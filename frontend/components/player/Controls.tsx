@@ -1,4 +1,5 @@
 import FocusablePressable from '@/components/FocusablePressable';
+import TVButton from '@/components/player/TVButton';
 import SeekBar from '@/components/player/SeekBar';
 import { SEGMENT_LABELS } from '@/components/player/SkipSegmentButton';
 import VolumeControl from '@/components/player/VolumeControl';
@@ -6,6 +7,7 @@ import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import { StreamInfoModal, type StreamInfoData } from '@/components/player/StreamInfoModal';
 import type { ActiveSegment, SegmentType } from '@/hooks/useIntroSkip';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
+import type { SpatialNavigationNodeRef } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -86,6 +88,11 @@ interface ControlsProps {
   onSkipSegment?: () => void;
   /** When true, hides all controls except the skip segment button (TV skip-only overlay) */
   skipOnlyMode?: boolean;
+  /** When true, focus the skip segment button after mount (overrides DefaultFocus on play/pause).
+   *  Used during skip-only → full controls transition so focus stays on the skip button. */
+  skipButtonRetainFocus?: boolean;
+  /** Exit button rendered inside spatial nav tree on TV (so DefaultFocus takes priority) */
+  onExit?: () => void;
 }
 
 export type TrackOption = {
@@ -149,6 +156,8 @@ const Controls: React.FC<ControlsProps> = ({
   skipSegment,
   onSkipSegment,
   skipOnlyMode = false,
+  skipButtonRetainFocus = false,
+  onExit,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -160,25 +169,24 @@ const Controls: React.FC<ControlsProps> = ({
   const isLandscape = width >= height;
   const _isSeekable = Number.isFinite(duration) && duration > 0;
   const lastFocusedKeyRef = useRef<string | null>(null);
-  // Refs for focus restoration after modal close (via requestTVFocus)
-  const audioButtonRef = useRef<View>(null);
-  const subtitleButtonRef = useRef<View>(null);
-  const infoButtonRef = useRef<View>(null);
-  const speedButtonRef = useRef<View>(null);
-  const skipSegmentButtonRef = useRef<View>(null);
-  const lastFocusedViewRef = useRef<View | null>(null);
+  // Refs for focus restoration after modal close
+  // On TV: SpatialNavigationNodeRef (.focus()), on web/mobile: View (.requestTVFocus())
+  const audioButtonRef = useRef<SpatialNavigationNodeRef | View>(null);
+  const subtitleButtonRef = useRef<SpatialNavigationNodeRef | View>(null);
+  const infoButtonRef = useRef<SpatialNavigationNodeRef | View>(null);
+  const speedButtonRef = useRef<SpatialNavigationNodeRef | View>(null);
+  const skipSegmentButtonRef = useRef<SpatialNavigationNodeRef>(null);
+  const lastFocusedRef = useRef<SpatialNavigationNodeRef | View | null>(null);
 
-  // Programmatically grab focus on the skip segment button when entering skip-only mode.
-  // DefaultFocus only applies at mount time — requestTVFocus is needed for dynamic focus changes.
+  // Programmatically grab focus on the skip segment button when entering skip-only mode
+  // or when transitioning from skip-only → full controls (skipButtonRetainFocus).
   useEffect(() => {
-    if (!skipOnlyMode || !isTvPlatform) return;
-    // Wait for the render to flush so the native view exists
+    if (!isTvPlatform) return;
+    if (!skipOnlyMode && !skipButtonRetainFocus) return;
     requestAnimationFrame(() => {
-      setTimeout(() => {
-        (skipSegmentButtonRef.current as any)?.requestTVFocus?.();
-      }, 50);
+      skipSegmentButtonRef.current?.focus();
     });
-  }, [skipOnlyMode, isTvPlatform]);
+  }, [skipOnlyMode, skipButtonRetainFocus, isTvPlatform]);
 
   // Flash animation for skip buttons (triggered by double-tap on mobile)
   const skipBackwardScale = useRef(new Animated.Value(1)).current;
@@ -262,6 +270,11 @@ const Controls: React.FC<ControlsProps> = ({
     if (isTvPlatform && showSubtitleOffset) parts.push('offset');
     if (isTvPlatform && streamInfo) parts.push('info');
     if (isTvPlatform && skipSegment) parts.push('skip');
+    // Include skipOnlyMode so the spatial nav tree remounts when transitioning
+    // from skip-only (only skip button registered) to full controls.
+    // Without this, the skip button stays at index 0 (leftmost) because it was
+    // registered first, and newly-appearing buttons get appended after it.
+    if (skipOnlyMode) parts.push('only');
     return `secondary-${parts.join('-')}`;
   }, [
     hasAudioSelection,
@@ -273,6 +286,7 @@ const Controls: React.FC<ControlsProps> = ({
     showSubtitleOffset,
     streamInfo,
     skipSegment,
+    skipOnlyMode,
   ]);
 
   const activeMenuRef = useRef<ActiveMenu>(null);
@@ -280,7 +294,7 @@ const Controls: React.FC<ControlsProps> = ({
   const menuClosingGuardRef = useRef(false);
 
   // Map focusKey → ref for focus restoration
-  const focusKeyToRef: Record<string, React.RefObject<View | null>> = useMemo(() => ({
+  const focusKeyToRef: Record<string, React.RefObject<SpatialNavigationNodeRef | View | null>> = useMemo(() => ({
     'audio-track-button': audioButtonRef,
     'subtitle-track-button': subtitleButtonRef,
     'subtitle-track-button-secondary': subtitleButtonRef,
@@ -299,7 +313,7 @@ const Controls: React.FC<ControlsProps> = ({
 
       if (focusKey) {
         lastFocusedKeyRef.current = focusKey;
-        lastFocusedViewRef.current = focusKeyToRef[focusKey]?.current ?? null;
+        lastFocusedRef.current = focusKeyToRef[focusKey]?.current ?? null;
       }
 
       onActiveMenuChange?.(menu);
@@ -320,16 +334,19 @@ const Controls: React.FC<ControlsProps> = ({
     onActiveMenuChange?.(null);
     onModalStateChange?.(false);
 
-    // Restore focus to the button that opened the menu via requestTVFocus()
-    // Use requestAnimationFrame to wait for React re-render (buttons re-enabled)
-    // then setTimeout to wait for native view updates to flush
-    if (Platform.isTV && lastFocusedViewRef.current) {
-      const targetView = lastFocusedViewRef.current;
-      lastFocusedViewRef.current = null;
+    // Restore focus to the button that opened the menu
+    // On TV: use spatial nav .focus(), on web: use requestTVFocus()
+    if (Platform.isTV && lastFocusedRef.current) {
+      const target = lastFocusedRef.current;
+      lastFocusedRef.current = null;
       lastFocusedKeyRef.current = null;
       requestAnimationFrame(() => {
         setTimeout(() => {
-          (targetView as any).requestTVFocus?.();
+          if ('focus' in target && typeof target.focus === 'function') {
+            target.focus();
+          } else {
+            (target as any).requestTVFocus?.();
+          }
         }, 50);
       });
     }
@@ -422,6 +439,7 @@ const Controls: React.FC<ControlsProps> = ({
   const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
   const handleSpeedFocus = useCallback(() => onFocusChange?.('speed-button'), [onFocusChange]);
   const handleSkipSegmentFocus = useCallback(() => onFocusChange?.('skip-segment-button'), [onFocusChange]);
+  const handleExitFocus = useCallback(() => onFocusChange?.('exit-button'), [onFocusChange]);
 
   // Memoize menu openers to stabilize onSelect props
   const handleOpenAudioMenu = useCallback(() => openMenu('audio', 'audio-track-button'), [openMenu]);
@@ -528,7 +546,20 @@ const Controls: React.FC<ControlsProps> = ({
           </View>
         </View>
       )}
-      <SpatialNavigationNode orientation="vertical">
+      <SpatialNavigationNode key={secondaryRowKey} orientation="vertical">
+        {/* Exit button BEFORE bottomControls in spatial nav vertical tree so pressing Up
+            from main row reaches it. Visually at top-left via absolute positioning. */}
+        {isTvPlatform && onExit && !skipOnlyMode && (
+          <TVButton
+            icon="arrow-back"
+            text="Exit"
+            onSelect={onExit}
+            onFocus={handleExitFocus}
+            disabled={activeMenu !== null}
+            style={styles.exitButton}
+            textStyle={styles.exitButtonText}
+          />
+        )}
         <View
           style={[
             styles.bottomControls,
@@ -543,39 +574,90 @@ const Controls: React.FC<ControlsProps> = ({
               <View style={styles.mainRow} pointerEvents="box-none">
                 {!isMobile && (
                   <View style={[styles.buttonGroup, isSeeking && styles.seekingDisabled]}>
-                    <DefaultFocus>
-                      <FocusablePressable
-                        icon={paused ? 'play' : 'pause'}
-                        focusKey="play-pause-button"
-                        onSelect={onPlayPause}
-                        onFocus={handlePlayPauseFocus}
-                        style={styles.controlButton}
-                        disabled={isSeeking || activeMenu !== null}
-                      />
-                    </DefaultFocus>
-                    {onSkipBackward && (
-                      <View style={styles.tvSkipButtonContainer}>
-                        <FocusablePressable
-                          icon="play-back"
-                          focusKey="skip-back-button"
-                          onSelect={onSkipBackward}
-                          onFocus={handleSkipBackFocus}
+                    {skipButtonRetainFocus ? (
+                      isTvPlatform ? (
+                        <TVButton
+                          icon={paused ? 'play' : 'pause'}
+                          onSelect={onPlayPause}
+                          onFocus={handlePlayPauseFocus}
                           style={styles.controlButton}
                           disabled={isSeeking || activeMenu !== null}
                         />
+                      ) : (
+                        <FocusablePressable
+                          icon={paused ? 'play' : 'pause'}
+                          focusKey="play-pause-button"
+                          onSelect={onPlayPause}
+                          onFocus={handlePlayPauseFocus}
+                          style={styles.controlButton}
+                          disabled={isSeeking || activeMenu !== null}
+                        />
+                      )
+                    ) : (
+                      <DefaultFocus>
+                        {isTvPlatform ? (
+                          <TVButton
+                            icon={paused ? 'play' : 'pause'}
+                            onSelect={onPlayPause}
+                            onFocus={handlePlayPauseFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        ) : (
+                          <FocusablePressable
+                            icon={paused ? 'play' : 'pause'}
+                            focusKey="play-pause-button"
+                            onSelect={onPlayPause}
+                            onFocus={handlePlayPauseFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        )}
+                      </DefaultFocus>
+                    )}
+                    {onSkipBackward && (
+                      <View style={styles.tvSkipButtonContainer}>
+                        {isTvPlatform ? (
+                          <TVButton
+                            icon="play-back"
+                            onSelect={onSkipBackward}
+                            onFocus={handleSkipBackFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        ) : (
+                          <FocusablePressable
+                            icon="play-back"
+                            focusKey="skip-back-button"
+                            onSelect={onSkipBackward}
+                            onFocus={handleSkipBackFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        )}
                         <Text style={styles.tvSkipLabel}>{seekBackwardSeconds}s</Text>
                       </View>
                     )}
                     {onSkipForward && (
                       <View style={styles.tvSkipButtonContainer}>
-                        <FocusablePressable
-                          icon="play-forward"
-                          focusKey="skip-forward-button"
-                          onSelect={onSkipForward}
-                          onFocus={handleSkipForwardFocus}
-                          style={styles.controlButton}
-                          disabled={isSeeking || activeMenu !== null}
-                        />
+                        {isTvPlatform ? (
+                          <TVButton
+                            icon="play-forward"
+                            onSelect={onSkipForward}
+                            onFocus={handleSkipForwardFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        ) : (
+                          <FocusablePressable
+                            icon="play-forward"
+                            focusKey="skip-forward-button"
+                            onSelect={onSkipForward}
+                            onFocus={handleSkipForwardFocus}
+                            style={styles.controlButton}
+                            disabled={isSeeking || activeMenu !== null}
+                          />
+                        )}
                         <Text style={styles.tvSkipLabel}>{seekForwardSeconds}s</Text>
                       </View>
                     )}
@@ -643,7 +725,7 @@ const Controls: React.FC<ControlsProps> = ({
             (isTvPlatform && skipSegment) ||
             showPipButton ||
             skipOnlyMode) && (
-              <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
+              <SpatialNavigationNode orientation="horizontal">
                 <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                   {/* Mobile PiP layout: portrait=stacked, landscape=side-by-side */}
                   {showPipButton ? (
@@ -761,19 +843,39 @@ const Controls: React.FC<ControlsProps> = ({
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           {isLiveTV ? (
                             <DefaultFocus>
-                              <FocusablePressable
-                                ref={audioButtonRef}
-                                icon="musical-notes"
-                                focusKey="audio-track-button"
-                                onSelect={handleOpenAudioMenu}
-                                onFocus={handleAudioTrackFocus}
-                                style={[styles.controlButton, styles.trackButton]}
-                                disabled={isSeeking || activeMenu !== null}
-                              />
+                              {isTvPlatform ? (
+                                <TVButton
+                                  ref={audioButtonRef as React.Ref<SpatialNavigationNodeRef>}
+                                  icon="musical-notes"
+                                  onSelect={handleOpenAudioMenu}
+                                  onFocus={handleAudioTrackFocus}
+                                  style={[styles.controlButton, styles.trackButton]}
+                                  disabled={isSeeking || activeMenu !== null}
+                                />
+                              ) : (
+                                <FocusablePressable
+                                  ref={audioButtonRef as React.Ref<View>}
+                                  icon="musical-notes"
+                                  focusKey="audio-track-button"
+                                  onSelect={handleOpenAudioMenu}
+                                  onFocus={handleAudioTrackFocus}
+                                  style={[styles.controlButton, styles.trackButton]}
+                                  disabled={isSeeking || activeMenu !== null}
+                                />
+                              )}
                             </DefaultFocus>
+                          ) : isTvPlatform ? (
+                            <TVButton
+                              ref={audioButtonRef as React.Ref<SpatialNavigationNodeRef>}
+                              icon="musical-notes"
+                              onSelect={handleOpenAudioMenu}
+                              onFocus={handleAudioTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
                           ) : (
                             <FocusablePressable
-                              ref={audioButtonRef}
+                              ref={audioButtonRef as React.Ref<View>}
                               icon="musical-notes"
                               focusKey="audio-track-button"
                               onSelect={handleOpenAudioMenu}
@@ -789,19 +891,39 @@ const Controls: React.FC<ControlsProps> = ({
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           {isLiveTV ? (
                             <DefaultFocus>
-                              <FocusablePressable
-                                ref={subtitleButtonRef}
-                                icon="chatbubble-ellipses"
-                                focusKey="subtitle-track-button"
-                                onSelect={handleOpenSubtitlesMenu}
-                                onFocus={handleSubtitleTrackFocus}
-                                style={[styles.controlButton, styles.trackButton]}
-                                disabled={isSeeking || activeMenu !== null}
-                              />
+                              {isTvPlatform ? (
+                                <TVButton
+                                  ref={subtitleButtonRef as React.Ref<SpatialNavigationNodeRef>}
+                                  icon="chatbubble-ellipses"
+                                  onSelect={handleOpenSubtitlesMenu}
+                                  onFocus={handleSubtitleTrackFocus}
+                                  style={[styles.controlButton, styles.trackButton]}
+                                  disabled={isSeeking || activeMenu !== null}
+                                />
+                              ) : (
+                                <FocusablePressable
+                                  ref={subtitleButtonRef as React.Ref<View>}
+                                  icon="chatbubble-ellipses"
+                                  focusKey="subtitle-track-button"
+                                  onSelect={handleOpenSubtitlesMenu}
+                                  onFocus={handleSubtitleTrackFocus}
+                                  style={[styles.controlButton, styles.trackButton]}
+                                  disabled={isSeeking || activeMenu !== null}
+                                />
+                              )}
                             </DefaultFocus>
+                          ) : isTvPlatform ? (
+                            <TVButton
+                              ref={subtitleButtonRef as React.Ref<SpatialNavigationNodeRef>}
+                              icon="chatbubble-ellipses"
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={handleSubtitleTrackFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
                           ) : (
                             <FocusablePressable
-                              ref={subtitleButtonRef}
+                              ref={subtitleButtonRef as React.Ref<View>}
                               icon="chatbubble-ellipses"
                               focusKey="subtitle-track-button"
                               onSelect={handleOpenSubtitlesMenu}
@@ -815,15 +937,26 @@ const Controls: React.FC<ControlsProps> = ({
                       )}
                       {!skipOnlyMode && hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                          <FocusablePressable
-                            ref={subtitleButtonRef}
-                            icon="chatbubble-ellipses"
-                            focusKey="subtitle-track-button-secondary"
-                            onSelect={handleOpenSubtitlesMenu}
-                            onFocus={handleSubtitleTrackSecondaryFocus}
-                            style={[styles.controlButton, styles.trackButton]}
-                            disabled={isSeeking || activeMenu !== null}
-                          />
+                          {isTvPlatform ? (
+                            <TVButton
+                              ref={subtitleButtonRef as React.Ref<SpatialNavigationNodeRef>}
+                              icon="chatbubble-ellipses"
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={handleSubtitleTrackSecondaryFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                          ) : (
+                            <FocusablePressable
+                              ref={subtitleButtonRef as React.Ref<View>}
+                              icon="chatbubble-ellipses"
+                              focusKey="subtitle-track-button-secondary"
+                              onSelect={handleOpenSubtitlesMenu}
+                              onFocus={handleSubtitleTrackSecondaryFocus}
+                              style={[styles.controlButton, styles.trackButton]}
+                              disabled={isSeeking || activeMenu !== null}
+                            />
+                          )}
                           <Text style={[styles.trackLabel, styles.tvTrackLabel]} numberOfLines={1}>{subtitleSummary}</Text>
                         </View>
                       )}
@@ -837,9 +970,8 @@ const Controls: React.FC<ControlsProps> = ({
                         (!hasPreviousEpisode || shuffleMode) && styles.episodeButtonGroupDisabled,
                       ]}
                       pointerEvents="box-none">
-                      <FocusablePressable
+                      <TVButton
                         icon="chevron-back-circle"
-                        focusKey="previous-episode-button"
                         onSelect={onPreviousEpisode}
                         onFocus={handlePreviousEpisodeFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -859,9 +991,8 @@ const Controls: React.FC<ControlsProps> = ({
                       ]}
                       pointerEvents="box-none">
                       <View>
-                        <FocusablePressable
+                        <TVButton
                           icon={shuffleMode ? 'shuffle' : 'chevron-forward-circle'}
-                          focusKey="next-episode-button"
                           onSelect={onNextEpisode}
                           onFocus={handleNextEpisodeFocus}
                           style={[styles.controlButton, styles.trackButton]}
@@ -877,9 +1008,8 @@ const Controls: React.FC<ControlsProps> = ({
                   {/* Subtitle offset controls for TV platforms */}
                   {!skipOnlyMode && isTvPlatform && showSubtitleOffset && !isLiveTV && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
                     <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
-                      <FocusablePressable
+                      <TVButton
                         icon="remove-circle-outline"
-                        focusKey="subtitle-offset-earlier"
                         onSelect={onSubtitleOffsetEarlier}
                         onFocus={handleSubtitleOffsetEarlierFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -889,9 +1019,8 @@ const Controls: React.FC<ControlsProps> = ({
                         <Text style={styles.subtitleOffsetTvLabel}>Subtitle</Text>
                         <Text style={styles.subtitleOffsetTvValue}>{formattedSubtitleOffset}</Text>
                       </View>
-                      <FocusablePressable
+                      <TVButton
                         icon="add-circle-outline"
-                        focusKey="subtitle-offset-later"
                         onSelect={onSubtitleOffsetLater}
                         onFocus={handleSubtitleOffsetLaterFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -902,10 +1031,9 @@ const Controls: React.FC<ControlsProps> = ({
                   {/* Info button for TV platforms (not for live TV) */}
                   {!skipOnlyMode && isTvPlatform && streamInfo && !isLiveTV && (
                     <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
-                        ref={infoButtonRef}
+                      <TVButton
+                        ref={infoButtonRef as React.Ref<SpatialNavigationNodeRef>}
                         icon="information-circle"
-                        focusKey="info-button"
                         onSelect={handleOpenInfoMenu}
                         onFocus={handleInfoFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -916,10 +1044,9 @@ const Controls: React.FC<ControlsProps> = ({
                   {/* Speed button for TV platforms - after info button */}
                   {!skipOnlyMode && isTvPlatform && hasSpeedSelection && (
                     <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
-                        ref={speedButtonRef}
+                      <TVButton
+                        ref={speedButtonRef as React.Ref<SpatialNavigationNodeRef>}
                         icon="speedometer-outline"
-                        focusKey="speed-button"
                         onSelect={handleOpenSpeedMenu}
                         onFocus={handleSpeedFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -928,18 +1055,13 @@ const Controls: React.FC<ControlsProps> = ({
                       <Text style={[styles.trackLabel, styles.tvTrackLabel]}>{speedSummary}</Text>
                     </View>
                   )}
-                  {/* Spacer to push skip segment button to far right */}
-                  {isTvPlatform && skipSegment && onSkipSegment && (
-                    <View style={styles.skipSegmentSpacer} />
-                  )}
                   {/* Skip segment button for TV platforms - far right of secondary row */}
                   {isTvPlatform && skipSegment && onSkipSegment && (
-                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
-                      <FocusablePressable
+                    <View style={[styles.trackButtonGroup, styles.skipSegmentGroup]} pointerEvents="box-none">
+                      <TVButton
                         ref={skipSegmentButtonRef}
                         text={SEGMENT_LABELS[skipSegment.type]}
                         icon="play-forward"
-                        focusKey="skip-segment-button"
                         onSelect={onSkipSegment}
                         onFocus={handleSkipSegmentFocus}
                         style={[styles.controlButton, styles.trackButton]}
@@ -1189,8 +1311,20 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number, screenHeight: 
       marginRight: theme.spacing.lg,
       marginBottom: theme.spacing.xs,
     },
-    skipSegmentSpacer: {
-      flex: 1,
+    skipSegmentGroup: {
+      marginLeft: 'auto',
+    },
+    exitButton: {
+      position: 'absolute' as const,
+      top: Math.round(theme.spacing.lg * vh),
+      left: Math.round(theme.spacing.lg * vh),
+      paddingVertical: Math.round(theme.spacing.md * vh),
+      paddingHorizontal: Math.round(theme.spacing.lg * vh),
+      marginHorizontal: Math.round(theme.spacing.lg * vh),
+    },
+    exitButtonText: {
+      fontSize: Math.round(16 * vh),
+      lineHeight: Math.round(21 * vh),
     },
     trackLabel: {
       ...theme.typography.body.sm,

@@ -461,6 +461,7 @@ export default function PlayerScreen() {
   const [skipOnlyVisible, setSkipOnlyVisible] = useState<boolean>(false);
   const skipOnlyVisibleRef = useRef<boolean>(false);
   const skipOnlyDismissedRef = useRef<boolean>(false);
+  const [skipButtonRetainFocus, setSkipButtonRetainFocus] = useState<boolean>(false);
   const prevIntroSkipSegmentRef = useRef<{ startMs: number; endMs: number; type: string } | null>(null);
   // Double-tap gesture handling for mobile skip forward/backward
   const lastTapRef = useRef<{ time: number; side: 'left' | 'right' } | null>(null);
@@ -538,6 +539,13 @@ export default function PlayerScreen() {
       setSkipOnlyVisible(false);
     }
   }, [controlsVisible]);
+
+  // Clear skipButtonRetainFocus after it has taken effect (one render cycle)
+  useEffect(() => {
+    if (skipButtonRetainFocus) {
+      setSkipButtonRetainFocus(false);
+    }
+  }, [skipButtonRetainFocus]);
 
   // Track whether the user has manually changed audio/subtitle tracks in this session.
   // Prevents handleTracksAvailable from overwriting user selections when its dependencies
@@ -2708,8 +2716,9 @@ export default function PlayerScreen() {
       }
       switch (key) {
         case SupportedKeys.Left:
-          // Skip-only → full controls transition
+          // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
             break;
@@ -2751,8 +2760,9 @@ export default function PlayerScreen() {
           }
           break;
         case SupportedKeys.Right:
-          // Skip-only → full controls transition
+          // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
             break;
@@ -2853,8 +2863,9 @@ export default function PlayerScreen() {
         }
         case SupportedKeys.Up:
         case SupportedKeys.Down:
-          // Skip-only → full controls transition
+          // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
             break;
@@ -6332,10 +6343,9 @@ export default function PlayerScreen() {
                         style={styles.overlayContent}
                         pointerEvents="box-none"
                         renderToHardwareTextureAndroid={true}>
-                        {/* Top row hidden in skip-only mode */}
+                        {/* Top row hidden in skip-only mode (ExitButton moved into Controls spatial nav tree) */}
                         {!skipOnlyVisible && (
                           <View style={styles.overlayTopRow} pointerEvents="box-none">
-                            <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen || activeMenu !== null} />
                             <MediaInfoDisplay
                               mediaType={mediaType}
                               title={title || ''}
@@ -6365,6 +6375,7 @@ export default function PlayerScreen() {
                             onSeek={seek}
                             volume={volume}
                             onVolumeChange={handleVolumeChange}
+                            onExit={() => router.back()}
                             isFullscreen={isFullscreen}
                             onToggleFullscreen={toggleFullscreen}
                             audioTracks={audioTrackOptions}
@@ -6432,6 +6443,7 @@ export default function PlayerScreen() {
                               }
                             } : undefined}
                             skipOnlyMode={skipOnlyVisible && !controlsVisible}
+                            skipButtonRetainFocus={skipButtonRetainFocus}
                           />
                         </View>
                       </View>
