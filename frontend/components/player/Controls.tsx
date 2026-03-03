@@ -178,16 +178,6 @@ const Controls: React.FC<ControlsProps> = ({
   const skipSegmentButtonRef = useRef<SpatialNavigationNodeRef>(null);
   const lastFocusedRef = useRef<SpatialNavigationNodeRef | View | null>(null);
 
-  // Programmatically grab focus on the skip segment button when entering skip-only mode
-  // or when transitioning from skip-only → full controls (skipButtonRetainFocus).
-  useEffect(() => {
-    if (!isTvPlatform) return;
-    if (!skipOnlyMode && !skipButtonRetainFocus) return;
-    requestAnimationFrame(() => {
-      skipSegmentButtonRef.current?.focus();
-    });
-  }, [skipOnlyMode, skipButtonRetainFocus, isTvPlatform]);
-
   // Flash animation for skip buttons (triggered by double-tap on mobile)
   const skipBackwardScale = useRef(new Animated.Value(1)).current;
   const skipForwardScale = useRef(new Animated.Value(1)).current;
@@ -275,7 +265,9 @@ const Controls: React.FC<ControlsProps> = ({
     // Without this, the skip button stays at index 0 (leftmost) because it was
     // registered first, and newly-appearing buttons get appended after it.
     if (skipOnlyMode) parts.push('only');
-    return `secondary-${parts.join('-')}`;
+    const key = `secondary-${parts.join('-')}`;
+    if (isTvPlatform) console.log('[Controls][KEY] secondaryRowKey computed:', key, { skipOnlyMode });
+    return key;
   }, [
     hasAudioSelection,
     hasSubtitleSelection,
@@ -419,12 +411,27 @@ const Controls: React.FC<ControlsProps> = ({
 
   // Memoize focus handlers to prevent re-renders of FocusablePressable on every Controls render
   // This is critical for Android TV performance where re-creating these functions causes sluggish navigation
-  const handlePlayPauseFocus = useCallback(() => onFocusChange?.('play-pause-button'), [onFocusChange]);
-  const handleSkipBackFocus = useCallback(() => onFocusChange?.('skip-back-button'), [onFocusChange]);
-  const handleSkipForwardFocus = useCallback(() => onFocusChange?.('skip-forward-button'), [onFocusChange]);
+  const handlePlayPauseFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] play-pause-button focused', { skipOnlyMode, skipButtonRetainFocus });
+    onFocusChange?.('play-pause-button');
+  }, [onFocusChange, skipOnlyMode, skipButtonRetainFocus]);
+  const handleSkipBackFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] skip-back-button focused');
+    onFocusChange?.('skip-back-button');
+  }, [onFocusChange]);
+  const handleSkipForwardFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] skip-forward-button focused');
+    onFocusChange?.('skip-forward-button');
+  }, [onFocusChange]);
   const handleFullscreenFocus = useCallback(() => onFocusChange?.('fullscreen-button'), [onFocusChange]);
-  const handleAudioTrackFocus = useCallback(() => onFocusChange?.('audio-track-button'), [onFocusChange]);
-  const handleSubtitleTrackFocus = useCallback(() => onFocusChange?.('subtitle-track-button'), [onFocusChange]);
+  const handleAudioTrackFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] audio-track-button focused', { skipOnlyMode, skipButtonRetainFocus });
+    onFocusChange?.('audio-track-button');
+  }, [onFocusChange, skipOnlyMode, skipButtonRetainFocus]);
+  const handleSubtitleTrackFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] subtitle-track-button focused', { skipOnlyMode, skipButtonRetainFocus });
+    onFocusChange?.('subtitle-track-button');
+  }, [onFocusChange, skipOnlyMode, skipButtonRetainFocus]);
   const handleSubtitleTrackSecondaryFocus = useCallback(
     () => onFocusChange?.('subtitle-track-button-secondary'),
     [onFocusChange],
@@ -436,10 +443,22 @@ const Controls: React.FC<ControlsProps> = ({
     [onFocusChange],
   );
   const handleSubtitleOffsetLaterFocus = useCallback(() => onFocusChange?.('subtitle-offset-later'), [onFocusChange]);
-  const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
-  const handleSpeedFocus = useCallback(() => onFocusChange?.('speed-button'), [onFocusChange]);
-  const handleSkipSegmentFocus = useCallback(() => onFocusChange?.('skip-segment-button'), [onFocusChange]);
-  const handleExitFocus = useCallback(() => onFocusChange?.('exit-button'), [onFocusChange]);
+  const handleInfoFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] info-button focused');
+    onFocusChange?.('info-button');
+  }, [onFocusChange]);
+  const handleSpeedFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] speed-button focused');
+    onFocusChange?.('speed-button');
+  }, [onFocusChange]);
+  const handleSkipSegmentFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] skip-segment-button focused', { skipOnlyMode, skipButtonRetainFocus });
+    onFocusChange?.('skip-segment-button');
+  }, [onFocusChange, skipOnlyMode, skipButtonRetainFocus]);
+  const handleExitFocus = useCallback(() => {
+    if (Platform.isTV) console.log('[Controls][FOCUS] exit-button focused', { skipOnlyMode, skipButtonRetainFocus });
+    onFocusChange?.('exit-button');
+  }, [onFocusChange, skipOnlyMode, skipButtonRetainFocus]);
 
   // Memoize menu openers to stabilize onSelect props
   const handleOpenAudioMenu = useCallback(() => openMenu('audio', 'audio-track-button'), [openMenu]);
@@ -461,6 +480,20 @@ const Controls: React.FC<ControlsProps> = ({
       </View>
     </View>
   );
+
+  // Debug: log render-time state for skip focus investigation
+  if (isTvPlatform && skipSegment) {
+    console.log('[Controls][RENDER]', {
+      skipOnlyMode,
+      skipButtonRetainFocus,
+      hasAudioSelection,
+      hasSubtitleSelection,
+      isLiveTV,
+      secondaryRowKey,
+      hasDefaultFocusOnSkip: skipButtonRetainFocus || skipOnlyMode,
+      hasDefaultFocusOnPlayPause: !skipButtonRetainFocus,
+    });
+  }
 
   return (
     <>
@@ -1058,16 +1091,31 @@ const Controls: React.FC<ControlsProps> = ({
                   {/* Skip segment button for TV platforms - far right of secondary row */}
                   {isTvPlatform && skipSegment && onSkipSegment && (
                     <View style={[styles.trackButtonGroup, styles.skipSegmentGroup]} pointerEvents="box-none">
-                      <TVButton
-                        ref={skipSegmentButtonRef}
-                        text={SEGMENT_LABELS[skipSegment.type]}
-                        icon="play-forward"
-                        onSelect={onSkipSegment}
-                        onFocus={handleSkipSegmentFocus}
-                        style={[styles.controlButton, styles.trackButton]}
-                        disabled={isSeeking || activeMenu !== null}
-                        variant="primary"
-                      />
+                      {skipButtonRetainFocus || skipOnlyMode ? (
+                        <DefaultFocus>
+                          <TVButton
+                            ref={skipSegmentButtonRef}
+                            text={SEGMENT_LABELS[skipSegment.type]}
+                            icon="play-forward"
+                            onSelect={onSkipSegment}
+                            onFocus={handleSkipSegmentFocus}
+                            style={[styles.controlButton, styles.trackButton]}
+                            disabled={isSeeking || activeMenu !== null}
+                            variant="primary"
+                          />
+                        </DefaultFocus>
+                      ) : (
+                        <TVButton
+                          ref={skipSegmentButtonRef}
+                          text={SEGMENT_LABELS[skipSegment.type]}
+                          icon="play-forward"
+                          onSelect={onSkipSegment}
+                          onFocus={handleSkipSegmentFocus}
+                          style={[styles.controlButton, styles.trackButton]}
+                          disabled={isSeeking || activeMenu !== null}
+                          variant="primary"
+                        />
+                      )}
                     </View>
                   )}
                 </View>

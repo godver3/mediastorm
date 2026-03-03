@@ -540,12 +540,15 @@ export default function PlayerScreen() {
     }
   }, [controlsVisible]);
 
-  // Clear skipButtonRetainFocus after it has taken effect (one render cycle)
+  // Clear skipButtonRetainFocus when controls are hidden (not after one render cycle,
+  // because that causes a re-render where DefaultFocus shifts back to play/pause and
+  // the spatial nav library steals focus from the skip button).
   useEffect(() => {
-    if (skipButtonRetainFocus) {
+    if (!controlsVisible && skipButtonRetainFocus) {
+      console.log('[player][SKIP-FOCUS] Clearing skipButtonRetainFocus (controls hidden)');
       setSkipButtonRetainFocus(false);
     }
-  }, [skipButtonRetainFocus]);
+  }, [controlsVisible, skipButtonRetainFocus]);
 
   // Track whether the user has manually changed audio/subtitle tracks in this session.
   // Prevents handleTracksAvailable from overwriting user selections when its dependencies
@@ -2718,6 +2721,7 @@ export default function PlayerScreen() {
         case SupportedKeys.Left:
           // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            console.log('[player][SKIP-FOCUS] Left pressed in skip-only mode, transitioning to full controls');
             setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
@@ -2762,6 +2766,7 @@ export default function PlayerScreen() {
         case SupportedKeys.Right:
           // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            console.log('[player][SKIP-FOCUS] Right pressed in skip-only mode, transitioning to full controls');
             setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
@@ -2865,6 +2870,7 @@ export default function PlayerScreen() {
         case SupportedKeys.Down:
           // Skip-only → full controls transition (retain focus on skip button)
           if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            console.log('[player][SKIP-FOCUS] Up/Down pressed in skip-only mode, transitioning to full controls');
             setSkipButtonRetainFocus(true);
             setSkipOnlyVisible(false);
             showControlsRef.current?.();
