@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxLogLines   = 5000
+	maxLogLines   = 1000
 	maxUploadSize = 10 << 20 // 10 MB limit for frontend logs
 )
 

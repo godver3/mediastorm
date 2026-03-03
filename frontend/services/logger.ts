@@ -11,7 +11,7 @@ interface LogEntry {
   message: string;
 }
 
-const MAX_LOG_ENTRIES = 5000;
+const MAX_LOG_ENTRIES = 1000;
 
 class Logger {
   private logs: LogEntry[] = [];
