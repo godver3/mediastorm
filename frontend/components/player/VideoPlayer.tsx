@@ -335,7 +335,7 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
     fontSize: subtitleSize,
     textColor: '#FFFFFF',
     backgroundColor: '#00000099', // 60% black background (matching SubtitleOverlay)
-    bottomMargin: 50, // Match SubtitleOverlay positioning
+    bottomMargin: 10, // Near bottom edge, matching KSPlayer positioning
   }), [subtitleSize]);
 
   return (

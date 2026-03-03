@@ -65,8 +65,9 @@ class ExoPlayerView(
         private const val LOW_RAM_THRESHOLD_MB = 2048L   // <= 2 GB
         private const val MID_RAM_THRESHOLD_MB = 3072L   // <= 3 GB
 
-        // Base subtitle size in SP — matches RN overlay's Android TV size
-        private const val BASE_SUBTITLE_SIZE_SP = 26f
+        // Base subtitle size as fraction of video height — matches mpv's
+        // sub-font-size=55 at 720 reference (55/720 ≈ 0.0764)
+        private const val BASE_SUBTITLE_FRACTION = 55f / 720f
 
         // PGS authoring reference height — PGS mastered at this resolution
         // gets a 1.0 base scale when displayed on a matching video.
@@ -130,7 +131,7 @@ class ExoPlayerView(
     // Subtitle styling state
     private var currentFgColor = Color.WHITE
     private var currentBgColor = 0x99000000.toInt()
-    private var baseSubtitleMarginY = 50
+    private var baseSubtitleMarginY = 10
     private var controlsVisible = false
     private var userBitmapMultiplier = 1.0f
 
@@ -166,7 +167,7 @@ class ExoPlayerView(
                 Typeface.DEFAULT_BOLD
             )
         )
-        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setFractionalTextSize(BASE_SUBTITLE_FRACTION)
     }
 
     private val surfaceCallback = object : SurfaceHolder.Callback {
@@ -633,7 +634,7 @@ class ExoPlayerView(
 
     override fun setSubtitleSize(size: Float) {
         if (size > 0) {
-            subtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+            subtitleView.setFractionalTextSize(BASE_SUBTITLE_FRACTION * size)
         }
     }
 
@@ -670,10 +671,7 @@ class ExoPlayerView(
         if (style.hasKey("fontSize")) {
             val multiplier = style.getDouble("fontSize")
             if (multiplier > 0) {
-                subtitleView.setFixedTextSize(
-                    TypedValue.COMPLEX_UNIT_SP,
-                    BASE_SUBTITLE_SIZE_SP * multiplier.toFloat()
-                )
+                subtitleView.setFractionalTextSize(BASE_SUBTITLE_FRACTION * multiplier.toFloat())
                 userBitmapMultiplier = multiplier.toFloat()
                 updateBitmapScale()
             }
