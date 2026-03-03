@@ -9,6 +9,7 @@ import { isMobileWeb } from '@/components/player/isMobileWeb';
 import MediaInfoDisplay from '@/components/player/MediaInfoDisplay';
 import { StreamInfoModal } from '@/components/player/StreamInfoModal';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
+import SkipSegmentButton from '@/components/player/SkipSegmentButton';
 import SubtitleOverlay, { SubtitleCuesRange, SubtitleDebugInfo } from '@/components/player/SubtitleOverlay';
 import { SubtitleSearchModal } from '@/components/player/SubtitleSearchModal';
 import { SubtitleStatusOverlay, type AutoSubtitleStatus } from '@/components/player/SubtitleStatusOverlay';
@@ -56,6 +57,7 @@ import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useLoadingScreen } from '@/components/LoadingScreenContext';
 import { useToast } from '@/components/ToastContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
+import { useIntroSkip } from '@/hooks/useIntroSkip';
 import { usePlaybackProgress } from '@/hooks/usePlaybackProgress';
 import type {
   AudioStreamMetadata,
@@ -482,6 +484,15 @@ export default function PlayerScreen() {
   const [subtitleTrackOptions, setSubtitleTrackOptions] = useState<TrackOption[]>([SUBTITLE_OFF_OPTION]);
   const [selectedAudioTrackId, setSelectedAudioTrackId] = useState<string | null>(null);
   const [selectedSubtitleTrackId, setSelectedSubtitleTrackId] = useState<string | null>(SUBTITLE_OFF_OPTION.id);
+
+  // Intro/recap/outro skip segments from introdb.app
+  const { activeSegment: introSkipSegment } = useIntroSkip({
+    imdbId,
+    seasonNumber,
+    episodeNumber,
+    mediaType,
+    currentTime,
+  });
 
   // Track whether the user has manually changed audio/subtitle tracks in this session.
   // Prevents handleTracksAvailable from overwriting user selections when its dependencies
@@ -6168,6 +6179,19 @@ export default function PlayerScreen() {
           {/* Auto-subtitle search status overlay */}
           {autoSubtitleMessage && !isPipActive && (
             <SubtitleStatusOverlay status={autoSubtitleStatus} message={autoSubtitleMessage} />
+          )}
+
+          {/* Skip Intro / Skip Recap / Skip Credits button (introdb.app) */}
+          {!usesSystemManagedControls && !isPipActive && (
+            <SkipSegmentButton
+              segmentType={introSkipSegment?.type ?? 'intro'}
+              visible={introSkipSegment !== null}
+              onSkip={() => {
+                if (introSkipSegment) {
+                  seek(introSkipSegment.endMs / 1000);
+                }
+              }}
+            />
           )}
 
           {/* Double-tap overlay for mobile skip forward/backward */}
