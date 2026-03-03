@@ -1,8 +1,10 @@
 import FocusablePressable from '@/components/FocusablePressable';
 import SeekBar from '@/components/player/SeekBar';
+import { SEGMENT_LABELS } from '@/components/player/SkipSegmentButton';
 import VolumeControl from '@/components/player/VolumeControl';
 import { TrackSelectionModal } from '@/components/player/TrackSelectionModal';
 import { StreamInfoModal, type StreamInfoData } from '@/components/player/StreamInfoModal';
+import type { ActiveSegment, SegmentType } from '@/hooks/useIntroSkip';
 import { DefaultFocus, SpatialNavigationNode } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
@@ -78,6 +80,12 @@ interface ControlsProps {
   playbackSpeed?: number;
   /** Callback when user selects a new playback speed */
   onPlaybackSpeedChange?: (speed: number) => void;
+  /** Active skip segment (intro/recap/outro) for TV controls */
+  skipSegment?: ActiveSegment | null;
+  /** Callback when skip segment button is pressed */
+  onSkipSegment?: () => void;
+  /** When true, hides all controls except the skip segment button (TV skip-only overlay) */
+  skipOnlyMode?: boolean;
 }
 
 export type TrackOption = {
@@ -138,6 +146,9 @@ const Controls: React.FC<ControlsProps> = ({
   onActiveMenuChange,
   playbackSpeed = 1.0,
   onPlaybackSpeedChange,
+  skipSegment,
+  onSkipSegment,
+  skipOnlyMode = false,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -154,7 +165,20 @@ const Controls: React.FC<ControlsProps> = ({
   const subtitleButtonRef = useRef<View>(null);
   const infoButtonRef = useRef<View>(null);
   const speedButtonRef = useRef<View>(null);
+  const skipSegmentButtonRef = useRef<View>(null);
   const lastFocusedViewRef = useRef<View | null>(null);
+
+  // Programmatically grab focus on the skip segment button when entering skip-only mode.
+  // DefaultFocus only applies at mount time — requestTVFocus is needed for dynamic focus changes.
+  useEffect(() => {
+    if (!skipOnlyMode || !isTvPlatform) return;
+    // Wait for the render to flush so the native view exists
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        (skipSegmentButtonRef.current as any)?.requestTVFocus?.();
+      }, 50);
+    });
+  }, [skipOnlyMode, isTvPlatform]);
 
   // Flash animation for skip buttons (triggered by double-tap on mobile)
   const skipBackwardScale = useRef(new Animated.Value(1)).current;
@@ -237,6 +261,7 @@ const Controls: React.FC<ControlsProps> = ({
     if (isTvPlatform && onNextEpisode) parts.push('next');
     if (isTvPlatform && showSubtitleOffset) parts.push('offset');
     if (isTvPlatform && streamInfo) parts.push('info');
+    if (isTvPlatform && skipSegment) parts.push('skip');
     return `secondary-${parts.join('-')}`;
   }, [
     hasAudioSelection,
@@ -247,6 +272,7 @@ const Controls: React.FC<ControlsProps> = ({
     onNextEpisode,
     showSubtitleOffset,
     streamInfo,
+    skipSegment,
   ]);
 
   const activeMenuRef = useRef<ActiveMenu>(null);
@@ -395,6 +421,7 @@ const Controls: React.FC<ControlsProps> = ({
   const handleSubtitleOffsetLaterFocus = useCallback(() => onFocusChange?.('subtitle-offset-later'), [onFocusChange]);
   const handleInfoFocus = useCallback(() => onFocusChange?.('info-button'), [onFocusChange]);
   const handleSpeedFocus = useCallback(() => onFocusChange?.('speed-button'), [onFocusChange]);
+  const handleSkipSegmentFocus = useCallback(() => onFocusChange?.('skip-segment-button'), [onFocusChange]);
 
   // Memoize menu openers to stabilize onSelect props
   const handleOpenAudioMenu = useCallback(() => openMenu('audio', 'audio-track-button'), [openMenu]);
@@ -507,10 +534,11 @@ const Controls: React.FC<ControlsProps> = ({
             styles.bottomControls,
             isMobile && styles.bottomControlsMobile,
             isMobile && isLandscape && styles.bottomControlsMobileLandscape,
+            skipOnlyMode && styles.bottomControlsSkipOnly,
           ]}
           pointerEvents={activeMenu !== null ? 'none' : 'auto'}
           renderToHardwareTextureAndroid={isTvPlatform}>
-          {!isLiveTV && (
+          {!isLiveTV && !skipOnlyMode && (
             <SpatialNavigationNode orientation="horizontal">
               <View style={styles.mainRow} pointerEvents="box-none">
                 {!isMobile && (
@@ -580,7 +608,7 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </SpatialNavigationNode>
           )}
-          {isLiveTV && (
+          {!skipOnlyMode && isLiveTV && (
             <View style={styles.mainRow} pointerEvents="box-none">
               <View style={[styles.seekContainer, isMobile && styles.seekContainerMobile]} pointerEvents="box-none">
                 {hasStartedPlaying && (
@@ -612,7 +640,9 @@ const Controls: React.FC<ControlsProps> = ({
             (isTvPlatform && streamInfo) ||
             (isTvPlatform && (onPreviousEpisode || onNextEpisode)) ||
             (isTvPlatform && showSubtitleOffset) ||
-            showPipButton) && (
+            (isTvPlatform && skipSegment) ||
+            showPipButton ||
+            skipOnlyMode) && (
               <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
                 <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                   {/* Mobile PiP layout: portrait=stacked, landscape=side-by-side */}
@@ -727,7 +757,7 @@ const Controls: React.FC<ControlsProps> = ({
                     )
                   ) : (
                     <>
-                      {hasAudioSelection && audioSummary && (
+                      {!skipOnlyMode && hasAudioSelection && audioSummary && (
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           {isLiveTV ? (
                             <DefaultFocus>
@@ -755,7 +785,7 @@ const Controls: React.FC<ControlsProps> = ({
                           <Text style={[styles.trackLabel, styles.tvTrackLabel]} numberOfLines={1}>{audioSummary}</Text>
                         </View>
                       )}
-                      {hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
+                      {!skipOnlyMode && hasSubtitleSelection && subtitleSummary && !hasAudioSelection && (
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           {isLiveTV ? (
                             <DefaultFocus>
@@ -783,7 +813,7 @@ const Controls: React.FC<ControlsProps> = ({
                           <Text style={[styles.trackLabel, styles.tvTrackLabel]} numberOfLines={1}>{subtitleSummary}</Text>
                         </View>
                       )}
-                      {hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
+                      {!skipOnlyMode && hasSubtitleSelection && subtitleSummary && hasAudioSelection && (
                         <View style={styles.trackButtonGroup} pointerEvents="box-none">
                           <FocusablePressable
                             ref={subtitleButtonRef}
@@ -800,7 +830,7 @@ const Controls: React.FC<ControlsProps> = ({
                     </>
                   )}
                   {/* Episode navigation buttons for TV platforms */}
-                  {isTvPlatform && onPreviousEpisode && (
+                  {!skipOnlyMode && isTvPlatform && onPreviousEpisode && (
                     <View
                       style={[
                         styles.trackButtonGroup,
@@ -821,7 +851,7 @@ const Controls: React.FC<ControlsProps> = ({
                       </Text>
                     </View>
                   )}
-                  {isTvPlatform && onNextEpisode && (
+                  {!skipOnlyMode && isTvPlatform && onNextEpisode && (
                     <View
                       style={[
                         styles.trackButtonGroup,
@@ -845,7 +875,7 @@ const Controls: React.FC<ControlsProps> = ({
                     </View>
                   )}
                   {/* Subtitle offset controls for TV platforms */}
-                  {isTvPlatform && showSubtitleOffset && !isLiveTV && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
+                  {!skipOnlyMode && isTvPlatform && showSubtitleOffset && !isLiveTV && onSubtitleOffsetEarlier && onSubtitleOffsetLater && (
                     <View style={styles.subtitleOffsetTvGroup} pointerEvents="box-none">
                       <FocusablePressable
                         icon="remove-circle-outline"
@@ -870,7 +900,7 @@ const Controls: React.FC<ControlsProps> = ({
                     </View>
                   )}
                   {/* Info button for TV platforms (not for live TV) */}
-                  {isTvPlatform && streamInfo && !isLiveTV && (
+                  {!skipOnlyMode && isTvPlatform && streamInfo && !isLiveTV && (
                     <View style={styles.trackButtonGroup} pointerEvents="box-none">
                       <FocusablePressable
                         ref={infoButtonRef}
@@ -884,7 +914,7 @@ const Controls: React.FC<ControlsProps> = ({
                     </View>
                   )}
                   {/* Speed button for TV platforms - after info button */}
-                  {isTvPlatform && hasSpeedSelection && (
+                  {!skipOnlyMode && isTvPlatform && hasSpeedSelection && (
                     <View style={styles.trackButtonGroup} pointerEvents="box-none">
                       <FocusablePressable
                         ref={speedButtonRef}
@@ -896,6 +926,26 @@ const Controls: React.FC<ControlsProps> = ({
                         disabled={isSeeking || activeMenu !== null}
                       />
                       <Text style={[styles.trackLabel, styles.tvTrackLabel]}>{speedSummary}</Text>
+                    </View>
+                  )}
+                  {/* Spacer to push skip segment button to far right */}
+                  {isTvPlatform && skipSegment && onSkipSegment && (
+                    <View style={styles.skipSegmentSpacer} />
+                  )}
+                  {/* Skip segment button for TV platforms - far right of secondary row */}
+                  {isTvPlatform && skipSegment && onSkipSegment && (
+                    <View style={styles.trackButtonGroup} pointerEvents="box-none">
+                      <FocusablePressable
+                        ref={skipSegmentButtonRef}
+                        text={SEGMENT_LABELS[skipSegment.type]}
+                        icon="play-forward"
+                        focusKey="skip-segment-button"
+                        onSelect={onSkipSegment}
+                        onFocus={handleSkipSegmentFocus}
+                        style={[styles.controlButton, styles.trackButton]}
+                        disabled={isSeeking || activeMenu !== null}
+                        variant="primary"
+                      />
                     </View>
                   )}
                 </View>
@@ -1018,6 +1068,9 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number, screenHeight: 
       paddingVertical: theme.spacing.sm,
       borderRadius: theme.radius.md,
     },
+    bottomControlsSkipOnly: {
+      backgroundColor: 'transparent',
+    },
     bottomControlsMobileLandscape: {
       bottom: theme.spacing.xs,
     },
@@ -1135,6 +1188,9 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number, screenHeight: 
       alignItems: 'center',
       marginRight: theme.spacing.lg,
       marginBottom: theme.spacing.xs,
+    },
+    skipSegmentSpacer: {
+      flex: 1,
     },
     trackLabel: {
       ...theme.typography.body.sm,

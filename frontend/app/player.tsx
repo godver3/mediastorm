@@ -457,6 +457,11 @@ export default function PlayerScreen() {
   const PAUSE_TEARDOWN_DELAY = 20000; // 20 seconds before teardown
   const [controlsVisible, setControlsVisible] = useState<boolean>(false);
   const controlsVisibleRef = useRef<boolean>(controlsVisible);
+  // Skip-only overlay state (TV only): shows just the skip button without full controls
+  const [skipOnlyVisible, setSkipOnlyVisible] = useState<boolean>(false);
+  const skipOnlyVisibleRef = useRef<boolean>(false);
+  const skipOnlyDismissedRef = useRef<boolean>(false);
+  const prevIntroSkipSegmentRef = useRef<{ startMs: number; endMs: number; type: string } | null>(null);
   // Double-tap gesture handling for mobile skip forward/backward
   const lastTapRef = useRef<{ time: number; side: 'left' | 'right' } | null>(null);
   const [flashSkipButton, setFlashSkipButton] = useState<'backward' | 'forward' | null>(null);
@@ -491,6 +496,48 @@ export default function PlayerScreen() {
     mediaType,
     currentTime,
   });
+
+  // Sync skipOnlyVisibleRef with state
+  useEffect(() => {
+    skipOnlyVisibleRef.current = skipOnlyVisible;
+  }, [skipOnlyVisible]);
+
+  // Auto-show skip-only overlay when segment becomes active while controls are hidden (TV only)
+  useEffect(() => {
+    if (!isTvPlatform) return;
+    if (introSkipSegment && !controlsVisibleRef.current && !skipOnlyDismissedRef.current) {
+      setSkipOnlyVisible(true);
+    }
+  }, [introSkipSegment, isTvPlatform]);
+
+  // Reset dismissed flag when segment identity changes (new segment)
+  useEffect(() => {
+    if (!isTvPlatform) return;
+    const prev = prevIntroSkipSegmentRef.current;
+    if (introSkipSegment) {
+      if (!prev || prev.startMs !== introSkipSegment.startMs || prev.endMs !== introSkipSegment.endMs || prev.type !== introSkipSegment.type) {
+        skipOnlyDismissedRef.current = false;
+      }
+      prevIntroSkipSegmentRef.current = { startMs: introSkipSegment.startMs, endMs: introSkipSegment.endMs, type: introSkipSegment.type };
+    } else {
+      prevIntroSkipSegmentRef.current = null;
+    }
+  }, [introSkipSegment, isTvPlatform]);
+
+  // Hide skip-only when segment ends
+  useEffect(() => {
+    if (!isTvPlatform) return;
+    if (!introSkipSegment) {
+      setSkipOnlyVisible(false);
+    }
+  }, [introSkipSegment, isTvPlatform]);
+
+  // When full controls become visible, clear skip-only state
+  useEffect(() => {
+    if (controlsVisible) {
+      setSkipOnlyVisible(false);
+    }
+  }, [controlsVisible]);
 
   // Track whether the user has manually changed audio/subtitle tracks in this session.
   // Prevents handleTracksAvailable from overwriting user selections when its dependencies
@@ -2661,6 +2708,12 @@ export default function PlayerScreen() {
       }
       switch (key) {
         case SupportedKeys.Left:
+          // Skip-only → full controls transition
+          if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipOnlyVisible(false);
+            showControlsRef.current?.();
+            break;
+          }
           if (!controlsVisibleRef.current) {
             const backwardAmount = settings?.playback?.seekBackwardSeconds ?? 10;
 
@@ -2698,6 +2751,12 @@ export default function PlayerScreen() {
           }
           break;
         case SupportedKeys.Right:
+          // Skip-only → full controls transition
+          if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipOnlyVisible(false);
+            showControlsRef.current?.();
+            break;
+          }
           if (!controlsVisibleRef.current) {
             const forwardAmount = settings?.playback?.seekForwardSeconds ?? 30;
 
@@ -2747,7 +2806,11 @@ export default function PlayerScreen() {
           break;
         }
         case SupportedKeys.Back:
-          if (controlsVisibleRef.current) {
+          if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            // Hide skip-only overlay (not permanently dismissed — still shows in full controls)
+            setSkipOnlyVisible(false);
+            skipOnlyDismissedRef.current = true;
+          } else if (controlsVisibleRef.current) {
             hideControlsRef.current?.();
           } else {
             router.back();
@@ -2757,7 +2820,13 @@ export default function PlayerScreen() {
           console.log('[player][SELECT-DEBUG] Enter received in handleKeyDown', {
             controlsVisible: controlsVisibleRef.current,
             isModalOpen: isModalOpenRef.current,
+            skipOnlyVisible: skipOnlyVisibleRef.current,
           });
+          // When skip-only is visible, let the focused button's onSelect fire natively
+          if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            console.log('[player][SELECT-DEBUG] → skip-only visible, letting spatial nav handle select');
+            break;
+          }
           // On TV platforms, Enter key should toggle play/pause when controls are hidden
           if (!controlsVisibleRef.current) {
             console.log('[player][SELECT-DEBUG] → toggling play/pause (controls hidden)');
@@ -2782,6 +2851,16 @@ export default function PlayerScreen() {
           }
           break;
         }
+        case SupportedKeys.Up:
+        case SupportedKeys.Down:
+          // Skip-only → full controls transition
+          if (skipOnlyVisibleRef.current && !controlsVisibleRef.current) {
+            setSkipOnlyVisible(false);
+            showControlsRef.current?.();
+            break;
+          }
+          showControlsRef.current?.();
+          break;
         default:
           showControlsRef.current?.();
           break;
@@ -6185,9 +6264,9 @@ export default function PlayerScreen() {
             <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
           )}
 
-          {/* Skip Intro / Skip Recap / Skip Credits button (introdb.app) */}
-          {/* Rendered after doubleTapOverlay so it sits on top and intercepts taps */}
-          {!usesSystemManagedControls && !isPipActive && (
+          {/* Skip Intro / Skip Recap / Skip Credits button (introdb.app) — mobile only */}
+          {/* On TV, the skip button is integrated into Controls and the skip-only overlay */}
+          {!isTvPlatform && !usesSystemManagedControls && !isPipActive && (
             <SkipSegmentButton
               segmentType={introSkipSegment?.type ?? 'intro'}
               visible={introSkipSegment !== null}
@@ -6206,19 +6285,23 @@ export default function PlayerScreen() {
             const shouldRenderControls =
               !usesSystemManagedControls &&
               !isPipActive &&
-              (controlsVisible || isModalOpen || isTVSeeking) &&
+              (controlsVisible || isModalOpen || isTVSeeking || skipOnlyVisible) &&
               (hasPlaybackContext || Platform.isTV);
 
             return shouldRenderControls ? (
               isTvPlatform ? (
                 <TVControlsModal
-                  visible={controlsVisible || isTVSeeking}
+                  visible={controlsVisible || isTVSeeking || skipOnlyVisible}
                   onRequestClose={() => {
                     if (closeActiveModalRef.current) {
                       // A child pseudo-modal is open — close it directly
                       closeActiveModalRef.current();
                     } else if (subtitleSearchModalVisible) {
                       handleCloseSubtitleSearch();
+                    } else if (skipOnlyVisible && !controlsVisible) {
+                      // Hide skip-only overlay via Menu/Back
+                      setSkipOnlyVisible(false);
+                      skipOnlyDismissedRef.current = true;
                     } else {
                       hideControls({ immediate: true });
                     }
@@ -6227,45 +6310,51 @@ export default function PlayerScreen() {
                     isSeeking={isTVSeeking}>
                   <ControlsContainerComponent style={controlsContainerStyle} pointerEvents="box-none">
                     <Animated.View
-                      style={tvOverlayAnimatedStyle}
+                      style={skipOnlyVisible && !controlsVisible ? [{ opacity: 1 }, styles.overlayAnimatedWrapper] : tvOverlayAnimatedStyle}
                       pointerEvents="box-none"
                       renderToHardwareTextureAndroid={true}>
-                      {/* Top gradient overlay */}
-                      <LinearGradient
-                        colors={['rgba(0, 0, 0, 0.7)', 'rgba(0, 0, 0, 0)']}
-                        style={styles.topGradient}
-                        pointerEvents="none"
-                      />
-                      {/* Bottom gradient overlay */}
-                      <LinearGradient
-                        colors={['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.7)']}
-                        style={styles.bottomGradient}
-                        pointerEvents="none"
-                      />
+                      {/* Gradients hidden in skip-only mode */}
+                      {!skipOnlyVisible && (
+                        <>
+                          <LinearGradient
+                            colors={['rgba(0, 0, 0, 0.7)', 'rgba(0, 0, 0, 0)']}
+                            style={styles.topGradient}
+                            pointerEvents="none"
+                          />
+                          <LinearGradient
+                            colors={['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0.7)']}
+                            style={styles.bottomGradient}
+                            pointerEvents="none"
+                          />
+                        </>
+                      )}
                       <View
                         style={styles.overlayContent}
                         pointerEvents="box-none"
                         renderToHardwareTextureAndroid={true}>
-                        <View style={styles.overlayTopRow} pointerEvents="box-none">
-                          <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen || activeMenu !== null} />
-                          <MediaInfoDisplay
-                            mediaType={mediaType}
-                            title={title || ''}
-                            year={year}
-                            seasonNumber={seasonNumber}
-                            episodeNumber={episodeNumber}
-                            episodeName={episodeName}
-                            visible={controlsVisible}
-                            sourcePath={sourcePath}
-                            displayName={displayName}
-                            playerImplementation={playerImplementationLabel}
-                            onFilenameDisplayChange={setIsFilenameDisplayed}
-                            hdrInfo={hdrInfo}
-                            resolution={streamInfo?.resolution}
-                            releaseDate={releaseDate}
-                            safeAreaInsets={safeAreaInsets}
-                          />
-                        </View>
+                        {/* Top row hidden in skip-only mode */}
+                        {!skipOnlyVisible && (
+                          <View style={styles.overlayTopRow} pointerEvents="box-none">
+                            <ExitButton onSelect={() => router.back()} onFocus={() => handleFocusChange('exit-button')} disabled={isModalOpen || activeMenu !== null} />
+                            <MediaInfoDisplay
+                              mediaType={mediaType}
+                              title={title || ''}
+                              year={year}
+                              seasonNumber={seasonNumber}
+                              episodeNumber={episodeNumber}
+                              episodeName={episodeName}
+                              visible={controlsVisible}
+                              sourcePath={sourcePath}
+                              displayName={displayName}
+                              playerImplementation={playerImplementationLabel}
+                              onFilenameDisplayChange={setIsFilenameDisplayed}
+                              hdrInfo={hdrInfo}
+                              resolution={streamInfo?.resolution}
+                              releaseDate={releaseDate}
+                              safeAreaInsets={safeAreaInsets}
+                            />
+                          </View>
+                        )}
                         <View style={styles.overlayControls} pointerEvents="box-none">
                           <Controls
                             key={`controls-tv-${isPipActive}`}
@@ -6334,6 +6423,15 @@ export default function PlayerScreen() {
                             nextProgram={nextProgram}
                             playbackSpeed={playbackSpeed}
                             onPlaybackSpeedChange={handlePlaybackSpeedChange}
+                            skipSegment={introSkipSegment}
+                            onSkipSegment={introSkipSegment ? () => {
+                              seek(introSkipSegment.endMs / 1000, false);
+                              if (skipOnlyVisible) {
+                                setSkipOnlyVisible(false);
+                                skipOnlyDismissedRef.current = true;
+                              }
+                            } : undefined}
+                            skipOnlyMode={skipOnlyVisible && !controlsVisible}
                           />
                         </View>
                       </View>
