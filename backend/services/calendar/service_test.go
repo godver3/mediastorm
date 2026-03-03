@@ -229,6 +229,75 @@ func TestBuildUserCalendar_MovieReleaseTypes(t *testing.T) {
 	}
 }
 
+func TestBuildUserCalendar_MovieEarliestReleasePerType(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.movies[700] = &models.Title{
+		Name: "Multi Release Movie", TMDBID: 700, Year: 2026,
+		Releases: []models.Release{
+			{Type: "theatrical", Date: futureDate(30), Released: false, Country: "GB"},
+			{Type: "theatrical", Date: futureDate(10), Released: false, Country: "US"}, // earliest
+			{Type: "theatrical", Date: futureDate(20), Released: false, Country: "AU"},
+			{Type: "digital", Date: futureDate(60), Released: false, Country: "US"}, // earliest
+			{Type: "digital", Date: futureDate(70), Released: false, Country: "GB"},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tmdb:700", MediaType: "movie", Name: "Multi Release Movie", ExternalIDs: map[string]string{"tmdb": "700"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (1 theatrical + 1 digital), got %d", len(items))
+	}
+
+	// Find theatrical and digital items
+	var theatrical, digital *models.CalendarItem
+	for i := range items {
+		switch items[i].ReleaseType {
+		case "theatrical":
+			theatrical = &items[i]
+		case "digital":
+			digital = &items[i]
+		}
+	}
+	if theatrical == nil || digital == nil {
+		t.Fatal("expected both theatrical and digital items")
+	}
+	if theatrical.AirDate != futureDate(10) {
+		t.Errorf("expected earliest theatrical date %s, got %s", futureDate(10), theatrical.AirDate)
+	}
+	if digital.AirDate != futureDate(60) {
+		t.Errorf("expected earliest digital date %s, got %s", futureDate(60), digital.AirDate)
+	}
+}
+
+func TestBuildUserCalendar_MovieSkipsAlreadyReleasedTypes(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.movies[800] = &models.Title{
+		Name: "Already Out Movie", TMDBID: 800, Year: 2025,
+		Releases: []models.Release{
+			{Type: "theatrical", Date: pastDate(30), Released: true, Country: "US"},  // already released
+			{Type: "theatrical", Date: futureDate(5), Released: false, Country: "FR"}, // regional, should be skipped
+			{Type: "digital", Date: futureDate(14), Released: false, Country: "US"},   // not yet released in any region
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tmdb:800", MediaType: "movie", Name: "Already Out Movie", ExternalIDs: map[string]string{"tmdb": "800"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item (digital only, theatrical already released), got %d", len(items))
+	}
+	if items[0].ReleaseType != "digital" {
+		t.Errorf("expected digital release, got %q", items[0].ReleaseType)
+	}
+}
+
 func TestBuildUserCalendar_TrendingMovies(t *testing.T) {
 	meta, wl, hist, us, users := defaultMocks()
 	meta.trending["movie"] = []models.TrendingItem{
@@ -520,6 +589,53 @@ func TestRefreshAll(t *testing.T) {
 	}
 	if len(cal2.Items) != 0 {
 		t.Errorf("expected 0 items for u2, got %d", len(cal2.Items))
+	}
+}
+
+func TestGet_OnDemandBuildForUncachedUser(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	users.users = []models.User{{ID: "u1"}, {ID: "u2"}}
+	meta.trending["movie"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "Trending Movie",
+				TMDBID:     999,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(10), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(10), Released: false}},
+			},
+		},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+
+	// Only refresh u1 via refreshAll, leaving u2 uncached
+	users.users = []models.User{{ID: "u1"}}
+	svc.refreshAll()
+
+	// Restore u2 to the users list
+	users.users = []models.User{{ID: "u1"}, {ID: "u2"}}
+
+	// Get for u2 should build on-demand (not return nil)
+	cal := svc.Get("u2")
+	if cal == nil {
+		t.Fatal("expected non-nil calendar for uncached user u2")
+	}
+	if cal.RefreshedAt.IsZero() {
+		t.Error("expected RefreshedAt to be set")
+	}
+	// u2 should have trending items built on-demand
+	if len(cal.Items) != 1 {
+		t.Fatalf("expected 1 trending item for u2, got %d", len(cal.Items))
+	}
+	if cal.Items[0].Source != "trending" {
+		t.Errorf("expected source 'trending', got %q", cal.Items[0].Source)
+	}
+
+	// Subsequent Get should return cached result
+	cal2 := svc.Get("u2")
+	if cal2 != cal {
+		t.Error("expected subsequent Get to return same cached pointer")
 	}
 }
 

@@ -222,11 +222,29 @@ func (s *Service) Stop() {
 	}
 }
 
-// Get returns the cached calendar for a user. Returns nil if not yet populated.
+// Get returns the cached calendar for a user. If the cache is empty for the
+// given user (e.g. profile created after the last refresh), it builds the
+// calendar on-demand so new profiles don't have to wait up to 4 hours.
 func (s *Service) Get(userID string) *userCalendar {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cache[userID]
+	cached := s.cache[userID]
+	s.mu.RUnlock()
+
+	if cached != nil {
+		return cached
+	}
+
+	// Build on-demand for uncached users
+	items := s.buildUserCalendar(userID)
+	uc := &userCalendar{
+		Items:       items,
+		RefreshedAt: time.Now().UTC(),
+	}
+	s.mu.Lock()
+	s.cache[userID] = uc
+	s.mu.Unlock()
+
+	return uc
 }
 
 // refreshAll rebuilds calendar data for all users.
@@ -438,7 +456,8 @@ func (s *Service) collectFromMDBLists(ctx context.Context, userID string, calSou
 }
 
 // collectMovieReleases extracts calendar items from a movie's release dates.
-// Creates separate entries for theatrical/premiere and home (digital/physical) releases.
+// For each release type (theatrical, digital, etc.), only the earliest upcoming
+// date is used so the calendar isn't cluttered with duplicate regional releases.
 func collectMovieReleases(title *models.Title, source string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	if title == nil {
 		return nil
@@ -450,34 +469,51 @@ func collectMovieReleases(title *models.Title, source string, now, cutoff time.T
 	}
 	extIDs := buildExternalIDs(title.IMDBID, title.TMDBID, title.TVDBID)
 
-	var items []models.CalendarItem
+	// Collect all candidate releases: curated pointers + full list.
+	var candidates []models.Release
+	if title.Theatrical != nil {
+		candidates = append(candidates, *title.Theatrical)
+	}
+	if title.HomeRelease != nil {
+		candidates = append(candidates, *title.HomeRelease)
+	}
+	candidates = append(candidates, title.Releases...)
 
-	// Check the curated pointers first (Theatrical and HomeRelease) for the primary releases.
-	// Then fall back to scanning all releases for any other upcoming dates.
-	addedTypes := make(map[string]bool)
-
-	if title.Theatrical != nil && !title.Theatrical.Released {
-		if item, ok := makeMovieReleaseItem(title, title.Theatrical, posterURL, extIDs, source, now, cutoff, seen); ok {
-			items = append(items, item)
-			addedTypes[title.Theatrical.Type] = true
+	// Find types that already have a released entry — the movie is already
+	// out in that format so remaining regional dates are just noise.
+	releasedTypes := make(map[string]bool)
+	for i := range candidates {
+		if candidates[i].Released {
+			releasedTypes[candidates[i].Type] = true
 		}
 	}
-	if title.HomeRelease != nil && !title.HomeRelease.Released {
-		if item, ok := makeMovieReleaseItem(title, title.HomeRelease, posterURL, extIDs, source, now, cutoff, seen); ok {
-			items = append(items, item)
-			addedTypes[title.HomeRelease.Type] = true
-		}
-	}
 
-	// Scan remaining releases for any not covered by the pointers
-	for i := range title.Releases {
-		rel := &title.Releases[i]
-		if rel.Released || addedTypes[rel.Type] {
+	// Pick the earliest unreleased date per type, skipping types already released.
+	earliestByType := make(map[string]*models.Release)
+	for i := range candidates {
+		rel := &candidates[i]
+		if rel.Released || releasedTypes[rel.Type] {
 			continue
 		}
+		d, err := parseDate(rel.Date)
+		if err != nil || d.Before(now) || d.After(cutoff) {
+			continue
+		}
+		existing := earliestByType[rel.Type]
+		if existing == nil {
+			earliestByType[rel.Type] = rel
+		} else {
+			existingDate, _ := parseDate(existing.Date)
+			if d.Before(existingDate) {
+				earliestByType[rel.Type] = rel
+			}
+		}
+	}
+
+	var items []models.CalendarItem
+	for _, rel := range earliestByType {
 		if item, ok := makeMovieReleaseItem(title, rel, posterURL, extIDs, source, now, cutoff, seen); ok {
 			items = append(items, item)
-			addedTypes[rel.Type] = true
 		}
 	}
 
