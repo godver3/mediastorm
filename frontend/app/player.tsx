@@ -6194,7 +6194,7 @@ export default function PlayerScreen() {
               visible={introSkipSegment !== null}
               onSkip={() => {
                 if (introSkipSegment) {
-                  seek(introSkipSegment.endMs / 1000);
+                  seek(introSkipSegment.endMs / 1000, false);
                 }
               }}
             />
