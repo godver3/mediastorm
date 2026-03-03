@@ -6181,7 +6181,13 @@ export default function PlayerScreen() {
             <SubtitleStatusOverlay status={autoSubtitleStatus} message={autoSubtitleMessage} />
           )}
 
+          {/* Double-tap overlay for mobile skip forward/backward */}
+          {isMobilePlatform && !usesSystemManagedControls && !isPipActive && (
+            <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
+          )}
+
           {/* Skip Intro / Skip Recap / Skip Credits button (introdb.app) */}
+          {/* Rendered after doubleTapOverlay so it sits on top and intercepts taps */}
           {!usesSystemManagedControls && !isPipActive && (
             <SkipSegmentButton
               segmentType={introSkipSegment?.type ?? 'intro'}
@@ -6192,11 +6198,6 @@ export default function PlayerScreen() {
                 }
               }}
             />
-          )}
-
-          {/* Double-tap overlay for mobile skip forward/backward */}
-          {isMobilePlatform && !usesSystemManagedControls && !isPipActive && (
-            <Pressable style={styles.doubleTapOverlay} onPress={handleDoubleTapSeek} />
           )}
 
           {(() => {
