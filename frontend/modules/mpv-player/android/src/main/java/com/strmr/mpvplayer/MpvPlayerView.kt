@@ -249,15 +249,16 @@ class MpvPlayerView(
     private fun ensureSubtitleFont(appContext: Context): String? {
         return try {
             val fontsDir = File(appContext.cacheDir, "mpv-fonts")
+            fontsDir.mkdirs()
+
+            // Primary text font
             val destFont = File(fontsDir, "Roboto-Regular.ttf")
             if (!destFont.exists()) {
-                fontsDir.mkdirs()
                 val srcFont = File("/system/fonts/Roboto-Regular.ttf")
                 if (srcFont.exists()) {
                     srcFont.copyTo(destFont, overwrite = true)
                     Log.d(TAG, "Copied Roboto font to ${destFont.absolutePath}")
                 } else {
-                    // Fallback: try DroidSans (older devices)
                     val fallback = File("/system/fonts/DroidSans.ttf")
                     if (fallback.exists()) {
                         fallback.copyTo(destFont, overwrite = true)
@@ -268,6 +269,26 @@ class MpvPlayerView(
                     }
                 }
             }
+
+            // Symbol font fallback — provides music notes (♪♫), arrows, etc.
+            // libass searches all fonts in sub-fonts-dir for missing glyphs.
+            val symbolFonts = listOf(
+                "NotoSansSymbols-Regular-Subsetted2.ttf",
+                "NotoSansSymbols-Regular-Subsetted.ttf",
+                "NotoSansSymbols-Regular.ttf"
+            )
+            for (name in symbolFonts) {
+                val src = File("/system/fonts/$name")
+                if (src.exists()) {
+                    val dest = File(fontsDir, name)
+                    if (!dest.exists()) {
+                        src.copyTo(dest, overwrite = true)
+                        Log.d(TAG, "Copied symbol font: $name")
+                    }
+                    break
+                }
+            }
+
             fontsDir.absolutePath
         } catch (e: Exception) {
             Log.e(TAG, "Failed to set up subtitle font", e)

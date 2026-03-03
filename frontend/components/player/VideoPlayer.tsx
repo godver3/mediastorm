@@ -333,10 +333,10 @@ const NativePlayerAdapter = React.forwardRef<VideoPlayerHandle, VideoPlayerProps
   // Build subtitle style to match our SubtitleOverlay appearance
   const subtitleStyle = useMemo(() => ({
     fontSize: subtitleSize,
-    textColor: '#FFFFFF',
+    textColor: isHDR ? '#888888' : '#FFFFFF', // Grey for HDR (matching SubtitleOverlay)
     backgroundColor: '#00000099', // 60% black background (matching SubtitleOverlay)
     bottomMargin: 10, // Near bottom edge, matching KSPlayer positioning
-  }), [subtitleSize]);
+  }), [subtitleSize, isHDR]);
 
   return (
     <View style={nativePlayerStyles.container}>

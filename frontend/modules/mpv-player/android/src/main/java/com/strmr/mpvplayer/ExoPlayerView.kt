@@ -168,6 +168,8 @@ class ExoPlayerView(
             )
         )
         setFractionalTextSize(BASE_SUBTITLE_FRACTION)
+        // Override default 8% bottom padding — match our base margin
+        setBottomPaddingFraction(10f / 720f)
     }
 
     private val surfaceCallback = object : SurfaceHolder.Callback {
@@ -249,11 +251,13 @@ class ExoPlayerView(
                 MeasureSpec.makeMeasureSpec(targetH, MeasureSpec.EXACTLY)
             )
             surfaceView.layout(childLeft, childTop, childLeft + targetW, childTop + targetH)
+            // Subtitle view spans full container (not letterboxed video area)
+            // so subs sit near the bottom of the screen, matching KSPlayer.
             subtitleView.measure(
-                MeasureSpec.makeMeasureSpec(targetW, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(targetH, MeasureSpec.EXACTLY)
+                MeasureSpec.makeMeasureSpec(containerW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(containerH, MeasureSpec.EXACTLY)
             )
-            subtitleView.layout(childLeft, childTop, childLeft + targetW, childTop + targetH)
+            subtitleView.layout(0, 0, containerW, containerH)
             Log.d(TAG, "onLayout: surface=${targetW}x${targetH} at ($childLeft,$childTop) (video=${videoWidth}x${videoHeight}, container=${containerW}x${containerH})")
         } else {
             surfaceView.measure(
@@ -713,11 +717,10 @@ class ExoPlayerView(
     }
 
     private fun updateSubtitlePosition() {
-        val marginDp = baseSubtitleMarginY + if (controlsVisible) 125 else 0
-        // Use fractional padding (proportion of view height) instead of absolute dp,
-        // so subtitle position scales correctly regardless of density or letterboxing.
-        // Reference 1080dp to match mpv's OSD coordinate system.
-        val fraction = (marginDp.toFloat() / 1080f).coerceIn(0f, 0.5f)
+        val margin = baseSubtitleMarginY + if (controlsVisible) 125 else 0
+        // Fractional padding matching mpv's sub-margin-y at 720 reference height.
+        // sub-scale does NOT affect margins, so margin/720 gives the correct fraction.
+        val fraction = (margin.toFloat() / 720f).coerceIn(0f, 0.5f)
         subtitleView.setBottomPaddingFraction(fraction)
     }
 
