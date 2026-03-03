@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -57,9 +58,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	account, err := h.accounts.Authenticate(req.Username, req.Password)
 	if err != nil {
+		msg := "invalid username or password"
+		if errors.Is(err, accounts.ErrAccountExpired) {
+			msg = "this account has expired"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid username or password"})
+		json.NewEncoder(w).Encode(map[string]string{"error": msg})
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -630,6 +631,176 @@ func TestExists_EmptyID(t *testing.T) {
 
 	if svc.Exists("") {
 		t.Error("expected empty ID to not exist")
+	}
+}
+
+func TestCreateWithExpiry_Success(t *testing.T) {
+	svc := setupTestService(t)
+
+	future := time.Now().Add(24 * time.Hour).UTC()
+	account, err := svc.CreateWithExpiry("tempuser", "password123", &future)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	if account.ExpiresAt == nil {
+		t.Fatal("expected ExpiresAt to be set")
+	}
+	if account.ExpiresAt.Sub(future) > time.Second {
+		t.Errorf("expected ExpiresAt near %v, got %v", future, *account.ExpiresAt)
+	}
+}
+
+func TestCreateWithExpiry_NilIsPermanent(t *testing.T) {
+	svc := setupTestService(t)
+
+	account, err := svc.CreateWithExpiry("permuser", "password123", nil)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	if account.ExpiresAt != nil {
+		t.Error("expected ExpiresAt to be nil for permanent account")
+	}
+}
+
+func TestIsExpired_ExpiredAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	past := time.Now().Add(-1 * time.Hour).UTC()
+	account, err := svc.CreateWithExpiry("expired", "password123", &past)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	if !svc.IsExpired(account.ID) {
+		t.Error("expected account to be expired")
+	}
+}
+
+func TestIsExpired_ActiveAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	future := time.Now().Add(24 * time.Hour).UTC()
+	account, err := svc.CreateWithExpiry("active", "password123", &future)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	if svc.IsExpired(account.ID) {
+		t.Error("expected account to not be expired")
+	}
+}
+
+func TestIsExpired_PermanentAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	account, err := svc.Create("perm", "password123")
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if svc.IsExpired(account.ID) {
+		t.Error("expected permanent account to not be expired")
+	}
+}
+
+func TestIsExpired_NonexistentAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	if svc.IsExpired("nonexistent") {
+		t.Error("expected false for nonexistent account")
+	}
+}
+
+func TestListExpired(t *testing.T) {
+	svc := setupTestService(t)
+
+	past := time.Now().Add(-1 * time.Hour).UTC()
+	future := time.Now().Add(24 * time.Hour).UTC()
+
+	_, err := svc.CreateWithExpiry("expired1", "password123", &past)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+	_, err = svc.CreateWithExpiry("expired2", "password456", &past)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+	_, err = svc.CreateWithExpiry("active", "password789", &future)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+	_, err = svc.Create("permanent", "passwordabc")
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	expired := svc.ListExpired()
+	if len(expired) != 2 {
+		t.Fatalf("expected 2 expired accounts, got %d", len(expired))
+	}
+}
+
+func TestAuthenticate_ExpiredAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	past := time.Now().Add(-1 * time.Hour).UTC()
+	_, err := svc.CreateWithExpiry("expired", "password123", &past)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	_, err = svc.Authenticate("expired", "password123")
+	if err != ErrAccountExpired {
+		t.Errorf("expected ErrAccountExpired, got %v", err)
+	}
+}
+
+func TestAuthenticate_ActiveTemporaryAccount(t *testing.T) {
+	svc := setupTestService(t)
+
+	future := time.Now().Add(24 * time.Hour).UTC()
+	_, err := svc.CreateWithExpiry("tempactive", "password123", &future)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	account, err := svc.Authenticate("tempactive", "password123")
+	if err != nil {
+		t.Fatalf("Authenticate failed: %v", err)
+	}
+	if account.Username != "tempactive" {
+		t.Errorf("expected username 'tempactive', got %q", account.Username)
+	}
+}
+
+func TestExpiresAt_Persistence(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	svc1, err := NewService(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create first service: %v", err)
+	}
+
+	future := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Millisecond)
+	_, err = svc1.CreateWithExpiry("tempuser", "password123", &future)
+	if err != nil {
+		t.Fatalf("CreateWithExpiry failed: %v", err)
+	}
+
+	// Reload from disk
+	svc2, err := NewService(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create second service: %v", err)
+	}
+
+	loaded, ok := svc2.GetByUsername("tempuser")
+	if !ok {
+		t.Fatal("expected tempuser to be loaded from disk")
+	}
+	if loaded.ExpiresAt == nil {
+		t.Fatal("expected ExpiresAt to persist after reload")
 	}
 }
 

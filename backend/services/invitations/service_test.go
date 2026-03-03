@@ -35,7 +35,7 @@ func TestCreateAndValidate_Success(t *testing.T) {
 	t.Parallel()
 
 	svc := setupService(t)
-	inv, err := svc.Create("master", 0)
+	inv, err := svc.Create("master", 0, 0)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestMarkUsedAndValidate_UsedInvitation(t *testing.T) {
 	t.Parallel()
 
 	svc := setupService(t)
-	inv, err := svc.Create("master", 24*time.Hour)
+	inv, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestValidate_ExpiredInvitation(t *testing.T) {
 	t.Parallel()
 
 	svc := setupService(t)
-	inv, err := svc.Create("master", 24*time.Hour)
+	inv, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -133,12 +133,12 @@ func TestListAndDelete(t *testing.T) {
 	t.Parallel()
 
 	svc := setupService(t)
-	older, err := svc.Create("master", 24*time.Hour)
+	older, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create older failed: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
-	newer, err := svc.Create("master", 24*time.Hour)
+	newer, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create newer failed: %v", err)
 	}
@@ -164,19 +164,19 @@ func TestCleanupExpired_RemovesOnlyOldExpiredOrUsed(t *testing.T) {
 
 	svc := setupService(t)
 
-	keepValid, err := svc.Create("master", 24*time.Hour)
+	keepValid, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create keepValid failed: %v", err)
 	}
-	removeExpired, err := svc.Create("master", 24*time.Hour)
+	removeExpired, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create removeExpired failed: %v", err)
 	}
-	removeUsed, err := svc.Create("master", 24*time.Hour)
+	removeUsed, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create removeUsed failed: %v", err)
 	}
-	keepUsedRecent, err := svc.Create("master", 24*time.Hour)
+	keepUsedRecent, err := svc.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create keepUsedRecent failed: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestNewService_LoadsPersistedInvitations(t *testing.T) {
 		t.Fatalf("first NewService failed: %v", err)
 	}
 
-	inv, err := svc1.Create("master", 24*time.Hour)
+	inv, err := svc1.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -247,6 +247,43 @@ func TestNewService_LoadsPersistedInvitations(t *testing.T) {
 	}
 	if loaded.ID != inv.ID {
 		t.Fatalf("expected loaded invitation ID %q, got %q", inv.ID, loaded.ID)
+	}
+}
+
+func TestCreate_WithAccountExpiresInHours(t *testing.T) {
+	t.Parallel()
+
+	svc := setupService(t)
+	inv, err := svc.Create("master", 24*time.Hour, 168) // 7-day temp account
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if inv.AccountExpiresInHours != 168 {
+		t.Fatalf("expected AccountExpiresInHours 168, got %d", inv.AccountExpiresInHours)
+	}
+
+	// Verify it persists through reload
+	loaded, err := svc.GetByToken(inv.Token)
+	if err != nil {
+		t.Fatalf("GetByToken failed: %v", err)
+	}
+	if loaded.AccountExpiresInHours != 168 {
+		t.Fatalf("expected persisted AccountExpiresInHours 168, got %d", loaded.AccountExpiresInHours)
+	}
+}
+
+func TestCreate_PermanentAccountExpiresInHours(t *testing.T) {
+	t.Parallel()
+
+	svc := setupService(t)
+	inv, err := svc.Create("master", 24*time.Hour, 0)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if inv.AccountExpiresInHours != 0 {
+		t.Fatalf("expected AccountExpiresInHours 0 for permanent, got %d", inv.AccountExpiresInHours)
 	}
 }
 

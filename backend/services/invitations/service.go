@@ -63,7 +63,8 @@ func NewService(storageDir string) (*Service, error) {
 }
 
 // Create generates a new invitation token.
-func (s *Service) Create(createdBy string, expiresIn time.Duration) (models.Invitation, error) {
+// accountExpiresInHours controls the lifetime of accounts created with this invitation (0 = permanent).
+func (s *Service) Create(createdBy string, expiresIn time.Duration, accountExpiresInHours int) (models.Invitation, error) {
 	if expiresIn <= 0 {
 		expiresIn = DefaultExpirationDuration
 	}
@@ -81,11 +82,12 @@ func (s *Service) Create(createdBy string, expiresIn time.Duration) (models.Invi
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	invitation := models.Invitation{
-		ID:        id,
-		Token:     token,
-		CreatedBy: createdBy,
-		ExpiresAt: now.Add(expiresIn),
-		CreatedAt: now,
+		ID:                    id,
+		Token:                 token,
+		CreatedBy:             createdBy,
+		ExpiresAt:             now.Add(expiresIn),
+		AccountExpiresInHours: accountExpiresInHours,
+		CreatedAt:             now,
 	}
 
 	s.invitations[id] = invitation

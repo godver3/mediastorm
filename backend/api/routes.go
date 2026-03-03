@@ -153,7 +153,7 @@ func Register(
 
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
-	protected.Use(AccountAuthMiddleware(sessionsSvc))
+	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
 
 	// Account management routes (master only)
 	masterOnly := protected.PathPrefix("/accounts").Subrouter()
@@ -549,10 +549,10 @@ func Register(
 }
 
 // RegisterTraktRoutes registers Trakt account management API endpoints.
-func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, sessionsSvc *sessions.Service) {
+func RegisterTraktRoutes(r *mux.Router, traktHandler *handlers.TraktAccountsHandler, sessionsSvc *sessions.Service, accountsSvc *accounts.Service) {
 	api := r.PathPrefix("/api/trakt").Subrouter()
 	api.Use(corsMiddleware)
-	api.Use(AccountAuthMiddleware(sessionsSvc))
+	api.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
 
 	// Trakt accounts management
 	api.HandleFunc("/accounts", traktHandler.ListAccounts).Methods(http.MethodGet)

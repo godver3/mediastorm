@@ -26,6 +26,7 @@ var (
 	ErrInvalidCredentials   = errors.New("invalid username or password")
 	ErrCannotDeleteMaster   = errors.New("cannot delete the master account")
 	ErrCannotDeleteLastAcct = errors.New("cannot delete the last account")
+	ErrAccountExpired       = errors.New("account has expired")
 )
 
 const (
@@ -134,8 +135,14 @@ func (s *Service) Exists(id string) bool {
 	return ok
 }
 
-// Create registers a new account with the provided username and password.
+// Create registers a new permanent account with the provided username and password.
 func (s *Service) Create(username, password string) (models.Account, error) {
+	return s.CreateWithExpiry(username, password, nil)
+}
+
+// CreateWithExpiry registers a new account with an optional expiration time.
+// Pass nil for expiresAt to create a permanent account.
+func (s *Service) CreateWithExpiry(username, password string, expiresAt *time.Time) (models.Account, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return models.Account{}, ErrUsernameRequired
@@ -170,6 +177,7 @@ func (s *Service) Create(username, password string) (models.Account, error) {
 		Username:     username,
 		PasswordHash: string(hash),
 		IsMaster:     false,
+		ExpiresAt:    expiresAt,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -182,6 +190,32 @@ func (s *Service) Create(username, password string) (models.Account, error) {
 	}
 
 	return account, nil
+}
+
+// IsExpired reports whether an account exists and has expired.
+func (s *Service) IsExpired(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	account, ok := s.accounts[id]
+	if !ok {
+		return false
+	}
+	return account.IsExpired()
+}
+
+// ListExpired returns all accounts that have passed their expiry time.
+func (s *Service) ListExpired() []models.Account {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var expired []models.Account
+	for _, a := range s.accounts {
+		if a.IsExpired() {
+			expired = append(expired, a)
+		}
+	}
+	return expired
 }
 
 // Authenticate verifies the username and password, returning the account if valid.
@@ -217,6 +251,11 @@ func (s *Service) Authenticate(username, password string) (models.Account, error
 	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(account.PasswordHash), []byte(password)); err != nil {
 		return models.Account{}, ErrInvalidCredentials
+	}
+
+	// Check if account has expired
+	if account.IsExpired() {
+		return models.Account{}, ErrAccountExpired
 	}
 
 	return account, nil

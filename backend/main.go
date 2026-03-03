@@ -269,6 +269,24 @@ func main() {
 		log.Fatalf("failed to initialise invitations: %v", err)
 	}
 
+	// Background cleanup of expired temporary accounts
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			expired := accountsService.ListExpired()
+			for _, acc := range expired {
+				sessionsService.RevokeAllForAccount(acc.ID)
+				if err := accountsService.Delete(acc.ID); err != nil {
+					log.Printf("failed to delete expired account %s: %v", acc.ID, err)
+				}
+			}
+			if len(expired) > 0 {
+				log.Printf("cleaned up %d expired account(s)", len(expired))
+			}
+		}
+	}()
+
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
 	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
 
@@ -462,7 +480,7 @@ func main() {
 
 	// Register Trakt accounts API routes
 	traktAccountsHandler := handlers.NewTraktAccountsHandler(cfgManager, traktClient, userService, accountsService)
-	api.RegisterTraktRoutes(r, traktAccountsHandler, sessionsService)
+	api.RegisterTraktRoutes(r, traktAccountsHandler, sessionsService, accountsService)
 
 	// Create Plex client and register Plex accounts handler
 	plexClient := plex.NewClient(plex.GenerateClientID())

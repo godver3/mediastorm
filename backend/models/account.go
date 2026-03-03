@@ -16,12 +16,18 @@ const (
 // Master accounts can manage all profiles and other accounts.
 // Regular accounts can only see and manage their own profiles.
 type Account struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"` // bcrypt hash, excluded from JSON API responses (security)
-	IsMaster     bool      `json:"isMaster"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string     `json:"id"`
+	Username     string     `json:"username"`
+	PasswordHash string     `json:"-"` // bcrypt hash, excluded from JSON API responses (security)
+	IsMaster     bool       `json:"isMaster"`
+	ExpiresAt    *time.Time `json:"expiresAt,omitempty"` // nil = permanent account
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+}
+
+// IsExpired reports whether the account has a set expiry that is in the past.
+func (a Account) IsExpired() bool {
+	return a.ExpiresAt != nil && time.Now().After(*a.ExpiresAt)
 }
 
 // MarshalJSON implements custom JSON marshaling to ensure password hash is never exposed in API responses.
@@ -37,12 +43,13 @@ func (a Account) MarshalJSON() ([]byte, error) {
 // AccountStorage is the internal representation used for file persistence.
 // Unlike Account, this includes the password hash for storage.
 type AccountStorage struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"passwordHash"` // Included for storage only
-	IsMaster     bool      `json:"isMaster"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string     `json:"id"`
+	Username     string     `json:"username"`
+	PasswordHash string     `json:"passwordHash"` // Included for storage only
+	IsMaster     bool       `json:"isMaster"`
+	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 // ToStorage converts an Account to AccountStorage for persistence.
@@ -52,6 +59,7 @@ func (a Account) ToStorage() AccountStorage {
 		Username:     a.Username,
 		PasswordHash: a.PasswordHash,
 		IsMaster:     a.IsMaster,
+		ExpiresAt:    a.ExpiresAt,
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
 	}
@@ -64,6 +72,7 @@ func (as AccountStorage) ToAccount() Account {
 		Username:     as.Username,
 		PasswordHash: as.PasswordHash,
 		IsMaster:     as.IsMaster,
+		ExpiresAt:    as.ExpiresAt,
 		CreatedAt:    as.CreatedAt,
 		UpdatedAt:    as.UpdatedAt,
 	}

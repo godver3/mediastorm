@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"novastream/internal/auth"
+	"novastream/services/accounts"
 	"novastream/services/sessions"
 	"novastream/services/users"
 )
@@ -21,7 +22,8 @@ var (
 
 // AccountAuthMiddleware creates middleware that validates session tokens.
 // Tokens can be provided via Authorization header or ?token= query param.
-func AccountAuthMiddleware(sessionsSvc *sessions.Service) mux.MiddlewareFunc {
+// If accountsSvc is provided, expired accounts will be rejected.
+func AccountAuthMiddleware(sessionsSvc *sessions.Service, accountsSvc *accounts.Service) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Always allow OPTIONS for CORS
@@ -51,6 +53,15 @@ func AccountAuthMiddleware(sessionsSvc *sessions.Service) mux.MiddlewareFunc {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or expired session"})
+				return
+			}
+
+			// Check if the account has expired
+			if accountsSvc != nil && accountsSvc.IsExpired(session.AccountID) {
+				sessionsSvc.RevokeAllForAccount(session.AccountID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "account has expired"})
 				return
 			}
 

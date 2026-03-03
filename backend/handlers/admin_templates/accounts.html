@@ -85,7 +85,7 @@
                 Invitation links allow users to create their own accounts
             </p>
         </div>
-        <button class="btn btn-primary" onclick="createInvitation()">
+        <button class="btn btn-primary" onclick="showCreateInvitationModal()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
                 <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
@@ -239,9 +239,10 @@ function renderAccounts() {
                         </svg>
                     </div>
                     <div style="flex: 1; min-width: 150px;">
-                        <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
+                        <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                             ${escapeHtml(a.username)}
                             ${a.isMaster ? '<span class="status-badge online" style="font-size: 0.65rem;">Admin</span>' : ''}
+                            ${a.expiresAt ? formatExpiryBadge(a.expiresAt) : ''}
                         </div>
                         <div style="font-size: 0.8rem; color: var(--text-muted);">
                             ${profileCount} profile${profileCount !== 1 ? 's' : ''}
@@ -840,6 +841,24 @@ async function renameAccount(e, accountId) {
     }
 }
 
+// Helper: format account expiry badge for display
+function formatExpiryBadge(expiresAtStr) {
+    const expires = new Date(expiresAtStr);
+    const now = new Date();
+    if (expires < now) return '<span class="status-badge warning" style="font-size: 0.65rem;">Expired</span>';
+    const hoursLeft = Math.round((expires - now) / (1000 * 60 * 60));
+    if (hoursLeft < 24) return '<span class="status-badge online" style="font-size: 0.65rem;">Temp: ' + hoursLeft + 'h left</span>';
+    const daysLeft = Math.round(hoursLeft / 24);
+    return '<span class="status-badge online" style="font-size: 0.65rem;">Temp: ' + daysLeft + 'd left</span>';
+}
+
+function formatAccountExpiryLabel(hours) {
+    if (!hours || hours === 0) return 'Permanent';
+    if (hours < 24) return 'Temp: ' + hours + 'h';
+    const days = Math.round(hours / 24);
+    return 'Temp: ' + days + 'd';
+}
+
 // Invitation functions
 function renderInvitations() {
     const container = document.getElementById('invitations-list');
@@ -886,6 +905,7 @@ function renderInvitations() {
                         <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                             Invitation Link
                             ${getExpiryStatus(inv.expiresAt, inv.usedAt)}
+                            <span class="account-badge" style="font-size: 0.65rem;">${formatAccountExpiryLabel(inv.accountExpiresInHours)}</span>
                         </div>
                         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
                             Created: ${formatDate(inv.createdAt)}
@@ -902,22 +922,80 @@ function renderInvitations() {
     }).join('');
 }
 
+function showCreateInvitationModal() {
+    showModal(`
+        <div class="card-header"><h2>Create Invitation</h2></div>
+        <div class="card-body">
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label class="form-label">Link Expiry</label>
+                <select id="invLinkExpiry" class="form-input">
+                    <option value="24">1 day</option>
+                    <option value="72">3 days</option>
+                    <option value="168" selected>7 days</option>
+                    <option value="720">30 days</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label class="form-label">Account Type</label>
+                <select id="invAccountType" class="form-input" onchange="toggleCustomExpiry()">
+                    <option value="0">Permanent</option>
+                    <option value="24">Temporary: 1 day</option>
+                    <option value="168">Temporary: 7 days</option>
+                    <option value="720">Temporary: 30 days</option>
+                    <option value="2160">Temporary: 90 days</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <div id="customExpiryGroup" class="form-group" style="margin-bottom: 1rem; display: none;">
+                <label class="form-label">Custom account lifetime (hours)</label>
+                <input type="number" id="invCustomHours" class="form-input" min="1" placeholder="e.g. 48">
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+                <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createInvitation()">Create</button>
+            </div>
+        </div>
+    `);
+}
+
+function toggleCustomExpiry() {
+    const sel = document.getElementById('invAccountType');
+    document.getElementById('customExpiryGroup').style.display = sel.value === 'custom' ? 'block' : 'none';
+}
+
 async function createInvitation() {
+    const expiresInHours = parseInt(document.getElementById('invLinkExpiry').value) || 168;
+    const accountTypeSel = document.getElementById('invAccountType').value;
+    let accountExpiresInHours = 0;
+    if (accountTypeSel === 'custom') {
+        accountExpiresInHours = parseInt(document.getElementById('invCustomHours').value) || 0;
+        if (accountExpiresInHours <= 0) {
+            showToast('Please enter a valid number of hours', 'error');
+            return;
+        }
+    } else {
+        accountExpiresInHours = parseInt(accountTypeSel) || 0;
+    }
+
     try {
         const res = await fetch(basePath + '/api/invitations', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ expiresInHours: 168 }) // 7 days
+            body: JSON.stringify({ expiresInHours, accountExpiresInHours })
         });
         if (!res.ok) throw new Error(await res.text());
         const inv = await res.json();
+
+        const linkExpiryDays = Math.round(expiresInHours / 24);
+        const accountTypeLabel = accountExpiresInHours > 0 ? formatAccountExpiryLabel(accountExpiresInHours) + ' account' : 'Permanent account';
 
         // Show the link in a modal
         showModal(`
             <div class="card-header"><h2>Invitation Created</h2></div>
             <div class="card-body">
                 <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                    Share this link with the person you want to invite. It will expire in 7 days.
+                    Share this link with the person you want to invite. It will expire in ${linkExpiryDays} day${linkExpiryDays !== 1 ? 's' : ''}.
+                    <br><strong>${accountTypeLabel}</strong>
                 </p>
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
                     <input type="text" id="invitationUrl" class="form-input" value="${inv.url}" readonly style="flex: 1;">

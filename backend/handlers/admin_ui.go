@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -2121,7 +2122,11 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	// Authenticate using accounts service
 	account, err := h.accountsService.Authenticate(username, password)
 	if err != nil {
-		h.renderLoginError(w, "Invalid username or password")
+		if errors.Is(err, accounts.ErrAccountExpired) {
+			h.renderLoginError(w, "This account has expired")
+		} else {
+			h.renderLoginError(w, "Invalid username or password")
+		}
 		return
 	}
 
@@ -3507,6 +3512,7 @@ type AdminAccountWithProfiles struct {
 	ID        string        `json:"id"`
 	Username  string        `json:"username"`
 	IsMaster  bool          `json:"isMaster"`
+	ExpiresAt *time.Time    `json:"expiresAt,omitempty"`
 	CreatedAt time.Time     `json:"createdAt"`
 	UpdatedAt time.Time     `json:"updatedAt"`
 	Profiles  []models.User `json:"profiles"`
@@ -3527,6 +3533,7 @@ func (h *AdminUIHandler) GetUserAccounts(w http.ResponseWriter, r *http.Request)
 			ID:        acc.ID,
 			Username:  acc.Username,
 			IsMaster:  acc.IsMaster,
+			ExpiresAt: acc.ExpiresAt,
 			CreatedAt: acc.CreatedAt,
 			UpdatedAt: acc.UpdatedAt,
 			Profiles:  profiles,
@@ -3768,17 +3775,19 @@ func (h *AdminUIHandler) HasDefaultPassword(w http.ResponseWriter, r *http.Reque
 
 // InvitationResponse represents an invitation in API responses
 type InvitationResponse struct {
-	ID        string     `json:"id"`
-	Token     string     `json:"token"`
-	URL       string     `json:"url"`
-	ExpiresAt time.Time  `json:"expiresAt"`
-	UsedAt    *time.Time `json:"usedAt,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
+	ID                    string     `json:"id"`
+	Token                 string     `json:"token"`
+	URL                   string     `json:"url"`
+	ExpiresAt             time.Time  `json:"expiresAt"`
+	AccountExpiresInHours int        `json:"accountExpiresInHours"`
+	UsedAt                *time.Time `json:"usedAt,omitempty"`
+	CreatedAt             time.Time  `json:"createdAt"`
 }
 
 // CreateInvitationRequest represents a request to create an invitation
 type CreateInvitationRequest struct {
-	ExpiresInHours int `json:"expiresInHours"`
+	ExpiresInHours        int `json:"expiresInHours"`
+	AccountExpiresInHours int `json:"accountExpiresInHours"` // 0 = permanent
 }
 
 // ListInvitations returns all invitations
@@ -3807,12 +3816,13 @@ func (h *AdminUIHandler) ListInvitations(w http.ResponseWriter, r *http.Request)
 
 	for i, inv := range invs {
 		result[i] = InvitationResponse{
-			ID:        inv.ID,
-			Token:     inv.Token,
-			URL:       fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
-			ExpiresAt: inv.ExpiresAt,
-			UsedAt:    inv.UsedAt,
-			CreatedAt: inv.CreatedAt,
+			ID:                    inv.ID,
+			Token:                 inv.Token,
+			URL:                   fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
+			ExpiresAt:             inv.ExpiresAt,
+			AccountExpiresInHours: inv.AccountExpiresInHours,
+			UsedAt:                inv.UsedAt,
+			CreatedAt:             inv.CreatedAt,
 		}
 	}
 
@@ -3846,7 +3856,7 @@ func (h *AdminUIHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 	}
 
 	expiresIn := time.Duration(req.ExpiresInHours) * time.Hour
-	inv, err := h.invitationsService.Create(session.AccountID, expiresIn)
+	inv, err := h.invitationsService.Create(session.AccountID, expiresIn, req.AccountExpiresInHours)
 	if err != nil {
 		http.Error(w, "Failed to create invitation", http.StatusInternalServerError)
 		return
@@ -3869,11 +3879,12 @@ func (h *AdminUIHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(InvitationResponse{
-		ID:        inv.ID,
-		Token:     inv.Token,
-		URL:       fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
-		ExpiresAt: inv.ExpiresAt,
-		CreatedAt: inv.CreatedAt,
+		ID:                    inv.ID,
+		Token:                 inv.Token,
+		URL:                   fmt.Sprintf("%s/register?token=%s", baseURL, inv.Token),
+		ExpiresAt:             inv.ExpiresAt,
+		AccountExpiresInHours: inv.AccountExpiresInHours,
+		CreatedAt:             inv.CreatedAt,
 	})
 }
 
@@ -3971,8 +3982,22 @@ func (h *AdminUIHandler) RegisterWithInvitation(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create the account
-	account, err := h.accountsService.Create(req.Username, req.Password)
+	// Retrieve the invitation to check account expiry settings
+	inv, err := h.invitationsService.GetByToken(req.Token)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to retrieve invitation"})
+		return
+	}
+
+	// Create the account (with optional expiry)
+	var expiresAt *time.Time
+	if inv.AccountExpiresInHours > 0 {
+		t := time.Now().UTC().Add(time.Duration(inv.AccountExpiresInHours) * time.Hour)
+		expiresAt = &t
+	}
+	account, err := h.accountsService.CreateWithExpiry(req.Username, req.Password, expiresAt)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if err == accounts.ErrUsernameExists {

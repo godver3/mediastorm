@@ -350,7 +350,7 @@ func TestAdminUIHandler_ValidateInvitation(t *testing.T) {
 	handler.SetInvitationsService(invitationsService)
 
 	// Create an invitation first
-	invite, err := invitationsService.Create("master", 24*time.Hour)
+	invite, err := invitationsService.Create("master", 24*time.Hour, 0)
 	if err != nil {
 		t.Fatalf("failed to create invitation: %v", err)
 	}
