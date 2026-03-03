@@ -1,5 +1,5 @@
 <p align="center">
-<img width="400" height="240" alt="mediastorm" src="[https://raw.githubusercontent.com/godver3/mediastorm/master/frontend/assets/tv_icons/icon-1920x720.png](https://github.com/godver3/mediastorm/blob/master/mediastorm-tv.jpg?raw=true)" />
+<img width="400" height="240" alt="mediastorm" src="https://github.com/godver3/mediastorm/blob/master/mediastorm-tv.jpg?raw=true" />
 </p>
 
 # mediastorm
