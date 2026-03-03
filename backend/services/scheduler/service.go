@@ -903,24 +903,15 @@ func (s *Service) executeTraktListSync(task config.ScheduledTask) (SyncResult, e
 		return SyncResult{}, errors.New("trakt account not authenticated")
 	}
 
+	// Ensure valid token (handles refresh with proper locking)
+	accessToken, err := s.traktClient.EnsureValidToken(traktAccount, s.configManager)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("ensure valid trakt token: %w", err)
+	}
+	traktAccount.AccessToken = accessToken
+
 	// Update client with account credentials
 	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
-
-	// Check token expiry and refresh if needed
-	if time.Now().Unix() >= traktAccount.ExpiresAt {
-		log.Printf("[scheduler] Trakt token expired, refreshing...")
-		tokenResp, err := s.traktClient.RefreshAccessToken(traktAccount.RefreshToken)
-		if err != nil {
-			return SyncResult{}, fmt.Errorf("refresh trakt token: %w", err)
-		}
-		traktAccount.AccessToken = tokenResp.AccessToken
-		traktAccount.RefreshToken = tokenResp.RefreshToken
-		traktAccount.ExpiresAt = tokenResp.CreatedAt + int64(tokenResp.ExpiresIn)
-		settings.Trakt.UpdateAccount(*traktAccount)
-		if err := s.configManager.Save(settings); err != nil {
-			log.Printf("[scheduler] Warning: failed to save refreshed Trakt token: %v", err)
-		}
-	}
 
 	// Build sync source identifier for tracking
 	syncSource := fmt.Sprintf("trakt:%s:%s:%s", traktAccountID, listType, task.ID)
@@ -1693,24 +1684,15 @@ func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult
 		return SyncResult{}, errors.New("trakt account not authenticated")
 	}
 
+	// Ensure valid token (handles refresh with proper locking)
+	accessToken, err := s.traktClient.EnsureValidToken(traktAccount, s.configManager)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("ensure valid trakt token: %w", err)
+	}
+	traktAccount.AccessToken = accessToken
+
 	// Update client with account credentials
 	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
-
-	// Check token expiry and refresh if needed
-	if time.Now().Unix() >= traktAccount.ExpiresAt {
-		log.Printf("[scheduler] Trakt token expired, refreshing...")
-		tokenResp, err := s.traktClient.RefreshAccessToken(traktAccount.RefreshToken)
-		if err != nil {
-			return SyncResult{}, fmt.Errorf("refresh trakt token: %w", err)
-		}
-		traktAccount.AccessToken = tokenResp.AccessToken
-		traktAccount.RefreshToken = tokenResp.RefreshToken
-		traktAccount.ExpiresAt = tokenResp.CreatedAt + int64(tokenResp.ExpiresIn)
-		settings.Trakt.UpdateAccount(*traktAccount)
-		if err := s.configManager.Save(settings); err != nil {
-			log.Printf("[scheduler] Warning: failed to save refreshed Trakt token: %v", err)
-		}
-	}
 
 	switch syncDirection {
 	case "trakt_to_local":

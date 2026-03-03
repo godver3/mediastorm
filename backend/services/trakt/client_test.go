@@ -4,7 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"novastream/config"
 )
 
 func TestScrobbleStart(t *testing.T) {
@@ -256,5 +262,202 @@ func TestRemovePlaybackItemError(t *testing.T) {
 	err := client.RemovePlaybackItem("token", 999)
 	if err == nil {
 		t.Fatal("expected error for 404 response")
+	}
+}
+
+// newTestConfigManager creates a config.Manager backed by a temp file with the given settings.
+func newTestConfigManager(t *testing.T, settings config.Settings) *config.Manager {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	mgr := config.NewManager(path)
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save test config: %v", err)
+	}
+	return mgr
+}
+
+func TestEnsureValidToken_NotExpiring(t *testing.T) {
+	client := NewClient("id", "secret")
+	account := &config.TraktAccount{
+		ID:          "acc1",
+		AccessToken: "valid-token",
+		ExpiresAt:   time.Now().Unix() + 7200, // 2 hours from now
+	}
+
+	token, err := client.EnsureValidToken(account, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "valid-token" {
+		t.Errorf("expected 'valid-token', got %q", token)
+	}
+}
+
+func TestEnsureValidToken_EmptyAccessToken(t *testing.T) {
+	client := NewClient("id", "secret")
+	account := &config.TraktAccount{
+		ID:          "acc1",
+		AccessToken: "",
+	}
+
+	token, err := client.EnsureValidToken(account, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "" {
+		t.Errorf("expected empty token, got %q", token)
+	}
+}
+
+func TestEnsureValidToken_RefreshesExpiredToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/oauth/token" {
+			t.Errorf("expected path /oauth/token, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    7776000,
+			CreatedAt:    time.Now().Unix(),
+		})
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	settings := config.Settings{
+		Trakt: config.TraktSettings{
+			Accounts: []config.TraktAccount{
+				{
+					ID:           "acc1",
+					ClientID:     "cid",
+					ClientSecret: "csec",
+					AccessToken:  "old-access",
+					RefreshToken: "old-refresh",
+					ExpiresAt:    time.Now().Unix() - 100, // expired
+				},
+			},
+		},
+	}
+	mgr := newTestConfigManager(t, settings)
+
+	client := NewClient("cid", "csec")
+	account := &config.TraktAccount{
+		ID:           "acc1",
+		ClientID:     "cid",
+		ClientSecret: "csec",
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		ExpiresAt:    time.Now().Unix() - 100,
+	}
+
+	token, err := client.EnsureValidToken(account, mgr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "new-access" {
+		t.Errorf("expected 'new-access', got %q", token)
+	}
+
+	// Verify config was persisted
+	saved, err := mgr.Load()
+	if err != nil {
+		t.Fatalf("load saved config: %v", err)
+	}
+	savedAcc := saved.Trakt.GetAccountByID("acc1")
+	if savedAcc == nil {
+		t.Fatal("account not found in saved config")
+	}
+	if savedAcc.AccessToken != "new-access" {
+		t.Errorf("saved access token: expected 'new-access', got %q", savedAcc.AccessToken)
+	}
+	if savedAcc.RefreshToken != "new-refresh" {
+		t.Errorf("saved refresh token: expected 'new-refresh', got %q", savedAcc.RefreshToken)
+	}
+}
+
+func TestEnsureValidToken_ConcurrentRefreshOnlyCallsOnce(t *testing.T) {
+	var refreshCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/token" {
+			refreshCount.Add(1)
+			// Simulate some latency so both goroutines overlap
+			time.Sleep(50 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(TokenResponse{
+				AccessToken:  "refreshed-token",
+				RefreshToken: "refreshed-refresh",
+				ExpiresIn:    7776000,
+				CreatedAt:    time.Now().Unix(),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	settings := config.Settings{
+		Trakt: config.TraktSettings{
+			Accounts: []config.TraktAccount{
+				{
+					ID:           "acc1",
+					ClientID:     "cid",
+					ClientSecret: "csec",
+					AccessToken:  "expired-token",
+					RefreshToken: "old-refresh",
+					ExpiresAt:    time.Now().Unix() - 100,
+				},
+			},
+		},
+	}
+	mgr := newTestConfigManager(t, settings)
+	client := NewClient("cid", "csec")
+
+	// Launch two goroutines that both try to refresh at the same time
+	var wg sync.WaitGroup
+	tokens := make([]string, 2)
+	errs := make([]error, 2)
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			acc := &config.TraktAccount{
+				ID:           "acc1",
+				ClientID:     "cid",
+				ClientSecret: "csec",
+				AccessToken:  "expired-token",
+				RefreshToken: "old-refresh",
+				ExpiresAt:    time.Now().Unix() - 100,
+			}
+			tokens[idx], errs[idx] = client.EnsureValidToken(acc, mgr)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d error: %v", i, err)
+		}
+	}
+	for i, tok := range tokens {
+		if tok != "refreshed-token" {
+			t.Errorf("goroutine %d: expected 'refreshed-token', got %q", i, tok)
+		}
+	}
+
+	// The key assertion: only ONE actual refresh call was made to Trakt
+	count := refreshCount.Load()
+	if count != 1 {
+		t.Errorf("expected exactly 1 refresh call, got %d", count)
 	}
 }

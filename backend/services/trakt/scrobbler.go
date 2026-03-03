@@ -81,45 +81,7 @@ func (s *Scrobbler) getAccessTokenForUser(userID string) (string, error) {
 		return "", nil
 	}
 
-	if account.AccessToken == "" {
-		return "", nil
-	}
-
-	// Update client with account credentials
-	s.client.UpdateCredentials(account.ClientID, account.ClientSecret)
-
-	// Check if token needs refresh (within 1 hour of expiry)
-	if account.ExpiresAt > 0 {
-		expiresIn := account.ExpiresAt - time.Now().Unix()
-		if expiresIn < 3600 && account.RefreshToken != "" {
-			token, err := s.client.RefreshAccessToken(account.RefreshToken)
-			if err != nil {
-				return "", err
-			}
-
-			// Update account with new tokens
-			settings, err := s.configManager.Load()
-			if err != nil {
-				return "", err
-			}
-
-			updatedAccount := settings.Trakt.GetAccountByID(account.ID)
-			if updatedAccount != nil {
-				updatedAccount.AccessToken = token.AccessToken
-				updatedAccount.RefreshToken = token.RefreshToken
-				updatedAccount.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-				settings.Trakt.UpdateAccount(*updatedAccount)
-
-				if err := s.configManager.Save(settings); err != nil {
-					return "", err
-				}
-			}
-
-			return token.AccessToken, nil
-		}
-	}
-
-	return account.AccessToken, nil
+	return s.client.EnsureValidToken(account, s.configManager)
 }
 
 // ScrobbleMovie syncs a watched movie to Trakt for the given user.

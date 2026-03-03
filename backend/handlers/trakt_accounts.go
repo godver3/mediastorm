@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -683,46 +682,7 @@ func (h *TraktAccountsHandler) normalizeHistoryItems(items []trakt.HistoryItem) 
 
 // ensureValidAccountToken checks if the Trakt access token is valid and refreshes if needed.
 func (h *TraktAccountsHandler) ensureValidAccountToken(account *config.TraktAccount) (string, error) {
-	if account.AccessToken == "" {
-		return "", nil
-	}
-
-	// Update client with account credentials
-	h.traktClient.UpdateCredentials(account.ClientID, account.ClientSecret)
-
-	// Check if token is expired or will expire within 1 hour
-	if account.ExpiresAt > 0 {
-		expiresIn := account.ExpiresAt - time.Now().Unix()
-		if expiresIn < 3600 { // Less than 1 hour remaining
-			if account.RefreshToken == "" {
-				return "", nil
-			}
-
-			token, err := h.traktClient.RefreshAccessToken(account.RefreshToken)
-			if err != nil {
-				return "", err
-			}
-
-			// Update account with new tokens
-			settings, err := h.configManager.Load()
-			if err != nil {
-				return "", err
-			}
-
-			account.AccessToken = token.AccessToken
-			account.RefreshToken = token.RefreshToken
-			account.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
-			settings.Trakt.UpdateAccount(*account)
-
-			if err := h.configManager.Save(settings); err != nil {
-				return "", err
-			}
-
-			return token.AccessToken, nil
-		}
-	}
-
-	return account.AccessToken, nil
+	return h.traktClient.EnsureValidToken(account, h.configManager)
 }
 
 // GetLists retrieves custom lists for a specific Trakt account.

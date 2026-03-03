@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
+
+	"novastream/config"
 )
 
 // ErrNotFound is returned when Trakt cannot find the requested item (404).
@@ -28,6 +32,10 @@ type Client struct {
 	httpClient   *http.Client
 	clientID     string
 	clientSecret string
+
+	// Per-account mutexes for coordinating token refresh
+	refreshMuMap   map[string]*sync.Mutex
+	refreshMuGuard sync.Mutex
 }
 
 // DeviceCodeResponse represents the response from /oauth/device/code
@@ -117,7 +125,93 @@ func NewClient(clientID, clientSecret string) *Client {
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		clientID:     clientID,
 		clientSecret: clientSecret,
+		refreshMuMap: make(map[string]*sync.Mutex),
 	}
+}
+
+// getRefreshMu returns the per-account mutex for token refresh coordination.
+func (c *Client) getRefreshMu(accountID string) *sync.Mutex {
+	c.refreshMuGuard.Lock()
+	defer c.refreshMuGuard.Unlock()
+	if c.refreshMuMap == nil {
+		c.refreshMuMap = make(map[string]*sync.Mutex)
+	}
+	mu, ok := c.refreshMuMap[accountID]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.refreshMuMap[accountID] = mu
+	}
+	return mu
+}
+
+// EnsureValidToken checks if the account's access token is valid and refreshes
+// it if needed, using a per-account mutex to prevent concurrent refresh races.
+// Trakt refresh tokens are single-use: if two goroutines try to refresh with
+// the same token, the second will get invalid_grant, permanently breaking auth.
+func (c *Client) EnsureValidToken(account *config.TraktAccount, configManager *config.Manager) (string, error) {
+	if account.AccessToken == "" {
+		return "", nil
+	}
+
+	// Fast path: token not expiring within 1 hour, no refresh needed
+	if account.ExpiresAt > 0 && account.ExpiresAt-time.Now().Unix() >= 3600 {
+		return account.AccessToken, nil
+	}
+
+	if account.RefreshToken == "" {
+		return "", nil
+	}
+
+	// Acquire per-account lock to serialize refresh attempts
+	mu := c.getRefreshMu(account.ID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Double-check: re-load config to see if another goroutine already refreshed
+	settings, err := configManager.Load()
+	if err != nil {
+		return "", fmt.Errorf("load config for token refresh: %w", err)
+	}
+
+	freshAccount := settings.Trakt.GetAccountByID(account.ID)
+	if freshAccount == nil {
+		return "", fmt.Errorf("trakt account %s not found after lock", account.ID)
+	}
+
+	// If the token was already refreshed by another goroutine, use the new one
+	if freshAccount.ExpiresAt > 0 && freshAccount.ExpiresAt-time.Now().Unix() >= 3600 {
+		// Update the caller's account struct with fresh tokens
+		account.AccessToken = freshAccount.AccessToken
+		account.RefreshToken = freshAccount.RefreshToken
+		account.ExpiresAt = freshAccount.ExpiresAt
+		return freshAccount.AccessToken, nil
+	}
+
+	// We still need to refresh — set credentials and call Trakt
+	c.UpdateCredentials(freshAccount.ClientID, freshAccount.ClientSecret)
+
+	log.Printf("[trakt] Refreshing token for account %s (%s)", freshAccount.Name, freshAccount.ID)
+	token, err := c.RefreshAccessToken(freshAccount.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("refresh trakt token: %w", err)
+	}
+
+	// Save new tokens to config
+	freshAccount.AccessToken = token.AccessToken
+	freshAccount.RefreshToken = token.RefreshToken
+	freshAccount.ExpiresAt = token.CreatedAt + int64(token.ExpiresIn)
+	settings.Trakt.UpdateAccount(*freshAccount)
+
+	if err := configManager.Save(settings); err != nil {
+		return "", fmt.Errorf("save refreshed trakt token: %w", err)
+	}
+
+	// Update the caller's account struct
+	account.AccessToken = token.AccessToken
+	account.RefreshToken = token.RefreshToken
+	account.ExpiresAt = freshAccount.ExpiresAt
+
+	return token.AccessToken, nil
 }
 
 // setTraktHeaders adds required Trakt API headers to a request
