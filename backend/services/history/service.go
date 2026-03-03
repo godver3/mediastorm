@@ -729,14 +729,14 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 					// Calculate episode counts for series completion tracking
 					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
-					// For in-progress, also count watched episodes from history
-					watchedCount := 0
+					// For in-progress, count watched episodes from history (dedup by season/episode)
+					watchedSet := make(map[string]bool)
 					for _, ep := range t.episodes {
 						if ep.SeasonNumber > 0 {
-							watchedCount++
+							watchedSet[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)] = true
 						}
 					}
-					state.WatchedEpisodeCount = watchedCount
+					state.WatchedEpisodeCount = len(watchedSet)
 				}
 			} else if len(t.episodes) > 0 {
 				// Priority 2: Next unwatched episode after most recently completed
@@ -1414,6 +1414,7 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 	}
 	imdbToSeries := make(map[string][]string)
 	tvdbToSeries := make(map[string][]string)
+	tmdbToSeries := make(map[string][]string)
 	seriesExternalIDCount := make(map[string]int) // track richness
 
 	recordIDs := func(seriesID string, extIDs map[string]string) {
@@ -1429,7 +1430,8 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 			tvdbToSeries[id] = append(tvdbToSeries[id], seriesID)
 			count++
 		}
-		if _, ok := extIDs["tmdb"]; ok {
+		if id, ok := extIDs["tmdb"]; ok && id != "" {
+			tmdbToSeries[id] = append(tmdbToSeries[id], seriesID)
 			count++
 		}
 		if existing, ok := seriesExternalIDCount[seriesID]; !ok || count > existing {
@@ -1484,6 +1486,9 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 		mergeGroup(group)
 	}
 	for _, group := range tvdbToSeries {
+		mergeGroup(group)
+	}
+	for _, group := range tmdbToSeries {
 		mergeGroup(group)
 	}
 
@@ -2140,10 +2145,77 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 	progressCleared := false
 	imported := 0
 
+	// Build cross-provider dedup index: "s01e01:imdb:tt123" → existing watch key
+	// This lets us find existing entries for the same episode imported under a different ID format.
+	type episodeIndex struct {
+		watchKey string
+	}
+	crossProviderIndex := make(map[string]episodeIndex)
+	for key, item := range perUser {
+		if item.MediaType != "episode" || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+			continue
+		}
+		epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
+		for idType, idValue := range item.ExternalIDs {
+			if idValue == "" || idType == "titleId" {
+				continue
+			}
+			indexKey := epKey + ":" + idType + ":" + idValue
+			crossProviderIndex[indexKey] = episodeIndex{watchKey: key}
+		}
+	}
+
 	for _, update := range updates {
 		normalizedItemID := strings.ToLower(update.ItemID)
 		key := makeWatchKey(update.MediaType, normalizedItemID)
 		existing, exists := perUser[key]
+
+		// Cross-provider dedup: if no direct match, look for an existing entry
+		// with matching external IDs and same season/episode numbers.
+		if !exists && update.SeasonNumber > 0 && update.EpisodeNumber > 0 && len(update.ExternalIDs) > 0 {
+			epKey := episodeKey(update.SeasonNumber, update.EpisodeNumber)
+			for idType, idValue := range update.ExternalIDs {
+				if idValue == "" || idType == "titleId" {
+					continue
+				}
+				indexKey := epKey + ":" + idType + ":" + idValue
+				if idx, found := crossProviderIndex[indexKey]; found && idx.watchKey != key {
+					// Found a match under a different key — merge into existing entry
+					existing = perUser[idx.watchKey]
+					exists = true
+					// Remove old key, will re-key under new canonical key below
+					delete(perUser, idx.watchKey)
+					// Clean up old index entries
+					for oldIDType, oldIDValue := range existing.ExternalIDs {
+						if oldIDValue == "" || oldIDType == "titleId" {
+							continue
+						}
+						oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
+						delete(crossProviderIndex, oldIndexKey)
+					}
+					log.Printf("[history] import: DEDUP cross-provider %s %q (old key %s -> new key %s)",
+						update.MediaType, update.Name, idx.watchKey, key)
+					break
+				}
+			}
+		}
+
+		// For movies: cross-provider dedup by external ID matching
+		if !exists && update.MediaType == "movie" && len(update.ExternalIDs) > 0 {
+			for existingKey, existingItem := range perUser {
+				if existingItem.MediaType != "movie" || existingKey == key {
+					continue
+				}
+				if hasMatchingExternalID(update.ExternalIDs, existingItem.ExternalIDs) {
+					existing = existingItem
+					exists = true
+					delete(perUser, existingKey)
+					log.Printf("[history] import: DEDUP cross-provider movie %q (old key %s -> new key %s)",
+						update.Name, existingKey, key)
+					break
+				}
+			}
+		}
 
 		// "Most recent wins" — skip if local item has a newer WatchedAt
 		if exists && existing.Watched {
@@ -2201,7 +2273,15 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			}
 		}
 		if update.ExternalIDs != nil {
-			item.ExternalIDs = update.ExternalIDs
+			// Merge external IDs so cross-provider dedup preserves IDs from both sources
+			if item.ExternalIDs == nil {
+				item.ExternalIDs = make(map[string]string)
+			}
+			for k, v := range update.ExternalIDs {
+				if v != "" {
+					item.ExternalIDs[k] = v
+				}
+			}
 		}
 		if update.SeasonNumber > 0 {
 			item.SeasonNumber = update.SeasonNumber
@@ -2217,6 +2297,17 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		}
 
 		perUser[key] = item
+
+		// Update cross-provider index so subsequent items in this batch can find this entry
+		if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
+			epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
+			for idType, idValue := range item.ExternalIDs {
+				if idValue == "" || idType == "titleId" {
+					continue
+				}
+				crossProviderIndex[epKey+":"+idType+":"+idValue] = episodeIndex{watchKey: key}
+			}
+		}
 
 		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 			if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {

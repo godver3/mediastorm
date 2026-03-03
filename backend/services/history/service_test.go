@@ -1910,3 +1910,167 @@ func TestEpisodeState_UnreleasedEpisodeFallback(t *testing.T) {
 	}
 	t.Fatal("Future Show not found in continue watching — unreleased fallback should prevent exclusion")
 }
+
+func TestImportWatchHistory_CrossProviderEpisodeDedup(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+
+	// Import episode via TMDB ID (like Plex would)
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:12345:s01e01",
+			Name:          "Pilot",
+			Watched:       &watched,
+			WatchedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			SeriesID:      "tmdb:tv:12345",
+			SeriesName:    "Test Show",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"tmdb": "12345", "imdb": "tt9999"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	// Import same episode via TVDB ID (like Trakt would), sharing the IMDB external ID
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:67890:s01e01",
+			Name:          "Pilot",
+			Watched:       &watched,
+			WatchedAt:     time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC),
+			SeriesID:      "tvdb:series:67890",
+			SeriesName:    "Test Show",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"tvdb": "67890", "imdb": "tt9999"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+
+	// Should have only 1 episode entry, not 2
+	items, _ := svc.ListWatchHistory(userID)
+	episodeCount := 0
+	for _, item := range items {
+		if item.MediaType == "episode" && item.SeasonNumber == 1 && item.EpisodeNumber == 1 {
+			episodeCount++
+			// Should have merged external IDs from both sources
+			if item.ExternalIDs["tmdb"] != "12345" {
+				t.Errorf("expected tmdb=12345, got %s", item.ExternalIDs["tmdb"])
+			}
+			if item.ExternalIDs["tvdb"] != "67890" {
+				t.Errorf("expected tvdb=67890, got %s", item.ExternalIDs["tvdb"])
+			}
+			if item.ExternalIDs["imdb"] != "tt9999" {
+				t.Errorf("expected imdb=tt9999, got %s", item.ExternalIDs["imdb"])
+			}
+		}
+	}
+	if episodeCount != 1 {
+		t.Fatalf("expected 1 episode entry after cross-provider dedup, got %d", episodeCount)
+	}
+}
+
+func TestBuildCanonicalSeriesIDMap_TMDBMerge(t *testing.T) {
+	items := []models.WatchHistoryItem{
+		{
+			MediaType:  "episode",
+			SeriesID:   "tmdb:tv:12345",
+			ExternalIDs: map[string]string{"tmdb": "12345"},
+		},
+		{
+			MediaType:  "episode",
+			SeriesID:   "tvdb:series:67890",
+			ExternalIDs: map[string]string{"tmdb": "12345", "tvdb": "67890"},
+		},
+	}
+
+	canonical := buildCanonicalSeriesIDMap(items, nil)
+
+	// Both series IDs should map to the same canonical ID
+	resolved1 := resolveCanonicalID(canonical, "tmdb:tv:12345")
+	resolved2 := resolveCanonicalID(canonical, "tvdb:series:67890")
+
+	if resolved1 != resolved2 {
+		t.Fatalf("expected same canonical ID, got %q and %q", resolved1, resolved2)
+	}
+
+	// The canonical should be the one with more external IDs (tvdb:series:67890 has 2)
+	if resolved1 != "tvdb:series:67890" {
+		t.Fatalf("expected canonical to be tvdb:series:67890 (richer), got %q", resolved1)
+	}
+}
+
+func TestImportWatchHistory_CrossProviderMovieDedup(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+
+	// Import movie via TVDB ID
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tvdb:movie:11111",
+			Name:        "Test Movie",
+			Watched:     &watched,
+			WatchedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			ExternalIDs: map[string]string{"tvdb": "11111", "imdb": "tt5555"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	// Import same movie via TMDB ID, sharing IMDB
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:22222",
+			Name:        "Test Movie",
+			Watched:     &watched,
+			WatchedAt:   time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC),
+			ExternalIDs: map[string]string{"tmdb": "22222", "imdb": "tt5555"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+
+	// Should have only 1 movie entry
+	items, _ := svc.ListWatchHistory(userID)
+	movieCount := 0
+	for _, item := range items {
+		if item.MediaType == "movie" {
+			movieCount++
+			// Should have merged external IDs
+			if item.ExternalIDs["tvdb"] != "11111" {
+				t.Errorf("expected tvdb=11111, got %s", item.ExternalIDs["tvdb"])
+			}
+			if item.ExternalIDs["tmdb"] != "22222" {
+				t.Errorf("expected tmdb=22222, got %s", item.ExternalIDs["tmdb"])
+			}
+			if item.ExternalIDs["imdb"] != "tt5555" {
+				t.Errorf("expected imdb=tt5555, got %s", item.ExternalIDs["imdb"])
+			}
+		}
+	}
+	if movieCount != 1 {
+		t.Fatalf("expected 1 movie entry after cross-provider dedup, got %d", movieCount)
+	}
+}
