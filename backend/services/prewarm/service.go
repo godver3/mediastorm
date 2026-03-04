@@ -152,7 +152,16 @@ func (s *Service) RestorePrequeueEntries() {
 			continue
 		}
 
-		// Create a new prequeue entry with the saved stream path
+		// Check if the prequeue store already has a valid entry for this title+user
+		// (loaded from prequeue.json which contains full track data)
+		if existing, ok := s.prequeueStore.GetByTitleUser(entry.TitleID, entry.UserID); ok && existing.Status == playback.PrequeueStatusReady {
+			entry.PrequeueID = existing.ID
+			restored++
+			log.Printf("[prewarm] Reused existing prequeue entry %s for %s (from prequeue.json)", existing.ID, entry.TitleName)
+			continue
+		}
+
+		// No existing entry — create a new one with just the stream path
 		pqEntry, _ := s.prequeueStore.Create(
 			entry.TitleID, entry.TitleName, entry.UserID,
 			entry.MediaType, entry.Year, entry.TargetEpisode, "prewarm",

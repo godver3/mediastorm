@@ -108,8 +108,8 @@ type PrequeueStatusResponse struct {
 	Duration       float64 `json:"duration,omitempty"` // Total duration in seconds (from HLS session probe)
 
 	// Selected tracks (based on user preferences)
-	SelectedAudioTrack    int `json:"selectedAudioTrack,omitempty"`    // -1 = default/all
-	SelectedSubtitleTrack int `json:"selectedSubtitleTrack,omitempty"` // -1 = none
+	SelectedAudioTrack    int `json:"selectedAudioTrack"`    // -1 = default/all
+	SelectedSubtitleTrack int `json:"selectedSubtitleTrack"` // -1 = none
 
 	// Available tracks (for display in UI)
 	AudioTracks    []AudioTrackInfo    `json:"audioTracks,omitempty"`
