@@ -2,8 +2,12 @@ package playback
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -124,54 +128,54 @@ type PrequeueStatusResponse struct {
 
 // PrequeueEntry is the internal state of a prequeue item
 type PrequeueEntry struct {
-	ID            string
-	TitleID       string
-	TitleName     string // For display purposes
-	Year          int    // For display purposes
-	UserID        string
-	MediaType     string
-	TargetEpisode *models.EpisodeReference
-	Reason        string // "details" or "next_episode" - affects HLS startup timeout
+	ID            string                   `json:"id"`
+	TitleID       string                   `json:"titleId"`
+	TitleName     string                   `json:"titleName"`
+	Year          int                      `json:"year,omitempty"`
+	UserID        string                   `json:"userId"`
+	MediaType     string                   `json:"mediaType"`
+	TargetEpisode *models.EpisodeReference `json:"targetEpisode,omitempty"`
+	Reason        string                   `json:"reason"`
 
-	Status       PrequeueStatus
-	StreamPath   string
-	FileSize     int64
-	HealthStatus string
+	Status       PrequeueStatus `json:"status"`
+	StreamPath   string         `json:"streamPath,omitempty"`
+	FileSize     int64          `json:"fileSize,omitempty"`
+	HealthStatus string         `json:"healthStatus,omitempty"`
 
 	// HDR detection
-	HasDolbyVision     bool
-	HasHDR10           bool
-	DolbyVisionProfile string
+	HasDolbyVision     bool   `json:"hasDolbyVision,omitempty"`
+	HasHDR10           bool   `json:"hasHdr10,omitempty"`
+	DolbyVisionProfile string `json:"dolbyVisionProfile,omitempty"`
 
 	// Audio transcoding detection (TrueHD, DTS, etc.)
-	NeedsAudioTranscode bool
+	NeedsAudioTranscode bool `json:"needsAudioTranscode,omitempty"`
 
 	// HLS session (for HDR or audio transcoding)
-	HLSSessionID   string
-	HLSPlaylistURL string
-	Duration       float64 // Total duration in seconds (from HLS session probe)
+	HLSSessionID   string  `json:"hlsSessionId,omitempty"`
+	HLSPlaylistURL string  `json:"hlsPlaylistUrl,omitempty"`
+	Duration       float64 `json:"duration,omitempty"`
 
 	// Selected tracks (based on user preferences)
-	SelectedAudioTrack    int // -1 = default/all
-	SelectedSubtitleTrack int // -1 = none
+	SelectedAudioTrack    int `json:"selectedAudioTrack"`
+	SelectedSubtitleTrack int `json:"selectedSubtitleTrack"`
 
 	// Pre-extracted subtitle sessions (for direct streaming/VLC path)
-	SubtitleSessions map[int]*models.SubtitleSessionInfo
+	SubtitleSessions map[int]*models.SubtitleSessionInfo `json:"-"`
 
 	// Track info for display in UI
-	AudioTracks    []AudioTrackInfo
-	SubtitleTracks []SubtitleTrackInfo
+	AudioTracks    []AudioTrackInfo    `json:"audioTracks,omitempty"`
+	SubtitleTracks []SubtitleTrackInfo `json:"subtitleTracks,omitempty"`
 
 	// AIOStreams passthrough format
-	PassthroughName        string
-	PassthroughDescription string
+	PassthroughName        string `json:"passthroughName,omitempty"`
+	PassthroughDescription string `json:"passthroughDescription,omitempty"`
 
-	Error     string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
 
 	// For cancellation
-	cancelFunc context.CancelFunc
+	cancelFunc context.CancelFunc `json:"-"`
 }
 
 // PrequeueStore manages prequeue entries with TTL
@@ -181,6 +185,7 @@ type PrequeueStore struct {
 	// Secondary index: titleId+userId -> prequeueId (to find/replace existing prequeue)
 	byTitleUser map[string]string
 	ttl         time.Duration
+	storagePath string // If set, ready entries are persisted to this file
 }
 
 // NewPrequeueStore creates a new prequeue store with the specified TTL
@@ -195,6 +200,89 @@ func NewPrequeueStore(ttl time.Duration) *PrequeueStore {
 	go store.cleanupLoop()
 
 	return store
+}
+
+// SetStoragePath enables persistence of ready entries to the given directory.
+// Entries are saved to prequeue.json in that directory.
+func (s *PrequeueStore) SetStoragePath(dir string) {
+	if dir == "" {
+		return
+	}
+	s.storagePath = filepath.Join(dir, "prequeue.json")
+	if err := s.loadFromDisk(); err != nil {
+		log.Printf("[prequeue] Warning: failed to load persisted entries: %v", err)
+	}
+}
+
+// loadFromDisk restores ready entries from disk
+func (s *PrequeueStore) loadFromDisk() error {
+	file, err := os.Open(s.storagePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var stored []*PrequeueEntry
+	if err := json.NewDecoder(file).Decode(&stored); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	restored := 0
+	for _, e := range stored {
+		if now.After(e.ExpiresAt) || e.Status != PrequeueStatusReady || e.StreamPath == "" {
+			continue
+		}
+		s.entries[e.ID] = e
+		key := titleUserKey(e.TitleID, e.UserID)
+		s.byTitleUser[key] = e.ID
+		restored++
+	}
+	if restored > 0 {
+		log.Printf("[prequeue] Restored %d ready entries from disk", restored)
+	}
+	return nil
+}
+
+// saveToDisk persists all ready entries to disk. Caller must hold s.mu.
+func (s *PrequeueStore) saveToDisk() {
+	if s.storagePath == "" {
+		return
+	}
+
+	now := time.Now()
+	var items []*PrequeueEntry
+	for _, e := range s.entries {
+		if e.Status == PrequeueStatusReady && e.StreamPath != "" && now.Before(e.ExpiresAt) {
+			items = append(items, e)
+		}
+	}
+
+	tmp := s.storagePath + ".tmp"
+	file, err := os.Create(tmp)
+	if err != nil {
+		log.Printf("[prequeue] Warning: failed to create temp file for persistence: %v", err)
+		return
+	}
+
+	enc := json.NewEncoder(file)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(items); err != nil {
+		file.Close()
+		os.Remove(tmp)
+		log.Printf("[prequeue] Warning: failed to encode prequeue entries: %v", err)
+		return
+	}
+	file.Close()
+	if err := os.Rename(tmp, s.storagePath); err != nil {
+		log.Printf("[prequeue] Warning: failed to persist prequeue entries: %v", err)
+	}
 }
 
 // generateID creates a unique prequeue ID
@@ -319,6 +407,7 @@ func (s *PrequeueStore) Update(id string, updateFn func(*PrequeueEntry)) bool {
 		if entry.ExpiresAt.Before(defaultExpiry) {
 			entry.ExpiresAt = defaultExpiry
 		}
+		s.saveToDisk()
 	}
 
 	return true
@@ -396,6 +485,9 @@ func (s *PrequeueStore) cleanup() {
 
 		delete(s.entries, id)
 		log.Printf("[prequeue] Expired and removed prequeue %s", id)
+	}
+	if len(toDelete) > 0 {
+		s.saveToDisk()
 	}
 }
 

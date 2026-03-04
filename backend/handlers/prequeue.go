@@ -330,16 +330,55 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	if h.prewarmSvc != nil {
 		if warm := h.prewarmSvc.GetWarm(req.TitleID, req.UserID); warm != nil && warm.PrequeueID != "" {
 			if warmEntry, ok := h.store.Get(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady {
-				log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
-				resp := playback.PrequeueResponse{
-					PrequeueID:    warm.PrequeueID,
-					TargetEpisode: warmEntry.TargetEpisode,
-					Status:        playback.PrequeueStatusReady,
+				// Verify the target episode matches (for series)
+				episodeMatch := true
+				if targetEpisode != nil && warmEntry.TargetEpisode != nil {
+					if targetEpisode.SeasonNumber != warmEntry.TargetEpisode.SeasonNumber ||
+						targetEpisode.EpisodeNumber != warmEntry.TargetEpisode.EpisodeNumber {
+						episodeMatch = false
+					}
+				} else if (targetEpisode == nil) != (warmEntry.TargetEpisode == nil) {
+					episodeMatch = false
 				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
+
+				if episodeMatch {
+					log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
+					resp := playback.PrequeueResponse{
+						PrequeueID:    warm.PrequeueID,
+						TargetEpisode: warmEntry.TargetEpisode,
+						Status:        playback.PrequeueStatusReady,
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(resp)
+					return
+				}
+				log.Printf("[prequeue] Pre-warmed entry %s episode mismatch (warm=%v, requested=%v), resolving fresh",
+					warm.PrequeueID, warmEntry.TargetEpisode, targetEpisode)
 			}
+		}
+	}
+
+	// Check for existing ready entry in the store (covers both prewarm and regular prequeues)
+	if existing, ok := h.store.GetByTitleUser(req.TitleID, req.UserID); ok && existing.Status == playback.PrequeueStatusReady && existing.StreamPath != "" {
+		episodeMatch := true
+		if targetEpisode != nil && existing.TargetEpisode != nil {
+			if targetEpisode.SeasonNumber != existing.TargetEpisode.SeasonNumber ||
+				targetEpisode.EpisodeNumber != existing.TargetEpisode.EpisodeNumber {
+				episodeMatch = false
+			}
+		} else if (targetEpisode == nil) != (existing.TargetEpisode == nil) {
+			episodeMatch = false
+		}
+		if episodeMatch {
+			log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
+			resp := playback.PrequeueResponse{
+				PrequeueID:    existing.ID,
+				TargetEpisode: existing.TargetEpisode,
+				Status:        playback.PrequeueStatusReady,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
 		}
 	}
 

@@ -379,6 +379,7 @@ func main() {
 	// Create prequeue handler now that history service is available
 	// Video prober and HLS creator are optional - we'll set them after videoHandler is created
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
+	prequeueHandler.GetStore().SetStoragePath(settings.Cache.Directory)
 
 	if settings.Transmux.FFmpegPath == "" {
 		settings.Transmux.FFmpegPath = "ffmpeg"
