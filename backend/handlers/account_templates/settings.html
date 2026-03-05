@@ -403,9 +403,9 @@ function renderSettings() {
                     </div>
                     <div class="setting-control">
                         <select id="subtitleMode" onchange="markChanged()">
-                            <option value="" ${!s.playback.preferredSubtitleMode ? 'selected' : ''}>Off</option>
-                            <option value="auto" ${s.playback.preferredSubtitleMode === 'auto' ? 'selected' : ''}>Auto</option>
-                            <option value="always" ${s.playback.preferredSubtitleMode === 'always' ? 'selected' : ''}>Always On</option>
+                            <option value="off" ${!s.playback.preferredSubtitleMode || s.playback.preferredSubtitleMode === 'off' ? 'selected' : ''}>Off</option>
+                            <option value="forced-only" ${s.playback.preferredSubtitleMode === 'forced-only' ? 'selected' : ''}>Auto (Forced Only)</option>
+                            <option value="on" ${s.playback.preferredSubtitleMode === 'on' ? 'selected' : ''}>Always On</option>
                         </select>
                     </div>
                 </div>

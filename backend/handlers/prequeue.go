@@ -126,6 +126,20 @@ type SubtitlePreExtractor interface {
 	StartPreExtraction(ctx context.Context, path string, tracks []SubtitleTrackInfo, startOffset float64) map[int]*SubtitleExtractSession
 }
 
+// normalizeSubtitleMode maps legacy subtitle mode values to canonical ones.
+func normalizeSubtitleMode(mode string) string {
+	switch mode {
+	case "auto":
+		return "forced-only"
+	case "always":
+		return "on"
+	case "":
+		return "off"
+	default:
+		return mode
+	}
+}
+
 // NewPrequeueHandler creates a new prequeue handler
 func NewPrequeueHandler(
 	indexerSvc *indexer.Service,
@@ -837,6 +851,13 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// Helper to check episode match
 	shouldSkipForEpisode := func(result models.NZBResult, i int) bool {
 		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
+			// Season packs (EpisodeCount > 1) contain multiple episodes and will be
+			// resolved to the correct file by the debrid provider. Don't reject them
+			// based on absolute episode parsing which can false-positive on season
+			// range patterns like "S01-02" in the title.
+			if result.EpisodeCount > 1 {
+				return false
+			}
 			parsedEp, hasEpisode := mediaresolve.ParseAbsoluteEpisodeNumber(result.Title)
 			if hasEpisode {
 				episodeCode := mediaresolve.EpisodeCode{Season: targetEpisode.SeasonNumber, Episode: targetEpisode.EpisodeNumber}
@@ -1163,9 +1184,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 				log.Printf("[prequeue] No preferred audio language set in user settings")
 			}
 
-			subMode := userSettings.Playback.PreferredSubtitleMode
+			subMode := normalizeSubtitleMode(userSettings.Playback.PreferredSubtitleMode)
 			subLang := userSettings.Playback.PreferredSubtitleLanguage
-			if subMode != "off" && subMode != "" {
+			if subMode != "off" {
 				// Get actual language of selected audio track for audio-aware subtitle selection
 				actualAudioLang := userSettings.Playback.PreferredAudioLanguage
 				if selectedAudioTrack >= 0 {

@@ -931,7 +931,7 @@ func (h *AccountUIHandler) GetProfileSettings(w http.ResponseWriter, r *http.Req
 		"playback": map[string]interface{}{
 			"preferredPlayer":           "native",
 			"preferredSubtitleLanguage": "en",
-			"preferredSubtitleMode":     "auto",
+			"preferredSubtitleMode":     "off",
 			"useLoadingScreen":          false,
 		},
 		"filtering": map[string]interface{}{

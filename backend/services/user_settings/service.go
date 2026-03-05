@@ -47,6 +47,20 @@ func NewService(storageDir string) (*Service, error) {
 	return svc, nil
 }
 
+// normalizeSubtitleMode maps legacy subtitle mode values to canonical ones.
+func normalizeSubtitleMode(mode string) string {
+	switch mode {
+	case "auto":
+		return "forced-only"
+	case "always":
+		return "on"
+	case "":
+		return "off"
+	default:
+		return mode
+	}
+}
+
 // Get returns the user's settings, or nil if not set.
 func (s *Service) Get(userID string) (*models.UserSettings, error) {
 	userID = strings.TrimSpace(userID)
@@ -119,6 +133,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.PreferredSubtitleMode == "" {
 			settings.Playback.PreferredSubtitleMode = defaults.Playback.PreferredSubtitleMode
 		}
+		settings.Playback.PreferredSubtitleMode = normalizeSubtitleMode(settings.Playback.PreferredSubtitleMode)
 		// SubtitleSize of 0 means "use default"
 		if settings.Playback.SubtitleSize == 0 {
 			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
