@@ -17,6 +17,15 @@
             </svg>
             Pause
         </button>
+        <button class="btn btn-danger" onclick="clearAllPrequeues()" id="clearAllBtn">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+            Clear All
+        </button>
     </div>
 </div>
 
@@ -120,23 +129,52 @@
                 ? escapeHtml(entry.streamPath)
                 : '';
 
-            return '<div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">' +
-                '<div style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">' +
-                    '<div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">' +
-                        titleDisplay +
+            return '<div style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 1rem;">' +
+                '<div style="flex: 1; min-width: 0;">' +
+                    '<div style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">' +
+                        '<div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">' +
+                            titleDisplay +
+                        '</div>' +
+                        '<div style="display: flex; gap: 0.35rem; flex-shrink: 0; align-items: center;">' +
+                            (isWarm ? '<span style="font-size: 0.7rem; font-weight: 600; background: #f59e0b22; color: #f59e0b; padding: 1px 6px; border-radius: 4px;">WARM</span>' : '') +
+                            '<span style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: ' + statusColor + '22; color: ' + statusColor + ';">' + entry.status + '</span>' +
+                        '</div>' +
                     '</div>' +
-                    '<div style="display: flex; gap: 0.35rem; flex-shrink: 0; align-items: center;">' +
-                        (isWarm ? '<span style="font-size: 0.7rem; font-weight: 600; background: #f59e0b22; color: #f59e0b; padding: 1px 6px; border-radius: 4px;">WARM</span>' : '') +
-                        '<span style="font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: ' + statusColor + '22; color: ' + statusColor + ';">' + entry.status + '</span>' +
+                    '<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">' +
+                        profileName + ' &middot; ' + (entry.mediaType || '—') + ' &middot; ' + formatRelativeTime(entry.createdAt) +
                     '</div>' +
+                    (streamPath ? '<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + escapeHtml(entry.streamPath || '') + '">' + streamPath + '</div>' : '') +
+                    (entry.error ? '<div style="font-size: 0.75rem; color: #ef4444; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + escapeHtml(entry.error) + '">' + escapeHtml(entry.error) + '</div>' : '') +
                 '</div>' +
-                '<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">' +
-                    profileName + ' &middot; ' + (entry.mediaType || '—') + ' &middot; ' + formatRelativeTime(entry.createdAt) +
+                '<div style="flex-shrink: 0;">' +
+                    '<button class="btn btn-icon btn-danger-soft" onclick="clearPrequeue(\'' + entry.id + '\')" title="Clear entry">' +
+                        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>' +
+                    '</button>' +
                 '</div>' +
-                (streamPath ? '<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + escapeHtml(entry.streamPath || '') + '">' + streamPath + '</div>' : '') +
-                (entry.error ? '<div style="font-size: 0.75rem; color: #ef4444; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + escapeHtml(entry.error) + '">' + escapeHtml(entry.error) + '</div>' : '') +
             '</div>';
         }).join('');
+    }
+
+    async function clearPrequeue(id) {
+        if (!confirm('Clear this prequeue entry?')) return;
+        try {
+            const response = await fetch('/admin/api/prequeue/' + id, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to clear entry');
+            loadEntries();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function clearAllPrequeues() {
+        if (!confirm('Clear ALL prequeue entries?')) return;
+        try {
+            const response = await fetch('/admin/api/prequeue', { method: 'DELETE' });
+            if (!response.ok) throw new Error('Failed to clear all entries');
+            loadEntries();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
     }
 
     function escapeHtml(text) {

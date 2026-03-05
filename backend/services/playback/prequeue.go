@@ -447,6 +447,22 @@ func (s *PrequeueStore) Delete(id string) {
 	delete(s.entries, id)
 }
 
+// DeleteAll removes all prequeue entries
+func (s *PrequeueStore) DeleteAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, entry := range s.entries {
+		if entry.cancelFunc != nil {
+			entry.cancelFunc()
+		}
+		delete(s.entries, id)
+	}
+	s.byTitleUser = make(map[string]string)
+	s.saveToDisk()
+	log.Printf("[prequeue] Cleared all prequeue entries")
+}
+
 // cleanupLoop periodically removes expired entries
 func (s *PrequeueStore) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second)

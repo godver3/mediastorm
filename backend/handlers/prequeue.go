@@ -149,8 +149,8 @@ func NewPrequeueHandler(
 	hlsCreator HLSCreator,
 	demoMode bool,
 ) *PrequeueHandler {
-	// 15 minute TTL for prequeue entries (allows time for credits when triggered at 90%)
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	// 30 minute TTL for prequeue entries (allows time for credits when triggered at 90%)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	return &PrequeueHandler{
 		store:       store,

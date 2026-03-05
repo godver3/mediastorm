@@ -10,6 +10,8 @@ import (
 
 	"novastream/models"
 	"novastream/services/playback"
+
+	"github.com/gorilla/mux"
 )
 
 // ProgressService provides access to playback progress data for admin dashboard
@@ -25,6 +27,8 @@ type UserService interface {
 // PrequeueStoreProvider provides access to prequeue entries for admin viewer
 type PrequeueStoreProvider interface {
 	ListAll() []*playback.PrequeueEntry
+	Delete(id string)
+	DeleteAll()
 }
 
 // AdminHandler provides administrative endpoints for monitoring the server
@@ -119,6 +123,35 @@ func (h *AdminHandler) GetPrequeueEntries(w http.ResponseWriter, r *http.Request
 		"entries": result,
 		"count":   len(result),
 	})
+}
+
+// ClearPrequeueEntry removes a single prequeue entry
+func (h *AdminHandler) ClearPrequeueEntry(w http.ResponseWriter, r *http.Request) {
+	if h.prequeueStore == nil {
+		http.Error(w, "prequeue store not available", http.StatusInternalServerError)
+		return
+	}
+
+	vars := mux.Vars(r)
+	prequeueID := vars["prequeueID"]
+	if prequeueID == "" {
+		http.Error(w, "missing prequeue ID", http.StatusBadRequest)
+		return
+	}
+
+	h.prequeueStore.Delete(prequeueID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ClearAllPrequeueEntries removes all prequeue entries
+func (h *AdminHandler) ClearAllPrequeueEntries(w http.ResponseWriter, r *http.Request) {
+	if h.prequeueStore == nil {
+		http.Error(w, "prequeue store not available", http.StatusInternalServerError)
+		return
+	}
+
+	h.prequeueStore.DeleteAll()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // StreamInfo represents information about an active stream

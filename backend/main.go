@@ -722,6 +722,8 @@ func main() {
 	prequeueAdminHandler.SetUserService(userService)
 	prequeueAdminHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	r.HandleFunc("/admin/api/prequeue", adminUIHandler.RequireMasterAuth(prequeueAdminHandler.GetPrequeueEntries)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/prequeue", adminUIHandler.RequireMasterAuth(prequeueAdminHandler.ClearAllPrequeueEntries)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/prequeue/{prequeueID}", adminUIHandler.RequireMasterAuth(prequeueAdminHandler.ClearPrequeueEntry)).Methods(http.MethodDelete)
 
 	// Connections dashboard (admin-only)
 	r.HandleFunc("/admin/connections", adminUIHandler.RequireMasterAuth(adminUIHandler.ConnectionsPage)).Methods(http.MethodGet)
@@ -868,6 +870,16 @@ func main() {
 
 	// Start prewarm background URL refresh
 	prewarmService.Start(context.Background())
+
+	// Run initial prewarm cycle in background
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		log.Printf("[prewarm] Running initial startup cycle...")
+		if _, err := prewarmService.RunOnce(ctx); err != nil {
+			log.Printf("[prewarm] Initial startup cycle failed: %v", err)
+		}
+	}()
 
 	// Start background cache manager to warm trending data and custom lists
 	// on startup and refresh periodically (every 2 hours)

@@ -44,7 +44,7 @@ func (m *mockDebridRefresher) GetDirectURL(ctx context.Context, path string) (st
 }
 
 func TestRunOnce_WarmsItems(t *testing.T) {
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	users := []models.User{
 		{ID: "user1", Name: "Alice"},
@@ -94,7 +94,7 @@ func TestRunOnce_WarmsItems(t *testing.T) {
 }
 
 func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	users := []models.User{
 		{ID: "user1", Name: "Alice"},
@@ -150,7 +150,7 @@ func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
 }
 
 func TestRunOnce_RemovesStaleEntries(t *testing.T) {
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	users := []models.User{
 		{ID: "user1", Name: "Alice"},
@@ -192,7 +192,7 @@ func TestRunOnce_RemovesStaleEntries(t *testing.T) {
 }
 
 func TestRunOnce_HandlesWorkerFailure(t *testing.T) {
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	users := []models.User{
 		{ID: "user1", Name: "Alice"},
@@ -376,7 +376,7 @@ func TestRefreshURLs_SkipsEntriesWithErrors(t *testing.T) {
 }
 
 func TestRunOnce_MultipleUsersMultipleItems(t *testing.T) {
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	users := []models.User{
 		{ID: "user1", Name: "Alice"},
@@ -490,7 +490,7 @@ func TestPersistence_SaveAndLoad(t *testing.T) {
 
 func TestPersistence_RestorePrequeueEntries(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	// Create service with persisted entries
 	svc := NewService(nil, tmpDir)
@@ -540,7 +540,7 @@ func TestPersistence_RestorePrequeueEntries(t *testing.T) {
 
 func TestPersistence_ExpiredEntriesRemovedOnRestore(t *testing.T) {
 	tmpDir := t.TempDir()
-	store := playback.NewPrequeueStore(15 * time.Minute)
+	store := playback.NewPrequeueStore(30 * time.Minute)
 
 	// Create service with an expired entry
 	svc := NewService(nil, tmpDir)
