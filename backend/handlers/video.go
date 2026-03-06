@@ -74,9 +74,9 @@ type VideoHandler struct {
 	subtitleExtractManager *SubtitleExtractManager
 
 	// Local WebDAV access for ffprobe seeking (usenet paths)
-	webdavMu       sync.RWMutex
-	webdavBaseURL  string
-	webdavPrefix   string
+	webdavMu      sync.RWMutex
+	webdavBaseURL string
+	webdavPrefix  string
 
 	// User settings for policy checks (e.g., HDR/DV policy)
 	userSettingsSvc   UserSettingsProvider
@@ -374,10 +374,25 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	// Add filename header if available
-	if resp.Filename != "" {
-		w.Header().Set("X-Filename", resp.Filename)
-		log.Printf("[video] setting filename header: %s", resp.Filename)
+	displayName := sanitizeExternalDisplayName(r.URL.Query().Get("displayName"))
+	if displayName == "" {
+		displayName = sanitizeExternalDisplayName(mux.Vars(r)["displayName"])
+	}
+	filename := displayName
+	if filename == "" {
+		filename = sanitizeExternalDisplayName(resp.Filename)
+	}
+	if filename == "" {
+		filename = inferFilenameFromPath(cleanPath)
+	}
+
+	// Add filename headers for external players (Infuse uses this for friendly naming).
+	if filename != "" {
+		w.Header().Set("X-Filename", filename)
+		if displayName != "" || w.Header().Get("Content-Disposition") == "" {
+			w.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
+		}
+		log.Printf("[video] setting filename headers: %s", filename)
 	}
 
 	status := resp.Status
@@ -1694,7 +1709,7 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 
 	args := []string{
 		"-v", "error",
-		"-probesize", "1000000",      // 1MB (faster startup)
+		"-probesize", "1000000", // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
@@ -2152,6 +2167,49 @@ func (h *VideoHandler) writeCommonHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
+}
+
+func sanitizeExternalDisplayName(input string) string {
+	name := strings.TrimSpace(input)
+	if name == "" {
+		return ""
+	}
+	name = strings.ReplaceAll(name, "\r", " ")
+	name = strings.ReplaceAll(name, "\n", " ")
+	// Avoid path traversal characters inside filename contexts.
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\\", "_")
+	return strings.TrimSpace(name)
+}
+
+func inferFilenameFromPath(cleanPath string) string {
+	raw := strings.TrimSpace(cleanPath)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		if parsed, err := url.Parse(raw); err == nil {
+			raw = parsed.Path
+		}
+	}
+	base := path.Base(raw)
+	if base == "." || base == "/" || base == "" {
+		return ""
+	}
+	if decoded, err := url.PathUnescape(base); err == nil && strings.TrimSpace(decoded) != "" {
+		base = decoded
+	}
+	return sanitizeExternalDisplayName(base)
+}
+
+func buildInlineContentDisposition(filename string) string {
+	safe := sanitizeExternalDisplayName(filename)
+	if safe == "" {
+		safe = "stream"
+	}
+	quoted := strings.ReplaceAll(safe, `"`, `'`)
+	encoded := url.PathEscape(safe)
+	return fmt.Sprintf(`inline; filename="%s"; filename*=UTF-8''%s`, quoted, encoded)
 }
 
 // isConnectionError checks if the error is a network connection error that indicates
@@ -3196,6 +3254,24 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	for _, header := range forwardHeaders {
 		if value := resp.Header.Get(header); value != "" {
 			w.Header().Set(header, value)
+		}
+	}
+
+	displayName := sanitizeExternalDisplayName(r.URL.Query().Get("displayName"))
+	if displayName == "" {
+		displayName = sanitizeExternalDisplayName(mux.Vars(r)["displayName"])
+	}
+	filename := displayName
+	if filename == "" {
+		filename = sanitizeExternalDisplayName(resp.Header.Get("X-Filename"))
+	}
+	if filename == "" {
+		filename = inferFilenameFromPath(externalURL)
+	}
+	if filename != "" {
+		w.Header().Set("X-Filename", filename)
+		if displayName != "" || w.Header().Get("Content-Disposition") == "" {
+			w.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
 		}
 	}
 

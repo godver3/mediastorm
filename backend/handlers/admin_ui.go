@@ -453,7 +453,7 @@ var SettingsSchema = map[string]interface{}{
 		"group": "experience",
 		"order": 0,
 		"fields": map[string]interface{}{
-			"preferredPlayer":           map[string]interface{}{"type": "select", "label": "Preferred Player", "options": []string{"native", "infuse"}, "description": "Default video player"},
+			"preferredPlayer":           map[string]interface{}{"type": "select", "label": "Preferred Player", "options": []string{"native", "infuse", "outplayer", "vlc", "mxplayer", "kodi"}, "description": "Default video player"},
 			"preferredAudioLanguage":    map[string]interface{}{"type": "text", "label": "Audio Language", "description": "Three-letter ISO 639-2 code (e.g., eng, spa, fra, deu, jpn)"},
 			"preferredSubtitleLanguage": map[string]interface{}{"type": "text", "label": "Subtitle Language", "description": "Three-letter ISO 639-2 code (e.g., eng, spa, fra, deu, jpn)"},
 			"preferredSubtitleMode":     map[string]interface{}{"type": "select", "label": "Subtitle Mode", "options": []string{"off", "forced-only", "on"}, "description": "Default subtitle behavior"},

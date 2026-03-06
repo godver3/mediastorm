@@ -297,6 +297,7 @@ func Register(
 
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
+	protected.HandleFunc("/video/stream/{displayName}", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	protected.HandleFunc("/video/metadata", videoHandler.ProbeVideo).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
 

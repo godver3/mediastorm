@@ -370,6 +370,10 @@ function renderSettings() {
                         <select id="preferredPlayer" onchange="markChanged()">
                             <option value="native" ${s.playback.preferredPlayer === 'native' ? 'selected' : ''}>Native Player</option>
                             <option value="infuse" ${s.playback.preferredPlayer === 'infuse' ? 'selected' : ''}>Infuse</option>
+                            <option value="outplayer" ${s.playback.preferredPlayer === 'outplayer' ? 'selected' : ''}>Outplayer</option>
+                            <option value="vlc" ${s.playback.preferredPlayer === 'vlc' ? 'selected' : ''}>VLC (Android)</option>
+                            <option value="mxplayer" ${s.playback.preferredPlayer === 'mxplayer' ? 'selected' : ''}>MX Player (Android)</option>
+                            <option value="kodi" ${s.playback.preferredPlayer === 'kodi' ? 'selected' : ''}>Kodi (Android)</option>
                         </select>
                     </div>
                 </div>
