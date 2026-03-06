@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -50,14 +51,31 @@ type AccountResponse struct {
 
 // Login authenticates a user and returns a session token.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[auth] login request method=%s path=%s host=%s remote=%s xff=%q xrealip=%q xfh=%q xfp=%q contentType=%q accept=%q ua=%q",
+		r.Method,
+		r.URL.Path,
+		r.Host,
+		r.RemoteAddr,
+		r.Header.Get("X-Forwarded-For"),
+		r.Header.Get("X-Real-IP"),
+		r.Header.Get("X-Forwarded-Host"),
+		r.Header.Get("X-Forwarded-Proto"),
+		r.Header.Get("Content-Type"),
+		r.Header.Get("Accept"),
+		r.Header.Get("User-Agent"),
+	)
+
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[auth] login decode failed path=%s host=%s err=%v", r.URL.Path, r.Host, err)
 		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	log.Printf("[auth] login payload username_len=%d rememberMe=%t", len(strings.TrimSpace(req.Username)), req.RememberMe)
 
 	account, err := h.accounts.Authenticate(req.Username, req.Password)
 	if err != nil {
+		log.Printf("[auth] login authentication failed user=%q ip=%s err=%v", strings.TrimSpace(req.Username), getClientIPAddress(r), err)
 		msg := "invalid username or password"
 		if errors.Is(err, accounts.ErrAccountExpired) {
 			msg = "this account has expired"
@@ -78,9 +96,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		session, err = h.sessions.Create(account.ID, account.IsMaster, userAgent, ipAddress)
 	}
 	if err != nil {
+		log.Printf("[auth] login session create failed accountID=%s ip=%s err=%v", account.ID, ipAddress, err)
 		http.Error(w, `{"error": "failed to create session"}`, http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[auth] login success accountID=%s username=%q isMaster=%t ip=%s", account.ID, account.Username, account.IsMaster, ipAddress)
 
 	resp := LoginResponse{
 		Token:     session.Token,
