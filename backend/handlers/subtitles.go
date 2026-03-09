@@ -478,26 +478,26 @@ func (h *SubtitlesHandler) resolveSubtitleSourceURL(r *http.Request, sourceURL s
 }
 
 func internalLoopbackBaseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
-		scheme = "https"
-	}
+	// Always use plain HTTP for loopback — the backend never terminates TLS itself.
+	// Behind a reverse proxy, r.TLS / X-Forwarded-Proto reflect the external scheme,
+	// not the local listener, so using them would produce https://127.0.0.1:443 which fails.
 
-	host := strings.TrimSpace(r.Host)
-	if host == "" {
-		if scheme == "https" {
-			return "https://127.0.0.1:443"
+	// Try to get the actual listen port from the request's local address (Go 1.20+).
+	if localAddr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if _, port, err := net.SplitHostPort(localAddr.String()); err == nil && port != "" {
+			return "http://127.0.0.1:" + port
 		}
-		return "http://127.0.0.1:80"
 	}
 
-	if _, port, err := net.SplitHostPort(host); err == nil && port != "" {
-		return scheme + "://127.0.0.1:" + port
+	// Fallback: extract port from Host header (works for direct access like host:7777).
+	host := strings.TrimSpace(r.Host)
+	if host != "" {
+		if _, port, err := net.SplitHostPort(host); err == nil && port != "" {
+			return "http://127.0.0.1:" + port
+		}
 	}
 
-	if scheme == "https" {
-		return "https://127.0.0.1:443"
-	}
+	// Last resort: default HTTP port.
 	return "http://127.0.0.1:80"
 }
 
