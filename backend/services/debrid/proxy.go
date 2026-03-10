@@ -2,7 +2,9 @@ package debrid
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,9 +29,22 @@ type ProxyService struct {
 
 // NewProxyService constructs a new proxy service with a default HTTP client.
 func NewProxyService(cfg *config.Manager) *ProxyService {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       5 * time.Minute,
+		ResponseHeaderTimeout: 15 * time.Second,
+		TLSHandshakeTimeout:  10 * time.Second,
+	}
 	return &ProxyService{
 		cfg:        cfg,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		httpClient: &http.Client{Transport: transport, Timeout: 0},
 	}
 }
 

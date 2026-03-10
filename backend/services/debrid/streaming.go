@@ -2,9 +2,11 @@ package debrid
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,10 +25,11 @@ type cachedURL struct {
 
 // StreamingProvider implements streaming.Provider for debrid content.
 type StreamingProvider struct {
-	cfg      *config.Manager
-	urlCache map[string]cachedURL
-	cacheMux sync.RWMutex
-	cacheTTL time.Duration
+	cfg        *config.Manager
+	urlCache   map[string]cachedURL
+	cacheMux   sync.RWMutex
+	cacheTTL   time.Duration
+	httpClient *http.Client
 }
 
 func parseDebridPath(path string) (provider, torrentID, fileID string, err error) {
@@ -67,10 +70,30 @@ func cacheKeyFor(torrentID, fileID string) string {
 
 // NewStreamingProvider creates a new debrid streaming provider.
 func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:    true,
+		MaxIdleConns:         20,
+		MaxIdleConnsPerHost:  8,
+		MaxConnsPerHost:      0, // unlimited
+		IdleConnTimeout:      5 * time.Minute,
+		ResponseHeaderTimeout: 15 * time.Second,
+		TLSHandshakeTimeout:  10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &StreamingProvider{
 		cfg:      cfg,
 		urlCache: make(map[string]cachedURL),
-		cacheTTL: 10 * time.Minute, // Real-Debrid URLs are valid for longer, but 10 min is safe
+		cacheTTL: 10 * time.Minute,
+		httpClient: &http.Client{
+			Transport: transport,
+			Timeout:   0, // no overall timeout; context handles cancellation
+		},
 	}
 }
 
@@ -300,12 +323,9 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		httpReq.Header.Set("Range", req.RangeHeader)
 	}
 
-	// Make the request
-	httpClient := &http.Client{
-		Timeout: 30 * time.Minute,
-	}
-
-	resp, err := httpClient.Do(httpReq)
+	// Use shared HTTP client with connection pooling — rapid seek requests
+	// reuse warm TCP+TLS connections to the CDN instead of handshaking each time
+	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -349,9 +369,52 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		Status:        resp.StatusCode,
 		Headers:       headers,
 		ContentLength: resp.ContentLength,
-		Body:          resp.Body,
+		Body:          &drainOnCloseBody{body: resp.Body},
 		Filename:      filename,
 	}, nil
+}
+
+// drainOnCloseBody wraps an io.ReadCloser so that on Close(), it drains a small
+// amount of unread data in the background instead of immediately closing the
+// connection. With HTTP/1.1 CDNs (like Real-Debrid), an unread response body
+// forces the TCP connection to be destroyed. By draining briefly, we allow the
+// connection to return to the pool for reuse by the next range request,
+// eliminating the ~500ms TLS handshake cost during rapid seek storms.
+type drainOnCloseBody struct {
+	body io.ReadCloser
+}
+
+func (d *drainOnCloseBody) Read(p []byte) (int, error) {
+	return d.body.Read(p)
+}
+
+const (
+	drainMaxBytes   = 2 * 1024 * 1024 // drain up to 2MB
+	drainTimeout    = 2 * time.Second
+)
+
+func (d *drainOnCloseBody) Close() error {
+	go func() {
+		defer d.body.Close()
+		timer := time.NewTimer(drainTimeout)
+		defer timer.Stop()
+
+		done := make(chan struct{})
+		go func() {
+			// Discard up to drainMaxBytes to return the connection to the pool
+			io.CopyN(io.Discard, d.body, drainMaxBytes)
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Drained successfully — connection returns to pool
+		case <-timer.C:
+			// Took too long — just close (kills connection)
+			d.body.Close()
+		}
+	}()
+	return nil
 }
 
 // CompositeProvider combines multiple streaming providers.
