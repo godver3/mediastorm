@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/mozillazg/go-unidecode"
+	"golang.org/x/text/unicode/norm"
 
 	"novastream/internal/mediaresolve"
 	"novastream/models"
@@ -630,8 +631,23 @@ func normalizeForContainment(s string) string {
 	s = strings.ReplaceAll(s, "-", " ")
 	s = strings.ReplaceAll(s, "_", " ")
 	s = strings.ReplaceAll(s, ":", " ")
+	// Strip diacritical marks (é→e, ü→u, etc.)
+	s = stripDiacritics(s)
 	// Collapse multiple spaces and trim
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+}
+
+// stripDiacritics removes combining marks from a string after NFD decomposition,
+// converting accented characters to their base form (e.g., "réseau" → "reseau").
+func stripDiacritics(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range norm.NFD.String(s) {
+		if !unicode.Is(unicode.Mn, r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // titleContainmentScore returns a similarity score if one title contains the other.

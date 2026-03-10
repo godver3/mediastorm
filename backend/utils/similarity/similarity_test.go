@@ -65,6 +65,30 @@ func TestSimilarity(t *testing.T) {
 			s2:       "Law and Order",
 			minScore: 1.0,
 		},
+		{
+			name:     "Diacritics stripped - French accents",
+			s1:       "Hors Reseau L Experience",
+			s2:       "Hors réseau : L'expérience",
+			minScore: 0.95,
+		},
+		{
+			name:     "Diacritics stripped - German umlauts",
+			s1:       "Uber",
+			s2:       "Über",
+			minScore: 1.0,
+		},
+		{
+			name:     "Diacritics stripped - Spanish tildes",
+			s1:       "Espana",
+			s2:       "España",
+			minScore: 1.0,
+		},
+		{
+			name:     "Diacritics stripped - mixed accents",
+			s1:       "Amelie",
+			s2:       "Amélie",
+			minScore: 1.0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -96,6 +120,11 @@ func TestNormalize(t *testing.T) {
 		{"Law & Order", "law and order"},
 		{"Me, MYSELF & I", "me myself and i"},
 		{"Rock & Roll", "rock and roll"},
+		{"Hors réseau : L'expérience", "hors reseau lexperience"},
+		{"Amélie", "amelie"},
+		{"Über", "uber"},
+		{"España", "espana"},
+		{"café crème", "cafe creme"},
 	}
 
 	for _, tt := range tests {

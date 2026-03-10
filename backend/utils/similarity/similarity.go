@@ -3,6 +3,8 @@ package similarity
 import (
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Similarity calculates the similarity percentage between two strings
@@ -76,10 +78,18 @@ func normalize(s string) string {
 	// Replace "&" with " and " before other processing
 	s = strings.ReplaceAll(s, "&", " and ")
 
+	// NFD decomposition splits accented characters into base + combining marks
+	// e.g., "é" → "e" + combining acute accent
+	s = norm.NFD.String(strings.ToLower(s))
+
 	var result strings.Builder
 	result.Grow(len(s))
 
-	for _, r := range strings.ToLower(s) {
+	for _, r := range s {
+		// Skip combining marks (diacritical marks like accents, umlauts, tildes)
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			result.WriteRune(r)
 		} else if unicode.IsSpace(r) || r == '.' || r == '-' || r == '_' {
