@@ -781,6 +781,66 @@ func TestResults_SeriesYearMismatch(t *testing.T) {
 	})
 }
 
+func TestResults_EpisodeAirYear(t *testing.T) {
+	// Test that results tagged with the episode's air year are accepted even when
+	// the series premiere year is far off. E.g., One Piece (2023) S02E01 aired in 2026.
+	t.Run("accepts results matching episode air year", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "ONE.PIECE.2023.S02E01.1080p.WEB-DL.x264"},             // Matches series year - should pass
+			{Title: "ONE.PIECE.S02E01.2026.1080p.WEB-DL.x264"},             // Matches episode air year - should pass
+			{Title: "One.Piece.S02.2026.1080p.WEBRip.x265"},                // Matches episode air year - should pass
+			{Title: "ONE.PIECE.S02E01.2020.1080p.WEB-DL.x264"},             // Matches neither - should be rejected
+			{Title: "ONE.PIECE.S02E01.1080p.WEB-DL.x264"},                  // No year - should be kept (leniency)
+		}
+
+		opts := Options{
+			ExpectedTitle:  "ONE PIECE",
+			ExpectedYear:   2023,
+			EpisodeAirYear: 2026,
+			IsMovie:        false,
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 4 {
+			t.Errorf("Expected 4 results (2023 + 2026 + 2026 + no year), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		// Verify 2020 result was rejected
+		for _, r := range filtered {
+			if r.Title == "ONE.PIECE.S02E01.2020.1080p.WEB-DL.x264" {
+				t.Errorf("Result with year 2020 should have been rejected (doesn't match series year 2023 or episode air year 2026)")
+			}
+		}
+	})
+
+	t.Run("no episode air year falls back to standard check", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"},  // Matches series year
+			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"},  // Too far from series year, no episode air year set
+		}
+
+		opts := Options{
+			ExpectedTitle: "Show Name",
+			ExpectedYear:  2023,
+			IsMovie:       false,
+			// EpisodeAirYear not set - should use standard ±1 check
+		}
+
+		filtered := Results(results, opts)
+
+		if len(filtered) != 1 {
+			t.Errorf("Expected 1 result (only 2023), got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+	})
+}
+
 func TestResults_TitleContainment(t *testing.T) {
 	// Test the bug case: "F1 The Movie" releases should match when TMDB returns "F1"
 	// This tests the fix for non-English title matching where the original title

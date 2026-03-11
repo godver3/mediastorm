@@ -9,6 +9,7 @@ import (
 type FilterOptions struct {
 	ExpectedTitle       string
 	ExpectedYear        int
+	EpisodeAirYear      int                // Year the target episode aired (for year filter tolerance)
 	MediaType           MediaType          // movie or series
 	MaxSizeMovieGB      float64            // Maximum size in GB for movies (0 = no limit)
 	MaxSizeEpisodeGB    float64            // Maximum size in GB for episodes (0 = no limit)
@@ -33,6 +34,7 @@ func FilterResults(results []models.NZBResult, opts FilterOptions) []models.NZBR
 	filterOpts := filter.Options{
 		ExpectedTitle:         opts.ExpectedTitle,
 		ExpectedYear:          opts.ExpectedYear,
+		EpisodeAirYear:        opts.EpisodeAirYear,
 		IsMovie:               opts.MediaType == MediaTypeMovie,
 		MaxSizeMovieGB:        opts.MaxSizeMovieGB,
 		MaxSizeEpisodeGB:      opts.MaxSizeEpisodeGB,

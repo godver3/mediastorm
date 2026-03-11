@@ -91,6 +91,7 @@ func (r *SeriesEpisodeResolver) GetEpisodesForSeasons(seasons []int) int {
 type Options struct {
 	ExpectedTitle       string
 	ExpectedYear        int
+	EpisodeAirYear      int         // Year the target episode aired (allows results tagged with this year)
 	IsMovie             bool        // true for movies, false for TV shows
 	MaxSizeMovieGB      float64     // Maximum size in GB for movies (0 = no limit)
 	MaxSizeEpisodeGB    float64     // Maximum size in GB for episodes (0 = no limit)
@@ -304,12 +305,19 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 		if opts.ExpectedYear > 0 {
 			if parsed.Year > 0 {
 				yearDiff := abs(opts.ExpectedYear - parsed.Year)
-				if yearDiff > MaxYearDifference {
-					log.Printf("[filter] Rejecting %q: year difference %d > %d (expected: %d, got: %d)",
-						result.Title, yearDiff, MaxYearDifference, opts.ExpectedYear, parsed.Year)
+				// Also accept if the parsed year matches the episode's air year (±1)
+				// This handles shows where S02 airs years after the series premiere
+				episodeYearMatch := opts.EpisodeAirYear > 0 && abs(opts.EpisodeAirYear-parsed.Year) <= MaxYearDifference
+				if yearDiff > MaxYearDifference && !episodeYearMatch {
+					log.Printf("[filter] Rejecting %q: year difference %d > %d (expected: %d, got: %d, episodeAirYear: %d)",
+						result.Title, yearDiff, MaxYearDifference, opts.ExpectedYear, parsed.Year, opts.EpisodeAirYear)
 					continue
 				}
 				result.Attributes["yearMatch"] = "true"
+				if episodeYearMatch && yearDiff > MaxYearDifference {
+					log.Printf("[filter] Accepted %q: year %d matches episode air year %d (series year: %d)",
+						result.Title, parsed.Year, opts.EpisodeAirYear, opts.ExpectedYear)
+				}
 			} else {
 				// If we can't parse a year from the title, be lenient and keep it
 				// but flag it so ranking can derank it below year-matched results

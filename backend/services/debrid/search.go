@@ -47,6 +47,7 @@ type SearchOptions struct {
 	IsAnime               bool                        // True for anime content - requires waiting for Nyaa scraper
 	IsDaily               bool                        // True for daily shows (talk shows, news) - enables date-based matching
 	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
+	EpisodeAirYear        int                         // Year the target episode aired (for year filter tolerance)
 }
 
 // SearchService coordinates queries against configured debrid providers.
@@ -511,6 +512,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		filterOpts := FilterOptions{
 			ExpectedTitle:         parsed.Title,
 			ExpectedYear:          parsed.Year,
+			EpisodeAirYear:        opts.EpisodeAirYear,
 			MediaType:             parsed.MediaType,
 			MaxSizeMovieGB:        models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
 			MaxSizeEpisodeGB:      models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),

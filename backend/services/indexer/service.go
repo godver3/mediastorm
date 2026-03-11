@@ -478,6 +478,7 @@ type SearchOptions struct {
 	IsAnime               bool                        // True for anime content - requires waiting for Nyaa scraper
 	IsDaily               bool                        // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
+	EpisodeAirYear        int                         // Year the target episode aired (for year filter tolerance)
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
@@ -585,6 +586,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				IsAnime:               opts.IsAnime,
 				IsDaily:               opts.IsDaily,
 				TargetAirDate:         opts.TargetAirDate,
+				EpisodeAirYear:        opts.EpisodeAirYear,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			log.Printf("[indexer] TIMING: debrid search complete (took: %v, results: %d)", time.Since(debridStart), len(debridResults))
@@ -906,6 +908,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 			IsAnime:               opts.IsAnime,
 			IsDaily:               opts.IsDaily,
 			TargetAirDate:         opts.TargetAirDate,
+			EpisodeAirYear:        opts.EpisodeAirYear,
 		}
 
 		debridResults, err := s.debrid.Search(ctx, debOpts)
@@ -1454,6 +1457,7 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 	filterOpts := filter.Options{
 		ExpectedTitle:    expectedTitle,
 		ExpectedYear:     expectedYear,
+		EpisodeAirYear:   opts.EpisodeAirYear,
 		IsMovie:          isMovie,
 		MaxSizeMovieGB:   models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
 		MaxSizeEpisodeGB: models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
