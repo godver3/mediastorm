@@ -102,9 +102,9 @@ type VideoHandler struct {
 // rangeBlockCache stores recently-fetched byte ranges to serve tiny range requests
 // from memory instead of making round trips to the debrid CDN.
 const (
-	rangeCacheMinFetchSize = 512 * 1024 // Fetch at least 512KB from CDN
-	rangeCacheTTL          = 30 * time.Second
-	rangeCacheMaxBlocks    = 8 // Max cached blocks per path
+	rangeCacheMinFetchSize = 2 * 1024 * 1024 // Fetch at least 2MB from CDN (4K DV needs larger prefetch)
+	rangeCacheTTL          = 60 * time.Second
+	rangeCacheMaxBlocks    = 16 // Max cached blocks per path
 )
 
 type rangeCacheBlock struct {
@@ -116,6 +116,11 @@ type rangeCacheBlock struct {
 type rangeBlockCache struct {
 	mu     sync.Mutex
 	blocks map[string][]rangeCacheBlock // keyed by file path
+
+	// In-flight fetch coalescing: when multiple requests land in the same
+	// fetch window, only one CDN request is made; others wait on the channel.
+	flightMu sync.Mutex
+	inFlight map[string]chan struct{} // key: "path:fetchStart"
 }
 
 func (c *rangeBlockCache) get(path string, start, end int64) ([]byte, bool) {
@@ -138,6 +143,36 @@ func (c *rangeBlockCache) get(path string, start, end int64) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// tryStartFetch attempts to claim ownership of a fetch for the given path+offset.
+// Returns true if this caller should perform the fetch (and must call finishFetch when done).
+// Returns false if another goroutine is already fetching this window — caller should wait
+// on the returned channel, then re-check the cache.
+func (c *rangeBlockCache) tryStartFetch(path string, fetchStart int64) (bool, chan struct{}) {
+	key := fmt.Sprintf("%s:%d", path, fetchStart)
+	c.flightMu.Lock()
+	defer c.flightMu.Unlock()
+	if c.inFlight == nil {
+		c.inFlight = make(map[string]chan struct{})
+	}
+	if ch, ok := c.inFlight[key]; ok {
+		return false, ch
+	}
+	ch := make(chan struct{})
+	c.inFlight[key] = ch
+	return true, ch
+}
+
+// finishFetch signals all waiters that the fetch for path+offset is complete.
+func (c *rangeBlockCache) finishFetch(path string, fetchStart int64) {
+	key := fmt.Sprintf("%s:%d", path, fetchStart)
+	c.flightMu.Lock()
+	defer c.flightMu.Unlock()
+	if ch, ok := c.inFlight[key]; ok {
+		close(ch)
+		delete(c.inFlight, key)
+	}
 }
 
 func (c *rangeBlockCache) put(path string, offset int64, data []byte) {
@@ -403,42 +438,73 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 
 				// Cache miss for a small request — expand to fetch a larger chunk from CDN,
 				// then cache it so subsequent nearby requests are instant.
-				fetchStart := rangeStart
-				fetchEnd := rangeStart + rangeCacheMinFetchSize - 1
+				// Align fetch window to rangeCacheMinFetchSize boundaries so that
+				// concurrent requests for nearby offsets coalesce into one CDN fetch.
+				fetchStart := (rangeStart / rangeCacheMinFetchSize) * rangeCacheMinFetchSize
+				fetchEnd := fetchStart + rangeCacheMinFetchSize - 1
 				expandedRange := fmt.Sprintf("bytes=%d-%d", fetchStart, fetchEnd)
-				log.Printf("[video] range cache MISS: expanding %q to %q for path=%q", rangeHeader, expandedRange, cleanPath)
 
-				fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer fetchCancel()
-				fetchResp, fetchErr := h.streamer.Stream(fetchCtx, streaming.Request{
-					Path:        cleanPath,
-					RangeHeader: expandedRange,
-					Method:      r.Method,
-				})
-				if fetchErr == nil {
-					defer fetchResp.Close()
-					fetchBuf := make([]byte, rangeCacheMinFetchSize+4096)
-					n, _ := io.ReadFull(fetchResp.Body, fetchBuf)
-					if n > 0 {
-						fetchBuf = fetchBuf[:n]
-						h.rangeCache.put(cleanPath, fetchStart, fetchBuf)
-						log.Printf("[video] range cache FILL: path=%q offset=%d size=%d", cleanPath, fetchStart, n)
-
-						// Serve the originally requested bytes from the fetched data
-						reqOffset := rangeStart - fetchStart
-						reqEnd := reqOffset + rangeLen
-						if reqEnd <= int64(n) {
-							h.writeCommonHeaders(w)
-							w.Header().Set("Content-Type", "video/mp4")
-							w.Header().Set("Accept-Ranges", "bytes")
-							w.Header().Set("Content-Length", strconv.FormatInt(rangeLen, 10))
-							w.WriteHeader(http.StatusPartialContent)
-							w.Write(fetchBuf[reqOffset:reqEnd])
-							return true, nil
-						}
+				// Coalesce: if another goroutine is already fetching this window, wait for it
+				// then serve from cache instead of making a duplicate CDN request.
+				isOwner, flightCh := h.rangeCache.tryStartFetch(cleanPath, fetchStart)
+				if !isOwner {
+					log.Printf("[video] range cache COALESCE: waiting for in-flight fetch path=%q window=%d", cleanPath, fetchStart)
+					select {
+					case <-flightCh:
+						// Fetch completed — check cache
+					case <-r.Context().Done():
+						// Client disconnected while waiting
+						return true, r.Context().Err()
 					}
+					if cached, hit := h.rangeCache.get(cleanPath, rangeStart, rangeEnd+1); hit {
+						log.Printf("[video] range cache HIT (after coalesce): path=%q range=%q (%d bytes)", cleanPath, rangeHeader, rangeLen)
+						h.writeCommonHeaders(w)
+						w.Header().Set("Content-Type", "video/mp4")
+						w.Header().Set("Accept-Ranges", "bytes")
+						w.Header().Set("Content-Length", strconv.FormatInt(int64(len(cached)), 10))
+						w.WriteHeader(http.StatusPartialContent)
+						w.Write(cached)
+						return true, nil
+					}
+					// Coalesced fetch didn't cover our range — fall through to normal streaming
 				} else {
-					log.Printf("[video] range cache fetch failed: path=%q err=%v", cleanPath, fetchErr)
+					log.Printf("[video] range cache MISS: expanding %q to %q for path=%q", rangeHeader, expandedRange, cleanPath)
+
+					fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
+					fetchResp, fetchErr := h.streamer.Stream(fetchCtx, streaming.Request{
+						Path:        cleanPath,
+						RangeHeader: expandedRange,
+						Method:      r.Method,
+					})
+					if fetchErr == nil {
+						fetchBuf := make([]byte, rangeCacheMinFetchSize+4096)
+						n, _ := io.ReadFull(fetchResp.Body, fetchBuf)
+						fetchResp.Close()
+						fetchCancel()
+						h.rangeCache.finishFetch(cleanPath, fetchStart)
+						if n > 0 {
+							fetchBuf = fetchBuf[:n]
+							h.rangeCache.put(cleanPath, fetchStart, fetchBuf)
+							log.Printf("[video] range cache FILL: path=%q offset=%d size=%d", cleanPath, fetchStart, n)
+
+							// Serve the originally requested bytes from the fetched data
+							reqOffset := rangeStart - fetchStart
+							reqEnd := reqOffset + rangeLen
+							if reqEnd <= int64(n) {
+								h.writeCommonHeaders(w)
+								w.Header().Set("Content-Type", "video/mp4")
+								w.Header().Set("Accept-Ranges", "bytes")
+								w.Header().Set("Content-Length", strconv.FormatInt(rangeLen, 10))
+								w.WriteHeader(http.StatusPartialContent)
+								w.Write(fetchBuf[reqOffset:reqEnd])
+								return true, nil
+							}
+						}
+					} else {
+						fetchCancel()
+						h.rangeCache.finishFetch(cleanPath, fetchStart)
+						log.Printf("[video] range cache fetch failed: path=%q err=%v", cleanPath, fetchErr)
+					}
 				}
 				// Fall through to normal streaming if cache fill failed
 			}
