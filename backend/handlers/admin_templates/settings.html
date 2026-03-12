@@ -1613,7 +1613,7 @@
                 return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'tags':
                 const tags = Array.isArray(value) ? value : [];
-                const tagsHtml = tags.map(tag => '<span class="tag">'+tag+'<span class="tag-remove" onclick="removeTag(\''+basePath+'\', \''+fieldKey+'\', \''+tag+'\')">&times;</span></span>').join('');
+                const tagsHtml = tags.map((tag, idx) => '<span class="tag">'+escapeHtml(tag)+'<span class="tag-remove" onclick="removeTagByIndex(\''+basePath+'\', \''+fieldKey+'\', '+idx+')">&times;</span></span>').join('');
                 return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." enterkeyhint="done" onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
             case 'checkboxes':
                 const selectedValues = Array.isArray(value) ? value : [];
@@ -1698,6 +1698,13 @@
     function removeTag(basePath, fieldKey, tag) {
         const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
         let tags = (getValue(fullPath) || []).filter(t => t !== tag);
+        setValue(fullPath, tags);
+        renderSettings();
+    }
+    function removeTagByIndex(basePath, fieldKey, index) {
+        const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
+        let tags = [...(getValue(fullPath) || [])];
+        tags.splice(index, 1);
         setValue(fullPath, tags);
         renderSettings();
     }
