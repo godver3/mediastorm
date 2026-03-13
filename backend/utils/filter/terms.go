@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"log"
 	"regexp"
 	"strings"
 )
@@ -31,7 +32,18 @@ func CompileTerms(terms []string) []CompiledTerm {
 				compiled = append(compiled, CompiledTerm{regex: re})
 				continue
 			}
+			log.Printf("[filter] Invalid regex in term %q: %v — falling back to plain substring", trimmed, err)
 			// Invalid regex: fall back to plain substring of the whole string
+		}
+
+		// Auto-detect anchored regex patterns (^ or $) without /slashes/
+		if strings.HasPrefix(trimmed, "^") || strings.HasSuffix(trimmed, "$") {
+			re, err := regexp.Compile("(?i)" + trimmed)
+			if err == nil {
+				compiled = append(compiled, CompiledTerm{regex: re})
+				continue
+			}
+			log.Printf("[filter] Term %q looks like regex (has anchor) but failed to compile: %v — falling back to plain substring", trimmed, err)
 		}
 
 		compiled = append(compiled, CompiledTerm{plain: strings.ToLower(trimmed)})

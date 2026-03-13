@@ -146,3 +146,183 @@ func TestMatchesAnyTerm_MultipleTerms(t *testing.T) {
 		t.Error("should not match unrelated title")
 	}
 }
+
+// frenchGroupRegex is the real-world regex a user reported not working for prioritization.
+// It matches French release group names preceded by a delimiter character.
+const frenchGroupRegex = `/^.*[.\-\[\]\(\) ](?:4FR|Aisha|AAjango|ALFA|ALLDAYiN|AMB3R|Amen|ANMWR|ANGERFIST007|ARK01|AZAZE|AZR|AXLBEN|BATGirl|BANKAi|BAWLS|BDHD|BENDER_37|BLACKPANTERS|BLACKANGEL|BLAP|BOOLZ|BOUC|BODIE|BRINK|BTTHD|BtRs|BTT|BULITT|BULiTT|BURNToDISC|BYHGO|CARAPILS|CHARTAIR|CHERRYcoke|CHOCO|CiELOS|CiNEMA|CMBHD|CoRa|COUAC|CRYPT0|CLASSICS|CYSTEiNE|DAM|D4KiD|DEAL|DeSs|DiEBEX|Djona12|DREAM|DUFF|DUPLI|DUSS|DUSTiN|DYDHZO|DWS|E\.T|ELCRACKITO|ENJOi|ESPER|EUBDS|EXTREME|FCK|FERVEX|FGT|FiDELiO|FiDO|FLOP|ForceBleue|FoX|FREAMON|FRATERNiTY|FRiES|FROSTIES|FRiENDS|FULLSiZE|FUTiL|FW|FWDHD|FTMVHD|GASMAK|GHZ|GHoST|GHOULS|GHT|GiMBAP|GLiMMER|GLaDOS|GOLDEN|Goldenyann|GOATLOVE|GUACAMOLE|GWEN|Hanami|H4S5S|HD2|HDKING|HDRA|HEAVYWEIGHT|HERC|HiggsBoson|HiRoSHiMa|HYBRiS|HyDe|HYO|iDySoNaP|JAQC|J4CK|JiHEFF|JMT|JP48|JoKeR|JRabbit|JUSTICELEAGUE|JuRDeN|K7|KAF|KAZETV|KBNawak|KENOBi3838|Kaoru111|KFL|LACTEL|LAOZI|LAZARUS|LEGdna|LEON|LiBERTAD|LiHDL|LOOKAMI|LOFiDEL|LOST|LOWIMDB|LUCKY|LYPSG|LazerTeam|MAGiCAL|MANGACiTY|MARBLECAKE|MAXAGAZ|Maxadonf|MAXiBENoul|McNULTY|MCSwi|MELBA|MELLOWMAN|MiND|MOONLY|MORELAND|MOO|MUNSTER|MULTIVISION|MUSTANG|MUxHD|Mad\.Darks27|MAN OF STYLE|mHDgz|MrS|NGRP|NERDHD|NERO|NONE|NOEX|NTK|NRZ|OBI|OBSTACLE|OKENEDET|OOHLALA|ONLY|ONLYMOViE|OVD|OXTORRENT|OZEF|PARISTOCAT|PATOMiEL|PATOPESTO|PEPiTE|P4TRi0T|PCH|PiNKPANTERS|PICKLES|PKPTRS|POP|POURMOi|PopHD|PREM|PROPJOE|PURE|PUREWASTEOFBW|PSY4|PuNiSHeR03|QC63|QUALiTY|QUEBEC63|QTZ|REBiRTH|R3MiX|RiFiFi|ROMKENT|Rough|RUDE|R2D2X|RYOTOX|S4LVE|SAFETY|SAL|SASHiMi|SESKAPILE|SESKAPiLE|SEL|SEiGHT|SENSei|SHADOW|SHEEEiT|Shamir|Sicario|SILVIODANTE|SLEEPINGFOREST|Slay3R|SN2P|SODAPOP|SPINE|SPOiLER|STARLIGHTER|STRINGERBELL|SUBZERO|SUNNY|SUNRiSE|SUPPLY|THESYNDiCATE|THiNK|THREESOME|TiMELiNE|TiNA|T3KASHi|TFA|TFR|TkHD|TheChirola|Tetine|TigersClassics|Torrent9|TRUNKDU92|TSuNaMi|TSC|toto70300|TyHD|ULSHD|ULYSSE|UKDHD|UKDTV|ukdhd|URY|USUNSKiLLED|USURY|VENUE|VFC|VFF|VoMiT|Wednesday29th|Wink|Winks|WMTorrent|XANTAR|Y4Y4|ZEKEY|ZEST|Z3US|ZinGy|ZiRCON|ZiT|Chris44|Cyrill2000|ludsfa|psy4|sozer|zza|SERQPH|Neostark|MULTiViSiON|bouba|CherryCoke|ulysse|OPTIMUM|Kenobi38|Dread|ShC23|SLM|PiCKLES|Ulysse|LITY|Plemo|RiPiT|BABA|BraD|AvALoN|SF2|AViTECH|PiCK|SACRiLEGE|HK31|MMCLX|iLynx|PREUMS|dooley|LDCS|MAMA|gismo65|WAlbator|b4dly|HiDeF|KLP33|MenZo|TRiCLUPRiD|LeSharkoiste|NOWiNHD|Hom3r|JiHeff|baron|ALCOOL|ROUGH|OkenEdet|AmineCamd|PiKES|chrisj42|D5T0|Temouche|Punisher694|ZezLD|GLUPS|Portos|HDZ|SANTACRUZ|c3r153|Burntodisc|SyND|QC|T0M|Tsundere-Raws|BOUBA|higgsboson|VFQ|VF2)(?:[.\-\[\]\(\) ].*)?$/`
+
+func TestCompileTerms_LongFrenchGroupRegex(t *testing.T) {
+	terms := CompileTerms([]string{frenchGroupRegex})
+	if len(terms) != 1 {
+		t.Fatalf("expected 1 compiled term, got %d", len(terms))
+	}
+	if terms[0].regex == nil {
+		t.Fatal("expected regex term, got plain — regex failed to compile")
+	}
+}
+
+func TestMatchesAnyTerm_FrenchGroupRegex(t *testing.T) {
+	terms := CompileTerms([]string{frenchGroupRegex})
+	if terms[0].regex == nil {
+		t.Fatal("regex did not compile")
+	}
+
+	tests := []struct {
+		title   string
+		match   bool
+		desc    string
+	}{
+		// Standard release formats: name-GROUP
+		{"Movie.2024.1080p.BluRay.x264-ALFA", true, "hyphen delimited group ALFA"},
+		{"Movie.2024.1080p.BluRay.x264-FGT", true, "hyphen delimited group FGT"},
+		{"Movie.2024.1080p.BluRay.x265-VFF", true, "hyphen delimited group VFF"},
+		{"Movie.2024.2160p.WEB-DL.DDP5.1.H.265-NERO", true, "hyphen delimited group NERO"},
+		{"Movie.2024.FRENCH.1080p.BluRay.x264-LOST", true, "group LOST with FRENCH tag"},
+		{"Movie.2024.MULTi.1080p.WEB-DL.H.265-EXTREME", true, "group EXTREME"},
+		{"Movie.2024.1080p.BluRay.x264-DEAL", true, "group DEAL"},
+		{"Movie.2024.FRENCH.720p.BluRay.x264-GOLDEN", true, "group GOLDEN"},
+
+		// Bracket delimited groups
+		{"Movie (2024) 1080p BluRay [ALFA]", true, "bracket delimited ALFA"},
+		{"[FGT] Movie 2024 1080p", true, "bracket prefix group FGT"},
+
+		// Dot delimited groups
+		{"Movie.2024.1080p.ALFA.mkv", true, "dot delimited group ALFA"},
+		{"Movie.2024.1080p.BluRay.PURE", true, "dot delimited trailing PURE"},
+
+		// Space delimited groups
+		{"Movie 2024 1080p BluRay ALFA", true, "space delimited group ALFA"},
+
+		// Parenthesis delimited
+		{"Movie.2024.1080p.(ALFA)", true, "parenthesis delimited ALFA"},
+
+		// Case-insensitive matching ((?i) flag)
+		{"Movie.2024.1080p.BluRay.x264-alfa", true, "lowercase group alfa"},
+		{"Movie.2024.1080p.BluRay.x264-Fgt", true, "mixed case Fgt"},
+
+		// Groups at end with file extension
+		{"Movie.2024.1080p.BluRay.x264-ALFA.mkv", true, "group with .mkv extension"},
+		{"Movie.2024.1080p.BluRay.x264-VFF.nzb", true, "group with .nzb extension"},
+
+		// Should NOT match — legitimate groups/words not in list
+		{"Movie.2024.1080p.BluRay.x264-SPARKS", false, "non-French group SPARKS"},
+		{"Movie.2024.1080p.BluRay.x264-YIFY", false, "non-French group YIFY"},
+		{"Movie.2024.1080p.BluRay.x264-RARBG", false, "non-French group RARBG"},
+		{"Movie.2024.1080p.BluRay.x264-FraMeSToR", false, "non-French group FraMeSToR"},
+
+		// Edge case: group name embedded in a word should NOT match (no delimiter)
+		// Actually this regex uses .* greedy + delimiter char class, so embedded
+		// names WILL match if preceded by any delimiter anywhere
+		// e.g. "SUNNYDALE" contains "SUNNY" preceded by nothing at that position,
+		// but the .* can match up to "." or other delimiters earlier
+
+		// Should NOT match — no content at all
+		{"", false, "empty title"},
+
+		// Group name at very start with no preceding delimiter should NOT match
+		// because regex requires [.\-\[\]\(\) ] before the group name
+		{"ALFA", false, "bare group name with no delimiter"},
+		{"ALFA.Movie.2024", false, "group at start with no preceding delimiter"},
+
+		// Specific groups from different parts of the list
+		{"Movie.2024.1080p-Tsundere-Raws", true, "group Tsundere-Raws"},
+		{"Movie.2024.1080p-BOUBA", true, "group BOUBA"},
+		{"Movie.2024.1080p-higgsboson", true, "group higgsboson"},
+		{"Movie.2024.1080p-VFQ", true, "group VFQ"},
+		{"Movie.2024.1080p-VF2", true, "group VF2 (last in list)"},
+		{"Movie.2024.1080p-4FR", true, "group 4FR (first in list)"},
+		{"Movie.2024.1080p.BluRay-QC", true, "group QC (short name)"},
+		{"Movie.2024.1080p.BluRay-T0M", true, "group T0M"},
+	}
+
+	for _, tt := range tests {
+		got := MatchesAnyTerm(tt.title, terms)
+		if got != tt.match {
+			t.Errorf("%s: MatchesAnyTerm(%q) = %v, want %v", tt.desc, tt.title, got, tt.match)
+		}
+	}
+}
+
+func TestMatchesAnyTerm_FrenchGroupRegex_AutoDetectAnchored(t *testing.T) {
+	// Anchored regex (starts with ^) should auto-detect as regex even without /slashes/
+	rawRegex := `^.*[.\-\[\]\(\) ](?:4FR|ALFA|VFF)(?:[.\-\[\]\(\) ].*)?$`
+	terms := CompileTerms([]string{rawRegex})
+	if terms[0].regex == nil {
+		t.Fatal("anchored pattern should auto-detect as regex")
+	}
+	if !MatchesAnyTerm("Movie.2024.1080p.BluRay.x264-ALFA", terms) {
+		t.Error("auto-detected regex should match")
+	}
+
+	// Also works with /slashes/ (explicit)
+	slashedRegex := "/" + rawRegex + "/"
+	termsSlashed := CompileTerms([]string{slashedRegex})
+	if termsSlashed[0].regex == nil {
+		t.Fatal("with slashes, should compile as regex")
+	}
+	if !MatchesAnyTerm("Movie.2024.1080p.BluRay.x264-ALFA", termsSlashed) {
+		t.Error("regex with slashes should match")
+	}
+}
+
+func TestCompileTerms_AutoDetectDollarAnchor(t *testing.T) {
+	terms := CompileTerms([]string{`.*-ALFA$`})
+	if terms[0].regex == nil {
+		t.Fatal("$ anchored pattern should auto-detect as regex")
+	}
+	if !MatchesAnyTerm("Movie.2024.1080p-ALFA", terms) {
+		t.Error("$ anchored regex should match")
+	}
+}
+
+func TestCompileTerms_PlainTermNotAutoDetected(t *testing.T) {
+	// Plain terms without anchors should remain plain substring matches
+	terms := CompileTerms([]string{"ALFA"})
+	if terms[0].regex != nil {
+		t.Error("plain term without anchors should not become regex")
+	}
+}
+
+func TestMatchesAnyTerm_FrenchGroupRegex_FilterOutIntegration(t *testing.T) {
+	// Simulate how this would be used as a filterOutTerm alongside other terms
+	terms := CompileTerms([]string{
+		"french",
+		"truefrench",
+		frenchGroupRegex,
+	})
+
+	// Titles that should be filtered by the regex (group name match)
+	filteredByRegex := []string{
+		"Gladiator.II.2024.MULTi.2160p.UHD.BluRay.x265-EXTREME",
+		"The.Count.of.Monte.Cristo.2024.1080p.BluRay.x264-LOST",
+		"Asterix.and.Obelix.2024.FRENCH.1080p.BluRay.x264-FGT",
+	}
+	for _, title := range filteredByRegex {
+		if !MatchesAnyTerm(title, terms) {
+			t.Errorf("expected filter match for %q", title)
+		}
+	}
+
+	// Titles that should be filtered by plain "french" term
+	filteredByPlain := []string{
+		"Movie.2024.FRENCH.1080p.BluRay.x264-SPARKS",
+		"Movie.2024.TrueFrench.1080p.WEB-DL-UnknownGroup",
+	}
+	for _, title := range filteredByPlain {
+		if !MatchesAnyTerm(title, terms) {
+			t.Errorf("expected filter match for %q (plain term)", title)
+		}
+	}
+
+	// Titles that should NOT be filtered
+	notFiltered := []string{
+		"Movie.2024.1080p.BluRay.x264-SPARKS",
+		"Movie.2024.2160p.WEB-DL.DDP5.1.H.265-FLUX",
+		"Movie.2024.1080p.REMUX.AVC.DTS-HD.MA.5.1-FraMeSToR",
+	}
+	for _, title := range notFiltered {
+		if MatchesAnyTerm(title, terms) {
+			t.Errorf("did NOT expect filter match for %q", title)
+		}
+	}
+}

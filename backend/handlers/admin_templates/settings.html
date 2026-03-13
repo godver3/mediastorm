@@ -1613,7 +1613,7 @@
                 return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'tags':
                 const tags = Array.isArray(value) ? value : [];
-                const tagsHtml = tags.map((tag, idx) => '<span class="tag">'+escapeHtml(tag)+'<span class="tag-remove" onclick="removeTagByIndex(\''+basePath+'\', \''+fieldKey+'\', '+idx+')">&times;</span></span>').join('');
+                const tagsHtml = tags.map((tag, idx) => '<span class="tag" title="'+escapeHtml(tag).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(tag)+'</span><span class="tag-remove" onclick="removeTagByIndex(\''+basePath+'\', \''+fieldKey+'\', '+idx+')">&times;</span></span>').join('');
                 return '<div class="tags-input'+invalidClass+'" id="'+id+'_container">'+tagsHtml+'<input type="text" placeholder="Add tag..." enterkeyhint="done" onkeydown="handleTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>';
             case 'checkboxes':
                 const selectedValues = Array.isArray(value) ? value : [];
@@ -1629,7 +1629,7 @@
                 return '<div class="checkboxes-group'+invalidClass+'" id="'+id+'_container">'+checkboxesHtml+'</div>';
             case 'multiselect':
                 const msSelected = Array.isArray(value) ? value : [];
-                const msTagsHtml = msSelected.map(v => '<span class="tag">'+v+'</span>').join('');
+                const msTagsHtml = msSelected.map(v => '<span class="tag" title="'+escapeHtml(v).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(v)+'</span></span>').join('');
                 const endpoint = fieldDef.optionsEndpoint || '';
                 return '<div class="multiselect-container'+invalidClass+'" id="'+id+'_container">' + msTagsHtml +
                     '<button type="button" class="multiselect-btn" onclick="openMultiselectModal(\''+basePath+'\', \''+fieldKey+'\', \''+endpoint+'\', \''+fieldDef.label+'\')">Select...</button></div>';
