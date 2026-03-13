@@ -260,6 +260,7 @@ type LiveSettings struct {
 	ProbeSizeMB           int                  `json:"probeSizeMb"`        // FFmpeg probesize in MB (0 = default ~5MB)
 	AnalyzeDurationSec    int                  `json:"analyzeDurationSec"` // FFmpeg analyzeduration in seconds (0 = default ~5s)
 	LowLatency            bool                 `json:"lowLatency"`         // Enable low-latency mode (nobuffer + low_delay flags)
+	StreamFormat          string               `json:"streamFormat"`       // "hls" (default) or "direct" - how to deliver live streams to clients
 	Filtering             LiveTVFilterSettings `json:"filtering"`          // Backend-side channel filtering
 	EPG                   EPGSettings          `json:"epg"`                // Electronic Program Guide settings
 }

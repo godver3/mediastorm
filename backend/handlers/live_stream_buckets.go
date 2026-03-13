@@ -12,10 +12,14 @@ import (
 )
 
 type liveStreamTarget struct {
-	Provider   string
-	MaxStreams int
-	BucketKey  string
-	BucketName string
+	Provider           string
+	MaxStreams         int
+	BucketKey          string
+	BucketName         string
+	StreamFormat       string
+	ProbeSizeMB        int
+	AnalyzeDurationSec int
+	LowLatency         bool
 }
 
 func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
@@ -34,6 +38,7 @@ func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
 		ProbeSizeMB:             settings.Live.ProbeSizeMB,
 		AnalyzeDurationSec:      settings.Live.AnalyzeDurationSec,
 		LowLatency:              settings.Live.LowLatency,
+		StreamFormat:            settings.Live.StreamFormat,
 		EnabledCategories:       settings.Live.Filtering.EnabledCategories,
 		MaxChannels:             settings.Live.Filtering.MaxChannels,
 		EPGEnabled:              settings.Live.EPG.Enabled,
@@ -59,10 +64,14 @@ func resolveLiveStreamTarget(global models.ResolvedLiveSource, profile *models.U
 	}
 	bucketKey, bucketName := deriveLiveBucket(provider, resolved)
 	return liveStreamTarget{
-		Provider:   provider,
-		MaxStreams: maxStreams,
-		BucketKey:  bucketKey,
-		BucketName: bucketName,
+		Provider:           provider,
+		MaxStreams:         maxStreams,
+		BucketKey:          bucketKey,
+		BucketName:         bucketName,
+		StreamFormat:       resolved.StreamFormat,
+		ProbeSizeMB:        resolved.ProbeSizeMB,
+		AnalyzeDurationSec: resolved.AnalyzeDurationSec,
+		LowLatency:         resolved.LowLatency,
 	}
 }
 

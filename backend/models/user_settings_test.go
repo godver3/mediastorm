@@ -20,6 +20,7 @@ func newGlobal() *ResolvedLiveSource {
 		ProbeSizeMB:           10,
 		AnalyzeDurationSec:    5,
 		LowLatency:            false,
+		StreamFormat:          "hls",
 		EnabledCategories:     []string{"News"},
 		MaxChannels:           500,
 	}
@@ -139,5 +140,32 @@ func TestResolveLiveSource_FilteringOverrides(t *testing.T) {
 	}
 	if r.MaxChannels != 100 {
 		t.Errorf("MaxChannels = %d, want 100", r.MaxChannels)
+	}
+}
+
+func TestResolveLiveSource_StreamFormatOverride(t *testing.T) {
+	direct := "direct"
+	profile := &LiveTVSettings{
+		StreamFormat: &direct,
+	}
+
+	r := ResolveLiveSource(profile, newGlobal())
+
+	if r.StreamFormat != "direct" {
+		t.Errorf("StreamFormat = %q, want %q", r.StreamFormat, "direct")
+	}
+	// Other fields should remain at global defaults
+	if r.Mode != "m3u" {
+		t.Errorf("Mode = %q, want %q", r.Mode, "m3u")
+	}
+}
+
+func TestResolveLiveSource_StreamFormatNilUsesGlobal(t *testing.T) {
+	profile := &LiveTVSettings{} // StreamFormat is nil
+
+	r := ResolveLiveSource(profile, newGlobal())
+
+	if r.StreamFormat != "hls" {
+		t.Errorf("StreamFormat = %q, want %q (global default)", r.StreamFormat, "hls")
 	}
 }

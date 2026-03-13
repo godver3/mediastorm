@@ -2708,17 +2708,48 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Determine stream format (default to "hls")
+	streamFormat := target.StreamFormat
+	if streamFormat == "" {
+		streamFormat = "hls"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Direct mode: return a proxy URL using the existing /live/stream endpoint
+	if streamFormat == "direct" {
+		proxyParams := url.Values{}
+		proxyParams.Set("url", liveURL)
+		directURL := fmt.Sprintf("/live/stream?%s", proxyParams.Encode())
+
+		log.Printf("[video] live session using direct proxy for URL: %s (provider=%s profile=%s)", liveURL, target.Provider, profileID)
+
+		response := map[string]interface{}{
+			"streamUrl": directURL,
+			"isLive":    true,
+			"isDirect":  true,
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("[video] failed to encode direct live session response: %v", err)
+		}
+		return
+	}
+
+	// HLS mode: create a segmented HLS session
 	log.Printf("[video] creating live HLS session for URL: %s (provider=%s bucket=%s profile=%s)", liveURL, target.Provider, target.BucketKey, profileID)
 
-	session, err := h.hlsManager.CreateLiveSession(r.Context(), liveURL, target.Provider, target.BucketKey, profileID, profileName, getClientIP(r))
+	tuning := LiveTuningSettings{
+		ProbeSizeMB:        target.ProbeSizeMB,
+		AnalyzeDurationSec: target.AnalyzeDurationSec,
+		LowLatency:         target.LowLatency,
+	}
+	session, err := h.hlsManager.CreateLiveSession(r.Context(), liveURL, target.Provider, target.BucketKey, profileID, profileName, getClientIP(r), tuning)
 	if err != nil {
 		log.Printf("[video] failed to create live HLS session: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create live HLS session: %v", err), http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	response := map[string]interface{}{
 		"sessionId":   session.ID,

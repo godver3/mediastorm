@@ -88,10 +88,11 @@ type LiveTVSettings struct {
 	XtreamPassword *string `json:"xtreamPassword,omitempty"`
 	MaxStreams     *int    `json:"maxStreams,omitempty"`
 	// Per-profile tuning overrides (nil = use global)
-	PlaylistCacheTTLHours *int  `json:"playlistCacheTtlHours,omitempty"`
-	ProbeSizeMB           *int  `json:"probeSizeMb,omitempty"`
-	AnalyzeDurationSec    *int  `json:"analyzeDurationSec,omitempty"`
-	LowLatency            *bool `json:"lowLatency,omitempty"`
+	PlaylistCacheTTLHours *int    `json:"playlistCacheTtlHours,omitempty"`
+	ProbeSizeMB           *int    `json:"probeSizeMb,omitempty"`
+	AnalyzeDurationSec    *int    `json:"analyzeDurationSec,omitempty"`
+	LowLatency            *bool   `json:"lowLatency,omitempty"`
+	StreamFormat          *string `json:"streamFormat,omitempty"`
 	// Per-profile filtering overrides (nil = use global)
 	Filtering *LiveTVFilterOverrides `json:"filtering,omitempty"`
 	// Per-profile EPG overrides (nil = use global)
@@ -125,6 +126,7 @@ type ResolvedLiveSource struct {
 	ProbeSizeMB             int
 	AnalyzeDurationSec      int
 	LowLatency              bool
+	StreamFormat            string
 	EnabledCategories       []string
 	MaxChannels             int
 	EPGEnabled              bool
@@ -169,6 +171,9 @@ func ResolveLiveSource(profile *LiveTVSettings, global *ResolvedLiveSource) Reso
 	}
 	if profile.LowLatency != nil {
 		r.LowLatency = *profile.LowLatency
+	}
+	if profile.StreamFormat != nil {
+		r.StreamFormat = *profile.StreamFormat
 	}
 	if profile.Filtering != nil {
 		if profile.Filtering.EnabledCategories != nil {

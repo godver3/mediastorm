@@ -377,9 +377,17 @@ type HLSSession struct {
 	IsLive       bool   // True for live TV streams (no duration, no seeking)
 	LiveProvider string // Live TV provider identifier ("m3u" or "xtream")
 	LiveBucket   string // Shared stream bucket identifier for limit accounting
+	LiveTuning   LiveTuningSettings // FFmpeg tuning settings for live sessions
 
 	// Prequeue tracking
 	PrequeueType string // "", "details" (details page), or "next_episode" (auto-play next)
+}
+
+// LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
+type LiveTuningSettings struct {
+	ProbeSizeMB        int
+	AnalyzeDurationSec int
+	LowLatency         bool
 }
 
 // LiveProviderUsageEntry summarizes active usage for a single live provider.
@@ -852,7 +860,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 
 // CreateLiveSession creates an HLS session for live TV streams
 // Unlike VOD sessions, live sessions don't have a known duration and don't support seeking
-func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, bucketKey, profileID, profileName, clientIP string) (*HLSSession, error) {
+func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, bucketKey, profileID, profileName, clientIP string, tuning LiveTuningSettings) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -890,6 +898,7 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 		ProfileID:               profileID,
 		ProfileName:             profileName,
 		ClientIP:                clientIP,
+		LiveTuning:              tuning,
 	}
 
 	m.mu.Lock()
@@ -985,8 +994,24 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		"-y",
 		"-loglevel", "warning",
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
-		// Live input options
-		"-fflags", "+genpts+discardcorrupt",
+	}
+
+	// Apply probe/analyze settings (these mirror StreamChannel in live.go)
+	if session.LiveTuning.ProbeSizeMB > 0 {
+		args = append(args, "-probesize", fmt.Sprintf("%d", session.LiveTuning.ProbeSizeMB*1024*1024))
+	}
+	if session.LiveTuning.AnalyzeDurationSec > 0 {
+		args = append(args, "-analyzeduration", fmt.Sprintf("%d", session.LiveTuning.AnalyzeDurationSec*1000000))
+	}
+
+	// Low latency mode: reduce buffering
+	if session.LiveTuning.LowLatency {
+		args = append(args, "-fflags", "+genpts+nobuffer+discardcorrupt", "-flags", "+low_delay")
+	} else {
+		args = append(args, "-fflags", "+genpts+discardcorrupt")
+	}
+
+	args = append(args,
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
@@ -1004,7 +1029,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		"-hls_flags", "delete_segments+append_list",
 		"-hls_segment_filename", segmentPattern,
 		playlistPath,
-	}
+	)
 
 	log.Printf("[hls] live session %s: starting FFmpeg with args: %v", session.ID, args)
 

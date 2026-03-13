@@ -848,6 +848,7 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 		ProbeSizeMB:             globalSettings.Live.ProbeSizeMB,
 		AnalyzeDurationSec:      globalSettings.Live.AnalyzeDurationSec,
 		LowLatency:              globalSettings.Live.LowLatency,
+		StreamFormat:            globalSettings.Live.StreamFormat,
 		EnabledCategories:       globalSettings.Live.Filtering.EnabledCategories,
 		MaxChannels:             globalSettings.Live.Filtering.MaxChannels,
 		EPGEnabled:              globalSettings.Live.EPG.Enabled,
