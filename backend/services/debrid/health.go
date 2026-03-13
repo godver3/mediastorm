@@ -429,6 +429,9 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 	}
 
 	torrentID := addResp.ID
+	if strings.HasPrefix(strings.ToLower(result.Link), "magnet:") {
+		RegisterMagnet(providerName, torrentID, result.Link)
+	}
 	log.Printf("[debrid-health] %s torrent added with ID %s, getting file list", providerName, torrentID)
 
 	// First, get the torrent info to see what files are available

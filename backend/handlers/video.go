@@ -536,6 +536,11 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		if errors.Is(err, streaming.ErrNotFound) {
 			return false, nil
 		}
+		if errors.Is(err, streaming.ErrStaleTorrent) {
+			log.Printf("[video] stale torrent detected for path=%q — returning 410 Gone", cleanPath)
+			http.Error(w, "debrid torrent expired or deleted — please re-resolve", http.StatusGone)
+			return true, err
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return true, err
 	}
@@ -1177,6 +1182,8 @@ func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath str
 			} else {
 				return meta, nil
 			}
+		} else if err != nil && errors.Is(err, streaming.ErrStaleTorrent) {
+			return nil, fmt.Errorf("%w", streaming.ErrStaleTorrent)
 		} else if err != nil && !errors.Is(err, streaming.ErrNotFound) {
 			log.Printf("[video] GetDirectURL failed for %q: %v", cleanPath, err)
 		}
@@ -1415,6 +1422,11 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, streaming.ErrNotFound) {
 				log.Printf("[video] ProbeVideo: stream not found for path=%q", cleanPath)
 				http.Error(w, "stream not found", http.StatusNotFound)
+				return
+			}
+			if errors.Is(err, streaming.ErrStaleTorrent) {
+				log.Printf("[video] ProbeVideo: stale torrent for path=%q", cleanPath)
+				http.Error(w, "debrid torrent expired or deleted — please re-resolve", http.StatusGone)
 				return
 			}
 			log.Printf("[video] metadata provider head failed for %q: %v", cleanPath, err)
@@ -2626,7 +2638,11 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), "")
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
-		http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
+		if errors.Is(err, streaming.ErrStaleTorrent) {
+			http.Error(w, "debrid torrent expired or deleted — please re-resolve", http.StatusGone)
+		} else {
+			http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -3766,6 +3782,11 @@ func (h *VideoHandler) GetDirectURL(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == streaming.ErrNotFound {
 			http.Error(w, "path not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, streaming.ErrStaleTorrent) {
+			log.Printf("[video] GetDirectURL: stale torrent for path=%q", path)
+			http.Error(w, "debrid torrent expired or deleted — please re-resolve", http.StatusGone)
 			return
 		}
 		log.Printf("[video] GetDirectURL error for path=%q: %v", path, err)

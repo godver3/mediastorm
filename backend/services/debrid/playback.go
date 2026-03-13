@@ -206,6 +206,10 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	}
 
 	torrentID := addResp.ID
+	// Register magnet link so the streaming layer can re-add if the torrent expires
+	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
+		RegisterMagnet(providerName, torrentID, candidate.Link)
+	}
 	log.Printf("[debrid-playback] TIMING: torrent added with ID %s (elapsed: %v)", torrentID, time.Since(resolveStart))
 
 	// Get torrent info to see available files
@@ -800,6 +804,9 @@ func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZB
 		return nil, fmt.Errorf("add torrent: %w", err)
 	}
 	torrentID := addResp.ID
+	if hasMagnet {
+		RegisterMagnet(providerName, torrentID, candidate.Link)
+	}
 	log.Printf("[debrid-playback-batch] torrent added id=%s (elapsed %v)", torrentID, time.Since(resolveStart))
 
 	// --- GetTorrentInfo 1st (once) — get file list ---

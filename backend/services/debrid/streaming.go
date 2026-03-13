@@ -16,6 +16,43 @@ import (
 	"novastream/services/streaming"
 )
 
+// isStaleTorrentError returns true if the error indicates the torrent ID
+// no longer exists on the debrid provider (expired, deleted, or invalid).
+func isStaleTorrentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	// AllDebrid: "This magnet ID does not exists or is invalid"
+	// RealDebrid: "torrent not found" / "bad token" on expired IDs
+	// Torbox: "not found in Torbox response"
+	return strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "magnet id") ||
+		(strings.Contains(msg, "torrent") && strings.Contains(msg, "not found"))
+}
+
+// readdFromRegistry looks up the magnet link for a stale torrent and re-adds it.
+// Returns the new torrent ID on success.
+func (p *StreamingProvider) readdFromRegistry(ctx context.Context, client Provider, provider, oldTorrentID string) (string, error) {
+	magnetLink, ok := LookupMagnet(provider, oldTorrentID)
+	if !ok {
+		return "", fmt.Errorf("no magnet registered for %s torrent %s", provider, oldTorrentID)
+	}
+
+	log.Printf("[debrid-stream] re-adding magnet for stale torrent %s on %s", oldTorrentID, provider)
+	addResp, err := client.AddMagnet(ctx, magnetLink)
+	if err != nil {
+		return "", fmt.Errorf("re-add magnet failed: %w", err)
+	}
+
+	newID := addResp.ID
+	// Register the new torrent ID with the same magnet
+	RegisterMagnet(provider, newID, magnetLink)
+
+	log.Printf("[debrid-stream] re-added stale torrent %s as %s on %s", oldTorrentID, newID, provider)
+	return newID, nil
+}
+
 // cachedURL represents a cached unrestricted URL with expiration.
 type cachedURL struct {
 	url       string
@@ -175,6 +212,17 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	}
 
 	info, err := client.GetTorrentInfo(ctx, torrentID)
+	if err != nil && isStaleTorrentError(err) {
+		newID, retryErr := p.readdFromRegistry(ctx, client, provider, torrentID)
+		if retryErr != nil {
+			log.Printf("[debrid-stream] stale torrent %s (direct URL) and re-add failed: %v (original: %v)", torrentID, retryErr, err)
+			return "", fmt.Errorf("%w: %v", streaming.ErrStaleTorrent, err)
+		}
+		log.Printf("[debrid-stream] stale torrent %s re-added as %s (direct URL), retrying", torrentID, newID)
+		torrentID = newID
+		cacheKey = cacheKeyFor(torrentID, fileID)
+		info, err = client.GetTorrentInfo(ctx, torrentID)
+	}
 	if err != nil {
 		return "", fmt.Errorf("get torrent info: %w", err)
 	}
@@ -273,6 +321,19 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		// Cache miss - need to unrestrict the link
 		// Get fresh torrent info to get download links
 		info, err := client.GetTorrentInfo(ctx, torrentID)
+		if err != nil && isStaleTorrentError(err) {
+			// Torrent expired/deleted — try to re-add from magnet registry
+			newID, retryErr := p.readdFromRegistry(ctx, client, providerName, torrentID)
+			if retryErr != nil {
+				log.Printf("[debrid-stream] stale torrent %s and re-add failed: %v (original: %v)", torrentID, retryErr, err)
+				return nil, fmt.Errorf("%w: %v", streaming.ErrStaleTorrent, err)
+			}
+			// Retry with new torrent ID
+			log.Printf("[debrid-stream] stale torrent %s re-added as %s, retrying", torrentID, newID)
+			torrentID = newID
+			cacheKey = cacheKeyFor(torrentID, fileID)
+			info, err = client.GetTorrentInfo(ctx, torrentID)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("get torrent info: %w", err)
 		}

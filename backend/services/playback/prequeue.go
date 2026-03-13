@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,6 +140,7 @@ type PrequeueEntry struct {
 
 	Status       PrequeueStatus `json:"status"`
 	StreamPath   string         `json:"streamPath,omitempty"`
+	MagnetLink   string         `json:"magnetLink,omitempty"`   // Original magnet link for re-adding expired torrents
 	FileSize     int64          `json:"fileSize,omitempty"`
 	HealthStatus string         `json:"healthStatus,omitempty"`
 
@@ -202,6 +204,13 @@ func NewPrequeueStore(ttl time.Duration) *PrequeueStore {
 	return store
 }
 
+// MagnetInfo contains the magnet link and debrid path info for a restored prequeue entry.
+type MagnetInfo struct {
+	Provider   string
+	TorrentID  string
+	MagnetLink string
+}
+
 // SetStoragePath enables persistence of ready entries to the given directory.
 // Entries are saved to prequeue.json in that directory.
 func (s *PrequeueStore) SetStoragePath(dir string) {
@@ -212,6 +221,44 @@ func (s *PrequeueStore) SetStoragePath(dir string) {
 	if err := s.loadFromDisk(); err != nil {
 		log.Printf("[prequeue] Warning: failed to load persisted entries: %v", err)
 	}
+}
+
+// RestoredMagnets returns magnet link info from restored prequeue entries.
+// Called after SetStoragePath to re-populate the magnet registry on restart.
+func (s *PrequeueStore) RestoredMagnets() []MagnetInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var magnets []MagnetInfo
+	for _, e := range s.entries {
+		if e.MagnetLink == "" || e.StreamPath == "" {
+			continue
+		}
+		provider, torrentID := parseDebridStreamPath(e.StreamPath)
+		if provider == "" || torrentID == "" {
+			continue
+		}
+		magnets = append(magnets, MagnetInfo{
+			Provider:   provider,
+			TorrentID:  torrentID,
+			MagnetLink: e.MagnetLink,
+		})
+	}
+	return magnets
+}
+
+// parseDebridStreamPath extracts provider and torrentID from a debrid stream path.
+// Format: /debrid/{provider}/{torrentID}/...
+func parseDebridStreamPath(path string) (provider, torrentID string) {
+	trimmed := strings.TrimPrefix(path, "/debrid/")
+	if trimmed == path {
+		return "", "" // not a debrid path
+	}
+	parts := strings.SplitN(trimmed, "/", 3)
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return parts[0], parts[1]
 }
 
 // loadFromDisk restores ready entries from disk

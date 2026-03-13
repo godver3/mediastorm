@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -155,7 +156,11 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 	// For provider-backed paths, try direct URL first for better metadata access
 	if m.streamer != nil {
 		if directProvider, ok := m.streamer.(streaming.DirectURLProvider); ok {
-			if directURL, err := directProvider.GetDirectURL(ctx, path); err == nil && directURL != "" {
+			directURL, directErr := directProvider.GetDirectURL(ctx, path)
+			if directErr != nil && errors.Is(directErr, streaming.ErrStaleTorrent) {
+				return nil, directErr // Propagate stale torrent error immediately
+			}
+			if directErr == nil && directURL != "" {
 				log.Printf("[hls] probing all metadata using direct URL for path: %s", path)
 				result, err = m.probeAllMetadataFromURL(ctx, directURL)
 				if err == nil && result != nil {

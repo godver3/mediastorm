@@ -287,6 +287,9 @@ func (s *MultiProviderService) checkProviderCache(
 	}
 
 	result.TorrentID = addResp.ID
+	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
+		RegisterMagnet(providerName, result.TorrentID, candidate.Link)
+	}
 	log.Printf("[multi-provider] %s: torrent added with ID %s", providerName, result.TorrentID)
 
 	// Get info and check status

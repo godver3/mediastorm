@@ -1063,6 +1063,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		e.StreamPath = resolution.WebDAVPath
 		e.FileSize = resolution.FileSize
 		e.HealthStatus = resolution.HealthStatus
+		// Store magnet link for re-adding expired torrents after restart
+		if selectedResult != nil && strings.HasPrefix(strings.ToLower(selectedResult.Link), "magnet:") {
+			e.MagnetLink = selectedResult.Link
+		}
 		// Copy passthrough format data from AIOStreams results
 		if selectedResult != nil && selectedResult.Attributes["passthrough_format"] == "true" {
 			e.PassthroughName = selectedResult.Attributes["raw_name"]

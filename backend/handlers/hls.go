@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -652,6 +653,10 @@ func (m *HLSManager) getDirectURL(ctx context.Context, session *HLSSession) (str
 	// Get the direct URL
 	url, err := directProvider.GetDirectURL(ctx, session.Path)
 	if err != nil {
+		if errors.Is(err, streaming.ErrStaleTorrent) {
+			log.Printf("[hls] stale torrent for %s — cannot recover", session.Path)
+			return "", false
+		}
 		log.Printf("[hls] failed to get direct URL for %s: %v", session.Path, err)
 		if directURL, ok := m.buildLocalWebDAVURL(session); ok {
 			return directURL, true
@@ -763,7 +768,11 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	var probeData *UnifiedProbeResult
 	if m.ffprobePath != "" && (m.streamer != nil || isExternalURL) {
 		log.Printf("[hls] running unified probe for session %s path=%q", sessionID, path)
-		if pd, err := m.probeAllMetadata(ctx, path); err == nil && pd != nil {
+		if pd, probeErr := m.probeAllMetadata(ctx, path); probeErr != nil && errors.Is(probeErr, streaming.ErrStaleTorrent) {
+			cancel()
+			os.RemoveAll(outputDir)
+			return nil, probeErr
+		} else if probeErr == nil && pd != nil {
 			probeData = pd
 			duration = pd.Duration
 			log.Printf("[hls] unified probe for session %s: duration=%.2fs colorTransfer=%q audioStreams=%d",
@@ -780,8 +789,8 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 				hasDV = false
 				hasHDR = true // DV Profile 8 has HDR10 fallback, enable HDR mode
 			}
-		} else if err != nil {
-			log.Printf("[hls] failed unified probe for session %s: %v", sessionID, err)
+		} else if probeErr != nil {
+			log.Printf("[hls] failed unified probe for session %s: %v", sessionID, probeErr)
 		}
 	}
 

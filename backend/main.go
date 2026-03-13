@@ -388,6 +388,12 @@ func main() {
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
 	prequeueHandler.GetStore().SetStoragePath(settings.Cache.Directory)
 
+	// Restore magnet links from persisted prequeue entries into the magnet registry
+	// so stale torrents can be re-added after a server restart
+	for _, m := range prequeueHandler.GetStore().RestoredMagnets() {
+		debrid.RegisterMagnet(m.Provider, m.TorrentID, m.MagnetLink)
+	}
+
 	if settings.Transmux.FFmpegPath == "" {
 		settings.Transmux.FFmpegPath = "ffmpeg"
 	}

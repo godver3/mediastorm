@@ -9,6 +9,10 @@ import (
 
 var ErrNotFound = errors.New("stream not found")
 
+// ErrStaleTorrent indicates the debrid torrent ID no longer exists on the provider.
+// Callers should treat the cached stream path as invalid and re-resolve.
+var ErrStaleTorrent = errors.New("debrid torrent expired or deleted")
+
 // Request encapsulates a streaming request coming from the handler layer.
 type Request struct {
 	Path        string
