@@ -44,22 +44,24 @@ type TrailerPrequeueManager struct {
 	mu            sync.RWMutex
 	items         map[string]*TrailerPrequeueItem
 	tempDir       string
+	cacheDir      string        // Cache directory (used to locate yt-dlp cookies file)
 	maxAge        time.Duration // Max age for failed/pending items before cleanup
 	cleanupC      chan struct{} // Signal to stop cleanup
 	cleanupActive bool          // Whether cleanup goroutine is running
 }
 
 // NewTrailerPrequeueManager creates a new prequeue manager
-func NewTrailerPrequeueManager(tempDir string) (*TrailerPrequeueManager, error) {
+func NewTrailerPrequeueManager(tempDir, cacheDir string) (*TrailerPrequeueManager, error) {
 	// Create temp directory if it doesn't exist
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create trailer temp dir: %w", err)
 	}
 
 	mgr := &TrailerPrequeueManager{
-		items:   make(map[string]*TrailerPrequeueItem),
-		tempDir: tempDir,
-		maxAge:  30 * time.Minute, // Cleanup stale failed/pending items after 30 min
+		items:    make(map[string]*TrailerPrequeueItem),
+		tempDir:  tempDir,
+		cacheDir: cacheDir,
+		maxAge:   30 * time.Minute, // Cleanup stale failed/pending items after 30 min
 	}
 
 	log.Printf("[trailer-prequeue] initialized manager (temp dir: %s)", tempDir)
@@ -201,14 +203,22 @@ func (m *TrailerPrequeueManager) downloadTrailer(id, videoURL string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, ytdlpPath,
+	args := []string{
 		"-f", "137+140/bestvideo[height<=1080]+bestaudio/best",
 		"--merge-output-format", "mp4",
 		"--no-warnings",
 		"--no-playlist",
 		"-o", outputPath,
-		videoURL,
-	)
+	}
+	// Pass cookies file if user has uploaded one (helps bypass VPS IP blocks)
+	if cookiesPath := filepath.Join(m.cacheDir, "yt-dlp-cookies.txt"); cookiesPath != "" {
+		if _, err := os.Stat(cookiesPath); err == nil {
+			args = append(args, "--cookies", cookiesPath)
+		}
+	}
+	args = append(args, videoURL)
+
+	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

@@ -623,6 +623,11 @@ func main() {
 	r.HandleFunc("/admin/api/calendar/worker/status", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarWorkerStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/calendar/worker/refresh", adminUIHandler.RequireAuth(adminUIHandler.RefreshCalendar)).Methods(http.MethodPost)
 
+	// yt-dlp cookies management (experimental)
+	r.HandleFunc("/admin/api/ytdlp-cookies", adminUIHandler.RequireMasterAuth(adminUIHandler.GetYTDLPCookiesStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/ytdlp-cookies", adminUIHandler.RequireMasterAuth(adminUIHandler.UploadYTDLPCookies)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/ytdlp-cookies", adminUIHandler.RequireMasterAuth(adminUIHandler.DeleteYTDLPCookies)).Methods(http.MethodDelete)
+
 	// History endpoints (admin session auth, no PIN required)
 	r.HandleFunc("/admin/api/history/watched", adminUIHandler.RequireAuth(adminUIHandler.GetWatchHistory)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/history/continue", adminUIHandler.RequireAuth(adminUIHandler.GetContinueWatching)).Methods(http.MethodGet)

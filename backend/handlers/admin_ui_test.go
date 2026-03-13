@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1062,4 +1063,102 @@ func TestAdminUIHandler_ConnectionsPage(t *testing.T) {
 	if rec2.Code != http.StatusForbidden {
 		t.Errorf("non-admin: expected 403, got %d", rec2.Code)
 	}
+}
+
+func TestAdminUIHandler_YTDLPCookies(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	// Test GET status - should report no file uploaded
+	t.Run("status_no_file", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/ytdlp-cookies", nil)
+		rec := httptest.NewRecorder()
+		handler.GetYTDLPCookiesStatus(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		var resp map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["uploaded"] != false {
+			t.Errorf("expected uploaded=false, got %v", resp["uploaded"])
+		}
+	})
+
+	// Test POST upload
+	t.Run("upload", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipartWriter(t, body, "cookies", "cookies.txt", "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\ttest")
+		req := httptest.NewRequest(http.MethodPost, "/admin/api/ytdlp-cookies", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+		handler.UploadYTDLPCookies(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("upload status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["uploaded"] != true {
+			t.Errorf("expected uploaded=true, got %v", resp["uploaded"])
+		}
+	})
+
+	// Test GET status after upload
+	t.Run("status_after_upload", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/api/ytdlp-cookies", nil)
+		rec := httptest.NewRecorder()
+		handler.GetYTDLPCookiesStatus(rec, req)
+
+		var resp map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["uploaded"] != true {
+			t.Errorf("expected uploaded=true after upload, got %v", resp["uploaded"])
+		}
+		if resp["fileName"] != "yt-dlp-cookies.txt" {
+			t.Errorf("expected fileName=yt-dlp-cookies.txt, got %v", resp["fileName"])
+		}
+	})
+
+	// Test DELETE
+	t.Run("delete", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/admin/api/ytdlp-cookies", nil)
+		rec := httptest.NewRecorder()
+		handler.DeleteYTDLPCookies(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delete status = %d, want 200", rec.Code)
+		}
+		var resp map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["uploaded"] != false {
+			t.Errorf("expected uploaded=false after delete, got %v", resp["uploaded"])
+		}
+	})
+
+	// Test upload with invalid file (no tabs)
+	t.Run("upload_invalid", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipartWriter(t, body, "cookies", "cookies.txt", "this is not a cookie file")
+		req := httptest.NewRequest(http.MethodPost, "/admin/api/ytdlp-cookies", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		rec := httptest.NewRecorder()
+		handler.UploadYTDLPCookies(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("invalid upload status = %d, want 400", rec.Code)
+		}
+	})
+}
+
+// multipartWriter creates a multipart form with a file field
+func multipartWriter(t *testing.T, body *bytes.Buffer, fieldName, fileName, content string) *multipart.Writer {
+	t.Helper()
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	part.Write([]byte(content))
+	writer.Close()
+	return writer
 }

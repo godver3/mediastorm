@@ -469,6 +469,7 @@ var SettingsSchema = map[string]interface{}{
 			"rewindOnResumeFromPause":   map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
 			"rewindOnPlaybackStart":     map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
 			"disablePrequeue":           map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
+			"ytdlpCookies":             map[string]interface{}{"type": "file_upload", "label": "YouTube Cookies (Experimental)", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 102, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true},
 		},
 	},
 	"homeShelves": map[string]interface{}{
@@ -3534,6 +3535,95 @@ func (h *AdminUIHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	http.ServeFile(w, r, iconPath)
+}
+
+// ============================================
+// yt-dlp Cookies Upload (Experimental)
+// ============================================
+
+// ytdlpCookiesPath returns the path where the yt-dlp cookies file is stored.
+func (h *AdminUIHandler) ytdlpCookiesPath() string {
+	return filepath.Join(filepath.Dir(h.settingsPath), "yt-dlp-cookies.txt")
+}
+
+// GetYTDLPCookiesStatus returns whether a yt-dlp cookies file has been uploaded.
+func (h *AdminUIHandler) GetYTDLPCookiesStatus(w http.ResponseWriter, r *http.Request) {
+	cookiesPath := h.ytdlpCookiesPath()
+	info, err := os.Stat(cookiesPath)
+	exists := err == nil
+
+	resp := map[string]interface{}{
+		"uploaded": exists,
+	}
+	if exists {
+		resp["fileName"] = "yt-dlp-cookies.txt"
+		resp["fileSize"] = info.Size()
+		resp["uploadedAt"] = info.ModTime()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// UploadYTDLPCookies accepts a Netscape-format cookies file for yt-dlp.
+func (h *AdminUIHandler) UploadYTDLPCookies(w http.ResponseWriter, r *http.Request) {
+	// Parse multipart form with 1MB limit (cookie files are small text files)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		http.Error(w, "File too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("cookies")
+	if err != nil {
+		http.Error(w, "cookies file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Basic validation: should be a text file, check for Netscape cookie format markers
+	content := string(data)
+	if !strings.Contains(content, "\t") {
+		http.Error(w, "Invalid cookie file format. Expected Netscape/Mozilla cookie format (tab-separated fields).", http.StatusBadRequest)
+		return
+	}
+
+	cookiesPath := h.ytdlpCookiesPath()
+	if err := os.WriteFile(cookiesPath, data, 0600); err != nil {
+		log.Printf("[admin] failed to save yt-dlp cookies: %v", err)
+		http.Error(w, "Failed to save cookies file", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[admin] yt-dlp cookies file uploaded (%d bytes)", len(data))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"uploaded": true,
+		"fileSize": len(data),
+	})
+}
+
+// DeleteYTDLPCookies removes the yt-dlp cookies file.
+func (h *AdminUIHandler) DeleteYTDLPCookies(w http.ResponseWriter, r *http.Request) {
+	cookiesPath := h.ytdlpCookiesPath()
+	if err := os.Remove(cookiesPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("[admin] failed to delete yt-dlp cookies: %v", err)
+		http.Error(w, "Failed to delete cookies file", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[admin] yt-dlp cookies file deleted")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"uploaded": false,
+	})
 }
 
 // ============================================

@@ -1633,6 +1633,19 @@
                 const endpoint = fieldDef.optionsEndpoint || '';
                 return '<div class="multiselect-container'+invalidClass+'" id="'+id+'_container">' + msTagsHtml +
                     '<button type="button" class="multiselect-btn" onclick="openMultiselectModal(\''+basePath+'\', \''+fieldKey+'\', \''+endpoint+'\', \''+fieldDef.label+'\')">Select...</button></div>';
+            case 'file_upload':
+                const uploadEndpoint = fieldDef.endpoint || '';
+                const acceptTypes = fieldDef.accept || '';
+                return '<div class="file-upload-container" id="'+id+'_container" data-endpoint="'+uploadEndpoint+'">' +
+                    '<div class="file-upload-status" id="'+id+'_status">Checking...</div>' +
+                    '<div class="file-upload-actions" id="'+id+'_actions" style="display:flex;gap:0.5rem;align-items:center;">' +
+                    '<label class="btn btn-sm btn-primary" style="cursor:pointer;margin:0;">' +
+                    '<input type="file" accept="'+acceptTypes+'" style="display:none;" onchange="handleFileUpload(\''+id+'\', \''+uploadEndpoint+'\', this)">' +
+                    'Upload File</label>' +
+                    '<button type="button" class="btn btn-sm btn-danger" id="'+id+'_delete" style="display:none;" onclick="handleFileDelete(\''+id+'\', \''+uploadEndpoint+'\')">Remove</button>' +
+                    '</div>' +
+                    '</div>' +
+                    '<script>checkFileUploadStatus("'+id+'", "'+uploadEndpoint+'");</script>';
             default:
                 return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
@@ -1880,6 +1893,91 @@
         const filteredValues = filtered.map(opt => opt.value);
         multiselectState.selected = multiselectState.selected.filter(v => !filteredValues.includes(v));
         renderMultiselectOptions();
+    }
+
+    // ============================================
+    // File Upload Handlers (for yt-dlp cookies etc.)
+    // ============================================
+    async function checkFileUploadStatus(fieldId, endpoint) {
+        try {
+            const response = await fetch(endpoint, { credentials: 'include' });
+            if (!response.ok) throw new Error('Status check failed');
+            const data = await response.json();
+            updateFileUploadUI(fieldId, data);
+        } catch (e) {
+            const statusEl = document.getElementById(fieldId + '_status');
+            if (statusEl) statusEl.textContent = 'Unable to check status';
+        }
+    }
+
+    function updateFileUploadUI(fieldId, data) {
+        const statusEl = document.getElementById(fieldId + '_status');
+        const deleteBtn = document.getElementById(fieldId + '_delete');
+        if (!statusEl) return;
+
+        if (data.uploaded) {
+            const size = data.fileSize ? ' (' + formatFileSize(data.fileSize) + ')' : '';
+            statusEl.innerHTML = '<span style="color: var(--success, #22c55e);">&#10003;</span> File uploaded' + size;
+            if (deleteBtn) deleteBtn.style.display = '';
+        } else {
+            statusEl.textContent = 'No file uploaded';
+            if (deleteBtn) deleteBtn.style.display = 'none';
+        }
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    async function handleFileUpload(fieldId, endpoint, inputEl) {
+        const file = inputEl.files[0];
+        if (!file) return;
+
+        const statusEl = document.getElementById(fieldId + '_status');
+        if (statusEl) statusEl.textContent = 'Uploading...';
+
+        try {
+            const formData = new FormData();
+            formData.append('cookies', file);
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                credentials: 'include',
+                body: formData,
+            });
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(errText);
+            }
+            const data = await response.json();
+            updateFileUploadUI(fieldId, data);
+            showToast('Cookies file uploaded successfully', 'success');
+        } catch (e) {
+            if (statusEl) statusEl.textContent = 'Upload failed';
+            showToast('Upload failed: ' + e.message, 'error');
+        }
+        // Reset input so same file can be re-uploaded
+        inputEl.value = '';
+    }
+
+    async function handleFileDelete(fieldId, endpoint) {
+        const statusEl = document.getElementById(fieldId + '_status');
+        if (statusEl) statusEl.textContent = 'Removing...';
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+            if (!response.ok) throw new Error('Delete failed');
+            const data = await response.json();
+            updateFileUploadUI(fieldId, data);
+            showToast('Cookies file removed', 'success');
+        } catch (e) {
+            if (statusEl) statusEl.textContent = 'Delete failed';
+            showToast('Failed to remove cookies file', 'error');
+        }
     }
 
     function addArrayItem(sectionKey) {
@@ -3182,6 +3280,8 @@
             .map(([fieldKey, fieldDef]) => {
                 // Skip hidden fields
                 if (fieldDef.hidden) return '';
+                // Skip global-only fields (like file uploads) when viewing profile/client settings
+                if (fieldDef.globalOnly && (selectedUserId || selectedClientId)) return '';
                 // Filter by search: if we have a field filter Set, only show matching fields
                 // (null means section-level match, so show all fields)
                 if (filteredFields && sectionFieldFilter !== null && !sectionFieldFilter.has(fieldKey)) {

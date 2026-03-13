@@ -46,6 +46,9 @@ type Service struct {
 	// Trailer prequeue manager for 1080p YouTube trailers
 	trailerPrequeue *TrailerPrequeueManager
 
+	// Cache directory (used to locate yt-dlp cookies file)
+	cacheDir string
+
 	// Background cache manager
 	cacheStopCh      chan struct{}
 	cacheStatusMu    sync.RWMutex
@@ -121,7 +124,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 
 	// Initialize trailer prequeue manager
 	trailerTempDir := filepath.Join(os.TempDir(), "strmr-trailers")
-	trailerMgr, err := NewTrailerPrequeueManager(trailerTempDir)
+	trailerMgr, err := NewTrailerPrequeueManager(trailerTempDir, cacheDir)
 	if err != nil {
 		log.Printf("[metadata] WARNING: failed to initialize trailer prequeue manager: %v", err)
 	}
@@ -144,6 +147,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		inflightRequests: make(map[string]*inflightRequest),
 		trailerPrequeue:  trailerMgr,
 		progressTasks:    make(map[string]*ProgressTask),
+		cacheDir:         cacheDir,
 	}
 }
 
@@ -5668,6 +5672,15 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 	return results, nil
 }
 
+// ytdlpCookiesPath returns the path to the yt-dlp cookies file if it exists, or empty string.
+func (s *Service) ytdlpCookiesPath() string {
+	p := filepath.Join(s.cacheDir, "yt-dlp-cookies.txt")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // ExtractTrailerStreamURL uses yt-dlp to extract a direct stream URL from a YouTube video.
 // The extracted URL is an MP4 that can be played directly by video players.
 func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) (string, error) {
@@ -5699,8 +5712,11 @@ func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) 
 		"--format", "18/22/best[ext=mp4][height<=720]/best[height<=720]/best",
 		"--no-warnings",
 		"--no-playlist",
-		videoURL,
 	}
+	if cookiesPath := s.ytdlpCookiesPath(); cookiesPath != "" {
+		args = append(args, "--cookies", cookiesPath)
+	}
+	args = append(args, videoURL)
 
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	var stdout, stderr bytes.Buffer
