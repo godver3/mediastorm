@@ -52,7 +52,7 @@ var (
 	}
 	episodeCodePattern    = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
 	episodeAltPattern     = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
-	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s](\d{1,2})[-_\s\[\.]`)   // Matches " - 01 - ", "_01_", "_01[", "_01." for anime
+	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s/](\d{1,2})[-_\s\[\.]`)  // Matches " - 01 - ", "_01_", "_01[", "_01.", "/01 " for season packs
 	seasonIndicatorPattern = regexp.MustCompile(`(?i)season[\s._-]*(\d{1,2})`)    // Matches "Season 02", "Season.02", "season_02"
 
 	// Absolute episode patterns for anime (3-4 digit episode numbers)
@@ -505,6 +505,12 @@ func parseEpisodeNumber(value string) (int, bool) {
 			if strings.HasSuffix(prefix, "season") {
 				continue
 			}
+		}
+		// Check if the trailing separator is "." followed by another digit,
+		// which indicates a decimal number (e.g., "1.28") rather than an episode number.
+		matchEnd := loc[1]
+		if matchEnd > 0 && value[matchEnd-1] == '.' && matchEnd < len(value) && value[matchEnd] >= '0' && value[matchEnd] <= '9' {
+			continue
 		}
 		return episode, true
 	}

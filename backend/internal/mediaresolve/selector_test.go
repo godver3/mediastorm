@@ -402,6 +402,11 @@ func TestCandidateMatchesEpisode(t *testing.T) {
 		{"Season 1 dir with indicator", "/Show Season 01/Show - 02.mkv", EpisodeCode{Season: 1, Episode: 2}, true},
 		// parseEpisodeNumber should skip "Season 02" as episode number
 		{"Season number not episode", "/Show Season 02 - 05.mkv", EpisodeCode{Season: 1, Episode: 5}, false},
+
+		// Decimal numbers in filenames should NOT match (e.g., "1.28" is not episode 1)
+		{"Decimal version not episode", "/36 - 1.28.mkv", EpisodeCode{Season: 1, Episode: 1}, false},
+		// Slash-prefixed episode numbers should match (e.g., "/01 - Rebirth.mkv")
+		{"Slash prefix ep match", "/01 - Rebirth.mkv", EpisodeCode{Season: 1, Episode: 1}, true},
 	}
 
 	for _, tt := range tests {
