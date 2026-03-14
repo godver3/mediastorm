@@ -1631,6 +1631,12 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 		size := parseSize(attrs["size"], item.Enclosure.Length)
 		published := parsePubDate(item.PubDate)
 
+		// Torznab indexers serve torrents that go through debrid, not usenet
+		svcType := models.ServiceTypeUnknown
+		if strings.EqualFold(strings.TrimSpace(idx.Type), "torznab") {
+			svcType = models.ServiceTypeDebrid
+		}
+
 		result := models.NZBResult{
 			Title:       item.Title,
 			Indexer:     idx.Name,
@@ -1641,6 +1647,7 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 			PublishDate: published,
 			Categories:  dedupe(append([]string{}, item.Categories...)),
 			Attributes:  attrs,
+			ServiceType: svcType,
 		}
 		results = append(results, result)
 	}

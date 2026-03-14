@@ -541,8 +541,14 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 		healthResult.Status = "cached"
 	}
 
+	// Use infoHash as track cache key; fall back to torrentURL when infoHash is unavailable (e.g. Jackett torrent file uploads)
+	trackCacheKey := infoHash
+	if trackCacheKey == "" && torrentURL != "" {
+		trackCacheKey = "url:" + torrentURL
+	}
+
 	// If cached and has links, check track cache or start async probe
-	if isCached && len(info.Links) > 0 && s.ffprobePath != "" && infoHash != "" {
+	if isCached && len(info.Links) > 0 && s.ffprobePath != "" && trackCacheKey != "" {
 		// Find the link for the preferred file (not just the first link)
 		// Links are ordered by original file ID, not selection order
 		preferredLinkIdx := 0
@@ -575,7 +581,7 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 
 		// Check track cache first
 		s.trackCacheMu.RLock()
-		cached, hasCached := s.trackCache[infoHash]
+		cached, hasCached := s.trackCache[trackCacheKey]
 		s.trackCacheMu.RUnlock()
 
 		if hasCached && time.Now().Before(cached.expiresAt) {
@@ -584,20 +590,20 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 			healthResult.SubtitleTracks = cached.subtitleTracks
 			healthResult.TrackProbeError = cached.probeError
 			log.Printf("[debrid-health] track cache HIT for %s: %d audio, %d subtitle",
-				infoHash, len(cached.audioTracks), len(cached.subtitleTracks))
+				trackCacheKey, len(cached.audioTracks), len(cached.subtitleTracks))
 		} else {
 			// Check if already probing
 			s.probingMu.Lock()
-			isProbing := s.probing[infoHash]
+			isProbing := s.probing[trackCacheKey]
 			if !isProbing {
-				s.probing[infoHash] = true
+				s.probing[trackCacheKey] = true
 			}
 			s.probingMu.Unlock()
 
 			if isProbing {
 				// Already probing, return loading state
 				healthResult.TracksLoading = true
-				log.Printf("[debrid-health] track probe in progress for %s", infoHash)
+				log.Printf("[debrid-health] track probe in progress for %s", trackCacheKey)
 			} else {
 				// Start async probe - need to unrestrict link first (before torrent is deleted)
 				unrestricted, err := client.UnrestrictLink(ctx, info.Links[preferredLinkIdx])
@@ -606,15 +612,15 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 					healthResult.TrackProbeError = fmt.Sprintf("unrestrict failed: %v", err)
 					// Clear probing state
 					s.probingMu.Lock()
-					delete(s.probing, infoHash)
+					delete(s.probing, trackCacheKey)
 					s.probingMu.Unlock()
 				} else if unrestricted.DownloadURL != "" {
 					// Start async probe with the download URL
 					downloadURL := unrestricted.DownloadURL
 					healthResult.TracksLoading = true
-					go s.probeTracksAsync(infoHash, downloadURL)
+					go s.probeTracksAsync(trackCacheKey, downloadURL)
 					log.Printf("[debrid-health] started async track probe for %s (link %d: %s)",
-						infoHash, preferredLinkIdx, unrestricted.Filename)
+						trackCacheKey, preferredLinkIdx, unrestricted.Filename)
 				}
 			}
 		}
