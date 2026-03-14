@@ -223,6 +223,17 @@ func (s *Service) Refresh(ctx context.Context) error {
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	futureLimit := time.Now().Add(time.Duration(retentionDays) * 24 * time.Hour)
 
+	// When a time offset is configured, programs are shifted at display time.
+	// Extend both cutoffs by the absolute offset to avoid premature pruning.
+	if offsetMin := settings.Live.EPG.TimeOffsetMinutes; offsetMin != 0 {
+		abs := time.Duration(offsetMin) * time.Minute
+		if abs < 0 {
+			abs = -abs
+		}
+		cutoff = cutoff.Add(-abs)
+		futureLimit = futureLimit.Add(abs)
+	}
+
 	for channelID, programs := range newSchedule.Programs {
 		var filtered []models.EPGProgram
 		for _, prog := range programs {
@@ -521,11 +532,16 @@ func parseXMLTVNSEpisode(s string) string {
 }
 
 // GetNowPlaying returns current and next programs for the specified channel IDs.
-func (s *Service) GetNowPlaying(channelIDs []string) []models.EPGNowPlaying {
+// The optional timeOffset shifts the effective "now" used for determining
+// current/next programs (negative offset = look earlier in stored data).
+func (s *Service) GetNowPlaying(channelIDs []string, timeOffset ...time.Duration) []models.EPGNowPlaying {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	now := time.Now().UTC()
+	if len(timeOffset) > 0 {
+		now = now.Add(timeOffset[0])
+	}
 	result := make([]models.EPGNowPlaying, 0, len(channelIDs))
 
 	for _, channelID := range channelIDs {

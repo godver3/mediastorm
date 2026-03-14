@@ -246,6 +246,7 @@ type EPGSettings struct {
 	Sources              []EPGSource `json:"sources,omitempty"`
 	RefreshIntervalHours int         `json:"refreshIntervalHours"` // Default: 12
 	RetentionDays        int         `json:"retentionDays"`        // Default: 7
+	TimeOffsetMinutes    int         `json:"timeOffsetMinutes"`    // Shift EPG program times by this many minutes (positive = forward, negative = backward)
 }
 
 // LiveSettings controls Live TV playlist caching behavior.

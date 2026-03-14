@@ -111,6 +111,7 @@ type EPGOverrides struct {
 	XmltvUrl             *string `json:"xmltvUrl,omitempty"`
 	RefreshIntervalHours *int    `json:"refreshIntervalHours,omitempty"`
 	RetentionDays        *int    `json:"retentionDays,omitempty"`
+	TimeOffsetMinutes    *int    `json:"timeOffsetMinutes,omitempty"`
 }
 
 // ResolvedLiveSource holds the resolved IPTV source and tuning configuration
@@ -133,6 +134,7 @@ type ResolvedLiveSource struct {
 	EPGXmltvUrl             string
 	EPGRefreshIntervalHours int
 	EPGRetentionDays        int
+	EPGTimeOffsetMinutes    int
 }
 
 // ResolveLiveSource merges per-profile IPTV overrides with global settings.
@@ -195,6 +197,9 @@ func ResolveLiveSource(profile *LiveTVSettings, global *ResolvedLiveSource) Reso
 		}
 		if profile.EPG.RetentionDays != nil {
 			r.EPGRetentionDays = *profile.EPG.RetentionDays
+		}
+		if profile.EPG.TimeOffsetMinutes != nil {
+			r.EPGTimeOffsetMinutes = *profile.EPG.TimeOffsetMinutes
 		}
 	}
 	return r

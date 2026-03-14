@@ -414,6 +414,7 @@ var SettingsSchema = map[string]interface{}{
 			"epg.xmltvUrl":             map[string]interface{}{"type": "text", "label": "XMLTV URL", "description": "URL to XMLTV EPG data (supports .xml and .xml.gz). For Xtream mode, leave empty to auto-fetch from provider.", "placeholder": "http://example.com/epg.xml.gz", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 14},
 			"epg.refreshIntervalHours": map[string]interface{}{"type": "number", "label": "EPG Refresh Interval (hours)", "description": "How often to refresh EPG data (default: 12)", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 15},
 			"epg.retentionDays":        map[string]interface{}{"type": "number", "label": "EPG Retention (days)", "description": "How many days of EPG data to keep (default: 7)", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 16},
+			"epg.timeOffsetMinutes":    map[string]interface{}{"type": "number", "label": "EPG Time Offset (minutes)", "description": "Shift EPG program times by this many minutes. Use positive values to move programs forward, negative to move them backward.", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 17},
 		},
 	},
 	"indexers": map[string]interface{}{
@@ -795,6 +796,13 @@ var SettingsSchema = map[string]interface{}{
 				"description": "How many days of EPG data to keep (default: 7)",
 				"showWhen":    map[string]interface{}{"field": "epg.enabled", "value": true},
 				"order":       16,
+			},
+			"epg.timeOffsetMinutes": map[string]interface{}{
+				"type":        "number",
+				"label":       "EPG Time Offset (minutes)",
+				"description": "Shift EPG program times by this many minutes. Use positive values to move programs forward, negative to move them backward.",
+				"showWhen":    map[string]interface{}{"field": "epg.enabled", "value": true},
+				"order":       17,
 			},
 		},
 	},

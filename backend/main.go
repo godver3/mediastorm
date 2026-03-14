@@ -452,7 +452,7 @@ func main() {
 
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
-	epgHandler := handlers.NewEPGHandler(epgService)
+	epgHandler := handlers.NewEPGHandler(epgService, cfgManager, userSettingsService)
 	settingsHandler.SetEPGService(epgService)               // Enable auto-refresh when new EPG sources are added
 	settingsHandler.SetUserSettingsService(userSettingsService) // Enable stripping redundant overrides
 	settingsHandler.SetClientsLister(clientsService)           // Enable client→profile mapping

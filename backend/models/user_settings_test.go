@@ -169,3 +169,34 @@ func TestResolveLiveSource_StreamFormatNilUsesGlobal(t *testing.T) {
 		t.Errorf("StreamFormat = %q, want %q (global default)", r.StreamFormat, "hls")
 	}
 }
+
+func TestResolveLiveSource_EPGTimeOffsetOverride(t *testing.T) {
+	offset := -120
+	profile := &LiveTVSettings{
+		EPG: &EPGOverrides{
+			TimeOffsetMinutes: &offset,
+		},
+	}
+
+	g := newGlobal()
+	g.EPGTimeOffsetMinutes = 60
+
+	r := ResolveLiveSource(profile, g)
+
+	if r.EPGTimeOffsetMinutes != -120 {
+		t.Errorf("EPGTimeOffsetMinutes = %d, want -120", r.EPGTimeOffsetMinutes)
+	}
+}
+
+func TestResolveLiveSource_EPGTimeOffsetNilUsesGlobal(t *testing.T) {
+	profile := &LiveTVSettings{}
+
+	g := newGlobal()
+	g.EPGTimeOffsetMinutes = 30
+
+	r := ResolveLiveSource(profile, g)
+
+	if r.EPGTimeOffsetMinutes != 30 {
+		t.Errorf("EPGTimeOffsetMinutes = %d, want 30 (global default)", r.EPGTimeOffsetMinutes)
+	}
+}

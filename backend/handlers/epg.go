@@ -8,19 +8,53 @@ import (
 	"strings"
 	"time"
 
+	"novastream/config"
+	"novastream/models"
 	"novastream/services/epg"
 )
 
 // EPGHandler handles EPG-related HTTP requests.
 type EPGHandler struct {
-	epgService *epg.Service
+	epgService      *epg.Service
+	cfgManager      *config.Manager
+	userSettingsSvc LiveUserSettingsProvider
 }
 
 // NewEPGHandler creates a new EPG handler.
-func NewEPGHandler(epgService *epg.Service) *EPGHandler {
+func NewEPGHandler(epgService *epg.Service, cfgManager *config.Manager, userSettingsSvc LiveUserSettingsProvider) *EPGHandler {
 	return &EPGHandler{
-		epgService: epgService,
+		epgService:      epgService,
+		cfgManager:      cfgManager,
+		userSettingsSvc: userSettingsSvc,
 	}
+}
+
+// getEPGTimeOffset resolves the EPG time offset for the current request,
+// merging global settings with any per-profile override.
+func (h *EPGHandler) getEPGTimeOffset(r *http.Request) time.Duration {
+	offset := 0
+	if h.cfgManager != nil {
+		if settings, err := h.cfgManager.Load(); err == nil {
+			offset = settings.Live.EPG.TimeOffsetMinutes
+		}
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID != "" && h.userSettingsSvc != nil {
+		userSettings, err := h.userSettingsSvc.Get(profileID)
+		if err == nil && userSettings != nil && userSettings.LiveTV.EPG != nil && userSettings.LiveTV.EPG.TimeOffsetMinutes != nil {
+			offset = *userSettings.LiveTV.EPG.TimeOffsetMinutes
+		}
+	}
+
+	return time.Duration(offset) * time.Minute
+}
+
+// applyOffsetToProgram returns a copy of the program with start/stop shifted by the offset.
+func applyOffsetToProgram(p models.EPGProgram, offset time.Duration) models.EPGProgram {
+	p.Start = p.Start.Add(offset)
+	p.Stop = p.Stop.Add(offset)
+	return p
 }
 
 // GetNowPlaying returns current and next programs for specified channels.
@@ -42,7 +76,24 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 		channelIDs[i] = strings.TrimSpace(channelIDs[i])
 	}
 
-	result := h.epgService.GetNowPlaying(channelIDs)
+	offset := h.getEPGTimeOffset(r)
+
+	// Query with the negative offset so we find the correct programs in stored data,
+	// then shift response times by the positive offset.
+	result := h.epgService.GetNowPlaying(channelIDs, -offset)
+
+	if offset != 0 {
+		for i := range result {
+			if result[i].Current != nil {
+				shifted := applyOffsetToProgram(*result[i].Current, offset)
+				result[i].Current = &shifted
+			}
+			if result[i].Next != nil {
+				shifted := applyOffsetToProgram(*result[i].Next, offset)
+				result[i].Next = &shifted
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(result); err != nil {
@@ -73,14 +124,23 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	start := time.Now().UTC()
+	offset := h.getEPGTimeOffset(r)
+
+	// Shift query window by -offset to find correct programs in stored data
+	start := time.Now().UTC().Add(-offset)
 	end := start.Add(time.Duration(days) * 24 * time.Hour)
 
 	programs := h.epgService.GetSchedule(channelID, start, end)
 
+	if offset != 0 {
+		for i := range programs {
+			programs[i] = applyOffsetToProgram(programs[i], offset)
+		}
+	}
+
 	response := struct {
-		ChannelID string              `json:"channelId"`
-		Programs  []interface{}       `json:"programs"`
+		ChannelID string        `json:"channelId"`
+		Programs  []interface{} `json:"programs"`
 	}{
 		ChannelID: channelID,
 		Programs:  make([]interface{}, len(programs)),
@@ -132,10 +192,22 @@ func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	start := time.Now().UTC().Add(time.Duration(startOffset) * time.Minute)
+	offset := h.getEPGTimeOffset(r)
+
+	// Shift query window by -offset to find correct programs in stored data
+	start := time.Now().UTC().Add(time.Duration(startOffset)*time.Minute - offset)
 	end := start.Add(time.Duration(hours) * time.Hour)
 
 	schedules := h.epgService.GetScheduleMultiple(channelIDs, start, end)
+
+	if offset != 0 {
+		for chID, programs := range schedules {
+			for i := range programs {
+				programs[i] = applyOffsetToProgram(programs[i], offset)
+			}
+			schedules[chID] = programs
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(schedules); err != nil {
@@ -168,12 +240,24 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	programs := h.epgService.GetChannelSchedule(channelID, date)
+	offset := h.getEPGTimeOffset(r)
+
+	// For channel schedule, query with shifted window to find correct stored programs
+	year, month, day := date.Date()
+	queryStart := time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Add(-offset)
+	queryEnd := queryStart.Add(24 * time.Hour)
+	programs := h.epgService.GetSchedule(channelID, queryStart, queryEnd)
+
+	if offset != 0 {
+		for i := range programs {
+			programs[i] = applyOffsetToProgram(programs[i], offset)
+		}
+	}
 
 	response := struct {
-		ChannelID string              `json:"channelId"`
-		Date      string              `json:"date"`
-		Programs  []interface{}       `json:"programs"`
+		ChannelID string        `json:"channelId"`
+		Date      string        `json:"date"`
+		Programs  []interface{} `json:"programs"`
 	}{
 		ChannelID: channelID,
 		Date:      date.Format("2006-01-02"),

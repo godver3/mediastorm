@@ -855,6 +855,7 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 		EPGXmltvUrl:             globalSettings.Live.EPG.XmltvUrl,
 		EPGRefreshIntervalHours: globalSettings.Live.EPG.RefreshIntervalHours,
 		EPGRetentionDays:        globalSettings.Live.EPG.RetentionDays,
+		EPGTimeOffsetMinutes:    globalSettings.Live.EPG.TimeOffsetMinutes,
 	}
 
 	profileID := r.URL.Query().Get("profileId")
