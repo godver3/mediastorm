@@ -169,6 +169,10 @@ func (p *streamPool) serve(
 
 	// If data not yet available at requested position, wait for CDN reader
 	if reqStart >= endPos {
+		gap := reqStart - endPos
+		waitStart := time.Now()
+		log.Printf("[stream-pool] WAIT-START: path=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v",
+			path, reqStart, endPos, gap, slot.startByte, false)
 		waitDeadline := time.After(poolWaitTimeout)
 		for {
 			select {
@@ -179,6 +183,8 @@ func (p *streamPool) serve(
 				ch = slot.signal
 				slot.mu.Unlock()
 				if reqStart < endPos {
+					log.Printf("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d",
+						path, time.Since(waitStart).Round(time.Millisecond), gap, endPos)
 					goto dataReady
 				}
 				if done {
@@ -186,7 +192,13 @@ func (p *streamPool) serve(
 					return false, nil
 				}
 			case <-waitDeadline:
-				log.Printf("[stream-pool] TIMEOUT waiting for data: reqStart=%d endPos=%d", reqStart, endPos)
+				slot.mu.Lock()
+				currentEnd := slot.startByte + int64(len(slot.data))
+				remaining := reqStart - currentEnd
+				cdnDone := slot.cdnDone
+				slot.mu.Unlock()
+				log.Printf("[stream-pool] TIMEOUT waiting for data: reqStart=%d endPos=%d remaining=%d cdnDone=%v elapsed=%v",
+					reqStart, currentEnd, remaining, cdnDone, time.Since(waitStart).Round(time.Millisecond))
 				return false, nil
 			case <-ctx.Done():
 				return true, nil
@@ -375,9 +387,15 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 	if slot := p.findSlot(path, reqPos); slot != nil {
 		slot.mu.Lock()
 		buffered := int64(len(slot.data))
+		endPos := slot.startByte + buffered
+		cdnDone := slot.cdnDone
 		slot.mu.Unlock()
-		log.Printf("[stream-pool] REUSE slot: path=%q reqPos=%d slotStart=%d buffered=%d",
-			path, reqPos, slot.startByte, buffered)
+		gap := reqPos - endPos
+		if gap < 0 {
+			gap = 0
+		}
+		log.Printf("[stream-pool] REUSE slot: path=%q reqPos=%d slotStart=%d buffered=%d endPos=%d gap=%d cdnDone=%v",
+			path, reqPos, slot.startByte, buffered, endPos, gap, cdnDone)
 		return slot, nil
 	}
 
@@ -477,17 +495,24 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 		default:
 		}
 
-		// Backpressure: if buffer is at the hard limit (active readers preventing
-		// trim), pause reading from CDN until readers catch up or disconnect.
+		// Backpressure: if buffer is at the hard limit, trim from the front
+		// to make room even if readers are active. Active readers whose position
+		// falls behind the new startByte will detect the trim (pos < startByte)
+		// and fall back to direct streaming. This prevents a deadlock where:
+		//   1. CDN reader blocks because buffer is full
+		//   2. Buffer can't trim because readers > 0
+		//   3. A waiting reader at the buffer edge never gets signaled
 		s.mu.Lock()
-		for len(s.data) >= poolSlotBufferHard {
-			s.mu.Unlock()
-			select {
-			case <-s.ctx.Done():
-				return
-			case <-time.After(100 * time.Millisecond):
-			}
-			s.mu.Lock()
+		if len(s.data) >= poolSlotBufferHard {
+			trimAmount := len(s.data) - poolSlotBufferTrim
+			remaining := len(s.data) - trimAmount
+			newData := make([]byte, remaining, remaining+4*1024*1024)
+			copy(newData, s.data[trimAmount:])
+			oldStart := s.startByte
+			s.data = newData
+			s.startByte += int64(trimAmount)
+			log.Printf("[stream-pool] backpressure trim: path=%q oldStart=%d newStart=%d trimmed=%d readers=%d",
+				s.path, oldStart, s.startByte, trimAmount, atomic.LoadInt32(&s.readers))
 		}
 		s.mu.Unlock()
 
@@ -495,13 +520,11 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 		if n > 0 {
 			s.mu.Lock()
 			s.data = append(s.data, buf[:n]...)
-			// Only trim when NO active readers are consuming the buffer.
-			// When readers are active, their position may be anywhere in the buffer,
-			// and trimming could evict data they haven't read yet.
-			// The hard limit above prevents unbounded growth.
-			if len(s.data) > poolSlotBufferMax && atomic.LoadInt32(&s.readers) == 0 {
+			// Trim when buffer exceeds the sliding window size.
+			// Active readers that fall behind the new startByte will detect
+			// the trim (pos < startByte check) and fall back gracefully.
+			if len(s.data) > poolSlotBufferMax {
 				trimAmount := len(s.data) - poolSlotBufferTrim
-				// Copy to new slice to release the old backing array
 				remaining := len(s.data) - trimAmount
 				newData := make([]byte, remaining, remaining+4*1024*1024)
 				copy(newData, s.data[trimAmount:])
