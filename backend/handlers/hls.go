@@ -252,9 +252,11 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 	t.session.mu.RUnlock()
 
 	// Check actual segment files on disk (more accurate than SegmentsCreated counter)
-	segmentExt := ".m4s"
-	pattern := filepath.Join(outputDir, "segment*"+segmentExt)
-	segmentFiles, _ := filepath.Glob(pattern)
+	// Glob for both .m4s (fMP4) and .ts (MPEG-TS) segments
+	segmentFiles, _ := filepath.Glob(filepath.Join(outputDir, "segment*.m4s"))
+	if len(segmentFiles) == 0 {
+		segmentFiles, _ = filepath.Glob(filepath.Join(outputDir, "segment*.ts"))
+	}
 
 	// Find highest segment number
 	highestSegment := -1
@@ -1687,6 +1689,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 				log.Printf("[hls] session %s: using hvc1 tag with fMP4 segments with HDR10 color metadata", session.ID)
 			}
 		}
+	} else if forceAAC {
+		// Cast sessions (forceAAC=true): use MPEG-TS for maximum Chromecast compatibility
+		// fMP4 with output seeking + copy mode can produce non-monotonic DTS that Chromecast rejects
+		needsFmp4 = false
+		segmentExt = ".ts"
+		log.Printf("[hls] session %s: using MPEG-TS segments for cast/forceAAC session (Chromecast compatibility)", session.ID)
 	} else {
 		// TESTING: Use fMP4 for all content (normally SDR uses .ts MPEG-TS segments)
 		// This allows testing HLS with react-native-video for SDR content
@@ -2314,14 +2322,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 					continue
 				}
 
-				// Find segment files on disk
-				// TESTING: Always use .m4s for all content
-				segmentExt := ".m4s"
-				// if hasDV || hasHDR {
-				// 	segmentExt = ".m4s"
-				// }
-				pattern := filepath.Join(outputDir, "segment*"+segmentExt)
-				segmentFiles, _ := filepath.Glob(pattern)
+				// Find segment files on disk (check both .m4s and .ts)
+				segmentFiles, _ := filepath.Glob(filepath.Join(outputDir, "segment*.m4s"))
+				if len(segmentFiles) == 0 {
+					segmentFiles, _ = filepath.Glob(filepath.Join(outputDir, "segment*.ts"))
+				}
 
 				// Find highest segment number from filenames (not just count, since cleanup removes old ones)
 				highestSegment := -1
@@ -3216,11 +3221,11 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		// Find the highest segment number in the current playlist
 		highestExisting := -1
 		lines := strings.Split(playlistContent, "\n")
-		// TESTING: Always use .m4s for all content (normally SDR uses .ts)
+		// Determine segment extension based on actual session format
 		segmentExt := ".m4s"
-		// if !session.HasDV && !session.HasHDR {
-		// 	segmentExt = ".ts"
-		// }
+		if session.forceAAC && !session.HasDV && !session.HasHDR {
+			segmentExt = ".ts" // Cast sessions use MPEG-TS for Chromecast compatibility
+		}
 		for _, line := range lines {
 			if strings.HasPrefix(line, "segment") && strings.HasSuffix(line, segmentExt) {
 				// Extract segment number from "segment0.m4s" or "segment0.ts"
@@ -3941,17 +3946,15 @@ func (m *HLSManager) deleteOldSegments(session *HLSSession, justServedSegment st
 		return
 	}
 
-	// TESTING: Always use .m4s for all content
-	segmentExt := ".m4s"
-	// if hasDV || hasHDR {
-	// 	segmentExt = ".m4s"
-	// }
-
 	// Delete segments older than cutoff (segments the player has already watched)
+	// Try both .m4s (fMP4) and .ts (MPEG-TS) extensions
 	deletedCount := 0
 	newMinAvailable := cutoff + 1
 	for i := 0; i <= cutoff; i++ {
-		oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d%s", i, segmentExt))
+		oldSegment := filepath.Join(outputDir, fmt.Sprintf("segment%d.m4s", i))
+		if _, err := os.Stat(oldSegment); os.IsNotExist(err) {
+			oldSegment = filepath.Join(outputDir, fmt.Sprintf("segment%d.ts", i))
+		}
 		if err := os.Remove(oldSegment); err == nil {
 			deletedCount++
 		}

@@ -303,6 +303,7 @@ func Register(
 	protected.HandleFunc("/video/stream/{displayName}", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	protected.HandleFunc("/video/metadata", videoHandler.ProbeVideo).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/cropdetect", videoHandler.CropDetect).Methods(http.MethodGet, http.MethodOptions)
 
 	// HLS streaming endpoints for Dolby Vision
 	protected.HandleFunc("/video/hls/start", videoHandler.StartHLSSession).Methods(http.MethodGet, http.MethodOptions)
