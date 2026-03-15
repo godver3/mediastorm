@@ -24,6 +24,7 @@ type TrackedStream struct {
 	ClientIP      string
 	ProfileID     string
 	ProfileName   string
+	AccountID     string
 	StartTime     time.Time
 	LastActivity  time.Time
 	BytesStreamed int64
@@ -35,6 +36,14 @@ type TrackedStream struct {
 	done             chan struct{}
 	bytesCounter     *int64
 	activityCounter  *int64 // unix nanos of last byte transfer, updated atomically
+}
+
+// StreamUsageSummary represents the current stream usage for an account or profile.
+type StreamUsageSummary struct {
+	CurrentStreams   int  `json:"currentStreams"`
+	MaxStreams       int  `json:"maxStreams"`
+	AvailableStreams int  `json:"availableStreams"`
+	AtLimit         bool `json:"atLimit"`
 }
 
 // Global stream tracker instance
@@ -51,6 +60,11 @@ func GetStreamTracker() *StreamTracker {
 // The caller should atomically update the bytes counter with total bytes transferred
 // and the activity counter with time.Now().UnixNano() on each write.
 func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength int64, rangeStart, rangeEnd int64) (string, *int64, *int64) {
+	return t.StartStreamWithAccount(r, path, contentLength, rangeStart, rangeEnd, "")
+}
+
+// StartStreamWithAccount is like StartStream but also records the account ID.
+func (t *StreamTracker) StartStreamWithAccount(r *http.Request, path string, contentLength int64, rangeStart, rangeEnd int64, accountID string) (string, *int64, *int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -81,6 +95,7 @@ func (t *StreamTracker) StartStream(r *http.Request, path string, contentLength 
 		ClientIP:        clientIP,
 		ProfileID:       profileID,
 		ProfileName:     profileName,
+		AccountID:       accountID,
 		StartTime:       now,
 		LastActivity:    now,
 		ContentLength:   contentLength,
@@ -142,6 +157,7 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 			ClientIP:      s.ClientIP,
 			ProfileID:     s.ProfileID,
 			ProfileName:   s.ProfileName,
+			AccountID:     s.AccountID,
 			StartTime:     s.StartTime,
 			LastActivity:  lastActivity,
 			BytesStreamed: atomic.LoadInt64(s.bytesCounter),
@@ -161,6 +177,72 @@ func (t *StreamTracker) Count() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return len(t.streams)
+}
+
+// CountForAccount returns the number of active streams for the given account.
+func (t *StreamTracker) CountForAccount(accountID string) int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	count := 0
+	for _, s := range t.streams {
+		if s.AccountID == accountID {
+			count++
+		}
+	}
+	return count
+}
+
+// CountForProfile returns the number of active streams for the given profile.
+func (t *StreamTracker) CountForProfile(profileID string) int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	count := 0
+	for _, s := range t.streams {
+		if s.ProfileID == profileID {
+			count++
+		}
+	}
+	return count
+}
+
+// GetAccountStreamUsage returns a usage summary for the given account.
+func (t *StreamTracker) GetAccountStreamUsage(accountID string, maxStreams int) StreamUsageSummary {
+	current := t.CountForAccount(accountID)
+	available := 0
+	atLimit := false
+	if maxStreams > 0 {
+		available = maxStreams - current
+		if available < 0 {
+			available = 0
+		}
+		atLimit = current >= maxStreams
+	}
+	return StreamUsageSummary{
+		CurrentStreams:   current,
+		MaxStreams:       maxStreams,
+		AvailableStreams: available,
+		AtLimit:         atLimit,
+	}
+}
+
+// GetProfileStreamUsage returns a usage summary for the given profile.
+func (t *StreamTracker) GetProfileStreamUsage(profileID string, maxStreams int) StreamUsageSummary {
+	current := t.CountForProfile(profileID)
+	available := 0
+	atLimit := false
+	if maxStreams > 0 {
+		available = maxStreams - current
+		if available < 0 {
+			available = 0
+		}
+		atLimit = current >= maxStreams
+	}
+	return StreamUsageSummary{
+		CurrentStreams:   current,
+		MaxStreams:       maxStreams,
+		AvailableStreams: available,
+		AtLimit:         atLimit,
+	}
 }
 
 func generateStreamID(counter uint64) string {

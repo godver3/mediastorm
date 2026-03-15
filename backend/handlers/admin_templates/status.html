@@ -54,7 +54,7 @@
     </div>
 </div>
 
-<!-- Live Stream Buckets -->
+<!-- Live Stream Limits -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
         <h2>
@@ -63,7 +63,7 @@
                 <path d="M12 5v14"/>
                 <circle cx="12" cy="12" r="9"/>
             </svg>
-            Live Stream Buckets
+            Live Stream Limits
         </h2>
     </div>
     <div class="card-body">
@@ -81,8 +81,38 @@
                 </thead>
                 <tbody id="liveUsageBucketsBody">
                     <tr>
-                        <td colspan="6" style="color: var(--text-muted); text-align: center; padding: 1rem;">No live stream buckets active</td>
+                        <td colspan="6" style="color: var(--text-muted); text-align: center; padding: 1rem;">No live stream limits active</td>
                     </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- VOD Stream Usage by Account -->
+<div class="card" id="vodUsageCard" style="margin-bottom: 1.5rem; display: none;">
+    <div class="card-header">
+        <h2>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            VOD Stream Limits
+        </h2>
+    </div>
+    <div class="card-body">
+        <div id="vodGlobalLimit"></div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Account</th>
+                        <th>Active</th>
+                        <th>Limit</th>
+                        <th>Available</th>
+                        <th>Profiles</th>
+                    </tr>
+                </thead>
+                <tbody id="vodUsageBody">
                 </tbody>
             </table>
         </div>
@@ -1096,7 +1126,60 @@
             return;
         }
 
-        body.innerHTML = '<tr><td colspan="6" style="color: var(--text-muted); text-align: center; padding: 1rem;">No live stream buckets active</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" style="color: var(--text-muted); text-align: center; padding: 1rem;">No live stream limits active</td></tr>';
+    }
+
+    function renderVODUsage(vodUsageByAccount, globalVODLimit, globalVODCurrent) {
+        const card = document.getElementById('vodUsageCard');
+        const body = document.getElementById('vodUsageBody');
+        const globalEl = document.getElementById('vodGlobalLimit');
+        if (!card || !body) return;
+
+        const rows = Array.isArray(vodUsageByAccount) ? vodUsageByAccount : [];
+        const hasGlobal = globalVODLimit > 0;
+        const hasRows = rows.length > 0;
+
+        if (!hasGlobal && !hasRows) {
+            card.style.display = 'none';
+            return;
+        }
+
+        card.style.display = '';
+
+        // Global limit summary
+        if (globalEl) {
+            if (hasGlobal) {
+                const globalAvailable = Math.max(0, globalVODLimit - globalVODCurrent);
+                const globalAtLimit = globalVODCurrent >= globalVODLimit;
+                globalEl.innerHTML = `<div style="padding: 0.75rem 0; border-bottom: 1px solid var(--border); font-size: 0.875rem; ${globalAtLimit ? 'color: #f87171;' : 'color: var(--text-secondary);'}">
+                    Global limit: <strong>${globalVODCurrent}/${globalVODLimit}</strong> streams active (${globalAvailable} available)
+                </div>`;
+            } else {
+                globalEl.innerHTML = '';
+            }
+        }
+
+        if (hasRows) {
+            body.innerHTML = rows.map(entry => {
+                const current = Number(entry.current || 0);
+                const max = Number(entry.max || 0);
+                const available = Number(entry.available || 0);
+                const atLimit = !!entry.atLimit;
+                const profiles = Array.isArray(entry.profiles) ? entry.profiles.join(', ') : '';
+                const rowStyle = atLimit ? 'color: #f87171;' : '';
+                return `
+                    <tr style="${rowStyle}">
+                        <td>${entry.accountName || entry.accountId}</td>
+                        <td>${current}</td>
+                        <td>${max}</td>
+                        <td>${available}</td>
+                        <td style="max-width: 320px; white-space: normal;">${profiles || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            body.innerHTML = '<tr><td colspan="5" style="color: var(--text-muted); text-align: center; padding: 0.5rem;">No per-account limits configured</td></tr>';
+        }
     }
 
     async function refreshStatus() {
@@ -1185,6 +1268,7 @@
     function handleStreamUpdate(data) {
         const streams = data.streams || [];
         renderLiveUsageBuckets(data.liveUsageBuckets, data.liveUsageByUser, data.liveUsage);
+        renderVODUsage(data.vodUsageByAccount, data.globalVODLimit, data.globalVODCurrent);
         const serverTime = data.server_time ? new Date(data.server_time).getTime() : Date.now();
         const receivedAt = Date.now();
 

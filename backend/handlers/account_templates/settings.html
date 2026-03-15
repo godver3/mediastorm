@@ -308,7 +308,11 @@
 {{define "scripts"}}
 <script>
 const profiles = {{json .Profiles}};
-let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
+// Check for ?profileId= query param to pre-select a profile
+const urlProfileId = new URLSearchParams(window.location.search).get('profileId');
+let currentProfileId = (urlProfileId && profiles.find(p => p.id === urlProfileId))
+    ? urlProfileId
+    : (profiles.length > 0 ? profiles[0].id : null);
 let currentSettings = null;
 let hasChanges = false;
 
@@ -619,8 +623,11 @@ function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
-// Load settings for first profile
+// Activate the correct profile selector button and load settings
 if (currentProfileId) {
+    document.querySelectorAll('.profile-selector-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.profileId === currentProfileId);
+    });
     loadSettings();
 }
 </script>

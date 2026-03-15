@@ -209,3 +209,68 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 	}
 	return summary, byUser, bucketRows
 }
+
+type vodAccountUsageRow struct {
+	AccountID   string   `json:"accountId"`
+	AccountName string   `json:"accountName"`
+	Profiles    []string `json:"profiles"`
+	Current     int      `json:"current"`
+	Max         int      `json:"max"`
+	Available   int      `json:"available"`
+	AtLimit     bool     `json:"atLimit"`
+}
+
+// buildVODStreamUsage builds per-account VOD stream usage data for the dashboard.
+func (h *AdminUIHandler) buildVODStreamUsage(isAdmin bool, scopedUsers []models.User, allowedProfileIDs map[string]bool) []vodAccountUsageRow {
+	if h.accountsService == nil {
+		return nil
+	}
+
+	// Group profiles by account
+	accountProfiles := map[string][]string{}
+	accountNames := map[string]string{}
+	for _, u := range scopedUsers {
+		if !isAdmin && !allowedProfileIDs[u.ID] {
+			continue
+		}
+		accountProfiles[u.AccountID] = append(accountProfiles[u.AccountID], u.Name)
+	}
+
+	// Get account names and max streams
+	accounts := h.accountsService.List()
+	for _, acc := range accounts {
+		accountNames[acc.ID] = acc.Username
+	}
+
+	tracker := GetStreamTracker()
+	var rows []vodAccountUsageRow
+
+	for _, acc := range accounts {
+		if acc.MaxStreams <= 0 {
+			continue
+		}
+		if _, hasScopedProfiles := accountProfiles[acc.ID]; !hasScopedProfiles && !isAdmin {
+			continue
+		}
+
+		usage := tracker.GetAccountStreamUsage(acc.ID, acc.MaxStreams)
+		profiles := accountProfiles[acc.ID]
+		sort.Strings(profiles)
+
+		rows = append(rows, vodAccountUsageRow{
+			AccountID:   acc.ID,
+			AccountName: acc.Username,
+			Profiles:    profiles,
+			Current:     usage.CurrentStreams,
+			Max:         usage.MaxStreams,
+			Available:   usage.AvailableStreams,
+			AtLimit:     usage.AtLimit,
+		})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].AccountName < rows[j].AccountName
+	})
+
+	return rows
+}

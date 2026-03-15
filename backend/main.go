@@ -449,6 +449,8 @@ func main() {
 		videoHandler.SetUserSettingsService(userSettingsService)
 		videoHandler.SetClientSettingsService(clientSettingsService)
 		videoHandler.SetConfigManager(cfgManager)
+		videoHandler.SetUsersService(userService)
+		videoHandler.SetAccountsService(accountsService)
 	}
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager, userSettingsService)
@@ -612,6 +614,7 @@ func main() {
 	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.RenameUserAccount)).Methods(http.MethodPatch)
 	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.DeleteUserAccount)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/accounts/password", adminUIHandler.RequireAuth(adminUIHandler.ResetUserAccountPassword)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/accounts/max-streams", adminUIHandler.RequireMasterAuth(adminUIHandler.SetAccountMaxStreams)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/accounts/default-password", adminUIHandler.RequireAuth(adminUIHandler.HasDefaultPassword)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/profiles/reassign", adminUIHandler.RequireAuth(adminUIHandler.ReassignProfile)).Methods(http.MethodPut)
 
@@ -810,6 +813,8 @@ func main() {
 	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.SetKidsAllowedLists)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.AddKidsAllowedList)).Methods(http.MethodPost)
 	r.HandleFunc("/account/api/users/{userID}/kids/lists", adminUIHandler.RequireAuth(usersHandler.RemoveKidsAllowedList)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/profiles/max-streams", accountUIHandler.RequireAuth(accountUIHandler.GetProfileMaxStreams)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/profiles/max-streams", accountUIHandler.RequireAuth(accountUIHandler.SetProfileMaxStreams)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/password", accountUIHandler.RequireAuth(accountUIHandler.ChangePassword)).Methods(http.MethodPut)
 
 	// Protected account routes - User Settings API

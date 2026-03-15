@@ -51,6 +51,17 @@
         </div>
     </div>
 
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; padding: 0.75rem 1rem; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.875rem; color: var(--text-secondary);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; flex-shrink: 0;">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        {{if gt .Account.MaxStreams 0}}
+            Max concurrent streams: <strong>{{.Account.MaxStreams}}</strong>{{if gt (len .ProfileStreamLimits) 0}} &mdash; per-profile limits set via Streams button{{end}}
+        {{else}}
+            Max concurrent streams: <strong>Unlimited</strong>
+        {{end}}
+    </div>
+
     <!-- Profiles Grid -->
     <div class="profile-grid" id="profilesGrid">
         {{range .Profiles}}
@@ -65,7 +76,10 @@
                 {{end}}
                 <div class="profile-info">
                     <h3>{{.Name}}</h3>
-                    <p>{{if .IsKidsProfile}}<span class="badge badge-accent">Kids</span>{{else}}Standard Profile{{end}}</p>
+                    <p>
+                        {{if .IsKidsProfile}}<span class="badge badge-accent">Kids</span>{{else}}Standard Profile{{end}}
+                        {{with index $.ProfileStreamLimits .ID}}<span class="badge" style="background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.25rem;">Max {{.}} streams</span>{{end}}
+                    </p>
                 </div>
             </div>
 
@@ -77,6 +91,21 @@
                     </svg>
                     Edit
                 </button>
+                <a class="btn btn-sm btn-secondary" href="/account/settings?profileId={{.ID}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    Settings
+                </a>
+                {{if gt $.Account.MaxStreams 0}}
+                <button class="btn btn-sm btn-secondary" onclick="showProfileStreamsModal('{{.ID}}', '{{.Name}}')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Streams
+                </button>
+                {{end}}
                 <button class="btn btn-sm btn-secondary" onclick="togglePin('{{.ID}}')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
                         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -219,10 +248,42 @@
         </div>
     </div>
 </div>
+
+<!-- Streams Modal -->
+<div id="streamsModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: var(--bg-secondary); border-radius: var(--radius-lg); width: 100%; max-width: 360px; border: 1px solid var(--border);">
+        <div style="padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+            <h3 id="streamsModalTitle">Profile Stream Limit</h3>
+            <button class="btn btn-icon btn-secondary" onclick="closeStreamsModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div style="padding: 1.25rem;">
+            <form id="streamsForm" onsubmit="saveProfileStreams(event)">
+                <input type="hidden" id="streamsProfileId">
+                <div class="form-group">
+                    <label class="form-label">Max Concurrent Streams</label>
+                    <input type="number" id="streamsInput" class="form-input" min="0" max="{{.Account.MaxStreams}}" value="0">
+                    <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">
+                        0 = uses full account limit ({{.Account.MaxStreams}}). Must be &le; {{.Account.MaxStreams}}.
+                    </p>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button type="submit" class="btn btn-primary">Save</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeStreamsModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {{end}}
 
 {{define "scripts"}}
 <script>
+    const accountMaxStreams = {{json .Account.MaxStreams}};
     let profiles = {{json .Profiles}};
     let selectedColor = '#3B82F6';
     let editSelectedColor = '#3B82F6';
@@ -587,11 +648,57 @@
         }
     }
 
+    // --- Profile Stream Limit Modal ---
+    async function showProfileStreamsModal(profileId, profileName) {
+        // Fetch current limit
+        try {
+            const res = await fetch('/account/api/profiles/max-streams?profileId=' + profileId);
+            if (res.ok) {
+                const data = await res.json();
+                document.getElementById('streamsProfileId').value = profileId;
+                document.getElementById('streamsInput').value = data.profileMaxStreams || 0;
+                document.getElementById('streamsModalTitle').textContent = 'Stream Limit: ' + profileName;
+                document.getElementById('streamsModal').style.display = 'flex';
+            } else {
+                showToast('Failed to load stream settings', 'error');
+            }
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
+    function closeStreamsModal() {
+        document.getElementById('streamsModal').style.display = 'none';
+    }
+
+    async function saveProfileStreams(e) {
+        e.preventDefault();
+        const profileId = document.getElementById('streamsProfileId').value;
+        const maxStreams = parseInt(document.getElementById('streamsInput').value) || 0;
+
+        try {
+            const res = await fetch('/account/api/profiles/max-streams?profileId=' + profileId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ maxStreams })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to save');
+            }
+            closeStreamsModal();
+            showToast('Stream limit updated');
+        } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+        }
+    }
+
     // Close modals on escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeEditModal();
             closePinModal();
+            closeStreamsModal();
         }
     });
 
@@ -602,5 +709,10 @@
     document.getElementById('pinModal').addEventListener('click', (e) => {
         if (e.target === document.getElementById('pinModal')) closePinModal();
     });
+    if (document.getElementById('streamsModal')) {
+        document.getElementById('streamsModal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('streamsModal')) closeStreamsModal();
+        });
+    }
 </script>
 {{end}}

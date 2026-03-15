@@ -260,7 +260,7 @@ func TestStreamPoolServe(t *testing.T) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}
 
-	served, err := pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "")
+	served, err := pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "", "")
 	if !served {
 		t.Fatal("expected serve to handle the request")
 	}
@@ -297,7 +297,7 @@ func TestStreamPoolClientDisconnectKeepsSlot(t *testing.T) {
 	// Start serving in a goroutine
 	done := make(chan struct{})
 	go func() {
-		pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "")
+		pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "", "")
 		close(done)
 	}()
 
@@ -458,7 +458,7 @@ func TestStreamPoolServeHead(t *testing.T) {
 
 	writeHeaders := func(w http.ResponseWriter) {}
 
-	served, err := pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "")
+	served, err := pool.serve(w, req, "/test/file.mp4", 0, provider, writeHeaders, "", "")
 	if !served {
 		t.Fatal("expected HEAD to be served")
 	}

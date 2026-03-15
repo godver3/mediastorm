@@ -110,6 +110,20 @@ type VideoHandler struct {
 	// client disconnects. Prevents seek storms when players alternate between audio
 	// and video track positions in non-interleaved MP4 files.
 	streamPool *streamPool
+
+	// User/account services for stream limit enforcement
+	usersSvc    UsersProvider
+	accountsSvc AccountsProvider
+}
+
+// UsersProvider interface for resolving profile → account
+type UsersProvider interface {
+	Get(id string) (models.User, bool)
+}
+
+// AccountsProvider interface for looking up account stream limits
+type AccountsProvider interface {
+	Get(id string) (models.Account, bool)
 }
 
 // rangeBlockCache stores recently-fetched byte ranges to serve tiny range requests
@@ -317,6 +331,34 @@ func (h *VideoHandler) SetClientSettingsService(svc ClientSettingsProvider) {
 	h.clientSettingsSvc = svc
 }
 
+// SetUsersService sets the users service for resolving profile → account.
+func (h *VideoHandler) SetUsersService(svc UsersProvider) {
+	h.usersSvc = svc
+}
+
+// SetAccountsService sets the accounts service for looking up stream limits.
+func (h *VideoHandler) SetAccountsService(svc AccountsProvider) {
+	h.accountsSvc = svc
+}
+
+// resolveAccountID resolves a profile ID from the request into an account ID.
+func (h *VideoHandler) resolveAccountID(r *http.Request) string {
+	if h.usersSvc == nil {
+		return ""
+	}
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+	if profileID == "" {
+		return ""
+	}
+	if user, ok := h.usersSvc.Get(profileID); ok {
+		return user.AccountID
+	}
+	return ""
+}
+
 // StreamVideo serves registered streams via the local provider.
 func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	// Handle OPTIONS requests for CORS
@@ -344,6 +386,77 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
 	} else if strings.HasPrefix(cleanPath, "webdav/") {
 		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+	}
+
+	// Enforce global concurrent stream limit (VOD only).
+	if r.Method == http.MethodGet && h.configManager != nil {
+		if globalSettings, err := h.configManager.Load(); err == nil && globalSettings.Playback.MaxConcurrentStreams > 0 {
+			tracker := GetStreamTracker()
+			totalActive := tracker.Count()
+			if totalActive >= globalSettings.Playback.MaxConcurrentStreams {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"code":           "STREAM_LIMIT_REACHED",
+					"message":        fmt.Sprintf("Server stream limit reached (%d/%d)", totalActive, globalSettings.Playback.MaxConcurrentStreams),
+					"currentStreams": totalActive,
+					"maxStreams":     globalSettings.Playback.MaxConcurrentStreams,
+					"scope":         "global",
+				})
+				return
+			}
+		}
+	}
+
+	// Enforce per-profile and per-account concurrent stream limits (VOD only).
+	// Only check on GET (not HEAD) to avoid blocking metadata probes.
+	if r.Method == http.MethodGet && h.usersSvc != nil && h.accountsSvc != nil {
+		profileID := r.URL.Query().Get("profileId")
+		if profileID == "" {
+			profileID = r.URL.Query().Get("userId")
+		}
+		if profileID != "" {
+			if user, ok := h.usersSvc.Get(profileID); ok {
+				// Check per-profile limit first
+				if h.userSettingsSvc != nil {
+					if settings, err := h.userSettingsSvc.Get(profileID); err == nil && settings != nil {
+						if settings.Playback.MaxConcurrentStreams != nil && *settings.Playback.MaxConcurrentStreams > 0 {
+							tracker := GetStreamTracker()
+							usage := tracker.GetProfileStreamUsage(profileID, *settings.Playback.MaxConcurrentStreams)
+							if usage.AtLimit {
+								w.Header().Set("Content-Type", "application/json")
+								w.WriteHeader(http.StatusTooManyRequests)
+								_ = json.NewEncoder(w).Encode(map[string]interface{}{
+									"code":           "STREAM_LIMIT_REACHED",
+									"message":        fmt.Sprintf("Profile stream limit reached (%d/%d)", usage.CurrentStreams, usage.MaxStreams),
+									"currentStreams": usage.CurrentStreams,
+									"maxStreams":     usage.MaxStreams,
+									"scope":         "profile",
+								})
+								return
+							}
+						}
+					}
+				}
+				// Check per-account limit
+				if account, ok := h.accountsSvc.Get(user.AccountID); ok && account.MaxStreams > 0 {
+					tracker := GetStreamTracker()
+					usage := tracker.GetAccountStreamUsage(user.AccountID, account.MaxStreams)
+					if usage.AtLimit {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusTooManyRequests)
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{
+							"code":           "STREAM_LIMIT_REACHED",
+							"message":        fmt.Sprintf("Account stream limit reached (%d/%d)", usage.CurrentStreams, usage.MaxStreams),
+							"currentStreams": usage.CurrentStreams,
+							"maxStreams":     usage.MaxStreams,
+							"scope":         "account",
+						})
+						return
+					}
+				}
+			}
+		}
 	}
 
 	// Determine whether transmuxing is desired and possible
@@ -537,7 +650,8 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 			if displayName == "" {
 				displayName = sanitizeExternalDisplayName(mux.Vars(r)["displayName"])
 			}
-			if served, err := h.streamPool.serve(w, r, cleanPath, reqStart, h.streamer, h.writeCommonHeaders, displayName); served {
+			poolAccountID := h.resolveAccountID(r)
+			if served, err := h.streamPool.serve(w, r, cleanPath, reqStart, h.streamer, h.writeCommonHeaders, displayName, poolAccountID); served {
 				return true, err
 			}
 			log.Printf("[stream-pool] falling back to direct streaming: path=%q range=%q", cleanPath, rangeHeader)
@@ -657,7 +771,8 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		// Start tracking this stream
 		var rangeStart, rangeEnd int64
 		// Parse range if present (simplified)
-		streamID, bytesCounter, activityCounter = tracker.StartStream(r, cleanPath, expectedLength, rangeStart, rangeEnd)
+		accountID := h.resolveAccountID(r)
+		streamID, bytesCounter, activityCounter = tracker.StartStreamWithAccount(r, cleanPath, expectedLength, rangeStart, rangeEnd, accountID)
 		defer tracker.EndStream(streamID)
 
 		reader := io.Reader(resp.Body)
@@ -1096,6 +1211,12 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusOK)
 	started := true
 
+	// Track this transmuxed stream
+	accountID := h.resolveAccountID(r)
+	tracker := GetStreamTracker()
+	streamID, bytesCounter, activityCounter := tracker.StartStreamWithAccount(r, cleanPath, 0, 0, 0, accountID)
+	defer tracker.EndStream(streamID)
+
 	flusher, _ := w.(http.Flusher)
 	var totalWritten int64
 	buf := make([]byte, 256*1024) // Larger buffer for provider transmux
@@ -1126,6 +1247,8 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 				return started, fmt.Errorf("write response: %w", writeErr)
 			}
 			totalWritten += int64(written)
+			atomic.StoreInt64(bytesCounter, totalWritten)
+			atomic.StoreInt64(activityCounter, time.Now().UnixNano())
 			flushCounter++
 
 			// Flush less frequently to improve performance
@@ -2838,6 +2961,56 @@ func (h *VideoHandler) GetLiveUsage(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(usage)
 }
 
+// GetStreamUsage returns current VOD stream usage for the requesting profile's account.
+func (h *VideoHandler) GetStreamUsage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	tracker := GetStreamTracker()
+	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
+
+	// Try per-profile limit
+	if profileID != "" && h.userSettingsSvc != nil {
+		if settings, err := h.userSettingsSvc.Get(profileID); err == nil && settings != nil {
+			if settings.Playback.MaxConcurrentStreams != nil && *settings.Playback.MaxConcurrentStreams > 0 {
+				usage := tracker.GetProfileStreamUsage(profileID, *settings.Playback.MaxConcurrentStreams)
+				_ = json.NewEncoder(w).Encode(usage)
+				return
+			}
+		}
+	}
+
+	// Try per-account limit
+	if profileID != "" && h.usersSvc != nil && h.accountsSvc != nil {
+		if user, ok := h.usersSvc.Get(profileID); ok {
+			if account, ok := h.accountsSvc.Get(user.AccountID); ok && account.MaxStreams > 0 {
+				usage := tracker.GetAccountStreamUsage(user.AccountID, account.MaxStreams)
+				_ = json.NewEncoder(w).Encode(usage)
+				return
+			}
+		}
+	}
+
+	// Try global limit
+	if h.configManager != nil {
+		if globalSettings, err := h.configManager.Load(); err == nil && globalSettings.Playback.MaxConcurrentStreams > 0 {
+			total := tracker.Count()
+			max := globalSettings.Playback.MaxConcurrentStreams
+			available := max - total
+			if available < 0 {
+				available = 0
+			}
+			_ = json.NewEncoder(w).Encode(StreamUsageSummary{
+				CurrentStreams:   total,
+				MaxStreams:       max,
+				AvailableStreams: available,
+				AtLimit:         total >= max,
+			})
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ServeHLSPlaylist serves the HLS playlist for a session
 func (h *VideoHandler) ServeHLSPlaylist(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {
@@ -3714,7 +3887,8 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 			expectedLength = parsed
 		}
 	}
-	streamID, bytesCounter, actCounter := tracker.StartStream(r, externalURL, expectedLength, 0, 0)
+	accountID := h.resolveAccountID(r)
+	streamID, bytesCounter, actCounter := tracker.StartStreamWithAccount(r, externalURL, expectedLength, 0, 0, accountID)
 	defer tracker.EndStream(streamID)
 
 	// Stream the response body to the client

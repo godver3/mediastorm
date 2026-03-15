@@ -20,6 +20,7 @@ type Account struct {
 	Username     string     `json:"username"`
 	PasswordHash string     `json:"-"` // bcrypt hash, excluded from JSON API responses (security)
 	IsMaster     bool       `json:"isMaster"`
+	MaxStreams   int        `json:"maxStreams"` // Max concurrent VOD streams for this account (0 = unlimited)
 	ExpiresAt    *time.Time `json:"expiresAt,omitempty"` // nil = permanent account
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
@@ -47,6 +48,7 @@ type AccountStorage struct {
 	Username     string     `json:"username"`
 	PasswordHash string     `json:"passwordHash"` // Included for storage only
 	IsMaster     bool       `json:"isMaster"`
+	MaxStreams   int        `json:"maxStreams,omitempty"`
 	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
@@ -59,6 +61,7 @@ func (a Account) ToStorage() AccountStorage {
 		Username:     a.Username,
 		PasswordHash: a.PasswordHash,
 		IsMaster:     a.IsMaster,
+		MaxStreams:   a.MaxStreams,
 		ExpiresAt:    a.ExpiresAt,
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
@@ -72,6 +75,7 @@ func (as AccountStorage) ToAccount() Account {
 		Username:     as.Username,
 		PasswordHash: as.PasswordHash,
 		IsMaster:     as.IsMaster,
+		MaxStreams:   as.MaxStreams,
 		ExpiresAt:    as.ExpiresAt,
 		CreatedAt:    as.CreatedAt,
 		UpdatedAt:    as.UpdatedAt,

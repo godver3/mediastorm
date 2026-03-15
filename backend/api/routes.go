@@ -168,6 +168,8 @@ func Register(
 	masterOnly.HandleFunc("/{accountID}", accountsHandler.Options).Methods(http.MethodOptions)
 	masterOnly.HandleFunc("/{accountID}/password", accountsHandler.ResetPassword).Methods(http.MethodPut)
 	masterOnly.HandleFunc("/{accountID}/password", accountsHandler.Options).Methods(http.MethodOptions)
+	masterOnly.HandleFunc("/{accountID}/max-streams", accountsHandler.SetMaxStreams).Methods(http.MethodPut)
+	masterOnly.HandleFunc("/{accountID}/max-streams", accountsHandler.Options).Methods(http.MethodOptions)
 
 	// Profile reassignment (master only)
 	masterOnly2 := protected.PathPrefix("/profiles").Subrouter()
@@ -297,6 +299,10 @@ func Register(
 		protected.HandleFunc("/live/epg/refresh", epgHandler.Refresh).Methods(http.MethodPost)
 		protected.HandleFunc("/live/epg/refresh", epgHandler.Options).Methods(http.MethodOptions)
 	}
+
+	// VOD stream usage endpoint
+	protected.HandleFunc("/stream-usage", videoHandler.GetStreamUsage).Methods(http.MethodGet)
+	protected.HandleFunc("/stream-usage", handleOptions).Methods(http.MethodOptions)
 
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)

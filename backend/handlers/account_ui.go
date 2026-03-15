@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"path/filepath"
@@ -169,10 +170,23 @@ func (h *AccountUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
+	// Build per-profile stream limits map for display
+	profileStreamLimits := map[string]int{}
+	if h.userSettingsService != nil {
+		for _, p := range profiles {
+			if settings, err := h.userSettingsService.Get(p.ID); err == nil && settings != nil {
+				if settings.Playback.MaxConcurrentStreams != nil && *settings.Playback.MaxConcurrentStreams > 0 {
+					profileStreamLimits[p.ID] = *settings.Playback.MaxConcurrentStreams
+				}
+			}
+		}
+	}
+
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage": "profiles",
+		"Account":              account,
+		"Profiles":             profiles,
+		"ProfileStreamLimits":  profileStreamLimits,
+		"ActivePage":           "profiles",
 	}
 
 	h.dashboardTemplate.ExecuteTemplate(w, "dashboard", data)
@@ -422,6 +436,114 @@ func (h *AccountUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
+}
+
+// SetProfileMaxStreams sets the per-profile concurrent stream limit.
+// Sub-accounts can set this for their own profiles, capped at their account's MaxStreams.
+func (h *AccountUIHandler) SetProfileMaxStreams(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify profile belongs to this account
+	if !h.usersService.BelongsToAccount(profileID, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		MaxStreams int `json:"maxStreams"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate against account limit
+	account, ok := h.accountsService.Get(session.AccountID)
+	if !ok {
+		http.Error(w, "Account not found", http.StatusInternalServerError)
+		return
+	}
+	if account.MaxStreams > 0 && req.MaxStreams > account.MaxStreams {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("Profile limit cannot exceed account limit (%d)", account.MaxStreams),
+		})
+		return
+	}
+
+	if h.userSettingsService == nil {
+		http.Error(w, "User settings service not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get current settings, update just maxConcurrentStreams
+	settings, err := h.userSettingsService.Get(profileID)
+	if err != nil || settings == nil {
+		settings = &models.UserSettings{}
+	}
+	if req.MaxStreams > 0 {
+		settings.Playback.MaxConcurrentStreams = &req.MaxStreams
+	} else {
+		settings.Playback.MaxConcurrentStreams = nil
+	}
+
+	if err := h.userSettingsService.Update(profileID, *settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "updated",
+		"maxStreams": req.MaxStreams,
+	})
+}
+
+// GetProfileMaxStreams returns the per-profile stream limit for a given profile.
+func (h *AccountUIHandler) GetProfileMaxStreams(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if !h.usersService.BelongsToAccount(profileID, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	maxStreams := 0
+	if h.userSettingsService != nil {
+		if settings, err := h.userSettingsService.Get(profileID); err == nil && settings != nil {
+			if settings.Playback.MaxConcurrentStreams != nil {
+				maxStreams = *settings.Playback.MaxConcurrentStreams
+			}
+		}
+	}
+
+	account, _ := h.accountsService.Get(session.AccountID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"profileMaxStreams": maxStreams,
+		"accountMaxStreams": account.MaxStreams,
+	})
 }
 
 // HistoryPage renders the watch history page.

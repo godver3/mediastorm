@@ -329,6 +329,28 @@ func (s *Service) UpdatePassword(id, newPassword string) error {
 }
 
 
+// SetMaxStreams updates the concurrent VOD stream limit for an account.
+func (s *Service) SetMaxStreams(id string, maxStreams int) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ErrAccountNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	account, ok := s.accounts[id]
+	if !ok {
+		return ErrAccountNotFound
+	}
+
+	account.MaxStreams = maxStreams
+	account.UpdatedAt = time.Now().UTC()
+	s.accounts[id] = account
+
+	return s.saveLocked()
+}
+
 // Delete removes an account by ID. The master account cannot be deleted.
 func (s *Service) Delete(id string) error {
 	id = strings.TrimSpace(id)

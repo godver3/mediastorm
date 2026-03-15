@@ -4304,10 +4304,22 @@
         }
     }
     document.addEventListener('DOMContentLoaded', async () => {
+        // Check for ?profileId= query param to pre-select a profile
+        const urlProfileId = new URLSearchParams(window.location.search).get('profileId');
+
         if (isAdmin) {
             await Promise.all([loadProfiles(), loadAccounts(), checkDefaultPassword()]);
-            // Check if browser restored a selected user (form state restoration)
             const selector = document.getElementById('userSelector');
+            // Pre-select from query param if provided
+            if (urlProfileId && selector) {
+                const opt = Array.from(selector.options).find(o => o.value === urlProfileId);
+                if (opt) {
+                    selector.value = urlProfileId;
+                    await handleUserChange(urlProfileId);
+                    return;
+                }
+            }
+            // Check if browser restored a selected user (form state restoration)
             if (selector && selector.value) {
                 await handleUserChange(selector.value);
                 return; // handleUserChange will call renderSettings
@@ -4317,8 +4329,18 @@
             await recalculateAllUserOverrides();
         } else {
             await loadProfiles();
-            // For non-admin, auto-select the first profile
             const selector = document.getElementById('userSelector');
+            // Pre-select from query param if provided
+            if (urlProfileId && selector) {
+                const opt = Array.from(selector.options).find(o => o.value === urlProfileId);
+                if (opt) {
+                    selector.value = urlProfileId;
+                    selectedUserId = urlProfileId;
+                    await handleUserChange(urlProfileId);
+                    return;
+                }
+            }
+            // For non-admin, auto-select the first profile
             if (selector && selector.options.length > 0) {
                 selectedUserId = selector.options[0].value;
                 selector.value = selectedUserId;

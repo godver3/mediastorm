@@ -223,6 +223,7 @@ type PlaybackSettings struct {
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`            // Scaling factor for subtitle size (1.0 = default)
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause,omitempty"` // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart,omitempty"`   // Seconds to rewind when resuming from saved progress (default 0)
+	MaxConcurrentStreams      *int    `json:"maxConcurrentStreams,omitempty"`     // Per-profile concurrent stream limit (nil = use account limit)
 }
 
 // ShelfConfig represents a configurable home screen shelf.

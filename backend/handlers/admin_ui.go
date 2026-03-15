@@ -1481,12 +1481,27 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 
 	liveUsage, liveUsageByUser, liveUsageBuckets := h.buildDashboardLiveUsage(isAdmin, scopedUsers, allowedProfileIDs)
 
+	// Build VOD stream usage by account
+	vodUsageByAccount := h.buildVODStreamUsage(isAdmin, scopedUsers, allowedProfileIDs)
+
+	// Global VOD stream limit
+	var globalVODLimit int
+	if h.configManager != nil {
+		if cfg, err := h.configManager.Load(); err == nil {
+			globalVODLimit = cfg.Playback.MaxConcurrentStreams
+		}
+	}
+	globalVODCurrent := tracker.Count()
+
 	return json.Marshal(map[string]interface{}{
-		"streams":          streams,
-		"server_time":      now.UTC(),
-		"liveUsage":        liveUsage,
-		"liveUsageByUser":  liveUsageByUser,
-		"liveUsageBuckets": liveUsageBuckets,
+		"streams":            streams,
+		"server_time":        now.UTC(),
+		"liveUsage":          liveUsage,
+		"liveUsageByUser":    liveUsageByUser,
+		"liveUsageBuckets":   liveUsageBuckets,
+		"vodUsageByAccount":  vodUsageByAccount,
+		"globalVODLimit":     globalVODLimit,
+		"globalVODCurrent":   globalVODCurrent,
 	})
 }
 
@@ -3642,13 +3657,14 @@ func (h *AdminUIHandler) DeleteYTDLPCookies(w http.ResponseWriter, r *http.Reque
 
 // AdminAccountWithProfiles represents an account with its associated profiles for admin UI
 type AdminAccountWithProfiles struct {
-	ID        string        `json:"id"`
-	Username  string        `json:"username"`
-	IsMaster  bool          `json:"isMaster"`
-	ExpiresAt *time.Time    `json:"expiresAt,omitempty"`
-	CreatedAt time.Time     `json:"createdAt"`
-	UpdatedAt time.Time     `json:"updatedAt"`
-	Profiles  []models.User `json:"profiles"`
+	ID         string        `json:"id"`
+	Username   string        `json:"username"`
+	IsMaster   bool          `json:"isMaster"`
+	MaxStreams int           `json:"maxStreams"`
+	ExpiresAt  *time.Time    `json:"expiresAt,omitempty"`
+	CreatedAt  time.Time     `json:"createdAt"`
+	UpdatedAt  time.Time     `json:"updatedAt"`
+	Profiles   []models.User `json:"profiles"`
 }
 
 // GetUserAccounts returns all user accounts with their profiles
@@ -3663,13 +3679,14 @@ func (h *AdminUIHandler) GetUserAccounts(w http.ResponseWriter, r *http.Request)
 	for _, acc := range accountsList {
 		profiles := h.usersService.ListForAccount(acc.ID)
 		result = append(result, AdminAccountWithProfiles{
-			ID:        acc.ID,
-			Username:  acc.Username,
-			IsMaster:  acc.IsMaster,
-			ExpiresAt: acc.ExpiresAt,
-			CreatedAt: acc.CreatedAt,
-			UpdatedAt: acc.UpdatedAt,
-			Profiles:  profiles,
+			ID:         acc.ID,
+			Username:   acc.Username,
+			IsMaster:   acc.IsMaster,
+			MaxStreams: acc.MaxStreams,
+			ExpiresAt:  acc.ExpiresAt,
+			CreatedAt:  acc.CreatedAt,
+			UpdatedAt:  acc.UpdatedAt,
+			Profiles:   profiles,
 		})
 	}
 
@@ -3810,6 +3827,40 @@ func (h *AdminUIHandler) ResetUserAccountPassword(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "password reset"})
+}
+
+// SetAccountMaxStreams updates the max concurrent streams for an account.
+func (h *AdminUIHandler) SetAccountMaxStreams(w http.ResponseWriter, r *http.Request) {
+	if h.accountsService == nil {
+		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
+		return
+	}
+
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		http.Error(w, "accountId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		MaxStreams int `json:"maxStreams"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.accountsService.SetMaxStreams(accountID, req.MaxStreams); err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrAccountNotFound {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "max streams updated"})
 }
 
 // RenameAccountRequest represents a request to rename an account

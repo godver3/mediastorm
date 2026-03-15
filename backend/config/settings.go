@@ -221,6 +221,7 @@ type PlaybackSettings struct {
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause"`      // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart"`        // Seconds to rewind when resuming from saved progress (default 0)
 	DisablePrequeue           bool    `json:"disablePrequeue"`              // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
+	MaxConcurrentStreams      int     `json:"maxConcurrentStreams"`         // Global max concurrent VOD streams across all accounts (0 = unlimited)
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.

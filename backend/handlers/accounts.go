@@ -242,6 +242,35 @@ func (h *AccountsHandler) ReassignProfile(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(profile)
 }
 
+// SetMaxStreams updates the max concurrent streams limit for an account (master only).
+func (h *AccountsHandler) SetMaxStreams(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	accountID := vars["accountID"]
+
+	var req struct {
+		MaxStreams int `json:"maxStreams"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.accounts.SetMaxStreams(accountID, req.MaxStreams); err != nil {
+		status := http.StatusInternalServerError
+		if err == accounts.ErrAccountNotFound {
+			status = http.StatusNotFound
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	account, _ := h.accounts.Get(accountID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(account)
+}
+
 // HasDefaultPassword returns whether the master account has the default password.
 func (h *AccountsHandler) HasDefaultPassword(w http.ResponseWriter, r *http.Request) {
 	hasDefault := h.accounts.HasDefaultPassword()

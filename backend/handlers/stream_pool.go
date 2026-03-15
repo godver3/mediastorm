@@ -138,6 +138,7 @@ func (p *streamPool) serve(
 	streamer streaming.Provider,
 	writeHeaders func(w http.ResponseWriter),
 	displayName string,
+	accountID string,
 ) (bool, error) {
 	slot, err := p.getOrCreate(path, reqStart, streamer)
 	if err != nil {
@@ -240,7 +241,7 @@ dataReady:
 	if totalSize > 0 {
 		expectedLen = totalSize - reqStart
 	}
-	streamID, bytesCounter, activityCounter := tracker.StartStream(r, path, expectedLen, reqStart, 0)
+	streamID, bytesCounter, activityCounter := tracker.StartStreamWithAccount(r, path, expectedLen, reqStart, 0, accountID)
 	defer tracker.EndStream(streamID)
 
 	// Stream data from slot buffer to client.

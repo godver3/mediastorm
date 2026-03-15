@@ -64,6 +64,21 @@
 <!-- Accounts Tab (admin only) -->
 <div id="content-accounts" class="tab-content">
     <div id="default-password-warning"></div>
+
+    <!-- Global Stream Limit -->
+    <div class="card" style="margin-bottom: 1rem;">
+        <div class="card-body" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 200px;">
+                <div style="font-weight: 600; font-size: 0.875rem;">Global Max Concurrent Streams</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">Server-wide limit across all accounts. 0 = unlimited.</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="number" id="globalMaxStreams" class="form-input" style="width: 80px;" min="0" value="0">
+                <button class="btn btn-primary btn-sm" onclick="saveGlobalMaxStreams()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <span id="accounts-count" style="color: var(--text-muted);"></span>
         <button class="btn btn-primary" onclick="showCreateAccountModal()">
@@ -117,6 +132,27 @@ const PROFILE_COLORS = [
     '#14B8A6', '#3B82F6', '#8B5CF6', '#EC4899'
 ];
 
+async function saveGlobalMaxStreams() {
+    const val = parseInt(document.getElementById('globalMaxStreams').value) || 0;
+    try {
+        // GET current settings, update just maxConcurrentStreams, PUT back
+        const res = await fetch(basePath + '/api/settings');
+        if (!res.ok) throw new Error('Failed to load settings');
+        const settings = await res.json();
+        if (!settings.playback) settings.playback = {};
+        settings.playback.maxConcurrentStreams = val;
+        const putRes = await fetch(basePath + '/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        if (!putRes.ok) throw new Error(await putRes.text());
+        showToast('Global stream limit updated');
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
 function switchTab(tab) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -137,6 +173,25 @@ async function loadData() {
             profiles = profilesRes || [];
             hasDefaultPassword = defaultPwdRes.hasDefaultPassword || false;
             invitations = invitationsRes.invitations || [];
+
+            // Enrich profiles with per-profile stream limits
+            await Promise.all(profiles.map(async p => {
+                try {
+                    const sRes = await fetch(basePath + '/api/user-settings?userId=' + p.id);
+                    if (sRes.ok) {
+                        const s = await sRes.json();
+                        p._maxStreams = s?.playback?.maxConcurrentStreams || 0;
+                    }
+                } catch (e) { p._maxStreams = 0; }
+            }));
+
+            // Load global max streams setting
+            try {
+                const settingsRes = await fetch(basePath + '/api/settings').then(r => r.json());
+                const el = document.getElementById('globalMaxStreams');
+                if (el) el.value = settingsRes?.playback?.maxConcurrentStreams || 0;
+            } catch (e) { /* ignore */ }
+
             renderProfiles();
             renderAccounts();
             renderInvitations();
@@ -173,6 +228,7 @@ function renderProfiles() {
         const badges = [];
         if (p.isKidsProfile) badges.push('<span class="status-badge warning" style="font-size: 0.65rem;">Kids</span>');
         if (p.hasPin) badges.push('<span class="status-badge" style="font-size: 0.65rem;">PIN</span>');
+        if (p._maxStreams > 0) badges.push(`<span class="status-badge" style="font-size: 0.65rem;">Max ${p._maxStreams} streams</span>`);
 
         const avatarHtml = p.hasIcon
             ? `<img class="profile-avatar" src="${basePath}/api/profiles/icon?profileId=${p.id}" alt="${escapeHtml(p.name)}" style="object-fit: cover;">`
@@ -193,6 +249,8 @@ function renderProfiles() {
                 </div>
                 <div class="profile-actions">
                     <button class="btn btn-secondary btn-sm" onclick="showEditProfileModal('${p.id}')">Edit</button>
+                    <a class="btn btn-secondary btn-sm" href="${basePath}/settings?profileId=${p.id}">Settings</a>
+                    ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showProfileStreamsModal('${p.id}', '${escapeHtml(p.name)}', '${p.accountId}')">Streams</button>` : ''}
                     ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showReassignModal('${p.id}')">Reassign</button>` : ''}
                     <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.id}', '${escapeHtml(p.name)}')">Delete</button>
                 </div>
@@ -246,10 +304,12 @@ function renderAccounts() {
                         </div>
                         <div style="font-size: 0.8rem; color: var(--text-muted);">
                             ${profileCount} profile${profileCount !== 1 ? 's' : ''}
+                            ${a.maxStreams > 0 ? ` &middot; Max streams: ${a.maxStreams}` : ''}
                         </div>
                     </div>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <button class="btn btn-secondary btn-sm" onclick="showRenameAccountModal('${a.id}', '${escapeHtml(a.username)}')">Rename</button>
+                        <button class="btn btn-secondary btn-sm" onclick="showMaxStreamsModal('${a.id}', '${escapeHtml(a.username)}', ${a.maxStreams || 0})">Streams</button>
                         <button class="btn btn-secondary btn-sm" onclick="showChangePasswordModal('${a.id}', '${escapeHtml(a.username)}')">Password</button>
                         ${!a.isMaster ? `<button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}', '${escapeHtml(a.username)}')">Delete</button>` : ''}
                     </div>
@@ -796,6 +856,114 @@ async function deleteAccount(accountId, username) {
         const res = await fetch(basePath + '/api/accounts?accountId=' + accountId, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         showToast('Account deleted');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function showMaxStreamsModal(accountId, username, currentMax) {
+    showModal(`
+        <div class="card-header"><h2>Max Concurrent Streams</h2></div>
+        <div class="card-body">
+            <p style="margin-bottom: 1rem; color: var(--text-muted);">Set the maximum concurrent VOD streams for <strong>${escapeHtml(username)}</strong></p>
+            <form onsubmit="setMaxStreams(event, '${accountId}')">
+                <div class="form-group">
+                    <label class="form-label">Max Streams (0 = unlimited)</label>
+                    <input type="number" name="maxStreams" class="form-input" min="0" value="${currentMax}" required autofocus>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function setMaxStreams(e, accountId) {
+    e.preventDefault();
+    const maxStreams = parseInt(e.target.maxStreams.value) || 0;
+    try {
+        const res = await fetch(basePath + '/api/accounts/max-streams?accountId=' + accountId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ maxStreams })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        hideModal();
+        showToast('Stream limit updated');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+async function showProfileStreamsModal(profileId, profileName, accountId) {
+    // Get the account's max streams to cap the profile limit
+    const account = accounts.find(a => a.id === accountId);
+    const accountMax = account ? (account.maxStreams || 0) : 0;
+
+    // Fetch current profile settings to get existing value
+    let currentMax = 0;
+    try {
+        const res = await fetch(basePath + '/api/user-settings?userId=' + profileId);
+        if (res.ok) {
+            const settings = await res.json();
+            currentMax = settings?.playback?.maxConcurrentStreams || 0;
+        }
+    } catch (e) { /* ignore */ }
+
+    const capNote = accountMax > 0
+        ? `<p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">Account limit: ${accountMax}. Profile limit must be &le; account limit.</p>`
+        : `<p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.25rem;">No account-level limit set. Set one on the Accounts tab first to enable per-profile limits.</p>`;
+
+    showModal(`
+        <div class="card-header"><h2>Profile Stream Limit</h2></div>
+        <div class="card-body">
+            <p style="margin-bottom: 1rem; color: var(--text-muted);">Set max concurrent VOD streams for <strong>${escapeHtml(profileName)}</strong></p>
+            <form onsubmit="setProfileMaxStreams(event, '${profileId}', ${accountMax})">
+                <div class="form-group">
+                    <label class="form-label">Max Streams (0 = use account limit)</label>
+                    <input type="number" name="maxStreams" class="form-input" min="0" ${accountMax > 0 ? `max="${accountMax}"` : ''} value="${currentMax}" required autofocus>
+                    ${capNote}
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" ${accountMax <= 0 ? 'disabled title="Set account limit first"' : ''}>Save</button>
+                </div>
+            </form>
+        </div>
+    `);
+}
+
+async function setProfileMaxStreams(e, profileId, accountMax) {
+    e.preventDefault();
+    const maxStreams = parseInt(e.target.maxStreams.value) || 0;
+
+    if (accountMax > 0 && maxStreams > accountMax) {
+        showToast('Profile limit cannot exceed account limit (' + accountMax + ')', 'error');
+        return;
+    }
+
+    try {
+        // Fetch current settings, update maxConcurrentStreams, save back
+        const getRes = await fetch(basePath + '/api/user-settings?userId=' + profileId);
+        if (!getRes.ok) throw new Error(await getRes.text());
+        const settings = await getRes.json();
+
+        if (!settings.playback) settings.playback = {};
+        settings.playback.maxConcurrentStreams = maxStreams > 0 ? maxStreams : null;
+
+        const putRes = await fetch(basePath + '/api/user-settings?userId=' + profileId, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(settings)
+        });
+        if (!putRes.ok) throw new Error(await putRes.text());
+
+        hideModal();
+        showToast('Profile stream limit updated');
         loadData();
     } catch (err) {
         showToast('Error: ' + err.message, 'error');
