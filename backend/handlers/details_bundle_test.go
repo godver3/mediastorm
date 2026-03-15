@@ -112,6 +112,14 @@ func (m *mockMetadataServiceDetailsBundle) GetProgressSnapshot() metadatapkg.Pro
 	return metadatapkg.ProgressSnapshot{}
 }
 
+func (m *mockMetadataServiceDetailsBundle) MDBListIsEnabled() bool { return false }
+func (m *mockMetadataServiceDetailsBundle) GetMDBListAllRatings(_ context.Context, _ string, _ string) ([]models.Rating, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceDetailsBundle) GetMDBListAllRatingsCached(_ string, _ string) []models.Rating {
+	return nil
+}
+
 type mockHistoryServiceDetailsBundle struct {
 	watchState       *models.SeriesWatchState
 	playbackProgress []models.PlaybackProgress

@@ -83,7 +83,7 @@ func newMDBListClient(apiKey string, enabledRatings []string, enabled bool, cach
 		enabled:        enabled,
 		cache:          make(map[string]*mdblistCacheEntry),
 		cacheTTL:       time.Duration(cacheTTLHours) * time.Hour,
-		minInterval:    100 * time.Millisecond,
+		minInterval:    500 * time.Millisecond,
 	}
 }
 
@@ -149,14 +149,19 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 
 	// Retry loop with exponential backoff
 	for attempt := 0; attempt < 3; attempt++ {
-		// Rate limiting - ensure minimum interval between requests
+		// Rate limiting — compute wait outside the lock to avoid blocking other goroutines
 		c.throttleMu.Lock()
-		since := time.Since(c.lastRequest)
-		if since < c.minInterval {
-			time.Sleep(c.minInterval - since)
+		wait := c.minInterval - time.Since(c.lastRequest)
+		if wait > 0 {
+			c.lastRequest = time.Now().Add(wait) // reserve our slot
+		} else {
+			c.lastRequest = time.Now()
+			wait = 0
 		}
-		c.lastRequest = time.Now()
 		c.throttleMu.Unlock()
+		if wait > 0 {
+			time.Sleep(wait)
+		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
@@ -248,6 +253,145 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 	log.Printf("[mdblist] fetched %d ratings for %s %s", len(ratings), mediaType, imdbID)
 
 	return ratings, nil
+}
+
+// GetAllRatings fetches all ratings for a title from MDBList without filtering by enabled ratings.
+// This is used for sort-by-rating where all sources should be available regardless of display settings.
+func (c *mdblistClient) GetAllRatings(ctx context.Context, imdbID string, mediaType string) ([]models.Rating, error) {
+	if !c.enabled || c.apiKey == "" || imdbID == "" {
+		return nil, nil
+	}
+
+	// Normalize IMDB ID
+	if !strings.HasPrefix(imdbID, "tt") {
+		imdbID = "tt" + imdbID
+	}
+
+	// Check cache first (shared with GetRatings)
+	cacheKey := fmt.Sprintf("all:%s:%s", mediaType, imdbID)
+	c.cacheMu.RLock()
+	if entry, ok := c.cache[cacheKey]; ok && time.Since(entry.fetchedAt) < c.cacheTTL {
+		c.cacheMu.RUnlock()
+		return entry.ratings, nil
+	}
+	c.cacheMu.RUnlock()
+
+	// Fetch all ratings in a single API call
+	url := fmt.Sprintf("https://api.mdblist.com/imdb/%s/%s?apikey=%s", mediaType, imdbID, c.apiKey)
+
+	var result mdblistMediaResponse
+	var lastErr error
+	backoff := 300 * time.Millisecond
+
+	for attempt := 0; attempt < 3; attempt++ {
+		// Rate limiting — compute wait outside the lock to avoid blocking other goroutines
+		c.throttleMu.Lock()
+		wait := c.minInterval - time.Since(c.lastRequest)
+		if wait > 0 {
+			c.lastRequest = time.Now().Add(wait) // reserve our slot
+		} else {
+			c.lastRequest = time.Now()
+			wait = 0
+		}
+		c.throttleMu.Unlock()
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("http request: %w", err)
+			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		resp.Body.Close()
+		lastErr = nil
+		break
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+
+	// Return ALL ratings without filtering by enabled settings
+	var ratings []models.Rating
+	for _, r := range result.Ratings {
+		if r.Value == nil || *r.Value == 0 {
+			continue
+		}
+
+		internalSource := r.Source
+		if mapped, ok := apiSourceToInternal[r.Source]; ok {
+			internalSource = mapped
+		}
+
+		sourceInfo, ok := ratingSourceInfo[r.Source]
+		if !ok {
+			sourceInfo = struct {
+				label string
+				max   float64
+			}{r.Source, 10}
+		}
+
+		ratings = append(ratings, models.Rating{
+			Source: internalSource,
+			Value:  *r.Value,
+			Max:    sourceInfo.max,
+		})
+	}
+
+	// Cache the results
+	c.cacheMu.Lock()
+	c.cache[cacheKey] = &mdblistCacheEntry{
+		ratings:   ratings,
+		fetchedAt: time.Now(),
+	}
+	c.cacheMu.Unlock()
+
+	return ratings, nil
+}
+
+// GetAllRatingsCached returns cached ratings for a title without making any API calls.
+// Returns nil if not cached. Used for non-blocking enrichment in request handlers.
+func (c *mdblistClient) GetAllRatingsCached(imdbID string, mediaType string) []models.Rating {
+	if !c.enabled || c.apiKey == "" || imdbID == "" {
+		return nil
+	}
+	if !strings.HasPrefix(imdbID, "tt") {
+		imdbID = "tt" + imdbID
+	}
+	cacheKey := fmt.Sprintf("all:%s:%s", mediaType, imdbID)
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+	if entry, ok := c.cache[cacheKey]; ok && time.Since(entry.fetchedAt) < c.cacheTTL {
+		return entry.ratings
+	}
+	return nil
 }
 
 // IsEnabled returns whether the MDBList client is enabled and configured

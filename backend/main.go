@@ -360,6 +360,9 @@ func main() {
 	// Wire up history service to watchlist handler for watch state enrichment
 	watchlistHandler.SetHistoryService(historyService)
 	customListsHandler.SetHistoryService(historyService)
+	// Wire up metadata service for MDBList rating enrichment
+	watchlistHandler.SetMetadataService(metadataService)
+	customListsHandler.SetMetadataService(metadataService)
 	// Wire up users service to metadata handler for kids profile filtering
 	metadataHandler.SetUsersService(userService)
 	// Wire up watchlist service to metadata handler for AI recommendations
@@ -938,6 +941,47 @@ func main() {
 		}
 
 		return infos
+	})
+	metadataService.SetRatingItemsProvider(func() []metadata.RatingItem {
+		seen := make(map[string]bool)
+		var items []metadata.RatingItem
+
+		add := func(imdbID, mediaType string) {
+			if imdbID == "" || seen[imdbID] {
+				return
+			}
+			seen[imdbID] = true
+			items = append(items, metadata.RatingItem{ImdbID: imdbID, MediaType: mediaType})
+		}
+
+		for _, user := range userService.ListAll() {
+			// Watchlist
+			if wl, err := watchlistService.List(user.ID); err == nil {
+				for _, item := range wl {
+					add(item.ExternalIDs["imdb"], item.MediaType)
+				}
+			}
+
+			// Continue watching / playback progress
+			if pp, err := historyService.ListPlaybackProgress(user.ID); err == nil {
+				for _, p := range pp {
+					add(p.ExternalIDs["imdb"], p.MediaType)
+				}
+			}
+
+			// User custom lists
+			if lists, err := customListsService.ListLists(user.ID); err == nil {
+				for _, list := range lists {
+					if listItems, err := customListsService.ListItems(user.ID, list.ID); err == nil {
+						for _, item := range listItems {
+							add(item.ExternalIDs["imdb"], item.MediaType)
+						}
+					}
+				}
+			}
+		}
+
+		return items
 	})
 	metadataService.StartBackgroundCacheManager(2 * time.Hour)
 	calendarService.StartBackgroundRefresh(4 * time.Hour)

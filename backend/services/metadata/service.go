@@ -27,13 +27,15 @@ import (
 )
 
 type Service struct {
-	client  *tvdbClient
-	tmdb    *tmdbClient
-	gemini  *geminiClient
-	mdblist *mdblistClient
-	cache   *fileCache
+	client       *tvdbClient
+	tmdb         *tmdbClient
+	gemini       *geminiClient
+	mdblist      *mdblistClient
+	cache        *fileCache
 	// Separate cache for stable ID mappings (TMDB↔IMDB) with 7x longer TTL
-	idCache *fileCache
+	idCache      *fileCache
+	// Separate cache for MDBList ratings — long TTL, persists across restarts
+	ratingsCache *fileCache
 	demo    bool
 
 	// Cache TTL in hours (stored for reuse when updating clients)
@@ -53,7 +55,8 @@ type Service struct {
 	cacheStopCh      chan struct{}
 	cacheStatusMu    sync.RWMutex
 	cacheStatus      CacheManagerStatus
-	customListInfoFn func() []CustomListInfo // returns configured custom MDBList URLs with display names
+	customListInfoFn  func() []CustomListInfo  // returns configured custom MDBList URLs with display names
+	ratingItemsFn     func() []RatingItem      // returns all items that need ratings (watchlist, continue watching, user lists)
 
 	// Progress tracking for long-running enrichment operations
 	progressMu    sync.RWMutex
@@ -106,6 +109,12 @@ type inflightRequest struct {
 
 const tvdbArtworkBaseURL = "https://artworks.thetvdb.com"
 
+// RatingItem represents a title that needs ratings, provided by external services.
+type RatingItem struct {
+	ImdbID    string // e.g. "tt1234567"
+	MediaType string // "movie" or "series"
+}
+
 // MDBListConfig holds configuration for the MDBList client
 type MDBListConfig struct {
 	APIKey         string
@@ -121,6 +130,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
 	idCacheDir := filepath.Join(cacheDir, "metadata", "ids")
+	ratingsCacheDir := filepath.Join(cacheDir, "metadata", "ratings")
 
 	// Initialize trailer prequeue manager
 	trailerTempDir := filepath.Join(os.TempDir(), "strmr-trailers")
@@ -142,6 +152,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled, ttlHours),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
 		idCache:          newFileCache(idCacheDir, ttlHours*stableIDCacheTTLMultiplier),
+		ratingsCache:     newFileCache(ratingsCacheDir, ttlHours*stableIDCacheTTLMultiplier),
 		demo:             demo,
 		ttlHours:         ttlHours,
 		inflightRequests: make(map[string]*inflightRequest),
@@ -307,6 +318,12 @@ func (s *Service) SetCustomListInfoProvider(fn func() []CustomListInfo) {
 	s.customListInfoFn = fn
 }
 
+// SetRatingItemsProvider sets a function that returns all items (across all users)
+// that should have ratings cached — watchlist, continue watching, user custom lists, etc.
+func (s *Service) SetRatingItemsProvider(fn func() []RatingItem) {
+	s.ratingItemsFn = fn
+}
+
 // SetCustomListURLsProvider is a convenience wrapper that accepts a URL-only provider.
 // Deprecated: use SetCustomListInfoProvider to include display names for progress tracking.
 func (s *Service) SetCustomListURLsProvider(fn func() []string) {
@@ -440,9 +457,105 @@ func (s *Service) warmTrendingCache() {
 
 	wg.Wait()
 
+	// Warm MDBList ratings (disk-persisted) for all cached items so that
+	// sort-by-rating works immediately without per-request API calls.
+	s.warmRatingsForCachedItems(ctx)
+
 	s.cacheStatusMu.Lock()
 	s.cacheStatus.LastError = lastErr
 	s.cacheStatusMu.Unlock()
+}
+
+// warmRatingsForCachedItems fetches MDBList ratings for all items in the metadata cache
+// (trending lists, custom lists, etc.) that don't already have ratings on disk.
+func (s *Service) warmRatingsForCachedItems(ctx context.Context) {
+	if s.mdblist == nil || !s.mdblist.IsEnabled() {
+		return
+	}
+
+	type ratingJob struct {
+		imdbID    string
+		mediaType string // "movie" or "show"
+	}
+	seen := make(map[string]bool)
+	var jobs []ratingJob
+
+	addItems := func(items []models.TrendingItem) {
+		for _, item := range items {
+			id := item.Title.IMDBID
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			mt := "movie"
+			if item.Title.MediaType == "series" {
+				mt = "show"
+			}
+			// Only add if not already in disk cache
+			if s.GetMDBListAllRatingsCached(id, mt) == nil {
+				jobs = append(jobs, ratingJob{imdbID: id, mediaType: mt})
+			}
+		}
+	}
+
+	// Scan ALL cached list files in the metadata cache directory.
+	// Any file that deserialises as []TrendingItem with IMDB IDs is included.
+	// This covers trending, custom MDBList lists, streaming service lists,
+	// genre discovery, AI recommendations — anything the user has ever browsed.
+	entries, err := os.ReadDir(s.cache.dir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			// Strip the .json extension to get the cache key
+			key := strings.TrimSuffix(entry.Name(), ".json")
+			var items []models.TrendingItem
+			if ok, _ := s.cache.get(key, &items); ok && len(items) > 0 {
+				addItems(items)
+			}
+		}
+	}
+
+	// Items from external providers (watchlist, continue watching, user custom lists)
+	if s.ratingItemsFn != nil {
+		for _, item := range s.ratingItemsFn() {
+			id := item.ImdbID
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			mt := "movie"
+			if item.MediaType == "series" {
+				mt = "show"
+			}
+			if s.GetMDBListAllRatingsCached(id, mt) == nil {
+				jobs = append(jobs, ratingJob{imdbID: id, mediaType: mt})
+			}
+		}
+	}
+
+	if len(jobs) == 0 {
+		log.Printf("[metadata] cache manager: all %d cached items already have ratings on disk", len(seen))
+		return
+	}
+
+	log.Printf("[metadata] cache manager: warming ratings for %d/%d items (rest already on disk)", len(jobs), len(jobs)+len(seen)-len(jobs))
+
+	// Single sequential worker to respect MDBList rate limits (~2 req/sec)
+	fetched := 0
+	for _, j := range jobs {
+		if ctx.Err() != nil {
+			break
+		}
+		// GetMDBListAllRatings checks disk cache first, then API, then persists to disk
+		if _, err := s.GetMDBListAllRatings(ctx, j.imdbID, j.mediaType); err != nil {
+			log.Printf("[metadata] cache manager: rating warm error for %s: %v", j.imdbID, err)
+		} else {
+			fetched++
+		}
+	}
+	log.Printf("[metadata] cache manager: ratings warm complete — fetched %d, total cached %d", fetched, len(seen))
 }
 
 // UpdateAPIKeys updates the API keys for TVDB, TMDB, and Gemini clients
@@ -474,6 +587,54 @@ func (s *Service) UpdateMDBListSettings(cfg MDBListConfig) {
 		s.mdblist.UpdateSettings(cfg.APIKey, cfg.EnabledRatings, cfg.Enabled)
 		log.Printf("[metadata] updated MDBList settings (enabled=%v, ratings=%v)", cfg.Enabled, cfg.EnabledRatings)
 	}
+}
+
+// MDBListIsEnabled returns whether MDBList is enabled and has an API key configured.
+func (s *Service) MDBListIsEnabled() bool {
+	if s.mdblist == nil {
+		return false
+	}
+	return s.mdblist.IsEnabled()
+}
+
+// ratingsDiskCacheKey returns a stable cache key for ratings stored on disk.
+func ratingsDiskCacheKey(imdbID, mediaType string) string {
+	return cacheKey("ratings", "all", mediaType, imdbID)
+}
+
+// GetMDBListAllRatings returns all ratings for a title without filtering by enabled display settings.
+// Results are persisted to disk cache so they survive restarts.
+func (s *Service) GetMDBListAllRatings(ctx context.Context, imdbID, mediaType string) ([]models.Rating, error) {
+	if s.mdblist == nil {
+		return nil, nil
+	}
+	// Check disk cache first
+	key := ratingsDiskCacheKey(imdbID, mediaType)
+	var cached []models.Rating
+	if ok, _ := s.ratingsCache.get(key, &cached); ok {
+		return cached, nil
+	}
+	// Fetch from API
+	ratings, err := s.mdblist.GetAllRatings(ctx, imdbID, mediaType)
+	if err != nil {
+		return nil, err
+	}
+	// Persist to disk (even empty results to avoid repeated lookups)
+	if ratings == nil {
+		ratings = []models.Rating{}
+	}
+	_ = s.ratingsCache.set(key, ratings)
+	return ratings, nil
+}
+
+// GetMDBListAllRatingsCached returns disk-cached ratings only (no API call). Returns nil on cache miss.
+func (s *Service) GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating {
+	key := ratingsDiskCacheKey(imdbID, mediaType)
+	var cached []models.Rating
+	if ok, _ := s.ratingsCache.get(key, &cached); ok {
+		return cached
+	}
+	return nil
 }
 
 // ClearCache removes all cached metadata files

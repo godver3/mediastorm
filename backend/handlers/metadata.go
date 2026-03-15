@@ -45,6 +45,10 @@ type metadataService interface {
 	ServePrequeuedTrailer(id string, w http.ResponseWriter, r *http.Request) error
 	// Progress tracking for long-running enrichment operations
 	GetProgressSnapshot() metadatapkg.ProgressSnapshot
+	// MDBList rating helpers for watchlist/list rating sort
+	MDBListIsEnabled() bool
+	GetMDBListAllRatings(ctx context.Context, imdbID, mediaType string) ([]models.Rating, error)
+	GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -191,6 +195,9 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	if limit > 0 && limit < len(items) {
 		items = items[:limit]
 	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := DiscoverNewResponse{Items: items, Total: total}
@@ -886,6 +893,9 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichTrendingRatings(items, h.Service)
+
 	w.Header().Set("Content-Type", "application/json")
 	resp := CustomListResponse{Items: items, Total: filteredTotal}
 	if hideUnreleased || hideWatched {
@@ -932,6 +942,9 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 			enrichTrendingItems(items, idx)
 		}
 	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"items": items})
@@ -982,6 +995,9 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
@@ -1066,6 +1082,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
@@ -1097,6 +1114,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
@@ -1124,6 +1142,7 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
+	enrichTrendingRatings(items, h.Service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})

@@ -205,6 +205,14 @@ func (m *mockMetadataServiceStartup) GetProgressSnapshot() metadatapkg.ProgressS
 	return metadatapkg.ProgressSnapshot{}
 }
 
+func (m *mockMetadataServiceStartup) MDBListIsEnabled() bool { return false }
+func (m *mockMetadataServiceStartup) GetMDBListAllRatings(_ context.Context, _ string, _ string) ([]models.Rating, error) {
+	return nil, nil
+}
+func (m *mockMetadataServiceStartup) GetMDBListAllRatingsCached(_ string, _ string) []models.Rating {
+	return nil
+}
+
 type mockUserServiceStartup struct {
 	exists bool
 }

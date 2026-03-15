@@ -26,9 +26,10 @@ type customListsService interface {
 var _ customListsService = (*customlists.Service)(nil)
 
 type CustomListsHandler struct {
-	Service        customListsService
-	Users          userService
-	HistoryService historyService
+	Service         customListsService
+	Users           userService
+	HistoryService  historyService
+	MetadataService metadataService
 }
 
 func NewCustomListsHandler(service customListsService, users userService) *CustomListsHandler {
@@ -37,6 +38,11 @@ func NewCustomListsHandler(service customListsService, users userService) *Custo
 
 func (h *CustomListsHandler) SetHistoryService(service historyService) {
 	h.HistoryService = service
+}
+
+// SetMetadataService sets the metadata service for rating enrichment on list item responses.
+func (h *CustomListsHandler) SetMetadataService(service metadataService) {
+	h.MetadataService = service
 }
 
 func (h *CustomListsHandler) ListLists(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +186,9 @@ func (h *CustomListsHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 			enrichWatchlistItems(items, idx)
 		}
 	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(items)

@@ -27,10 +27,11 @@ type userService interface {
 }
 
 type WatchlistHandler struct {
-	Service        watchlistService
-	Users          userService
-	DemoMode       bool
-	HistoryService historyService
+	Service         watchlistService
+	Users           userService
+	DemoMode        bool
+	HistoryService  historyService
+	MetadataService metadataService
 }
 
 func NewWatchlistHandler(service watchlistService, users userService, demoMode bool) *WatchlistHandler {
@@ -40,6 +41,11 @@ func NewWatchlistHandler(service watchlistService, users userService, demoMode b
 // SetHistoryService sets the history service for watch state enrichment on list responses.
 func (h *WatchlistHandler) SetHistoryService(service historyService) {
 	h.HistoryService = service
+}
+
+// SetMetadataService sets the metadata service for rating enrichment on list responses.
+func (h *WatchlistHandler) SetMetadataService(service metadataService) {
+	h.MetadataService = service
 }
 
 func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +70,9 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 			enrichWatchlistItems(items, idx)
 		}
 	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)

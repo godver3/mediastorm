@@ -273,6 +273,8 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	// Enrich items with pre-computed watch state (after all concurrent fetches complete)
 	idx := buildWatchStateIndex(watchHistory, resp.ContinueWatching, playbackProgress)
 	enrichWatchlistItems(resp.Watchlist, idx)
+	// Enrich with MDBList ratings for sort-by-rating support (bounded by startupShelfLimit)
+	enrichWatchlistRatings(r.Context(), resp.Watchlist, h.metadata)
 	if resp.TrendingMovies != nil {
 		enrichTrendingItems(resp.TrendingMovies.Items, idx)
 	}

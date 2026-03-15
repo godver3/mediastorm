@@ -207,6 +207,18 @@ func (f *fakeMetadataService) GetProgressSnapshot() metadata.ProgressSnapshot {
 	return metadata.ProgressSnapshot{}
 }
 
+func (f *fakeMetadataService) MDBListIsEnabled() bool {
+	return false
+}
+
+func (f *fakeMetadataService) GetMDBListAllRatings(_ context.Context, _ string, _ string) ([]models.Rating, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) GetMDBListAllRatingsCached(_ string, _ string) []models.Rating {
+	return nil
+}
+
 // fakeUsersServiceForSearch implements usersServiceInterface for search handler tests.
 type fakeUsersServiceForSearch struct {
 	users map[string]models.User

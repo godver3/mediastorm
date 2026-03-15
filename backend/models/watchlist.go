@@ -19,6 +19,7 @@ type WatchlistItem struct {
 	SyncedAt       *time.Time        `json:"syncedAt,omitempty"`   // when last synced from external source
 	WatchState     string            `json:"watchState,omitempty"`     // "none" | "partial" | "complete"
 	UnwatchedCount *int              `json:"unwatchedCount,omitempty"` // series only: total - watched
+	Ratings        []Rating          `json:"ratings,omitempty"`        // hydrated at response time from MDBList
 }
 
 // WatchlistUpsert captures data required to insert or update a watchlist item.
