@@ -29,6 +29,22 @@
     .log-file { opacity: 0.7; font-style: italic; margin-right: 8px; }
     .log-msg { color: #eee; flex-grow: 1; word-break: break-all; }
     .log-hidden { display: none; }
+
+    @media (max-width: 768px) {
+        .log-entry {
+            flex-direction: column;
+            gap: 2px;
+        }
+        .log-prefix {
+            white-space: normal;
+            flex-wrap: wrap;
+            margin-right: 0;
+        }
+        .log-msg {
+            padding-left: 8px;
+            border-left: 2px solid rgba(255, 255, 255, 0.1);
+        }
+    }
     
     .source-tag {
         display: inline-flex;
