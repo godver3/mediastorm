@@ -13,6 +13,7 @@ func MigrateRawSettings(raw map[string]interface{}) {
 	migrateFieldToSection(raw, "filtering", "playback", "maxResultsPerResolution")
 	migratePrioritizeHdrToPreferredTerms(raw)
 	migrateRemoveHdrRankingCriterion(raw)
+	migratePrewarmFrequencyClear(raw)
 }
 
 // MigrateRawUserSettings applies migrations to a single user's raw settings map.
@@ -100,6 +101,36 @@ func migratePrioritizeHdrToPreferredTerms(raw map[string]interface{}) {
 		}
 	} else {
 		log.Printf("[config] removed deprecated filtering.prioritizeHdr (was false)")
+	}
+}
+
+// migratePrewarmFrequencyClear clears the frequency field on prewarm tasks.
+// Prewarm now uses dynamic TTL and the scheduler hardcodes a 15-minute internal
+// tick, so user-configured frequency is no longer applicable.
+func migratePrewarmFrequencyClear(raw map[string]interface{}) {
+	tasksMap, ok := raw["scheduledTasks"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	tasksList, ok := tasksMap["tasks"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, t := range tasksList {
+		task, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if task["type"] != "prewarm" {
+			continue
+		}
+		freq, _ := task["frequency"].(string)
+		if freq == "" {
+			continue // Already cleared
+		}
+		task["frequency"] = ""
+		log.Printf("[config] cleared prewarm task frequency %q (dynamic TTL now manages re-resolve cadence)", freq)
 	}
 }
 

@@ -192,16 +192,16 @@ type PrequeueStore struct {
 	entries map[string]*PrequeueEntry
 	// Secondary index: titleId+userId -> prequeueId (to find/replace existing prequeue)
 	byTitleUser map[string]string
-	ttl         time.Duration
+	defaultTTL  time.Duration
 	storagePath string // If set, ready entries are persisted to this file
 }
 
-// NewPrequeueStore creates a new prequeue store with the specified TTL
+// NewPrequeueStore creates a new prequeue store with the specified default TTL
 func NewPrequeueStore(ttl time.Duration) *PrequeueStore {
 	store := &PrequeueStore{
 		entries:     make(map[string]*PrequeueEntry),
 		byTitleUser: make(map[string]string),
-		ttl:         ttl,
+		defaultTTL:  ttl,
 	}
 
 	// Start cleanup goroutine
@@ -388,9 +388,14 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 		Status:                PrequeueStatusQueued,
 		SelectedAudioTrack:    -1, // Default: use all/default
 		SelectedSubtitleTrack: -1, // Default: none
-		CreatedAt:             time.Now(),
-		ExpiresAt:             time.Now().Add(s.ttl),
+		CreatedAt: time.Now(),
 	}
+	// Use dynamic TTL based on air date; fall back to store default
+	dynTTL := entry.DynamicTTL()
+	if dynTTL <= 0 {
+		dynTTL = s.defaultTTL
+	}
+	entry.ExpiresAt = time.Now().Add(dynTTL)
 
 	s.entries[id] = entry
 	s.byTitleUser[key] = id
@@ -456,7 +461,11 @@ func (s *PrequeueStore) Update(id string, updateFn func(*PrequeueEntry)) bool {
 
 	// Extend TTL when status becomes ready (only if not already set further out)
 	if entry.Status == PrequeueStatusReady {
-		defaultExpiry := time.Now().Add(s.ttl)
+		dynTTL := entry.DynamicTTL()
+		if dynTTL <= 0 {
+			dynTTL = s.defaultTTL
+		}
+		defaultExpiry := time.Now().Add(dynTTL)
 		if entry.ExpiresAt.Before(defaultExpiry) {
 			entry.ExpiresAt = defaultExpiry
 		}
@@ -568,6 +577,32 @@ func (s *PrequeueStore) ListAll() []*PrequeueEntry {
 	var result []*PrequeueEntry
 	for _, entry := range s.entries {
 		if now.Before(entry.ExpiresAt) {
+			result = append(result, entry)
+		}
+	}
+	return result
+}
+
+// ForceExpiry sets the ExpiresAt time for an entry, bypassing TTL auto-extension.
+// Intended for testing.
+func (s *PrequeueStore) ForceExpiry(id string, expiresAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, exists := s.entries[id]; exists {
+		entry.ExpiresAt = expiresAt
+	}
+}
+
+// ListExpired returns all entries whose TTL has elapsed (ready entries only).
+// Used by prewarm to know which entries need re-resolving.
+func (s *PrequeueStore) ListExpired() []*PrequeueEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now()
+	var result []*PrequeueEntry
+	for _, entry := range s.entries {
+		if entry.Status == PrequeueStatusReady && now.After(entry.ExpiresAt) {
 			result = append(result, entry)
 		}
 	}

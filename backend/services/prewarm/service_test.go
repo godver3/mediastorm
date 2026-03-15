@@ -530,6 +530,148 @@ func TestPersistence_RestorePrequeueEntries(t *testing.T) {
 	}
 }
 
+func TestReResolveExpired(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	// Create an entry and make it ready
+	entry, _ := store.Create("title1", "Breaking Bad", "user1", "series", 2008,
+		&models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3}, "prewarm")
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = "/debrid/rd/123/456"
+	})
+	// Force expiry bypassing TTL auto-extension
+	store.ForceExpiry(entry.ID, time.Now().Add(-1*time.Minute))
+
+	workerCalls := 0
+	workerFn := func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+		workerCalls++
+		newEntry, _ := store.Create(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm")
+		store.Update(newEntry.ID, func(e *playback.PrequeueEntry) {
+			e.Status = playback.PrequeueStatusReady
+			e.StreamPath = "/debrid/rd/789/012"
+		})
+		return newEntry.ID, nil
+	}
+
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(workerFn)
+
+	// Add a warm entry that references the expired prequeue
+	svc.entries[entryKey("title1", "user1")] = &WarmEntry{
+		TitleID:    "title1",
+		UserID:     "user1",
+		PrequeueID: entry.ID,
+		ExpiresAt:  time.Now().Add(12 * time.Hour),
+	}
+
+	reResolved := svc.reResolveExpired(context.Background())
+
+	if reResolved != 1 {
+		t.Errorf("expected 1 re-resolved, got %d", reResolved)
+	}
+	if workerCalls != 1 {
+		t.Errorf("expected 1 worker call, got %d", workerCalls)
+	}
+
+	// Warm entry should have been updated with the new prequeue ID
+	warmEntry := svc.entries[entryKey("title1", "user1")]
+	if warmEntry.PrequeueID == entry.ID {
+		t.Error("expected warm entry to be updated with new prequeue ID")
+	}
+}
+
+func TestAdoptEntry(t *testing.T) {
+	svc := NewService(nil, "")
+
+	svc.AdoptEntry("pq_123")
+
+	svc.adhocMu.RLock()
+	_, exists := svc.adhocEntries["pq_123"]
+	svc.adhocMu.RUnlock()
+
+	if !exists {
+		t.Error("expected adopted entry to be tracked")
+	}
+}
+
+func TestPruneAdhocEntries_PrunesOldEntries(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(store)
+
+	// Create an ad-hoc entry that's older than 24h
+	svc.adhocMu.Lock()
+	svc.adhocEntries["pq_old"] = time.Now().Add(-25 * time.Hour)
+	svc.adhocMu.Unlock()
+
+	// No active continue-watching keys
+	activeKeys := make(map[string]bool)
+
+	pruned := svc.pruneAdhocEntries(activeKeys)
+	if pruned != 1 {
+		t.Errorf("expected 1 pruned, got %d", pruned)
+	}
+
+	svc.adhocMu.RLock()
+	_, exists := svc.adhocEntries["pq_old"]
+	svc.adhocMu.RUnlock()
+
+	if exists {
+		t.Error("expected old ad-hoc entry to be pruned")
+	}
+}
+
+func TestPruneAdhocEntries_KeepsContinueWatchingEntries(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	// Create the prequeue entry in the store
+	entry, _ := store.Create("title1", "Breaking Bad", "user1", "series", 2008, nil, "details")
+
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(store)
+
+	// Adopt it, but set adoption time > 24h ago
+	svc.adhocMu.Lock()
+	svc.adhocEntries[entry.ID] = time.Now().Add(-25 * time.Hour)
+	svc.adhocMu.Unlock()
+
+	// This title+user IS in continue watching
+	activeKeys := map[string]bool{
+		entryKey("title1", "user1"): true,
+	}
+
+	pruned := svc.pruneAdhocEntries(activeKeys)
+	if pruned != 0 {
+		t.Errorf("expected 0 pruned (in continue watching), got %d", pruned)
+	}
+
+	svc.adhocMu.RLock()
+	_, exists := svc.adhocEntries[entry.ID]
+	svc.adhocMu.RUnlock()
+
+	if !exists {
+		t.Error("expected ad-hoc entry to be kept (in continue watching)")
+	}
+}
+
+func TestPruneAdhocEntries_KeepsRecentEntries(t *testing.T) {
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(playback.NewPrequeueStore(30 * time.Minute))
+
+	// Ad-hoc entry adopted 1 hour ago (< 24h)
+	svc.adhocMu.Lock()
+	svc.adhocEntries["pq_recent"] = time.Now().Add(-1 * time.Hour)
+	svc.adhocMu.Unlock()
+
+	pruned := svc.pruneAdhocEntries(make(map[string]bool))
+	if pruned != 0 {
+		t.Errorf("expected 0 pruned (recent entry), got %d", pruned)
+	}
+}
+
 func TestPersistence_ExpiredEntriesRemovedOnRestore(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := playback.NewPrequeueStore(30 * time.Minute)

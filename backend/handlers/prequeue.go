@@ -33,9 +33,10 @@ type MovieDetailsProvider interface {
 	MovieInfo(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
 }
 
-// PrewarmService interface for checking pre-warmed entries
+// PrewarmService interface for checking pre-warmed entries and adopting ad-hoc prequeues
 type PrewarmService interface {
 	GetWarm(titleID, userID string) *playback.WarmRef
+	AdoptEntry(prequeueID string)
 }
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
@@ -418,6 +419,11 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 
 	// Create prequeue entry
 	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason)
+
+	// Register with prewarm so it keeps the entry alive via dynamic TTL
+	if h.prewarmSvc != nil {
+		h.prewarmSvc.AdoptEntry(entry.ID)
+	}
 
 	// Start background worker with all the info needed for search
 	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, targetEpisode, req.StartOffset, req.SkipHLS)

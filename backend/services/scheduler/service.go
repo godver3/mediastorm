@@ -193,12 +193,16 @@ func (s *Service) shouldRun(task config.ScheduledTask) bool {
 		return true
 	}
 
-	interval := s.getInterval(task.Frequency)
+	interval := s.getInterval(task.Type, task.Frequency)
 	return time.Since(*task.LastRunAt) >= interval
 }
 
-// getInterval returns the duration for a given frequency
-func (s *Service) getInterval(freq config.ScheduledTaskFrequency) time.Duration {
+// getInterval returns the duration for a given task type and frequency.
+// Prewarm tasks use a hardcoded 15-minute interval (dynamic TTL manages re-resolve cadence).
+func (s *Service) getInterval(taskType config.ScheduledTaskType, freq config.ScheduledTaskFrequency) time.Duration {
+	if taskType == config.ScheduledTaskTypePrewarm {
+		return 15 * time.Minute
+	}
 	switch freq {
 	case config.ScheduledTaskFrequency1Min:
 		return 1 * time.Minute

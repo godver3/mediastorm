@@ -64,6 +64,10 @@ type Service struct {
 	entries map[string]*WarmEntry // key: "titleID:userID"
 	path    string                // persistence file path
 
+	// Ad-hoc entries adopted from user prequeue requests (key: prequeueID, value: adoption time)
+	adhocMu      sync.RWMutex
+	adhocEntries map[string]time.Time
+
 	historySvc      HistoryProvider
 	usersSvc        UsersProvider
 	prequeueStore   *playback.PrequeueStore
@@ -87,6 +91,7 @@ func hasTrackMetadata(entry *playback.PrequeueEntry) bool {
 func NewService(cfgManager *config.Manager, storageDir string) *Service {
 	svc := &Service{
 		entries:       make(map[string]*WarmEntry),
+		adhocEntries:  make(map[string]time.Time),
 		configManager: cfgManager,
 	}
 
@@ -123,6 +128,15 @@ func (s *Service) SetDebridStreaming(provider DebridURLRefresher) {
 // SetWorkerFunc sets the prequeue worker function for resolving items
 func (s *Service) SetWorkerFunc(fn playback.PrequeueWorkerFunc) {
 	s.workerFn = fn
+}
+
+// AdoptEntry registers an ad-hoc prequeue entry with prewarm so it stays alive.
+// Called by the prequeue handler after creating an ad-hoc entry.
+func (s *Service) AdoptEntry(prequeueID string) {
+	s.adhocMu.Lock()
+	defer s.adhocMu.Unlock()
+	s.adhocEntries[prequeueID] = time.Now()
+	log.Printf("[prewarm] Adopted ad-hoc prequeue entry %s", prequeueID)
 }
 
 // RestorePrequeueEntries re-creates PrequeueStore entries from persisted warm data.
@@ -325,10 +339,10 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 		}
 	}
 
-	// Remove entries that are no longer in continue watching
+	// Remove entries that are no longer in continue watching (but keep ad-hoc adopted ones)
 	s.mu.Lock()
 	for key := range s.entries {
-		if !activeKeys[key] {
+		if !activeKeys[key] && !s.isAdoptedEntry(s.entries[key]) {
 			log.Printf("[prewarm] Removing stale warm entry: %s", key)
 			delete(s.entries, key)
 			result.Removed++
@@ -339,8 +353,14 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 	}
 	s.mu.Unlock()
 
-	log.Printf("[prewarm] Cycle complete: warmed=%d skipped=%d failed=%d removed=%d",
-		result.Warmed, result.Skipped, result.Failed, result.Removed)
+	// Re-resolve expired prequeue entries (dynamic TTL refresh)
+	reResolved := s.reResolveExpired(ctx)
+
+	// Prune ad-hoc entries older than 24h that aren't in continue watching
+	pruned := s.pruneAdhocEntries(activeKeys)
+
+	log.Printf("[prewarm] Cycle complete: warmed=%d skipped=%d failed=%d removed=%d reResolved=%d adhocPruned=%d",
+		result.Warmed, result.Skipped, result.Failed, result.Removed, reResolved, pruned)
 
 	return result, nil
 }
@@ -526,6 +546,112 @@ func (s *Service) getMaxAge() time.Duration {
 		}
 	}
 	return 12 * time.Hour
+}
+
+// reResolveExpired re-resolves prequeue entries whose dynamic TTL has expired.
+// Returns the number of entries re-resolved.
+func (s *Service) reResolveExpired(ctx context.Context) int {
+	if s.prequeueStore == nil || s.workerFn == nil {
+		return 0
+	}
+
+	expired := s.prequeueStore.ListExpired()
+	if len(expired) == 0 {
+		return 0
+	}
+
+	reResolved := 0
+	for _, entry := range expired {
+		select {
+		case <-ctx.Done():
+			return reResolved
+		default:
+		}
+
+		log.Printf("[prewarm] Re-resolving expired prequeue %s (%s) for user %s",
+			entry.ID, entry.TitleName, entry.UserID)
+
+		var imdbID string
+		var targetEpisode *models.EpisodeReference
+		if entry.TargetEpisode != nil {
+			targetEpisode = entry.TargetEpisode
+		}
+
+		newPqID, err := s.workerFn(ctx, entry.TitleID, entry.TitleName, imdbID, entry.MediaType, entry.Year, entry.UserID, targetEpisode)
+		if err != nil {
+			log.Printf("[prewarm] Re-resolve failed for %s (%s): %v", entry.ID, entry.TitleName, err)
+			continue
+		}
+
+		// Update warm entry if we have one
+		key := entryKey(entry.TitleID, entry.UserID)
+		s.mu.Lock()
+		if warmEntry, ok := s.entries[key]; ok {
+			warmEntry.PrequeueID = newPqID
+			warmEntry.LastResolve = time.Now()
+			warmEntry.Error = ""
+			if pqEntry, ok := s.prequeueStore.Get(newPqID); ok {
+				warmEntry.StreamPath = pqEntry.StreamPath
+				warmEntry.LastRefresh = time.Now()
+			}
+		}
+		s.mu.Unlock()
+
+		reResolved++
+		log.Printf("[prewarm] Re-resolved %s → %s", entry.ID, newPqID)
+	}
+
+	if reResolved > 0 {
+		s.mu.Lock()
+		if err := s.saveLocked(); err != nil {
+			log.Printf("[prewarm] Warning: failed to persist after re-resolve: %v", err)
+		}
+		s.mu.Unlock()
+	}
+
+	return reResolved
+}
+
+// pruneAdhocEntries removes ad-hoc entries older than 24h that aren't in continue watching.
+// Returns the number pruned.
+func (s *Service) pruneAdhocEntries(activeKeys map[string]bool) int {
+	s.adhocMu.Lock()
+	defer s.adhocMu.Unlock()
+
+	now := time.Now()
+	pruned := 0
+	const adhocMaxAge = 24 * time.Hour
+
+	for pqID, adoptedAt := range s.adhocEntries {
+		if now.Sub(adoptedAt) < adhocMaxAge {
+			continue
+		}
+
+		// Check if this prequeue entry's title+user is in continue watching
+		if pqEntry, ok := s.prequeueStore.Get(pqID); ok {
+			key := entryKey(pqEntry.TitleID, pqEntry.UserID)
+			if activeKeys[key] {
+				continue // In continue watching, keep it
+			}
+		}
+
+		delete(s.adhocEntries, pqID)
+		pruned++
+		log.Printf("[prewarm] Pruned ad-hoc entry %s (adopted %v ago)", pqID, now.Sub(adoptedAt).Round(time.Minute))
+	}
+
+	return pruned
+}
+
+// isAdoptedEntry checks if a warm entry corresponds to an adopted ad-hoc prequeue.
+func (s *Service) isAdoptedEntry(entry *WarmEntry) bool {
+	if entry == nil || entry.PrequeueID == "" {
+		return false
+	}
+	s.adhocMu.RLock()
+	defer s.adhocMu.RUnlock()
+	_, adopted := s.adhocEntries[entry.PrequeueID]
+	return adopted
 }
 
 func entryKey(titleID, userID string) string {

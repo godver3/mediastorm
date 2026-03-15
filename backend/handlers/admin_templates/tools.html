@@ -248,7 +248,7 @@
                         <div style="padding: 1rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 1rem;">
                             <p style="margin: 0; color: var(--text-secondary); font-size: 0.9rem;">
                                 Pre-resolves continue watching items for all profiles so playback starts instantly.
-                                Debrid URLs are refreshed every 8 minutes to stay within the 10-minute TTL.
+                                Runs every 15 minutes and re-resolves entries based on dynamic TTL (tighter near air date, relaxed for catalog content).
                             </p>
                         </div>
                     </div>
@@ -388,7 +388,7 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
+                    <div id="newFrequencyGroup" class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="newTaskFrequency" class="form-select">
                             <option value="1min">Every Minute</option>
@@ -400,6 +400,13 @@
                             <option value="12hours" selected>Every 12 Hours</option>
                             <option value="daily">Daily</option>
                         </select>
+                    </div>
+                    <div id="newAutoFrequencyLabel" class="form-group" style="display: none;">
+                        <label class="form-label">Frequency</label>
+                        <div style="padding: 0.5rem 0.75rem; background: var(--bg-secondary); border-radius: 6px; color: var(--text-secondary); font-size: 0.9rem;">
+                            Automatic (every 15 minutes)
+                        </div>
+                        <small class="text-muted">Managed internally using dynamic TTL based on air date proximity</small>
                     </div>
 
                     <div class="form-group">
@@ -576,7 +583,7 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
+                    <div id="editFrequencyGroup" class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="editTaskFrequency" class="form-select">
                             <option value="1min">Every Minute</option>
@@ -588,6 +595,13 @@
                             <option value="12hours">Every 12 Hours</option>
                             <option value="daily">Daily</option>
                         </select>
+                    </div>
+                    <div id="editAutoFrequencyLabel" class="form-group" style="display: none;">
+                        <label class="form-label">Frequency</label>
+                        <div style="padding: 0.5rem 0.75rem; background: var(--bg-secondary); border-radius: 6px; color: var(--text-secondary); font-size: 0.9rem;">
+                            Automatic (every 15 minutes)
+                        </div>
+                        <small class="text-muted">Managed internally using dynamic TTL based on air date proximity</small>
                     </div>
 
                     <div class="form-group" id="editDryRunGroup">
@@ -3586,7 +3600,7 @@
         listContainer.innerHTML = scheduledTasks.map(task => {
             const statusClass = getStatusClass(task.lastStatus);
             const statusLabel = getStatusLabel(task.lastStatus);
-            const frequencyLabel = getFrequencyLabel(task.frequency);
+            const frequencyLabel = getFrequencyLabel(task.frequency, task.type);
             const lastRunLabel = task.lastRunAt ? formatRelativeTime(task.lastRunAt) : 'Never';
             const taskTypeLabel = getTaskTypeLabel(task.type);
 
@@ -3718,7 +3732,10 @@
         }
     }
 
-    function getFrequencyLabel(frequency) {
+    function getFrequencyLabel(frequency, taskType) {
+        if (taskType === 'prewarm' || frequency === '') {
+            return 'Automatic (15 min)';
+        }
         switch (frequency) {
             case '1min': return 'Every minute';
             case '5min': return 'Every 5 minutes';
@@ -3891,6 +3908,11 @@
             `;
         }
 
+        // Show/hide frequency selector (prewarm uses automatic frequency)
+        const isPrewarm = taskType === 'prewarm';
+        document.getElementById('newFrequencyGroup').style.display = isPrewarm ? 'none' : 'block';
+        document.getElementById('newAutoFrequencyLabel').style.display = isPrewarm ? 'block' : 'none';
+
         // Show sync options and dry run for any sync-type task (not for backup or prewarm)
         // But hide generic sync options for trakt_history_sync (it has its own direction control)
         const isSyncTask = taskType.includes('sync');
@@ -4052,7 +4074,7 @@
                 body: JSON.stringify({
                     type: taskType,
                     name: taskName || undefined,
-                    frequency: frequency,
+                    frequency: taskType === 'prewarm' ? '' : frequency,
                     config: config,
                     enabled: enabled
                 })
@@ -4172,7 +4194,12 @@
         document.getElementById('editTaskId').value = task.id;
         document.getElementById('editTaskType').value = task.type;
         document.getElementById('editTaskName').value = task.name || '';
-        document.getElementById('editTaskFrequency').value = task.frequency;
+        const isPrewarmEdit = task.type === 'prewarm';
+        document.getElementById('editFrequencyGroup').style.display = isPrewarmEdit ? 'none' : 'block';
+        document.getElementById('editAutoFrequencyLabel').style.display = isPrewarmEdit ? 'block' : 'none';
+        if (!isPrewarmEdit) {
+            document.getElementById('editTaskFrequency').value = task.frequency;
+        }
 
         // Hide all config sections first
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
@@ -4403,7 +4430,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     name: taskName || undefined,
-                    frequency: frequency,
+                    frequency: taskType === 'prewarm' ? '' : frequency,
                     config: config
                 })
             });
