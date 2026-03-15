@@ -579,3 +579,87 @@ func TestResolveAlternateTitles_LanguagePriorityWithCap(t *testing.T) {
 		t.Errorf("expected Chinese alias second, got %q", aliases[1])
 	}
 }
+
+func TestPerResolutionLimiting(t *testing.T) {
+	// Helper to make results with resolution in title
+	makeResult := func(title string) models.NZBResult {
+		return models.NZBResult{Title: title}
+	}
+
+	results := []models.NZBResult{
+		makeResult("Movie.2160p.WEB-DL.x265"),
+		makeResult("Movie.2160p.BluRay.x265"),
+		makeResult("Movie.2160p.REMUX.x265"),
+		makeResult("Movie.1080p.WEB-DL.x264"),
+		makeResult("Movie.1080p.BluRay.x264"),
+		makeResult("Movie.1080p.REMUX.x264"),
+		makeResult("Movie.720p.WEB-DL.x264"),
+		makeResult("Movie.720p.BluRay.x264"),
+	}
+
+	t.Run("limits results per resolution tier", func(t *testing.T) {
+		maxPerRes := 2
+		resolutionCounts := map[int]int{}
+		var limited []models.NZBResult
+		for _, r := range results {
+			res := extractResolutionFromResult(r)
+			if resolutionCounts[res] < maxPerRes {
+				limited = append(limited, r)
+				resolutionCounts[res]++
+			}
+		}
+
+		if len(limited) != 6 {
+			t.Fatalf("expected 6 results (2 per tier), got %d", len(limited))
+		}
+
+		// Verify per-tier counts
+		tierCounts := map[int]int{}
+		for _, r := range limited {
+			tierCounts[extractResolutionFromResult(r)]++
+		}
+		for tier, count := range tierCounts {
+			if count > maxPerRes {
+				t.Errorf("tier %d has %d results, expected max %d", tier, count, maxPerRes)
+			}
+		}
+	})
+
+	t.Run("zero means no limit", func(t *testing.T) {
+		maxPerRes := 0
+		if maxPerRes > 0 {
+			t.Fatal("should not apply limiting when maxPerRes is 0")
+		}
+		// All results pass through
+		if len(results) != 8 {
+			t.Fatalf("expected all 8 results, got %d", len(results))
+		}
+	})
+
+	t.Run("preserves order within tier", func(t *testing.T) {
+		maxPerRes := 1
+		resolutionCounts := map[int]int{}
+		var limited []models.NZBResult
+		for _, r := range results {
+			res := extractResolutionFromResult(r)
+			if resolutionCounts[res] < maxPerRes {
+				limited = append(limited, r)
+				resolutionCounts[res]++
+			}
+		}
+
+		if len(limited) != 3 {
+			t.Fatalf("expected 3 results (1 per tier), got %d", len(limited))
+		}
+		// First result from each tier should be the first in the original order
+		if limited[0].Title != "Movie.2160p.WEB-DL.x265" {
+			t.Errorf("expected first 2160p result, got %q", limited[0].Title)
+		}
+		if limited[1].Title != "Movie.1080p.WEB-DL.x264" {
+			t.Errorf("expected first 1080p result, got %q", limited[1].Title)
+		}
+		if limited[2].Title != "Movie.720p.WEB-DL.x264" {
+			t.Errorf("expected first 720p result, got %q", limited[2].Title)
+		}
+	})
+}

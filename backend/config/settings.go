@@ -327,6 +327,7 @@ type FilterSettings struct {
 	NonPreferredTerms                []string    `json:"nonPreferredTerms"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly bool        `json:"bypassFilteringForAioStreamsOnly"` // Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper (debrid-only mode)
 	ShowParsedBadges                bool        `json:"showParsedBadges,omitempty"`       // Show parsed metadata badges instead of raw titles in manual selection
+	MaxResultsPerResolution         int         `json:"maxResultsPerResolution"`          // Maximum number of results per resolution tier (0 = no limit)
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.

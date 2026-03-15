@@ -4,6 +4,7 @@ package models
 func FloatPtr(v float64) *float64 { return &v }
 func BoolPtr(v bool) *bool        { return &v }
 func StringPtr(v string) *string  { return &v }
+func IntPtr(v int) *int           { return &v }
 
 // Helper functions for safely dereferencing pointers with defaults
 func FloatVal(p *float64, def float64) float64 {
@@ -14,6 +15,13 @@ func FloatVal(p *float64, def float64) float64 {
 }
 
 func BoolVal(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func IntVal(p *int, def int) int {
 	if p == nil {
 		return def
 	}
@@ -258,6 +266,7 @@ type FilterSettings struct {
 	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`                   // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms                []string    `json:"nonPreferredTerms,omitempty"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper
+	MaxResultsPerResolution         *int        `json:"maxResultsPerResolution,omitempty"`          // Maximum number of results per resolution tier (0 = no limit)
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences (per-user overrides).

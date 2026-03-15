@@ -152,7 +152,8 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		PrioritizeHdr:     models.BoolPtr(globalSettings.Filtering.PrioritizeHdr),
 		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
-		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
+		NonPreferredTerms:       globalSettings.Filtering.NonPreferredTerms,
+		MaxResultsPerResolution: models.IntPtr(globalSettings.Filtering.MaxResultsPerResolution),
 	}
 	animeSettings := models.AnimeFilteringSettings{
 		AnimeLanguageEnabled:   models.BoolPtr(globalSettings.AnimeFiltering.AnimeLanguageEnabled),
@@ -194,6 +195,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			if profileFiltering.BypassFilteringForAIOStreamsOnly != nil {
 				filterSettings.BypassFilteringForAIOStreamsOnly = profileFiltering.BypassFilteringForAIOStreamsOnly
 			}
+			if profileFiltering.MaxResultsPerResolution != nil {
+				filterSettings.MaxResultsPerResolution = profileFiltering.MaxResultsPerResolution
+			}
 			profileAnime := userSettings.AnimeFiltering
 			if profileAnime.AnimeLanguageEnabled != nil {
 				animeSettings.AnimeLanguageEnabled = profileAnime.AnimeLanguageEnabled
@@ -234,6 +238,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.NonPreferredTerms != nil {
 				filterSettings.NonPreferredTerms = *clientSettings.NonPreferredTerms
+			}
+			if clientSettings.MaxResultsPerResolution != nil {
+				filterSettings.MaxResultsPerResolution = clientSettings.MaxResultsPerResolution
 			}
 			if clientSettings.AnimeLanguageEnabled != nil {
 				animeSettings.AnimeLanguageEnabled = clientSettings.AnimeLanguageEnabled
@@ -712,6 +719,22 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	for idx := 0; idx < len(aggregated); idx++ {
 		res := extractResolutionFromResult(aggregated[idx])
 		log.Printf("[indexer] Result #%d: ServiceType=%q Resolution=%d Size=%d Title=%q", idx, aggregated[idx].ServiceType, res, aggregated[idx].SizeBytes, aggregated[idx].Title)
+	}
+
+	// Apply per-resolution limit before global MaxResults truncation
+	maxPerRes := models.IntVal(filterSettings.MaxResultsPerResolution, 0)
+	if maxPerRes > 0 {
+		resolutionCounts := map[int]int{}
+		var limited []models.NZBResult
+		for _, r := range aggregated {
+			res := extractResolutionFromResult(r)
+			if resolutionCounts[res] < maxPerRes {
+				limited = append(limited, r)
+				resolutionCounts[res]++
+			}
+		}
+		log.Printf("[indexer] Per-resolution limit=%d applied: %d -> %d results", maxPerRes, len(aggregated), len(limited))
+		aggregated = limited
 	}
 
 	if opts.MaxResults > 0 && len(aggregated) > opts.MaxResults {

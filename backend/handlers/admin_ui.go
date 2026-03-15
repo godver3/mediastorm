@@ -343,7 +343,8 @@ var SettingsSchema = map[string]interface{}{
 			"preferredTerms":                   map[string]interface{}{"type": "tags", "label": "Preferred Terms", "description": "Terms to prioritize in results (case-insensitive substring match, ranked higher; wrap in /slashes/ for regex)"},
 			"nonPreferredTerms":                map[string]interface{}{"type": "tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results (case-insensitive substring match, ranked lower but not removed; wrap in /slashes/ for regex)"},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet."},
-			"showParsedBadges": map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection"},
+			"showParsedBadges":          map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection"},
+			"maxResultsPerResolution": map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)"},
 		},
 	},
 	"animeFiltering": map[string]interface{}{
