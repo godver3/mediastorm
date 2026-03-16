@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -556,6 +557,19 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// isYouTubeURL validates that the given URL actually points to a YouTube domain
+// by parsing the URL and checking the hostname. A simple strings.Contains check
+// would allow URLs like http://attacker.com/youtube.com to pass.
+func isYouTubeURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" ||
+		host == "youtu.be" || host == "www.youtu.be"
+}
+
 // TrailerStreamResponse contains the extracted stream URL
 type TrailerStreamResponse struct {
 	StreamURL string `json:"streamUrl"`
@@ -574,7 +588,7 @@ func (h *MetadataHandler) TrailerStream(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Validate it's a YouTube URL
-	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+	if !isYouTubeURL(videoURL) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "only YouTube URLs are supported"})
@@ -606,7 +620,7 @@ func (h *MetadataHandler) TrailerProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate it's a YouTube URL
-	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+	if !isYouTubeURL(videoURL) {
 		http.Error(w, "only YouTube URLs are supported", http.StatusBadRequest)
 		return
 	}
@@ -654,7 +668,7 @@ func (h *MetadataHandler) TrailerPrequeue(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate it's a YouTube URL
-	if !strings.Contains(videoURL, "youtube.com") && !strings.Contains(videoURL, "youtu.be") {
+	if !isYouTubeURL(videoURL) {
 		http.Error(w, "only YouTube URLs are supported", http.StatusBadRequest)
 		return
 	}

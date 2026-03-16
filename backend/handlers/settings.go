@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/internal/pool"
 	"novastream/services/debrid"
 	"novastream/services/epg"
@@ -114,6 +115,13 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Redact sensitive fields for non-master users
+	isMaster, _ := r.Context().Value(auth.ContextKeyIsMaster).(bool)
+	if !isMaster {
+		redactSettings(&s)
+	}
+
 	// Build response with computed effective playlist URL
 	resp := SettingsResponseWithLive{
 		SettingsResponse: SettingsResponse{
@@ -129,6 +137,140 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// redactSettings replaces sensitive credentials with a placeholder so
+// non-master users cannot read API keys, passwords, or tokens.
+func redactSettings(s *config.Settings) {
+	const redacted = "••••••••"
+	mask := func(v *string) {
+		if *v != "" {
+			*v = redacted
+		}
+	}
+
+	// Server
+	mask(&s.Server.HomepageAPIKey)
+
+	// Usenet providers
+	for i := range s.Usenet {
+		mask(&s.Usenet[i].Password)
+	}
+
+	// Indexers (Newznab/Torznab)
+	for i := range s.Indexers {
+		mask(&s.Indexers[i].APIKey)
+	}
+
+	// Torrent scrapers (Prowlarr/Jackett)
+	for i := range s.TorrentScrapers {
+		mask(&s.TorrentScrapers[i].APIKey)
+	}
+
+	// Metadata API keys
+	mask(&s.Metadata.TVDBAPIKey)
+	mask(&s.Metadata.TMDBAPIKey)
+	mask(&s.Metadata.GeminiAPIKey)
+
+	// WebDAV
+	mask(&s.WebDAV.Password)
+
+	// Debrid providers
+	for i := range s.Streaming.DebridProviders {
+		mask(&s.Streaming.DebridProviders[i].APIKey)
+	}
+
+	// SABnzbd
+	mask(&s.SABnzbd.FallbackAPIKey)
+
+	// Subtitles
+	mask(&s.Subtitles.OpenSubtitlesPassword)
+
+	// MDBList
+	mask(&s.MDBList.APIKey)
+
+	// Trakt
+	mask(&s.Trakt.ClientSecret)
+	mask(&s.Trakt.AccessToken)
+	mask(&s.Trakt.RefreshToken)
+
+	// Plex
+	mask(&s.Plex.AuthToken)
+
+	// Live (Xtream)
+	mask(&s.Live.XtreamPassword)
+}
+
+const redactedPlaceholder = "••••••••"
+
+// preserveRedactedFields restores the real credential from existing settings
+// whenever the incoming value equals the redaction placeholder. This prevents
+// save-back of redacted values from overwriting real secrets.
+func preserveRedactedFields(incoming *config.Settings, existing *config.Settings) {
+	restore := func(newVal *string, oldVal string) {
+		if *newVal == redactedPlaceholder {
+			*newVal = oldVal
+		}
+	}
+
+	// Server
+	restore(&incoming.Server.HomepageAPIKey, existing.Server.HomepageAPIKey)
+
+	// Usenet providers (match by index — frontend preserves order)
+	for i := range incoming.Usenet {
+		if i < len(existing.Usenet) {
+			restore(&incoming.Usenet[i].Password, existing.Usenet[i].Password)
+		}
+	}
+
+	// Indexers
+	for i := range incoming.Indexers {
+		if i < len(existing.Indexers) {
+			restore(&incoming.Indexers[i].APIKey, existing.Indexers[i].APIKey)
+		}
+	}
+
+	// Torrent scrapers
+	for i := range incoming.TorrentScrapers {
+		if i < len(existing.TorrentScrapers) {
+			restore(&incoming.TorrentScrapers[i].APIKey, existing.TorrentScrapers[i].APIKey)
+		}
+	}
+
+	// Metadata
+	restore(&incoming.Metadata.TVDBAPIKey, existing.Metadata.TVDBAPIKey)
+	restore(&incoming.Metadata.TMDBAPIKey, existing.Metadata.TMDBAPIKey)
+	restore(&incoming.Metadata.GeminiAPIKey, existing.Metadata.GeminiAPIKey)
+
+	// WebDAV
+	restore(&incoming.WebDAV.Password, existing.WebDAV.Password)
+
+	// Debrid providers
+	for i := range incoming.Streaming.DebridProviders {
+		if i < len(existing.Streaming.DebridProviders) {
+			restore(&incoming.Streaming.DebridProviders[i].APIKey, existing.Streaming.DebridProviders[i].APIKey)
+		}
+	}
+
+	// SABnzbd
+	restore(&incoming.SABnzbd.FallbackAPIKey, existing.SABnzbd.FallbackAPIKey)
+
+	// Subtitles
+	restore(&incoming.Subtitles.OpenSubtitlesPassword, existing.Subtitles.OpenSubtitlesPassword)
+
+	// MDBList
+	restore(&incoming.MDBList.APIKey, existing.MDBList.APIKey)
+
+	// Trakt
+	restore(&incoming.Trakt.ClientSecret, existing.Trakt.ClientSecret)
+	restore(&incoming.Trakt.AccessToken, existing.Trakt.AccessToken)
+	restore(&incoming.Trakt.RefreshToken, existing.Trakt.RefreshToken)
+
+	// Plex
+	restore(&incoming.Plex.AuthToken, existing.Plex.AuthToken)
+
+	// Live (Xtream)
+	restore(&incoming.Live.XtreamPassword, existing.Live.XtreamPassword)
+}
+
 func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	// Load old settings to detect new EPG sources
 	oldSettings, _ := h.Manager.Load()
@@ -142,6 +284,11 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Restore real credentials when the incoming value is the redaction placeholder.
+	// This prevents non-master users from accidentally overwriting secrets when they
+	// save settings that were returned with redacted values.
+	preserveRedactedFields(&s, &oldSettings)
 
 	// Auto-create/remove scheduled tasks based on feature settings
 	h.ensureEPGTaskIfEnabled(&s)

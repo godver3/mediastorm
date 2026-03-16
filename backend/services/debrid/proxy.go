@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -59,6 +60,11 @@ func (s *ProxyService) Proxy(ctx context.Context, req ProxyRequest) (*streaming.
 		return nil, fmt.Errorf("missing resource URL for debrid proxy")
 	}
 
+	// Validate URL points to a known debrid provider domain to prevent SSRF
+	if err := validateDebridURL(trimmedURL); err != nil {
+		return nil, err
+	}
+
 	settings, err := s.cfg.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
@@ -109,6 +115,40 @@ func (s *ProxyService) Proxy(ctx context.Context, req ProxyRequest) (*streaming.
 	}
 
 	return response, nil
+}
+
+// allowedDebridHosts contains the set of hostnames (and suffixes) that the
+// debrid proxy is allowed to forward requests to. This prevents SSRF by
+// ensuring we never send the debrid API key to an attacker-controlled server.
+var allowedDebridHosts = []string{
+	".real-debrid.com",
+	".realdebrid.com",
+	".alldebrid.com",
+	".premiumize.me",
+	".debrid-link.com",
+	".debrid-link.fr",
+	".put.io",
+	".torbox.app",
+	".offcloud.com",
+}
+
+// validateDebridURL ensures the URL points to a known debrid provider host.
+func validateDebridURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid debrid URL: %w", err)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("debrid URL has no hostname")
+	}
+	for _, suffix := range allowedDebridHosts {
+		// Match exact domain or any subdomain
+		if host == strings.TrimPrefix(suffix, ".") || strings.HasSuffix(host, suffix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("debrid proxy blocked: host %q is not a known debrid provider", host)
 }
 
 func findProvider(providers []config.DebridProviderSettings, name string) (config.DebridProviderSettings, error) {

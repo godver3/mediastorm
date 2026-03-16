@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/services/epg"
 )
 
@@ -39,7 +41,10 @@ func TestSettingsHandler_GetSettings(t *testing.T) {
 
 	handler := NewSettingsHandler(mgr)
 
+	// Simulate a master account request so credentials are not redacted
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	ctx := context.WithValue(req.Context(), auth.ContextKeyIsMaster, true)
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	handler.GetSettings(rec, req)

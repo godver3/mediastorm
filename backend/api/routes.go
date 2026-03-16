@@ -129,12 +129,14 @@ func Register(
 	loginLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5)     // 5/min per IP
 	defaultPwLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10) // 10/min per IP
 
+	// Rate limiters for resource-intensive endpoints (spawn FFmpeg processes)
+	probeLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10) // 10/min per IP
+	hlsStartLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5) // 5/min per IP
+
 	// Auth routes (no authentication required)
 	authHandler := handlers.NewAuthHandler(accountsSvc, sessionsSvc)
 	api.HandleFunc("/auth/login", RateLimitHandlerFunc(loginLimiter, authHandler.Login)).Methods(http.MethodPost)
 	api.HandleFunc("/auth/login", authHandler.Options).Methods(http.MethodOptions)
-	api.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
-	api.HandleFunc("/auth/logout", authHandler.Options).Methods(http.MethodOptions)
 	api.HandleFunc("/auth/me", authHandler.Me).Methods(http.MethodGet)
 	api.HandleFunc("/auth/me", authHandler.Options).Methods(http.MethodOptions)
 	api.HandleFunc("/auth/refresh", authHandler.Refresh).Methods(http.MethodPost)
@@ -155,6 +157,10 @@ func Register(
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
+
+	// Logout requires a valid session to prevent unauthenticated session revocation
+	protected.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
+	protected.HandleFunc("/auth/logout", authHandler.Options).Methods(http.MethodOptions)
 
 	// Account management routes (master only)
 	masterOnly := protected.PathPrefix("/accounts").Subrouter()
@@ -280,7 +286,7 @@ func Register(
 	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
-	protected.HandleFunc("/live/hls/start", videoHandler.StartLiveHLSSession).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/live/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/live/usage", videoHandler.GetLiveUsage).Methods(http.MethodGet)
 	protected.HandleFunc("/live/usage", handleOptions).Methods(http.MethodOptions)
 
@@ -307,12 +313,12 @@ func Register(
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	protected.HandleFunc("/video/stream/{displayName}", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
-	protected.HandleFunc("/video/metadata", videoHandler.ProbeVideo).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/metadata", RateLimitHandlerFunc(probeLimiter, videoHandler.ProbeVideo)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
-	protected.HandleFunc("/video/cropdetect", videoHandler.CropDetect).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/cropdetect", RateLimitHandlerFunc(probeLimiter, videoHandler.CropDetect)).Methods(http.MethodGet, http.MethodOptions)
 
 	// HLS streaming endpoints for Dolby Vision
-	protected.HandleFunc("/video/hls/start", videoHandler.StartHLSSession).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/stream.m3u8", videoHandler.ServeHLSPlaylist).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/subtitles.vtt", videoHandler.ServeHLSSubtitles).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/keepalive", videoHandler.KeepAliveHLSSession).Methods(http.MethodPost, http.MethodOptions)
