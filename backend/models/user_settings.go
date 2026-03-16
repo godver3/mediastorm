@@ -253,6 +253,7 @@ type FilterSettings struct {
 	PreferredTerms                   []string    `json:"preferredTerms,omitempty"`                   // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms                []string    `json:"nonPreferredTerms,omitempty"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
 	BypassFilteringForAIOStreamsOnly *bool       `json:"bypassFilteringForAioStreamsOnly,omitempty"` // Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper
+	HideShowsWithoutLocalFiles      *bool       `json:"hideShowsWithoutLocalFiles,omitempty"`       // Hide shows that don't have any files in the local library on disk
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences (per-user overrides).

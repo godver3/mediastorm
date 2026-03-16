@@ -118,6 +118,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	hideNonLocal := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideNonLocal"))) == "true"
 	// Parse optional pagination parameters
 	limit := 0
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -151,6 +152,12 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	// Apply watched filter if requested (requires userID and history service)
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
+	}
+
+	// Apply local library filter if requested
+	// TODO: Wire to local file index when disk playback feature is implemented
+	if hideNonLocal {
+		items = filterNonLocalItems(items)
 	}
 
 	// Apply kids rating filter if user is a kids profile
@@ -752,6 +759,13 @@ func filterUnreleasedItems(items []models.TrendingItem) []models.TrendingItem {
 	}
 	log.Printf("[hideUnreleased] filter result: %d/%d items kept (filtered %d)", len(result), len(items), filteredCount)
 	return result
+}
+
+// filterNonLocalItems removes items that don't have associated local files on disk.
+// TODO: Implement when local disk playback feature is added — query the local file index
+// and filter out items with no matching local files.
+func filterNonLocalItems(items []models.TrendingItem) []models.TrendingItem {
+	return items
 }
 
 // filterWatchedItems removes items that have been fully watched by the user.

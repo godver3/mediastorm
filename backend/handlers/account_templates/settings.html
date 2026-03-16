@@ -510,6 +510,18 @@ function renderSettings() {
                         </select>
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Hide Shows Without Local Files</h4>
+                        <p>Only show content that has files available in your local library on disk</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="hideShowsWithoutLocalFiles" ${s.filtering.hideShowsWithoutLocalFiles ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <div class="setting-row" style="flex-direction: column; align-items: flex-start;">
                     <div class="setting-label" style="margin-bottom: 0.5rem;">
                         <h4>Excluded Terms</h4>
@@ -585,6 +597,7 @@ function collectSettings() {
             prioritizeHdr: document.getElementById('prioritizeHdr').checked,
             hdrDvPolicy: document.getElementById('hdrDvPolicy').value,
             filterOutTerms: currentSettings.filtering.filterOutTerms || [],
+            hideShowsWithoutLocalFiles: document.getElementById('hideShowsWithoutLocalFiles').checked,
         },
         liveTV: currentSettings.liveTV || { hiddenChannels: [], favoriteChannels: [], selectedCategories: [] },
     };
