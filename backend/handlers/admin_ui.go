@@ -191,19 +191,21 @@ var SettingsGroups = []map[string]string{
 	{"id": "searchFiltering", "label": "Search & Filtering"},
 	{"id": "services", "label": "Services"},
 	{"id": "experience", "label": "Experience"},
+	{"id": "server", "label": "Server"},
 }
 
 // SettingsSchema defines the schema for dynamic form generation
 var SettingsSchema = map[string]interface{}{
 	"server": map[string]interface{}{
-		"label":  "Server Settings",
-		"icon":   "server",
-		"group":  "server",
-		"order":  0,
-		"hidden": true,
+		"label":       "Server Settings",
+		"icon":        "server",
+		"group":       "server",
+		"order":       0,
+		"description": "Changing host or port requires a container restart to take effect. Only modify these if you know what you're doing.",
 		"fields": map[string]interface{}{
-			"host": map[string]interface{}{"type": "text", "label": "Host", "description": "Server bind address"},
-			"port": map[string]interface{}{"type": "number", "label": "Port", "description": "Server port"},
+			"host":     map[string]interface{}{"type": "text", "label": "Host", "description": "Server bind address (leave empty to bind all interfaces)", "order": 0},
+			"port":     map[string]interface{}{"type": "number", "label": "Port", "description": "Server port (default: 7777)", "order": 1},
+			"basePath": map[string]interface{}{"type": "text", "label": "Base Path", "description": "URL path prefix for reverse proxy (e.g. /mediastorm). Requires restart.", "placeholder": "/mediastorm", "order": 2},
 		},
 	},
 	"network": map[string]interface{}{

@@ -880,10 +880,17 @@ func main() {
 		fmt.Println("")
 	}
 
+	// Wrap handler with base path prefix stripping if configured
+	var handler http.Handler = r
+	if settings.Server.BasePath != "" {
+		handler = utils.BasePathHandler(settings.Server.BasePath, r)
+		fmt.Printf("📁 Base path prefix: %s (requests to %s/* will be routed normally)\n", settings.Server.BasePath, settings.Server.BasePath)
+	}
+
 	// Create HTTP server with timeouts
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           r,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0, // No write timeout for streaming

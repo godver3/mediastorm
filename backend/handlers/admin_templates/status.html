@@ -299,6 +299,13 @@
                         <td>{{.Settings.Server.Port}}</td>
                         <td style="color: var(--text-muted);">HTTP API port</td>
                     </tr>
+                    {{if .Settings.Server.BasePath}}
+                    <tr>
+                        <td>Base Path</td>
+                        <td>{{.Settings.Server.BasePath}}</td>
+                        <td style="color: var(--text-muted);">URL path prefix for reverse proxy</td>
+                    </tr>
+                    {{end}}
                     <tr>
                         <td>Download Workers</td>
                         <td>{{.Settings.Streaming.MaxDownloadWorkers}}</td>

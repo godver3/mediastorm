@@ -48,6 +48,7 @@ type Settings struct {
 type ServerSettings struct {
 	Host           string `json:"host"`
 	Port           int    `json:"port"`
+	BasePath       string `json:"basePath,omitempty"`       // URL path prefix for reverse proxy (e.g. "/mediastorm")
 	HomepageAPIKey string `json:"homepageApiKey,omitempty"` // API key for Homepage dashboard integration
 }
 

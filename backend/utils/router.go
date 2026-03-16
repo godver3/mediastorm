@@ -2,6 +2,8 @@ package utils
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -23,6 +25,38 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+// BasePathHandler wraps a handler to strip a URL path prefix.
+// Requests with the prefix get it stripped before routing; requests without
+// the prefix are passed through unchanged so direct access still works.
+func BasePathHandler(basePath string, next http.Handler) http.Handler {
+	basePath = "/" + strings.Trim(basePath, "/")
+	if basePath == "/" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, basePath+"/") || r.URL.Path == basePath {
+			r2 := new(http.Request)
+			*r2 = *r
+			r2.URL = new(url.URL)
+			*r2.URL = *r.URL
+			r2.URL.Path = strings.TrimPrefix(r.URL.Path, basePath)
+			if r2.URL.Path == "" {
+				r2.URL.Path = "/"
+			}
+			if r2.URL.RawPath != "" {
+				r2.URL.RawPath = strings.TrimPrefix(r2.URL.RawPath, basePath)
+				if r2.URL.RawPath == "" {
+					r2.URL.RawPath = "/"
+				}
+			}
+			next.ServeHTTP(w, r2)
+			return
+		}
+		// No prefix match — serve normally (allows direct access)
 		next.ServeHTTP(w, r)
 	})
 }

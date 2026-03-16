@@ -3860,6 +3860,12 @@
             comingSoonHtml = '<div class="section-coming-soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Coming in app version 1.5.x - Requires native app update</div>';
         }
 
+        // Section description/warning
+        let descriptionHtml = '';
+        if (sectionDef.description) {
+            descriptionHtml = '<div style="background: rgba(255, 180, 0, 0.08); border: 1px solid rgba(255, 180, 0, 0.25); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary);"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="rgb(255, 180, 0)" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>'+sectionDef.description+'</span></div>';
+        }
+
         // Handle custom sections (like profiles, userAccounts)
         let contentHtml;
         if (sectionDef.custom && sectionKey === 'profiles') {
@@ -3889,7 +3895,7 @@
                 nestedHtml += '<div style="margin-top: 1.5rem;"><h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem;">'+nestedDef.label+'</h3>'+nestedContent+'</div>';
             }
         }
-        return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+disabledClass+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+comingSoonHtml+messagesHtml+contentHtml+nestedHtml+'</div></div>';
+        return '<div class="section '+(isOpen ? 'open' : '')+(hasChanges ? ' has-changes' : '')+disabledClass+'" id="section-'+sectionKey+'"><div class="section-header" onclick="toggleSection(this)"><div class="section-title">'+getIcon(sectionDef.icon)+sectionDef.label+warningBadge+'</div><div class="section-header-actions">'+saveBtn+'<svg class="section-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div></div><div class="section-content">'+comingSoonHtml+messagesHtml+descriptionHtml+contentHtml+nestedHtml+'</div></div>';
     }
 
     // Profile management functions
