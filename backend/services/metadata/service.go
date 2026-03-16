@@ -3639,19 +3639,82 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 		normalizedType = "series"
 	}
 
-	// Check cache first
-	cacheID := cacheKey("tmdb", "similar", normalizedType, fmt.Sprintf("%d", tmdbID))
+	// Check cache first (v3 = era/language-aware discover engine)
+	cacheID := cacheKey("discover", "similar", "v3", normalizedType, fmt.Sprintf("%d", tmdbID))
 	var cached []models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		log.Printf("[metadata] similar cache hit type=%s tmdbId=%d count=%d", normalizedType, tmdbID, len(cached))
 		return cached, nil
 	}
 
-	// Fetch from TMDB
-	titles, err := s.tmdb.fetchSimilar(ctx, normalizedType, tmdbID)
+	// Fetch the title's genres, keywords, original language, and year
+	seed, err := s.tmdb.fetchTitleSeedInfo(ctx, normalizedType, tmdbID)
 	if err != nil {
-		log.Printf("[metadata] similar fetch failed type=%s tmdbId=%d: %v", normalizedType, tmdbID, err)
-		return nil, err
+		log.Printf("[metadata] similar: failed to fetch seed info type=%s tmdbId=%d: %v", normalizedType, tmdbID, err)
+	}
+
+	// Build era window: ±10 years from the seed's air date
+	var yearFrom, yearTo int
+	if seed.Year > 0 {
+		yearFrom = seed.Year - 10
+		yearTo = seed.Year + 10
+	}
+
+	var titles []models.Title
+
+	// Pass 1: genres + keywords + era + language (tightest match)
+	if len(seed.GenreIDs) > 0 {
+		opts := discoverSimilarOpts{
+			KeywordIDs:       seed.KeywordIDs,
+			OriginalLanguage: seed.OriginalLanguage,
+			YearFrom:         yearFrom,
+			YearTo:           yearTo,
+		}
+		titles, err = s.tmdb.discoverSimilar(ctx, normalizedType, seed.GenreIDs, tmdbID, opts)
+		if err != nil {
+			log.Printf("[metadata] similar discover pass1 failed type=%s tmdbId=%d: %v", normalizedType, tmdbID, err)
+		}
+
+		// Pass 2: drop keywords if too restrictive
+		if len(titles) < 5 && len(seed.KeywordIDs) > 0 {
+			log.Printf("[metadata] similar pass1 too few (%d), retrying without keywords", len(titles))
+			opts.KeywordIDs = nil
+			pass2, err2 := s.tmdb.discoverSimilar(ctx, normalizedType, seed.GenreIDs, tmdbID, opts)
+			if err2 == nil && len(pass2) > len(titles) {
+				titles = pass2
+			}
+		}
+
+		// Pass 3: drop era constraint if still too few
+		if len(titles) < 5 {
+			log.Printf("[metadata] similar pass2 too few (%d), retrying without era filter", len(titles))
+			opts.YearFrom = 0
+			opts.YearTo = 0
+			pass3, err3 := s.tmdb.discoverSimilar(ctx, normalizedType, seed.GenreIDs, tmdbID, opts)
+			if err3 == nil && len(pass3) > len(titles) {
+				titles = pass3
+			}
+		}
+
+		// Pass 4: drop language constraint if still too few
+		if len(titles) < 5 {
+			log.Printf("[metadata] similar pass3 too few (%d), retrying without language filter", len(titles))
+			opts.OriginalLanguage = ""
+			pass4, err4 := s.tmdb.discoverSimilar(ctx, normalizedType, seed.GenreIDs, tmdbID, opts)
+			if err4 == nil && len(pass4) > len(titles) {
+				titles = pass4
+			}
+		}
+	}
+
+	// Fall back to TMDB's /similar endpoint if discover didn't produce results
+	if len(titles) == 0 {
+		log.Printf("[metadata] similar: falling back to TMDB /similar type=%s tmdbId=%d", normalizedType, tmdbID)
+		titles, err = s.tmdb.fetchSimilar(ctx, normalizedType, tmdbID)
+		if err != nil {
+			log.Printf("[metadata] similar fallback fetch failed type=%s tmdbId=%d: %v", normalizedType, tmdbID, err)
+			return nil, err
+		}
 	}
 
 	// Cache the result

@@ -28,6 +28,9 @@ type mockMetadataServiceDetailsBundle struct {
 	movieDetailsErr  error
 	similarErr       error
 	trailersErr      error
+
+	// Capture the TMDB ID passed to Similar() for verification
+	similarCalledWithTMDBID int64
 }
 
 func (m *mockMetadataServiceDetailsBundle) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
@@ -36,7 +39,8 @@ func (m *mockMetadataServiceDetailsBundle) SeriesDetails(_ context.Context, _ mo
 func (m *mockMetadataServiceDetailsBundle) MovieDetails(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
 	return m.movieDetails, m.movieDetailsErr
 }
-func (m *mockMetadataServiceDetailsBundle) Similar(_ context.Context, _ string, _ int64) ([]models.Title, error) {
+func (m *mockMetadataServiceDetailsBundle) Similar(_ context.Context, _ string, tmdbID int64) ([]models.Title, error) {
+	m.similarCalledWithTMDBID = tmdbID
 	return m.similar, m.similarErr
 }
 func (m *mockMetadataServiceDetailsBundle) DiscoverByGenre(_ context.Context, _ string, _ int64, _, _ int) ([]models.TrendingItem, int, error) {
@@ -420,6 +424,77 @@ func TestDetailsBundleHandler_NoTmdbIdSkipsSimilar(t *testing.T) {
 	// Similar should be empty since tmdbId=0
 	if len(resp.Similar) != 0 {
 		t.Errorf("expected empty similar (no tmdbId), got %d", len(resp.Similar))
+	}
+}
+
+func TestDetailsBundleHandler_UsesResolvedTMDBID(t *testing.T) {
+	// The request passes tmdbId=90 (wrong), but the series details resolve TMDBID=3793 (correct).
+	// Similar() should be called with the resolved 3793, not the request param 90.
+	meta := &mockMetadataServiceDetailsBundle{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{Name: "Invader ZIM", ID: "tvdb:series:75545", TMDBID: 3793},
+		},
+		similar: []models.Title{
+			{Name: "Similar Show", ID: "similar1"},
+		},
+		trailers: &models.TrailerResponse{},
+	}
+	h := handlers.NewDetailsBundleHandler(
+		meta,
+		&mockHistoryServiceDetailsBundle{},
+		&mockContentPrefsServiceDetailsBundle{},
+		&mockUserServiceDetailsBundle{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/users/user1/details-bundle?type=series&titleId=tvdb:series:75545&tmdbId=90&name=Invader+ZIM",
+		nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetDetailsBundle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if meta.similarCalledWithTMDBID != 3793 {
+		t.Errorf("expected Similar() called with resolved TMDB ID 3793, got %d", meta.similarCalledWithTMDBID)
+	}
+}
+
+func TestDetailsBundleHandler_FallsBackToRequestTMDBID(t *testing.T) {
+	// If details don't resolve a TMDB ID, Similar() should use the request param.
+	meta := &mockMetadataServiceDetailsBundle{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{Name: "Some Show", ID: "tvdb:series:999", TMDBID: 0},
+		},
+		similar: []models.Title{
+			{Name: "Similar Show"},
+		},
+		trailers: &models.TrailerResponse{},
+	}
+	h := handlers.NewDetailsBundleHandler(
+		meta,
+		&mockHistoryServiceDetailsBundle{},
+		&mockContentPrefsServiceDetailsBundle{},
+		&mockUserServiceDetailsBundle{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/users/user1/details-bundle?type=series&titleId=tvdb:series:999&tmdbId=456&name=Some+Show",
+		nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetDetailsBundle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if meta.similarCalledWithTMDBID != 456 {
+		t.Errorf("expected Similar() called with fallback TMDB ID 456, got %d", meta.similarCalledWithTMDBID)
 	}
 }
 

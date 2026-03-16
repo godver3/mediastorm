@@ -573,7 +573,9 @@ type tvdbSeriesExtendedData struct {
 	} `json:"status"`
 	// Type indicates the series type from TVDB (e.g., "scripted", "reality", "documentary", "talk_show", "news", "game_show")
 	// Used to detect daily shows that use date-based episode naming in scene releases
-	Type string `json:"type"`
+	Type            string          `json:"type"`
+	Tags            []tvdbTag       `json:"tags"`
+	OriginalCountry string          `json:"originalCountry"`
 }
 
 type tvdbMovieExtendedData struct {
@@ -589,6 +591,16 @@ type tvdbMovieExtendedData struct {
 		Type       int    `json:"type"`
 		SourceName string `json:"sourceName"`
 	} `json:"remoteIds"`
+	Tags            []tvdbTag `json:"tags"`
+	OriginalCountry string    `json:"originalCountry"`
+}
+
+// tvdbTag represents a tag from TVDB's extended data.
+// Tag categories: 1=descriptors, 3=format, 4=era, 7=feel/tone, 11=setting, 13=creatures
+type tvdbTag struct {
+	ID   int64  `json:"id"`
+	Tag  int    `json:"tag"`  // category ID
+	Name string `json:"name"`
 }
 
 type tvdbTrailer struct {

@@ -1824,6 +1824,228 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 	return titles, nil
 }
 
+// titleSeedInfo holds the genre IDs, keyword IDs, original language, and year
+// of a title, used to build discover queries for similar content.
+type titleSeedInfo struct {
+	GenreIDs         []int64
+	KeywordIDs       []int64
+	OriginalLanguage string // ISO 639-1, e.g. "en", "ja"
+	Year             int
+}
+
+// fetchTitleSeedInfo fetches genre IDs, keyword IDs, original language, and
+// year for a title in parallel. Used by the custom recommendations engine.
+func (c *tmdbClient) fetchTitleSeedInfo(ctx context.Context, mediaType string, tmdbID int64) (titleSeedInfo, error) {
+	if !c.isConfigured() {
+		return titleSeedInfo{}, errors.New("tmdb api key not configured")
+	}
+
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	type detailsResult struct {
+		genres   []int64
+		origLang string
+		year     int
+		err      error
+	}
+	type kwResult struct {
+		keywords []int64
+		err      error
+	}
+	detailsCh := make(chan detailsResult, 1)
+	kwCh := make(chan kwResult, 1)
+
+	// Fetch genres + original language + year from base details
+	go func() {
+		endpoint, e := url.JoinPath(tmdbBaseURL, apiMediaType, fmt.Sprintf("%d", tmdbID))
+		if e != nil {
+			detailsCh <- detailsResult{err: e}
+			return
+		}
+		endpoint = endpoint + "?api_key=" + c.apiKey
+		var payload struct {
+			Genres []struct {
+				ID int64 `json:"id"`
+			} `json:"genres"`
+			OriginalLanguage string `json:"original_language"`
+			FirstAirDate     string `json:"first_air_date"`
+			ReleaseDate      string `json:"release_date"`
+		}
+		if e := c.doGET(ctx, endpoint, &payload); e != nil {
+			detailsCh <- detailsResult{err: e}
+			return
+		}
+		ids := make([]int64, 0, len(payload.Genres))
+		for _, g := range payload.Genres {
+			ids = append(ids, g.ID)
+		}
+		detailsCh <- detailsResult{
+			genres:   ids,
+			origLang: payload.OriginalLanguage,
+			year:     parseTMDBYear(payload.ReleaseDate, payload.FirstAirDate),
+		}
+	}()
+
+	// Fetch keywords
+	go func() {
+		endpoint, e := url.JoinPath(tmdbBaseURL, apiMediaType, fmt.Sprintf("%d", tmdbID), "keywords")
+		if e != nil {
+			kwCh <- kwResult{err: e}
+			return
+		}
+		endpoint = endpoint + "?api_key=" + c.apiKey
+		// TMDB returns "keywords" for movies, "results" for TV
+		var payload struct {
+			Keywords []struct{ ID int64 `json:"id"` } `json:"keywords"`
+			Results  []struct{ ID int64 `json:"id"` } `json:"results"`
+		}
+		if e := c.doGET(ctx, endpoint, &payload); e != nil {
+			kwCh <- kwResult{err: e}
+			return
+		}
+		combined := append(payload.Keywords, payload.Results...)
+		ids := make([]int64, 0, len(combined))
+		for _, k := range combined {
+			ids = append(ids, k.ID)
+		}
+		kwCh <- kwResult{keywords: ids}
+	}()
+
+	dr := <-detailsCh
+	kr := <-kwCh
+	if dr.err != nil && kr.err != nil {
+		return titleSeedInfo{}, fmt.Errorf("details: %w; keywords: %v", dr.err, kr.err)
+	}
+	return titleSeedInfo{
+		GenreIDs:         dr.genres,
+		KeywordIDs:       kr.keywords,
+		OriginalLanguage: dr.origLang,
+		Year:             dr.year,
+	}, nil
+}
+
+// discoverSimilarOpts controls optional filters for the discover query.
+type discoverSimilarOpts struct {
+	KeywordIDs       []int64
+	OriginalLanguage string // filter to same original language (e.g. "en")
+	YearFrom         int    // e.g. 1984
+	YearTo           int    // e.g. 2000
+}
+
+// discoverSimilar uses TMDB's /discover endpoint with genre and keyword filters
+// to find content similar to a seed title. Returns up to 20 titles.
+func (c *tmdbClient) discoverSimilar(ctx context.Context, mediaType string, genreIDs []int64, excludeTMDBID int64, opts discoverSimilarOpts) ([]models.Title, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	// Build genre filter — use at most 2 genres (AND logic) to avoid overly narrow results
+	var genreParts []string
+	for i, id := range genreIDs {
+		if i >= 2 {
+			break
+		}
+		genreParts = append(genreParts, fmt.Sprintf("%d", id))
+	}
+
+	// Build keyword filter — OR logic (pipe separated)
+	var kwParts []string
+	for _, id := range opts.KeywordIDs {
+		kwParts = append(kwParts, fmt.Sprintf("%d", id))
+	}
+
+	endpoint := fmt.Sprintf("%s/discover/%s?api_key=%s&sort_by=vote_average.desc&vote_count.gte=50&page=1",
+		tmdbBaseURL, apiMediaType, c.apiKey)
+	if len(genreParts) > 0 {
+		endpoint += "&with_genres=" + strings.Join(genreParts, ",")
+	}
+	if len(kwParts) > 0 {
+		endpoint += "&with_keywords=" + strings.Join(kwParts, "|")
+	}
+	if opts.OriginalLanguage != "" {
+		endpoint += "&with_original_language=" + opts.OriginalLanguage
+	}
+	dateField := "first_air_date"
+	if apiMediaType == "movie" {
+		dateField = "primary_release_date"
+	}
+	if opts.YearFrom > 0 {
+		endpoint += fmt.Sprintf("&%s.gte=%d-01-01", dateField, opts.YearFrom)
+	}
+	if opts.YearTo > 0 {
+		endpoint += fmt.Sprintf("&%s.lte=%d-12-31", dateField, opts.YearTo)
+	}
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Results []struct {
+			ID               int64   `json:"id"`
+			Name             string  `json:"name"`
+			Title            string  `json:"title"`
+			Overview         string  `json:"overview"`
+			OriginalLanguage string  `json:"original_language"`
+			PosterPath       string  `json:"poster_path"`
+			BackdropPath     string  `json:"backdrop_path"`
+			Popularity       float64 `json:"popularity"`
+			VoteAverage      float64 `json:"vote_average"`
+			FirstAirDate     string  `json:"first_air_date"`
+			ReleaseDate      string  `json:"release_date"`
+			GenreIDs         []int   `json:"genre_ids"`
+		} `json:"results"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb discover similar for %s failed: %w", apiMediaType, err)
+	}
+
+	titles := make([]models.Title, 0, len(payload.Results))
+	resultMediaType := "movie"
+	if apiMediaType == "tv" {
+		resultMediaType = "series"
+	}
+	for _, r := range payload.Results {
+		if r.ID == excludeTMDBID {
+			continue
+		}
+		title := models.Title{
+			ID:        fmt.Sprintf("tmdb:%s:%d", apiMediaType, r.ID),
+			Name:      pickTMDBName(apiMediaType, r.Name, r.Title),
+			Overview:  r.Overview,
+			Language:  r.OriginalLanguage,
+			MediaType: resultMediaType,
+			TMDBID:    r.ID,
+		}
+		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+		title.Popularity = scoreFallback(r.Popularity, r.VoteAverage)
+		if genres := resolveGenreIDs(r.GenreIDs, apiMediaType); len(genres) > 0 {
+			title.Genres = genres
+		}
+		titles = append(titles, title)
+		if len(titles) >= 20 {
+			break
+		}
+	}
+
+	return titles, nil
+}
+
 // fetchSimilar retrieves similar movies or TV shows from TMDB
 // Returns up to 20 similar titles
 func (c *tmdbClient) fetchSimilar(ctx context.Context, mediaType string, tmdbID int64) ([]models.Title, error) {

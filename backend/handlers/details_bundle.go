@@ -82,10 +82,13 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// 1. Series or Movie details
-	wg.Add(1)
+	// 1. Series or Movie details — fetch first so we can use the resolved
+	// TMDB ID for similar content (the request param may be stale/wrong).
+	var resolvedTMDBID int64
+	var detailsDone sync.WaitGroup
+	detailsDone.Add(1)
 	go func() {
-		defer wg.Done()
+		defer detailsDone.Done()
 		start := time.Now()
 		if contentType == "series" {
 			details, err := h.metadata.SeriesDetails(r.Context(), models.SeriesDetailsQuery{
@@ -102,6 +105,9 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			}
 			mu.Lock()
 			resp.SeriesDetails = details
+			if details != nil && details.Title.TMDBID > 0 {
+				resolvedTMDBID = details.Title.TMDBID
+			}
 			mu.Unlock()
 		} else {
 			details, err := h.metadata.MovieDetails(r.Context(), models.MovieDetailsQuery{
@@ -119,27 +125,44 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			}
 			mu.Lock()
 			resp.MovieDetails = details
+			if details != nil && details.TMDBID > 0 {
+				resolvedTMDBID = details.TMDBID
+			}
 			mu.Unlock()
 		}
 	}()
 
-	// 2. Similar content (requires tmdbId)
-	if tmdbID > 0 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			start := time.Now()
-			titles, err := h.metadata.Similar(r.Context(), contentType, tmdbID)
-			log.Printf("[details-bundle timing] similar: %dms (err=%v)", time.Since(start).Milliseconds(), err)
-			if err != nil {
-				log.Printf("[details-bundle] similar error: %v", err)
-				return
-			}
-			mu.Lock()
-			resp.Similar = slimTitles(titles)
-			mu.Unlock()
-		}()
-	}
+	// 2. Similar content — wait for details to resolve the correct TMDB ID,
+	// then fetch similar content. Falls back to the request param if details
+	// didn't resolve a TMDB ID.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		detailsDone.Wait()
+
+		similarTMDBID := resolvedTMDBID
+		if similarTMDBID == 0 {
+			similarTMDBID = tmdbID
+		}
+		if similarTMDBID <= 0 {
+			return
+		}
+
+		if similarTMDBID != tmdbID && tmdbID > 0 {
+			log.Printf("[details-bundle] similar: using resolved TMDB ID %d instead of request param %d", similarTMDBID, tmdbID)
+		}
+
+		start := time.Now()
+		titles, err := h.metadata.Similar(r.Context(), contentType, similarTMDBID)
+		log.Printf("[details-bundle timing] similar: %dms (err=%v)", time.Since(start).Milliseconds(), err)
+		if err != nil {
+			log.Printf("[details-bundle] similar error: %v", err)
+			return
+		}
+		mu.Lock()
+		resp.Similar = slimTitles(titles)
+		mu.Unlock()
+	}()
 
 	// 3. Trailers
 	wg.Add(1)
