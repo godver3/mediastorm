@@ -31,27 +31,58 @@ Deploy the backend using Docker Compose (or use the example in the repo):
 
 ```yaml
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mediastorm-postgres
+    environment:
+      POSTGRES_DB: mediastorm
+      POSTGRES_USER: mediastorm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mediastorm}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediastorm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   mediastorm:
     image: godver3/mediastorm:latest
     container_name: mediastorm
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "7777:7777"
     volumes:
       - /path/to/your/cache:/root/cache
     environment:
-      - TZ=UTC
+      - TZ=${TZ:-UTC}
+      - DATABASE_URL=postgres://mediastorm:${POSTGRES_PASSWORD:-mediastorm}@postgres:5432/mediastorm?sslmode=disable
     restart: unless-stopped
+
+volumes:
+  postgres_data:
 ```
 
-The cache folder will contain user settings and stream metadata.
+The cache folder will contain settings.json and stream metadata. All user data (accounts, watch history, playback progress, etc.) is stored in PostgreSQL.
 
-2. Start the container:
+2. Start the containers:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 The backend will be available at `http://localhost:7777`. The default login is `admin`/`admin` for both the frontend app and the admin web UI.
+
+**Upgrading from a previous version:** On first startup with the new compose file, mediastorm will automatically migrate your existing JSON data into PostgreSQL. Your original JSON files are preserved with a `.migrated` suffix in the cache directory.
+
+**Custom Postgres password:** Set the `POSTGRES_PASSWORD` environment variable before starting:
+
+```bash
+POSTGRES_PASSWORD=your_secure_password docker compose up -d
+```
 
 > **⚠️ Security Notice:** mediastorm is not designed to be directly exposed to the internet. For safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
 

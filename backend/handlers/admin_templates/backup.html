@@ -28,16 +28,13 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Create a backup of your settings, user profiles, watchlists, and watch history. Backups do not include cached metadata (it can be regenerated).
+                Create a backup of your settings and all user data. Backups do not include cached metadata (it can be regenerated).
             </p>
             <div class="backup-files-info" style="background: var(--bg-tertiary); padding: 1rem; border-radius: var(--radius); margin-bottom: 1rem;">
-                <strong style="font-size: 0.875rem;">Files included in backup:</strong>
+                <strong style="font-size: 0.875rem;">Data included in backup:</strong>
                 <ul style="margin: 0.5rem 0 0 1.5rem; font-size: 0.875rem; color: var(--text-secondary);">
                     <li>Settings configuration</li>
-                    <li>User profiles and accounts</li>
-                    <li>Watchlists</li>
-                    <li>Watch history and playback progress</li>
-                    <li>Queue database</li>
+                    <li>PostgreSQL database export (accounts, profiles, sessions, watchlists, watch history, playback progress, content preferences, client settings)</li>
                 </ul>
             </div>
             <button class="btn btn-primary" onclick="createBackup()" id="createBackupBtn">

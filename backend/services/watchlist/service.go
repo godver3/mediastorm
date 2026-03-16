@@ -1,6 +1,7 @@
 package watchlist
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -27,7 +29,23 @@ var (
 type Service struct {
 	mu    sync.RWMutex
 	path  string
+	store *datastore.DataStore
 	items map[string]map[string]models.WatchlistItem
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a watchlist service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store: store,
+		items: make(map[string]map[string]models.WatchlistItem),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates a watchlist service storing data inside the provided directory.
@@ -248,6 +266,22 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		allItems, err := s.store.Watchlist().ListAll(context.Background())
+		if err != nil {
+			return fmt.Errorf("load watchlist from db: %w", err)
+		}
+		s.items = make(map[string]map[string]models.WatchlistItem, len(allItems))
+		for userID, items := range allItems {
+			perUser := make(map[string]models.WatchlistItem, len(items))
+			for _, item := range items {
+				perUser[item.Key()] = item
+			}
+			s.items[userID] = perUser
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.items = make(map[string]map[string]models.WatchlistItem)
@@ -304,6 +338,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	byUser := make(map[string][]models.WatchlistItem, len(s.items))
 	for userID, collection := range s.items {
 		items := make([]models.WatchlistItem, 0, len(collection))
@@ -351,6 +389,60 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory watchlist state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existingAll, err := tx.Watchlist().ListAll(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Build set of existing DB keys per user
+		dbKeys := make(map[string]map[string]bool, len(existingAll))
+		for userID, items := range existingAll {
+			keys := make(map[string]bool, len(items))
+			for _, item := range items {
+				keys[item.Key()] = true
+			}
+			dbKeys[userID] = keys
+		}
+
+		// Upsert all in-memory items
+		for userID, perUser := range s.items {
+			items := make([]models.WatchlistItem, 0, len(perUser))
+			for _, item := range perUser {
+				items = append(items, item)
+			}
+			if err := tx.Watchlist().BulkUpsert(ctx, userID, items); err != nil {
+				return err
+			}
+
+			// Remove keys that exist in DB but not in memory for this user
+			if existing, ok := dbKeys[userID]; ok {
+				for key := range existing {
+					if _, inMem := perUser[key]; !inMem {
+						if err := tx.Watchlist().Delete(ctx, userID, key); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			delete(dbKeys, userID)
+		}
+
+		// Delete entire users that exist in DB but not in memory
+		for userID := range dbKeys {
+			if err := tx.Watchlist().DeleteByUser(ctx, userID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 func (s *Service) ensureUserLocked(userID string) map[string]models.WatchlistItem {

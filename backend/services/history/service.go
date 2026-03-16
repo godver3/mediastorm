@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 	"novastream/services/calendar"
 )
@@ -83,6 +84,7 @@ type cachedContinueWatching struct {
 // Service persists watch history for all content (movies, series, episodes).
 type Service struct {
 	mu                    sync.RWMutex
+	store                 *datastore.DataStore
 	path                  string
 	watchHistPath         string
 	playbackProgressPath  string
@@ -98,6 +100,35 @@ type Service struct {
 	metadataCacheTTL      time.Duration
 	continueWatchingCache map[string]*cachedContinueWatching // userID -> continue watching
 	continueWatchingTTL   time.Duration
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a history service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store:                 store,
+		states:                make(map[string]map[string]models.SeriesWatchState),
+		watchHistory:          make(map[string]map[string]models.WatchHistoryItem),
+		playbackProgress:      make(map[string]map[string]models.PlaybackProgress),
+		metadataCache:         make(map[string]*cachedSeriesMetadata),
+		seriesInfoCache:       make(map[string]*cachedSeriesInfo),
+		movieMetadataCache:    make(map[string]*cachedMovieMetadata),
+		metadataCacheTTL:      24 * time.Hour,
+		continueWatchingCache: make(map[string]*cachedContinueWatching),
+		continueWatchingTTL:   10 * time.Minute,
+	}
+
+	if err := svc.loadWatchHistory(); err != nil {
+		return nil, err
+	}
+
+	if err := svc.loadPlaybackProgress(); err != nil {
+		return nil, err
+	}
+
+	return svc, nil
 }
 
 // NewService constructs a history service backed by a JSON file on disk.
@@ -2355,6 +2386,24 @@ func (s *Service) loadWatchHistory() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		ctx := context.Background()
+		allItems, err := s.store.WatchHistory().ListAll(ctx)
+		if err != nil {
+			return fmt.Errorf("load watch history from db: %w", err)
+		}
+		s.watchHistory = make(map[string]map[string]models.WatchHistoryItem, len(allItems))
+		for userID, items := range allItems {
+			perUser := make(map[string]models.WatchHistoryItem, len(items))
+			for _, item := range items {
+				key := makeWatchKey(item.MediaType, item.ItemID)
+				perUser[key] = item
+			}
+			s.watchHistory[userID] = perUser
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.watchHistPath)
 	if errors.Is(err, os.ErrNotExist) {
 		s.watchHistory = make(map[string]map[string]models.WatchHistoryItem)
@@ -2447,6 +2496,10 @@ func (s *Service) loadWatchHistory() error {
 }
 
 func (s *Service) saveWatchHistoryLocked() error {
+	if s.useDB() {
+		return s.syncWatchedToDB()
+	}
+
 	// Convert to array format for storage
 	toSave := make(map[string][]models.WatchHistoryItem)
 	for userID, perUser := range s.watchHistory {
@@ -2747,6 +2800,24 @@ func (s *Service) loadPlaybackProgress() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		ctx := context.Background()
+		allItems, err := s.store.PlaybackProgress().ListAll(ctx)
+		if err != nil {
+			return fmt.Errorf("load playback progress from db: %w", err)
+		}
+		s.playbackProgress = make(map[string]map[string]models.PlaybackProgress, len(allItems))
+		for userID, items := range allItems {
+			perUser := make(map[string]models.PlaybackProgress, len(items))
+			for _, item := range items {
+				key := makeWatchKey(item.MediaType, item.ItemID)
+				perUser[key] = item
+			}
+			s.playbackProgress[userID] = perUser
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.playbackProgressPath)
 	if errors.Is(err, os.ErrNotExist) {
 		s.playbackProgress = make(map[string]map[string]models.PlaybackProgress)
@@ -2817,6 +2888,10 @@ func (s *Service) loadPlaybackProgress() error {
 }
 
 func (s *Service) savePlaybackProgressLocked() error {
+	if s.useDB() {
+		return s.syncProgressToDB()
+	}
+
 	// Convert to array format for storage
 	toSave := make(map[string][]models.PlaybackProgress)
 	for userID, perUser := range s.playbackProgress {
@@ -2844,6 +2919,90 @@ func (s *Service) savePlaybackProgressLocked() error {
 	}
 
 	return nil
+}
+
+// syncWatchedToDB writes the full in-memory watch history state to PostgreSQL.
+func (s *Service) syncWatchedToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.WatchHistory().ListAll(ctx)
+		if err != nil {
+			return err
+		}
+		// Build set of existing DB keys per user
+		dbKeys := make(map[string]map[string]bool)
+		for userID, items := range existing {
+			keys := make(map[string]bool, len(items))
+			for _, item := range items {
+				keys[item.ID] = true
+			}
+			dbKeys[userID] = keys
+		}
+		// Upsert all in-memory items
+		for userID, perUser := range s.watchHistory {
+			for _, item := range perUser {
+				itemCopy := item
+				if err := tx.WatchHistory().Upsert(ctx, userID, &itemCopy); err != nil {
+					return err
+				}
+				if dbKeys[userID] != nil {
+					delete(dbKeys[userID], item.ID)
+				}
+			}
+		}
+		// Delete items removed from memory
+		for userID, keys := range dbKeys {
+			for key := range keys {
+				if err := tx.WatchHistory().Delete(ctx, userID, key); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// syncProgressToDB writes the full in-memory playback progress state to PostgreSQL.
+func (s *Service) syncProgressToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.PlaybackProgress().ListAll(ctx)
+		if err != nil {
+			return err
+		}
+		// Build set of existing DB keys per user
+		dbKeys := make(map[string]map[string]bool)
+		for userID, items := range existing {
+			keys := make(map[string]bool, len(items))
+			for _, item := range items {
+				keys[item.ID] = true
+			}
+			dbKeys[userID] = keys
+		}
+		// Upsert all in-memory items
+		for userID, perUser := range s.playbackProgress {
+			for _, item := range perUser {
+				itemCopy := item
+				if err := tx.PlaybackProgress().Upsert(ctx, userID, &itemCopy); err != nil {
+					return err
+				}
+				if dbKeys[userID] != nil {
+					delete(dbKeys[userID], item.ID)
+				}
+			}
+		}
+		// Delete items removed from memory
+		for userID, keys := range dbKeys {
+			for key := range keys {
+				if err := tx.PlaybackProgress().Delete(ctx, userID, key); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // ListAllPlaybackProgress returns all playback progress for all users (for admin dashboard).
@@ -3199,3 +3358,4 @@ func hasMatchingExternalID(a, b map[string]string) bool {
 	}
 	return false
 }
+

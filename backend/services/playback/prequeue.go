@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -194,6 +195,16 @@ type PrequeueStore struct {
 	byTitleUser map[string]string
 	defaultTTL  time.Duration
 	storagePath string // If set, ready entries are persisted to this file
+	store       *datastore.DataStore
+}
+
+// useDB returns true when the store is backed by PostgreSQL.
+func (s *PrequeueStore) useDB() bool { return s.store != nil }
+
+// SetDataStore sets the PostgreSQL datastore for persistence.
+// When set, entries are persisted to the database instead of disk.
+func (s *PrequeueStore) SetDataStore(store *datastore.DataStore) {
+	s.store = store
 }
 
 // NewPrequeueStore creates a new prequeue store with the specified default TTL
@@ -267,8 +278,12 @@ func parseDebridStreamPath(path string) (provider, torrentID string) {
 	return parts[0], parts[1]
 }
 
-// loadFromDisk restores ready entries from disk
+// loadFromDisk restores ready entries from disk (or from DB when useDB)
 func (s *PrequeueStore) loadFromDisk() error {
+	if s.useDB() {
+		return s.loadFromDB()
+	}
+
 	file, err := os.Open(s.storagePath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -303,8 +318,45 @@ func (s *PrequeueStore) loadFromDisk() error {
 	return nil
 }
 
-// saveToDisk persists all ready entries to disk. Caller must hold s.mu.
+// loadFromDB restores ready entries from PostgreSQL.
+func (s *PrequeueStore) loadFromDB() error {
+	blobs, err := s.store.Prequeue().List(context.Background())
+	if err != nil {
+		return fmt.Errorf("load prequeue from db: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	restored := 0
+	for _, data := range blobs {
+		var e PrequeueEntry
+		if err := json.Unmarshal(data, &e); err != nil {
+			log.Printf("[prequeue] Warning: failed to unmarshal DB entry: %v", err)
+			continue
+		}
+		if now.After(e.ExpiresAt) || e.Status != PrequeueStatusReady || e.StreamPath == "" {
+			continue
+		}
+		s.entries[e.ID] = &e
+		key := titleUserKey(e.TitleID, e.UserID)
+		s.byTitleUser[key] = e.ID
+		restored++
+	}
+	if restored > 0 {
+		log.Printf("[prequeue] Restored %d ready entries from database", restored)
+	}
+	return nil
+}
+
+// saveToDisk persists all ready entries to disk (or DB when useDB). Caller must hold s.mu.
 func (s *PrequeueStore) saveToDisk() {
+	if s.useDB() {
+		s.saveToDB()
+		return
+	}
+
 	if s.storagePath == "" {
 		return
 	}
@@ -335,6 +387,26 @@ func (s *PrequeueStore) saveToDisk() {
 	file.Close()
 	if err := os.Rename(tmp, s.storagePath); err != nil {
 		log.Printf("[prequeue] Warning: failed to persist prequeue entries: %v", err)
+	}
+}
+
+// saveToDB persists all ready entries to PostgreSQL. Caller must hold s.mu.
+func (s *PrequeueStore) saveToDB() {
+	ctx := context.Background()
+	now := time.Now()
+
+	for _, e := range s.entries {
+		if e.Status != PrequeueStatusReady || e.StreamPath == "" || now.After(e.ExpiresAt) {
+			continue
+		}
+		data, err := json.Marshal(e)
+		if err != nil {
+			log.Printf("[prequeue] Warning: failed to marshal entry %s for DB: %v", e.ID, err)
+			continue
+		}
+		if err := s.store.Prequeue().Upsert(ctx, e.ID, e.TitleID, e.UserID, string(e.Status), data, e.ExpiresAt); err != nil {
+			log.Printf("[prequeue] Warning: failed to upsert entry %s to DB: %v", e.ID, err)
+		}
 	}
 }
 

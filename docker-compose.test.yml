@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: mediastorm
       POSTGRES_USER: mediastorm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mediastorm}
+      POSTGRES_PASSWORD: mediastorm
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -16,7 +16,9 @@ services:
       retries: 5
 
   mediastorm:
-    image: godver3/mediastorm:latest
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: mediastorm
     depends_on:
       postgres:
@@ -24,11 +26,10 @@ services:
     ports:
       - "7777:7777"
     volumes:
-      # User data folder containing settings.json, streams, and cache
-      - /host/cache/location:/root/cache
+      - ./backend/cache:/root/cache
     environment:
-      - TZ=${TZ:-UTC}
-      - DATABASE_URL=postgres://mediastorm:${POSTGRES_PASSWORD:-mediastorm}@postgres:5432/mediastorm?sslmode=disable
+      - TZ=UTC
+      - DATABASE_URL=postgres://mediastorm:mediastorm@postgres:5432/mediastorm?sslmode=disable
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "http://localhost:7777/health"]

@@ -1,6 +1,7 @@
 package customlists
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -39,9 +41,25 @@ type userCollection struct {
 
 // Service manages persistence and retrieval of user custom lists.
 type Service struct {
-	mu   sync.RWMutex
-	path string
-	data map[string]*userCollection
+	mu    sync.RWMutex
+	path  string
+	store *datastore.DataStore
+	data  map[string]*userCollection
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a custom lists service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store: store,
+		data:  make(map[string]*userCollection),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 func NewService(storageDir string) (*Service, error) {
@@ -360,6 +378,40 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		ctx := context.Background()
+		userIDs, err := s.store.CustomLists().ListUserIDs(ctx)
+		if err != nil {
+			return fmt.Errorf("load custom list user ids from db: %w", err)
+		}
+		s.data = make(map[string]*userCollection, len(userIDs))
+		for _, userID := range userIDs {
+			lists, err := s.store.CustomLists().ListByUser(ctx, userID)
+			if err != nil {
+				return fmt.Errorf("load custom lists for user %s from db: %w", userID, err)
+			}
+			collection := &userCollection{
+				lists: make(map[string]models.CustomList, len(lists)),
+				items: make(map[string]map[string]models.WatchlistItem),
+			}
+			for _, list := range lists {
+				list.ItemCount = 0
+				collection.lists[list.ID] = list
+				items, err := s.store.CustomLists().GetItems(ctx, list.ID)
+				if err != nil {
+					return fmt.Errorf("load items for list %s from db: %w", list.ID, err)
+				}
+				byKey := make(map[string]models.WatchlistItem, len(items))
+				for _, item := range items {
+					byKey[item.Key()] = item
+				}
+				collection.items[list.ID] = byKey
+			}
+			s.data[userID] = collection
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.data = make(map[string]*userCollection)
@@ -429,6 +481,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	byUser := make(map[string]persistedUser, len(s.data))
 	for userID, collection := range s.data {
 		lists := make([]models.CustomList, 0, len(collection.lists))
@@ -493,6 +549,73 @@ func (s *Service) saveLocked() error {
 		return fmt.Errorf("replace custom lists file: %w", err)
 	}
 	return nil
+}
+
+// syncToDB writes the full in-memory custom lists state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		for userID, collection := range s.data {
+			// Get existing DB lists for this user to detect deletes
+			existing, err := tx.CustomLists().ListByUser(ctx, userID)
+			if err != nil {
+				return err
+			}
+			dbListIDs := make(map[string]bool, len(existing))
+			for _, l := range existing {
+				dbListIDs[l.ID] = true
+			}
+
+			// Upsert all in-memory lists and their items
+			for listID, list := range collection.lists {
+				cl := list
+				if dbListIDs[listID] {
+					if err := tx.CustomLists().UpdateList(ctx, &cl); err != nil {
+						return err
+					}
+				} else {
+					if err := tx.CustomLists().CreateList(ctx, userID, &cl); err != nil {
+						return err
+					}
+				}
+				delete(dbListIDs, listID)
+
+				// Get existing items for this list to detect deletes
+				existingItems, err := tx.CustomLists().GetItems(ctx, listID)
+				if err != nil {
+					return err
+				}
+				dbItemKeys := make(map[string]bool, len(existingItems))
+				for _, item := range existingItems {
+					dbItemKeys[item.Key()] = true
+				}
+
+				// Upsert all in-memory items
+				for key, item := range collection.items[listID] {
+					it := item
+					if err := tx.CustomLists().UpsertItem(ctx, listID, &it); err != nil {
+						return err
+					}
+					delete(dbItemKeys, key)
+				}
+
+				// Delete items removed from memory
+				for key := range dbItemKeys {
+					if err := tx.CustomLists().DeleteItem(ctx, listID, key); err != nil {
+						return err
+					}
+				}
+			}
+
+			// Delete lists removed from memory (CASCADE will handle items)
+			for listID := range dbListIDs {
+				if err := tx.CustomLists().DeleteList(ctx, listID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Service) ensureUserLocked(userID string) *userCollection {

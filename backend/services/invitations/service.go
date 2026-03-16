@@ -1,6 +1,7 @@
 package invitations
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -37,7 +39,23 @@ const (
 type Service struct {
 	mu          sync.RWMutex
 	path        string
+	store       *datastore.DataStore
 	invitations map[string]models.Invitation
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates an invitations service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store:       store,
+		invitations: make(map[string]models.Invitation),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates an invitations service storing data inside the provided directory.
@@ -227,6 +245,18 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		list, err := s.store.Invitations().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load invitations from db: %w", err)
+		}
+		s.invitations = make(map[string]models.Invitation, len(list))
+		for _, inv := range list {
+			s.invitations[inv.ID] = inv
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -253,6 +283,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	invitations := make([]models.Invitation, 0, len(s.invitations))
 	for _, inv := range s.invitations {
 		invitations = append(invitations, inv)
@@ -292,4 +326,41 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory invitations state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.Invitations().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbIDs := make(map[string]bool, len(existing))
+		for _, inv := range existing {
+			dbIDs[inv.ID] = true
+		}
+		// Upsert all in-memory invitations
+		for _, inv := range s.invitations {
+			inv := inv
+			if dbIDs[inv.ID] {
+				if err := tx.Invitations().Update(ctx, &inv); err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Invitations().Create(ctx, &inv); err != nil {
+					return err
+				}
+			}
+			delete(dbIDs, inv.ID)
+		}
+		// Delete invitations removed from memory
+		for id := range dbIDs {
+			if err := tx.Invitations().Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

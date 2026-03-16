@@ -28,7 +28,7 @@ require (
 	github.com/sethvargo/go-password v0.3.1
 	github.com/sourcegraph/conc v0.3.0
 	github.com/spf13/afero v1.14.0
-	github.com/stretchr/testify v1.11.0
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.5.2
 	golang.org/x/crypto v0.41.0
 	golang.org/x/image v0.35.0
@@ -47,6 +47,9 @@ require (
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/pgx/v5 v5.8.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect

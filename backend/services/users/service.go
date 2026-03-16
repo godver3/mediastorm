@@ -1,6 +1,7 @@
 package users
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -55,7 +57,26 @@ type Service struct {
 	mu         sync.RWMutex
 	path       string
 	storageDir string
+	store      *datastore.DataStore
 	users      map[string]models.User
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a users service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store: store,
+		users: make(map[string]models.User),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	if err := svc.ensureDefaultUser(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates a users service storing data inside the provided directory.
@@ -1067,6 +1088,18 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		users, err := s.store.Users().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load users from db: %w", err)
+		}
+		s.users = make(map[string]models.User, len(users))
+		for _, u := range users {
+			s.users[u.ID] = u
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1122,6 +1155,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	// diskUser bypasses User.MarshalJSON so that PinHash is persisted to disk.
 	// MarshalJSON strips PinHash for API security, but we need it on disk.
 	type diskUser models.User
@@ -1168,4 +1205,41 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory users state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.Users().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbIDs := make(map[string]bool, len(existing))
+		for _, u := range existing {
+			dbIDs[u.ID] = true
+		}
+		// Upsert all in-memory users
+		for _, u := range s.users {
+			user := u
+			if dbIDs[u.ID] {
+				if err := tx.Users().Update(ctx, &user); err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Users().Create(ctx, &user); err != nil {
+					return err
+				}
+			}
+			delete(dbIDs, u.ID)
+		}
+		// Delete users removed from memory
+		for id := range dbIDs {
+			if err := tx.Users().Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

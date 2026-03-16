@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/datastore"
 	"novastream/models"
 	"novastream/services/playback"
 )
@@ -63,6 +64,7 @@ type Service struct {
 	mu      sync.RWMutex
 	entries map[string]*WarmEntry // key: "titleID:userID"
 	path    string                // persistence file path
+	store   *datastore.DataStore  // PostgreSQL backing store (nil = JSON file mode)
 
 	// Ad-hoc entries adopted from user prequeue requests (key: prequeueID, value: adoption time)
 	adhocMu      sync.RWMutex
@@ -129,6 +131,14 @@ func (s *Service) SetDebridStreaming(provider DebridURLRefresher) {
 func (s *Service) SetWorkerFunc(fn playback.PrequeueWorkerFunc) {
 	s.workerFn = fn
 }
+
+// SetDataStore sets the PostgreSQL backing store for persistence.
+func (s *Service) SetDataStore(store *datastore.DataStore) {
+	s.store = store
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
 
 // AdoptEntry registers an ad-hoc prequeue entry with prewarm so it stays alive.
 // Called by the prequeue handler after creating an ad-hoc entry.
@@ -445,8 +455,26 @@ func (s *Service) ListAll() []*WarmEntry {
 	return result
 }
 
-// load reads persisted warm entries from disk
+// load reads persisted warm entries from disk or database
 func (s *Service) load() error {
+	if s.useDB() {
+		rows, err := s.store.Prewarm().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load prewarm from db: %w", err)
+		}
+		s.entries = make(map[string]*WarmEntry, len(rows))
+		for _, data := range rows {
+			var e WarmEntry
+			if err := json.Unmarshal(data, &e); err != nil {
+				log.Printf("[prewarm] Warning: failed to unmarshal db entry: %v", err)
+				continue
+			}
+			s.entries[entryKey(e.TitleID, e.UserID)] = &e
+		}
+		log.Printf("[prewarm] Loaded %d warm entries from database", len(s.entries))
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil // First run
@@ -469,8 +497,12 @@ func (s *Service) load() error {
 	return nil
 }
 
-// saveLocked writes warm entries to disk atomically. Caller must hold s.mu.
+// saveLocked writes warm entries to disk or database atomically. Caller must hold s.mu.
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	if s.path == "" {
 		return nil
 	}
@@ -505,6 +537,45 @@ func (s *Service) saveLocked() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
+	return nil
+}
+
+// syncToDB writes the full in-memory prewarm state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	repo := s.store.Prewarm()
+
+	// Upsert all in-memory entries
+	for key, entry := range s.entries {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return fmt.Errorf("marshal prewarm entry %s: %w", key, err)
+		}
+		if err := repo.Upsert(ctx, key, entry.TitleID, entry.UserID, data, entry.ExpiresAt); err != nil {
+			return fmt.Errorf("upsert prewarm entry %s: %w", key, err)
+		}
+	}
+
+	// Delete entries from DB that are no longer in memory
+	dbRows, err := repo.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list prewarm from db for cleanup: %w", err)
+	}
+	memKeys := make(map[string]bool, len(s.entries))
+	for key := range s.entries {
+		memKeys[key] = true
+	}
+	for _, data := range dbRows {
+		var e WarmEntry
+		if err := json.Unmarshal(data, &e); err != nil {
+			continue
+		}
+		key := entryKey(e.TitleID, e.UserID)
+		if !memKeys[key] {
+			_ = repo.Delete(ctx, key)
+		}
+	}
+
 	return nil
 }
 

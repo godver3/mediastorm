@@ -1,6 +1,7 @@
 package accounts
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -39,7 +41,26 @@ const (
 type Service struct {
 	mu       sync.RWMutex
 	path     string
+	store    *datastore.DataStore
 	accounts map[string]models.Account
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates an accounts service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store:    store,
+		accounts: make(map[string]models.Account),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	if err := svc.ensureMasterAccount(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates an accounts service storing data inside the provided directory.
@@ -440,6 +461,18 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		accounts, err := s.store.Accounts().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load accounts from db: %w", err)
+		}
+		s.accounts = make(map[string]models.Account, len(accounts))
+		for _, a := range accounts {
+			s.accounts[a.ID] = a
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -474,6 +507,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	// Convert to storage format (includes password hash)
 	storage := make([]models.AccountStorage, 0, len(s.accounts))
 	for _, account := range s.accounts {
@@ -517,4 +554,41 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory accounts state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.Accounts().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbIDs := make(map[string]bool, len(existing))
+		for _, a := range existing {
+			dbIDs[a.ID] = true
+		}
+		// Upsert all in-memory accounts
+		for _, a := range s.accounts {
+			acct := a
+			if dbIDs[a.ID] {
+				if err := tx.Accounts().Update(ctx, &acct); err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Accounts().Create(ctx, &acct); err != nil {
+					return err
+				}
+			}
+			delete(dbIDs, a.ID)
+		}
+		// Delete accounts removed from memory
+		for id := range dbIDs {
+			if err := tx.Accounts().Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

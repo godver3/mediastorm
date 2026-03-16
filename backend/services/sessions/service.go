@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -37,8 +39,33 @@ const (
 type Service struct {
 	mu              sync.RWMutex
 	path            string
+	store           *datastore.DataStore
 	sessions        map[string]models.Session
 	sessionDuration time.Duration
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a sessions service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore, defaultDuration time.Duration) (*Service, error) {
+	if defaultDuration <= 0 {
+		defaultDuration = DefaultSessionDuration
+	}
+
+	svc := &Service{
+		store:           store,
+		sessions:        make(map[string]models.Session),
+		sessionDuration: defaultDuration,
+	}
+
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+
+	go svc.cleanupLoop()
+
+	return svc, nil
 }
 
 // NewService creates a new sessions service with persistence.
@@ -251,8 +278,20 @@ func (s *Service) Count() int {
 	return len(s.sessions)
 }
 
-// load reads sessions from the JSON file on disk.
+// load reads sessions from the JSON file on disk (or from the database).
 func (s *Service) load() error {
+	if s.useDB() {
+		sessions, err := s.store.Sessions().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load sessions from db: %w", err)
+		}
+		s.sessions = make(map[string]models.Session, len(sessions))
+		for _, sess := range sessions {
+			s.sessions[sess.Token] = sess
+		}
+		return nil
+	}
+
 	if s.path == "" {
 		return nil // No persistence configured
 	}
@@ -288,8 +327,12 @@ func (s *Service) load() error {
 	return nil
 }
 
-// saveLocked writes sessions to the JSON file. Must be called with mu held.
+// saveLocked writes sessions to the JSON file (or syncs to DB). Must be called with mu held.
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	if s.path == "" {
 		return nil // No persistence configured
 	}
@@ -331,4 +374,41 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory sessions state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.Sessions().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbTokens := make(map[string]bool, len(existing))
+		for _, sess := range existing {
+			dbTokens[sess.Token] = true
+		}
+		// Upsert all in-memory sessions
+		for _, sess := range s.sessions {
+			s := sess
+			if dbTokens[sess.Token] {
+				// Session exists in DB — delete and re-create (sessions have no Update method)
+				if err := tx.Sessions().Delete(ctx, s.Token); err != nil {
+					return err
+				}
+			}
+			if err := tx.Sessions().Create(ctx, &s); err != nil {
+				return err
+			}
+			delete(dbTokens, sess.Token)
+		}
+		// Delete sessions removed from memory
+		for token := range dbTokens {
+			if err := tx.Sessions().Delete(ctx, token); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

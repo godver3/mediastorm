@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -193,4 +194,70 @@ func (h *BackupHandler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 	})
+}
+
+// ExportData exports all database data as a portable JSON download.
+// GET /api/admin/export
+func (h *BackupHandler) ExportData(w http.ResponseWriter, r *http.Request) {
+	data, err := h.backupService.ExportDatabaseJSON()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to export data: " + err.Error(),
+		})
+		return
+	}
+
+	filename := fmt.Sprintf("mediastorm_export_%s.json", time.Now().UTC().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Write(data)
+}
+
+// ImportData imports data from a previously exported JSON file.
+// POST /api/admin/import
+func (h *BackupHandler) ImportData(w http.ResponseWriter, r *http.Request) {
+	// Limit upload to 50MB
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to read request body: " + err.Error(),
+		})
+		return
+	}
+
+	// Create pre-import backup
+	preBackup, err := h.backupService.CreateBackup(backup.BackupTypePreRestore)
+	if err != nil {
+		log.Printf("[backup] Warning: failed to create pre-import backup: %v", err)
+	} else {
+		log.Printf("[backup] Created pre-import backup: %s", preBackup.Filename)
+	}
+
+	if err := h.backupService.ImportDatabaseJSON(data); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "Failed to import data: " + err.Error(),
+			"preImportBackup": preBackup,
+		})
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Data imported successfully. Restart the server to apply all changes.",
+	}
+	if preBackup != nil {
+		response["preImportBackup"] = preBackup
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

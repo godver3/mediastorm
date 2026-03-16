@@ -1,6 +1,7 @@
 package user_settings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	"novastream/config"
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -24,7 +26,23 @@ var (
 type Service struct {
 	mu       sync.RWMutex
 	path     string
+	store    *datastore.DataStore
 	settings map[string]models.UserSettings
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a user settings service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store:    store,
+		settings: make(map[string]models.UserSettings),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates a user settings service storing data inside the provided directory.
@@ -312,6 +330,47 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		settings, err := s.store.UserSettings().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load user settings from db: %w", err)
+		}
+		s.settings = settings
+		if s.settings == nil {
+			s.settings = make(map[string]models.UserSettings)
+		}
+
+		// Apply migrations to DB-loaded settings
+		needsSave := false
+		for userID, us := range s.settings {
+			changed := false
+			for i := range us.HomeShelves.Shelves {
+				id := us.HomeShelves.Shelves[i].ID
+				if (id == "trending-movies" || id == "trending-tv") && us.HomeShelves.Shelves[i].HideUnreleased {
+					us.HomeShelves.Shelves[i].HideUnreleased = false
+					changed = true
+				}
+			}
+			if changed {
+				s.settings[userID] = us
+				needsSave = true
+			}
+		}
+
+		for userID, us := range s.settings {
+			log.Printf("[user-settings] load: user=%q subMode=%q audioLang=%q subLang=%q",
+				userID, us.Playback.PreferredSubtitleMode, us.Playback.PreferredAudioLanguage, us.Playback.PreferredSubtitleLanguage)
+		}
+
+		if needsSave {
+			log.Printf("[user-settings] persisting migrated user settings to db")
+			if err := s.syncToDB(); err != nil {
+				log.Printf("[user-settings] warning: failed to persist migration: %v", err)
+			}
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.settings = make(map[string]models.UserSettings)
@@ -401,6 +460,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	tmp := s.path + ".tmp"
 	file, err := os.Create(tmp)
 	if err != nil {
@@ -431,4 +494,35 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory user settings state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.UserSettings().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbIDs := make(map[string]bool, len(existing))
+		for id := range existing {
+			dbIDs[id] = true
+		}
+		// Upsert all in-memory settings
+		for userID, us := range s.settings {
+			settings := us
+			if err := tx.UserSettings().Upsert(ctx, userID, &settings); err != nil {
+				return err
+			}
+			delete(dbIDs, userID)
+		}
+		// Delete settings removed from memory
+		for id := range dbIDs {
+			if err := tx.UserSettings().Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

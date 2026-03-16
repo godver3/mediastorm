@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/datastore"
+	"novastream/models"
 )
 
 // BackupType indicates how the backup was created
@@ -52,9 +55,13 @@ type Service struct {
 	backupDir     string
 	cacheDir      string
 	configManager *config.Manager
+	store         *datastore.DataStore
 }
 
-// Files to backup (relative to cacheDir)
+// Files to backup (relative to cacheDir).
+// When using PostgreSQL, only settings.json is backed up as a file — everything else
+// is exported from the database as database.json.
+// The legacy JSON file list is kept for backwards compatibility with non-DB deployments.
 var backupFiles = []string{
 	"settings.json",
 	"queue.db",
@@ -64,6 +71,17 @@ var backupFiles = []string{
 	"playback_progress.json",
 	"watched_items.json",
 	"user_settings.json",
+}
+
+var backupFilesDB = []string{
+	"settings.json",
+}
+
+func (s *Service) useDB() bool { return s.store != nil }
+
+// SetDataStore sets the PostgreSQL backing store for DB-aware backups.
+func (s *Service) SetDataStore(store *datastore.DataStore) {
+	s.store = store
 }
 
 // NewService creates a new backup service
@@ -107,8 +125,14 @@ func (s *Service) CreateBackup(backupType BackupType) (*BackupInfo, error) {
 		Files:     make(map[string]string),
 	}
 
+	// Select file list based on storage mode
+	filesToBackup := backupFiles
+	if s.useDB() {
+		filesToBackup = backupFilesDB
+	}
+
 	// Add files to backup
-	for _, filename := range backupFiles {
+	for _, filename := range filesToBackup {
 		srcPath := filepath.Join(s.cacheDir, filename)
 
 		// Check if file exists
@@ -145,6 +169,19 @@ func (s *Service) CreateBackup(backupType BackupType) (*BackupInfo, error) {
 			manifest.Files[filename] = checksum
 			log.Printf("[backup] Added %s", filename)
 		}
+	}
+
+	// Export database tables as JSON when using PostgreSQL
+	if s.useDB() {
+		dbChecksum, err := s.exportDatabaseToZip(zipWriter)
+		if err != nil {
+			zipWriter.Close()
+			zipFile.Close()
+			os.Remove(tmpPath)
+			return nil, fmt.Errorf("export database: %w", err)
+		}
+		manifest.Files["database.json"] = dbChecksum
+		log.Printf("[backup] Added database.json (PostgreSQL export)")
 	}
 
 	// Write manifest
@@ -423,6 +460,20 @@ func (s *Service) RestoreBackup(filename string) error {
 			continue
 		}
 
+		// Handle database.json restore into PostgreSQL
+		if file.Name == "database.json" && s.useDB() {
+			checksum, err := s.importDatabaseFromZip(file)
+			if err != nil {
+				return fmt.Errorf("restore database: %w", err)
+			}
+			if checksum != expectedChecksum {
+				return fmt.Errorf("checksum mismatch for database.json")
+			}
+			restoredCount++
+			log.Printf("[backup] Restored database.json (PostgreSQL import)")
+			continue
+		}
+
 		destPath := filepath.Join(s.cacheDir, file.Name)
 
 		// Ensure parent directory exists
@@ -574,4 +625,261 @@ func (s *Service) CleanupOldBackups() (int, error) {
 // GetBackupDir returns the backup directory path
 func (s *Service) GetBackupDir() string {
 	return s.backupDir
+}
+
+// ExportDatabaseJSON returns the full database as portable JSON bytes.
+func (s *Service) ExportDatabaseJSON() ([]byte, error) {
+	if !s.useDB() {
+		return nil, errors.New("database export requires PostgreSQL")
+	}
+	return s.exportDatabaseBytes()
+}
+
+// ImportDatabaseJSON imports data from portable JSON bytes into the database.
+func (s *Service) ImportDatabaseJSON(data []byte) error {
+	if !s.useDB() {
+		return errors.New("database import requires PostgreSQL")
+	}
+	return s.importDatabaseBytes(data)
+}
+
+// --- PostgreSQL database export/import ---
+
+// databaseExport is the JSON structure for database backups.
+type databaseExport struct {
+	Version            string                              `json:"version"`
+	ExportedAt         time.Time                           `json:"exportedAt"`
+	Accounts           []models.AccountStorage             `json:"accounts"`
+	Users              []models.User                       `json:"users"`
+	Sessions           []models.Session                    `json:"sessions"`
+	Invitations        []models.Invitation                 `json:"invitations"`
+	Clients            []models.Client                     `json:"clients"`
+	ClientSettings     map[string]models.ClientFilterSettings `json:"clientSettings"`
+	UserSettings       map[string]models.UserSettings      `json:"userSettings"`
+	Watchlist          map[string][]models.WatchlistItem   `json:"watchlist"`
+	WatchHistory       map[string][]models.WatchHistoryItem `json:"watchHistory"`
+	PlaybackProgress   map[string][]models.PlaybackProgress `json:"playbackProgress"`
+	ContentPreferences map[string][]models.ContentPreference `json:"contentPreferences"`
+}
+
+// exportDatabaseBytes queries all tables and returns the export as JSON bytes.
+func (s *Service) exportDatabaseBytes() ([]byte, error) {
+	ctx := context.Background()
+	export := databaseExport{
+		Version:    "2.0",
+		ExportedAt: time.Now().UTC(),
+	}
+
+	accounts, err := s.store.Accounts().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export accounts: %w", err)
+	}
+	export.Accounts = make([]models.AccountStorage, 0, len(accounts))
+	for _, a := range accounts {
+		export.Accounts = append(export.Accounts, a.ToStorage())
+	}
+
+	users, err := s.store.Users().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export users: %w", err)
+	}
+	export.Users = users
+
+	sessions, err := s.store.Sessions().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export sessions: %w", err)
+	}
+	export.Sessions = sessions
+
+	invitations, err := s.store.Invitations().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export invitations: %w", err)
+	}
+	export.Invitations = invitations
+
+	clients, err := s.store.Clients().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export clients: %w", err)
+	}
+	export.Clients = clients
+
+	clientSettings, err := s.store.ClientSettings().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export client settings: %w", err)
+	}
+	export.ClientSettings = clientSettings
+
+	userSettings, err := s.store.UserSettings().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export user settings: %w", err)
+	}
+	export.UserSettings = userSettings
+
+	watchlist, err := s.store.Watchlist().ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export watchlist: %w", err)
+	}
+	export.Watchlist = watchlist
+
+	watchHistory, err := s.store.WatchHistory().ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export watch history: %w", err)
+	}
+	export.WatchHistory = watchHistory
+
+	playbackProgress, err := s.store.PlaybackProgress().ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("export playback progress: %w", err)
+	}
+	export.PlaybackProgress = playbackProgress
+
+	export.ContentPreferences = make(map[string][]models.ContentPreference)
+	for _, u := range users {
+		prefs, err := s.store.ContentPreferences().ListByUser(ctx, u.ID)
+		if err != nil {
+			return nil, fmt.Errorf("export content preferences for %s: %w", u.ID, err)
+		}
+		if len(prefs) > 0 {
+			export.ContentPreferences[u.ID] = prefs
+		}
+	}
+
+	return json.MarshalIndent(export, "", "  ")
+}
+
+// importDatabaseBytes parses JSON data and restores all tables in a transaction.
+func (s *Service) importDatabaseBytes(data []byte) error {
+	var export databaseExport
+	if err := json.Unmarshal(data, &export); err != nil {
+		return fmt.Errorf("unmarshal database export: %w", err)
+	}
+
+	ctx := context.Background()
+	err := s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Delete all existing data (cascade from accounts)
+		existingAccounts, err := tx.Accounts().List(ctx)
+		if err != nil {
+			return fmt.Errorf("list existing accounts: %w", err)
+		}
+		for _, a := range existingAccounts {
+			if err := tx.Accounts().Delete(ctx, a.ID); err != nil {
+				return fmt.Errorf("delete account %s: %w", a.ID, err)
+			}
+		}
+
+		// Insert in FK dependency order
+		for _, as := range export.Accounts {
+			acct := as.ToAccount()
+			if err := tx.Accounts().Create(ctx, &acct); err != nil {
+				return fmt.Errorf("restore account %s: %w", acct.ID, err)
+			}
+		}
+		for i := range export.Users {
+			if err := tx.Users().Create(ctx, &export.Users[i]); err != nil {
+				return fmt.Errorf("restore user %s: %w", export.Users[i].ID, err)
+			}
+		}
+		for i := range export.Sessions {
+			if err := tx.Sessions().Create(ctx, &export.Sessions[i]); err != nil {
+				return fmt.Errorf("restore session: %w", err)
+			}
+		}
+		for i := range export.Invitations {
+			if err := tx.Invitations().Create(ctx, &export.Invitations[i]); err != nil {
+				return fmt.Errorf("restore invitation %s: %w", export.Invitations[i].ID, err)
+			}
+		}
+		for i := range export.Clients {
+			if err := tx.Clients().Create(ctx, &export.Clients[i]); err != nil {
+				return fmt.Errorf("restore client %s: %w", export.Clients[i].ID, err)
+			}
+		}
+		for clientID, settings := range export.ClientSettings {
+			cs := settings
+			if err := tx.ClientSettings().Upsert(ctx, clientID, &cs); err != nil {
+				return fmt.Errorf("restore client settings %s: %w", clientID, err)
+			}
+		}
+		for userID, settings := range export.UserSettings {
+			us := settings
+			if err := tx.UserSettings().Upsert(ctx, userID, &us); err != nil {
+				return fmt.Errorf("restore user settings %s: %w", userID, err)
+			}
+		}
+		for userID, items := range export.Watchlist {
+			if err := tx.Watchlist().BulkUpsert(ctx, userID, items); err != nil {
+				return fmt.Errorf("restore watchlist for %s: %w", userID, err)
+			}
+		}
+		for userID, items := range export.WatchHistory {
+			if err := tx.WatchHistory().BulkUpsert(ctx, userID, items); err != nil {
+				return fmt.Errorf("restore watch history for %s: %w", userID, err)
+			}
+		}
+		for userID, items := range export.PlaybackProgress {
+			if err := tx.PlaybackProgress().BulkUpsert(ctx, userID, items); err != nil {
+				return fmt.Errorf("restore playback progress for %s: %w", userID, err)
+			}
+		}
+		for userID, prefs := range export.ContentPreferences {
+			for _, pref := range prefs {
+				p := pref
+				if err := tx.ContentPreferences().Upsert(ctx, userID, &p); err != nil {
+					return fmt.Errorf("restore content preference for %s: %w", userID, err)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("database restore transaction: %w", err)
+	}
+
+	log.Printf("[backup] Database restored: %d accounts, %d users, %d sessions",
+		len(export.Accounts), len(export.Users), len(export.Sessions))
+	return nil
+}
+
+// exportDatabaseToZip queries all tables and writes database.json into the ZIP.
+func (s *Service) exportDatabaseToZip(zipWriter *zip.Writer) (string, error) {
+	data, err := s.exportDatabaseBytes()
+	if err != nil {
+		return "", err
+	}
+
+	hasher := sha256.New()
+	hasher.Write(data)
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+
+	writer, err := zipWriter.Create("database.json")
+	if err != nil {
+		return "", fmt.Errorf("create database.json in zip: %w", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		return "", fmt.Errorf("write database.json: %w", err)
+	}
+	return checksum, nil
+}
+
+// importDatabaseFromZip reads database.json from the ZIP and restores all tables.
+func (s *Service) importDatabaseFromZip(file *zip.File) (string, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("open database.json: %w", err)
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("read database.json: %w", err)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(data)
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+
+	if err := s.importDatabaseBytes(data); err != nil {
+		return "", err
+	}
+	return checksum, nil
 }

@@ -19,6 +19,7 @@ import (
 	"novastream/config"
 	"novastream/handlers"
 	"novastream/internal/database"
+	"novastream/internal/datastore"
 	"novastream/internal/integration"
 	"novastream/internal/pool"
 	"novastream/internal/webdav"
@@ -104,6 +105,66 @@ func main() {
 	// Apply port override if specified
 	if *portOverride > 0 {
 		settings.Server.Port = *portOverride
+	}
+
+	// Initialize PostgreSQL DataStore if configured
+	var store *datastore.DataStore
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = settings.Database.URL
+	}
+	if dbURL != "" {
+		var dsOpts []datastore.Option
+		if settings.Database.MaxOpenConns > 0 {
+			dsOpts = append(dsOpts, datastore.WithMaxConns(settings.Database.MaxOpenConns))
+		}
+		if settings.Database.MaxIdleConns > 0 {
+			dsOpts = append(dsOpts, datastore.WithMinConns(settings.Database.MaxIdleConns))
+		}
+		if settings.Database.ConnMaxLifetimeMinutes > 0 {
+			dsOpts = append(dsOpts, datastore.WithMaxConnLifetime(time.Duration(settings.Database.ConnMaxLifetimeMinutes)*time.Minute))
+		}
+		var dsErr error
+		store, dsErr = datastore.New(context.Background(), dbURL, dsOpts...)
+		if dsErr != nil {
+			log.Fatalf("failed to initialize PostgreSQL datastore: %v", dsErr)
+		}
+		defer store.Close()
+		fmt.Println("🐘 PostgreSQL datastore initialized")
+
+		// Run one-time JSON→PostgreSQL migration for existing users
+		if migrateErr := datastore.MigrateFromJSON(context.Background(), store, settings.Cache.Directory); migrateErr != nil {
+			log.Printf("Warning: JSON migration encountered errors: %v", migrateErr)
+		}
+	} else {
+		fmt.Println("")
+		fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")
+		fmt.Println("║                  ⚠️  DATABASE CONFIGURATION REQUIRED ⚠️                ║")
+		fmt.Println("╠══════════════════════════════════════════════════════════════════════╣")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   No DATABASE_URL found. mediastorm now requires PostgreSQL.         ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   If using Docker Compose, update your docker-compose.yml to         ║")
+		fmt.Println("║   include the postgres service and DATABASE_URL environment           ║")
+		fmt.Println("║   variable. See the updated example at:                              ║")
+		fmt.Println("║     → https://github.com/godver3/mediastorm                          ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   For local development:                                             ║")
+		fmt.Println("║     docker run -d --name mediastorm-postgres \\                       ║")
+		fmt.Println("║       -e POSTGRES_DB=mediastorm \\                                    ║")
+		fmt.Println("║       -e POSTGRES_USER=mediastorm \\                                  ║")
+		fmt.Println("║       -e POSTGRES_PASSWORD=mediastorm \\                              ║")
+		fmt.Println("║       -p 5432:5432 postgres:16-alpine                                ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   Then set: DATABASE_URL=postgres://mediastorm:mediastorm@            ║")
+		fmt.Println("║             localhost:5432/mediastorm?sslmode=disable                 ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("║   Your existing JSON data will be migrated automatically on          ║")
+		fmt.Println("║   first startup with PostgreSQL.                                     ║")
+		fmt.Println("║                                                                      ║")
+		fmt.Println("╚══════════════════════════════════════════════════════════════════════╝")
+		fmt.Println("")
+		log.Fatal("DATABASE_URL is required. Set it as an environment variable or in settings.json under database.url")
 	}
 
 	// Construct router
@@ -251,22 +312,42 @@ func main() {
 	// Prequeue handler will be created later after historyService is available
 	var prequeueHandler *handlers.PrequeueHandler
 	usenetHandler := handlers.NewUsenetHandler(usenetService)
-	userService, err := users.NewService(settings.Cache.Directory)
+	var userService *users.Service
+	if store != nil {
+		userService, err = users.NewServiceWithStore(store)
+	} else {
+		userService, err = users.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise users: %v", err)
 	}
 	usersHandler := handlers.NewUsersHandler(userService)
 
 	// Initialize accounts, sessions, and invitations services
-	accountsService, err := accounts.NewService(settings.Cache.Directory)
+	var accountsService *accounts.Service
+	if store != nil {
+		accountsService, err = accounts.NewServiceWithStore(store)
+	} else {
+		accountsService, err = accounts.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise accounts: %v", err)
 	}
-	sessionsService, err := sessions.NewService(settings.Cache.Directory, 0) // Use default session duration (30 days)
+	var sessionsService *sessions.Service
+	if store != nil {
+		sessionsService, err = sessions.NewServiceWithStore(store, 0)
+	} else {
+		sessionsService, err = sessions.NewService(settings.Cache.Directory, 0)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise sessions: %v", err)
 	}
-	invitationsService, err := invitations.NewService(settings.Cache.Directory)
+	var invitationsService *invitations.Service
+	if store != nil {
+		invitationsService, err = invitations.NewServiceWithStore(store)
+	} else {
+		invitationsService, err = invitations.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise invitations: %v", err)
 	}
@@ -292,36 +373,66 @@ func main() {
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
 	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
 
-	watchlistService, err := watchlist.NewService(settings.Cache.Directory)
+	var watchlistService *watchlist.Service
+	if store != nil {
+		watchlistService, err = watchlist.NewServiceWithStore(store)
+	} else {
+		watchlistService, err = watchlist.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise watchlist: %v", err)
 	}
 	watchlistHandler := handlers.NewWatchlistHandler(watchlistService, userService, *demoMode)
-	customListsService, err := customlists.NewService(settings.Cache.Directory)
+	var customListsService *customlists.Service
+	if store != nil {
+		customListsService, err = customlists.NewServiceWithStore(store)
+	} else {
+		customListsService, err = customlists.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise custom lists: %v", err)
 	}
 	customListsHandler := handlers.NewCustomListsHandler(customListsService, userService)
 
-	userSettingsService, err := user_settings.NewService(settings.Cache.Directory)
+	var userSettingsService *user_settings.Service
+	if store != nil {
+		userSettingsService, err = user_settings.NewServiceWithStore(store)
+	} else {
+		userSettingsService, err = user_settings.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise user settings: %v", err)
 	}
 	userSettingsHandler := handlers.NewUserSettingsHandler(userSettingsService, userService, cfgManager)
 
 	// Initialize content preferences service for per-content language preferences
-	contentPreferencesService, err := content_preferences.NewService(settings.Cache.Directory)
+	var contentPreferencesService *content_preferences.Service
+	if store != nil {
+		contentPreferencesService, err = content_preferences.NewServiceWithStore(store)
+	} else {
+		contentPreferencesService, err = content_preferences.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise content preferences: %v", err)
 	}
 	contentPreferencesHandler := handlers.NewContentPreferencesHandler(contentPreferencesService, userService)
 
 	// Initialize clients service for device tracking
-	clientsService, err := clients.NewService(settings.Cache.Directory)
+	var clientsService *clients.Service
+	if store != nil {
+		clientsService, err = clients.NewServiceWithStore(store)
+	} else {
+		clientsService, err = clients.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise clients: %v", err)
 	}
-	clientSettingsService, err := client_settings.NewService(settings.Cache.Directory)
+	var clientSettingsService *client_settings.Service
+	if store != nil {
+		clientSettingsService, err = client_settings.NewServiceWithStore(store)
+	} else {
+		clientSettingsService, err = client_settings.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise client settings: %v", err)
 	}
@@ -337,7 +448,12 @@ func main() {
 	debridSearchService.SetClientSettingsProvider(clientSettingsService)
 	indexerService.SetClientSettingsProvider(clientSettingsService)
 
-	historyService, err := history.NewService(settings.Cache.Directory)
+	var historyService *history.Service
+	if store != nil {
+		historyService, err = history.NewServiceWithStore(store)
+	} else {
+		historyService, err = history.NewService(settings.Cache.Directory)
+	}
 	if err != nil {
 		log.Fatalf("failed to initialise watch history: %v", err)
 	}
@@ -389,6 +505,9 @@ func main() {
 	// Create prequeue handler now that history service is available
 	// Video prober and HLS creator are optional - we'll set them after videoHandler is created
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
+	if store != nil {
+		prequeueHandler.GetStore().SetDataStore(store)
+	}
 	prequeueHandler.GetStore().SetStoragePath(settings.Cache.Directory)
 
 	// Restore magnet links from persisted prequeue entries into the magnet registry
@@ -724,6 +843,9 @@ func main() {
 	if err != nil {
 		log.Printf("warning: failed to initialize backup service: %v", err)
 	} else {
+		if store != nil {
+			backupService.SetDataStore(store)
+		}
 		backupHandler := handlers.NewBackupHandler(backupService)
 		schedulerService.SetBackupService(backupService)
 		r.HandleFunc("/admin/backup", adminUIHandler.RequireMasterAuth(adminUIHandler.BackupPage)).Methods(http.MethodGet)
@@ -732,11 +854,16 @@ func main() {
 		r.HandleFunc("/admin/api/backups/{filename}/download", adminUIHandler.RequireMasterAuth(backupHandler.DownloadBackup)).Methods(http.MethodGet)
 		r.HandleFunc("/admin/api/backups/{filename}/restore", adminUIHandler.RequireMasterAuth(backupHandler.RestoreBackup)).Methods(http.MethodPost)
 		r.HandleFunc("/admin/api/backups/{filename}", adminUIHandler.RequireMasterAuth(backupHandler.DeleteBackup)).Methods(http.MethodDelete)
+		r.HandleFunc("/api/admin/export", adminUIHandler.RequireMasterAuth(backupHandler.ExportData)).Methods(http.MethodGet)
+		r.HandleFunc("/api/admin/import", adminUIHandler.RequireMasterAuth(backupHandler.ImportData)).Methods(http.MethodPost)
 		fmt.Println("💾 Backup management available at /admin/backup")
 	}
 
 	// Prewarm service for pre-resolving continue watching items
 	prewarmService := prewarm.NewService(cfgManager, settings.Cache.Directory)
+	if store != nil {
+		prewarmService.SetDataStore(store)
+	}
 	prewarmService.SetHistoryService(historyService)
 	prewarmService.SetUsersService(userService)
 	prewarmService.SetPrequeueStore(prequeueHandler.GetStore())

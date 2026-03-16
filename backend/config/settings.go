@@ -122,7 +122,11 @@ type WebDAVSettings struct {
 
 // DatabaseSettings defines database configuration for queue management
 type DatabaseSettings struct {
-	Path string `json:"path"`
+	Path                   string `json:"path"`                             // SQLite queue.db path (legacy, will be retired)
+	URL                    string `json:"url,omitempty"`                    // PostgreSQL connection URL (e.g. postgres://user:pass@host:5432/db?sslmode=disable)
+	MaxOpenConns           int    `json:"maxOpenConns,omitempty"`           // Max open connections in pool (default 25)
+	MaxIdleConns           int    `json:"maxIdleConns,omitempty"`           // Min idle connections in pool (default 5)
+	ConnMaxLifetimeMinutes int    `json:"connMaxLifetimeMinutes,omitempty"` // Max connection lifetime in minutes (default 30)
 }
 
 // StreamingSettings defines streaming and download configuration

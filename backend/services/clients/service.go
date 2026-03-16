@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"novastream/internal/datastore"
 	"novastream/models"
 )
 
@@ -24,7 +26,23 @@ var (
 type Service struct {
 	mu      sync.RWMutex
 	path    string
+	store   *datastore.DataStore
 	clients map[string]models.Client
+}
+
+// useDB returns true when the service is backed by PostgreSQL.
+func (s *Service) useDB() bool { return s.store != nil }
+
+// NewServiceWithStore creates a clients service backed by PostgreSQL.
+func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
+	svc := &Service{
+		store:   store,
+		clients: make(map[string]models.Client),
+	}
+	if err := svc.load(); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // NewService creates a clients service storing data inside the provided directory.
@@ -297,6 +315,18 @@ func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.useDB() {
+		clients, err := s.store.Clients().List(context.Background())
+		if err != nil {
+			return fmt.Errorf("load clients from db: %w", err)
+		}
+		s.clients = make(map[string]models.Client, len(clients))
+		for _, c := range clients {
+			s.clients[c.ID] = c
+		}
+		return nil
+	}
+
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		s.clients = make(map[string]models.Client)
@@ -317,6 +347,10 @@ func (s *Service) load() error {
 }
 
 func (s *Service) saveLocked() error {
+	if s.useDB() {
+		return s.syncToDB()
+	}
+
 	tmp := s.path + ".tmp"
 	file, err := os.Create(tmp)
 	if err != nil {
@@ -347,4 +381,41 @@ func (s *Service) saveLocked() error {
 	}
 
 	return nil
+}
+
+// syncToDB writes the full in-memory clients state to PostgreSQL.
+func (s *Service) syncToDB() error {
+	ctx := context.Background()
+	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		// Get existing DB state to detect deletes
+		existing, err := tx.Clients().List(ctx)
+		if err != nil {
+			return err
+		}
+		dbIDs := make(map[string]bool, len(existing))
+		for _, c := range existing {
+			dbIDs[c.ID] = true
+		}
+		// Upsert all in-memory clients
+		for _, c := range s.clients {
+			client := c
+			if dbIDs[c.ID] {
+				if err := tx.Clients().Update(ctx, &client); err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Clients().Create(ctx, &client); err != nil {
+					return err
+				}
+			}
+			delete(dbIDs, c.ID)
+		}
+		// Delete clients removed from memory
+		for id := range dbIDs {
+			if err := tx.Clients().Delete(ctx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
