@@ -642,10 +642,10 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	} else {
 		// Get effective ranking criteria (cascade: global -> profile -> client)
 		rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q", len(aggregated), len(rankingCriteria), settings.Streaming.ServicePriority)
+		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q", len(aggregated), len(rankingCriteria), settings.Filtering.ServicePriority)
 
 		// Cache settings needed for comparison functions
-		servicePriority := settings.Streaming.ServicePriority
+		servicePriority := settings.Filtering.ServicePriority
 		preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
 		nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
 
@@ -814,7 +814,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 
 	// Prepare ranking criteria and settings for sorting (same as main Search function)
 	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-	servicePriority := settings.Streaming.ServicePriority
+	servicePriority := settings.Filtering.ServicePriority
 	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
 	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
 

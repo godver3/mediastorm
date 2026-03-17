@@ -247,12 +247,6 @@ var SettingsSchema = map[string]interface{}{
 			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers", "hidden": true},
 			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes", "hidden": true},
 			"serviceMode":        map[string]interface{}{"type": "select", "label": "Service Mode", "options": []string{"usenet", "debrid", "hybrid"}, "description": "Streaming service mode"},
-			"servicePriority": map[string]interface{}{
-				"type":        "select",
-				"label":       "Service Priority",
-				"description": "Prioritize results from a specific service type",
-				"options":     []string{"none", "usenet", "debrid"},
-			},
 			"searchMode": map[string]interface{}{
 				"type":        "select",
 				"label":       "Search Mode",
@@ -349,6 +343,13 @@ var SettingsSchema = map[string]interface{}{
 				"description": "Boost results from this scraper when the Preferred Scraper ranking criterion is enabled",
 				"order":       10,
 				"optionsFrom": "torrentScrapers",
+			},
+			"servicePriority": map[string]interface{}{
+				"type":        "select",
+				"label":       "Service Priority",
+				"description": "Prioritize results from a specific service type when the Service Priority ranking criterion is enabled",
+				"options":     []string{"none", "usenet", "debrid"},
+				"order":       11,
 			},
 		},
 	},

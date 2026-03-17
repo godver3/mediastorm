@@ -592,7 +592,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		h.failPrequeue(prequeueID, "failed to load settings: "+err.Error())
 		return
 	}
-	servicePriority := settings.Streaming.ServicePriority
+	servicePriority := settings.Filtering.ServicePriority
 	log.Printf("[prequeue] TIMING: service priority is %q (elapsed: %v)", servicePriority, time.Since(workerStart))
 
 	// Start split search - debrid and usenet run in parallel

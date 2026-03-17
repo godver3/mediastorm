@@ -135,7 +135,6 @@ type StreamingSettings struct {
 	MaxDownloadWorkers         int                      `json:"maxDownloadWorkers"`
 	MaxCacheSizeMB             int                      `json:"maxCacheSizeMB"`
 	ServiceMode                StreamingServiceMode     `json:"serviceMode"`
-	ServicePriority            StreamingServicePriority `json:"servicePriority"` // Priority for service type in search results
 	SearchMode                 SearchMode               `json:"searchMode"`      // Fast (early return) vs Accurate (wait for all results)
 	DebridProviders            []DebridProviderSettings `json:"debridProviders,omitempty"`
 	MultiProviderMode          MultiProviderMode        `json:"multiProviderMode,omitempty"` // How to select provider when multiple are enabled
@@ -333,7 +332,8 @@ type FilterSettings struct {
 	FilterOutTerms    []string    `json:"filterOutTerms"`              // Terms to filter out from results (case-insensitive match in title)
 	PreferredTerms    []string    `json:"preferredTerms"`              // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms []string    `json:"nonPreferredTerms"`           // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
-	PreferredScraper  string      `json:"preferredScraper,omitempty"`  // Name of the preferred torrent scraper (empty = none)
+	PreferredScraper  string                 `json:"preferredScraper,omitempty"`  // Name of the preferred torrent scraper (empty = none)
+	ServicePriority   StreamingServicePriority `json:"servicePriority"`             // Priority for service type in search results
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.
@@ -682,7 +682,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
@@ -701,6 +701,7 @@ func DefaultSettings() Settings {
 			MaxSizeMovieGB:   0,                       // 0 means no limit
 			MaxSizeEpisodeGB: 0,                       // 0 means no limit
 			HDRDVPolicy:      HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
+			ServicePriority:  StreamingServicePriorityNone,
 			},
 		AnimeFiltering: AnimeFilteringSettings{},
 		UI: UISettings{
@@ -872,17 +873,19 @@ func (m *Manager) Load() (Settings, error) {
 	// Apply versioned migrations (settings field relocations)
 	MigrateRawSettings(raw)
 
-	// Migrate servicePriority from filtering to streaming
-	if filteringRaw, ok := raw["filtering"].(map[string]interface{}); ok {
-		if servicePriority, hasPriority := filteringRaw["servicePriority"]; hasPriority {
-			// Move it to streaming section
-			if streamingRaw, ok := raw["streaming"].(map[string]interface{}); ok {
-				streamingRaw["servicePriority"] = servicePriority
+	// Migrate servicePriority from streaming to filtering (moved to Ranking & Filtering section)
+	if streamingRaw, ok := raw["streaming"].(map[string]interface{}); ok {
+		if servicePriority, hasPriority := streamingRaw["servicePriority"]; hasPriority {
+			// Move it to filtering section
+			if filteringRaw, ok := raw["filtering"].(map[string]interface{}); ok {
+				if _, alreadySet := filteringRaw["servicePriority"]; !alreadySet {
+					filteringRaw["servicePriority"] = servicePriority
+				}
 			} else {
-				raw["streaming"] = map[string]interface{}{"servicePriority": servicePriority}
+				raw["filtering"] = map[string]interface{}{"servicePriority": servicePriority}
 			}
-			// Remove from filtering
-			delete(filteringRaw, "servicePriority")
+			// Remove from streaming
+			delete(streamingRaw, "servicePriority")
 		}
 	}
 
@@ -1012,8 +1015,8 @@ func (m *Manager) Load() (Settings, error) {
 		s.Streaming.ServiceMode = StreamingServiceModeUsenet
 	}
 	// Backfill ServicePriority if not set
-	if s.Streaming.ServicePriority == "" {
-		s.Streaming.ServicePriority = StreamingServicePriorityNone
+	if s.Filtering.ServicePriority == "" {
+		s.Filtering.ServicePriority = StreamingServicePriorityNone
 	}
 	// Backfill SearchMode if not set (default to fast for best UX)
 	if s.Streaming.SearchMode == "" {
