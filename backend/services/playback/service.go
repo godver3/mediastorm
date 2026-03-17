@@ -50,6 +50,10 @@ type Service struct {
 	nzbSystem   *integration.NzbSystem
 	metadataSvc metadataService
 
+	// ExternalUsenetResolver, when set, handles all usenet playback resolution
+	// externally (e.g., via nzbdav). The internal NNTP code is bypassed entirely.
+	ExternalUsenetResolver func(ctx context.Context, candidate models.NZBResult, nzbBytes []byte, fileName string) (*models.PlaybackResolution, error)
+
 	// NZB fetch/process counters for diagnostics (atomic, safe for concurrent use).
 	// Grep logs for [search-stats] to see totals during playback.
 	nzbFetchCount   atomic.Int64 // NZB file downloads from indexers
@@ -131,6 +135,11 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	}
 
 	log.Printf("[playback] nzb fetched size=%d fileName=%q", len(nzbBytes), fileName)
+
+	// External resolver hook (e.g., nzbdav) — bypasses all internal NNTP/health logic
+	if s.ExternalUsenetResolver != nil {
+		return s.ExternalUsenetResolver(ctx, candidate, nzbBytes, fileName)
+	}
 
 	// Check if health check should be skipped (optimization for faster startup)
 	cfg, err := s.cfg.Load()

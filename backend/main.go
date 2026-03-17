@@ -30,6 +30,7 @@ import (
 	content_preferences "novastream/services/content_preferences"
 	"novastream/services/customlists"
 	"novastream/services/debrid"
+	nzbdavsvc "novastream/services/nzbdav"
 	"novastream/services/epg"
 	"novastream/services/history"
 	"novastream/services/indexer"
@@ -247,6 +248,14 @@ func main() {
 	}
 
 	playbackService := playback.NewService(cfgManager, usenetService, nzbSystem, nzbSystem.MetadataReader())
+
+	// If nzbdav is configured, set it as the external usenet resolver.
+	// This bypasses all internal NNTP/health-check code for usenet playback,
+	// delegating NZB processing to nzbdav (SABnzbd API + WebDAV streaming).
+	if nzbdavClient := nzbdavsvc.NewClientFromEnv(); nzbdavClient != nil {
+		playbackService.ExternalUsenetResolver = nzbdavsvc.MakeResolver(nzbdavClient)
+	}
+
 	playbackHandler := handlers.NewPlaybackHandler(playbackService)
 	// Prequeue handler will be created later after historyService is available
 	var prequeueHandler *handlers.PrequeueHandler
@@ -401,9 +410,18 @@ func main() {
 	// Best-effort save so the config persists the defaults
 	_ = cfgManager.Save(settings)
 
-	// Create composite streaming provider that handles both usenet and debrid
+	// Create composite streaming provider that handles usenet + debrid
 	debridStreamingProvider := debrid.NewStreamingProvider(cfgManager)
-	compositeProvider := debrid.NewCompositeProvider(debridStreamingProvider, nzbSystem)
+	var compositeProvider *debrid.CompositeProvider
+	if nzbdavClient := nzbdavsvc.NewClientFromEnv(); nzbdavClient != nil {
+		compositeProvider = debrid.NewCompositeProvider(
+			debridStreamingProvider,
+			nzbdavsvc.NewStreamingProvider(nzbdavClient.BaseURL()),
+			nzbSystem,
+		)
+	} else {
+		compositeProvider = debrid.NewCompositeProvider(debridStreamingProvider, nzbSystem)
+	}
 
 	// Create video handler with composite provider
 	videoHandler := handlers.NewVideoHandlerWithProvider(
