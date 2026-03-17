@@ -38,6 +38,7 @@ type Settings struct {
 	MDBList         MDBListSettings         `json:"mdblist"`
 	Trakt           TraktSettings           `json:"trakt,omitempty"`
 	Plex            PlexSettings            `json:"plex,omitempty"`
+	Jellyfin        JellyfinSettings        `json:"jellyfin,omitempty"`
 	Log             LogConfig               `json:"log"`
 	ScheduledTasks  ScheduledTasksSettings  `json:"scheduledTasks,omitempty"`
 	Network         NetworkSettings         `json:"network,omitempty"`
@@ -490,6 +491,52 @@ func (p *PlexSettings) RemoveAccount(id string) bool {
 	return false
 }
 
+// JellyfinAccount represents a connected Jellyfin server account.
+type JellyfinAccount struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ServerURL string `json:"serverUrl"`
+	Token     string `json:"token,omitempty"`
+	UserID    string `json:"userId,omitempty"`
+	Username  string `json:"username,omitempty"`
+}
+
+// JellyfinSettings contains Jellyfin integration configuration.
+type JellyfinSettings struct {
+	Accounts []JellyfinAccount `json:"accounts,omitempty"`
+}
+
+// GetAccountByID returns a pointer to the Jellyfin account with the given ID, or nil.
+func (j *JellyfinSettings) GetAccountByID(id string) *JellyfinAccount {
+	for i := range j.Accounts {
+		if j.Accounts[i].ID == id {
+			return &j.Accounts[i]
+		}
+	}
+	return nil
+}
+
+// UpdateAccount replaces the account with the matching ID.
+func (j *JellyfinSettings) UpdateAccount(account JellyfinAccount) {
+	for i := range j.Accounts {
+		if j.Accounts[i].ID == account.ID {
+			j.Accounts[i] = account
+			return
+		}
+	}
+}
+
+// RemoveAccount removes a Jellyfin account by ID.
+func (j *JellyfinSettings) RemoveAccount(id string) bool {
+	for i := range j.Accounts {
+		if j.Accounts[i].ID == id {
+			j.Accounts = append(j.Accounts[:i], j.Accounts[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // ScheduledTaskType defines the type of scheduled task
 type ScheduledTaskType string
 
@@ -499,8 +546,11 @@ const (
 	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
 	ScheduledTaskTypePlaylistRefresh   ScheduledTaskType = "playlist_refresh"
 	ScheduledTaskTypeBackup            ScheduledTaskType = "backup"
-	ScheduledTaskTypeTraktHistorySync  ScheduledTaskType = "trakt_history_sync"
-	ScheduledTaskTypePrewarm           ScheduledTaskType = "prewarm"
+	ScheduledTaskTypeTraktHistorySync      ScheduledTaskType = "trakt_history_sync"
+	ScheduledTaskTypePrewarm               ScheduledTaskType = "prewarm"
+	ScheduledTaskTypePlexHistorySync       ScheduledTaskType = "plex_history_sync"
+	ScheduledTaskTypeJellyfinFavoritesSync ScheduledTaskType = "jellyfin_favorites_sync"
+	ScheduledTaskTypeJellyfinHistorySync   ScheduledTaskType = "jellyfin_history_sync"
 )
 
 // BackupRetentionSettings controls how backups are automatically cleaned up
@@ -521,6 +571,7 @@ const (
 	ScheduledTaskFrequency6Hours  ScheduledTaskFrequency = "6hours"
 	ScheduledTaskFrequency12Hours ScheduledTaskFrequency = "12hours"
 	ScheduledTaskFrequencyDaily   ScheduledTaskFrequency = "daily"
+	ScheduledTaskFrequencyOnce   ScheduledTaskFrequency = "once"
 )
 
 // ScheduledTaskStatus represents the last run status

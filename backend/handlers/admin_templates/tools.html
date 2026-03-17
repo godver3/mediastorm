@@ -169,6 +169,61 @@
         </div>
     </div>
 
+    <!-- Jellyfin Accounts Section -->
+    <div class="section" id="jellyfinAccountsSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M8 12l2 2 4-4"/>
+                </svg>
+                Jellyfin Accounts
+            </div>
+            <span id="jellyfinAccountCountBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <!-- Jellyfin Accounts List -->
+            <div id="jellyfinAccountsList" style="margin-bottom: 1rem;">
+            </div>
+
+            <!-- Add Jellyfin Account Form -->
+            <div id="addJellyfinAccountForm" style="display: none; margin-bottom: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px;">
+                <h4 style="margin-bottom: 1rem;">Connect Jellyfin Server</h4>
+                <div class="form-group">
+                    <label class="form-label">Server URL</label>
+                    <input type="text" class="form-input" id="jellyfinServerUrl" placeholder="http://192.168.1.100:8096">
+                    <small class="text-muted">Full URL including port (e.g., http://your-server:8096)</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-input" id="jellyfinUsername" placeholder="admin">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-input" id="jellyfinPassword" placeholder="Password">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Display Name (optional)</label>
+                    <input type="text" class="form-input" id="jellyfinAccountName" placeholder="My Jellyfin Server">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="hideAddJellyfinForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="connectJellyfin()">Connect</button>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="addJellyfinBtn" onclick="showAddJellyfinForm()">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Jellyfin Account
+            </button>
+        </div>
+    </div>
+
 </div>
 
 <!-- AUTOMATION CATEGORY (admin only) -->
@@ -231,8 +286,11 @@
                         <label class="form-label">Task Type</label>
                         <select id="newTaskType" class="form-select" onchange="onTaskTypeChange()">
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
+                            <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
+                            <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Continue Watching</option>
                         </select>
@@ -342,6 +400,63 @@
                         </div>
                     </div>
 
+                    <!-- Plex History Sync specific config -->
+                    <div id="plexHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Plex Account</label>
+                            <select id="newTaskPlexHistoryAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Plex account</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="newTaskPlexHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Jellyfin Favorites Sync specific config -->
+                    <div id="jellyfinFavoritesSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Jellyfin Account</label>
+                            <select id="newTaskJellyfinFavAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Jellyfin account</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskJellyfinFavProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Jellyfin History Sync specific config -->
+                    <div id="jellyfinHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Jellyfin Account</label>
+                            <select id="newTaskJellyfinHistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Jellyfin account</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="newTaskJellyfinHistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
                     <!-- Sync Options (shown for sync-type tasks) -->
                     <div id="syncOptionsConfig" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
                         <div class="form-group">
@@ -390,7 +505,8 @@
 
                     <div id="newFrequencyGroup" class="form-group">
                         <label class="form-label">Frequency</label>
-                        <select id="newTaskFrequency" class="form-select">
+                        <select id="newTaskFrequency" class="form-select" onchange="onFrequencyChange()">
+                            <option value="once">Run Once (one-time import)</option>
                             <option value="1min">Every Minute</option>
                             <option value="5min">Every 5 Minutes</option>
                             <option value="15min">Every 15 Minutes</option>
@@ -400,6 +516,7 @@
                             <option value="12hours" selected>Every 12 Hours</option>
                             <option value="daily">Daily</option>
                         </select>
+                        <small id="onceFrequencyNote" class="text-muted" style="display: none; color: var(--accent);">This task will run immediately and auto-complete after finishing.</small>
                     </div>
                     <div id="newAutoFrequencyLabel" class="form-group" style="display: none;">
                         <label class="form-label">Frequency</label>
@@ -441,8 +558,11 @@
                         <label class="form-label">Task Type</label>
                         <select id="editTaskType" class="form-select" disabled>
                             <option value="plex_watchlist_sync">Plex Watchlist Sync</option>
+                            <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
+                            <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Continue Watching</option>
                         </select>
@@ -537,6 +657,60 @@
                         </div>
                     </div>
 
+                    <!-- Plex History Sync specific config (edit) -->
+                    <div id="editPlexHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Plex Account</label>
+                            <select id="editTaskPlexHistoryAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="editTaskPlexHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Jellyfin Favorites Sync specific config (edit) -->
+                    <div id="editJellyfinFavoritesSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Jellyfin Account</label>
+                            <select id="editTaskJellyfinFavAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskJellyfinFavProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Jellyfin History Sync specific config (edit) -->
+                    <div id="editJellyfinHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Jellyfin Account</label>
+                            <select id="editTaskJellyfinHistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Import to Profile</label>
+                            <select id="editTaskJellyfinHistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
                     <!-- Sync Options (shown for sync-type tasks) -->
                     <div id="editSyncOptionsConfig" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
                         <div class="form-group">
@@ -586,6 +760,7 @@
                     <div id="editFrequencyGroup" class="form-group">
                         <label class="form-label">Frequency</label>
                         <select id="editTaskFrequency" class="form-select">
+                            <option value="once">Run Once (one-time import)</option>
                             <option value="1min">Every Minute</option>
                             <option value="5min">Every 5 Minutes</option>
                             <option value="15min">Every 15 Minutes</option>
@@ -748,559 +923,6 @@
     </div>
 </div>
 
-<!-- IMPORT CATEGORY -->
-<div class="settings-group">
-    <div class="group-title">Import</div>
-
-    <!-- Watchlist Section -->
-    <div class="section" id="watchlistSection">
-        <div class="section-header" onclick="toggleSection(this)">
-            <div class="section-title">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-                </svg>
-                Watchlist
-            </div>
-            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-            </svg>
-        </div>
-        <div class="section-content">
-            <!-- Plex Watchlist Import -->
-            <div class="import-card">
-                <div class="import-card-header">
-                    <h3>Plex Watchlist</h3>
-                </div>
-                <div class="import-card-body" id="plexWatchlistCard">
-                    <!-- Not Connected -->
-                    <div id="plexWatchlistNotConnected">
-                        <p class="text-muted">Connect your Plex account in the Integrations section above to import your watchlist.</p>
-                    </div>
-
-                    <!-- Connected - Ready to import -->
-                    <div id="plexWatchlistConnected" style="display: none;">
-                        <div class="form-group">
-                            <label class="form-label">Import from Plex Account</label>
-                            <select id="plexWatchlistAccountSelect" class="form-select" style="max-width: 300px;">
-                                <!-- Populated by JavaScript -->
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Import to Profile</label>
-                            <select id="plexProfileSelect" class="form-select" style="max-width: 300px;">
-                                {{range .Users}}
-                                <option value="{{.ID}}">{{.Name}}</option>
-                                {{end}}
-                            </select>
-                        </div>
-
-                        <!-- Action buttons - swap between Load and Import -->
-                        <div id="plexFetchBtnWrapper">
-                            <button class="btn btn-primary" onclick="fetchPlexWatchlist()" id="plexFetchBtn">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="1 4 1 10 7 10"/>
-                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                </svg>
-                                Load Watchlist from Plex
-                            </button>
-                        </div>
-                        <div id="plexImportBtnWrapper" style="display: none;">
-                            <div class="import-action-bar">
-                                <button class="btn btn-primary" onclick="importPlexWatchlist()" id="plexImportBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                        <polyline points="17 8 12 3 7 8"/>
-                                        <line x1="12" y1="3" x2="12" y2="15"/>
-                                    </svg>
-                                    Import <span id="plexSelectedCount">0</span> Selected
-                                </button>
-                                <button class="btn btn-secondary" onclick="resetPlexWatchlistLoad()">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="1 4 1 10 7 10"/>
-                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                    </svg>
-                                    Reload
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Loading -->
-                    <div id="plexLoadingSection" style="display: none;">
-                        <div class="loading-box">
-                            <div class="spinner"></div>
-                            <span id="plexWatchlistLoadingText">Loading watchlist...</span>
-                            <div id="plexWatchlistProgress" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted);"></div>
-                        </div>
-                    </div>
-
-                    <!-- Preview Table -->
-                    <div id="plexPreviewSection" style="display: none; margin-top: 1rem;">
-                        <div class="preview-header">
-                            <div>
-                                <span class="preview-count" id="plexWatchlistCount">0 items</span>
-                                <span class="text-muted"> in your Plex watchlist</span>
-                            </div>
-                            <div class="btn-group">
-                                <button class="btn btn-secondary btn-sm" onclick="plexSelectAll(true)">Select All</button>
-                                <button class="btn btn-secondary btn-sm" onclick="plexSelectAll(false)">Deselect All</button>
-                            </div>
-                        </div>
-
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 40px;"><input type="checkbox" id="plexSelectAllCheckbox" onchange="plexSelectAll(this.checked)" checked></th>
-                                        <th style="width: 50px;"></th>
-                                        <th>Title</th>
-                                        <th style="width: 80px;">Year</th>
-                                        <th style="width: 100px;">Type</th>
-                                        <th style="width: 100px;">IDs</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="plexWatchlistTableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Import Progress -->
-                    <div id="plexImportingSection" style="display: none; margin-top: 1rem;">
-                        <div class="status-box">
-                            <div class="spinner"></div>
-                            <div>
-                                <div class="status-title">Importing items...</div>
-                                <div class="text-muted" id="plexImportProgress">0 of 0</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Import Complete -->
-                    <div id="plexCompleteSection" style="display: none; margin-top: 1rem;">
-                        <div class="success-box">
-                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                <polyline points="22 4 12 14.01 9 11.01"/>
-                            </svg>
-                            <div>
-                                <div class="status-title" style="color: var(--success);">Import Complete</div>
-                                <div id="plexImportSummary" class="text-muted"></div>
-                            </div>
-                        </div>
-                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetPlexImport()">Import More</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Trakt Watchlist Import -->
-            <div class="import-card">
-                <div class="import-card-header">
-                    <h3>Trakt Watchlist</h3>
-                </div>
-                <div class="import-card-body" id="traktWatchlistCard">
-                    <!-- Not Connected -->
-                    <div id="traktWatchlistNotConnected">
-                        <p class="text-muted">Connect your Trakt account in the Integrations section above to import your watchlist.</p>
-                    </div>
-
-                    <!-- Connected - Ready to import -->
-                    <div id="traktWatchlistConnected" style="display: none;">
-                        <div class="form-group">
-                            <label class="form-label">Import from Trakt Account</label>
-                            <select id="traktWatchlistAccountSelect" class="form-select" style="max-width: 300px;">
-                                <!-- Populated by JavaScript -->
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Import to Profile</label>
-                            <select id="traktWatchlistProfileSelect" class="form-select" style="max-width: 300px;">
-                                {{range .Users}}
-                                <option value="{{.ID}}">{{.Name}}</option>
-                                {{end}}
-                            </select>
-                        </div>
-
-                        <!-- Action buttons - swap between Load and Import -->
-                        <div id="traktWatchlistFetchBtnWrapper">
-                            <button class="btn btn-primary" onclick="fetchTraktWatchlist()" id="traktWatchlistFetchBtn">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="1 4 1 10 7 10"/>
-                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                </svg>
-                                Load Watchlist from Trakt
-                            </button>
-                        </div>
-                        <div id="traktWatchlistImportBtnWrapper" style="display: none;">
-                            <div class="import-action-bar">
-                                <button class="btn btn-primary" onclick="importTraktWatchlist()" id="traktWatchlistImportBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                        <polyline points="17 8 12 3 7 8"/>
-                                        <line x1="12" y1="3" x2="12" y2="15"/>
-                                    </svg>
-                                    Import <span id="traktWatchlistSelectedCount">0</span> Selected
-                                </button>
-                                <button class="btn btn-secondary" onclick="resetTraktWatchlistLoad()">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="1 4 1 10 7 10"/>
-                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                    </svg>
-                                    Reload
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Loading -->
-                    <div id="traktWatchlistLoadingSection" style="display: none;">
-                        <div class="loading-box">
-                            <div class="spinner"></div>
-                            <span>Loading watchlist...</span>
-                        </div>
-                    </div>
-
-                    <!-- Preview Table -->
-                    <div id="traktWatchlistPreviewSection" style="display: none; margin-top: 1rem;">
-                        <div class="preview-header">
-                            <div>
-                                <span class="preview-count" id="traktWatchlistCount">0 items</span>
-                                <span class="text-muted"> in your Trakt watchlist</span>
-                            </div>
-                            <div class="btn-group">
-                                <button class="btn btn-secondary btn-sm" onclick="traktWatchlistSelectAll(true)">Select All</button>
-                                <button class="btn btn-secondary btn-sm" onclick="traktWatchlistSelectAll(false)">Deselect All</button>
-                            </div>
-                        </div>
-
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 40px;"><input type="checkbox" id="traktWatchlistSelectAllCheckbox" onchange="traktWatchlistSelectAll(this.checked)" checked></th>
-                                        <th>Title</th>
-                                        <th style="width: 80px;">Year</th>
-                                        <th style="width: 100px;">Type</th>
-                                        <th style="width: 100px;">IDs</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="traktWatchlistTableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Import Progress -->
-                    <div id="traktWatchlistImportingSection" style="display: none; margin-top: 1rem;">
-                        <div class="status-box">
-                            <div class="spinner"></div>
-                            <div>
-                                <div class="status-title">Importing items...</div>
-                                <div class="text-muted" id="traktWatchlistImportProgress">0 of 0</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Import Complete -->
-                    <div id="traktWatchlistCompleteSection" style="display: none; margin-top: 1rem;">
-                        <div class="success-box">
-                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                <polyline points="22 4 12 14.01 9 11.01"/>
-                            </svg>
-                            <div>
-                                <div class="status-title" style="color: var(--success);">Import Complete</div>
-                                <div id="traktWatchlistImportSummary" class="text-muted"></div>
-                            </div>
-                        </div>
-                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetTraktWatchlistImport()">Import More</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Watch History Section -->
-    <div class="section" id="historySection">
-        <div class="section-header" onclick="toggleSection(this)">
-            <div class="section-title">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <polyline points="12 6 12 12 16 14"/>
-                </svg>
-                Watch History
-            </div>
-            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-            </svg>
-        </div>
-        <div class="section-content">
-            <!-- Plex Watch History Import -->
-            <div class="import-card">
-                <div class="import-card-header">
-                    <h3>Plex Watch History</h3>
-                </div>
-                <div class="import-card-body" id="plexHistoryCard">
-                    <!-- Not Connected -->
-                    <div id="plexHistoryNotConnected">
-                        <p class="text-muted">Connect your Plex account in the Integrations section above to import your watch history.</p>
-                    </div>
-
-                    <!-- Connected - Ready to import -->
-                    <div id="plexHistoryConnected" style="display: none;">
-                        <p class="text-muted" style="margin-bottom: 1rem;">
-                            <strong>Note:</strong> This imports watch history from your Plex Media Server(s). Your server must be online and accessible.
-                        </p>
-                        <div class="form-group">
-                            <label class="form-label">Import from Plex Account</label>
-                            <select id="plexHistoryAccountSelect" class="form-select" style="max-width: 300px;" onchange="onPlexHistoryAccountChange()">
-                                <!-- Populated by JavaScript -->
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Filter by Plex User</label>
-                            <select id="plexHistoryUserSelect" class="form-select" style="max-width: 300px;">
-                                <option value="0">All Users</option>
-                                <!-- Populated by JavaScript when account is selected -->
-                            </select>
-                            <small class="text-muted">Select which Plex user's watch history to import</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Import to Profile</label>
-                            <select id="plexHistoryProfileSelect" class="form-select" style="max-width: 300px;">
-                                {{range .Users}}
-                                <option value="{{.ID}}">{{.Name}}</option>
-                                {{end}}
-                            </select>
-                        </div>
-
-                        <!-- Action buttons - swap between Load and Import -->
-                        <div id="plexHistoryFetchBtnWrapper">
-                            <button class="btn btn-primary" onclick="fetchPlexHistory()" id="plexHistoryFetchBtn">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="1 4 1 10 7 10"/>
-                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                </svg>
-                                Load History from Plex
-                            </button>
-                        </div>
-                        <div id="plexHistoryImportBtnWrapper" style="display: none;">
-                            <div class="import-action-bar">
-                                <button class="btn btn-primary" onclick="importPlexHistory()" id="plexHistoryImportBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                        <polyline points="17 8 12 3 7 8"/>
-                                        <line x1="12" y1="3" x2="12" y2="15"/>
-                                    </svg>
-                                    Import <span id="plexHistorySelectedCount">0</span> Selected
-                                </button>
-                                <button class="btn btn-secondary" onclick="resetPlexHistoryLoad()">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="1 4 1 10 7 10"/>
-                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                    </svg>
-                                    Reload
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Loading -->
-                    <div id="plexHistoryLoading" style="display: none;">
-                        <div class="loading-box">
-                            <div class="spinner"></div>
-                            <span id="plexHistoryLoadingText">Loading watch history from Plex servers...</span>
-                            <div id="plexHistoryProgress" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted);"></div>
-                        </div>
-                    </div>
-
-                    <!-- Preview Table -->
-                    <div id="plexHistoryPreview" style="display: none; margin-top: 1rem;">
-                        <div class="preview-header">
-                            <div>
-                                <span class="preview-count" id="plexHistoryCount">0 items</span>
-                                <span class="text-muted"> in your Plex history</span>
-                            </div>
-                            <div class="btn-group">
-                                <button class="btn btn-secondary btn-sm" onclick="plexHistorySelectAll(true)">Select All</button>
-                                <button class="btn btn-secondary btn-sm" onclick="plexHistorySelectAll(false)">Deselect All</button>
-                            </div>
-                        </div>
-
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 40px;"><input type="checkbox" id="plexHistorySelectAllCheckbox" onchange="plexHistorySelectAll(this.checked)" checked></th>
-                                        <th>Title</th>
-                                        <th style="width: 80px;">Year</th>
-                                        <th style="width: 100px;">Type</th>
-                                        <th style="width: 150px;">Watched</th>
-                                        <th style="width: 120px;">Server</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="plexHistoryTableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Import Progress -->
-                    <div id="plexHistoryImporting" style="display: none; margin-top: 1rem;">
-                        <div class="status-box">
-                            <div class="spinner"></div>
-                            <div>
-                                <div class="status-title">Importing items...</div>
-                                <div class="text-muted" id="plexHistoryImportProgress">0 of 0</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Import Complete -->
-                    <div id="plexHistoryComplete" style="display: none; margin-top: 1rem;">
-                        <div class="success-box">
-                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                <polyline points="22 4 12 14.01 9 11.01"/>
-                            </svg>
-                            <div>
-                                <div class="status-title" style="color: var(--success);">Import Complete</div>
-                                <div id="plexHistoryImportSummary" class="text-muted"></div>
-                            </div>
-                        </div>
-                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetPlexHistoryImport()">Import More</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Trakt Watch History Import -->
-            <div class="import-card">
-                <div class="import-card-header">
-                    <h3>Trakt Watch History</h3>
-                </div>
-                <div class="import-card-body" id="traktHistoryCard">
-                    <!-- Not Connected -->
-                    <div id="traktHistoryNotConnected">
-                        <p class="text-muted">Connect your Trakt account in the Integrations section above to import your watch history.</p>
-                    </div>
-
-                    <!-- Connected - Ready to import -->
-                    <div id="traktHistoryConnected" style="display: none;">
-                        <div class="form-group">
-                            <label class="form-label">Import from Trakt Account</label>
-                            <select id="traktHistoryAccountSelect" class="form-select" style="max-width: 300px;">
-                                <!-- Populated by JavaScript -->
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Import to Profile</label>
-                            <select id="traktHistoryProfileSelect" class="form-select" style="max-width: 300px;">
-                                {{range .Users}}
-                                <option value="{{.ID}}">{{.Name}}</option>
-                                {{end}}
-                            </select>
-                        </div>
-
-                        <!-- Action buttons - swap between Load and Import -->
-                        <div id="traktHistoryFetchBtnWrapper">
-                            <button class="btn btn-primary" onclick="fetchTraktHistory()" id="traktHistoryFetchBtn">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="1 4 1 10 7 10"/>
-                                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                </svg>
-                                Load History from Trakt
-                            </button>
-                        </div>
-                        <div id="traktHistoryImportBtnWrapper" style="display: none;">
-                            <div class="import-action-bar">
-                                <button class="btn btn-primary" onclick="importTraktHistory()" id="traktHistoryImportBtn">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                        <polyline points="17 8 12 3 7 8"/>
-                                        <line x1="12" y1="3" x2="12" y2="15"/>
-                                    </svg>
-                                    Import <span id="traktHistorySelectedCount">0</span> Selected
-                                </button>
-                                <button class="btn btn-secondary" onclick="resetTraktHistoryLoad()">
-                                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="1 4 1 10 7 10"/>
-                                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                                    </svg>
-                                    Reload
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Loading -->
-                    <div id="traktHistoryLoading" style="display: none;">
-                        <div class="loading-box">
-                            <div class="spinner"></div>
-                            <span>Loading watch history...</span>
-                        </div>
-                    </div>
-
-                    <!-- Preview Table -->
-                    <div id="traktHistoryPreview" style="display: none; margin-top: 1rem;">
-                        <div class="preview-header">
-                            <div>
-                                <span class="preview-count" id="traktHistoryCount">0 items</span>
-                                <span class="text-muted"> in your Trakt history</span>
-                            </div>
-                            <div class="btn-group">
-                                <button class="btn btn-secondary btn-sm" onclick="traktHistorySelectAll(true)">Select All</button>
-                                <button class="btn btn-secondary btn-sm" onclick="traktHistorySelectAll(false)">Deselect All</button>
-                            </div>
-                        </div>
-
-                        <div class="table-container">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 40px;"><input type="checkbox" id="traktHistorySelectAllCheckbox" onchange="traktHistorySelectAll(this.checked)" checked></th>
-                                        <th>Title</th>
-                                        <th style="width: 80px;">Year</th>
-                                        <th style="width: 100px;">Type</th>
-                                        <th style="width: 150px;">Watched</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="traktHistoryTableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Import Progress -->
-                    <div id="traktHistoryImporting" style="display: none; margin-top: 1rem;">
-                        <div class="status-box">
-                            <div class="spinner"></div>
-                            <div>
-                                <div class="status-title">Importing items...</div>
-                                <div class="text-muted" id="traktHistoryImportProgress">0 of 0</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Import Complete -->
-                    <div id="traktHistoryComplete" style="display: none; margin-top: 1rem;">
-                        <div class="success-box">
-                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--success)" stroke-width="2">
-                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                <polyline points="22 4 12 14.01 9 11.01"/>
-                            </svg>
-                            <div>
-                                <div class="status-title" style="color: var(--success);">Import Complete</div>
-                                <div id="traktHistoryImportSummary" class="text-muted"></div>
-                            </div>
-                        </div>
-                        <button class="btn btn-secondary" style="margin-top: 1rem;" onclick="resetTraktHistoryImport()">Import More</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
 
 <!-- MAINTENANCE CATEGORY -->
 <div class="settings-group">
@@ -1830,6 +1452,9 @@
     let traktPollInterval = null;
     let userProfiles = [];
 
+    // ========== Jellyfin State ==========
+    let jellyfinAccounts = [];
+
     // ========== Client Management State ==========
     let allClients = [];
     let filteredClients = [];
@@ -1843,7 +1468,7 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadJellyfinAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     // ========== Plex Account Functions ==========
@@ -3543,6 +3168,140 @@
         }
     }
 
+    // ========== Jellyfin Account Functions ==========
+    async function loadJellyfinAccounts() {
+        try {
+            const response = await fetch('/admin/api/jellyfin/accounts');
+            const data = await response.json();
+            jellyfinAccounts = data.accounts || [];
+            renderJellyfinAccountsList();
+            updateJellyfinStatusBadge();
+        } catch (err) {
+            console.error('Failed to load Jellyfin accounts:', err);
+        }
+    }
+
+    function updateJellyfinStatusBadge() {
+        const badge = document.getElementById('jellyfinAccountCountBadge');
+        if (!badge) return;
+        const connectedCount = jellyfinAccounts.filter(a => a.connected).length;
+        if (connectedCount > 0) {
+            badge.textContent = `${connectedCount} connected`;
+            badge.className = 'status-badge success';
+        } else {
+            badge.textContent = '';
+            badge.className = 'status-badge';
+        }
+    }
+
+    function renderJellyfinAccountsList() {
+        const container = document.getElementById('jellyfinAccountsList');
+        if (!container) return;
+
+        if (jellyfinAccounts.length === 0) {
+            container.innerHTML = '<p class="text-muted">No Jellyfin accounts configured.</p>';
+            return;
+        }
+
+        container.innerHTML = jellyfinAccounts.map(account => `
+            <div class="account-card" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem;">
+                <div>
+                    <strong>${escapeHtml(account.name)}</strong>
+                    <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.875rem;">${escapeHtml(account.serverUrl)}</span>
+                    ${account.connected ? '<span class="status-badge success" style="margin-left: 0.5rem;">Connected</span>' : '<span class="status-badge" style="margin-left: 0.5rem;">Disconnected</span>'}
+                    ${account.username ? `<span class="text-muted" style="margin-left: 0.5rem; font-size: 0.875rem;">(${escapeHtml(account.username)})</span>` : ''}
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary btn-sm" onclick="testJellyfinConnection('${account.id}')">Test</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteJellyfinAccount('${account.id}')">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function showAddJellyfinForm() {
+        document.getElementById('addJellyfinAccountForm').style.display = 'block';
+        document.getElementById('addJellyfinBtn').style.display = 'none';
+    }
+
+    function hideAddJellyfinForm() {
+        document.getElementById('addJellyfinAccountForm').style.display = 'none';
+        document.getElementById('addJellyfinBtn').style.display = 'inline-flex';
+        document.getElementById('jellyfinServerUrl').value = '';
+        document.getElementById('jellyfinUsername').value = '';
+        document.getElementById('jellyfinPassword').value = '';
+        document.getElementById('jellyfinAccountName').value = '';
+    }
+
+    async function connectJellyfin() {
+        const serverUrl = document.getElementById('jellyfinServerUrl').value.trim();
+        const username = document.getElementById('jellyfinUsername').value.trim();
+        const password = document.getElementById('jellyfinPassword').value;
+        const name = document.getElementById('jellyfinAccountName').value.trim();
+
+        if (!serverUrl || !username) {
+            showToast('Server URL and username are required', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/admin/api/jellyfin/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, serverUrl, username, password })
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to connect');
+            }
+
+            showToast('Jellyfin account connected', 'success');
+            hideAddJellyfinForm();
+            await loadJellyfinAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function deleteJellyfinAccount(accountId) {
+        if (!confirm('Delete this Jellyfin account?')) return;
+
+        try {
+            const response = await fetch(`/admin/api/jellyfin/accounts/${accountId}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to delete');
+            }
+            showToast('Jellyfin account deleted', 'success');
+            await loadJellyfinAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function testJellyfinConnection(accountId) {
+        try {
+            const response = await fetch(`/admin/api/jellyfin/accounts/${accountId}/test`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Connection test failed');
+            }
+            showToast('Connection successful', 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    function populateJellyfinSelect(selectId) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const connected = jellyfinAccounts.filter(a => a.connected);
+        select.innerHTML = connected.map(account =>
+            `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Jellyfin Account')}</option>`
+        ).join('');
+    }
+
     // ========== Scheduled Tasks Functions ==========
     async function loadScheduledTasks() {
         const listContainer = document.getElementById('scheduledTasksList');
@@ -3628,6 +3387,18 @@
                     accountSource = 'Trakt';
                     const dirLabels = { trakt_to_local: 'Import', local_to_trakt: 'Export', bidirectional: 'Bidirectional' };
                     listTypeLabel = dirLabels[task.config.syncDirection] || 'Import';
+                } else if (task.type === 'plex_history_sync') {
+                    const plexAccount = plexAccounts.find(a => a.id === task.config.plexAccountId);
+                    if (plexAccount) accountName = plexAccount.name || plexAccount.username || 'Plex Account';
+                    accountSource = 'Plex';
+                } else if (task.type === 'jellyfin_favorites_sync') {
+                    const jfAccount = jellyfinAccounts.find(a => a.id === task.config.jellyfinAccountId);
+                    if (jfAccount) accountName = jfAccount.name || jfAccount.username || 'Jellyfin Account';
+                    accountSource = 'Jellyfin';
+                } else if (task.type === 'jellyfin_history_sync') {
+                    const jfAccount = jellyfinAccounts.find(a => a.id === task.config.jellyfinAccountId);
+                    if (jfAccount) accountName = jfAccount.name || jfAccount.username || 'Jellyfin Account';
+                    accountSource = 'Jellyfin';
                 }
                 const profile = userProfiles.find(p => p.id === task.config.profileId);
                 if (profile) profileName = profile.name || 'Profile';
@@ -3642,6 +3413,8 @@
                                 <span class="type-badge" style="background: rgba(99, 102, 241, 0.2); color: var(--accent); font-size: 0.7rem;">${taskTypeLabel}</span>
                                 ${listTypeLabel ? `<span class="type-badge" style="background: rgba(99, 102, 241, 0.1); color: var(--accent); font-size: 0.65rem;">${listTypeLabel}</span>` : ''}
                                 ${task.config && task.config.dryRun === 'true' ? `<span class="type-badge" style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; font-size: 0.65rem;">DRY RUN</span>` : ''}
+                                ${task.frequency === 'once' ? `<span class="type-badge" style="background: rgba(99, 102, 241, 0.15); color: var(--text-muted); font-size: 0.65rem;">ONE-TIME</span>` : ''}
+                                ${task.frequency === 'once' && !task.enabled && task.lastRunAt ? `<span class="type-badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success); font-size: 0.65rem;">COMPLETED</span>` : ''}
                             </div>
                         </div>
                         <label class="toggle-switch" style="margin-left: auto;">
@@ -3745,6 +3518,7 @@
             case '6hours': return 'Every 6 hours';
             case '12hours': return 'Every 12 hours';
             case 'daily': return 'Daily';
+            case 'once': return 'One-time';
             default: return frequency;
         }
     }
@@ -3752,8 +3526,11 @@
     function getTaskTypeLabel(type) {
         switch (type) {
             case 'plex_watchlist_sync': return 'Plex Watchlist';
+            case 'plex_history_sync': return 'Plex History';
             case 'trakt_list_sync': return 'Trakt List';
             case 'trakt_history_sync': return 'Trakt History';
+            case 'jellyfin_favorites_sync': return 'Jellyfin Favorites';
+            case 'jellyfin_history_sync': return 'Jellyfin History';
             case 'backup': return 'System Backup';
             case 'prewarm': return 'Pre-warm';
             default: return type;
@@ -3791,6 +3568,7 @@
 
     function getNextRunLabel(task) {
         if (task.lastStatus === 'running') return 'Running now';
+        if (task.frequency === 'once') return task.lastRunAt ? 'Completed' : 'Immediately';
         if (!task.enabled) return 'Disabled';
 
         const intervalMs = getFrequencyMs(task.frequency);
@@ -3854,6 +3632,8 @@
         document.getElementById('newTaskDryRun').checked = false;
         document.getElementById('newTaskListType').value = 'watchlist';
         document.getElementById('customListGroup').style.display = 'none';
+        const onceNote = document.getElementById('onceFrequencyNote');
+        if (onceNote) onceNote.style.display = 'none';
 
         // Reset visibility
         onTaskTypeChange();
@@ -3872,6 +3652,9 @@
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
         const traktConfig = document.getElementById('traktListSyncConfig');
         const traktHistoryConfig = document.getElementById('traktHistorySyncConfig');
+        const plexHistoryConfig = document.getElementById('plexHistorySyncConfig');
+        const jellyfinFavConfig = document.getElementById('jellyfinFavoritesSyncConfig');
+        const jellyfinHistConfig = document.getElementById('jellyfinHistorySyncConfig');
         const backupConfig = document.getElementById('backupConfig');
         const prewarmConfig = document.getElementById('prewarmConfig');
         const syncOptions = document.getElementById('syncOptionsConfig');
@@ -3881,6 +3664,9 @@
         plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
         traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
         traktHistoryConfig.style.display = taskType === 'trakt_history_sync' ? 'block' : 'none';
+        plexHistoryConfig.style.display = taskType === 'plex_history_sync' ? 'block' : 'none';
+        jellyfinFavConfig.style.display = taskType === 'jellyfin_favorites_sync' ? 'block' : 'none';
+        jellyfinHistConfig.style.display = taskType === 'jellyfin_history_sync' ? 'block' : 'none';
         backupConfig.style.display = taskType === 'backup' ? 'block' : 'none';
         prewarmConfig.style.display = taskType === 'prewarm' ? 'block' : 'none';
 
@@ -3891,6 +3677,23 @@
             historyTraktSelect.innerHTML = connectedTraktAccounts.map(account =>
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
             ).join('');
+        }
+
+        // Populate Plex accounts for history sync
+        if (taskType === 'plex_history_sync') {
+            const plexHistSelect = document.getElementById('newTaskPlexHistoryAccount');
+            const connectedPlexAccounts = plexAccounts.filter(a => a.connected);
+            plexHistSelect.innerHTML = connectedPlexAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Plex Account')}</option>`
+            ).join('');
+        }
+
+        // Populate Jellyfin accounts
+        if (taskType === 'jellyfin_favorites_sync') {
+            populateJellyfinSelect('newTaskJellyfinFavAccount');
+        }
+        if (taskType === 'jellyfin_history_sync') {
+            populateJellyfinSelect('newTaskJellyfinHistAccount');
         }
 
         // Update sync direction labels based on task type
@@ -3906,6 +3709,10 @@
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
+        } else if (taskType === 'jellyfin_favorites_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target" selected>Jellyfin → mediastorm (Import from Jellyfin)</option>
+            `;
         }
 
         // Show/hide frequency selector (prewarm uses automatic frequency)
@@ -3913,12 +3720,20 @@
         document.getElementById('newFrequencyGroup').style.display = isPrewarm ? 'none' : 'block';
         document.getElementById('newAutoFrequencyLabel').style.display = isPrewarm ? 'block' : 'none';
 
-        // Show sync options and dry run for any sync-type task (not for backup or prewarm)
-        // But hide generic sync options for trakt_history_sync (it has its own direction control)
+        // Show sync options and dry run for appropriate task types
+        // Hide generic sync options for history sync types (they have their own controls or no direction needed)
         const isSyncTask = taskType.includes('sync');
-        const isHistorySync = taskType === 'trakt_history_sync';
-        syncOptions.style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
+        const hasOwnDirection = taskType === 'trakt_history_sync' || taskType === 'plex_history_sync' || taskType === 'jellyfin_history_sync';
+        syncOptions.style.display = (isSyncTask && !hasOwnDirection) ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
+    }
+
+    function onFrequencyChange() {
+        const freq = document.getElementById('newTaskFrequency').value;
+        const note = document.getElementById('onceFrequencyNote');
+        if (note) {
+            note.style.display = freq === 'once' ? 'block' : 'none';
+        }
     }
 
     async function onListTypeChange() {
@@ -4044,13 +3859,38 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'plex_history_sync') {
+            config.plexAccountId = document.getElementById('newTaskPlexHistoryAccount').value;
+            config.profileId = document.getElementById('newTaskPlexHistoryProfile').value;
+
+            if (!config.plexAccountId || !config.profileId) {
+                showToast('Please select a Plex account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'jellyfin_favorites_sync') {
+            config.jellyfinAccountId = document.getElementById('newTaskJellyfinFavAccount').value;
+            config.profileId = document.getElementById('newTaskJellyfinFavProfile').value;
+
+            if (!config.jellyfinAccountId || !config.profileId) {
+                showToast('Please select a Jellyfin account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'jellyfin_history_sync') {
+            config.jellyfinAccountId = document.getElementById('newTaskJellyfinHistAccount').value;
+            config.profileId = document.getElementById('newTaskJellyfinHistProfile').value;
+
+            if (!config.jellyfinAccountId || !config.profileId) {
+                showToast('Please select a Jellyfin account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'backup') {
             config.retentionDays = String(parseInt(document.getElementById('newBackupRetentionDays').value) || 30);
             config.retentionCount = String(parseInt(document.getElementById('newBackupRetentionCount').value) || 10);
         }
 
-        // Add sync options for sync-type tasks (but not trakt_history_sync which has its own direction)
-        if (taskType.includes('sync') && taskType !== 'trakt_history_sync') {
+        // Add sync options for sync-type tasks (but not history sync types which have their own controls)
+        const historyTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        if (taskType.includes('sync') && !historyTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('newTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('newTaskDeleteBehavior').value;
             if (config.syncDirection === 'bidirectional') {
@@ -4060,8 +3900,8 @@
             if (document.getElementById('newTaskDryRun').checked) {
                 config.dryRun = 'true';
             }
-        } else if (taskType === 'trakt_history_sync') {
-            // Add dry run option for history sync
+        } else if (historyTypes.includes(taskType)) {
+            // Add dry run option for history sync types
             if (document.getElementById('newTaskDryRun').checked) {
                 config.dryRun = 'true';
             }
@@ -4205,6 +4045,9 @@
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editTraktListSyncConfig').style.display = 'none';
         document.getElementById('editTraktHistorySyncConfig').style.display = 'none';
+        document.getElementById('editPlexHistorySyncConfig').style.display = 'none';
+        document.getElementById('editJellyfinFavoritesSyncConfig').style.display = 'none';
+        document.getElementById('editJellyfinHistorySyncConfig').style.display = 'none';
         document.getElementById('editBackupConfig').style.display = 'none';
 
         // Set config values for Plex watchlist sync
@@ -4249,6 +4092,33 @@
             historyTraktSelect.value = task.config.traktAccountId || '';
         }
 
+        // Set config values for Plex history sync
+        if (task.type === 'plex_history_sync' && task.config) {
+            document.getElementById('editPlexHistorySyncConfig').style.display = 'block';
+            const plexHistSelect = document.getElementById('editTaskPlexHistoryAccount');
+            plexHistSelect.innerHTML = connectedPlexAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Plex Account')}</option>`
+            ).join('');
+            plexHistSelect.value = task.config.plexAccountId || '';
+            document.getElementById('editTaskPlexHistoryProfile').value = task.config.profileId || '';
+        }
+
+        // Set config values for Jellyfin favorites sync
+        if (task.type === 'jellyfin_favorites_sync' && task.config) {
+            document.getElementById('editJellyfinFavoritesSyncConfig').style.display = 'block';
+            populateJellyfinSelect('editTaskJellyfinFavAccount');
+            document.getElementById('editTaskJellyfinFavAccount').value = task.config.jellyfinAccountId || '';
+            document.getElementById('editTaskJellyfinFavProfile').value = task.config.profileId || '';
+        }
+
+        // Set config values for Jellyfin history sync
+        if (task.type === 'jellyfin_history_sync' && task.config) {
+            document.getElementById('editJellyfinHistorySyncConfig').style.display = 'block';
+            populateJellyfinSelect('editTaskJellyfinHistAccount');
+            document.getElementById('editTaskJellyfinHistAccount').value = task.config.jellyfinAccountId || '';
+            document.getElementById('editTaskJellyfinHistProfile').value = task.config.profileId || '';
+        }
+
         // Set config values for backup task
         if (task.type === 'backup') {
             document.getElementById('editBackupConfig').style.display = 'block';
@@ -4272,11 +4142,16 @@
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
+        } else if (task.type === 'jellyfin_favorites_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target">Jellyfin → mediastorm (Import from Jellyfin)</option>
+            `;
         }
 
-        // Set sync options for sync-type tasks (but not trakt_history_sync which has its own controls)
+        // Set sync options for sync-type tasks (but not history sync types which have their own controls)
         const isSyncTask = task.type.includes('sync');
-        const isHistorySync = task.type === 'trakt_history_sync';
+        const editHistoryTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const isHistorySync = editHistoryTypes.includes(task.type);
         document.getElementById('editSyncOptionsConfig').style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
 
         if (isSyncTask && !isHistorySync && task.config) {
@@ -4401,13 +4276,38 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'plex_history_sync') {
+            config.plexAccountId = document.getElementById('editTaskPlexHistoryAccount').value;
+            config.profileId = document.getElementById('editTaskPlexHistoryProfile').value;
+
+            if (!config.plexAccountId || !config.profileId) {
+                showToast('Please select a Plex account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'jellyfin_favorites_sync') {
+            config.jellyfinAccountId = document.getElementById('editTaskJellyfinFavAccount').value;
+            config.profileId = document.getElementById('editTaskJellyfinFavProfile').value;
+
+            if (!config.jellyfinAccountId || !config.profileId) {
+                showToast('Please select a Jellyfin account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'jellyfin_history_sync') {
+            config.jellyfinAccountId = document.getElementById('editTaskJellyfinHistAccount').value;
+            config.profileId = document.getElementById('editTaskJellyfinHistProfile').value;
+
+            if (!config.jellyfinAccountId || !config.profileId) {
+                showToast('Please select a Jellyfin account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'backup') {
             config.retentionDays = String(parseInt(document.getElementById('editBackupRetentionDays').value) || 30);
             config.retentionCount = String(parseInt(document.getElementById('editBackupRetentionCount').value) || 10);
         }
 
-        // Add sync options for sync-type tasks (but not trakt_history_sync which has its own controls)
-        if (taskType.includes('sync') && taskType !== 'trakt_history_sync') {
+        // Add sync options for sync-type tasks (but not history sync types which have their own controls)
+        const editHistTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        if (taskType.includes('sync') && !editHistTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('editTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('editTaskDeleteBehavior').value;
             if (config.syncDirection === 'bidirectional') {
@@ -4417,8 +4317,8 @@
             if (document.getElementById('editTaskDryRun').checked) {
                 config.dryRun = 'true';
             }
-        } else if (taskType === 'trakt_history_sync') {
-            // Add dry run option for history sync
+        } else if (editHistTypes.includes(taskType)) {
+            // Add dry run option for history sync types
             if (document.getElementById('editTaskDryRun').checked) {
                 config.dryRun = 'true';
             }

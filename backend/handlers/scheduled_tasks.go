@@ -122,6 +122,42 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate config for Plex history sync
+	if req.Type == config.ScheduledTaskTypePlexHistorySync {
+		if req.Config == nil || req.Config["plexAccountId"] == "" || req.Config["profileId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Plex history sync requires plexAccountId and profileId in config",
+			})
+			return
+		}
+	}
+
+	// Validate config for Jellyfin favorites sync
+	if req.Type == config.ScheduledTaskTypeJellyfinFavoritesSync {
+		if req.Config == nil || req.Config["jellyfinAccountId"] == "" || req.Config["profileId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Jellyfin favorites sync requires jellyfinAccountId and profileId in config",
+			})
+			return
+		}
+	}
+
+	// Validate config for Jellyfin history sync
+	if req.Type == config.ScheduledTaskTypeJellyfinHistorySync {
+		if req.Config == nil || req.Config["jellyfinAccountId"] == "" || req.Config["profileId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Jellyfin history sync requires jellyfinAccountId and profileId in config",
+			})
+			return
+		}
+	}
+
 	// Validate config for Trakt history sync
 	if req.Type == config.ScheduledTaskTypeTraktHistorySync {
 		if req.Config == nil || req.Config["traktAccountId"] == "" || req.Config["profileId"] == "" {
@@ -175,6 +211,13 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 			"error": "Failed to save settings: " + err.Error(),
 		})
 		return
+	}
+
+	// Auto-trigger "once" tasks immediately
+	if task.Frequency == config.ScheduledTaskFrequencyOnce && task.Enabled {
+		go func() {
+			_ = h.schedulerService.RunTaskNow(task.ID)
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")

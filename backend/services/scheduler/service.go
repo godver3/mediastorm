@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"novastream/services/backup"
 	"novastream/services/epg"
 	"novastream/services/history"
+	"novastream/services/jellyfin"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
 	"novastream/services/trakt"
@@ -27,6 +29,7 @@ type Service struct {
 	configManager    *config.Manager
 	plexClient       *plex.Client
 	traktClient      *trakt.Client
+	jellyfinClient   *jellyfin.Client
 	watchlistService *watchlist.Service
 	epgService       *epg.Service
 	backupService    *backup.Service
@@ -188,6 +191,11 @@ func (s *Service) shouldRun(task config.ScheduledTask) bool {
 	}
 	s.taskMu.RUnlock()
 
+	// "once" tasks that have already run should not run again
+	if task.Frequency == config.ScheduledTaskFrequencyOnce && task.LastRunAt != nil {
+		return false
+	}
+
 	// Never run before
 	if task.LastRunAt == nil {
 		return true
@@ -220,6 +228,8 @@ func (s *Service) getInterval(taskType config.ScheduledTaskType, freq config.Sch
 		return 12 * time.Hour
 	case config.ScheduledTaskFrequencyDaily:
 		return 24 * time.Hour
+	case config.ScheduledTaskFrequencyOnce:
+		return time.Duration(math.MaxInt64)
 	default:
 		return 24 * time.Hour
 	}
@@ -258,6 +268,12 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeTraktHistorySync(task)
 	case config.ScheduledTaskTypePrewarm:
 		result, err = s.executePrewarm(task)
+	case config.ScheduledTaskTypePlexHistorySync:
+		result, err = s.executePlexHistorySync(task)
+	case config.ScheduledTaskTypeJellyfinFavoritesSync:
+		result, err = s.executeJellyfinFavoritesSync(task)
+	case config.ScheduledTaskTypeJellyfinHistorySync:
+		result, err = s.executeJellyfinHistorySync(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -304,6 +320,12 @@ func (s *Service) updateTaskStatus(taskID string, err error, result SyncResult) 
 				} else {
 					log.Printf("[scheduler] Task %s completed successfully, imported %d items", taskID, result.Count)
 				}
+			}
+
+			// Auto-disable "once" tasks after completion
+			if settings.ScheduledTasks.Tasks[i].Frequency == config.ScheduledTaskFrequencyOnce {
+				settings.ScheduledTasks.Tasks[i].Enabled = false
+				log.Printf("[scheduler] Auto-disabled one-time task %s", taskID)
 			}
 			break
 		}
@@ -398,6 +420,13 @@ func (s *Service) SetPrewarmService(prewarmService *prewarm.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prewarmService = prewarmService
+}
+
+// SetJellyfinClient sets the Jellyfin client for scheduled Jellyfin sync tasks.
+func (s *Service) SetJellyfinClient(jellyfinClient *jellyfin.Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jellyfinClient = jellyfinClient
 }
 
 // executePlexWatchlistSync syncs a Plex watchlist to/from a profile
@@ -2500,4 +2529,411 @@ func (s *Service) executePrewarm(task config.ScheduledTask) (SyncResult, error) 
 		Count:   prewarmResult.Warmed,
 		Message: fmt.Sprintf("Warmed %d, skipped %d, failed %d, removed %d", prewarmResult.Warmed, prewarmResult.Skipped, prewarmResult.Failed, prewarmResult.Removed),
 	}, nil
+}
+
+// executePlexHistorySync imports watch history from Plex into a local profile.
+func (s *Service) executePlexHistorySync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	historySvc := s.historyService
+	s.mu.RUnlock()
+
+	if historySvc == nil {
+		return SyncResult{}, errors.New("history service not configured")
+	}
+
+	plexAccountID := task.Config["plexAccountId"]
+	profileID := task.Config["profileId"]
+
+	if plexAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing plexAccountId or profileId in task config")
+	}
+
+	dryRun := task.Config["dryRun"] == "true"
+	if dryRun {
+		log.Printf("[scheduler] DRY RUN mode enabled for Plex history sync")
+	}
+
+	// Parse optional plexUserId for filtering to a specific Plex Home user
+	plexUserID := 0
+	if uid := task.Config["plexUserId"]; uid != "" {
+		if parsed, parseErr := strconv.Atoi(uid); parseErr == nil {
+			plexUserID = parsed
+		}
+	}
+
+	// Load settings to get Plex account
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	plexAccount := settings.Plex.GetAccountByID(plexAccountID)
+	if plexAccount == nil {
+		return SyncResult{}, errors.New("plex account not found")
+	}
+	if plexAccount.AuthToken == "" {
+		return SyncResult{}, errors.New("plex account not authenticated")
+	}
+
+	// Fetch all watch history from Plex
+	historyItems, err := s.plexClient.GetAllWatchHistory(plexAccount.AuthToken, 5000, plexUserID)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("fetch plex history: %w", err)
+	}
+
+	log.Printf("[scheduler] Fetched %d Plex history items", len(historyItems))
+
+	result := SyncResult{DryRun: dryRun}
+	watched := true
+	var updates []models.WatchHistoryUpdate
+
+	for _, item := range historyItems {
+		mediaType := plex.NormalizeMediaType(item.Type)
+		itemID := item.RatingKey
+
+		// Prefer TMDB then IMDB
+		if tmdbID, ok := item.ExternalIDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.ExternalIDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		if dryRun {
+			name := item.Title
+			if item.Type == "episode" && item.GrandparentTitle != "" {
+				name = fmt.Sprintf("%s S%02dE%02d", item.GrandparentTitle, item.ParentIndex, item.Index)
+			}
+			result.ToAdd = append(result.ToAdd, config.DryRunItem{
+				Name:      name,
+				MediaType: mediaType,
+				ID:        itemID,
+			})
+			continue
+		}
+
+		watchedAt := time.Unix(item.ViewedAt, 0).UTC()
+		update := models.WatchHistoryUpdate{
+			MediaType:   mediaType,
+			ItemID:      itemID,
+			Name:        item.Title,
+			Year:        item.Year,
+			Watched:     &watched,
+			WatchedAt:   watchedAt,
+			ExternalIDs: item.ExternalIDs,
+		}
+
+		if item.Type == "episode" {
+			update.SeasonNumber = item.ParentIndex
+			update.EpisodeNumber = item.Index
+			update.SeriesName = item.GrandparentTitle
+		}
+
+		updates = append(updates, update)
+	}
+
+	if dryRun {
+		result.Count = len(result.ToAdd)
+		return result, nil
+	}
+
+	if len(updates) > 0 {
+		imported, err := historySvc.ImportWatchHistory(profileID, updates)
+		if err != nil {
+			return result, fmt.Errorf("import watch history: %w", err)
+		}
+		result.Count = imported
+		log.Printf("[scheduler] Imported %d/%d Plex history items", imported, len(updates))
+	}
+
+	return result, nil
+}
+
+// executeJellyfinFavoritesSync syncs Jellyfin favorites to a local watchlist.
+func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	jfClient := s.jellyfinClient
+	s.mu.RUnlock()
+
+	if jfClient == nil {
+		return SyncResult{}, errors.New("jellyfin client not configured")
+	}
+
+	jellyfinAccountID := task.Config["jellyfinAccountId"]
+	profileID := task.Config["profileId"]
+
+	if jellyfinAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing jellyfinAccountId or profileId in task config")
+	}
+
+	syncDirection := task.Config["syncDirection"]
+	if syncDirection == "" {
+		syncDirection = "source_to_target"
+	}
+	deleteBehavior := task.Config["deleteBehavior"]
+	if deleteBehavior == "" {
+		deleteBehavior = "additive"
+	}
+	dryRun := task.Config["dryRun"] == "true"
+
+	if dryRun {
+		log.Printf("[scheduler] DRY RUN mode enabled for Jellyfin favorites sync")
+	}
+
+	// Load settings to get Jellyfin account
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	jfAccount := settings.Jellyfin.GetAccountByID(jellyfinAccountID)
+	if jfAccount == nil {
+		return SyncResult{}, errors.New("jellyfin account not found")
+	}
+	if jfAccount.Token == "" {
+		return SyncResult{}, errors.New("jellyfin account not authenticated")
+	}
+
+	// Only source_to_target is supported for Jellyfin favorites
+	if syncDirection != "source_to_target" {
+		return SyncResult{}, fmt.Errorf("unsupported sync direction for Jellyfin favorites: %s (only source_to_target supported)", syncDirection)
+	}
+
+	// Fetch favorites from Jellyfin
+	items, err := jfClient.GetFavorites(jfAccount.ServerURL, jfAccount.Token, jfAccount.UserID)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("fetch jellyfin favorites: %w", err)
+	}
+
+	log.Printf("[scheduler] Fetched %d Jellyfin favorites", len(items))
+
+	now := time.Now().UTC()
+	result := SyncResult{DryRun: dryRun}
+	syncSource := fmt.Sprintf("jellyfin:%s:%s", jellyfinAccountID, task.ID)
+
+	// Build set of Jellyfin item keys for deletion checking
+	jfItemKeys := make(map[string]bool)
+
+	// Get existing local items to check what's new
+	existingItems, _ := s.watchlistService.List(profileID)
+	existingKeys := make(map[string]bool)
+	for _, item := range existingItems {
+		existingKeys[item.Key()] = true
+	}
+
+	imported := 0
+	for _, item := range items {
+		mediaType := jellyfin.NormalizeMediaType(item.Type)
+
+		// Prefer TMDB then IMDB then Jellyfin ID
+		itemID := item.ID
+		if tmdbID, ok := item.ProviderIDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.ProviderIDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		itemKey := mediaType + ":" + itemID
+		jfItemKeys[itemKey] = true
+
+		isNew := !existingKeys[itemKey]
+
+		if dryRun {
+			if isNew {
+				log.Printf("[scheduler] DRY RUN: Would import from Jellyfin: %s (%s)", item.Name, mediaType)
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{
+					Name:      item.Name,
+					MediaType: mediaType,
+					ID:        itemID,
+				})
+			}
+			imported++
+			continue
+		}
+
+		extIDs := item.ProviderIDs
+		if extIDs == nil {
+			extIDs = map[string]string{}
+		}
+		extIDs["jellyfin"] = item.ID
+
+		input := models.WatchlistUpsert{
+			ID:          itemID,
+			MediaType:   mediaType,
+			Name:        item.Name,
+			Year:        item.Year,
+			ExternalIDs: extIDs,
+			SyncSource:  syncSource,
+			SyncedAt:    &now,
+		}
+
+		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
+			log.Printf("[scheduler] Failed to import Jellyfin favorite %s: %v", item.Name, err)
+			continue
+		}
+
+		imported++
+	}
+
+	// Handle deletions
+	if deleteBehavior != "additive" {
+		removed := 0
+		localItems, err := s.watchlistService.List(profileID)
+		if err != nil {
+			log.Printf("[scheduler] Failed to list local items for deletion check: %v", err)
+		} else {
+			for _, localItem := range localItems {
+				if jfItemKeys[localItem.Key()] {
+					continue
+				}
+				if deleteBehavior == "delete" && localItem.SyncSource != syncSource {
+					continue
+				}
+
+				if dryRun {
+					result.ToRemove = append(result.ToRemove, config.DryRunItem{
+						Name:      localItem.Name,
+						MediaType: localItem.MediaType,
+						ID:        localItem.ID,
+					})
+					removed++
+					continue
+				}
+
+				if ok, err := s.watchlistService.Remove(profileID, localItem.MediaType, localItem.ID); err != nil {
+					log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
+				} else if ok {
+					removed++
+				}
+			}
+		}
+		if removed > 0 {
+			log.Printf("[scheduler] Removed %d items no longer in Jellyfin favorites", removed)
+		}
+	}
+
+	result.Count = imported
+	return result, nil
+}
+
+// executeJellyfinHistorySync imports watch history from Jellyfin into a local profile.
+func (s *Service) executeJellyfinHistorySync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	historySvc := s.historyService
+	jfClient := s.jellyfinClient
+	s.mu.RUnlock()
+
+	if historySvc == nil {
+		return SyncResult{}, errors.New("history service not configured")
+	}
+	if jfClient == nil {
+		return SyncResult{}, errors.New("jellyfin client not configured")
+	}
+
+	jellyfinAccountID := task.Config["jellyfinAccountId"]
+	profileID := task.Config["profileId"]
+
+	if jellyfinAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing jellyfinAccountId or profileId in task config")
+	}
+
+	dryRun := task.Config["dryRun"] == "true"
+	if dryRun {
+		log.Printf("[scheduler] DRY RUN mode enabled for Jellyfin history sync")
+	}
+
+	// Load settings to get Jellyfin account
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+
+	jfAccount := settings.Jellyfin.GetAccountByID(jellyfinAccountID)
+	if jfAccount == nil {
+		return SyncResult{}, errors.New("jellyfin account not found")
+	}
+	if jfAccount.Token == "" {
+		return SyncResult{}, errors.New("jellyfin account not authenticated")
+	}
+
+	// Fetch watch history from Jellyfin
+	items, err := jfClient.GetWatchHistory(jfAccount.ServerURL, jfAccount.Token, jfAccount.UserID)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("fetch jellyfin history: %w", err)
+	}
+
+	log.Printf("[scheduler] Fetched %d Jellyfin history items", len(items))
+
+	result := SyncResult{DryRun: dryRun}
+	watched := true
+	var updates []models.WatchHistoryUpdate
+
+	for _, item := range items {
+		mediaType := jellyfin.NormalizeMediaType(item.Type)
+
+		// Prefer TMDB then IMDB then Jellyfin ID
+		itemID := item.ID
+		if tmdbID, ok := item.ProviderIDs["tmdb"]; ok && tmdbID != "" {
+			itemID = tmdbID
+		} else if imdbID, ok := item.ProviderIDs["imdb"]; ok && imdbID != "" {
+			itemID = imdbID
+		}
+
+		if dryRun {
+			name := item.Name
+			if item.Type == "Episode" && item.SeriesName != "" {
+				name = fmt.Sprintf("%s S%02dE%02d", item.SeriesName, item.SeasonNum, item.EpisodeNum)
+			}
+			result.ToAdd = append(result.ToAdd, config.DryRunItem{
+				Name:      name,
+				MediaType: mediaType,
+				ID:        itemID,
+			})
+			continue
+		}
+
+		watchedAt := time.Now().UTC()
+		if item.DatePlayed != nil {
+			watchedAt = *item.DatePlayed
+		}
+
+		extIDs := item.ProviderIDs
+		if extIDs == nil {
+			extIDs = map[string]string{}
+		}
+		extIDs["jellyfin"] = item.ID
+
+		update := models.WatchHistoryUpdate{
+			MediaType:   mediaType,
+			ItemID:      itemID,
+			Name:        item.Name,
+			Year:        item.Year,
+			Watched:     &watched,
+			WatchedAt:   watchedAt,
+			ExternalIDs: extIDs,
+		}
+
+		if item.Type == "Episode" {
+			update.SeasonNumber = item.SeasonNum
+			update.EpisodeNumber = item.EpisodeNum
+			update.SeriesName = item.SeriesName
+		}
+
+		updates = append(updates, update)
+	}
+
+	if dryRun {
+		result.Count = len(result.ToAdd)
+		return result, nil
+	}
+
+	if len(updates) > 0 {
+		imported, err := historySvc.ImportWatchHistory(profileID, updates)
+		if err != nil {
+			return result, fmt.Errorf("import watch history: %w", err)
+		}
+		result.Count = imported
+		log.Printf("[scheduler] Imported %d/%d Jellyfin history items", imported, len(updates))
+	}
+
+	return result, nil
 }

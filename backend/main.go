@@ -38,6 +38,7 @@ import (
 	"novastream/services/invitations"
 	"novastream/services/metadata"
 	"novastream/services/playback"
+	"novastream/services/jellyfin"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
 	"novastream/services/scheduler"
@@ -636,10 +637,15 @@ func main() {
 	plexClient := plex.NewClient(plex.GenerateClientID())
 	plexAccountsHandler := handlers.NewPlexAccountsHandler(cfgManager, plexClient, userService, accountsService)
 
+	// Create Jellyfin client and register accounts handler
+	jellyfinClient := jellyfin.NewClient()
+	jellyfinAccountsHandler := handlers.NewJellyfinAccountsHandler(cfgManager, jellyfinClient)
+
 	// Create scheduler service for background tasks
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	schedulerService.SetEPGService(epgService)
 	schedulerService.SetHistoryService(historyService)
+	schedulerService.SetJellyfinClient(jellyfinClient)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
 	// Rate limiter for admin/account login (5/min per IP)
@@ -820,6 +826,12 @@ func main() {
 	r.HandleFunc("/admin/api/plex/accounts/{accountID}/users", adminUIHandler.RequireAuth(plexAccountsHandler.GetHomeUsers)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/plex/accounts/{accountID}/watchlist", adminUIHandler.RequireAuth(plexAccountsHandler.GetWatchlist)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/plex/import/history", adminUIHandler.RequireAuth(adminUIHandler.PlexImportHistory)).Methods(http.MethodPost)
+
+	// Jellyfin multi-account management (admin routes)
+	r.HandleFunc("/admin/api/jellyfin/accounts", adminUIHandler.RequireMasterAuth(jellyfinAccountsHandler.ListAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/jellyfin/accounts", adminUIHandler.RequireMasterAuth(jellyfinAccountsHandler.CreateAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/jellyfin/accounts/{accountID}", adminUIHandler.RequireMasterAuth(jellyfinAccountsHandler.DeleteAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/jellyfin/accounts/{accountID}/test", adminUIHandler.RequireMasterAuth(jellyfinAccountsHandler.TestConnection)).Methods(http.MethodPost)
 
 	// Profile Plex linking (admin routes)
 	r.HandleFunc("/admin/api/users/{userID}/plex", adminUIHandler.RequireAuth(usersHandler.SetPlexAccount)).Methods(http.MethodPut)
