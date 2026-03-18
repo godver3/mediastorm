@@ -123,7 +123,14 @@ func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSv
 	}
 	return &Service{
 		cfg:            cfg,
-		httpc:          &http.Client{Timeout: 20 * time.Second},
+		httpc: &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 16,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
 		debrid:         debridSvc,
 		debridPlayback: debrid.NewPlaybackService(cfg, nil),
 		metadata:       metadataSvc,
