@@ -60,8 +60,9 @@ type poolSlot struct {
 	contentType string // Content-Type from CDN
 
 	// Usage tracking
-	lastAccess time.Time
-	readers    int32 // atomic: active reader count
+	lastAccess    time.Time
+	readers       int32 // atomic: active reader count
+	minReaderPos  int64 // lowest active reader position (updated by readers under mu)
 
 	// Notification: closed when new data is written, then replaced with a fresh channel
 	signal chan struct{}
@@ -145,8 +146,16 @@ func (p *streamPool) serve(
 		return false, nil
 	}
 
+	// Register reader and track position for safe buffer trimming
+	slot.mu.Lock()
 	atomic.AddInt32(&slot.readers, 1)
-	defer atomic.AddInt32(&slot.readers, -1)
+	if atomic.LoadInt32(&slot.readers) == 1 || reqStart < slot.minReaderPos {
+		slot.minReaderPos = reqStart
+	}
+	slot.mu.Unlock()
+	defer func() {
+		atomic.AddInt32(&slot.readers, -1)
+	}()
 
 	ctx := r.Context()
 
@@ -327,6 +336,14 @@ dataReady:
 		pos += int64(written)
 		totalWritten += int64(written)
 
+		// Update minimum reader position so the background reader
+		// knows how far it can safely trim the buffer.
+		slot.mu.Lock()
+		if pos > slot.minReaderPos {
+			slot.minReaderPos = pos
+		}
+		slot.mu.Unlock()
+
 		if bytesCounter != nil {
 			atomic.StoreInt64(bytesCounter, totalWritten)
 		}
@@ -495,24 +512,44 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 		default:
 		}
 
-		// Backpressure: if buffer is at the hard limit, trim from the front
-		// to make room even if readers are active. Active readers whose position
-		// falls behind the new startByte will detect the trim (pos < startByte)
-		// and fall back to direct streaming. This prevents a deadlock where:
-		//   1. CDN reader blocks because buffer is full
-		//   2. Buffer can't trim because readers > 0
-		//   3. A waiting reader at the buffer edge never gets signaled
+		// Backpressure: if buffer is at the hard limit, trim data that
+		// readers have already consumed. If readers are active, only trim
+		// up to minReaderPos to avoid invalidating their read position.
+		// If no room can be freed, sleep briefly to apply backpressure
+		// to the CDN download (TCP window will close naturally).
 		s.mu.Lock()
 		if len(s.data) >= poolSlotBufferHard {
-			trimAmount := len(s.data) - poolSlotBufferTrim
-			remaining := len(s.data) - trimAmount
-			newData := make([]byte, remaining, remaining+4*1024*1024)
-			copy(newData, s.data[trimAmount:])
-			oldStart := s.startByte
-			s.data = newData
-			s.startByte += int64(trimAmount)
-			log.Printf("[stream-pool] backpressure trim: path=%q oldStart=%d newStart=%d trimmed=%d readers=%d",
-				s.path, oldStart, s.startByte, trimAmount, atomic.LoadInt32(&s.readers))
+			readers := atomic.LoadInt32(&s.readers)
+			safeTrimTo := s.minReaderPos
+			if readers == 0 {
+				// No readers — safe to trim aggressively
+				safeTrimTo = s.startByte + int64(len(s.data))
+			}
+			maxTrim := int(safeTrimTo - s.startByte)
+			if maxTrim > 0 {
+				// Trim only data already consumed by all readers
+				trimAmount := len(s.data) - poolSlotBufferTrim
+				if trimAmount > maxTrim {
+					trimAmount = maxTrim
+				}
+				if trimAmount > 0 {
+					remaining := len(s.data) - trimAmount
+					newData := make([]byte, remaining, remaining+4*1024*1024)
+					copy(newData, s.data[trimAmount:])
+					oldStart := s.startByte
+					s.data = newData
+					s.startByte += int64(trimAmount)
+					log.Printf("[stream-pool] backpressure trim: path=%q oldStart=%d newStart=%d trimmed=%d readers=%d minReaderPos=%d",
+						s.path, oldStart, s.startByte, trimAmount, readers, safeTrimTo)
+				}
+			}
+			if len(s.data) >= poolSlotBufferHard {
+				// Still at hard limit — can't trim more without passing readers.
+				// Sleep briefly to let readers catch up (backpressure on CDN).
+				s.mu.Unlock()
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
 		}
 		s.mu.Unlock()
 
