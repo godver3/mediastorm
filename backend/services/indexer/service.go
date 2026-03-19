@@ -123,7 +123,7 @@ func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSv
 	}
 	return &Service{
 		cfg:            cfg,
-		httpc:          &http.Client{Timeout: 20 * time.Second},
+		httpc:          &http.Client{},
 		debrid:         debridSvc,
 		debridPlayback: debrid.NewPlaybackService(cfg, nil),
 		metadata:       metadataSvc,
@@ -1551,6 +1551,15 @@ type torznabAttr struct {
 func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
 	apiCallNum := s.usenetAPICallCount.Add(1)
 	log.Printf("[search-stats] usenet API call #%d to indexer=%q (query=%q)", apiCallNum, idx.Name, opts.Query)
+
+	// Apply configured search timeout to the request context
+	if s.cfg != nil {
+		if settings, err := s.cfg.Load(); err == nil && settings.Streaming.IndexerTimeoutSec > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(settings.Streaming.IndexerTimeoutSec)*time.Second)
+			defer cancel()
+		}
+	}
 
 	endpoint := strings.TrimSpace(idx.URL)
 	if endpoint == "" {

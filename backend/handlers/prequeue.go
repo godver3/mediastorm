@@ -566,8 +566,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		}
 	}
 
-	// Search for results using split search (debrid and usenet in parallel)
-	// This allows us to start resolving debrid results while usenet search continues
+	// Use the same search path as the regular search UI: wait for all sources
+	// (debrid + usenet), combine, rank, and return a single ordered list.
 	searchOpts := indexer.SearchOptions{
 		Query:           query,
 		MaxResults:      50,
@@ -586,240 +586,17 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		searchOpts.AbsoluteEpisodeNumber = targetEpisode.AbsoluteEpisodeNumber
 	}
 
-	// Load settings to get service priority
-	settings, err := h.configManager.Load()
-	if err != nil {
-		h.failPrequeue(prequeueID, "failed to load settings: "+err.Error())
-		return
-	}
-	servicePriority := settings.Filtering.ServicePriority
-	log.Printf("[prequeue] TIMING: service priority is %q (elapsed: %v)", servicePriority, time.Since(workerStart))
-
-	// Start split search - debrid and usenet run in parallel
-	debridChan, usenetChan := h.indexerSvc.SearchSplit(ctx, searchOpts)
-
-	// Wait for search results based on service priority
-	var debridResults []models.NZBResult
-	var usenetResults []models.NZBResult
-	var debridErr, usenetErr error
-
-	switch servicePriority {
-	case config.StreamingServicePriorityUsenet:
-		// Usenet priority: wait for usenet first, debrid as fallback
-		log.Printf("[prequeue] TIMING: usenet priority - waiting for usenet results first")
-		select {
-		case <-ctx.Done():
-			h.failPrequeue(prequeueID, "cancelled")
-			return
-		case usenetResult, ok := <-usenetChan:
-			if ok {
-				usenetResults = usenetResult.Results
-				usenetErr = usenetResult.Err
-				if usenetErr != nil {
-					log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-				} else {
-					log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-				}
-			} else {
-				log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
-			}
-		}
-		// If no usenet results, wait for debrid as fallback
-		if len(usenetResults) == 0 {
-			log.Printf("[prequeue] TIMING: no usenet results, waiting for debrid fallback (elapsed: %v)", time.Since(workerStart))
-			select {
-			case <-ctx.Done():
-				h.failPrequeue(prequeueID, "cancelled")
-				return
-			case debridResult, ok := <-debridChan:
-				if ok {
-					debridResults = debridResult.Results
-					debridErr = debridResult.Err
-					if debridErr != nil {
-						log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-					} else {
-						log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-					}
-				} else {
-					log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
-				}
-			}
-		}
-
-	case config.StreamingServicePriorityDebrid:
-		// Debrid priority: wait for debrid first, usenet as fallback
-		log.Printf("[prequeue] TIMING: debrid priority - waiting for debrid results first")
-		select {
-		case <-ctx.Done():
-			h.failPrequeue(prequeueID, "cancelled")
-			return
-		case debridResult, ok := <-debridChan:
-			if ok {
-				debridResults = debridResult.Results
-				debridErr = debridResult.Err
-				if debridErr != nil {
-					log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-				} else {
-					log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-				}
-			} else {
-				log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
-			}
-		}
-		// If no debrid results, wait for usenet as fallback
-		if len(debridResults) == 0 {
-			log.Printf("[prequeue] TIMING: no debrid results, waiting for usenet fallback (elapsed: %v)", time.Since(workerStart))
-			select {
-			case <-ctx.Done():
-				h.failPrequeue(prequeueID, "cancelled")
-				return
-			case usenetResult, ok := <-usenetChan:
-				if ok {
-					usenetResults = usenetResult.Results
-					usenetErr = usenetResult.Err
-					if usenetErr != nil {
-						log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-					} else {
-						log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-					}
-				} else {
-					log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
-				}
-			}
-		}
-
-	default:
-		// No priority (or unknown): race both, use whichever has results first
-		log.Printf("[prequeue] TIMING: no priority - racing debrid and usenet")
-
-		// Track which sources have been consumed (closed channels return immediately)
-		debridConsumed := false
-		usenetConsumed := false
-
-		select {
-		case <-ctx.Done():
-			h.failPrequeue(prequeueID, "cancelled")
-			return
-		case debridResult, ok := <-debridChan:
-			debridConsumed = true
-			if ok {
-				debridResults = debridResult.Results
-				debridErr = debridResult.Err
-				if debridErr != nil {
-					log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-				} else {
-					log.Printf("[prequeue] TIMING: debrid search complete (race winner), got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-				}
-			} else {
-				log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
-			}
-		case usenetResult, ok := <-usenetChan:
-			usenetConsumed = true
-			if ok {
-				usenetResults = usenetResult.Results
-				usenetErr = usenetResult.Err
-				if usenetErr != nil {
-					log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-				} else {
-					log.Printf("[prequeue] TIMING: usenet search complete (race winner), got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-				}
-			} else {
-				log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
-			}
-		}
-
-		// If the winner had no results, wait for the other source (only if not already consumed)
-		if len(debridResults) == 0 && len(usenetResults) == 0 {
-			log.Printf("[prequeue] TIMING: race winner had no results, waiting for other source (elapsed: %v)", time.Since(workerStart))
-
-			// Only wait for sources that haven't been consumed yet
-			if !debridConsumed && !usenetConsumed {
-				// Both still available - race again
-				select {
-				case <-ctx.Done():
-					h.failPrequeue(prequeueID, "cancelled")
-					return
-				case debridResult, ok := <-debridChan:
-					if ok {
-						debridResults = debridResult.Results
-						debridErr = debridResult.Err
-						if debridErr != nil {
-							log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-						} else {
-							log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-						}
-					}
-				case usenetResult, ok := <-usenetChan:
-					if ok {
-						usenetResults = usenetResult.Results
-						usenetErr = usenetResult.Err
-						if usenetErr != nil {
-							log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-						} else {
-							log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-						}
-					}
-				}
-			} else if !debridConsumed {
-				// Only debrid left to check
-				select {
-				case <-ctx.Done():
-					h.failPrequeue(prequeueID, "cancelled")
-					return
-				case debridResult, ok := <-debridChan:
-					if ok {
-						debridResults = debridResult.Results
-						debridErr = debridResult.Err
-						if debridErr != nil {
-							log.Printf("[prequeue] TIMING: debrid search failed: %v (elapsed: %v)", debridErr, time.Since(workerStart))
-						} else {
-							log.Printf("[prequeue] TIMING: debrid search complete, got %d results (elapsed: %v)", len(debridResults), time.Since(workerStart))
-						}
-					} else {
-						log.Printf("[prequeue] TIMING: debrid channel closed (not configured), elapsed: %v", time.Since(workerStart))
-					}
-				}
-			} else if !usenetConsumed {
-				// Only usenet left to check
-				select {
-				case <-ctx.Done():
-					h.failPrequeue(prequeueID, "cancelled")
-					return
-				case usenetResult, ok := <-usenetChan:
-					if ok {
-						usenetResults = usenetResult.Results
-						usenetErr = usenetResult.Err
-						if usenetErr != nil {
-							log.Printf("[prequeue] TIMING: usenet search failed: %v (elapsed: %v)", usenetErr, time.Since(workerStart))
-						} else {
-							log.Printf("[prequeue] TIMING: usenet search complete, got %d results (elapsed: %v)", len(usenetResults), time.Since(workerStart))
-						}
-					} else {
-						log.Printf("[prequeue] TIMING: usenet channel closed (not configured), elapsed: %v", time.Since(workerStart))
-					}
-				}
-			}
-			// else: both consumed, nothing more to wait for
-		}
-	}
-
-	// Check if we have any results at all
-	if len(debridResults) == 0 && len(usenetResults) == 0 {
+	allResults, searchErr := h.indexerSvc.Search(ctx, searchOpts)
+	if searchErr != nil || len(allResults) == 0 {
 		errMsg := "no results found"
-		if debridErr != nil {
-			errMsg = "debrid: " + debridErr.Error()
-		}
-		if usenetErr != nil {
-			if debridErr != nil {
-				errMsg += "; "
-			}
-			errMsg += "usenet: " + usenetErr.Error()
+		if searchErr != nil {
+			errMsg = searchErr.Error()
 		}
 		h.failPrequeue(prequeueID, errMsg)
 		return
 	}
+	log.Printf("[prequeue] TIMING: search complete, %d combined results (elapsed: %v)", len(allResults), time.Since(workerStart))
 
-	log.Printf("[prequeue] TIMING: search phase complete, debrid=%d usenet=%d (elapsed: %v)", len(debridResults), len(usenetResults), time.Since(workerStart))
 
 	// Update status to resolving
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
@@ -862,194 +639,78 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	needsDVCheck := hdrDVPolicy == models.HDRDVPolicyIncludeHDR
 	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v", hdrDVPolicy, needsDVCheck)
 
-	// Resolution phase - priority aware
+	// Resolution phase — iterate through combined ranked results (same order as search UI)
 	var resolution *models.PlaybackResolution
 	var lastErr error
-	var selectedResult *models.NZBResult // Track which result was successfully resolved
+	var selectedResult *models.NZBResult
 
 	resolveStart := time.Now()
-	log.Printf("[prequeue] TIMING: starting resolution phase (debrid=%d, usenet=%d, priority=%s, elapsed: %v)",
-		len(debridResults), len(usenetResults), servicePriority, time.Since(workerStart))
+	log.Printf("[prequeue] TIMING: starting resolution phase (%d results, elapsed: %v)",
+		len(allResults), time.Since(workerStart))
 
 	// Cached probe result for DV checking (reused later for track selection)
 	var cachedProbeResult *VideoFullResult
 
-	// Helper to check episode match
-	shouldSkipForEpisode := func(result models.NZBResult, i int) bool {
+	for i, result := range allResults {
+		select {
+		case <-ctx.Done():
+			h.failPrequeue(prequeueID, "cancelled")
+			return
+		default:
+		}
+
+		// Check episode match for anime absolute numbering
 		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
-			// Season packs (EpisodeCount > 1) contain multiple episodes and will be
-			// resolved to the correct file by the debrid provider. Don't reject them
-			// based on absolute episode parsing which can false-positive on season
-			// range patterns like "S01-02" in the title.
-			if result.EpisodeCount > 1 {
-				return false
-			}
-			parsedEp, hasEpisode := mediaresolve.ParseAbsoluteEpisodeNumber(result.Title)
-			if hasEpisode {
-				episodeCode := mediaresolve.EpisodeCode{Season: targetEpisode.SeasonNumber, Episode: targetEpisode.EpisodeNumber}
-				matchesSXXEXX := mediaresolve.CandidateMatchesEpisode(result.Title, episodeCode)
-				if !matchesSXXEXX && parsedEp != targetEpisode.AbsoluteEpisodeNumber {
-					log.Printf("[prequeue] Skipping result [%d] - episode %d doesn't match target (S%02dE%02d/abs:%d): %s",
-						i, parsedEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber, result.Title)
-					return true
+			if result.EpisodeCount <= 1 {
+				parsedEp, hasEpisode := mediaresolve.ParseAbsoluteEpisodeNumber(result.Title)
+				if hasEpisode {
+					episodeCode := mediaresolve.EpisodeCode{Season: targetEpisode.SeasonNumber, Episode: targetEpisode.EpisodeNumber}
+					matchesSXXEXX := mediaresolve.CandidateMatchesEpisode(result.Title, episodeCode)
+					if !matchesSXXEXX && parsedEp != targetEpisode.AbsoluteEpisodeNumber {
+						log.Printf("[prequeue] Skipping result [%d] - episode %d doesn't match target (S%02dE%02d/abs:%d): %s",
+							i, parsedEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber, result.Title)
+						continue
+					}
 				}
 			}
 		}
-		return false
-	}
 
-	// Helper to check DV compatibility
-	checkDVCompatibility := func(result models.NZBResult, res *models.PlaybackResolution) (*VideoFullResult, error) {
-		if !needsDVCheck || h.fullProber == nil {
-			return nil, nil
+		resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
+		if lastErr != nil || resolution == nil || resolution.WebDAVPath == "" {
+			log.Printf("[prequeue] Failed to resolve result [%d] (%s) %s: %v", i, result.ServiceType, result.Title, lastErr)
+			resolution = nil
+			continue
 		}
-		probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, res.WebDAVPath)
-		if probeErr != nil {
-			return nil, probeErr
-		}
-		if probeResult != nil {
-			if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
-				return nil, err
-			}
-			if probeResult.HasDolbyVision {
-				log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
-			}
-		}
-		return probeResult, nil
-	}
 
-	// Helper to try resolving debrid results
-	tryDebridResults := func() bool {
-		if len(debridResults) == 0 {
-			return false
-		}
-		log.Printf("[prequeue] TIMING: trying debrid resolution (%d results)", len(debridResults))
-		for i, result := range debridResults {
-			select {
-			case <-ctx.Done():
-				return false
-			default:
-			}
+		log.Printf("[prequeue] Resolved result [%d] (%s): %s -> %s", i, result.ServiceType, result.Title, resolution.WebDAVPath)
 
-			if shouldSkipForEpisode(result, i) {
+		// Check DV compatibility
+		if needsDVCheck && h.fullProber != nil {
+			probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+			if probeErr != nil {
+				log.Printf("[prequeue] DV check failed for %s: %v, trying next result", result.Title, probeErr)
+				resolution = nil
+				lastErr = probeErr
 				continue
 			}
-
-			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
-			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
-				log.Printf("[prequeue] Resolved debrid result [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
-
-				probeResult, probeErr := checkDVCompatibility(result, resolution)
-				if probeErr != nil {
-					log.Printf("[prequeue] DV check failed for %s: %v, trying next result", result.Title, probeErr)
+			if probeResult != nil {
+				if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
+					log.Printf("[prequeue] DV profile incompatible for %s: %v, trying next result", result.Title, err)
 					resolution = nil
-					lastErr = probeErr
+					lastErr = err
 					continue
 				}
-				cachedProbeResult = probeResult
-				selectedResult = &result
-				log.Printf("[prequeue] TIMING: debrid resolved (resolve took: %v, total elapsed: %v)",
-					time.Since(resolveStart), time.Since(workerStart))
-				return true
-			}
-			log.Printf("[prequeue] Failed to resolve debrid %s: %v", result.Title, lastErr)
-			resolution = nil
-		}
-		return false
-	}
-
-	// Helper to try resolving usenet results
-	tryUsenetResults := func() bool {
-		if len(usenetResults) == 0 {
-			return false
-		}
-
-		// NOTE: Usenet health pre-checking disabled — was adding latency without much benefit.
-		// To re-enable, uncomment the health check block below and switch back to ResolveWithHealthResult.
-		//
-		// healthCheckStart := time.Now()
-		// log.Printf("[prequeue] TIMING: starting usenet health check for %d candidates", len(usenetResults))
-		// healthResults := h.playbackSvc.ParallelHealthCheck(ctx, usenetResults, 10)
-		//
-		// select {
-		// case <-ctx.Done():
-		// 	return false
-		// default:
-		// }
-		//
-		// healthMap := make(map[string]playback.HealthCheckResult)
-		// for _, hr := range healthResults {
-		// 	key := hr.Candidate.DownloadURL
-		// 	if key == "" {
-		// 		key = hr.Candidate.Link
-		// 	}
-		// 	healthMap[key] = hr
-		// }
-		// log.Printf("[prequeue] TIMING: usenet health check complete (took: %v)", time.Since(healthCheckStart))
-
-		// Try usenet results in priority order (no health pre-check)
-		log.Printf("[prequeue] TIMING: trying usenet resolution (%d results, no health pre-check)", len(usenetResults))
-		for i, result := range usenetResults {
-			select {
-			case <-ctx.Done():
-				return false
-			default:
-			}
-
-			if shouldSkipForEpisode(result, i) {
-				continue
-			}
-
-			// Resolve directly without health pre-check
-			resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
-			if lastErr == nil && resolution != nil && resolution.WebDAVPath != "" {
-				log.Printf("[prequeue] Resolved usenet result [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
-
-				probeResult, probeErr := checkDVCompatibility(result, resolution)
-				if probeErr != nil {
-					log.Printf("[prequeue] DV check failed for %s: %v, trying next result", result.Title, probeErr)
-					resolution = nil
-					lastErr = probeErr
-					continue
+				if probeResult.HasDolbyVision {
+					log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
 				}
-				cachedProbeResult = probeResult
-				selectedResult = &result
-				log.Printf("[prequeue] TIMING: usenet resolved (resolve took: %v, total elapsed: %v)",
-					time.Since(resolveStart), time.Since(workerStart))
-				return true
 			}
-			log.Printf("[prequeue] Failed to resolve usenet %s: %v", result.Title, lastErr)
-			resolution = nil
-		}
-		return false
-	}
-
-	// Resolve based on service priority
-	switch servicePriority {
-	case config.StreamingServicePriorityUsenet:
-		// Usenet priority: try usenet first, debrid as fallback
-		log.Printf("[prequeue] TIMING: usenet priority - trying usenet resolution first")
-		if !tryUsenetResults() {
-			log.Printf("[prequeue] TIMING: usenet resolution failed, trying debrid fallback")
-			tryDebridResults()
+			cachedProbeResult = probeResult
 		}
 
-	case config.StreamingServicePriorityDebrid:
-		// Debrid priority: try debrid first, usenet as fallback
-		log.Printf("[prequeue] TIMING: debrid priority - trying debrid resolution first")
-		if !tryDebridResults() {
-			log.Printf("[prequeue] TIMING: debrid resolution failed, trying usenet fallback")
-			tryUsenetResults()
-		}
-
-	default:
-		// No priority: try debrid first (faster), then usenet
-		// Note: In "none" priority, debrid is tried first because it doesn't require health checks
-		log.Printf("[prequeue] TIMING: no priority - trying debrid first (faster path)")
-		if !tryDebridResults() {
-			log.Printf("[prequeue] TIMING: debrid resolution failed, trying usenet")
-			tryUsenetResults()
-		}
+		selectedResult = &result
+		log.Printf("[prequeue] TIMING: resolved (took: %v, total elapsed: %v)",
+			time.Since(resolveStart), time.Since(workerStart))
+		break
 	}
 
 	if resolution == nil {

@@ -247,12 +247,7 @@ var SettingsSchema = map[string]interface{}{
 			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers", "hidden": true},
 			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes", "hidden": true},
 			"serviceMode":        map[string]interface{}{"type": "select", "label": "Service Mode", "options": []string{"usenet", "debrid", "hybrid"}, "description": "Streaming service mode"},
-			"searchMode": map[string]interface{}{
-				"type":        "select",
-				"label":       "Search Mode",
-				"description": "Fast returns results quickly (early return), Accurate waits for all scrapers/indexers",
-				"options":     []string{"fast", "accurate"},
-			},
+			"searchMode": map[string]interface{}{"type": "select", "label": "Search Mode", "hidden": true},
 			"multiProviderMode": map[string]interface{}{
 				"type":        "select",
 				"label":       "Multi-Provider Mode",

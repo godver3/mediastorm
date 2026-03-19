@@ -381,16 +381,9 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// For non-anime: use early return after fast scrapers finish (500ms timeout or 20+ results)
 	// For anime: wait for all scrapers (need Nyaa results)
 	var (
-		aggregate     []models.NZBResult
-		errs          []error
-		seenGuids     = make(map[string]struct{})
-		scrapersRecvd = 0
-	)
-
-	// Early return settings for non-anime content
-	const (
-		earlyReturnMinResults = 20  // Return early if we have this many results
-		earlyReturnTimeout    = 500 * time.Millisecond // Max wait for fast scrapers
+		aggregate []models.NZBResult
+		errs      []error
+		seenGuids = make(map[string]struct{})
 	)
 
 	// Helper to process scraper results
@@ -425,70 +418,11 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		}
 	}
 
-	// Determine if we should wait for all results (accurate mode) or use early return (fast mode)
-	useAccurateMode := settings.Streaming.SearchMode == config.SearchModeAccurate
-
-	if useAccurateMode || opts.IsAnime {
-		// Accurate mode or Anime: wait for all scrapers
-		if useAccurateMode {
-			log.Printf("[debrid] TIMING: accurate mode - waiting for all %d scrapers", scraperCount)
-		} else {
-			log.Printf("[debrid] TIMING: anime content - waiting for all %d scrapers", scraperCount)
-		}
-		for sr := range resultsChan {
-			processScraperResult(sr)
-		}
-	} else {
-		// Fast mode (non-anime): early return when we have enough results from fast scrapers
-		earlyReturnTimer := time.NewTimer(earlyReturnTimeout)
-		defer earlyReturnTimer.Stop()
-
-	collectLoop:
-		for {
-			select {
-			case sr, ok := <-resultsChan:
-				if !ok {
-					// Channel closed, all scrapers done
-					break collectLoop
-				}
-				scrapersRecvd++
-				processScraperResult(sr)
-
-				// Check if we have enough results to return early
-				if len(aggregate) >= earlyReturnMinResults && scrapersRecvd < scraperCount {
-					log.Printf("[debrid] TIMING: early return with %d results from %d/%d scrapers (have enough results)",
-						len(aggregate), scrapersRecvd, scraperCount)
-					break collectLoop
-				}
-
-			case <-earlyReturnTimer.C:
-				// Timeout: return what we have if we got any results
-				if len(aggregate) > 0 && scrapersRecvd < scraperCount {
-					log.Printf("[debrid] TIMING: early return with %d results from %d/%d scrapers (timeout after %v)",
-						len(aggregate), scrapersRecvd, scraperCount, earlyReturnTimeout)
-					break collectLoop
-				}
-				// No results yet, keep waiting
-			}
-		}
-
-		// Drain any remaining results that arrived (non-blocking)
-	drainLoop:
-		for {
-			select {
-			case sr, ok := <-resultsChan:
-				if !ok {
-					break drainLoop
-				}
-				// Log but don't process late results to avoid blocking
-				if sr.err == nil {
-					log.Printf("[debrid] TIMING: late result from %s (%d results) - already returned early", sr.name, len(sr.results))
-				}
-			default:
-				// No more results waiting
-				break drainLoop
-			}
-		}
+	// Always wait for all scrapers to complete before returning results.
+	// This ensures consistent ranking regardless of scraper response times.
+	log.Printf("[debrid] TIMING: waiting for all %d scrapers", scraperCount)
+	for sr := range resultsChan {
+		processScraperResult(sr)
 	}
 
 	if len(aggregate) == 0 && len(errs) > 0 {
