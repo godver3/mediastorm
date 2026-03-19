@@ -672,14 +672,6 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		preferredScraper := settings.Filtering.PreferredScraper
 
 		sort.SliceStable(aggregated, func(i, j int) bool {
-			// Year match is a correctness concern, not a preference — always applied first.
-			// Always check yearMatch attributes (set by filter when ExpectedYear > 0),
-			// regardless of opts.Year — the debrid search may parse year from the query
-			// string even when opts.Year is 0 (e.g. series with year in title name).
-			if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
-				return ym < 0
-			}
-
 			for _, criterion := range rankingCriteria {
 				if !criterion.Enabled {
 					continue
@@ -706,6 +698,14 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				if result != 0 {
 					return result < 0
 				}
+			}
+
+			// Final tiebreaker: prefer year-matched results only when all
+			// user-configured criteria are tied. This prevents results from
+			// scrapers that include the year in titles from dominating over
+			// ranking criteria like resolution or size.
+			if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
+				return ym < 0
 			}
 			return false
 		})
@@ -864,14 +864,6 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 			return
 		}
 		sort.SliceStable(results, func(i, j int) bool {
-			// Year match is a correctness concern, not a preference — always applied first.
-			// Always check yearMatch attributes (set by filter when ExpectedYear > 0),
-			// regardless of opts.Year — the debrid search may parse year from the query
-			// string even when opts.Year is 0 (e.g. series with year in title name).
-			if ym := compareYearMatch(results[i], results[j]); ym != 0 {
-				return ym < 0
-			}
-
 			for _, criterion := range rankingCriteria {
 				if !criterion.Enabled {
 					continue
@@ -896,6 +888,9 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 				if result != 0 {
 					return result < 0
 				}
+			}
+			if ym := compareYearMatch(results[i], results[j]); ym != 0 {
+				return ym < 0
 			}
 			return false
 		})
