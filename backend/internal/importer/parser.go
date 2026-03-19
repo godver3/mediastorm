@@ -638,9 +638,8 @@ func (p *Parser) ValidateNzb(parsed *ParsedNzb) error {
 			return NewNonRetryableError(fmt.Sprintf("invalid NZB: file %d has invalid size", i), nil)
 		}
 
-		if len(file.Groups) == 0 {
-			return NewNonRetryableError(fmt.Sprintf("invalid NZB: file %d has no groups", i), nil)
-		}
+		// Note: groups are optional — many indexers (Zyclops, NZBHydra) omit them.
+		// Segment article IDs are globally unique, so groups aren't needed for downloading.
 	}
 
 	return nil
