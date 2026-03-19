@@ -56,11 +56,18 @@ services:
     ports:
       - "7777:7777"
     volumes:
+      # User data folder containing settings.json, streams, and cache
       - /path/to/your/cache:/root/cache
     environment:
       - TZ=${TZ:-UTC}
       - DATABASE_URL=postgres://mediastorm:${POSTGRES_PASSWORD:-mediastorm}@postgres:5432/mediastorm?sslmode=disable
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "http://localhost:7777/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
 
 volumes:
   postgres_data:
@@ -84,7 +91,7 @@ The backend will be available at `http://localhost:7777`. The default login is `
 POSTGRES_PASSWORD=your_secure_password docker compose up -d
 ```
 
-> **⚠️ Security Notice:** mediastorm is not designed to be directly exposed to the internet. For safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
+> **⚠️ Notice:** mediastorm is developed with the assistance of large language models (LLMs). While best efforts have been made to ensure security and code integrity, use this software at your own risk. mediastorm is not designed to be directly exposed to the internet — for safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
 
 ### Frontend Apps
 
