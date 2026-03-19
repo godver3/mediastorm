@@ -14,9 +14,16 @@ type cacheMiss struct {
 	mediaType string
 }
 
+// maxWarmBatch limits how many items a single request-driven warm can fetch,
+// to avoid hammering the MDBList API alongside the cache manager's own warming.
+const maxWarmBatch = 20
+
 // warmCacheMisses fires a background goroutine to fetch ratings for uncached items.
 // Uses a single sequential worker to stay within MDBList API rate limits.
 func warmCacheMisses(misses []cacheMiss, meta metadataService) {
+	if len(misses) > maxWarmBatch {
+		misses = misses[:maxWarmBatch]
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()

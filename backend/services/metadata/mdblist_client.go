@@ -83,7 +83,7 @@ func newMDBListClient(apiKey string, enabledRatings []string, enabled bool, cach
 		enabled:        enabled,
 		cache:          make(map[string]*mdblistCacheEntry),
 		cacheTTL:       time.Duration(cacheTTLHours) * time.Hour,
-		minInterval:    500 * time.Millisecond,
+		minInterval:    1100 * time.Millisecond, // MDBList free tier: ~1 req/sec
 	}
 }
 
@@ -145,7 +145,7 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 
 	var result mdblistMediaResponse
 	var lastErr error
-	backoff := 300 * time.Millisecond
+	backoff := 2 * time.Second
 
 	// Retry loop with exponential backoff
 	for attempt := 0; attempt < 3; attempt++ {
@@ -281,7 +281,7 @@ func (c *mdblistClient) GetAllRatings(ctx context.Context, imdbID string, mediaT
 
 	var result mdblistMediaResponse
 	var lastErr error
-	backoff := 300 * time.Millisecond
+	backoff := 2 * time.Second
 
 	for attempt := 0; attempt < 3; attempt++ {
 		// Rate limiting — compute wait outside the lock to avoid blocking other goroutines

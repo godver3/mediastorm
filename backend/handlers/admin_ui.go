@@ -4594,6 +4594,11 @@ func (h *AdminUIHandler) TestMDBList(w http.ResponseWriter, r *http.Request) {
 			"success": true,
 			"message": "API key is valid",
 		})
+	} else if resp.StatusCode == http.StatusTooManyRequests {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Rate limited by MDBList API — try again in a minute",
+		})
 	} else {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
