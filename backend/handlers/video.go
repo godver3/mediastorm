@@ -3840,6 +3840,11 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			log.Printf("[video] query parse failed, using raw URL: %v", err)
 		} else {
+			// Some providers (e.g., Comet) return URLs with "torrent_name" but
+			// their playback endpoint expects "name". Add the alias if missing.
+			if params.Has("torrent_name") && !params.Has("name") {
+				params.Set("name", params.Get("torrent_name"))
+			}
 			// Re-encode query string properly
 			cleanURL = baseURL + "?" + params.Encode()
 			log.Printf("[video] external proxy: re-encoded query: %s -> %s", queryStr, params.Encode())
