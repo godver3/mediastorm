@@ -281,10 +281,11 @@ type tmdbImagesResponse struct {
 	Posters []tmdbImageItem `json:"posters"`
 }
 
-// tmdbImagesResult contains logo and textless poster from a single /images API call
+// tmdbImagesResult contains logo, textless poster, and text poster from a single /images API call
 type tmdbImagesResult struct {
 	Logo           *models.Image
 	TextlessPoster *models.Image
+	TextPoster     *models.Image // Best poster with title text (has language tag)
 }
 
 // fetchImages retrieves logo and textless poster for a movie or TV show from TMDB
@@ -358,12 +359,15 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 		}
 	}
 
-	// Find best textless poster (no language = textless)
+	// Find best textless poster (no language = textless) and best text poster (has language tag)
 	if len(payload.Posters) > 0 {
 		var textless []tmdbImageItem
+		var withText []tmdbImageItem
 		for _, p := range payload.Posters {
 			if p.ISO6391 == "" {
 				textless = append(textless, p)
+			} else if p.ISO6391 == preferredLang || p.ISO6391 == "en" {
+				withText = append(withText, p)
 			}
 		}
 		if len(textless) > 0 {
@@ -372,6 +376,25 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 				return textless[i].VoteAverage > textless[j].VoteAverage
 			})
 			result.TextlessPoster = buildTMDBImage(textless[0].FilePath, tmdbPosterSize, "poster")
+		}
+		if len(withText) > 0 {
+			// Prefer user's language, then English, then highest vote average
+			sort.Slice(withText, func(i, j int) bool {
+				if preferredLang != "" && preferredLang != "en" {
+					iPref := withText[i].ISO6391 == preferredLang
+					jPref := withText[j].ISO6391 == preferredLang
+					if iPref != jPref {
+						return iPref
+					}
+				}
+				iEng := withText[i].ISO6391 == "en"
+				jEng := withText[j].ISO6391 == "en"
+				if iEng != jEng {
+					return iEng
+				}
+				return withText[i].VoteAverage > withText[j].VoteAverage
+			})
+			result.TextPoster = buildTMDBImage(withText[0].FilePath, tmdbPosterSize, "poster")
 		}
 	}
 

@@ -117,6 +117,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		if len(items) > startupShelfLimit {
 			items = items[:startupShelfLimit]
 		}
+		enrichWatchlistTextPosters(items, h.metadata)
 		resp.Watchlist = items
 	}()
 

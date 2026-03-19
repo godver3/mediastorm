@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"novastream/models"
@@ -73,6 +74,9 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich with MDBList ratings for sort-by-rating support
 	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
+
+	// Enrich with text poster URLs from metadata cache
+	enrichWatchlistTextPosters(items, h.MetadataService)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -201,4 +205,30 @@ func (h *WatchlistHandler) requireUser(w http.ResponseWriter, r *http.Request) (
 	}
 
 	return userID, true
+}
+
+// enrichWatchlistTextPosters populates TextPosterURL from the metadata cache.
+// This is a fast, cache-only operation with no API calls.
+func enrichWatchlistTextPosters(items []models.WatchlistItem, meta metadataService) {
+	if meta == nil {
+		return
+	}
+	for i := range items {
+		var tmdbID, tvdbID int64
+		if v, ok := items[i].ExternalIDs["tmdb"]; ok {
+			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+				tmdbID = id
+			}
+		}
+		if v, ok := items[i].ExternalIDs["tvdb"]; ok {
+			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+				tvdbID = id
+			}
+		}
+		if tmdbID > 0 || tvdbID > 0 {
+			if url := meta.GetTextPosterURL(items[i].MediaType, tmdbID, tvdbID); url != "" {
+				items[i].TextPosterURL = url
+			}
+		}
+	}
 }

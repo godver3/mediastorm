@@ -657,6 +657,45 @@ func (s *Service) GetMDBListAllRatingsCached(imdbID, mediaType string) []models.
 	return nil
 }
 
+// GetTextPosterURL returns the text poster URL for a title from cache, if available.
+// This is a fast cache-only lookup with no API calls.
+func (s *Service) GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string {
+	if mediaType == "movie" {
+		// Try TMDB-only cache first (used when no TVDB ID was available)
+		if tmdbID > 0 {
+			cacheID := cacheKey("tmdb", "movie", "details", "v1", s.client.language, strconv.FormatInt(tmdbID, 10))
+			var cached models.Title
+			if ok, _ := s.cache.get(cacheID, &cached); ok && cached.TextPoster != nil {
+				return cached.TextPoster.URL
+			}
+		}
+		// Try TVDB movie cache (most movies go through this path)
+		movieTVDBID := tvdbID
+		if movieTVDBID <= 0 && tmdbID > 0 {
+			// Resolve TMDB→TVDB from ID cache
+			resolveKey := cacheKey("tvdb", "resolve", "movie", "tmdb", fmt.Sprintf("%d", tmdbID))
+			var resolved int64
+			if ok, _ := s.cache.get(resolveKey, &resolved); ok && resolved > 0 {
+				movieTVDBID = resolved
+			}
+		}
+		if movieTVDBID > 0 {
+			cacheID := cacheKey("tvdb", "movie", "details", "v3", s.client.language, strconv.FormatInt(movieTVDBID, 10))
+			var cached models.Title
+			if ok, _ := s.cache.get(cacheID, &cached); ok && cached.TextPoster != nil {
+				return cached.TextPoster.URL
+			}
+		}
+	} else if tvdbID > 0 {
+		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+		var cached models.SeriesDetails
+		if ok, _ := s.cache.get(cacheID, &cached); ok && cached.Title.TextPoster != nil {
+			return cached.Title.TextPoster.URL
+		}
+	}
+	return ""
+}
+
 // ClearCache removes all cached metadata files
 func (s *Service) ClearCache() error {
 	return s.cache.clear()
@@ -2828,7 +2867,13 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 				seriesTitle.Logo = images.Logo
 				log.Printf("[metadata] fetched logo for series tmdbId=%d", seriesTitle.TMDBID)
 			}
+			if images.TextPoster != nil {
+				seriesTitle.TextPoster = images.TextPoster
+			}
 			if images.TextlessPoster != nil {
+				if seriesTitle.TextPoster == nil {
+					seriesTitle.TextPoster = seriesTitle.Poster // Fallback: preserve original
+				}
 				seriesTitle.Poster = images.TextlessPoster
 				log.Printf("[metadata] textless poster applied to series tmdbId=%d", seriesTitle.TMDBID)
 			}
@@ -4463,7 +4508,13 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 					movieTitle.Logo = images.Logo
 					log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForEnrichment)
 				}
+				if images.TextPoster != nil {
+					movieTitle.TextPoster = images.TextPoster
+				}
 				if images.TextlessPoster != nil {
+					if movieTitle.TextPoster == nil {
+						movieTitle.TextPoster = movieTitle.Poster // Fallback: preserve original
+					}
 					movieTitle.Poster = images.TextlessPoster
 					log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForEnrichment)
 				}

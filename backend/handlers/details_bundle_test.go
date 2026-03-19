@@ -123,6 +123,9 @@ func (m *mockMetadataServiceDetailsBundle) GetMDBListAllRatings(_ context.Contex
 func (m *mockMetadataServiceDetailsBundle) GetMDBListAllRatingsCached(_ string, _ string) []models.Rating {
 	return nil
 }
+func (m *mockMetadataServiceDetailsBundle) GetTextPosterURL(_ string, _ int64, _ int64) string {
+	return ""
+}
 
 type mockHistoryServiceDetailsBundle struct {
 	watchState       *models.SeriesWatchState

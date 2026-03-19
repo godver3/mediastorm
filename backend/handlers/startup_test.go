@@ -212,6 +212,9 @@ func (m *mockMetadataServiceStartup) GetMDBListAllRatings(_ context.Context, _ s
 func (m *mockMetadataServiceStartup) GetMDBListAllRatingsCached(_ string, _ string) []models.Rating {
 	return nil
 }
+func (m *mockMetadataServiceStartup) GetTextPosterURL(_ string, _ int64, _ int64) string {
+	return ""
+}
 
 type mockUserServiceStartup struct {
 	exists bool

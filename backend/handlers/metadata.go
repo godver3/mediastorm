@@ -50,6 +50,8 @@ type metadataService interface {
 	MDBListIsEnabled() bool
 	GetMDBListAllRatings(ctx context.Context, imdbID, mediaType string) ([]models.Rating, error)
 	GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating
+	// Poster helpers
+	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)

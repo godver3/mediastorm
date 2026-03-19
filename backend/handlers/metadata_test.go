@@ -219,6 +219,10 @@ func (f *fakeMetadataService) GetMDBListAllRatingsCached(_ string, _ string) []m
 	return nil
 }
 
+func (f *fakeMetadataService) GetTextPosterURL(_ string, _ int64, _ int64) string {
+	return ""
+}
+
 // fakeUsersServiceForSearch implements usersServiceInterface for search handler tests.
 type fakeUsersServiceForSearch struct {
 	users map[string]models.User

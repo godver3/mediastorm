@@ -363,6 +363,8 @@ type DisplaySettings struct {
 	BypassFilteringForAIOStreamsOnly bool `json:"bypassFilteringForAioStreamsOnly"`
 	// ShowParsedBadges shows parsed metadata badges instead of raw titles in manual selection.
 	ShowParsedBadges bool `json:"showParsedBadges,omitempty"`
+	// CleanPosters hides text overlays and gradient backgrounds on poster cards.
+	CleanPosters bool `json:"cleanPosters,omitempty"`
 }
 
 // SubtitleSettings defines subtitle provider configuration.

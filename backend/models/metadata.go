@@ -50,6 +50,7 @@ type Title struct {
 	Year            int       `json:"year"`
 	Language        string    `json:"language"`
 	Poster          *Image    `json:"poster,omitempty"`
+	TextPoster      *Image    `json:"textPoster,omitempty"` // Original poster with text (preserved when Poster is overridden with textless)
 	Backdrop        *Image    `json:"backdrop,omitempty"`
 	Backdrops       []Image   `json:"backdrops,omitempty"` // Additional backdrop options beyond the primary
 	Logo            *Image    `json:"logo,omitempty"`

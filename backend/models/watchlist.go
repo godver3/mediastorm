@@ -9,8 +9,9 @@ type WatchlistItem struct {
 	Name        string            `json:"name"`
 	Overview    string            `json:"overview,omitempty"`
 	Year        int               `json:"year,omitempty"`
-	PosterURL   string            `json:"posterUrl,omitempty"`
-	BackdropURL string            `json:"backdropUrl,omitempty"`
+	PosterURL       string            `json:"posterUrl,omitempty"`
+	TextPosterURL   string            `json:"textPosterUrl,omitempty"` // Poster with title text (enriched at response time)
+	BackdropURL     string            `json:"backdropUrl,omitempty"`
 	AddedAt     time.Time         `json:"addedAt"`
 	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 	Genres         []string          `json:"genres,omitempty"`
