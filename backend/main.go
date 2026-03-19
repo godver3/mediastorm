@@ -314,6 +314,19 @@ func main() {
 	// Prequeue handler will be created later after historyService is available
 	var prequeueHandler *handlers.PrequeueHandler
 	usenetHandler := handlers.NewUsenetHandler(usenetService)
+
+	// Initialize accounts before users — users table has a foreign key on accounts,
+	// so the master account must exist before the default user can be created.
+	var accountsService *accounts.Service
+	if store != nil {
+		accountsService, err = accounts.NewServiceWithStore(store)
+	} else {
+		accountsService, err = accounts.NewService(settings.Cache.Directory)
+	}
+	if err != nil {
+		log.Fatalf("failed to initialise accounts: %v", err)
+	}
+
 	var userService *users.Service
 	if store != nil {
 		userService, err = users.NewServiceWithStore(store)
@@ -324,17 +337,6 @@ func main() {
 		log.Fatalf("failed to initialise users: %v", err)
 	}
 	usersHandler := handlers.NewUsersHandler(userService)
-
-	// Initialize accounts, sessions, and invitations services
-	var accountsService *accounts.Service
-	if store != nil {
-		accountsService, err = accounts.NewServiceWithStore(store)
-	} else {
-		accountsService, err = accounts.NewService(settings.Cache.Directory)
-	}
-	if err != nil {
-		log.Fatalf("failed to initialise accounts: %v", err)
-	}
 	var sessionsService *sessions.Service
 	if store != nil {
 		sessionsService, err = sessions.NewServiceWithStore(store, 0)

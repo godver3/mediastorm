@@ -1055,7 +1055,10 @@ func (s *Service) ensureDefaultUser() error {
 		return nil
 	}
 
-	_, err := s.createLocked(models.DefaultAccountID, models.DefaultUserName)
+	// Use the master account ID for the default profile on fresh installs.
+	// DefaultAccountID ("default") is for legacy/migrated profiles and may not
+	// have a corresponding row in the accounts table yet.
+	_, err := s.createLocked(models.MasterAccountID, models.DefaultUserName)
 	return err
 }
 

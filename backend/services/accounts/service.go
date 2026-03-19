@@ -444,7 +444,7 @@ func (s *Service) ensureMasterAccount() error {
 
 	now := time.Now().UTC()
 	master := models.Account{
-		ID:           "master",
+		ID:           models.MasterAccountID,
 		Username:     models.MasterAccountUsername,
 		PasswordHash: string(hash),
 		IsMaster:     true,

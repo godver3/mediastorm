@@ -6,6 +6,8 @@ import (
 )
 
 const (
+	// MasterAccountID is the ID of the master account created on first startup.
+	MasterAccountID = "master"
 	// DefaultAccountID is the account ID assigned to migrated/legacy profiles.
 	DefaultAccountID = "default"
 	// MasterAccountUsername is the default username for the master account.
