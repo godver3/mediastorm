@@ -2799,12 +2799,15 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	}
 
 	// Fetch ratings from MDBList if enabled and IMDB ID is available
+	// Short timeout so 429 retries don't block the entire details response.
 	if seriesTitle.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
-		if ratings, err := s.mdblist.GetRatings(ctx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
+		ratingCtx, ratingCancel := context.WithTimeout(ctx, 1*time.Second)
+		if ratings, err := s.mdblist.GetRatings(ratingCtx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
 			seriesTitle.Ratings = ratings
 			details.Title = seriesTitle // Update the details with ratings
 			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
 		}
+		ratingCancel()
 	}
 
 	// Fetch cast credits from TMDB if configured
@@ -4420,12 +4423,14 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}
 	}()
 
-	// 2. MDBList ratings
+	// 2. MDBList ratings (short timeout so 429 retries don't block the response)
 	if includeRatings && imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
 		enrichWg.Add(1)
 		go func() {
 			defer enrichWg.Done()
-			if ratings, err := s.mdblist.GetRatings(ctx, imdbIDForRatings, "movie"); err != nil {
+			ratingCtx, ratingCancel := context.WithTimeout(ctx, 1*time.Second)
+			defer ratingCancel()
+			if ratings, err := s.mdblist.GetRatings(ratingCtx, imdbIDForRatings, "movie"); err != nil {
 				log.Printf("[metadata] error fetching ratings for movie imdbId=%s: %v", imdbIDForRatings, err)
 			} else if len(ratings) > 0 {
 				movieTitle.Ratings = ratings

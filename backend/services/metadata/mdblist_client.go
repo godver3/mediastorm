@@ -172,7 +172,11 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 		if err != nil {
 			lastErr = fmt.Errorf("http request: %w", err)
 			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 			backoff *= 2
 			continue
 		}
@@ -182,7 +186,12 @@ func (c *mdblistClient) GetRatings(ctx context.Context, imdbID string, mediaType
 			resp.Body.Close()
 			log.Printf("[mdblist] rate limited or server error (attempt %d/3): status %d", attempt+1, resp.StatusCode)
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)
-			time.Sleep(backoff)
+			// Context-aware sleep: bail immediately if context expires during backoff
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 			backoff *= 2
 			continue
 		}
@@ -307,7 +316,11 @@ func (c *mdblistClient) GetAllRatings(ctx context.Context, imdbID string, mediaT
 		if err != nil {
 			lastErr = fmt.Errorf("http request: %w", err)
 			log.Printf("[mdblist] http request error (attempt %d/3): %v", attempt+1, err)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 			backoff *= 2
 			continue
 		}
@@ -315,7 +328,11 @@ func (c *mdblistClient) GetAllRatings(ctx context.Context, imdbID string, mediaT
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
 			backoff *= 2
 			continue
 		}
