@@ -42,6 +42,7 @@ type AccountUIHandler struct {
 	hlsManager          *HLSManager
 	configManager       *config.Manager
 	traktClient         *trakt.Client
+	serverBasePath      string // server-level base path from config (e.g. "/mediastorm")
 }
 
 // NewAccountUIHandler creates a new account UI handler.
@@ -77,6 +78,17 @@ func NewAccountUIHandler(accountsSvc *accounts.Service, sessionsSvc *sessions.Se
 	searchTmpl := template.Must(template.Must(baseTmpl.Clone()).ParseFS(accountTemplatesFS, "account_templates/search.html"))
 	toolsTmpl := template.Must(template.Must(baseTmpl.Clone()).ParseFS(accountTemplatesFS, "account_templates/tools.html"))
 
+	// Load server base path from config
+	var serverBasePath string
+	if configManager != nil {
+		if settings, err := configManager.Load(); err == nil {
+			serverBasePath = "/" + strings.Trim(settings.Server.BasePath, "/")
+			if serverBasePath == "/" {
+				serverBasePath = ""
+			}
+		}
+	}
+
 	return &AccountUIHandler{
 		templates:           dashboardTmpl,
 		loginTemplate:       loginTmpl,
@@ -93,6 +105,7 @@ func NewAccountUIHandler(accountsSvc *accounts.Service, sessionsSvc *sessions.Se
 		hlsManager:          hlsManager,
 		configManager:       configManager,
 		traktClient:         traktClient,
+		serverBasePath:      serverBasePath,
 	}
 }
 
@@ -102,12 +115,12 @@ const sessionCookieName = "strmr_admin_session"
 // LoginPage redirects to the unified login page.
 func (h *AccountUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	// Redirect to unified login
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 }
 
 // LoginSubmit redirects to the unified login page (POST should go to /admin/login).
 func (h *AccountUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 }
 
 // Logout handles logout.
@@ -124,7 +137,7 @@ func (h *AccountUIHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 }
 
 // RequireAuth is middleware that requires authentication for regular accounts.
@@ -132,19 +145,19 @@ func (h *AccountUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
-			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 			return
 		}
 
 		session, err := h.sessionsService.Validate(cookie.Value)
 		if err != nil {
-			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 			return
 		}
 
 		// Don't allow master accounts here - redirect to admin
 		if session.IsMaster {
-			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			http.Redirect(w, r, h.serverBasePath+"/admin", http.StatusSeeOther)
 			return
 		}
 
@@ -158,13 +171,13 @@ func (h *AccountUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 func (h *AccountUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -187,6 +200,8 @@ func (h *AccountUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"Profiles":             profiles,
 		"ProfileStreamLimits":  profileStreamLimits,
 		"ActivePage":           "profiles",
+		"BasePath":             h.serverBasePath + "/account",
+		"ServerBasePath":       h.serverBasePath,
 	}
 
 	h.dashboardTemplate.ExecuteTemplate(w, "dashboard", data)
@@ -196,13 +211,13 @@ func (h *AccountUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 func (h *AccountUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -211,7 +226,9 @@ func (h *AccountUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Account":    account,
 		"Profiles":   profiles,
-		"ActivePage": "status",
+		"ActivePage":      "status",
+		"BasePath":        h.serverBasePath + "/account",
+		"ServerBasePath":  h.serverBasePath,
 	}
 
 	h.statusTemplate.ExecuteTemplate(w, "status", data)
@@ -317,13 +334,13 @@ func (h *AccountUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 func (h *AccountUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -332,7 +349,9 @@ func (h *AccountUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) 
 	data := map[string]interface{}{
 		"Account":    account,
 		"Profiles":   profiles,
-		"ActivePage": "settings",
+		"ActivePage":      "settings",
+		"BasePath":        h.serverBasePath + "/account",
+		"ServerBasePath":  h.serverBasePath,
 	}
 
 	h.settingsTemplate.ExecuteTemplate(w, "settings", data)
@@ -550,13 +569,13 @@ func (h *AccountUIHandler) GetProfileMaxStreams(w http.ResponseWriter, r *http.R
 func (h *AccountUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -565,7 +584,9 @@ func (h *AccountUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Account":    account,
 		"Profiles":   profiles,
-		"ActivePage": "history",
+		"ActivePage":      "history",
+		"BasePath":        h.serverBasePath + "/account",
+		"ServerBasePath":  h.serverBasePath,
 	}
 
 	h.historyTemplate.ExecuteTemplate(w, "history", data)
@@ -575,13 +596,13 @@ func (h *AccountUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 func (h *AccountUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -590,7 +611,9 @@ func (h *AccountUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Account":    account,
 		"Profiles":   profiles,
-		"ActivePage": "search",
+		"ActivePage":      "search",
+		"BasePath":        h.serverBasePath + "/account",
+		"ServerBasePath":  h.serverBasePath,
 	}
 
 	h.searchTemplate.ExecuteTemplate(w, "search", data)
@@ -600,13 +623,13 @@ func (h *AccountUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 func (h *AccountUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	session := sessionFromContext(r.Context())
 	if session == nil {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
 	account, ok := h.accountsService.Get(session.AccountID)
 	if !ok {
-		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 		return
 	}
 
@@ -615,7 +638,9 @@ func (h *AccountUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Account":    account,
 		"Profiles":   profiles,
-		"ActivePage": "tools",
+		"ActivePage":      "tools",
+		"BasePath":        h.serverBasePath + "/account",
+		"ServerBasePath":  h.serverBasePath,
 	}
 
 	h.toolsTemplate.ExecuteTemplate(w, "tools", data)
@@ -1565,6 +1590,70 @@ func (h *AccountUIHandler) ClearProfileTrakt(w http.ResponseWriter, r *http.Requ
 	// Clear Trakt account from profile
 	if _, err := h.usersService.ClearTraktAccountID(profileId); err != nil {
 		http.Error(w, "Failed to unlink Trakt account", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// SetProfileMdblist links an MDBList account to a profile.
+func (h *AccountUIHandler) SetProfileMdblist(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileId := r.URL.Query().Get("profileId")
+	if profileId == "" {
+		http.Error(w, "Profile ID required", http.StatusBadRequest)
+		return
+	}
+
+	if !h.profileBelongsToAccount(profileId, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		MdblistAccountID string `json:"mdblistAccountId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.usersService.SetMdblistAccountID(profileId, req.MdblistAccountID); err != nil {
+		http.Error(w, "Failed to link MDBList account", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// ClearProfileMdblist removes MDBList link from a profile.
+func (h *AccountUIHandler) ClearProfileMdblist(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	profileId := r.URL.Query().Get("profileId")
+	if profileId == "" {
+		http.Error(w, "Profile ID required", http.StatusBadRequest)
+		return
+	}
+
+	if !h.profileBelongsToAccount(profileId, session.AccountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	if _, err := h.usersService.ClearMdblistAccountID(profileId); err != nil {
+		http.Error(w, "Failed to unlink MDBList account", http.StatusInternalServerError)
 		return
 	}
 

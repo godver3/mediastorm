@@ -254,7 +254,7 @@
         }
 
         try {
-            const response = await fetch(`/account/api/watchlist/${currentProfileId}`, {
+            const response = await fetch(`${basePath}/api/watchlist/${currentProfileId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id, type })

@@ -208,7 +208,7 @@
         container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
         try {
-            const response = await fetch(`/account/api/history/${profileId}/continue`);
+            const response = await fetch(`${basePath}/api/history/${profileId}/continue`);
             if (!response.ok) throw new Error('Failed to load');
 
             const items = await response.json();
@@ -228,7 +228,7 @@
         container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
         try {
-            const response = await fetch(`/account/api/history/${profileId}/watched`);
+            const response = await fetch(`${basePath}/api/history/${profileId}/watched`);
             if (!response.ok) throw new Error('Failed to load');
 
             const items = await response.json();

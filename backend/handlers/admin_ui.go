@@ -28,6 +28,9 @@ import (
 
 	"novastream/config"
 	"novastream/internal/auth"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"novastream/models"
 	"novastream/services/accounts"
 	"novastream/services/calendar"
@@ -659,14 +662,14 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"mdblist": map[string]interface{}{
-		"label":    "MDBList Ratings",
+		"label":    "MDBList",
 		"icon":     "star",
 		"group":    "services",
 		"order":    1,
 		"testable": true,
 		"fields": map[string]interface{}{
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable MDBList integration for aggregated ratings (Rotten Tomatoes, IMDB, etc.)", "order": 0},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key", "description": "MDBList API key from mdblist.com (free tier available)", "order": 1},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key (Ratings)", "description": "Global MDBList API key for ratings display. For scrobbling, add MDBList accounts in Tools.", "order": 1},
 			"enabledRatings": map[string]interface{}{
 				"type":        "checkboxes",
 				"label":       "Rating Sources",
@@ -850,6 +853,7 @@ type AdminUIHandler struct {
 	calendarService       *calendar.Service
 	clientsService        clientsService
 	clientSettingsService clientSettingsService
+	serverBasePath        string // server-level base path from config (e.g. "/mediastorm")
 }
 
 // MetadataService interface for metadata operations
@@ -1029,6 +1033,17 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		}
 	}
 
+	// Load server base path from config
+	var serverBasePath string
+	if configManager != nil {
+		if settings, err := configManager.Load(); err == nil {
+			serverBasePath = "/" + strings.Trim(settings.Server.BasePath, "/")
+			if serverBasePath == "/" {
+				serverBasePath = ""
+			}
+		}
+	}
+
 	return &AdminUIHandler{
 		settingsTemplate:     createPageTemplate("settings.html"),
 		statusTemplate:       createPageTemplate("status.html"),
@@ -1053,26 +1068,28 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		configManager:        configManager,
 		plexClient:           plex.NewClient(plex.GenerateClientID()),
 		traktClient:          trakt.NewClient("", ""), // Will be updated with credentials from settings
+		serverBasePath:       serverBasePath,
 	}
 }
 
 // AdminPageData holds data for admin page templates
 type AdminPageData struct {
-	CurrentPath   string
-	BasePath      string // "/admin" for master accounts, "/account" for regular accounts
-	IsAdmin       bool   // true for master accounts, false for regular accounts
-	AccountID     string // Account ID for scoping data (empty for master)
-	Username      string // Username of logged in account
-	Settings      config.Settings
-	Schema        map[string]interface{}
-	Groups        []map[string]string
-	Status        AdminStatus
-	Users         []models.User
-	UserOverrides map[string]bool // Map of userID -> hasOverrides for showing indicators
-	Version       string
-	BuildID       string
-	NoProfiles    bool // true when non-admin user has no profiles
-	Presets       []config.Preset
+	CurrentPath    string
+	BasePath       string // e.g. "/mediastorm/admin" or "/admin"
+	ServerBasePath string // server-level prefix only, e.g. "/mediastorm" or ""
+	IsAdmin        bool   // true for master accounts, false for regular accounts
+	AccountID      string // Account ID for scoping data (empty for master)
+	Username       string // Username of logged in account
+	Settings       config.Settings
+	Schema         map[string]interface{}
+	Groups         []map[string]string
+	Status         AdminStatus
+	Users          []models.User
+	UserOverrides  map[string]bool // Map of userID -> hasOverrides for showing indicators
+	Version        string
+	BuildID        string
+	NoProfiles     bool // true when non-admin user has no profiles
+	Presets        []config.Preset
 }
 
 // AdminStatus holds backend status information
@@ -1106,9 +1123,10 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := AdminPageData{
-		CurrentPath:   basePath + "/settings",
-		BasePath:      basePath,
-		IsAdmin:       isAdmin,
+		CurrentPath:    basePath + "/settings",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:     accountID,
 		Username:      username,
 		Settings:      settings,
@@ -1144,8 +1162,9 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/status",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Settings:    settings,
@@ -1172,8 +1191,9 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/history",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Users:       usersList,
@@ -1965,7 +1985,8 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 
 // LoginPageData holds data for the login template
 type LoginPageData struct {
-	Error string
+	Error          string
+	ServerBasePath string
 }
 
 // IsAuthenticated checks if the request has a valid session (any account)
@@ -2025,7 +2046,7 @@ func (h *AdminUIHandler) getSession(r *http.Request) *models.Session {
 func (h *AdminUIHandler) getPageRoleInfo(r *http.Request) (isAdmin bool, accountID string, basePath string, username string) {
 	session := adminSessionFromContext(r.Context())
 	if session == nil {
-		return false, "", "/admin", ""
+		return false, "", h.serverBasePath + "/admin", ""
 	}
 
 	isAdmin = session.IsMaster
@@ -2038,11 +2059,11 @@ func (h *AdminUIHandler) getPageRoleInfo(r *http.Request) (isAdmin bool, account
 		}
 	}
 
-	// Determine base path from request URL
+	// Determine base path from request URL, prepending server base path
 	if strings.HasPrefix(r.URL.Path, "/account") {
-		basePath = "/account"
+		basePath = h.serverBasePath + "/account"
 	} else {
-		basePath = "/admin"
+		basePath = h.serverBasePath + "/admin"
 	}
 
 	return isAdmin, accountID, basePath, username
@@ -2082,7 +2103,7 @@ func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session := h.getSession(r)
 		if session == nil {
-			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 			return
 		}
 		// Add session to context for handlers to use
@@ -2114,12 +2135,12 @@ func (h *AdminUIHandler) RequireMasterAuth(next http.HandlerFunc) http.HandlerFu
 func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	// If already authenticated, redirect to dashboard
 	if h.IsAuthenticated(r) {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin", http.StatusSeeOther)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.loginTemplate.ExecuteTemplate(w, "login", LoginPageData{}); err != nil {
+	if err := h.loginTemplate.ExecuteTemplate(w, "login", LoginPageData{ServerBasePath: h.serverBasePath}); err != nil {
 		fmt.Printf("Login template error: %v\n", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
@@ -2127,8 +2148,9 @@ func (h *AdminUIHandler) LoginPage(w http.ResponseWriter, r *http.Request) {
 
 // RegisterPageData holds data for the registration page
 type RegisterPageData struct {
-	Token string
-	Error string
+	Token          string
+	Error          string
+	ServerBasePath string
 }
 
 // RegisterPage serves the registration page (GET)
@@ -2151,8 +2173,9 @@ func (h *AdminUIHandler) RegisterPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.registerTemplate.ExecuteTemplate(w, "register", RegisterPageData{
-		Token: token,
-		Error: validationError,
+		Token:          token,
+		Error:          validationError,
+		ServerBasePath: h.serverBasePath,
 	}); err != nil {
 		fmt.Printf("Register template error: %v\n", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
@@ -2223,9 +2246,9 @@ func (h *AdminUIHandler) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect based on account type
 	if account.IsMaster {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/admin", http.StatusSeeOther)
 	} else {
-		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		http.Redirect(w, r, h.serverBasePath+"/account", http.StatusSeeOther)
 	}
 }
 
@@ -2245,12 +2268,12 @@ func (h *AdminUIHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 	})
 
-	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
 }
 
 func (h *AdminUIHandler) renderLoginError(w http.ResponseWriter, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.loginTemplate.ExecuteTemplate(w, "login", LoginPageData{Error: errMsg}); err != nil {
+	if err := h.loginTemplate.ExecuteTemplate(w, "login", LoginPageData{Error: errMsg, ServerBasePath: h.serverBasePath}); err != nil {
 		fmt.Printf("Login template error: %v\n", err)
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
@@ -2975,6 +2998,7 @@ type ProfileWithPinStatus struct {
 	KidsMaxTVRating    string    `json:"kidsMaxTVRating,omitempty"`
 	KidsAllowedLists   []string  `json:"kidsAllowedLists,omitempty"`
 	TraktAccountID     string    `json:"traktAccountId,omitempty"`
+	MdblistAccountID   string    `json:"mdblistAccountId,omitempty"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
 }
@@ -3007,6 +3031,7 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 			KidsMaxTVRating:    u.KidsMaxTVRating,
 			KidsAllowedLists:   u.KidsAllowedLists,
 			TraktAccountID:     u.TraktAccountID,
+			MdblistAccountID:   u.MdblistAccountID,
 			CreatedAt:          u.CreatedAt,
 			UpdatedAt:          u.UpdatedAt,
 		}
@@ -4608,6 +4633,139 @@ func (h *AdminUIHandler) TestMDBList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetMDBListAccounts returns all configured MDBList accounts.
+func (h *AdminUIHandler) GetMDBListAccounts(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings.MDBList.Accounts)
+}
+
+// CreateMDBListAccount adds a new MDBList account.
+func (h *AdminUIHandler) CreateMDBListAccount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name   string `json:"name"`
+		APIKey string `json:"apiKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.APIKey == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "API key is required"})
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	account := config.MDBListAccount{
+		ID:     uuid.New().String(),
+		Name:   req.Name,
+		APIKey: req.APIKey,
+	}
+
+	if account.Name == "" {
+		account.Name = "MDBList Account"
+	}
+
+	settings.MDBList.Accounts = append(settings.MDBList.Accounts, account)
+
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(account)
+}
+
+// DeleteMDBListAccount removes an MDBList account.
+func (h *AdminUIHandler) DeleteMDBListAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	accountID := vars["accountID"]
+	if accountID == "" {
+		http.Error(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	if !settings.MDBList.RemoveAccount(accountID) {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// UpdateMDBListAccount updates an MDBList account's settings.
+func (h *AdminUIHandler) UpdateMDBListAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	accountID := vars["accountID"]
+	if accountID == "" {
+		http.Error(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Name   *string `json:"name,omitempty"`
+		APIKey *string `json:"apiKey,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	account := settings.MDBList.GetAccountByID(accountID)
+	if account == nil {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Name != nil {
+		account.Name = *req.Name
+	}
+	if req.APIKey != nil {
+		account.APIKey = *req.APIKey
+	}
+
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(account)
+}
+
 // TestLiveTVRequest represents a request to test a Live TV connection
 type TestLiveTVRequest struct {
 	Mode           string `json:"mode"`
@@ -5070,8 +5228,9 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/tools",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Users:       usersList,
@@ -5096,8 +5255,9 @@ func (h *AdminUIHandler) PrequeuePage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/tools",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Version:     GetBackendVersion(),
@@ -5130,8 +5290,9 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/search",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Settings:    settings,
@@ -5164,8 +5325,9 @@ func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/accounts",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Settings:    settings,
@@ -5210,8 +5372,9 @@ func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/kids-settings",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Settings:    settings,
@@ -5242,8 +5405,9 @@ func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/backup",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Version:     GetBackendVersion(),
@@ -5275,8 +5439,9 @@ func (h *AdminUIHandler) ConnectionsPage(w http.ResponseWriter, r *http.Request)
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/connections",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Version:     GetBackendVersion(),
@@ -5307,8 +5472,9 @@ func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/calendar",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Users:       usersList,
@@ -6846,8 +7012,9 @@ func (h *AdminUIHandler) PerformancePage(w http.ResponseWriter, r *http.Request)
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/performance",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Version:     GetBackendVersion(),
@@ -6920,8 +7087,9 @@ func (h *AdminUIHandler) LogsPage(w http.ResponseWriter, r *http.Request) {
 
 	data := AdminPageData{
 		CurrentPath: basePath + "/logs",
-		BasePath:    basePath,
-		IsAdmin:     isAdmin,
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
 		AccountID:   accountID,
 		Username:    username,
 		Version:     GetBackendVersion(),

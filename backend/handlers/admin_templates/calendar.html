@@ -171,10 +171,7 @@
     }
 
     function getBasePath() {
-        // Detect whether we're on /admin or /account
-        const path = window.location.pathname;
-        if (path.startsWith('/account')) return '/account';
-        return '/admin';
+        return basePath;
     }
 
     function formatRelativeDate(dateStr) {

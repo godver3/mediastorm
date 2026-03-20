@@ -52,7 +52,6 @@
 
 {{define "scripts"}}
 <script>
-    const basePath = '{{.BasePath}}';
     let autoRefresh = true;
     let refreshTimer = null;
 
@@ -78,7 +77,7 @@
 
     async function loadEntries() {
         try {
-            const response = await fetch('/admin/api/prequeue');
+            const response = await fetch(basePath + '/api/prequeue');
             if (!response.ok) throw new Error('Failed to load');
             const data = await response.json();
             renderEntries(data.entries || []);
@@ -158,7 +157,7 @@
     async function clearPrequeue(id) {
         if (!confirm('Clear this prequeue entry?')) return;
         try {
-            const response = await fetch('/admin/api/prequeue/' + id, { method: 'DELETE' });
+            const response = await fetch(basePath + '/api/prequeue/' + id, { method: 'DELETE' });
             if (!response.ok) throw new Error('Failed to clear entry');
             loadEntries();
         } catch (err) {
@@ -169,7 +168,7 @@
     async function clearAllPrequeues() {
         if (!confirm('Clear ALL prequeue entries?')) return;
         try {
-            const response = await fetch('/admin/api/prequeue', { method: 'DELETE' });
+            const response = await fetch(basePath + '/api/prequeue', { method: 'DELETE' });
             if (!response.ok) throw new Error('Failed to clear all entries');
             loadEntries();
         } catch (err) {

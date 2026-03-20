@@ -161,7 +161,7 @@ async function runAllTests() {
         if (card.group === 'Metadata Services') {
             // Metadata uses a single endpoint returning array results
             if (!promises._metadataPromise) {
-                promises._metadataPromise = testPost('/admin/api/test/metadata', {
+                promises._metadataPromise = testPost(basePath + '/api/test/metadata', {
                     tvdbApiKey: settings.metadata?.tvdbApiKey || '',
                     tmdbApiKey: settings.metadata?.tmdbApiKey || '',
                     geminiApiKey: settings.metadata?.geminiApiKey || ''
@@ -178,16 +178,16 @@ async function runAllTests() {
                 return result;
             });
         } else if (card.badge === 'subtitles') {
-            p = testPost('/admin/api/test/subtitles', {
+            p = testPost(basePath + '/api/test/subtitles', {
                 username: settings.subtitles?.openSubtitlesUsername || '',
                 password: settings.subtitles?.openSubtitlesPassword || ''
             });
         } else if (card.badge === 'mdblist') {
-            p = testPost('/admin/api/test/mdblist', {
+            p = testPost(basePath + '/api/test/mdblist', {
                 apiKey: settings.mdblist?.apiKey || ''
             });
         } else if (card.group === 'Live TV') {
-            p = testPost('/admin/api/test/live', {
+            p = testPost(basePath + '/api/test/live', {
                 mode: settings.live?.mode || '',
                 playlistUrl: settings.live?.playlistUrl || '',
                 xtreamHost: settings.live?.xtreamHost || '',
@@ -198,19 +198,19 @@ async function runAllTests() {
             const items = settings.indexers || [];
             const idx = items.filter(x => x.enabled).indexOf(items.find((x, j) => x.enabled && x.name === card.name));
             const item = items.filter(x => x.enabled).find(x => x.name === card.name) || items.filter(x => x.enabled)[0];
-            if (item) p = testPost('/admin/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name });
+            if (item) p = testPost(basePath + '/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name });
         } else if (card.badge === 'scraper') {
             const items = settings.torrentScrapers || [];
             const item = items.filter(x => x.enabled).find(x => x.name === card.name);
-            if (item) p = testPost('/admin/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey });
+            if (item) p = testPost(basePath + '/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey });
         } else if (card.badge === 'usenet') {
             const items = settings.usenet || [];
             const item = items.filter(x => x.enabled).find(x => x.name === card.name);
-            if (item) p = testPost('/admin/api/test/usenet-provider', { name: item.name, host: item.host, port: item.port, ssl: item.ssl, username: item.username, password: item.password });
+            if (item) p = testPost(basePath + '/api/test/usenet-provider', { name: item.name, host: item.host, port: item.port, ssl: item.ssl, username: item.username, password: item.password });
         } else if (card.badge === 'debrid') {
             const items = settings.debridProviders || [];
             const item = items.filter(x => x.enabled).find(x => x.name === card.name);
-            if (item) p = testPost('/admin/api/test/debrid-provider', { name: item.name, provider: item.provider, apiKey: item.apiKey });
+            if (item) p = testPost(basePath + '/api/test/debrid-provider', { name: item.name, provider: item.provider, apiKey: item.apiKey });
         }
 
         if (p) {

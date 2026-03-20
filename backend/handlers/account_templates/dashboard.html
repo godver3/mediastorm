@@ -68,7 +68,7 @@
         <div class="profile-card" data-profile-id="{{.ID}}">
             <div class="profile-header">
                 {{if .IconURL}}
-                <img class="profile-avatar" src="/account/api/profiles/icon?profileId={{.ID}}" alt="{{.Name}}" style="object-fit: cover;">
+                <img class="profile-avatar" src="{{$.BasePath}}/api/profiles/icon?profileId={{.ID}}" alt="{{.Name}}" style="object-fit: cover;">
                 {{else}}
                 <div class="profile-avatar" style="background: {{if .Color}}{{.Color}}{{else}}#3B82F6{{end}};">
                     {{slice .Name 0 1}}
@@ -91,7 +91,7 @@
                     </svg>
                     Edit
                 </button>
-                <a class="btn btn-sm btn-secondary" href="/account/settings?profileId={{.ID}}">
+                <a class="btn btn-sm btn-secondary" href="{{$.BasePath}}/settings?profileId={{.ID}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -314,7 +314,7 @@
         if (!name) return;
 
         try {
-            const response = await fetch('/account/api/profiles', {
+            const response = await fetch(basePath + '/api/profiles', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, color: selectedColor })
@@ -393,7 +393,7 @@
         btn.textContent = 'Downloading...';
 
         try {
-            const response = await fetch('/account/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ iconUrl })
@@ -456,7 +456,7 @@
         btn.disabled = true;
         btn.textContent = 'Uploading...';
         try {
-            const response = await fetch('/account/api/profiles/icon/upload?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/icon/upload?profileId=' + encodeURIComponent(profileId), {
                 method: 'POST',
                 body: formData
             });
@@ -479,7 +479,7 @@
         const profileId = document.getElementById('editProfileId').value;
 
         try {
-            const response = await fetch('/account/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/icon?profileId=' + encodeURIComponent(profileId), {
                 method: 'DELETE'
             });
             if (response.ok) {
@@ -505,7 +505,7 @@
         const isKidsProfile = document.getElementById('editKidsProfile').checked;
 
         try {
-            let response = await fetch('/account/api/profiles?profileId=' + encodeURIComponent(profileId), {
+            let response = await fetch(basePath + '/api/profiles?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
@@ -516,13 +516,13 @@
                 return;
             }
 
-            response = await fetch('/account/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
+            response = await fetch(basePath + '/api/profiles/color?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ color: editSelectedColor })
             });
 
-            response = await fetch('/account/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
+            response = await fetch(basePath + '/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ isKidsProfile })
@@ -540,7 +540,7 @@
         if (!confirm('Delete this profile? This action cannot be undone.')) return;
 
         try {
-            const response = await fetch('/account/api/profiles?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles?profileId=' + encodeURIComponent(profileId), {
                 method: 'DELETE'
             });
             if (response.ok) {
@@ -577,7 +577,7 @@
         const pin = document.getElementById('pinInput').value;
 
         try {
-            const response = await fetch('/account/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pin })
@@ -599,7 +599,7 @@
         if (!confirm('Remove PIN protection from this profile?')) return;
 
         try {
-            const response = await fetch('/account/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
+            const response = await fetch(basePath + '/api/profiles/pin?profileId=' + encodeURIComponent(profileId), {
                 method: 'DELETE'
             });
             if (response.ok) {
@@ -631,7 +631,7 @@
         }
 
         try {
-            const response = await fetch('/account/api/password', {
+            const response = await fetch(basePath + '/api/password', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ currentPassword, newPassword })
@@ -652,7 +652,7 @@
     async function showProfileStreamsModal(profileId, profileName) {
         // Fetch current limit
         try {
-            const res = await fetch('/account/api/profiles/max-streams?profileId=' + profileId);
+            const res = await fetch(basePath + '/api/profiles/max-streams?profileId=' + profileId);
             if (res.ok) {
                 const data = await res.json();
                 document.getElementById('streamsProfileId').value = profileId;
@@ -677,7 +677,7 @@
         const maxStreams = parseInt(document.getElementById('streamsInput').value) || 0;
 
         try {
-            const res = await fetch('/account/api/profiles/max-streams?profileId=' + profileId, {
+            const res = await fetch(basePath + '/api/profiles/max-streams?profileId=' + profileId, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ maxStreams })

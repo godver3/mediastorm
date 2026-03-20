@@ -12,7 +12,7 @@
 <div class="settings-group">
     <div class="group-title">Integrations</div>
 
-    <!-- Trakt Accounts Section -->
+    <!-- Scrobbling Accounts Section -->
     <div class="section" id="traktAccountSection">
         <div class="section-header" onclick="toggleSection(this)">
             <div class="section-title">
@@ -20,7 +20,7 @@
                     <circle cx="12" cy="12" r="10"/>
                     <path d="M8 12l2 2 4-4"/>
                 </svg>
-                Trakt Accounts
+                Scrobbling Accounts
             </div>
             <span id="traktStatusBadge" class="status-badge"></span>
             <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -29,18 +29,21 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Register Trakt accounts and link them to profiles. Each profile can have its own Trakt account for scrobbling.
-                Scrobbling is one-way &mdash; it pushes to Trakt when an item is completed or marked as watched. To pull watch history from Trakt (e.g. items watched in other apps), create a <strong style="color: var(--text-secondary);">Trakt History Sync</strong> scheduled task below.
-                <br>Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get Client ID and Secret.
+                Register Trakt and MDBList accounts here, then link them to profiles in the <strong style="color: var(--text-secondary);">Profile Scrobbling</strong> section below.
+                Scrobbling pushes watched items to the linked service. To pull watch history, create a sync scheduled task.
             </p>
 
-            <!-- Trakt Accounts List -->
-            <div id="traktAccountsList" style="margin-bottom: 1.5rem;">
+            <!-- Trakt Accounts -->
+            <h4 style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">Trakt</h4>
+            <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">
+                Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank">trakt.tv/oauth/applications</a> to get Client ID and Secret.
+            </p>
+            <div id="traktAccountsList" style="margin-bottom: 1rem;">
                 <!-- Accounts will be rendered here -->
             </div>
 
-            <!-- Add New Account Button -->
-            <button class="btn btn-primary" onclick="showAddTraktAccountForm()" id="addTraktAccountBtn">
+            <!-- Add New Trakt Account Button -->
+            <button class="btn btn-primary" onclick="showAddTraktAccountForm()" id="addTraktAccountBtn" style="margin-bottom: 1.5rem;">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
@@ -80,10 +83,44 @@
                     <button class="btn btn-secondary" onclick="cancelTraktAuth()">Cancel</button>
                 </div>
             </div>
+
+            <!-- MDBList Accounts -->
+            <h4 style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);">MDBList</h4>
+            <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">
+                Get an API key from <a href="https://mdblist.com/preferences/" target="_blank">mdblist.com/preferences</a>.
+            </p>
+            <div id="mdblistAccountsList" style="margin-bottom: 1rem;">
+                <!-- Accounts will be rendered here -->
+            </div>
+
+            <!-- Add New MDBList Account -->
+            <button class="btn btn-primary" onclick="showAddMdblistAccountForm()" id="addMdblistAccountBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add MDBList Account
+            </button>
+
+            <!-- Add MDBList Account Form (hidden by default) -->
+            <div id="mdblistAddAccountForm" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 1rem;">Add New MDBList Account</h4>
+                <div class="form-group">
+                    <label class="form-label">Account Name</label>
+                    <input type="text" class="form-input" id="newMdblistAccountName" placeholder="e.g., My MDBList">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API Key</label>
+                    <input type="password" class="form-input" id="newMdblistApiKey" placeholder="From mdblist.com/preferences">
+                </div>
+                <div class="btn-group" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="hideAddMdblistAccountForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createMdblistAccount()">Create Account</button>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Profile-Trakt Linking Section -->
+    <!-- Profile Scrobbling Section -->
     <div class="section" id="profileTraktLinkingSection">
         <div class="section-header" onclick="toggleSection(this)">
             <div class="section-title">
@@ -92,7 +129,7 @@
                     <circle cx="8.5" cy="7" r="4"/>
                     <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                 </svg>
-                Profile Trakt Linking
+                Profile Scrobbling
             </div>
             <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="6 9 12 15 18 9"/>
@@ -100,7 +137,7 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Link each profile to a Trakt account. When a profile watches content, it will automatically scrobble to their linked Trakt account if scrobbling is enabled (one-way push).
+                Link each profile to a Trakt account and/or enable MDBList scrobbling. When a profile watches content, it will automatically scrobble to their linked services (one-way push).
                 To sync history in the other direction (e.g. items watched in other apps), use a <strong style="color: var(--text-secondary);">Trakt History Sync</strong> scheduled task.
             </p>
             <div id="profileTraktLinkingList">
@@ -289,6 +326,8 @@
                             <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
+                            <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             <option value="backup">System Backup</option>
@@ -393,6 +432,56 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="newTaskHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- MDBList Watchlist Sync specific config -->
+                    <div id="mdblistWatchlistSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">MDBList Account</label>
+                            <select id="newTaskMdblistWatchlistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select an MDBList account to import watchlist from</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskMdblistWatchlistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- MDBList History Sync specific config -->
+                    <div id="mdblistHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">MDBList Account</label>
+                            <select id="newTaskMdblistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select an MDBList account to sync history with</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="newTaskMdblistSyncDirection" class="form-select">
+                                <option value="mdblist_to_local" selected>MDBList → Local (Import from MDBList)</option>
+                                <option value="local_to_mdblist">Local → MDBList (Export to MDBList)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                            <small class="text-muted">Direction of watch history sync</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskMdblistProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -561,6 +650,8 @@
                             <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
+                            <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             <option value="backup">System Backup</option>
@@ -650,6 +741,53 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="editTaskHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- MDBList Watchlist Sync specific config (edit) -->
+                    <div id="editMdblistWatchlistSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">MDBList Account</label>
+                            <select id="editTaskMdblistWatchlistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskMdblistWatchlistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- MDBList History Sync specific config (edit) -->
+                    <div id="editMdblistHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">MDBList Account</label>
+                            <select id="editTaskMdblistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync Direction</label>
+                            <select id="editTaskMdblistSyncDirection" class="form-select">
+                                <option value="mdblist_to_local">MDBList → Local (Import from MDBList)</option>
+                                <option value="local_to_mdblist">Local → MDBList (Export to MDBList)</option>
+                                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskMdblistProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -1451,6 +1589,7 @@
     let traktAuthAccountId = null;
     let traktPollInterval = null;
     let userProfiles = [];
+    let mdblistAccounts = [];
 
     // ========== Jellyfin State ==========
     let jellyfinAccounts = [];
@@ -1458,7 +1597,6 @@
     // ========== Client Management State ==========
     let allClients = [];
     let filteredClients = [];
-    const basePath = '{{.BasePath}}';
 
     // ========== Scheduled Tasks State ==========
     let scheduledTasks = [];
@@ -1468,13 +1606,13 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadJellyfinAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     // ========== Plex Account Functions ==========
     async function loadPlexAccounts() {
         try {
-            const response = await fetch('/admin/api/plex/accounts');
+            const response = await fetch(basePath + '/api/plex/accounts');
             const data = await response.json();
             plexAccounts = data.accounts || [];
             renderPlexAccountsList();
@@ -1552,7 +1690,7 @@
         const name = document.getElementById('newPlexAccountName').value.trim();
 
         try {
-            const response = await fetch('/admin/api/plex/accounts', {
+            const response = await fetch(basePath + '/api/plex/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name || 'Plex Account' })
@@ -1575,7 +1713,7 @@
         if (!confirm('Delete this Plex account? Any linked profiles will be unlinked.')) return;
 
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}`, { method: 'DELETE' });
+            const response = await fetch(`${basePath}/api/plex/accounts/${accountId}`, { method: 'DELETE' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to delete account');
@@ -1592,7 +1730,7 @@
 
     async function connectPlexAccount(accountId) {
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/pin`, { method: 'POST' });
+            const response = await fetch(`${basePath}/api/plex/accounts/${accountId}/pin`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to start auth');
@@ -1627,7 +1765,7 @@
 
     async function pollPlexAuth(accountId, pinId) {
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/pin/${pinId}`);
+            const response = await fetch(`${basePath}/api/plex/accounts/${accountId}/pin/${pinId}`);
             const data = await response.json();
 
             if (data.authenticated) {
@@ -1665,7 +1803,7 @@
 
     async function disconnectPlexAccount(accountId) {
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/disconnect`, { method: 'POST' });
+            const response = await fetch(`${basePath}/api/plex/accounts/${accountId}/disconnect`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to disconnect');
@@ -1703,7 +1841,7 @@
     // ========== User Profiles Functions ==========
     async function loadUserProfiles() {
         try {
-            const response = await fetch('/admin/api/profiles');
+            const response = await fetch(basePath + '/api/profiles');
             if (response.ok) {
                 userProfiles = await response.json();
                 renderProfileTraktLinking();
@@ -1713,10 +1851,110 @@
         }
     }
 
+    // ========== MDBList Accounts Functions ==========
+    async function loadMdblistAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/mdblist/accounts');
+            if (response.ok) {
+                mdblistAccounts = await response.json() || [];
+                renderMdblistAccountsList();
+                updateTraktStatusBadge();
+                renderProfileTraktLinking();
+            }
+        } catch (err) {
+            console.error('Failed to load MDBList accounts:', err);
+        }
+    }
+
+    function renderMdblistAccountsList() {
+        const container = document.getElementById('mdblistAccountsList');
+        if (!container) return;
+        if (mdblistAccounts.length === 0) {
+            container.innerHTML = '<p class="text-muted">No MDBList accounts configured.</p>';
+            return;
+        }
+
+        container.innerHTML = mdblistAccounts.map(account => {
+            const linkedProfiles = userProfiles.filter(p => p.mdblistAccountId === account.id);
+            return `
+            <div style="padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                    <div style="flex: 1; min-width: 120px;">
+                        <strong>${escapeHtml(account.name || 'MDBList Account')}</strong>
+                        <span class="status-badge connected" style="font-size: 0.75rem;">API Key Set</span>
+                        ${linkedProfiles.length > 0 ?
+                            `<div class="text-muted" style="font-size: 0.8rem; margin-top: 0.25rem;">Linked to: ${linkedProfiles.map(p => escapeHtml(p.name)).join(', ')}</div>` :
+                            ''
+                        }
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="deleteMdblistAccount('${account.id}')" style="color: var(--danger);">Delete</button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function showAddMdblistAccountForm() {
+        document.getElementById('mdblistAddAccountForm').style.display = 'block';
+        document.getElementById('addMdblistAccountBtn').style.display = 'none';
+    }
+
+    function hideAddMdblistAccountForm() {
+        document.getElementById('mdblistAddAccountForm').style.display = 'none';
+        document.getElementById('addMdblistAccountBtn').style.display = 'inline-flex';
+        document.getElementById('newMdblistAccountName').value = '';
+        document.getElementById('newMdblistApiKey').value = '';
+    }
+
+    async function createMdblistAccount() {
+        const name = document.getElementById('newMdblistAccountName').value.trim();
+        const apiKey = document.getElementById('newMdblistApiKey').value.trim();
+
+        if (!apiKey) {
+            showToast('API Key is required', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(basePath + '/api/mdblist/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name || 'MDBList Account', apiKey })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to create account');
+            }
+
+            showToast('MDBList account created', 'success');
+            hideAddMdblistAccountForm();
+            await loadMdblistAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function deleteMdblistAccount(accountId) {
+        if (!confirm('Delete this MDBList account? Any linked profiles will be unlinked.')) return;
+
+        try {
+            const response = await fetch(`${basePath}/api/mdblist/accounts/${accountId}`, { method: 'DELETE' });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to delete account');
+            }
+            showToast('MDBList account deleted', 'success');
+            await loadMdblistAccounts();
+            await loadUserProfiles();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
     // ========== Trakt Accounts Functions ==========
     async function loadTraktAccounts() {
         try {
-            const response = await fetch('/admin/api/trakt/accounts');
+            const response = await fetch(basePath + '/api/trakt/accounts');
             const data = await response.json();
             traktAccounts = data.accounts || [];
             renderTraktAccountsList();
@@ -1731,11 +1969,15 @@
 
     function updateTraktStatusBadge() {
         const badge = document.getElementById('traktStatusBadge');
-        const connectedCount = traktAccounts.filter(a => a.connected).length;
-        if (connectedCount > 0) {
-            badge.textContent = `${connectedCount} Connected`;
+        const traktConnected = traktAccounts.filter(a => a.connected).length;
+        const mdblistCount = mdblistAccounts.length;
+        const totalConnected = traktConnected + mdblistCount;
+        const totalAccounts = traktAccounts.length + mdblistCount;
+
+        if (totalConnected > 0) {
+            badge.textContent = `${totalConnected} Connected`;
             badge.className = 'status-badge connected';
-        } else if (traktAccounts.length > 0) {
+        } else if (totalAccounts > 0) {
             badge.textContent = 'Not Connected';
             badge.className = 'status-badge disconnected';
         } else {
@@ -1778,13 +2020,6 @@
                     </div>
                     <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-shrink: 0; align-items: center;">
                         ${account.connected ? `
-                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-right: 0.5rem;" title="Enable scrobbling to sync watch history to Trakt">
-                                <label class="toggle-switch">
-                                    <input type="checkbox" ${account.scrobblingEnabled ? 'checked' : ''} onchange="toggleAccountScrobbling('${account.id}', this.checked)">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span style="font-size: 0.75rem; color: var(--text-muted);">Scrobble</span>
-                            </div>
                             <button class="btn btn-secondary btn-sm" onclick="disconnectTraktAccount('${account.id}')">Disconnect</button>
                         ` : `
                             <button class="btn btn-primary btn-sm" onclick="connectTraktAccount('${account.id}')">Connect</button>
@@ -1806,12 +2041,11 @@
         const connectedAccounts = traktAccounts.filter(a => a.connected);
 
         container.innerHTML = userProfiles.map(profile => {
-            const currentAccountId = profile.traktAccountId || '';
-            // Check if current account ID exists in any account (connected or not)
-            const currentAccountExists = currentAccountId && traktAccounts.some(a => a.id === currentAccountId);
-            const currentAccountConnected = currentAccountId && connectedAccounts.some(a => a.id === currentAccountId);
-            // Show warning if profile has an account ID that doesn't exist
-            const orphanedLink = currentAccountId && !currentAccountExists;
+            const currentTraktId = profile.traktAccountId || '';
+            const currentMdblistId = profile.mdblistAccountId || '';
+            const currentAccountExists = currentTraktId && traktAccounts.some(a => a.id === currentTraktId);
+            const orphanedLink = currentTraktId && !currentAccountExists;
+            const mdblistOrphaned = currentMdblistId && !mdblistAccounts.some(a => a.id === currentMdblistId);
 
             return `
                 <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); gap: 0.5rem;">
@@ -1821,14 +2055,24 @@
                         </div>
                         <span style="font-weight: 500;">${escapeHtml(profile.name)}</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-                        ${orphanedLink ? `<span class="status-badge" style="background: var(--warning); color: #000; font-size: 0.7rem;">Orphaned link</span>` : ''}
-                        <select class="form-select" style="max-width: 200px; min-width: 150px;" onchange="updateProfileTraktLink('${profile.id}', this.value)">
-                            <option value="" ${!currentAccountId ? 'selected' : ''}>No Trakt Account</option>
-                            ${orphanedLink ? `<option value="${currentAccountId}" selected style="color: var(--warning);">⚠ Unknown Account</option>` : ''}
+                    <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                        ${orphanedLink ? `<span class="status-badge" style="background: var(--warning); color: #000; font-size: 0.7rem;">Orphaned Trakt</span>` : ''}
+                        <select class="form-select" style="max-width: 180px; min-width: 140px;" onchange="updateProfileTraktLink('${profile.id}', this.value)" title="Trakt account">
+                            <option value="" ${!currentTraktId ? 'selected' : ''}>No Trakt</option>
+                            ${orphanedLink ? `<option value="${currentTraktId}" selected style="color: var(--warning);">⚠ Unknown</option>` : ''}
                             ${connectedAccounts.map(acc => `
-                                <option value="${acc.id}" ${currentAccountId === acc.id ? 'selected' : ''}>
+                                <option value="${acc.id}" ${currentTraktId === acc.id ? 'selected' : ''}>
                                     ${escapeHtml(acc.name || acc.username || 'Unnamed')}
+                                </option>
+                            `).join('')}
+                        </select>
+                        ${mdblistOrphaned ? `<span class="status-badge" style="background: var(--warning); color: #000; font-size: 0.7rem;">Orphaned MDBList</span>` : ''}
+                        <select class="form-select" style="max-width: 180px; min-width: 140px;" onchange="updateProfileMdblistLink('${profile.id}', this.value)" title="MDBList account">
+                            <option value="" ${!currentMdblistId ? 'selected' : ''}>No MDBList</option>
+                            ${mdblistOrphaned ? `<option value="${currentMdblistId}" selected style="color: var(--warning);">⚠ Unknown</option>` : ''}
+                            ${mdblistAccounts.map(acc => `
+                                <option value="${acc.id}" ${currentMdblistId === acc.id ? 'selected' : ''}>
+                                    ${escapeHtml(acc.name || 'MDBList Account')}
                                 </option>
                             `).join('')}
                         </select>
@@ -1862,7 +2106,7 @@
         }
 
         try {
-            const response = await fetch('/admin/api/trakt/accounts', {
+            const response = await fetch(basePath + '/api/trakt/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: name || 'Trakt Account', clientId, clientSecret })
@@ -1885,7 +2129,7 @@
         if (!confirm('Delete this Trakt account? Any linked profiles will be unlinked.')) return;
 
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}`, { method: 'DELETE' });
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}`, { method: 'DELETE' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to delete account');
@@ -1900,7 +2144,7 @@
 
     async function connectTraktAccount(accountId) {
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/auth/start`, { method: 'POST' });
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/auth/start`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to start auth');
@@ -1935,7 +2179,7 @@
 
     async function pollTraktAuth(accountId, deviceCode) {
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/auth/check/${deviceCode}`);
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/auth/check/${deviceCode}`);
             const data = await response.json();
 
             if (data.authenticated) {
@@ -1962,7 +2206,7 @@
 
     async function disconnectTraktAccount(accountId) {
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/disconnect`, { method: 'POST' });
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/disconnect`, { method: 'POST' });
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to disconnect');
@@ -1975,29 +2219,10 @@
         }
     }
 
-    async function toggleAccountScrobbling(accountId, enabled) {
-        try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/scrobbling`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled })
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to update scrobbling');
-            }
-            showToast(`Scrobbling ${enabled ? 'enabled' : 'disabled'}`, 'success');
-        } catch (err) {
-            showToast(err.message, 'error');
-            // Reload to reset toggle state
-            await loadTraktAccounts();
-        }
-    }
-
     async function updateProfileTraktLink(profileId, traktAccountId) {
         try {
             const method = traktAccountId ? 'PUT' : 'DELETE';
-            const response = await fetch(`/admin/api/users/${profileId}/trakt`, {
+            const response = await fetch(`${basePath}/api/users/${profileId}/trakt`, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
                 body: traktAccountId ? JSON.stringify({ traktAccountId }) : undefined
@@ -2009,6 +2234,26 @@
             showToast(traktAccountId ? 'Profile linked to Trakt account' : 'Profile unlinked from Trakt', 'success');
             await loadUserProfiles();
             await loadTraktAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+            await loadUserProfiles();
+        }
+    }
+
+    async function updateProfileMdblistLink(profileId, mdblistAccountId) {
+        try {
+            const method = mdblistAccountId ? 'PUT' : 'DELETE';
+            const response = await fetch(`${basePath}/api/users/${profileId}/mdblist`, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: mdblistAccountId ? JSON.stringify({ mdblistAccountId }) : undefined
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to update profile');
+            }
+            showToast(mdblistAccountId ? 'Profile linked to MDBList account' : 'Profile unlinked from MDBList', 'success');
+            await loadUserProfiles();
         } catch (err) {
             showToast(err.message, 'error');
             await loadUserProfiles();
@@ -2078,7 +2323,7 @@
         document.getElementById('traktWatchlistFetchBtnWrapper').style.display = 'none';
 
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/watchlist`);
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/watchlist`);
 
             if (!response.ok) {
                 const error = await response.json();
@@ -2205,7 +2450,7 @@
         document.getElementById('traktWatchlistImportProgress').textContent = `0 of ${itemsToImport.length}`;
 
         try {
-            const response = await fetch('/admin/api/trakt/import/watchlist', {
+            const response = await fetch(basePath + '/api/trakt/import/watchlist', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2282,7 +2527,7 @@
         document.getElementById('traktHistoryFetchBtnWrapper').style.display = 'none';
 
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/history?all=true`);
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/history?all=true`);
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.error || 'Failed to fetch history');
@@ -2402,7 +2647,7 @@
         document.getElementById('traktHistoryImportProgress').textContent = `0 of ${itemsToImport.length}`;
 
         try {
-            const response = await fetch('/admin/api/trakt/import/history', {
+            const response = await fetch(basePath + '/api/trakt/import/history', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2474,7 +2719,7 @@
 
         try {
             // Use SSE for progress streaming
-            const eventSource = new EventSource(`/admin/api/plex/accounts/${accountId}/watchlist?stream=true`);
+            const eventSource = new EventSource(`${basePath}/api/plex/accounts/${accountId}/watchlist?stream=true`);
 
             eventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
@@ -2629,7 +2874,7 @@
         document.getElementById('plexImportProgress').textContent = `0 of ${itemsToImport.length}`;
 
         try {
-            const response = await fetch('/admin/api/plex/import', {
+            const response = await fetch(basePath + '/api/plex/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2690,7 +2935,7 @@
         if (!accountId) return;
 
         try {
-            const response = await fetch(`/admin/api/plex/accounts/${accountId}/users`);
+            const response = await fetch(`${basePath}/api/plex/accounts/${accountId}/users`);
             if (response.ok) {
                 const data = await response.json();
                 const users = data.users || [];
@@ -2729,7 +2974,7 @@
 
         try {
             // Use SSE for progress streaming
-            const eventSource = new EventSource(`/admin/api/plex/accounts/${accountId}/history?limit=1000&plexUserId=${plexUserId}&stream=true`);
+            const eventSource = new EventSource(`${basePath}/api/plex/accounts/${accountId}/history?limit=1000&plexUserId=${plexUserId}&stream=true`);
 
             eventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
@@ -2886,7 +3131,7 @@
         document.getElementById('plexHistoryImportProgress').textContent = `0 of ${selectedItems.length}`;
 
         try {
-            const response = await fetch(`/admin/api/plex/import/history`, {
+            const response = await fetch(`${basePath}/api/plex/import/history`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -3171,7 +3416,7 @@
     // ========== Jellyfin Account Functions ==========
     async function loadJellyfinAccounts() {
         try {
-            const response = await fetch('/admin/api/jellyfin/accounts');
+            const response = await fetch(basePath + '/api/jellyfin/accounts');
             const data = await response.json();
             jellyfinAccounts = data.accounts || [];
             renderJellyfinAccountsList();
@@ -3245,7 +3490,7 @@
         }
 
         try {
-            const response = await fetch('/admin/api/jellyfin/accounts', {
+            const response = await fetch(basePath + '/api/jellyfin/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, serverUrl, username, password })
@@ -3268,7 +3513,7 @@
         if (!confirm('Delete this Jellyfin account?')) return;
 
         try {
-            const response = await fetch(`/admin/api/jellyfin/accounts/${accountId}`, { method: 'DELETE' });
+            const response = await fetch(`${basePath}/api/jellyfin/accounts/${accountId}`, { method: 'DELETE' });
             const data = await response.json();
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to delete');
@@ -3282,7 +3527,7 @@
 
     async function testJellyfinConnection(accountId) {
         try {
-            const response = await fetch(`/admin/api/jellyfin/accounts/${accountId}/test`, { method: 'POST' });
+            const response = await fetch(`${basePath}/api/jellyfin/accounts/${accountId}/test`, { method: 'POST' });
             const data = await response.json();
             if (!response.ok) {
                 throw new Error(data.error || 'Connection test failed');
@@ -3311,7 +3556,7 @@
         if (!listContainer) return;
 
         try {
-            const response = await fetch('/admin/api/scheduled-tasks');
+            const response = await fetch(basePath + '/api/scheduled-tasks');
             if (!response.ok) {
                 throw new Error('Failed to load scheduled tasks');
             }
@@ -3387,6 +3632,17 @@
                     accountSource = 'Trakt';
                     const dirLabels = { trakt_to_local: 'Import', local_to_trakt: 'Export', bidirectional: 'Bidirectional' };
                     listTypeLabel = dirLabels[task.config.syncDirection] || 'Import';
+                } else if (task.type === 'mdblist_watchlist_sync') {
+                    const mdbWLAccount = mdblistAccounts.find(a => a.id === task.config.mdblistAccountId);
+                    if (mdbWLAccount) accountName = mdbWLAccount.name || 'MDBList Account';
+                    accountSource = 'MDBList';
+                    listTypeLabel = 'Watchlist';
+                } else if (task.type === 'mdblist_history_sync') {
+                    const mdbAccount = mdblistAccounts.find(a => a.id === task.config.mdblistAccountId);
+                    if (mdbAccount) accountName = mdbAccount.name || 'MDBList Account';
+                    accountSource = 'MDBList';
+                    const mdbDirLabels = { mdblist_to_local: 'Import', local_to_mdblist: 'Export', bidirectional: 'Bidirectional' };
+                    listTypeLabel = mdbDirLabels[task.config.syncDirection] || 'Import';
                 } else if (task.type === 'plex_history_sync') {
                     const plexAccount = plexAccounts.find(a => a.id === task.config.plexAccountId);
                     if (plexAccount) accountName = plexAccount.name || plexAccount.username || 'Plex Account';
@@ -3529,6 +3785,8 @@
             case 'plex_history_sync': return 'Plex History';
             case 'trakt_list_sync': return 'Trakt List';
             case 'trakt_history_sync': return 'Trakt History';
+            case 'mdblist_watchlist_sync': return 'MDBList Watchlist';
+            case 'mdblist_history_sync': return 'MDBList History';
             case 'jellyfin_favorites_sync': return 'Jellyfin Favorites';
             case 'jellyfin_history_sync': return 'Jellyfin History';
             case 'backup': return 'System Backup';
@@ -3664,6 +3922,10 @@
         plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
         traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
         traktHistoryConfig.style.display = taskType === 'trakt_history_sync' ? 'block' : 'none';
+        const mdblistWatchlistConfig = document.getElementById('mdblistWatchlistSyncConfig');
+        mdblistWatchlistConfig.style.display = taskType === 'mdblist_watchlist_sync' ? 'block' : 'none';
+        const mdblistHistoryConfig = document.getElementById('mdblistHistorySyncConfig');
+        mdblistHistoryConfig.style.display = taskType === 'mdblist_history_sync' ? 'block' : 'none';
         plexHistoryConfig.style.display = taskType === 'plex_history_sync' ? 'block' : 'none';
         jellyfinFavConfig.style.display = taskType === 'jellyfin_favorites_sync' ? 'block' : 'none';
         jellyfinHistConfig.style.display = taskType === 'jellyfin_history_sync' ? 'block' : 'none';
@@ -3676,6 +3938,22 @@
             const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
             historyTraktSelect.innerHTML = connectedTraktAccounts.map(account =>
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
+            ).join('');
+        }
+
+        // Populate MDBList accounts for watchlist sync
+        if (taskType === 'mdblist_watchlist_sync') {
+            const mdblistWLSelect = document.getElementById('newTaskMdblistWatchlistAccount');
+            mdblistWLSelect.innerHTML = mdblistAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || 'MDBList Account')}</option>`
+            ).join('');
+        }
+
+        // Populate MDBList accounts for history sync
+        if (taskType === 'mdblist_history_sync') {
+            const mdblistSelect = document.getElementById('newTaskMdblistAccount');
+            mdblistSelect.innerHTML = mdblistAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || 'MDBList Account')}</option>`
             ).join('');
         }
 
@@ -3709,6 +3987,12 @@
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
+        } else if (taskType === 'mdblist_watchlist_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target" selected>MDBList → mediastorm (Import from MDBList)</option>
+                <option value="target_to_source">mediastorm → MDBList (Export to MDBList)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
         } else if (taskType === 'jellyfin_favorites_sync') {
             syncDirection.innerHTML = `
                 <option value="source_to_target" selected>Jellyfin → mediastorm (Import from Jellyfin)</option>
@@ -3723,7 +4007,7 @@
         // Show sync options and dry run for appropriate task types
         // Hide generic sync options for history sync types (they have their own controls or no direction needed)
         const isSyncTask = taskType.includes('sync');
-        const hasOwnDirection = taskType === 'trakt_history_sync' || taskType === 'plex_history_sync' || taskType === 'jellyfin_history_sync';
+        const hasOwnDirection = taskType === 'trakt_history_sync' || taskType === 'mdblist_history_sync' || taskType === 'plex_history_sync' || taskType === 'jellyfin_history_sync';
         syncOptions.style.display = (isSyncTask && !hasOwnDirection) ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
     }
@@ -3782,7 +4066,7 @@
         select.disabled = true;
 
         try {
-            const response = await fetch(`/admin/api/trakt/accounts/${accountId}/lists`);
+            const response = await fetch(`${basePath}/api/trakt/accounts/${accountId}/lists`);
             const data = await response.json();
 
             if (!response.ok) {
@@ -3859,6 +4143,23 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'mdblist_watchlist_sync') {
+            config.mdblistAccountId = document.getElementById('newTaskMdblistWatchlistAccount').value;
+            config.profileId = document.getElementById('newTaskMdblistWatchlistProfile').value;
+
+            if (!config.mdblistAccountId || !config.profileId) {
+                showToast('Please select an MDBList account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'mdblist_history_sync') {
+            config.mdblistAccountId = document.getElementById('newTaskMdblistAccount').value;
+            config.profileId = document.getElementById('newTaskMdblistProfile').value;
+            config.syncDirection = document.getElementById('newTaskMdblistSyncDirection').value;
+
+            if (!config.mdblistAccountId || !config.profileId) {
+                showToast('Please select an MDBList account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'plex_history_sync') {
             config.plexAccountId = document.getElementById('newTaskPlexHistoryAccount').value;
             config.profileId = document.getElementById('newTaskPlexHistoryProfile').value;
@@ -3889,7 +4190,7 @@
         }
 
         // Add sync options for sync-type tasks (but not history sync types which have their own controls)
-        const historyTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const historyTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         if (taskType.includes('sync') && !historyTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('newTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('newTaskDeleteBehavior').value;
@@ -3908,7 +4209,7 @@
         }
 
         try {
-            const response = await fetch('/admin/api/scheduled-tasks', {
+            const response = await fetch(basePath + '/api/scheduled-tasks', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -3936,7 +4237,7 @@
 
     async function toggleScheduledTask(taskId, enabled) {
         try {
-            const response = await fetch(`/admin/api/scheduled-tasks/${taskId}/toggle`, {
+            const response = await fetch(`${basePath}/api/scheduled-tasks/${taskId}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: enabled })
@@ -3962,7 +4263,7 @@
 
     async function runScheduledTaskNow(taskId) {
         try {
-            const response = await fetch(`/admin/api/scheduled-tasks/${taskId}/run`, {
+            const response = await fetch(`${basePath}/api/scheduled-tasks/${taskId}/run`, {
                 method: 'POST'
             });
 
@@ -3991,7 +4292,7 @@
         if (!confirm('Delete this scheduled task?')) return;
 
         try {
-            const response = await fetch(`/admin/api/scheduled-tasks/${taskId}`, {
+            const response = await fetch(`${basePath}/api/scheduled-tasks/${taskId}`, {
                 method: 'DELETE'
             });
 
@@ -4045,6 +4346,8 @@
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editTraktListSyncConfig').style.display = 'none';
         document.getElementById('editTraktHistorySyncConfig').style.display = 'none';
+        document.getElementById('editMdblistWatchlistSyncConfig').style.display = 'none';
+        document.getElementById('editMdblistHistorySyncConfig').style.display = 'none';
         document.getElementById('editPlexHistorySyncConfig').style.display = 'none';
         document.getElementById('editJellyfinFavoritesSyncConfig').style.display = 'none';
         document.getElementById('editJellyfinHistorySyncConfig').style.display = 'none';
@@ -4090,6 +4393,29 @@
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
             ).join('');
             historyTraktSelect.value = task.config.traktAccountId || '';
+        }
+
+        // Set config values for MDBList watchlist sync
+        if (task.type === 'mdblist_watchlist_sync' && task.config) {
+            document.getElementById('editMdblistWatchlistSyncConfig').style.display = 'block';
+            const mdblistWLSelect = document.getElementById('editTaskMdblistWatchlistAccount');
+            mdblistWLSelect.innerHTML = mdblistAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || 'MDBList Account')}</option>`
+            ).join('');
+            mdblistWLSelect.value = task.config.mdblistAccountId || '';
+            document.getElementById('editTaskMdblistWatchlistProfile').value = task.config.profileId || '';
+        }
+
+        // Set config values for MDBList history sync
+        if (task.type === 'mdblist_history_sync' && task.config) {
+            document.getElementById('editMdblistHistorySyncConfig').style.display = 'block';
+            const mdblistSelect = document.getElementById('editTaskMdblistAccount');
+            mdblistSelect.innerHTML = mdblistAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || 'MDBList Account')}</option>`
+            ).join('');
+            mdblistSelect.value = task.config.mdblistAccountId || '';
+            document.getElementById('editTaskMdblistSyncDirection').value = task.config.syncDirection || 'mdblist_to_local';
+            document.getElementById('editTaskMdblistProfile').value = task.config.profileId || '';
         }
 
         // Set config values for Plex history sync
@@ -4142,6 +4468,12 @@
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
+        } else if (task.type === 'mdblist_watchlist_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target">MDBList → mediastorm (Import from MDBList)</option>
+                <option value="target_to_source">mediastorm → MDBList (Export to MDBList)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
         } else if (task.type === 'jellyfin_favorites_sync') {
             syncDirection.innerHTML = `
                 <option value="source_to_target">Jellyfin → mediastorm (Import from Jellyfin)</option>
@@ -4150,7 +4482,7 @@
 
         // Set sync options for sync-type tasks (but not history sync types which have their own controls)
         const isSyncTask = task.type.includes('sync');
-        const editHistoryTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const editHistoryTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         const isHistorySync = editHistoryTypes.includes(task.type);
         document.getElementById('editSyncOptionsConfig').style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
 
@@ -4276,6 +4608,23 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'mdblist_watchlist_sync') {
+            config.mdblistAccountId = document.getElementById('editTaskMdblistWatchlistAccount').value;
+            config.profileId = document.getElementById('editTaskMdblistWatchlistProfile').value;
+
+            if (!config.mdblistAccountId || !config.profileId) {
+                showToast('Please select an MDBList account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'mdblist_history_sync') {
+            config.mdblistAccountId = document.getElementById('editTaskMdblistAccount').value;
+            config.profileId = document.getElementById('editTaskMdblistProfile').value;
+            config.syncDirection = document.getElementById('editTaskMdblistSyncDirection').value;
+
+            if (!config.mdblistAccountId || !config.profileId) {
+                showToast('Please select an MDBList account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'plex_history_sync') {
             config.plexAccountId = document.getElementById('editTaskPlexHistoryAccount').value;
             config.profileId = document.getElementById('editTaskPlexHistoryProfile').value;
@@ -4306,7 +4655,7 @@
         }
 
         // Add sync options for sync-type tasks (but not history sync types which have their own controls)
-        const editHistTypes = ['trakt_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const editHistTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         if (taskType.includes('sync') && !editHistTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('editTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('editTaskDeleteBehavior').value;
@@ -4325,7 +4674,7 @@
         }
 
         try {
-            const response = await fetch(`/admin/api/scheduled-tasks/${taskId}`, {
+            const response = await fetch(`${basePath}/api/scheduled-tasks/${taskId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

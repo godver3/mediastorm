@@ -137,7 +137,7 @@ const profileIds = new Set(profiles.map(p => p.id));
 async function checkBackendStatus() {
     const el = document.getElementById('backendStatus');
     try {
-        const response = await fetch('/account/api/status');
+        const response = await fetch(basePath + '/api/status');
         if (response.ok) {
             const data = await response.json();
             el.innerHTML = data.reachable
@@ -159,7 +159,7 @@ async function refreshStreams() {
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
     try {
-        const response = await fetch('/account/api/streams');
+        const response = await fetch(basePath + '/api/streams');
         if (!response.ok) throw new Error('Failed to load streams');
 
         const data = await response.json();

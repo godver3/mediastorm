@@ -36,6 +36,9 @@
                     {{if $profile.TraktAccountID}}
                     <span class="badge badge-success" style="margin-left: 0.25rem;">Trakt</span>
                     {{end}}
+                    {{if $profile.MdblistAccountID}}
+                    <span class="badge badge-success" style="margin-left: 0.25rem;">MDBList</span>
+                    {{end}}
                 </button>
                 {{end}}
             </div>
@@ -113,6 +116,32 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideCreateTraktModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="createTraktAccount()">Create Account</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MDBList Scrobbling -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                MDBList Scrobbling
+            </h2>
+        </div>
+        <div class="card-body">
+            <div id="mdblistStatus">
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;">
+                    Link an MDBList account to this profile to automatically sync watched content.
+                    MDBList accounts are configured by the administrator.
+                </p>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 0.875rem;">MDBList Account:</span>
+                    <select id="mdblistAccountSelect" class="form-select" style="max-width: 250px;" onchange="updateAccountMdblistLink(this.value)">
+                        <option value="">None</option>
+                    </select>
+                </div>
             </div>
         </div>
     </div>
@@ -354,16 +383,64 @@
     const profiles = {{json .Profiles}};
     let currentProfileId = profiles.length > 0 ? profiles[0].id : null;
     let currentTraktAccountId = profiles.length > 0 ? profiles[0].traktAccountId : null;
+    let currentMdblistAccountId = profiles.length > 0 ? (profiles[0].mdblistAccountId || '') : '';
     let traktAccounts = [];
+    let mdblistAccounts = [];
     let authPollingInterval = null;
 
     function selectProfile(profileId, traktAccountId, btn) {
         currentProfileId = profileId;
         currentTraktAccountId = traktAccountId || null;
+        const profile = profiles.find(p => p.id === profileId);
+        currentMdblistAccountId = profile ? (profile.mdblistAccountId || '') : '';
         document.querySelectorAll('.profile-selector-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         updateTraktStatus();
+        updateMdblistStatus();
         loadTraktAccounts();
+    }
+
+    function updateMdblistStatus() {
+        const select = document.getElementById('mdblistAccountSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">None</option>' +
+            mdblistAccounts.map(acc =>
+                `<option value="${acc.id}" ${currentMdblistAccountId === acc.id ? 'selected' : ''}>${acc.name || 'MDBList Account'}</option>`
+            ).join('');
+    }
+
+    async function loadMdblistAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/mdblist/accounts');
+            if (response.ok) {
+                mdblistAccounts = await response.json() || [];
+                updateMdblistStatus();
+            }
+        } catch (err) {
+            console.error('Failed to load MDBList accounts:', err);
+        }
+    }
+
+    async function updateAccountMdblistLink(mdblistAccountId) {
+        if (!currentProfileId) return;
+        try {
+            const method = mdblistAccountId ? 'PUT' : 'DELETE';
+            const response = await fetch(`${basePath}/api/profiles/mdblist?profileId=${encodeURIComponent(currentProfileId)}`, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: mdblistAccountId ? JSON.stringify({ mdblistAccountId }) : undefined
+            });
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error || 'Failed to update MDBList account');
+            }
+            currentMdblistAccountId = mdblistAccountId || '';
+            const profile = profiles.find(p => p.id === currentProfileId);
+            if (profile) profile.mdblistAccountId = mdblistAccountId || '';
+        } catch (err) {
+            alert(err.message);
+            updateMdblistStatus(); // revert
+        }
     }
 
     function updateTraktStatus() {
@@ -402,7 +479,7 @@
         const container = document.getElementById('traktAccountsList');
 
         try {
-            const response = await fetch('/account/api/trakt/accounts');
+            const response = await fetch(basePath + '/api/trakt/accounts');
             if (!response.ok) throw new Error('Failed to load');
 
             traktAccounts = await response.json();
@@ -480,7 +557,7 @@
         }
 
         try {
-            const response = await fetch('/account/api/trakt/accounts', {
+            const response = await fetch(basePath + '/api/trakt/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, clientId, clientSecret })
@@ -503,7 +580,7 @@
         if (!confirm('Delete this Trakt account? This will unlink it from any profiles.')) return;
 
         try {
-            const response = await fetch(`/account/api/trakt/accounts/delete?id=${encodeURIComponent(accountId)}`, {
+            const response = await fetch(`${basePath}/api/trakt/accounts/delete?id=${encodeURIComponent(accountId)}`, {
                 method: 'POST'
             });
 
@@ -531,7 +608,7 @@
         content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
         try {
-            const response = await fetch(`/account/api/trakt/accounts/auth/start?id=${encodeURIComponent(accountId)}`, {
+            const response = await fetch(`${basePath}/api/trakt/accounts/auth/start?id=${encodeURIComponent(accountId)}`, {
                 method: 'POST'
             });
 
@@ -568,7 +645,7 @@
 
         authPollingInterval = setInterval(async () => {
             try {
-                const response = await fetch(`/account/api/trakt/accounts/auth/check?id=${encodeURIComponent(accountId)}&deviceCode=${encodeURIComponent(deviceCode)}`);
+                const response = await fetch(`${basePath}/api/trakt/accounts/auth/check?id=${encodeURIComponent(accountId)}&deviceCode=${encodeURIComponent(deviceCode)}`);
 
                 if (!response.ok) {
                     throw new Error('Authentication failed');
@@ -617,7 +694,7 @@
         if (!confirm('Revoke Trakt authentication? You will need to re-authenticate to use this account.')) return;
 
         try {
-            const response = await fetch(`/account/api/trakt/accounts/disconnect?id=${encodeURIComponent(accountId)}`, {
+            const response = await fetch(`${basePath}/api/trakt/accounts/disconnect?id=${encodeURIComponent(accountId)}`, {
                 method: 'POST'
             });
 
@@ -639,7 +716,7 @@
         }
 
         try {
-            const response = await fetch(`/account/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
+            const response = await fetch(`${basePath}/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ traktAccountId: accountId })
@@ -665,7 +742,7 @@
         if (!confirm('Disconnect Trakt from this profile?')) return;
 
         try {
-            const response = await fetch(`/account/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
+            const response = await fetch(`${basePath}/api/profiles/trakt?profileId=${encodeURIComponent(currentProfileId)}`, {
                 method: 'DELETE'
             });
 
@@ -685,5 +762,6 @@
     // Initialize
     updateTraktStatus();
     loadTraktAccounts();
+    loadMdblistAccounts();
 </script>
 {{end}}

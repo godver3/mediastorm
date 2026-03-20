@@ -171,7 +171,7 @@
 <body>
     <div class="login-card">
         <div class="login-banner">
-            <img src="/api/static/app-logo-wide.png" alt="mediastorm">
+            <img src="{{.ServerBasePath}}/api/static/app-logo-wide.png" alt="mediastorm">
         </div>
         <div class="login-body">
         <div class="login-header">
@@ -182,7 +182,7 @@
         <div class="form-error">{{.Error}}</div>
         {{end}}
 
-        <form id="loginForm" method="POST" action="/admin/login">
+        <form id="loginForm" method="POST" action="{{.ServerBasePath}}/admin/login">
             <div class="form-group">
                 <label class="form-label" for="username">Username</label>
                 <input

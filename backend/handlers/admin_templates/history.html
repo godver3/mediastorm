@@ -263,7 +263,7 @@
 
         try {
             // Build URL with pagination and filter
-            let url = '/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=' + currentPage + '&pageSize=' + pageSize;
+            let url = basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=' + currentPage + '&pageSize=' + pageSize;
             if (currentFilter !== 'all') {
                 url += '&mediaType=' + encodeURIComponent(currentFilter);
             }
@@ -296,7 +296,7 @@
 
         try {
             // Fetch stats for movies count
-            const moviesResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=movie');
+            const moviesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=movie');
             if (moviesResponse.ok) {
                 const moviesData = await moviesResponse.json();
                 cachedStats.movies = moviesData.total || 0;
@@ -304,7 +304,7 @@
             }
 
             // Fetch stats for episodes count
-            const episodesResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=episode');
+            const episodesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=episode');
             if (episodesResponse.ok) {
                 const episodesData = await episodesResponse.json();
                 cachedStats.episodes = episodesData.total || 0;
@@ -312,7 +312,7 @@
             }
 
             // Fetch last activity (first item from all history)
-            const lastResponse = await fetch('/admin/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1');
+            const lastResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1');
             if (lastResponse.ok) {
                 const lastData = await lastResponse.json();
                 if (lastData.items && lastData.items.length > 0 && lastData.items[0].watchedAt) {
@@ -334,7 +334,7 @@
         continueContainer.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading...</div>';
 
         try {
-            const continueResponse = await fetch('/admin/api/history/continue?userId=' + encodeURIComponent(profileId));
+            const continueResponse = await fetch(basePath + '/api/history/continue?userId=' + encodeURIComponent(profileId));
             if (!continueResponse.ok) {
                 const errorText = await continueResponse.text();
                 console.error('Continue watching API error:', continueResponse.status, errorText);

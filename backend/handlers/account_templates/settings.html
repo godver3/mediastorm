@@ -337,7 +337,7 @@ async function loadSettings() {
     }
 
     try {
-        const response = await fetch(`/account/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`);
+        const response = await fetch(`${basePath}/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`);
         if (!response.ok) throw new Error('Failed to load settings');
         currentSettings = await response.json();
         renderSettings();
@@ -585,7 +585,7 @@ async function saveSettings() {
     const settings = collectSettings();
 
     try {
-        const response = await fetch(`/account/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`, {
+        const response = await fetch(`${basePath}/api/user-settings?profileId=${encodeURIComponent(currentProfileId)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings),

@@ -187,7 +187,6 @@
     let hasDefaultPassword = false; // Whether admin has default password
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
-    const basePath = {{json .BasePath}};
 
     // Search state
     let searchTerm = '';
@@ -2102,15 +2101,15 @@
 
         switch(sectionKey) {
             case 'indexers':
-                endpoint = '/admin/api/test/indexer';
+                endpoint = basePath + '/api/test/indexer';
                 payload = { url: item.url, apiKey: item.apiKey, name: item.name };
                 break;
             case 'torrentScrapers':
-                endpoint = '/admin/api/test/scraper';
+                endpoint = basePath + '/api/test/scraper';
                 payload = { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey };
                 break;
             case 'usenet':
-                endpoint = '/admin/api/test/usenet-provider';
+                endpoint = basePath + '/api/test/usenet-provider';
                 payload = {
                     name: item.name,
                     host: item.host,
@@ -2121,7 +2120,7 @@
                 };
                 break;
             case 'debridProviders':
-                endpoint = '/admin/api/test/debrid-provider';
+                endpoint = basePath + '/api/test/debrid-provider';
                 payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
                 break;
             default:
@@ -3769,14 +3768,14 @@
 
         switch(sectionKey) {
             case 'subtitles':
-                endpoint = '/admin/api/test/subtitles';
+                endpoint = basePath + '/api/test/subtitles';
                 payload = {
                     username: sectionData.openSubtitlesUsername || '',
                     password: sectionData.openSubtitlesPassword || ''
                 };
                 break;
             case 'metadata':
-                endpoint = '/admin/api/test/metadata';
+                endpoint = basePath + '/api/test/metadata';
                 payload = {
                     tvdbApiKey: sectionData.tvdbApiKey || '',
                     tmdbApiKey: sectionData.tmdbApiKey || '',
@@ -3784,11 +3783,11 @@
                 };
                 break;
             case 'mdblist':
-                endpoint = '/admin/api/test/mdblist';
+                endpoint = basePath + '/api/test/mdblist';
                 payload = { apiKey: sectionData.apiKey || '' };
                 break;
             case 'live':
-                endpoint = '/admin/api/test/live';
+                endpoint = basePath + '/api/test/live';
                 payload = {
                     mode: sectionData.mode || '',
                     playlistUrl: sectionData.playlistUrl || '',
