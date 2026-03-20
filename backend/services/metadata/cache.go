@@ -30,6 +30,12 @@ func (c *fileCache) jitteredTTL(key string) time.Duration {
 }
 
 func (c *fileCache) get(key string, v any) (bool, error) {
+	return c.getWithMaxAge(key, v, 0)
+}
+
+// getWithMaxAge is like get but uses a custom maxAge instead of the cache's default TTL.
+// If maxAge is 0, the default jittered TTL is used.
+func (c *fileCache) getWithMaxAge(key string, v any, maxAge time.Duration) (bool, error) {
 	if key == "" {
 		return false, errors.New("empty key")
 	}
@@ -41,7 +47,11 @@ func (c *fileCache) get(key string, v any) (bool, error) {
 	if err != nil {
 		return false, nil
 	}
-	if time.Since(fi.ModTime()) > c.jitteredTTL(key) {
+	ttl := c.jitteredTTL(key)
+	if maxAge > 0 {
+		ttl = maxAge
+	}
+	if time.Since(fi.ModTime()) > ttl {
 		_ = os.Remove(path)
 		return false, nil
 	}

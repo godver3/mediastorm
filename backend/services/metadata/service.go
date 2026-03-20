@@ -634,9 +634,19 @@ func (s *Service) GetMDBListAllRatings(ctx context.Context, imdbID, mediaType st
 	if ok, _ := s.ratingsCache.get(key, &cached); ok {
 		return cached, nil
 	}
+	// Also check negative cache (404s cached with shorter TTL)
+	negKey := ratingsDiskCacheKey(imdbID, mediaType) + "_notfound"
+	var negCached struct{}
+	if ok, _ := s.ratingsCache.getWithMaxAge(negKey, &negCached, 24*time.Hour); ok {
+		return nil, nil // Known missing — skip API call
+	}
 	// Fetch from API
 	ratings, err := s.mdblist.GetAllRatings(ctx, imdbID, mediaType)
 	if err != nil {
+		// Cache 404s so we don't re-fetch every warm-up cycle
+		if strings.Contains(err.Error(), "status: 404") {
+			_ = s.ratingsCache.set(negKey, struct{}{})
+		}
 		return nil, err
 	}
 	// Persist to disk (even empty results to avoid repeated lookups)
