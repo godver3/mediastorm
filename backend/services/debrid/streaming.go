@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,8 @@ type cachedURL struct {
 	url       string
 	filename  string
 	expiresAt time.Time
+	rarOffset int64 // 0 = normal file, >0 = byte offset within RAR
+	rarSize   int64 // 0 = normal file, >0 = file size within RAR
 }
 
 // StreamingProvider implements streaming.Provider for debrid content.
@@ -135,24 +138,24 @@ func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
 }
 
 // getCachedURL retrieves a cached unrestricted URL if it exists and hasn't expired.
-func (p *StreamingProvider) getCachedURL(cacheKey string) (url string, filename string, found bool) {
+func (p *StreamingProvider) getCachedURL(cacheKey string) (url string, filename string, rarOffset int64, rarSize int64, found bool) {
 	p.cacheMux.RLock()
 	defer p.cacheMux.RUnlock()
 
 	cached, exists := p.urlCache[cacheKey]
 	if !exists {
-		return "", "", false
+		return "", "", 0, 0, false
 	}
 
 	if time.Now().After(cached.expiresAt) {
-		return "", "", false
+		return "", "", 0, 0, false
 	}
 
-	return cached.url, cached.filename, true
+	return cached.url, cached.filename, cached.rarOffset, cached.rarSize, true
 }
 
 // setCachedURL stores an unrestricted URL in the cache.
-func (p *StreamingProvider) setCachedURL(cacheKey, url, filename string) {
+func (p *StreamingProvider) setCachedURL(cacheKey, url, filename string, rarOffset, rarSize int64) {
 	p.cacheMux.Lock()
 	defer p.cacheMux.Unlock()
 
@@ -160,6 +163,8 @@ func (p *StreamingProvider) setCachedURL(cacheKey, url, filename string) {
 		url:       url,
 		filename:  filename,
 		expiresAt: time.Now().Add(p.cacheTTL),
+		rarOffset: rarOffset,
+		rarSize:   rarSize,
 	}
 
 	// Clean up expired entries while we have the lock
@@ -181,7 +186,11 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	// Check cache first
 	cacheKey := cacheKeyFor(torrentID, fileID)
 
-	if cachedURL, _, found := p.getCachedURL(cacheKey); found {
+	if cachedURL, _, rarOffset, _, found := p.getCachedURL(cacheKey); found {
+		if rarOffset > 0 {
+			// RAR-packed files must go through the proxy for range translation
+			return "", fmt.Errorf("RAR-packed file requires proxy streaming")
+		}
 		log.Printf("[debrid-stream] using cached URL for torrent %s file %s", torrentID, fileID)
 		return cachedURL, nil
 	}
@@ -227,6 +236,11 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 		return "", fmt.Errorf("get torrent info: %w", err)
 	}
 
+	// RAR-packed torrents can't use direct URLs — force proxy path
+	if isRARPacked(info) {
+		return "", fmt.Errorf("RAR-packed file requires proxy streaming")
+	}
+
 	restrictedLink, filename, _, matched := resolveRestrictedLink(info, fileID)
 	if restrictedLink == "" {
 		return "", fmt.Errorf("no download links available for torrent %s", torrentID)
@@ -249,7 +263,7 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	}
 
 	// Cache the URL and filename for future requests
-	p.setCachedURL(cacheKey, downloadURL, filename)
+	p.setCachedURL(cacheKey, downloadURL, filename, 0, 0)
 
 	log.Printf("[debrid-stream] resolved direct URL for path %s: %s (filename: %s)", path, downloadURL, filename)
 	return downloadURL, nil
@@ -309,14 +323,17 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 	providerName := client.Name()
 	var downloadURL string
 	var filename string
+	var rarOffset, rarSize int64
 
 	cacheKey := cacheKeyFor(torrentID, fileID)
 
 	// Check cache first
-	if cachedURL, cachedFilename, found := p.getCachedURL(cacheKey); found {
+	if cachedURL, cachedFilename, cachedRarOffset, cachedRarSize, found := p.getCachedURL(cacheKey); found {
 		log.Printf("[debrid-stream] using cached URL for torrent %s file %s", torrentID, fileID)
 		downloadURL = cachedURL
 		filename = cachedFilename
+		rarOffset = cachedRarOffset
+		rarSize = cachedRarSize
 	} else {
 		// Cache miss - need to unrestrict the link
 		// Get fresh torrent info to get download links
@@ -367,8 +384,30 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 			filename = resolvedFilename
 		}
 
+		// Detect RAR-packed torrents and parse file offsets
+		if isRARPacked(info) {
+			log.Printf("[debrid-stream] RAR file detected for torrent %s, parsing headers", torrentID)
+			entries, parseErr := parseRAR4StoredFiles(ctx, p.httpClient, downloadURL)
+			if parseErr != nil {
+				log.Printf("[debrid-stream] RAR parse failed: %v — falling back to raw stream", parseErr)
+			} else {
+				for i, e := range entries {
+					log.Printf("[debrid-stream] RAR entry[%d]: %q offset=%d size=%d", i, e.Name, e.DataOffset, e.Size)
+				}
+				entry := findRAREntry(entries, resolvedFilename)
+				if entry != nil {
+					rarOffset = entry.DataOffset
+					rarSize = entry.Size
+					filename = filepath.Base(entry.Name)
+					log.Printf("[debrid-stream] RAR entry matched: %q → offset=%d size=%d", resolvedFilename, rarOffset, rarSize)
+				} else {
+					log.Printf("[debrid-stream] RAR entry not found for %q in %d entries", resolvedFilename, len(entries))
+				}
+			}
+		}
+
 		// Cache the URL and filename for future requests
-		p.setCachedURL(cacheKey, downloadURL, filename)
+		p.setCachedURL(cacheKey, downloadURL, filename, rarOffset, rarSize)
 
 		log.Printf("[debrid-stream] proxying to unrestricted URL: %s", downloadURL)
 	}
@@ -379,8 +418,16 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	// Forward range header if present
-	if req.RangeHeader != "" {
+	// Translate range headers for RAR-packed files
+	if rarOffset > 0 && rarSize > 0 {
+		if req.RangeHeader != "" {
+			httpReq.Header.Set("Range", translateRangeForRAR(req.RangeHeader, rarOffset, rarSize))
+		} else if req.Method == http.MethodGet {
+			// No range header on GET — request just the file's extent within the RAR
+			httpReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rarOffset, rarOffset+rarSize-1))
+		}
+	} else if req.RangeHeader != "" {
+		// Normal (non-RAR) range forwarding
 		httpReq.Header.Set("Range", req.RangeHeader)
 	}
 
@@ -414,13 +461,29 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		headers.Set("Accept-Ranges", "bytes")
 	}
 
+	// Rewrite response headers for RAR-packed files
+	contentLength := resp.ContentLength
+	if rarOffset > 0 && rarSize > 0 {
+		if cr := headers.Get("Content-Range"); cr != "" {
+			headers.Set("Content-Range", rewriteContentRangeForRAR(cr, rarOffset, rarSize))
+		}
+		if contentLength > 0 {
+			// Content-Length from CDN is already correct for the range we requested
+			// but for a full GET without client range, report the file size
+		}
+	}
+
 	// Handle HEAD requests - close body immediately
 	if req.Method == http.MethodHead {
 		resp.Body.Close()
+		headContentLength := contentLength
+		if rarOffset > 0 && rarSize > 0 {
+			headContentLength = rarSize
+		}
 		return &streaming.Response{
 			Status:        resp.StatusCode,
 			Headers:       headers,
-			ContentLength: resp.ContentLength,
+			ContentLength: headContentLength,
 			Body:          io.NopCloser(strings.NewReader("")),
 			Filename:      filename,
 		}, nil
@@ -429,7 +492,7 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 	return &streaming.Response{
 		Status:        resp.StatusCode,
 		Headers:       headers,
-		ContentLength: resp.ContentLength,
+		ContentLength: contentLength,
 		Body:          &drainOnCloseBody{body: resp.Body},
 		Filename:      filename,
 	}, nil

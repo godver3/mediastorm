@@ -35,7 +35,8 @@ func resolveRestrictedLink(info *TorrentInfo, fileID string) (link string, filen
 		}
 		if fmt.Sprintf("%d", file.ID) == target {
 			if linkIndex >= len(info.Links) {
-				break
+				// RAR pack: all files share the single link
+				return info.Links[0], file.Path, 0, true
 			}
 			return info.Links[linkIndex], file.Path, linkIndex, true
 		}
