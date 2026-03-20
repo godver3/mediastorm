@@ -283,6 +283,114 @@ func TestCompileTerms_PlainTermNotAutoDetected(t *testing.T) {
 	}
 }
 
+func TestParseTermWeight(t *testing.T) {
+	tests := []struct {
+		raw    string
+		term   string
+		weight int
+	}{
+		{"DV", "DV", 1},
+		{"DV=3", "DV", 3},
+		{"REMUX=2", "REMUX", 2},
+		{"/\\bHDR\\b/=5", "/\\bHDR\\b/", 5},
+		{"DV=0", "DV=0", 1},     // invalid weight (<1) → default
+		{"DV=abc", "DV=abc", 1}, // non-integer → default
+		{"DV=", "DV=", 1},      // trailing = with no value
+		{"=3", "=3", 1},        // no term part → keep as-is
+		{"/foo=bar/", "/foo=bar/", 1}, // = inside regex, no trailing int
+		{"/foo=bar/=2", "/foo=bar/", 2}, // = inside regex + valid weight
+	}
+	for _, tt := range tests {
+		term, weight := ParseTermWeight(tt.raw)
+		if term != tt.term || weight != tt.weight {
+			t.Errorf("ParseTermWeight(%q) = (%q, %d), want (%q, %d)", tt.raw, term, weight, tt.term, tt.weight)
+		}
+	}
+}
+
+func TestCompileTerms_WithWeights(t *testing.T) {
+	terms := CompileTerms([]string{"DV=3", "REMUX=2", "HDR"})
+	if len(terms) != 3 {
+		t.Fatalf("expected 3 terms, got %d", len(terms))
+	}
+	if terms[0].Weight != 3 {
+		t.Errorf("DV=3 weight: got %d, want 3", terms[0].Weight)
+	}
+	if terms[1].Weight != 2 {
+		t.Errorf("REMUX=2 weight: got %d, want 2", terms[1].Weight)
+	}
+	if terms[2].Weight != 1 {
+		t.Errorf("HDR weight: got %d, want 1", terms[2].Weight)
+	}
+}
+
+func TestCompileTerms_RegexWithWeight(t *testing.T) {
+	terms := CompileTerms([]string{`/\bDUB\b/=4`})
+	if len(terms) != 1 {
+		t.Fatalf("expected 1 term, got %d", len(terms))
+	}
+	if terms[0].regex == nil {
+		t.Fatal("expected regex term")
+	}
+	if terms[0].Weight != 4 {
+		t.Errorf("weight: got %d, want 4", terms[0].Weight)
+	}
+}
+
+func TestSumMatchedWeights(t *testing.T) {
+	terms := CompileTerms([]string{"DV=3", "REMUX=2", "HDR"})
+
+	// Title matching DV + REMUX + HDR → 3+2+1 = 6
+	total, names := SumMatchedWeights("Movie.2024.2160p.REMUX.DV.HDR", terms)
+	if total != 6 {
+		t.Errorf("expected total weight 6, got %d", total)
+	}
+	if len(names) != 3 {
+		t.Errorf("expected 3 matched names, got %d", len(names))
+	}
+
+	// Title matching only DV → 3
+	total, names = SumMatchedWeights("Movie.2024.DV.x265", terms)
+	if total != 3 {
+		t.Errorf("expected total weight 3, got %d", total)
+	}
+	if len(names) != 1 {
+		t.Errorf("expected 1 matched name, got %d", len(names))
+	}
+
+	// No matches → 0
+	total, names = SumMatchedWeights("Movie.2024.1080p.BluRay", terms)
+	if total != 0 {
+		t.Errorf("expected total weight 0, got %d", total)
+	}
+	if len(names) != 0 {
+		t.Errorf("expected 0 matched names, got %d", len(names))
+	}
+}
+
+func TestSumMatchedWeights_DefaultWeight(t *testing.T) {
+	// Terms without =N should default to weight 1
+	terms := CompileTerms([]string{"DV", "REMUX"})
+	total, _ := SumMatchedWeights("Movie.DV.REMUX", terms)
+	if total != 2 {
+		t.Errorf("expected total weight 2 (1+1), got %d", total)
+	}
+}
+
+func TestMatchedTermWithWeight(t *testing.T) {
+	terms := CompileTerms([]string{"DV=3", "REMUX=2"})
+
+	name, w := MatchedTermWithWeight("Movie.DV.REMUX", terms)
+	if name != "dv" || w != 3 {
+		t.Errorf("MatchedTermWithWeight: got (%q, %d), want (\"dv\", 3)", name, w)
+	}
+
+	name, w = MatchedTermWithWeight("Movie.1080p", terms)
+	if name != "" || w != 0 {
+		t.Errorf("MatchedTermWithWeight no match: got (%q, %d), want (\"\", 0)", name, w)
+	}
+}
+
 func TestMatchesAnyTerm_FrenchGroupRegex_FilterOutIntegration(t *testing.T) {
 	// Simulate how this would be used as a filterOutTerm alongside other terms
 	terms := CompileTerms([]string{

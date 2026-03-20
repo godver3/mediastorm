@@ -380,12 +380,12 @@ func comparePreferredTerms(i, j models.NZBResult, terms []filter.CompiledTerm) i
 	if len(terms) == 0 {
 		return 0
 	}
-	iHas := filter.MatchesAnyTerm(i.Title, terms)
-	jHas := filter.MatchesAnyTerm(j.Title, terms)
-	if iHas && !jHas {
+	iWeight, _ := filter.SumMatchedWeights(i.Title, terms)
+	jWeight, _ := filter.SumMatchedWeights(j.Title, terms)
+	if iWeight > jWeight {
 		return -1
 	}
-	if !iHas && jHas {
+	if iWeight < jWeight {
 		return 1
 	}
 	return 0
@@ -395,13 +395,13 @@ func compareNonPreferredTerms(i, j models.NZBResult, terms []filter.CompiledTerm
 	if len(terms) == 0 {
 		return 0
 	}
-	iHas := filter.MatchesAnyTerm(i.Title, terms)
-	jHas := filter.MatchesAnyTerm(j.Title, terms)
-	if iHas && !jHas {
-		return 1 // i has non-preferred term → sort lower
+	iWeight, _ := filter.SumMatchedWeights(i.Title, terms)
+	jWeight, _ := filter.SumMatchedWeights(j.Title, terms)
+	if iWeight > jWeight {
+		return 1 // i has more non-preferred weight → sort lower
 	}
-	if !iHas && jHas {
-		return -1 // j has non-preferred term → i sorts higher
+	if iWeight < jWeight {
+		return -1 // j has more non-preferred weight → i sorts higher
 	}
 	return 0
 }

@@ -946,6 +946,91 @@
             outline: none;
         }
 
+        .weighted-tags-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            padding: 0.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            min-height: 42px;
+        }
+
+        .weighted-tag-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.375rem;
+            background: rgba(138, 43, 226, 0.1);
+            border: 1px solid rgba(138, 43, 226, 0.2);
+            border-radius: 4px;
+        }
+
+        .weighted-tag-term {
+            flex: 1;
+            font-size: 0.8125rem;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .weighted-tag-weight {
+            width: 50px;
+            padding: 0.15rem 0.3rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-primary);
+            font-size: 0.75rem;
+            text-align: center;
+        }
+
+        .weighted-tag-weight-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .weighted-tag-remove {
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+            color: var(--text-muted);
+            font-size: 1rem;
+            line-height: 1;
+            padding: 0 0.15rem;
+        }
+
+        .weighted-tag-remove:hover {
+            opacity: 1;
+            color: #f87171;
+        }
+
+        .weighted-tag-add {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            margin-top: 0.25rem;
+        }
+
+        .weighted-tag-add input {
+            flex: 1;
+            min-width: 100px;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            outline: none;
+        }
+
+        .field-inherited .weighted-tags-container {
+            opacity: 0.6;
+            background: rgba(100, 116, 139, 0.08);
+            border-color: rgba(100, 116, 139, 0.25);
+        }
+
         .checkboxes-group {
             display: flex;
             flex-wrap: wrap;

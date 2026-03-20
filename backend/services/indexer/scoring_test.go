@@ -189,3 +189,95 @@ func TestScoreResult_PriorityOrderMatters(t *testing.T) {
 		t.Fatalf("expected preferred term match at position 0 (%d) > resolution at position 1 (%d)", sRemux, sPlain)
 	}
 }
+
+func TestScoreResult_WeightedPreferredTerms(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingPreferredTerms, Name: "Preferred Terms", Enabled: true, Order: 0},
+		},
+		PreferredTerms: filter.CompileTerms([]string{"DV=3", "REMUX=2", "HDR"}),
+	}
+
+	// Matches DV(3) + REMUX(2) + HDR(1) = weight 6
+	allMatch := models.NZBResult{Title: "Movie.2024.REMUX.DV.HDR"}
+	// Matches only DV(3) = weight 3
+	dvOnly := models.NZBResult{Title: "Movie.2024.DV.x265"}
+	// No match = weight 0
+	noMatch := models.NZBResult{Title: "Movie.2024.1080p.BluRay"}
+
+	sAll, _ := ScoreResult(allMatch, ctx)
+	sDV, _ := ScoreResult(dvOnly, ctx)
+	sNone, _ := ScoreResult(noMatch, ctx)
+
+	if sAll <= sDV {
+		t.Fatalf("expected all-match (%d) > DV-only (%d)", sAll, sDV)
+	}
+	if sDV <= sNone {
+		t.Fatalf("expected DV-only (%d) > no-match (%d)", sDV, sNone)
+	}
+}
+
+func TestScoreResult_WeightedNonPreferredTerms(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingNonPreferredTerms, Name: "Non-Preferred Terms", Enabled: true, Order: 0},
+		},
+		NonPreferredTerms: filter.CompileTerms([]string{"CAM=3", "HDTS"}),
+	}
+
+	cam := models.NZBResult{Title: "Movie.2024.CAM"} // weight 3
+	hdts := models.NZBResult{Title: "Movie.2024.HDTS"} // weight 1
+	clean := models.NZBResult{Title: "Movie.2024.BluRay"} // weight 0
+
+	sCam, _ := ScoreResult(cam, ctx)
+	sHdts, _ := ScoreResult(hdts, ctx)
+	sClean, _ := ScoreResult(clean, ctx)
+
+	if sCam >= sHdts {
+		t.Fatalf("expected CAM=3 (%d) < HDTS=1 (%d) — higher weight = more penalty", sCam, sHdts)
+	}
+	if sHdts >= sClean {
+		t.Fatalf("expected HDTS (%d) < clean (%d)", sHdts, sClean)
+	}
+}
+
+func TestScoreResult_MultipleWeightedTermsSum(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingPreferredTerms, Name: "Preferred Terms", Enabled: true, Order: 0},
+		},
+		PreferredTerms: filter.CompileTerms([]string{"DV=3", "HDR=2"}),
+	}
+
+	// Matches both DV(3) + HDR(2) = 5
+	both := models.NZBResult{Title: "Movie.DV.HDR.2024"}
+	// Matches only DV(3) = 3
+	dvOnly := models.NZBResult{Title: "Movie.DV.2024"}
+
+	sBoth, _ := ScoreResult(both, ctx)
+	sDV, _ := ScoreResult(dvOnly, ctx)
+
+	if sBoth <= sDV {
+		t.Fatalf("expected both match (%d) > DV-only (%d)", sBoth, sDV)
+	}
+}
+
+func TestScoreResult_BackwardCompat_NoWeights(t *testing.T) {
+	// Terms without =N suffix should still work (weight defaults to 1)
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingPreferredTerms, Name: "Preferred Terms", Enabled: true, Order: 0},
+		},
+		PreferredTerms: filter.CompileTerms([]string{"remux"}),
+	}
+
+	with := models.NZBResult{Title: "Movie 2024 Remux 1080p"}
+	without := models.NZBResult{Title: "Movie 2024 BluRay 1080p"}
+
+	scoreWith, _ := ScoreResult(with, ctx)
+	scoreWithout, _ := ScoreResult(without, ctx)
+
+	if scoreWith <= scoreWithout {
+		t.Fatalf("expected preferred term match (%d) > no match (%d)", scoreWith, scoreWithout)
+	}
+}

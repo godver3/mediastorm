@@ -90,8 +90,9 @@ func scorePreferredTerms(r models.NZBResult, terms []filter.CompiledTerm, weight
 	if len(terms) == 0 {
 		return 0, "no preferred terms configured"
 	}
-	if matched := filter.MatchedTerm(r.Title, terms); matched != "" {
-		return weight, fmt.Sprintf("matches preferred term '%s'", matched)
+	totalWeight, matchedNames := filter.SumMatchedWeights(r.Title, terms)
+	if totalWeight > 0 {
+		return weight * totalWeight, fmt.Sprintf("matches preferred terms '%s' (combined weight %d)", strings.Join(matchedNames, ", "), totalWeight)
 	}
 	return 0, "no preferred terms matched"
 }
@@ -100,8 +101,9 @@ func scoreNonPreferredTerms(r models.NZBResult, terms []filter.CompiledTerm, wei
 	if len(terms) == 0 {
 		return 0, "no non-preferred terms configured"
 	}
-	if matched := filter.MatchedTerm(r.Title, terms); matched != "" {
-		return -weight, fmt.Sprintf("matches non-preferred term '%s'", matched)
+	totalWeight, matchedNames := filter.SumMatchedWeights(r.Title, terms)
+	if totalWeight > 0 {
+		return -weight * totalWeight, fmt.Sprintf("matches non-preferred terms '%s' (combined weight %d)", strings.Join(matchedNames, ", "), totalWeight)
 	}
 	return 0, "no non-preferred terms matched"
 }
