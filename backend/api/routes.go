@@ -263,6 +263,9 @@ func Register(
 		protected.HandleFunc("/playback/prequeue", prequeueHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.GetStatus).Methods(http.MethodGet)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.Options).Methods(http.MethodOptions)
+		// Stream migration - search for alternative stream when current one fails mid-playback
+		protected.HandleFunc("/playback/migrate", prequeueHandler.MigrateStream).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/migrate", prequeueHandler.Options).Methods(http.MethodOptions)
 		// Lazy subtitle extraction - called when user plays with known offset
 		protected.HandleFunc("/playback/prequeue/{prequeueID}/start-subtitles", prequeueHandler.StartSubtitles).Methods(http.MethodPost)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}/start-subtitles", prequeueHandler.Options).Methods(http.MethodOptions)
@@ -467,6 +470,9 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.SetTraktAccount).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.ClearTraktAccount).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/trakt", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.SetMdblistAccount).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.ClearMdblistAccount).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
 	// Kids profile content restriction configuration

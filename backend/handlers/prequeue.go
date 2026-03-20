@@ -1064,6 +1064,138 @@ func (h *PrequeueHandler) failPrequeue(prequeueID, errMsg string) {
 	})
 }
 
+// MigrateStreamRequest is the request body for stream migration.
+// Self-contained: performs its own search and resolves the next-best alternative.
+type MigrateStreamRequest struct {
+	TitleID          string  `json:"titleId"`
+	TitleName        string  `json:"titleName"`
+	MediaType        string  `json:"mediaType"` // "movie" or "series"
+	UserID           string  `json:"userId"`
+	FailedStreamPath string  `json:"failedStreamPath"` // Path of the stream that failed (to skip it)
+	LastPosition     float64 `json:"lastPosition"`     // Playback position at time of failure
+	SeasonNumber     int     `json:"seasonNumber,omitempty"`
+	EpisodeNumber    int     `json:"episodeNumber,omitempty"`
+	IMDBID           string  `json:"imdbId,omitempty"`
+	Year             int     `json:"year,omitempty"`
+}
+
+// MigrateStreamResponse is the response with the new stream info.
+type MigrateStreamResponse struct {
+	StreamPath string  `json:"streamPath"`
+	FileSize   int64   `json:"fileSize,omitempty"`
+	Duration   float64 `json:"duration,omitempty"`
+}
+
+// MigrateStream searches for an alternative stream when the current one fails mid-playback.
+// It performs a fresh search, skips the failed result, and resolves the next viable one.
+func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var req MigrateStreamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TitleName == "" {
+		http.Error(w, "titleName is required", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[stream-migration] Starting migration (title=%q, mediaType=%q, S%02dE%02d, failed=%q, position=%.1fs)",
+		req.TitleName, req.MediaType, req.SeasonNumber, req.EpisodeNumber, req.FailedStreamPath, req.LastPosition)
+
+	ctx := r.Context()
+
+	// Build target episode for series (mediaType may be "series" or "episode")
+	var targetEpisode *models.EpisodeReference
+	if req.SeasonNumber > 0 && req.EpisodeNumber > 0 {
+		targetEpisode = &models.EpisodeReference{
+			SeasonNumber:  req.SeasonNumber,
+			EpisodeNumber: req.EpisodeNumber,
+		}
+	}
+
+	// Build search query (same logic as prequeue worker)
+	query := h.buildSearchQuery(req.TitleName, req.MediaType, targetEpisode)
+	if query == "" {
+		http.Error(w, "failed to build search query", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[stream-migration] Searching with query: %q", query)
+
+	// Search for results
+	searchOpts := indexer.SearchOptions{
+		Query:      query,
+		MaxResults: 50,
+		MediaType:  req.MediaType,
+		IMDBID:     req.IMDBID,
+		Year:       req.Year,
+		UserID:     req.UserID,
+	}
+
+	allResults, searchErr := h.indexerSvc.Search(ctx, searchOpts)
+	if searchErr != nil || len(allResults) == 0 {
+		log.Printf("[stream-migration] Search returned no results: %v", searchErr)
+		http.Error(w, "no alternative streams found", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("[stream-migration] Found %d results, resolving alternatives (skipping failed path)", len(allResults))
+
+	// Iterate through results, skip the one matching the failed path
+	var resolution *models.PlaybackResolution
+	var selectedResult *models.NZBResult
+
+	for i, result := range allResults {
+		resolution, _ = h.playbackSvc.Resolve(ctx, result)
+		if resolution == nil || resolution.WebDAVPath == "" {
+			continue
+		}
+
+		// Skip if this resolves to the same path that failed
+		if resolution.WebDAVPath == req.FailedStreamPath {
+			log.Printf("[stream-migration] Skipping result [%d] — same as failed path: %s", i, result.Title)
+			resolution = nil
+			continue
+		}
+
+		log.Printf("[stream-migration] Resolved alternative [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
+		selectedResult = &result
+		break
+	}
+
+	if resolution == nil || selectedResult == nil {
+		log.Printf("[stream-migration] No viable alternatives found")
+		http.Error(w, "no alternative streams found", http.StatusNotFound)
+		return
+	}
+
+	// Probe for duration
+	var duration float64
+	if h.fullProber != nil {
+		fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+		if err == nil && fullResult != nil {
+			duration = fullResult.Duration
+		}
+	}
+
+	resp := MigrateStreamResponse{
+		StreamPath: resolution.WebDAVPath,
+		FileSize:   resolution.FileSize,
+		Duration:   duration,
+	}
+
+	log.Printf("[stream-migration] Migration successful: %s (%.0fs duration)", resp.StreamPath, resp.Duration)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // StartSubtitlesRequest is the request body for starting subtitle extraction
 type StartSubtitlesRequest struct {
 	StartOffset float64 `json:"startOffset"` // Resume position in seconds
