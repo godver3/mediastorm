@@ -9,7 +9,7 @@
       "maxResolution": "",
       "hdrDvPolicy": "hdr_dv",
       "filterOutTerms": ["CAM", "HDTS", "TELESYNC", "HDTC"],
-      "preferredTerms": ["REMUX", "ATMOS", "HDR", "HDR10", "HDR10+", "/\\bDV\\b/", "Dolby Vision"],
+      "preferredTerms": ["REMUX", "ATMOS", "/\\bHDR\\b/", "HDR10", "HDR10+", "/\\bDV\\b/", "Dolby Vision"],
       "nonPreferredTerms": ["HDCAM", "TS"]
     },
     "ranking": {
@@ -34,7 +34,7 @@
       "maxResolution": "2160p",
       "hdrDvPolicy": "hdr_dv",
       "filterOutTerms": ["CAM", "HDTS", "TELESYNC"],
-      "preferredTerms": ["REMUX", "HDR", "HDR10", "/\\bDV\\b/", "Dolby Vision"],
+      "preferredTerms": ["REMUX", "/\\bHDR\\b/", "HDR10", "/\\bDV\\b/", "Dolby Vision"],
       "nonPreferredTerms": ["HDCAM", "TS"]
     },
     "ranking": {

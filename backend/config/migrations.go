@@ -76,7 +76,7 @@ func migratePrioritizeHdrToPreferredTerms(raw map[string]interface{}) {
 	// If prioritizeHdr was true, add HDR preferred terms
 	prioritize, isBool := val.(bool)
 	if isBool && prioritize {
-		hdrTerms := []string{"HDR", "HDR10", "HDR10+", `/\bDV\b/`, "Dolby Vision"}
+		hdrTerms := []string{`/\bHDR\b/`, "HDR10", "HDR10+", `/\bDV\b/`, "Dolby Vision"}
 
 		// Get existing preferred terms
 		existing, _ := filterMap["preferredTerms"].([]interface{})
