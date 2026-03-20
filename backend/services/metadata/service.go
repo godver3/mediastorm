@@ -926,7 +926,7 @@ func (s *Service) enrichDemoArtwork(ctx context.Context, items []models.Trending
 	}
 }
 
-// enrichTrendingMovieReleases adds release data (theatrical/home release) to trending movie items.
+// enrichTrendingMovieReleases adds release data (theatrical/home release) and runtime to trending movie items.
 // This runs concurrently for performance. Release data is cached by enrichMovieReleases.
 func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []models.TrendingItem) {
 	const maxConcurrent = 5
@@ -938,8 +938,10 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 
 	// Collect eligible items first, then set phase total before launching goroutines
 	type enrichJob struct {
-		idx    int
-		tmdbID int64
+		idx          int
+		tmdbID       int64
+		needsRelease bool
+		needsRuntime bool
 	}
 	var jobs []enrichJob
 	for idx := range items {
@@ -949,7 +951,9 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 		if items[idx].Title.MediaType != "movie" {
 			continue
 		}
-		if items[idx].Title.HomeRelease != nil || items[idx].Title.Theatrical != nil {
+		needsRelease := items[idx].Title.HomeRelease == nil && items[idx].Title.Theatrical == nil
+		needsRuntime := items[idx].Title.RuntimeMinutes == 0
+		if !needsRelease && !needsRuntime {
 			continue
 		}
 		tmdbID := items[idx].Title.TMDBID
@@ -962,7 +966,7 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 		if tmdbID <= 0 {
 			continue
 		}
-		jobs = append(jobs, enrichJob{idx: idx, tmdbID: tmdbID})
+		jobs = append(jobs, enrichJob{idx: idx, tmdbID: tmdbID, needsRelease: needsRelease, needsRuntime: needsRuntime})
 	}
 
 	queued = len(jobs)
@@ -970,21 +974,32 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 
 	for _, job := range jobs {
 		wg.Add(1)
-		go func(i int, tmdbID int64) {
+		go func(i int, tmdbID int64, needsRelease, needsRuntime bool) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if s.enrichMovieReleases(ctx, &items[i].Title, tmdbID) {
+			enriched := false
+			if needsRelease {
+				if s.enrichMovieReleases(ctx, &items[i].Title, tmdbID) {
+					enriched = true
+				}
+			}
+			if needsRuntime {
+				if s.maybeHydrateMovieArtworkFromTMDB(ctx, &items[i].Title, models.MovieDetailsQuery{TMDBID: tmdbID}) {
+					enriched = true
+				}
+			}
+			if enriched {
 				atomic.AddInt32(&enrichedCount, 1)
 			}
 			s.incrementProgress("trending-movie")
-		}(job.idx, job.tmdbID)
+		}(job.idx, job.tmdbID, job.needsRelease, job.needsRuntime)
 	}
 	wg.Wait()
 
 	if enrichedCount > 0 {
-		log.Printf("[metadata] enriched %d/%d trending movies with release data (limit %d)", enrichedCount, queued, enrichLimit)
+		log.Printf("[metadata] enriched %d/%d trending movies with release/runtime data (limit %d)", enrichedCount, queued, enrichLimit)
 	}
 }
 
