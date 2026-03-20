@@ -116,8 +116,9 @@ type SeriesSeason struct {
 }
 
 type SeriesDetails struct {
-	Title   Title          `json:"title"`
-	Seasons []SeriesSeason `json:"seasons"`
+	Title           Title          `json:"title"`
+	Seasons         []SeriesSeason `json:"seasons"`
+	PreferredSeason *int           `json:"preferredSeason,omitempty"`
 }
 
 type SeriesDetailsQuery struct {

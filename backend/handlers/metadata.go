@@ -293,7 +293,11 @@ func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) 
 	details, err := h.Service.SeriesDetails(r.Context(), req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "404 Not Found") || strings.Contains(err.Error(), "unable to resolve") {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}

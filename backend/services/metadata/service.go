@@ -1731,7 +1731,17 @@ func (s *Service) enrichSeriesTVDB(title *models.Title, tvShow mdblistTVShow) {
 
 	if !found {
 		remoteID := tvShow.IMDBID
-		if searchResults, err := s.searchTVDBSeries(tvShow.Title, tvShow.ReleaseYear, remoteID); err == nil && len(searchResults) > 0 {
+		searchResults, err := s.searchTVDBSeries(tvShow.Title, tvShow.ReleaseYear, remoteID)
+		// If no results, retry progressively relaxing constraints.
+		// The show may be listed as a season of a parent series with a
+		// different year/IMDB ID (e.g. "Company Retreat" is S2 of "Jury Duty").
+		if (err != nil || len(searchResults) == 0) && tvShow.ReleaseYear > 0 {
+			searchResults, err = s.searchTVDBSeries(tvShow.Title, 0, remoteID)
+		}
+		if (err != nil || len(searchResults) == 0) && remoteID != "" {
+			searchResults, err = s.searchTVDBSeries(tvShow.Title, 0, "")
+		}
+		if err == nil && len(searchResults) > 0 {
 			result := searchResults[0]
 			title.TVDBID, _ = strconv.ParseInt(result.TVDBID, 10, 64)
 			title.ID = fmt.Sprintf("tvdb:series:%s", result.TVDBID)
@@ -2161,6 +2171,41 @@ func (s *Service) resolveSeriesTVDBID(req models.SeriesDetailsQuery) (int64, err
 	return id, err
 }
 
+// tryFallbackSeriesTVDBID is called when a TVDB series fetch returns 404 (stub entry).
+// It searches by name without the year constraint to find a parent series
+// (e.g. "Company Retreat" → "Jury Duty" S2). Returns 0 if no fallback found.
+func (s *Service) tryFallbackSeriesTVDBID(req models.SeriesDetailsQuery, failedID int64) int64 {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return 0
+	}
+
+	// Check if we've already resolved this failed ID
+	fallbackKey := cacheKey("tvdb", "series-fallback", strconv.FormatInt(failedID, 10))
+	var cachedFallback int64
+	if ok, _ := s.cache.get(fallbackKey, &cachedFallback); ok {
+		if cachedFallback > 0 {
+			log.Printf("[metadata] tvdb series fallback cache hit: %d → %d for %q", failedID, cachedFallback, name)
+		}
+		return cachedFallback
+	}
+
+	log.Printf("[metadata] tvdb series %d returned 404, searching by name %q (no year constraint)", failedID, name)
+	fallbackReq := req
+	fallbackReq.TVDBID = 0
+	fallbackReq.Year = 0
+	altID, altErr := s.resolveSeriesTVDBIDActual(fallbackReq)
+	if altErr == nil && altID > 0 && altID != failedID {
+		log.Printf("[metadata] tvdb 404 fallback: resolved %q to tvdbId=%d (was %d)", name, altID, failedID)
+		_ = s.cache.set(fallbackKey, altID)
+		return altID
+	}
+
+	// Cache the miss so we don't retry
+	_ = s.cache.set(fallbackKey, int64(0))
+	return 0
+}
+
 func (s *Service) resolveSeriesTVDBIDActual(req models.SeriesDetailsQuery) (int64, error) {
 	name := strings.TrimSpace(req.Name)
 
@@ -2414,6 +2459,12 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID)
 
+	// Track original TVDB ID to detect fallback (stub → parent series)
+	originalTVDBID := req.TVDBID
+	if originalTVDBID == 0 {
+		originalTVDBID = parseTVDBIDFromTitleID(req.TitleID)
+	}
+
 	tvdbID, err := s.resolveSeriesTVDBID(req)
 	if err != nil {
 
@@ -2587,7 +2638,17 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	if err != nil {
 		log.Printf("[metadata] series details tvdb fetch error tvdbId=%d err=%v", tvdbID, err)
 
-		return nil, fmt.Errorf("failed to fetch series details: %w", err)
+		// If this is a 404 (stub entry), try fallback to a parent series
+		if strings.Contains(err.Error(), "404 Not Found") {
+			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+				tvdbID = altID
+				cacheID = cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+				base, err = s.getTVDBSeriesDetails(tvdbID)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch series details: %w", err)
+		}
 	}
 
 	extended, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
@@ -3023,6 +3084,21 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 	populateAiredDateTimeUTC(&details)
 
+	// If we fell back to a parent series (e.g. "Company Retreat" → "Jury Duty"),
+	// find which season matches the original name and set it as preferred.
+	if originalTVDBID > 0 && tvdbID != originalTVDBID && strings.TrimSpace(req.Name) != "" {
+		lowerOriginal := strings.ToLower(strings.TrimSpace(req.Name))
+		for _, season := range details.Seasons {
+			if season.Name != "" && (strings.Contains(strings.ToLower(season.Name), lowerOriginal) ||
+				strings.Contains(lowerOriginal, strings.ToLower(season.Name))) {
+				num := season.Number
+				details.PreferredSeason = &num
+				log.Printf("[metadata] series details fallback: preferred season %d (%q) matches original name %q", num, season.Name, req.Name)
+				break
+			}
+		}
+	}
+
 	_ = s.cache.set(cacheID, details)
 
 	log.Printf("[metadata] series details complete tvdbId=%d seasons=%d", tvdbID, len(seasons))
@@ -3114,7 +3190,37 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 
 	extResult := <-extChan
 	if extResult.err != nil {
-		return nil, fmt.Errorf("failed to fetch extended series metadata: %w", extResult.err)
+		// If 404 (stub entry), try fallback to a parent series and re-fetch
+		if strings.Contains(extResult.err.Error(), "404 Not Found") {
+			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+				tvdbID = altID
+				cacheID = cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+				// Drain the translation channel from the failed ID
+				<-transChan
+				// Re-fetch with the correct ID
+				ext, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
+				if err != nil {
+					return nil, fmt.Errorf("failed to fetch extended series metadata (fallback): %w", err)
+				}
+				extResult = struct {
+					data tvdbSeriesExtendedData
+					err  error
+				}{ext, nil}
+				// Re-fetch translations for the correct ID
+				transChan = make(chan transResult, 1)
+				go func() {
+					var result transResult
+					if tr, err := s.client.seriesTranslations(tvdbID, s.client.language); err == nil && tr != nil {
+						result.name = strings.TrimSpace(tr.Name)
+						result.overview = strings.TrimSpace(tr.Overview)
+					}
+					transChan <- result
+				}()
+			}
+		}
+		if extResult.err != nil {
+			return nil, fmt.Errorf("failed to fetch extended series metadata: %w", extResult.err)
+		}
 	}
 	extended := extResult.data
 
@@ -3681,7 +3787,18 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	base, err := s.getTVDBSeriesDetails(tvdbID)
 	if err != nil {
 		log.Printf("[metadata] series info tvdb fetch error tvdbId=%d err=%v", tvdbID, err)
-		return nil, fmt.Errorf("failed to fetch series info: %w", err)
+
+		// If 404 (stub entry), try fallback to a parent series
+		if strings.Contains(err.Error(), "404 Not Found") {
+			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+				tvdbID = altID
+				cacheID = cacheKey("tvdb", "series", "info", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
+				base, err = s.getTVDBSeriesDetails(tvdbID)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch series info: %w", err)
+		}
 	}
 
 	// Fetch extended data with artworks only (no episodes)
