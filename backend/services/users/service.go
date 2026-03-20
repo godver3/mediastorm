@@ -65,15 +65,15 @@ type Service struct {
 func (s *Service) useDB() bool { return s.store != nil }
 
 // NewServiceWithStore creates a users service backed by PostgreSQL.
+// Note: ensureDefaultUser is skipped for PostgreSQL because the default
+// account ("default") may not exist yet due to foreign key constraints.
+// Profile creation is handled after accounts are initialized.
 func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
 	svc := &Service{
 		store: store,
 		users: make(map[string]models.User),
 	}
 	if err := svc.load(); err != nil {
-		return nil, err
-	}
-	if err := svc.ensureDefaultUser(); err != nil {
 		return nil, err
 	}
 	return svc, nil
