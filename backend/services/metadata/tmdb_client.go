@@ -425,6 +425,10 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 // isImageDark fetches a small thumbnail of the logo and checks if the non-transparent
 // pixels are predominantly dark (average luminance < 50/255). Used to detect black
 // logos on transparent backgrounds that need tinting on dark UI.
+//
+// Only returns true for logos that are actually cutouts on a transparent background.
+// Logos with solid/opaque backgrounds (>70% opaque pixels) are left untinted even if
+// dark, since they have built-in contrast (e.g. white text on a dark banner).
 func (c *tmdbClient) isImageDark(ctx context.Context, imageURL string) bool {
 	// Use w92 thumbnail for analysis — tiny and fast to download
 	analysisURL := strings.Replace(imageURL, "/w500/", "/w92/", 1)
@@ -454,6 +458,7 @@ func (c *tmdbClient) isImageDark(ctx context.Context, imageURL string) bool {
 	}
 
 	bounds := img.Bounds()
+	totalPixels := (bounds.Max.X - bounds.Min.X) * (bounds.Max.Y - bounds.Min.Y)
 	var totalLuminance float64
 	var opaquePixels int
 
@@ -487,7 +492,17 @@ func (c *tmdbClient) isImageDark(ctx context.Context, imageURL string) bool {
 
 	avgLuminance := totalLuminance / float64(opaquePixels)
 	isDark := avgLuminance < 50
-	log.Printf("[metadata] logo brightness: avg=%.1f opaque=%d dark=%v url=%s", avgLuminance, opaquePixels, isDark, analysisURL)
+
+	// If the image is mostly opaque (>70%), it has a solid background with built-in
+	// contrast (e.g. Jury Duty: white text on dark banner). Tinting these destroys
+	// the logo, so skip the dark flag.
+	opaqueRatio := float64(opaquePixels) / float64(totalPixels)
+	if isDark && opaqueRatio > 0.70 {
+		log.Printf("[metadata] logo brightness: avg=%.1f opaque=%d (%.0f%%) — solid background, skipping dark flag url=%s", avgLuminance, opaquePixels, opaqueRatio*100, analysisURL)
+		return false
+	}
+
+	log.Printf("[metadata] logo brightness: avg=%.1f opaque=%d (%.0f%%) dark=%v url=%s", avgLuminance, opaquePixels, opaqueRatio*100, isDark, analysisURL)
 	return isDark
 }
 

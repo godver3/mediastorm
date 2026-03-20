@@ -81,9 +81,9 @@ func TestIsImageDark(t *testing.T) {
 		wantDark bool
 	}{
 		{
-			name:     "black opaque logo is dark",
+			name:     "solid black image not marked dark (solid background)",
 			handler:  makePNG(color.Black, false),
-			wantDark: true,
+			wantDark: false, // >70% opaque = solid background, skip dark flag
 		},
 		{
 			name:     "white opaque logo is not dark",
@@ -91,14 +91,14 @@ func TestIsImageDark(t *testing.T) {
 			wantDark: false,
 		},
 		{
-			name:     "black with transparency still dark",
+			name:     "black on transparent background is dark",
 			handler:  makePNG(color.Black, true),
-			wantDark: true,
+			wantDark: true, // 50% opaque = cutout logo, dark flag applies
 		},
 		{
-			name:     "dark gray (luminance ~30) is dark",
+			name:     "solid dark gray not marked dark (solid background)",
 			handler:  makePNG(color.NRGBA{30, 30, 30, 255}, false),
-			wantDark: true,
+			wantDark: false, // >70% opaque = solid background
 		},
 		{
 			name:     "mid gray (luminance ~128) is not dark",
