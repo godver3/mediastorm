@@ -3353,6 +3353,14 @@ func (h *VideoHandler) GetHLSManager() *HLSManager {
 	return h.hlsManager
 }
 
+// GetStreamPoolStats returns current stream pool memory and slot stats.
+func (h *VideoHandler) GetStreamPoolStats() PoolStats {
+	if h == nil || h.streamPool == nil {
+		return PoolStats{}
+	}
+	return h.streamPool.Stats()
+}
+
 func (h *VideoHandler) resolveLiveStreamTarget(profileID string) liveStreamTarget {
 	if h == nil || h.configManager == nil {
 		return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
 	"novastream/services/trakt"
+	internalusenet "novastream/internal/usenet"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
@@ -1175,6 +1177,39 @@ func main() {
 	})
 	metadataService.StartBackgroundCacheManager(2 * time.Hour)
 	calendarService.StartBackgroundRefresh(4 * time.Hour)
+
+	// Start periodic runtime stats logger for memory/crash correlation
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-shutdownChan:
+				return
+			case <-ticker.C:
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				poolStats := videoHandler.GetStreamPoolStats()
+				usenetReaders, usenetSegments, usenetEstMB := internalusenet.GlobalReaderStats()
+				log.Printf("[runtime] goroutines=%d heap_alloc=%dMB heap_sys=%dMB heap_inuse=%dMB stack_inuse=%dMB num_gc=%d "+
+					"pool_slots=%d pool_active=%d pool_buffer=%dMB "+
+					"usenet_readers=%d usenet_segments=%d usenet_est_mb=%d",
+					runtime.NumGoroutine(),
+					m.HeapAlloc/1024/1024,
+					m.HeapSys/1024/1024,
+					m.HeapInuse/1024/1024,
+					m.StackInuse/1024/1024,
+					m.NumGC,
+					poolStats.TotalSlots,
+					poolStats.ActiveSlots,
+					poolStats.TotalBufferMB,
+					usenetReaders,
+					usenetSegments,
+					usenetEstMB,
+				)
+			}
+		}
+	}()
 
 	// Start server in goroutine
 	go func() {

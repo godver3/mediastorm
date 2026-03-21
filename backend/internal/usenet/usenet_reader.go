@@ -5,11 +5,20 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/javi11/nntppool"
 	"github.com/sourcegraph/conc/pool"
+)
+
+// Global usenet memory tracking for diagnostics
+var (
+	activeReaders    int64 // number of active usenet readers
+	activeSegments   int64 // total segments across all active readers
+	estimatedMemory  int64 // estimated total bytes in usenet pipelines
 )
 
 const defaultDownloadWorkers = 15
@@ -63,11 +72,23 @@ func NewUsenetReader(
 		totalSegmentSize += seg.SegmentSize
 	}
 
+	readers := atomic.AddInt64(&activeReaders, 1)
+	segs := atomic.AddInt64(&activeSegments, int64(len(rg.segments)))
+	estMem := atomic.AddInt64(&estimatedMemory, totalSegmentSize)
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
 	log.InfoContext(ctx, "usenet.reader.init",
 		"segments", len(rg.segments),
 		"range_start", rg.start,
 		"range_end", rg.end,
 		"max_download_workers", maxDownloadWorkers,
+		"est_segment_bytes_mb", totalSegmentSize/1024/1024,
+		"global_active_readers", readers,
+		"global_active_segments", segs,
+		"global_est_memory_mb", estMem/1024/1024,
+		"heap_alloc_mb", m.HeapAlloc/1024/1024,
 	)
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -103,9 +124,26 @@ func NewUsenetReader(
 
 func (b *usenetReader) Close() error {
 	b.closeOnce.Do(func() {
-		b.log.Debug("usenet.reader.closing",
+		// Decrement global counters
+		var totalSegSize int64
+		for _, seg := range b.rg.segments {
+			totalSegSize += seg.SegmentSize
+		}
+		readers := atomic.AddInt64(&activeReaders, -1)
+		segs := atomic.AddInt64(&activeSegments, -int64(len(b.rg.segments)))
+		estMem := atomic.AddInt64(&estimatedMemory, -totalSegSize)
+
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		b.log.Info("usenet.reader.closing",
 			"total_bytes_read", b.totalBytesRead,
 			"segments_count", len(b.rg.segments),
+			"freed_est_mb", totalSegSize/1024/1024,
+			"global_active_readers", readers,
+			"global_active_segments", segs,
+			"global_est_memory_mb", estMem/1024/1024,
+			"heap_alloc_mb", m.HeapAlloc/1024/1024,
 		)
 
 		b.cancel()
@@ -375,4 +413,11 @@ func (b *usenetReader) downloadManager(
 	case <-ctx.Done():
 		return
 	}
+}
+
+// GlobalReaderStats returns current global usenet reader memory diagnostics.
+func GlobalReaderStats() (readers, segments, estMemoryMB int64) {
+	return atomic.LoadInt64(&activeReaders),
+		atomic.LoadInt64(&activeSegments),
+		atomic.LoadInt64(&estimatedMemory) / 1024 / 1024
 }
