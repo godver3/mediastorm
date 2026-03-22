@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -344,6 +345,182 @@ func TestLogsHandler_Submit_InvalidPayload(t *testing.T) {
 
 	if resp.Error == "" {
 		t.Error("expected error message in response")
+	}
+}
+
+func TestLogsHandler_UploadFrontendLogs_AndListSnapshots(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	if err := os.WriteFile(logFile, []byte("backend line\n"), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+
+	body := `{"frontendLogs":"one\ntwo","deviceType":"Android TV","os":"Android","appVersion":"1.2.3"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-ID", "client-123")
+	rec := httptest.NewRecorder()
+
+	h.UploadFrontendLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	summaries, err := h.ListFrontendLogSummaries()
+	if err != nil {
+		t.Fatalf("unexpected error listing snapshots: %v", err)
+	}
+
+	if len(summaries) != 1 {
+		t.Fatalf("expected 1 summary, got %d", len(summaries))
+	}
+	if summaries[0].ClientID != "client-123" {
+		t.Fatalf("expected client id client-123, got %s", summaries[0].ClientID)
+	}
+	if summaries[0].LogCount != 2 {
+		t.Fatalf("expected log count 2, got %d", summaries[0].LogCount)
+	}
+
+	snapshot, err := h.GetFrontendLogSnapshot("client-123")
+	if err != nil {
+		t.Fatalf("unexpected error reading snapshot: %v", err)
+	}
+	if snapshot.DeviceType != "Android TV" {
+		t.Fatalf("expected device type Android TV, got %s", snapshot.DeviceType)
+	}
+	if !strings.Contains(snapshot.FrontendLogs, "two") {
+		t.Fatalf("expected stored frontend logs to include latest content")
+	}
+}
+
+func TestLogsHandler_SubmitStoredLogsPackage_UsesStoredFrontendLogs(t *testing.T) {
+	pasteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		content := string(body)
+		if !strings.Contains(content, "backend line 1") {
+			t.Fatalf("expected package to include backend logs")
+		}
+		if !strings.Contains(content, "frontend line 1") {
+			t.Fatalf("expected package to include stored frontend logs")
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "https://paste.test.com/combined123")
+	}))
+	defer pasteServer.Close()
+
+	originalServices := pasteServices
+	pasteServices = []pasteService{{
+		name: "test-paste",
+		url:  pasteServer.URL,
+		headers: map[string]string{
+			"Content-Type": "text/plain",
+		},
+	}}
+	defer func() { pasteServices = originalServices }()
+
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	if err := os.WriteFile(logFile, []byte("backend line 1\nbackend line 2\n"), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", strings.NewReader(`{"frontendLogs":"frontend line 1\nfrontend line 2"}`))
+	uploadReq.Header.Set("Content-Type", "application/json")
+	uploadReq.Header.Set("X-Client-ID", "client-456")
+	uploadRec := httptest.NewRecorder()
+	h.UploadFrontendLogs(uploadRec, uploadReq)
+	if uploadRec.Code != http.StatusOK {
+		t.Fatalf("expected upload status %d, got %d", http.StatusOK, uploadRec.Code)
+	}
+
+	url, err := h.SubmitStoredLogsPackage("client-456")
+	if err != nil {
+		t.Fatalf("unexpected error submitting stored package: %v", err)
+	}
+	if url != "https://paste.test.com/combined123" {
+		t.Fatalf("expected paste url https://paste.test.com/combined123, got %s", url)
+	}
+}
+
+func TestLogsHandler_ReadCombinedLogEntries_AllOrigins(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	if err := os.WriteFile(logFile, []byte("2026/03/22 10:00:00 [backend] backend line 1\n"), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", strings.NewReader(`{"frontendLogs":"[2026-03-22T10:00:01Z] [INFO ] frontend line 1"}`))
+	uploadReq.Header.Set("Content-Type", "application/json")
+	uploadReq.Header.Set("X-Client-ID", "client-789")
+	uploadRec := httptest.NewRecorder()
+	h.UploadFrontendLogs(uploadRec, uploadReq)
+	if uploadRec.Code != http.StatusOK {
+		t.Fatalf("expected upload status %d, got %d", http.StatusOK, uploadRec.Code)
+	}
+
+	entries, err := h.ReadCombinedLogEntries(1000, "all", "")
+	if err != nil {
+		t.Fatalf("unexpected error reading combined entries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 combined entries, got %d", len(entries))
+	}
+	if entries[0].Origin != "backend" {
+		t.Fatalf("expected first entry to be backend, got %s", entries[0].Origin)
+	}
+	if entries[1].Origin != "frontend" {
+		t.Fatalf("expected second entry to be frontend, got %s", entries[1].Origin)
+	}
+	if !strings.Contains(entries[1].Line, "frontend:client-789") {
+		t.Fatalf("expected frontend line decoration, got %s", entries[1].Line)
+	}
+}
+
+func TestLogsHandler_ReadCombinedLogEntries_FilterByClient(t *testing.T) {
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	if err := os.WriteFile(logFile, []byte("2026/03/22 10:00:00 [backend] backend line 1\n"), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+
+	for _, tc := range []struct {
+		clientID string
+		body     string
+	}{
+		{clientID: "client-a", body: `{"frontendLogs":"[2026-03-22T10:00:01Z] [INFO ] frontend line a"}`},
+		{clientID: "client-b", body: `{"frontendLogs":"[2026-03-22T10:00:02Z] [INFO ] frontend line b"}`},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Client-ID", tc.clientID)
+		rec := httptest.NewRecorder()
+		h.UploadFrontendLogs(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected upload status %d for %s, got %d", http.StatusOK, tc.clientID, rec.Code)
+		}
+	}
+
+	entries, err := h.ReadCombinedLogEntries(1000, "frontend", "client-b")
+	if err != nil {
+		t.Fatalf("unexpected error reading client-filtered entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 frontend entry, got %d", len(entries))
+	}
+	if !strings.Contains(entries[0].Line, "client-b") {
+		t.Fatalf("expected filtered frontend entry to contain client-b, got %s", entries[0].Line)
 	}
 }
 

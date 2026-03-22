@@ -28,24 +28,26 @@
     .log-source { font-weight: 500; margin-right: 8px; }
     .log-file { opacity: 0.7; font-style: italic; margin-right: 8px; }
     .log-msg { color: #eee; flex-grow: 1; word-break: break-all; }
-    .log-hidden { display: none; }
-
-    @media (max-width: 768px) {
-        .log-entry {
-            flex-direction: column;
-            gap: 2px;
-        }
-        .log-prefix {
-            white-space: normal;
-            flex-wrap: wrap;
-            margin-right: 0;
-        }
-        .log-msg {
-            padding-left: 8px;
-            border-left: 2px solid rgba(255, 255, 255, 0.1);
-        }
+    .origin-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
     }
-    
+    .origin-pill.backend {
+        color: #a5d6ff;
+        background: rgba(59, 130, 246, 0.14);
+        border: 1px solid rgba(59, 130, 246, 0.35);
+    }
+    .origin-pill.frontend {
+        color: #7ee787;
+        background: rgba(34, 197, 94, 0.14);
+        border: 1px solid rgba(34, 197, 94, 0.35);
+    }
     .source-tag {
         display: inline-flex;
         align-items: center;
@@ -59,7 +61,6 @@
     }
     .source-tag:hover { opacity: 0.8; }
     .source-tag.disabled { opacity: 0.3; text-decoration: line-through; }
-    
     .search-container {
         position: relative;
         flex: 1;
@@ -77,16 +78,45 @@
     #logSearch {
         padding-left: 34px;
     }
+    .log-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        align-items: center;
+        background: var(--bg-tertiary);
+        border-bottom: 1px solid var(--border);
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+    .log-meta strong {
+        color: var(--text-primary);
+    }
+    @media (max-width: 768px) {
+        .log-entry {
+            flex-direction: column;
+            gap: 2px;
+        }
+        .log-prefix {
+            white-space: normal;
+            flex-wrap: wrap;
+            margin-right: 0;
+        }
+        .log-msg {
+            padding-left: 8px;
+            border-left: 2px solid rgba(255, 255, 255, 0.1);
+        }
+    }
 </style>
 
 <div class="page-header">
     <h1>System Logs</h1>
-    <p>View real-time backend logs with source coloring and filtering</p>
+    <p>View combined backend and frontend logs, filter by origin, and share the latest diagnostics package from the backend.</p>
 </div>
 
 <div class="card">
     <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
             <h2>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -95,10 +125,12 @@
                     <line x1="16" y1="17" x2="8" y2="17"/>
                     <polyline points="10 9 9 9 8 9"/>
                 </svg>
-                Backend Logs
+                Logs Explorer
             </h2>
+            <span class="origin-pill backend">Backend</span>
+            <span class="origin-pill frontend">Frontend</span>
         </div>
-        
+
         <div class="search-container">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8"></circle>
@@ -108,6 +140,14 @@
         </div>
 
         <div class="card-header-actions" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <select id="logSourceType" class="form-select" style="width: auto; padding: 0.25rem 0.5rem;" onchange="fetchLogs()">
+                <option value="all">All Logs</option>
+                <option value="backend">Backend Only</option>
+                <option value="frontend">Frontend Only</option>
+            </select>
+            <select id="clientFilter" class="form-select" style="width: min(360px, 100%); padding: 0.25rem 0.5rem;" onchange="fetchLogs()">
+                <option value="">All Frontend Clients</option>
+            </select>
             <select id="linesCount" class="form-select" style="width: auto; padding: 0.25rem 0.5rem;" onchange="fetchLogs()">
                 <option value="100">100 lines</option>
                 <option value="500" selected>500 lines</option>
@@ -122,6 +162,9 @@
                 </svg>
                 Refresh
             </button>
+            <button class="btn btn-primary btn-sm" id="submitPackageButton" onclick="submitLogsPackage()">
+                Share Logs
+            </button>
             <label class="toggle">
                 <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
                 <span class="toggle-slider"></span>
@@ -129,17 +172,25 @@
             </label>
         </div>
     </div>
+
+    <div class="log-meta">
+        <span id="logSourceDescription"><strong>All logs</strong> showing backend and frontend entries merged by timestamp.</span>
+        <span id="frontendUploadMeta"></span>
+        <span id="clientFilterMeta"></span>
+        <span id="packageStatus"></span>
+    </div>
+
     <div style="display: flex; align-items: flex-start; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); padding: 0.5rem 1rem; gap: 12px;">
         <button class="btn btn-secondary btn-sm" onclick="toggleAllSources()" style="flex-shrink: 0; padding: 2px 8px; font-size: 11px; height: 24px;">Toggle All</button>
-        <div id="sourceLegend" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
-            <!-- Sources will be populated here -->
-        </div>
+        <div id="sourceLegend" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;"></div>
     </div>
+
     <div class="card-body" style="padding: 0;">
-        <div id="logContainer" style="background: #0d1117; color: #c9d1d9; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; padding: 1rem; height: calc(100vh - 300px); overflow-y: auto; white-space: pre-wrap; word-break: break-all;">
+        <div id="logContainer" style="background: #0d1117; color: #c9d1d9; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; padding: 1rem; height: calc(100vh - 330px); overflow-y: auto; white-space: pre-wrap; word-break: break-all;">
             <div style="color: #666;">Loading logs...</div>
         </div>
     </div>
+
     <div class="card-footer" style="padding: 0.5rem 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between;">
         <span id="logStats">Lines: 0</span>
         <span id="filteredStats"></span>
@@ -150,10 +201,11 @@
 {{define "scripts"}}
 <script>
     let autoRefreshInterval = null;
-    let rawLogLines = [];
+    let rawLogEntries = [];
     let sources = new Map();
+    let frontendClients = [];
     const sourceColors = [
-        '#ff7b72', '#ffa657', '#f2cc60', '#7ee787', '#a5d6ff', '#d2a8ff', '#ff7eb6', 
+        '#ff7b72', '#ffa657', '#f2cc60', '#7ee787', '#a5d6ff', '#d2a8ff', '#ff7eb6',
         '#79c0ff', '#58a6ff', '#1f6feb', '#238636', '#9e6a03', '#8b1c1c', '#6e7681'
     ];
     let colorIndex = 0;
@@ -170,10 +222,16 @@
         return sources.get(source).color;
     }
 
+    function resetSourceFilters() {
+        sources = new Map();
+        colorIndex = 0;
+        updateLegend();
+    }
+
     function updateLegend() {
         const legend = document.getElementById('sourceLegend');
         legend.innerHTML = '';
-        
+
         Array.from(sources.keys()).sort().forEach(source => {
             const data = sources.get(source);
             const tag = document.createElement('span');
@@ -203,31 +261,31 @@
 
         let workingLine = line;
 
-        // 1. Extract time (e.g., 2026/02/25 10:00:00 or 2026-02-25T10:00:00Z)
-        const timeMatch = workingLine.match(/^(\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/);
+        const timeMatch = workingLine.match(/^(\[?\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\]?)/);
         if (timeMatch) {
-            result.time = timeMatch[1];
+            result.time = timeMatch[1].replace(/^\[|\]$/g, '');
             workingLine = workingLine.substring(timeMatch[1].length).trim();
         }
 
-        // 2. Extract level (e.g., INFO, level=info, ERROR)
-        const levelMatch = workingLine.match(/^(?:level=)?(INFO|ERROR|WARN|DEBUG|FATAL)/i);
-        if (levelMatch) {
+        const bracketLevelMatch = workingLine.match(/^\[([A-Z]+)\]/);
+        const levelMatch = workingLine.match(/^(?:level=)?(INFO|ERROR|WARN|DEBUG|FATAL|LOG)/i);
+        if (bracketLevelMatch) {
+            result.level = bracketLevelMatch[1].toUpperCase();
+            workingLine = workingLine.substring(bracketLevelMatch[0].length).trim();
+        } else if (levelMatch) {
             result.level = levelMatch[1].toUpperCase();
             workingLine = workingLine.substring(levelMatch[0].length).trim();
         }
 
-        // 3. Extract filename:line: prefix if present
-        const filePrefixMatch = workingLine.match(/^([^ ]+\.go:\d+: )/);
+        const filePrefixMatch = workingLine.match(/^([^ ]+\.(?:go|ts|tsx|js|jsx):\d+:?)/);
         if (filePrefixMatch) {
             result.file = filePrefixMatch[1];
             workingLine = workingLine.substring(filePrefixMatch[1].length).trim();
         }
 
-        // 4. Extract source (e.g., [source] or source=name)
         const sourceBracketMatch = workingLine.match(/^\[([^\]]+)\]/);
         const sourceKeyMatch = workingLine.match(/\bsource=([^ ]+)/);
-        
+
         if (sourceBracketMatch) {
             result.source = sourceBracketMatch[1];
             result.message = workingLine.substring(sourceBracketMatch[0].length).trim();
@@ -238,7 +296,6 @@
             result.message = workingLine;
         }
 
-        // 5. Extract message (e.g., msg="message" or just the rest)
         const msgMatch = result.message.match(/\bmsg="([^"]+)"/);
         if (msgMatch) {
             result.message = msgMatch[1];
@@ -249,7 +306,7 @@
 
     function toggleAllSources() {
         const anyDisabled = Array.from(sources.values()).some(s => !s.enabled);
-        const newState = anyDisabled; // If any disabled, enable all. If all enabled, disable all.
+        const newState = anyDisabled;
         sources.forEach(s => s.enabled = newState);
         updateLegend();
         renderLogs();
@@ -259,26 +316,30 @@
         const container = document.getElementById('logContainer');
         const searchTerm = document.getElementById('logSearch').value.toLowerCase();
         const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 50;
-        
+
         const fragment = document.createDocumentFragment();
         let visibleCount = 0;
 
-        rawLogLines.forEach(line => {
+        rawLogEntries.forEach(entry => {
+            const line = entry.line || '';
             if (!line || line.trim() === '') return;
-            
+
             const parsed = parseLogLine(line);
             const sourceData = sources.get(parsed.source) || { enabled: true };
-            
-            // Filtering
             const matchesSearch = line.toLowerCase().includes(searchTerm);
             const matchesSource = sourceData.enabled;
 
             if (matchesSearch && matchesSource) {
-                const entry = document.createElement('div');
-                entry.className = 'log-entry';
-                
+                const row = document.createElement('div');
+                row.className = 'log-entry';
+
                 const prefix = document.createElement('div');
                 prefix.className = 'log-prefix';
+
+                const originSpan = document.createElement('span');
+                originSpan.className = `origin-pill ${entry.origin || 'backend'}`;
+                originSpan.textContent = entry.origin || 'backend';
+                prefix.appendChild(originSpan);
 
                 if (parsed.time) {
                     const timeSpan = document.createElement('span');
@@ -305,49 +366,107 @@
                 sourceSpan.textContent = `[${parsed.source}]`;
                 prefix.appendChild(sourceSpan);
 
-                entry.appendChild(prefix);
+                row.appendChild(prefix);
 
                 const msgSpan = document.createElement('div');
                 msgSpan.className = 'log-msg';
                 msgSpan.textContent = parsed.message;
-                entry.appendChild(msgSpan);
+                row.appendChild(msgSpan);
 
-                fragment.appendChild(entry);
+                fragment.appendChild(row);
                 visibleCount++;
             }
         });
 
         container.innerHTML = '';
-        container.appendChild(fragment);
-        
-        document.getElementById('logStats').textContent = `Total: ${rawLogLines.length}`;
-        document.getElementById('filteredStats').textContent = searchTerm || Array.from(sources.values()).some(v => !v.enabled) 
-            ? `Showing: ${visibleCount}` 
-            : '';
+        if (visibleCount === 0) {
+            container.innerHTML = '<div style="color: #666;">No log lines matched the current filters.</div>';
+        } else {
+            container.appendChild(fragment);
+        }
+
+        document.getElementById('logStats').textContent = `Total: ${rawLogEntries.length}`;
+        document.getElementById('filteredStats').textContent =
+            searchTerm || Array.from(sources.values()).some(v => !v.enabled)
+                ? `Showing: ${visibleCount}`
+                : '';
 
         if (isAtBottom) {
             container.scrollTop = container.scrollHeight;
         }
     }
 
+    function updateMetaBar(source) {
+        const sourceDescription = document.getElementById('logSourceDescription');
+        const frontendUploadMeta = document.getElementById('frontendUploadMeta');
+        const clientFilterMeta = document.getElementById('clientFilterMeta');
+        const selectedClientId = document.getElementById('clientFilter').value;
+        const selectedClient = frontendClients.find(client => client.clientId === selectedClientId);
+
+        if (source === 'backend') {
+            sourceDescription.innerHTML = '<strong>Backend only</strong> showing server log lines.';
+        } else if (source === 'frontend') {
+            sourceDescription.innerHTML = '<strong>Frontend only</strong> showing uploaded app log lines.';
+        } else {
+            sourceDescription.innerHTML = '<strong>All logs</strong> showing backend and frontend entries merged by timestamp.';
+        }
+
+        frontendUploadMeta.textContent = frontendClients.length > 0
+            ? `${frontendClients.length} frontend device upload${frontendClients.length === 1 ? '' : 's'} available.`
+            : 'No frontend logs uploaded yet.';
+
+        if (selectedClient) {
+            clientFilterMeta.innerHTML = `<strong>Client:</strong> ${selectedClient.clientId} ${selectedClient.deviceType || ''} ${selectedClient.os || ''}`.trim();
+        } else {
+            clientFilterMeta.textContent = '';
+        }
+    }
+
+    function updateClientFilterOptions(selectedClientId) {
+        const select = document.getElementById('clientFilter');
+        const currentValue = selectedClientId || select.value;
+        select.innerHTML = '<option value="">All Frontend Clients</option>';
+
+        frontendClients.forEach(client => {
+            const option = document.createElement('option');
+            option.value = client.clientId;
+            option.textContent = [
+                client.deviceType || 'Unknown device',
+                client.os || '',
+                client.clientId,
+                client.uploadedAt ? new Date(client.uploadedAt).toLocaleString() : ''
+            ].filter(Boolean).join(' • ');
+            option.selected = client.clientId === currentValue;
+            select.appendChild(option);
+        });
+    }
+
     async function fetchLogs() {
         const lines = document.getElementById('linesCount').value;
+        const source = document.getElementById('logSourceType').value;
+        const clientId = document.getElementById('clientFilter').value;
         const container = document.getElementById('logContainer');
-        
+
         try {
-            const data = await apiCall(`{{.BasePath}}/api/logs?lines=${lines}`);
-            if (data.lines) {
-                rawLogLines = data.lines;
-                // Discover sources from new data
-                rawLogLines.forEach(line => {
-                    const parsed = parseLogLine(line);
-                    getSourceColor(parsed.source);
-                });
-                renderLogs();
-            } else if (data.error) {
-                container.innerHTML = `<div style="color: var(--danger);">${data.error}</div>`;
+            let url = `{{.BasePath}}/api/logs?source=${encodeURIComponent(source)}&lines=${encodeURIComponent(lines)}`;
+            if (clientId) {
+                url += `&clientId=${encodeURIComponent(clientId)}`;
             }
+            const data = await apiCall(url);
+            rawLogEntries = data.entries || [];
+            frontendClients = data.frontendClients || [];
+            updateClientFilterOptions(data.clientId || clientId);
+
+            resetSourceFilters();
+            rawLogEntries.forEach(entry => {
+                const parsed = parseLogLine(entry.line || '');
+                getSourceColor(parsed.source);
+            });
+
+            updateMetaBar(source);
+            renderLogs();
         } catch (err) {
+            rawLogEntries = [];
             container.innerHTML = `<div style="color: var(--danger);">Failed to fetch logs: ${err.message}</div>`;
         }
     }
@@ -356,23 +475,48 @@
         renderLogs();
     }
 
+    async function submitLogsPackage() {
+        const button = document.getElementById('submitPackageButton');
+        const packageStatus = document.getElementById('packageStatus');
+        const clientId = document.getElementById('clientFilter').value;
+
+        button.disabled = true;
+        packageStatus.textContent = 'Submitting package...';
+
+        try {
+            const response = await fetch(`{{.BasePath}}/api/logs/package`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ clientId })
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Request failed (${response.status})`);
+            }
+
+            packageStatus.innerHTML = `Shared: <a href="${data.url}" target="_blank" rel="noopener noreferrer">${data.url}</a>`;
+        } catch (err) {
+            packageStatus.textContent = `Failed to share logs: ${err.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     function toggleAutoRefresh() {
         const checkbox = document.getElementById('autoRefresh');
         if (checkbox.checked) {
             fetchLogs();
             autoRefreshInterval = setInterval(fetchLogs, 3000);
-        } else {
-            if (autoRefreshInterval) {
-                clearInterval(autoRefreshInterval);
-                autoRefreshInterval = null;
-            }
+        } else if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
         }
     }
 
-    // Initial fetch
     fetchLogs();
 
-    // Clean up interval on page leave
     window.addEventListener('beforeunload', () => {
         if (autoRefreshInterval) clearInterval(autoRefreshInterval);
     });

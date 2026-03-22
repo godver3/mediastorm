@@ -9,8 +9,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,11 +24,11 @@ const (
 
 // pasteService defines a paste service configuration
 type pasteService struct {
-	name       string
-	url        string
-	urlPrefix  string            // if response is a key, prepend this to form the full URL
-	headers    map[string]string // additional headers to send
-	jsonKeyField string          // if non-empty, parse JSON response and extract this field as the key
+	name         string
+	url          string
+	urlPrefix    string            // if response is a key, prepend this to form the full URL
+	headers      map[string]string // additional headers to send
+	jsonKeyField string            // if non-empty, parse JSON response and extract this field as the key
 }
 
 // pasteServices is the ordered list of paste services to try
@@ -66,12 +69,47 @@ var pasteServices = []pasteService{
 }
 
 type LogsHandler struct {
-	logger  *log.Logger
-	logFile string // path to the backend log file
+	logger          *log.Logger
+	logFile         string // path to the backend log file
+	frontendLogsDir string
+	frontendLogsMu  sync.RWMutex
 }
 
 type submitLogsRequest struct {
 	FrontendLogs string `json:"frontendLogs"`
+}
+
+type uploadFrontendLogsRequest struct {
+	FrontendLogs string `json:"frontendLogs"`
+	DeviceType   string `json:"deviceType,omitempty"`
+	OS           string `json:"os,omitempty"`
+	AppVersion   string `json:"appVersion,omitempty"`
+}
+
+type frontendLogSnapshot struct {
+	ClientID     string    `json:"clientId"`
+	DeviceType   string    `json:"deviceType,omitempty"`
+	OS           string    `json:"os,omitempty"`
+	AppVersion   string    `json:"appVersion,omitempty"`
+	UploadedAt   time.Time `json:"uploadedAt"`
+	LogCount     int       `json:"logCount"`
+	FrontendLogs string    `json:"frontendLogs"`
+}
+
+type frontendLogSummary struct {
+	ClientID   string    `json:"clientId"`
+	DeviceType string    `json:"deviceType,omitempty"`
+	OS         string    `json:"os,omitempty"`
+	AppVersion string    `json:"appVersion,omitempty"`
+	UploadedAt time.Time `json:"uploadedAt"`
+	LogCount   int       `json:"logCount"`
+}
+
+type logEntry struct {
+	Origin    string    `json:"origin"`
+	ClientID  string    `json:"clientId,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	Line      string    `json:"line"`
 }
 
 type submitLogsResponse struct {
@@ -87,6 +125,7 @@ func NewLogsHandler(logger *log.Logger, logFile string) *LogsHandler {
 	if h.logger == nil {
 		h.logger = log.New(os.Stdout, "", log.LstdFlags)
 	}
+	h.frontendLogsDir = h.defaultFrontendLogsDir()
 	return h
 }
 
@@ -108,48 +147,7 @@ func (h *LogsHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the combined log content
-	var combined strings.Builder
-
-	// Header with metadata
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString("                         STRMR LOG SUBMISSION\n")
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().UTC().Format(time.RFC3339)))
-	combined.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
-	combined.WriteString("\n")
-
-	// Backend logs
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString("                           BACKEND LOGS\n")
-	combined.WriteString(fmt.Sprintf("                     (last %d lines)\n", maxLogLines))
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
-
-	backendLogs, err := h.readBackendLogs()
-	if err != nil {
-		combined.WriteString(fmt.Sprintf("[Error reading backend logs: %v]\n", err))
-	} else if backendLogs == "" {
-		combined.WriteString("[No backend logs available]\n")
-	} else {
-		combined.WriteString(backendLogs)
-	}
-	combined.WriteString("\n\n")
-
-	// Frontend logs
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString("                          FRONTEND LOGS\n")
-	combined.WriteString(fmt.Sprintf("                     (last %d entries)\n", maxLogLines))
-	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
-
-	if strings.TrimSpace(payload.FrontendLogs) == "" {
-		combined.WriteString("[No frontend logs provided]\n")
-	} else {
-		combined.WriteString(payload.FrontendLogs)
-	}
-
-	// Submit to paste.c-net.org
-	pasteContent := combined.String()
-	pasteURL, err := h.submitToPaste(pasteContent)
+	pasteURL, err := h.SubmitLogsPackage(payload.FrontendLogs, nil)
 	if err != nil {
 		h.logger.Printf("[logs] Failed to submit to paste service: %v", err)
 		h.respondError(w, fmt.Sprintf("failed to submit logs: %v", err), http.StatusInternalServerError)
@@ -163,8 +161,170 @@ func (h *LogsHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(submitLogsResponse{URL: pasteURL})
 }
 
+func (h *LogsHandler) UploadFrontendLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		h.respondError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientID := strings.TrimSpace(r.Header.Get("X-Client-ID"))
+	if clientID == "" {
+		h.respondError(w, "client id is required", http.StatusBadRequest)
+		return
+	}
+
+	var payload uploadFrontendLogsRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxUploadSize))
+	if err := decoder.Decode(&payload); err != nil {
+		h.respondError(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	snapshot := frontendLogSnapshot{
+		ClientID:     clientID,
+		DeviceType:   strings.TrimSpace(payload.DeviceType),
+		OS:           strings.TrimSpace(payload.OS),
+		AppVersion:   strings.TrimSpace(payload.AppVersion),
+		UploadedAt:   time.Now().UTC(),
+		LogCount:     countLogLines(payload.FrontendLogs),
+		FrontendLogs: payload.FrontendLogs,
+	}
+
+	if err := h.saveFrontendLogSnapshot(snapshot); err != nil {
+		h.logger.Printf("[logs] Failed to store frontend logs for client %s: %v", clientID, err)
+		h.respondError(w, fmt.Sprintf("failed to store frontend logs: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"clientId":   snapshot.ClientID,
+		"logCount":   snapshot.LogCount,
+		"uploadedAt": snapshot.UploadedAt,
+	})
+}
+
 func (h *LogsHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *LogsHandler) ListFrontendLogSummaries() ([]frontendLogSummary, error) {
+	h.frontendLogsMu.RLock()
+	defer h.frontendLogsMu.RUnlock()
+
+	entries, err := os.ReadDir(h.frontendLogsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	summaries := make([]frontendLogSummary, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		snapshot, err := h.readFrontendLogSnapshotByPath(filepath.Join(h.frontendLogsDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+
+		summaries = append(summaries, frontendLogSummary{
+			ClientID:   snapshot.ClientID,
+			DeviceType: snapshot.DeviceType,
+			OS:         snapshot.OS,
+			AppVersion: snapshot.AppVersion,
+			UploadedAt: snapshot.UploadedAt,
+			LogCount:   snapshot.LogCount,
+		})
+	}
+
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].UploadedAt.After(summaries[j].UploadedAt)
+	})
+
+	return summaries, nil
+}
+
+func (h *LogsHandler) GetFrontendLogSnapshot(clientID string) (*frontendLogSnapshot, error) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" {
+		return nil, fmt.Errorf("client id is required")
+	}
+
+	h.frontendLogsMu.RLock()
+	defer h.frontendLogsMu.RUnlock()
+
+	path := h.frontendLogSnapshotPath(clientID)
+	snapshot, err := h.readFrontendLogSnapshotByPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (h *LogsHandler) SubmitLogsPackage(frontendLogs string, snapshot *frontendLogSnapshot) (string, error) {
+	pasteContent := h.buildCombinedLogPackage(frontendLogs, snapshot)
+	return h.submitToPaste(pasteContent)
+}
+
+func (h *LogsHandler) SubmitStoredLogsPackage(clientID string) (string, error) {
+	frontendLogs, summaries, err := h.readAggregatedFrontendLogs(maxLogLines, clientID)
+	if err != nil {
+		return "", err
+	}
+	pasteContent := h.buildCombinedStoredLogsPackage(frontendLogs, summaries)
+	return h.submitToPaste(pasteContent)
+}
+
+func (h *LogsHandler) ReadCombinedLogEntries(linesCount int, source, clientID string) ([]logEntry, error) {
+	source = strings.TrimSpace(strings.ToLower(source))
+	if source == "" {
+		source = "all"
+	}
+	clientID = strings.TrimSpace(clientID)
+
+	entries := make([]logEntry, 0, linesCount*2)
+
+	if source == "all" || source == "backend" {
+		backendEntries, err := h.readBackendLogEntries(linesCount)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, backendEntries...)
+	}
+
+	if source == "all" || source == "frontend" {
+		frontendEntries, err := h.readFrontendLogEntries(linesCount, clientID)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, frontendEntries...)
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		aHasTime := !entries[i].Timestamp.IsZero()
+		bHasTime := !entries[j].Timestamp.IsZero()
+		switch {
+		case aHasTime && bHasTime:
+			return entries[i].Timestamp.Before(entries[j].Timestamp)
+		case aHasTime:
+			return false
+		case bHasTime:
+			return true
+		default:
+			return entries[i].Line < entries[j].Line
+		}
+	})
+
+	return entries, nil
 }
 
 func (h *LogsHandler) readBackendLogs() (string, error) {
@@ -185,6 +345,342 @@ func (h *LogsHandler) readBackendLogs() (string, error) {
 	}
 
 	return strings.Join(lines, "\n"), nil
+}
+
+func (h *LogsHandler) buildCombinedLogPackage(frontendLogs string, snapshot *frontendLogSnapshot) string {
+	var combined strings.Builder
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                         STRMR LOG SUBMISSION\n")
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	combined.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
+	if snapshot != nil {
+		combined.WriteString(fmt.Sprintf("Frontend Client: %s\n", snapshot.ClientID))
+		if snapshot.DeviceType != "" || snapshot.OS != "" {
+			combined.WriteString(fmt.Sprintf("Frontend Device: %s %s\n", snapshot.DeviceType, snapshot.OS))
+		}
+		if snapshot.AppVersion != "" {
+			combined.WriteString(fmt.Sprintf("Frontend App Version: %s\n", snapshot.AppVersion))
+		}
+		combined.WriteString(fmt.Sprintf("Frontend Uploaded: %s\n", snapshot.UploadedAt.Format(time.RFC3339)))
+	}
+	combined.WriteString("\n")
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                           BACKEND LOGS\n")
+	combined.WriteString(fmt.Sprintf("                     (last %d lines)\n", maxLogLines))
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+
+	backendLogs, err := h.readBackendLogs()
+	if err != nil {
+		combined.WriteString(fmt.Sprintf("[Error reading backend logs: %v]\n", err))
+	} else if backendLogs == "" {
+		combined.WriteString("[No backend logs available]\n")
+	} else {
+		combined.WriteString(backendLogs)
+	}
+	combined.WriteString("\n\n")
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                          FRONTEND LOGS\n")
+	combined.WriteString(fmt.Sprintf("                     (last %d entries)\n", maxLogLines))
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+
+	if strings.TrimSpace(frontendLogs) == "" {
+		combined.WriteString("[No frontend logs provided]\n")
+	} else {
+		combined.WriteString(frontendLogs)
+	}
+
+	return combined.String()
+}
+
+func (h *LogsHandler) buildCombinedStoredLogsPackage(frontendLogs string, summaries []frontendLogSummary) string {
+	var combined strings.Builder
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                         STRMR LOG SUBMISSION\n")
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	combined.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
+	if len(summaries) > 0 {
+		combined.WriteString(fmt.Sprintf("Frontend Clients Included: %d\n", len(summaries)))
+	}
+	combined.WriteString("\n")
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                           BACKEND LOGS\n")
+	combined.WriteString(fmt.Sprintf("                     (last %d lines)\n", maxLogLines))
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+
+	backendLogs, err := h.readBackendLogs()
+	if err != nil {
+		combined.WriteString(fmt.Sprintf("[Error reading backend logs: %v]\n", err))
+	} else if backendLogs == "" {
+		combined.WriteString("[No backend logs available]\n")
+	} else {
+		combined.WriteString(backendLogs)
+	}
+	combined.WriteString("\n\n")
+
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
+	combined.WriteString("                          FRONTEND LOGS\n")
+	combined.WriteString(fmt.Sprintf("                     (last %d lines total)\n", maxLogLines))
+	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n\n")
+
+	if len(summaries) == 0 {
+		combined.WriteString("[No frontend logs uploaded]\n")
+	} else {
+		for _, summary := range summaries {
+			combined.WriteString(fmt.Sprintf("- %s %s %s uploaded %s\n",
+				summary.ClientID,
+				strings.TrimSpace(summary.DeviceType),
+				strings.TrimSpace(summary.OS),
+				summary.UploadedAt.Format(time.RFC3339),
+			))
+		}
+		combined.WriteString("\n")
+		if strings.TrimSpace(frontendLogs) == "" {
+			combined.WriteString("[No frontend logs available]\n")
+		} else {
+			combined.WriteString(frontendLogs)
+		}
+	}
+
+	return combined.String()
+}
+
+func (h *LogsHandler) defaultFrontendLogsDir() string {
+	if h.logFile != "" {
+		return filepath.Join(filepath.Dir(h.logFile), "frontend_logs")
+	}
+	return filepath.Join(os.TempDir(), "strmr_frontend_logs")
+}
+
+func (h *LogsHandler) frontendLogSnapshotPath(clientID string) string {
+	return filepath.Join(h.frontendLogsDir, urlSafeFileName(clientID)+".json")
+}
+
+func (h *LogsHandler) saveFrontendLogSnapshot(snapshot frontendLogSnapshot) error {
+	h.frontendLogsMu.Lock()
+	defer h.frontendLogsMu.Unlock()
+
+	if err := os.MkdirAll(h.frontendLogsDir, 0o755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(h.frontendLogSnapshotPath(snapshot.ClientID), data, 0o644)
+}
+
+func (h *LogsHandler) readFrontendLogSnapshotByPath(path string) (*frontendLogSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var snapshot frontendLogSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, err
+	}
+
+	return &snapshot, nil
+}
+
+func countLogLines(logs string) int {
+	trimmed := strings.TrimSpace(logs)
+	if trimmed == "" {
+		return 0
+	}
+	return strings.Count(trimmed, "\n") + 1
+}
+
+func urlSafeFileName(value string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "..", "_")
+	return replacer.Replace(strings.TrimSpace(value))
+}
+
+func (h *LogsHandler) readBackendLogEntries(limit int) ([]logEntry, error) {
+	if h.logFile == "" {
+		return nil, fmt.Errorf("log file not configured")
+	}
+
+	file, err := os.Open(h.logFile)
+	if err != nil {
+		return nil, fmt.Errorf("could not open log file %s: %w", h.logFile, err)
+	}
+	defer file.Close()
+
+	lines, err := readLastNLines(file, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]logEntry, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		entries = append(entries, logEntry{
+			Origin:    "backend",
+			Timestamp: parseLogTimestamp(line, time.Time{}),
+			Line:      line,
+		})
+	}
+
+	return entries, nil
+}
+
+func (h *LogsHandler) readFrontendLogEntries(limit int, clientID string) ([]logEntry, error) {
+	summaries, err := h.ListFrontendLogSummaries()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]logEntry, 0, limit)
+	for _, summary := range summaries {
+		if clientID != "" && summary.ClientID != clientID {
+			continue
+		}
+		snapshot, err := h.GetFrontendLogSnapshot(summary.ClientID)
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(snapshot.FrontendLogs, "\n")
+		for _, rawLine := range lines {
+			if strings.TrimSpace(rawLine) == "" {
+				continue
+			}
+			entries = append(entries, logEntry{
+				Origin:    "frontend",
+				ClientID:  snapshot.ClientID,
+				Timestamp: parseLogTimestamp(rawLine, snapshot.UploadedAt),
+				Line:      decorateFrontendLogLine(snapshot, rawLine),
+			})
+		}
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		aHasTime := !entries[i].Timestamp.IsZero()
+		bHasTime := !entries[j].Timestamp.IsZero()
+		switch {
+		case aHasTime && bHasTime:
+			return entries[i].Timestamp.After(entries[j].Timestamp)
+		case aHasTime:
+			return true
+		case bHasTime:
+			return false
+		default:
+			return entries[i].Line > entries[j].Line
+		}
+	})
+
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Timestamp.Before(entries[j].Timestamp)
+	})
+
+	return entries, nil
+}
+
+func (h *LogsHandler) readAggregatedFrontendLogs(limit int, clientID string) (string, []frontendLogSummary, error) {
+	summaries, err := h.ListFrontendLogSummaries()
+	if err != nil {
+		return "", nil, err
+	}
+	if clientID != "" {
+		filtered := make([]frontendLogSummary, 0, len(summaries))
+		for _, summary := range summaries {
+			if summary.ClientID == clientID {
+				filtered = append(filtered, summary)
+			}
+		}
+		summaries = filtered
+	}
+
+	entries, err := h.readFrontendLogEntries(limit, clientID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, entry.Line)
+	}
+
+	return strings.Join(lines, "\n"), summaries, nil
+}
+
+func decorateFrontendLogLine(snapshot *frontendLogSnapshot, rawLine string) string {
+	tag := fmt.Sprintf("frontend:%s", truncateLogIdentifier(snapshot.ClientID))
+	if snapshot.DeviceType != "" {
+		tag = fmt.Sprintf("%s:%s", tag, strings.ReplaceAll(strings.ToLower(snapshot.DeviceType), " ", "-"))
+	}
+
+	trimmed := strings.TrimSpace(rawLine)
+	if trimmed == "" {
+		return fmt.Sprintf("[%s]", tag)
+	}
+
+	if strings.HasPrefix(trimmed, "[") {
+		if idx := strings.Index(trimmed, "]"); idx != -1 {
+			return trimmed[:idx+1] + " [" + tag + "]" + trimmed[idx+1:]
+		}
+	}
+
+	return fmt.Sprintf("[%s] %s", tag, trimmed)
+}
+
+func parseLogTimestamp(line string, fallback time.Time) time.Time {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return fallback
+	}
+
+	candidates := []string{}
+	if strings.HasPrefix(line, "[") {
+		if end := strings.Index(line, "]"); end > 1 {
+			candidates = append(candidates, line[1:end])
+		}
+	}
+	if len(line) >= 19 {
+		candidates = append(candidates, line[:19])
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006/01/02 15:04:05",
+		"2006-01-02 15:04:05",
+	}
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		for _, layout := range layouts {
+			if ts, err := time.Parse(layout, candidate); err == nil {
+				return ts
+			}
+		}
+	}
+
+	return fallback
+}
+
+func truncateLogIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }
 
 func readLastNLines(file *os.File, n int) ([]string, error) {

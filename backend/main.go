@@ -688,6 +688,7 @@ func main() {
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 	adminUIHandler.SetWatchlistService(watchlistService)
+	adminUIHandler.SetLogsHandler(logsHandler)
 	adminUIHandler.SetAccountsService(accountsService)
 	adminUIHandler.SetInvitationsService(invitationsService)
 	adminUIHandler.SetSessionsService(sessionsService)
@@ -949,6 +950,7 @@ func main() {
 	r.HandleFunc("/admin/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.PerformancePage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/logs", adminUIHandler.RequireAuth(adminUIHandler.LogsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/logs", adminUIHandler.RequireAuth(adminUIHandler.GetLogs)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/logs/package", adminUIHandler.RequireAuth(adminUIHandler.SubmitLogsPackage)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/performance", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceMetrics)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/performance/sse", adminUIHandler.RequireMasterAuth(adminUIHandler.GetPerformanceSSE)).Methods(http.MethodGet)
 

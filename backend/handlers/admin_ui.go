@@ -250,7 +250,7 @@ var SettingsSchema = map[string]interface{}{
 			"maxDownloadWorkers": map[string]interface{}{"type": "number", "label": "Max Download Workers", "description": "Maximum concurrent download workers", "hidden": true},
 			"maxCacheSizeMB":     map[string]interface{}{"type": "number", "label": "Max Cache Size (MB)", "description": "Maximum cache size in megabytes", "hidden": true},
 			"serviceMode":        map[string]interface{}{"type": "select", "label": "Service Mode", "options": []string{"usenet", "debrid", "hybrid"}, "description": "Streaming service mode"},
-			"searchMode": map[string]interface{}{"type": "select", "label": "Search Mode", "hidden": true},
+			"searchMode":         map[string]interface{}{"type": "select", "label": "Search Mode", "hidden": true},
 			"multiProviderMode": map[string]interface{}{
 				"type":        "select",
 				"label":       "Multi-Provider Mode",
@@ -332,8 +332,8 @@ var SettingsSchema = map[string]interface{}{
 				},
 				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
 			},
-			"filterOutTerms":   map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
-			"preferredTerms":   map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
+			"filterOutTerms":    map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
+			"preferredTerms":    map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
 			"nonPreferredTerms": map[string]interface{}{"type": "weighted-tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results. Each term has a weight (1-10) that controls how strongly it penalizes ranking. Higher weights push results lower. Wrap in /slashes/ for regex."},
 			"preferredScraper": map[string]interface{}{
 				"type":        "select",
@@ -471,14 +471,14 @@ var SettingsSchema = map[string]interface{}{
 			"seekBackwardSeconds":       map[string]interface{}{"type": "number", "label": "Skip Backward", "description": "Seconds to skip backward (default 10)", "step": 5, "min": 5, "max": 120},
 			// Temporarily hidden: loading screen disabled across the board
 			// "useLoadingScreen":          map[string]interface{}{"type": "boolean", "label": "Loading Screen", "description": "Show loading screen during playback init"},
-			"forceAacTranscoding":       map[string]interface{}{"type": "boolean", "label": "Force AAC Audio Transcoding", "description": "Transcode AC3/EAC3/DTS surround audio to AAC. Enable this if using Bluetooth headphones, as they cannot decode surround codecs directly.", "order": 99},
-			"autoPlayTrailersTV":        map[string]interface{}{"type": "boolean", "label": "Auto-Play Trailers (TV)", "description": "Replace backdrop artwork with playing trailer on TV details pages once loaded", "order": 100},
-			"rewindOnResumeFromPause":   map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
-			"rewindOnPlaybackStart":     map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
-			"disablePrequeue":           map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
-			"creditsDetection":          map[string]interface{}{"type": "boolean", "label": "Credits Detection (Experimental)", "description": "Detect where credits begin during playback using on-device Vision OCR. Shows a 'Next Episode' card when credits are detected. iOS and tvOS only.", "order": 102},
-			"maxResultsPerResolution":   map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)", "order": 103},
-			"ytdlpCookies":             map[string]interface{}{"type": "file_upload", "label": "YouTube Cookies (Experimental)", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 104, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true},
+			"forceAacTranscoding":     map[string]interface{}{"type": "boolean", "label": "Force AAC Audio Transcoding", "description": "Transcode AC3/EAC3/DTS surround audio to AAC. Enable this if using Bluetooth headphones, as they cannot decode surround codecs directly.", "order": 99},
+			"autoPlayTrailersTV":      map[string]interface{}{"type": "boolean", "label": "Auto-Play Trailers (TV)", "description": "Replace backdrop artwork with playing trailer on TV details pages once loaded", "order": 100},
+			"rewindOnResumeFromPause": map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
+			"rewindOnPlaybackStart":   map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
+			"disablePrequeue":         map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
+			"creditsDetection":        map[string]interface{}{"type": "boolean", "label": "Credits Detection (Experimental)", "description": "Detect where credits begin during playback using on-device Vision OCR. Shows a 'Next Episode' card when credits are detected. iOS and tvOS only.", "order": 102},
+			"maxResultsPerResolution": map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)", "order": 103},
+			"ytdlpCookies":            map[string]interface{}{"type": "file_upload", "label": "YouTube Cookies (Experimental)", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 104, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true},
 		},
 	},
 	"homeShelves": map[string]interface{}{
@@ -565,8 +565,8 @@ var SettingsSchema = map[string]interface{}{
 				"order":       3,
 			},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet.", "order": 4},
-			"showParsedBadges": map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
-			"cleanPosters": map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
+			"showParsedBadges":                 map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
+			"cleanPosters":                     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
 		},
 	},
 	"metadata": map[string]interface{}{
@@ -853,6 +853,7 @@ type AdminUIHandler struct {
 	calendarService       *calendar.Service
 	clientsService        clientsService
 	clientSettingsService clientSettingsService
+	logsHandler           *LogsHandler
 	serverBasePath        string // server-level base path from config (e.g. "/mediastorm")
 }
 
@@ -903,6 +904,10 @@ func (h *AdminUIHandler) SetClientsService(cs clientsService) {
 // SetClientSettingsService sets the client settings service for propagation
 func (h *AdminUIHandler) SetClientSettingsService(css clientSettingsService) {
 	h.clientSettingsService = css
+}
+
+func (h *AdminUIHandler) SetLogsHandler(lh *LogsHandler) {
+	h.logsHandler = lh
 }
 
 // SetCalendarService sets the calendar service for the calendar admin page
@@ -1127,17 +1132,17 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:     accountID,
-		Username:      username,
-		Settings:      settings,
-		Schema:        SettingsSchema,
-		Groups:        SettingsGroups,
-		Users:         usersList,
-		UserOverrides: userOverrides,
-		Version:       GetBackendVersion(),
-		BuildID:       GetBackendBuildID(),
-		NoProfiles:    noProfiles,
-		Presets:       config.LoadPresets(),
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Schema:         SettingsSchema,
+		Groups:         SettingsGroups,
+		Users:          usersList,
+		UserOverrides:  userOverrides,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+		NoProfiles:     noProfiles,
+		Presets:        config.LoadPresets(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1161,17 +1166,17 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	status := h.getStatus(settings)
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/status",
+		CurrentPath:    basePath + "/status",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Settings:    settings,
-		Schema:      SettingsSchema,
-		Status:      status,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Schema:         SettingsSchema,
+		Status:         status,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1190,16 +1195,16 @@ func (h *AdminUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	noProfiles := !isAdmin && len(usersList) == 0
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/history",
+		CurrentPath:    basePath + "/history",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Users:       usersList,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
-		NoProfiles:  noProfiles,
+		AccountID:      accountID,
+		Username:       username,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+		NoProfiles:     noProfiles,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1477,14 +1482,14 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 	globalVODCurrent := tracker.Count()
 
 	return json.Marshal(map[string]interface{}{
-		"streams":            streams,
-		"server_time":        now.UTC(),
-		"liveUsage":          liveUsage,
-		"liveUsageByUser":    liveUsageByUser,
-		"liveUsageBuckets":   liveUsageBuckets,
-		"vodUsageByAccount":  vodUsageByAccount,
-		"globalVODLimit":     globalVODLimit,
-		"globalVODCurrent":   globalVODCurrent,
+		"streams":           streams,
+		"server_time":       now.UTC(),
+		"liveUsage":         liveUsage,
+		"liveUsageByUser":   liveUsageByUser,
+		"liveUsageBuckets":  liveUsageBuckets,
+		"vodUsageByAccount": vodUsageByAccount,
+		"globalVODLimit":    globalVODLimit,
+		"globalVODCurrent":  globalVODCurrent,
 	})
 }
 
@@ -1758,8 +1763,8 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			MaxStreams:         &maxStreams,
 		},
 		Display: models.DisplaySettings{
-			BadgeVisibility:                 globalSettings.Display.BadgeVisibility,
-			WatchStateIconStyle:             globalSettings.Display.WatchStateIconStyle,
+			BadgeVisibility:                  globalSettings.Display.BadgeVisibility,
+			WatchStateIconStyle:              globalSettings.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
 		},
 	}
@@ -5182,15 +5187,15 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	usersList := h.getScopedUsers(isAdmin, accountID)
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/tools",
+		CurrentPath:    basePath + "/tools",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Users:       usersList,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5209,14 +5214,14 @@ func (h *AdminUIHandler) PrequeuePage(w http.ResponseWriter, r *http.Request) {
 	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/tools",
+		CurrentPath:    basePath + "/tools",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5244,16 +5249,16 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	usersList := h.getScopedUsers(isAdmin, accountID)
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/search",
+		CurrentPath:    basePath + "/search",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Settings:    settings,
-		Users:       usersList,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5279,15 +5284,15 @@ func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/accounts",
+		CurrentPath:    basePath + "/accounts",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Settings:    settings,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5326,15 +5331,15 @@ func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request
 	}
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/kids-settings",
+		CurrentPath:    basePath + "/kids-settings",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Settings:    settings,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5359,14 +5364,14 @@ func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/backup",
+		CurrentPath:    basePath + "/backup",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5393,15 +5398,15 @@ func (h *AdminUIHandler) ConnectionsPage(w http.ResponseWriter, r *http.Request)
 	settings, _ := mgr.Load()
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/connections",
+		CurrentPath:    basePath + "/connections",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
-		Settings:    settings,
+		AccountID:      accountID,
+		Username:       username,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+		Settings:       settings,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -5426,17 +5431,17 @@ func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
 	settings, _ := mgr.Load()
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/calendar",
+		CurrentPath:    basePath + "/calendar",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Users:       usersList,
-		Settings:    settings,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
-		NoProfiles:  noProfiles,
+		AccountID:      accountID,
+		Username:       username,
+		Users:          usersList,
+		Settings:       settings,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+		NoProfiles:     noProfiles,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -6966,14 +6971,14 @@ func (h *AdminUIHandler) PerformancePage(w http.ResponseWriter, r *http.Request)
 	}
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/performance",
+		CurrentPath:    basePath + "/performance",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -7041,14 +7046,14 @@ func (h *AdminUIHandler) LogsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := AdminPageData{
-		CurrentPath: basePath + "/logs",
+		CurrentPath:    basePath + "/logs",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
-		AccountID:   accountID,
-		Username:    username,
-		Version:     GetBackendVersion(),
-		BuildID:     GetBackendBuildID(),
+		AccountID:      accountID,
+		Username:       username,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -7062,7 +7067,7 @@ func (h *AdminUIHandler) LogsPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetLogs returns the last N lines of the backend log file.
+// GetLogs returns combined backend/frontend log entries.
 func (h *AdminUIHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	isAdmin, _, _, _ := h.getPageRoleInfo(r)
 	if !isAdmin {
@@ -7070,8 +7075,8 @@ func (h *AdminUIHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.logFile == "" {
-		http.Error(w, "Log file not configured", http.StatusInternalServerError)
+	if h.logsHandler == nil {
+		http.Error(w, "Logs handler not configured", http.StatusInternalServerError)
 		return
 	}
 
@@ -7085,21 +7090,63 @@ func (h *AdminUIHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 		linesCount = 5000
 	}
 
-	file, err := os.Open(h.logFile)
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	if source == "" {
+		source = "all"
+	}
+	clientID := strings.TrimSpace(r.URL.Query().Get("clientId"))
+
+	entries, err := h.logsHandler.ReadCombinedLogEntries(linesCount, source, clientID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to open log file: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to read logs: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer file.Close()
 
-	lines, err := readLastNLines(file, linesCount)
+	frontendClients := []frontendLogSummary(nil)
+	frontendClients, _ = h.logsHandler.ListFrontendLogSummaries()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"source":          source,
+		"clientId":        clientID,
+		"entries":         entries,
+		"frontendClients": frontendClients,
+	})
+}
+
+func (h *AdminUIHandler) SubmitLogsPackage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, _, _, _ := h.getPageRoleInfo(r)
+	if !isAdmin {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.logsHandler == nil {
+		http.Error(w, "Logs handler not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		ClientID string `json:"clientId"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxUploadSize)).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	url, err := h.logsHandler.SubmitStoredLogsPackage(req.ClientID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read log file: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to submit logs package: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"lines": lines,
-	})
+	json.NewEncoder(w).Encode(map[string]string{"url": url})
 }

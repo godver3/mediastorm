@@ -130,7 +130,7 @@ func Register(
 	defaultPwLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10) // 10/min per IP
 
 	// Rate limiters for resource-intensive endpoints (spawn FFmpeg processes)
-	probeLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10) // 10/min per IP
+	probeLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)    // 10/min per IP
 	hlsStartLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5) // 5/min per IP
 
 	// Auth routes (no authentication required)
@@ -354,6 +354,8 @@ func Register(
 	// Log submission endpoint
 	protected.HandleFunc("/logs/submit", logsHandler.Submit).Methods(http.MethodPost)
 	protected.HandleFunc("/logs/submit", logsHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/logs/frontend", logsHandler.UploadFrontendLogs).Methods(http.MethodPost)
+	protected.HandleFunc("/logs/frontend", logsHandler.Options).Methods(http.MethodOptions)
 
 	// Version endpoint (public)
 	versionHandler := handlers.NewVersionHandler()
