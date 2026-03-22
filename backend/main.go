@@ -19,34 +19,35 @@ import (
 	"novastream/api"
 	"novastream/config"
 	"novastream/handlers"
+	"novastream/internal/accountrecovery"
 	"novastream/internal/database"
 	"novastream/internal/datastore"
 	"novastream/internal/integration"
 	"novastream/internal/pool"
+	internalusenet "novastream/internal/usenet"
 	"novastream/internal/webdav"
 	"novastream/services/accounts"
 	"novastream/services/backup"
 	"novastream/services/calendar"
 	client_settings "novastream/services/client_settings"
 	"novastream/services/clients"
-	"novastream/services/credits"
 	content_preferences "novastream/services/content_preferences"
+	"novastream/services/credits"
 	"novastream/services/customlists"
 	"novastream/services/debrid"
 	"novastream/services/epg"
 	"novastream/services/history"
 	"novastream/services/indexer"
 	"novastream/services/invitations"
-	"novastream/services/metadata"
-	"novastream/services/mdblist"
-	"novastream/services/playback"
 	"novastream/services/jellyfin"
+	"novastream/services/mdblist"
+	"novastream/services/metadata"
+	"novastream/services/playback"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
 	"novastream/services/trakt"
-	internalusenet "novastream/internal/usenet"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
@@ -59,6 +60,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "recover-account" {
+		if err := accountrecovery.Run(os.Args[2:], os.Stdout, os.Getenv); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	demoMode := flag.Bool("demo", false, "serve curated public domain metadata instead of live feeds")
 	portOverride := flag.Int("port", 0, "override server port from config")
@@ -609,9 +616,9 @@ func main() {
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
 	epgHandler := handlers.NewEPGHandler(epgService, cfgManager, userSettingsService)
-	settingsHandler.SetEPGService(epgService)               // Enable auto-refresh when new EPG sources are added
-	settingsHandler.SetUserSettingsService(userSettingsService) // Enable stripping redundant overrides
-	settingsHandler.SetClientsLister(clientsService)           // Enable client→profile mapping
+	settingsHandler.SetEPGService(epgService)                     // Enable auto-refresh when new EPG sources are added
+	settingsHandler.SetUserSettingsService(userSettingsService)   // Enable stripping redundant overrides
+	settingsHandler.SetClientsLister(clientsService)              // Enable client→profile mapping
 	settingsHandler.SetClientSettingsBatch(clientSettingsService) // Enable client settings stripping
 
 	// Create subtitles handler for external subtitle search
@@ -619,7 +626,7 @@ func main() {
 
 	// Create image proxy handler for resizing and caching TMDB images
 	imageHandler := handlers.NewImageHandler(settings.Cache.Directory)
-	settingsHandler.SetImageHandler(imageHandler)                     // Enable clearing image cache
+	settingsHandler.SetImageHandler(imageHandler)                // Enable clearing image cache
 	settingsHandler.SetPrequeueStore(prequeueHandler.GetStore()) // Clear prequeue when ShowParsedBadges changes
 
 	api.Register(

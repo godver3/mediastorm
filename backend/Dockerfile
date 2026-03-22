@@ -1,4 +1,4 @@
-# strmr Backend Dockerfile
+# mediastorm Backend Dockerfile
 
 # Build stage
 FROM golang:1.23-bookworm AS builder
@@ -24,7 +24,7 @@ RUN go mod download
 COPY backend/ .
 
 # Build the application (CGO required for rapidyenc)
-RUN GOTOOLCHAIN=auto CGO_ENABLED=1 go build -o strmr .
+RUN GOTOOLCHAIN=auto CGO_ENABLED=1 go build -o mediastorm .
 
 # Final stage
 FROM debian:bookworm-slim
@@ -73,7 +73,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 WORKDIR /root/
 
 # Copy the binary from builder stage
-COPY --from=builder /app/strmr .
+COPY --from=builder /app/mediastorm .
 
 # Copy version file and stamp build ID with current date
 COPY backend/version.txt /app/version.txt
@@ -90,6 +90,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -qO- http://localhost:7777/health > /dev/null || exit 1
 
 # Run the application
-CMD ["./strmr"]
-
+CMD ["./mediastorm"]
 

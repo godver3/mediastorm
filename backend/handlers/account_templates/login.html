@@ -6,6 +6,117 @@
 
 {{define "content"}}
 <div style="min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem;">
+    <style>
+        .login-help {
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .login-help button {
+            background: none;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.875rem;
+            padding: 0;
+        }
+
+        .login-help button:hover {
+            text-decoration: underline;
+        }
+
+        .recovery-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.72);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            z-index: 1000;
+        }
+
+        .recovery-modal.open {
+            display: flex;
+        }
+
+        .recovery-modal-card {
+            width: min(700px, 100%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+        }
+
+        .recovery-modal-header,
+        .recovery-modal-body,
+        .recovery-modal-footer {
+            padding: 1rem 1.25rem;
+        }
+
+        .recovery-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .recovery-modal-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .recovery-modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+
+        .recovery-modal-body {
+            color: var(--text-secondary);
+            display: grid;
+            gap: 0.875rem;
+            font-size: 0.9rem;
+        }
+
+        .recovery-modal-body h4 {
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .recovery-modal-body p,
+        .recovery-modal-body ol {
+            margin: 0;
+        }
+
+        .recovery-modal-body ol {
+            padding-left: 1.25rem;
+        }
+
+        .recovery-command {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            padding: 0.875rem 1rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .recovery-modal-footer {
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+        }
+    </style>
     <div style="width: 100%; max-width: 400px;">
         <div style="text-align: center; margin-bottom: 2rem;">
             <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width: 48px; height: 48px; margin-bottom: 1rem;">
@@ -50,6 +161,10 @@
                         Sign In
                     </button>
                 </form>
+
+                <div class="login-help">
+                    <button type="button" onclick="openRecoveryModal()">Need to recover an account?</button>
+                </div>
             </div>
         </div>
 
@@ -57,5 +172,70 @@
             Admin? <a href="/admin/login" style="color: var(--accent); text-decoration: none;">Sign in to admin panel</a>
         </p>
     </div>
+
+    <div id="recoveryModal" class="recovery-modal" aria-hidden="true">
+        <div class="recovery-modal-card" role="dialog" aria-modal="true" aria-labelledby="recoveryModalTitle">
+            <div class="recovery-modal-header">
+                <div id="recoveryModalTitle" class="recovery-modal-title">Account Recovery</div>
+                <button type="button" class="recovery-modal-close" onclick="closeRecoveryModal()" aria-label="Close">&times;</button>
+            </div>
+            <div class="recovery-modal-body">
+                <p>If nobody in your household can sign in, reset the account password from the backend container. Most deployments use Docker Compose and the default service name <strong>mediastorm</strong>.</p>
+
+                <div>
+                    <h4>Recover the admin account</h4>
+                    <div class="recovery-command">docker compose exec mediastorm ./mediastorm recover-account -master -generate</div>
+                </div>
+
+                <div>
+                    <h4>Recover a regular account</h4>
+                    <div class="recovery-command">docker compose exec mediastorm ./mediastorm recover-account -username alice -generate</div>
+                </div>
+
+                <div>
+                    <h4>Plain Docker</h4>
+                    <div class="recovery-command">docker exec -it mediastorm ./mediastorm recover-account -master -generate</div>
+                </div>
+
+                <div>
+                    <h4>What to expect</h4>
+                    <ol>
+                        <li>The command prints the new password in the terminal.</li>
+                        <li>Existing sessions are revoked by default so the reset takes effect immediately.</li>
+                        <li>You can replace <code>-generate</code> with <code>-new-password 'your-new-password'</code> if needed.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="recovery-modal-footer">
+                <button type="button" class="btn btn-primary" onclick="closeRecoveryModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const recoveryModal = document.getElementById('recoveryModal');
+
+        function openRecoveryModal() {
+            recoveryModal.classList.add('open');
+            recoveryModal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeRecoveryModal() {
+            recoveryModal.classList.remove('open');
+            recoveryModal.setAttribute('aria-hidden', 'true');
+        }
+
+        recoveryModal.addEventListener('click', (event) => {
+            if (event.target === recoveryModal) {
+                closeRecoveryModal();
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && recoveryModal.classList.contains('open')) {
+                closeRecoveryModal();
+            }
+        });
+    </script>
 </div>
 {{end}}

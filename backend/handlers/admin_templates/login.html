@@ -166,6 +166,120 @@
             user-select: none;
         }
 
+        .login-help {
+            margin-top: 1rem;
+            text-align: center;
+        }
+
+        .login-help button {
+            background: none;
+            border: none;
+            color: var(--accent-hover);
+            cursor: pointer;
+            font-size: 0.875rem;
+            padding: 0;
+        }
+
+        .login-help button:hover {
+            color: var(--text-primary);
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.72);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            z-index: 1000;
+        }
+
+        .modal.open {
+            display: flex;
+        }
+
+        .modal-card {
+            width: min(680px, 100%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+        }
+
+        .modal-header,
+        .modal-body,
+        .modal-footer {
+            padding: 1rem 1.25rem;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+
+        .modal-body {
+            color: var(--text-secondary);
+            display: grid;
+            gap: 0.875rem;
+            font-size: 0.9rem;
+        }
+
+        .modal-body h4 {
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .modal-body p,
+        .modal-body ol {
+            margin: 0;
+        }
+
+        .modal-body ol {
+            padding-left: 1.25rem;
+        }
+
+        .modal-body li + li {
+            margin-top: 0.45rem;
+        }
+
+        .command-block {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-primary);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            overflow-x: auto;
+            padding: 0.875rem 1rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+        }
+
     </style>
 </head>
 <body>
@@ -225,8 +339,79 @@
             </button>
         </form>
 
+        <div class="login-help">
+            <button type="button" onclick="openRecoveryModal()">Need to recover an account?</button>
+        </div>
+
         </div>
     </div>
+
+    <div id="recoveryModal" class="modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="recoveryTitle">
+            <div class="modal-header">
+                <div id="recoveryTitle" class="modal-title">Account Recovery</div>
+                <button type="button" class="modal-close" onclick="closeRecoveryModal()" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>If you cannot sign in, reset the password from the backend container. Most installs use Docker Compose and the default service name <strong>mediastorm</strong>.</p>
+
+                <div>
+                    <h4>Docker Compose</h4>
+                    <div class="command-block">docker compose exec mediastorm ./mediastorm recover-account -master -generate</div>
+                </div>
+
+                <div>
+                    <h4>Plain Docker</h4>
+                    <div class="command-block">docker exec -it mediastorm ./mediastorm recover-account -master -generate</div>
+                </div>
+
+                <div>
+                    <h4>Target a non-admin account</h4>
+                    <div class="command-block">docker compose exec mediastorm ./mediastorm recover-account -username alice -generate</div>
+                </div>
+
+                <div>
+                    <h4>What it does</h4>
+                    <ol>
+                        <li>Sets a new password for the selected account.</li>
+                        <li>Revokes active sessions by default, forcing a fresh login.</li>
+                        <li>Prints the new password in the command output.</li>
+                    </ol>
+                </div>
+
+                <p>Replace <strong>mediastorm</strong> if your container or Compose service uses a different name. If you prefer to set the password manually, swap <code>-generate</code> for <code>-new-password 'your-new-password'</code>.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="closeRecoveryModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const recoveryModal = document.getElementById('recoveryModal');
+
+        function openRecoveryModal() {
+            recoveryModal.classList.add('open');
+            recoveryModal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeRecoveryModal() {
+            recoveryModal.classList.remove('open');
+            recoveryModal.setAttribute('aria-hidden', 'true');
+        }
+
+        recoveryModal.addEventListener('click', (event) => {
+            if (event.target === recoveryModal) {
+                closeRecoveryModal();
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && recoveryModal.classList.contains('open')) {
+                closeRecoveryModal();
+            }
+        });
+    </script>
 </body>
 </html>
 {{end}}
