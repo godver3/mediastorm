@@ -1259,69 +1259,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		}
 	}
 
-	// Helper to match progress for a stream - returns full progress for media identification
-	// matchProgress uses a two-pass approach: first tries precise match (series name + S##E##),
-	// then falls back to name-only match picking the most recently updated entry.
 	matchProgress := func(filename, profileID, profileName string) *models.PlaybackProgress {
-		cleanedFilename := cleanFilenameForProgressMatch(filename)
-		lowerFilename := strings.ToLower(filename)
-
-		// Determine which user IDs to try for progress lookup
-		userIDsToTry := []string{}
-		if profileID != "" {
-			userIDsToTry = append(userIDsToTry, profileID)
-		}
-		if profileName != "" {
-			if mappedID, ok := nameToUserID[strings.ToLower(profileName)]; ok && mappedID != profileID {
-				userIDsToTry = append(userIDsToTry, mappedID)
-			}
-		}
-
-		// Pass 1: Precise match — series name + S##E## pattern
-		for _, userID := range userIDsToTry {
-			if userProgress, ok := allProgress[userID]; ok {
-				for i := range userProgress {
-					progress := &userProgress[i]
-					if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
-						sePattern := strings.ToLower(fmt.Sprintf("s%02de%02d", progress.SeasonNumber, progress.EpisodeNumber))
-						if strings.Contains(lowerFilename, sePattern) {
-							cleanedProgressName := cleanFilenameForProgressMatch(progress.SeriesName)
-							if cleanedProgressName != "" && cleanedFilename != "" &&
-								strings.Contains(cleanedFilename, cleanedProgressName) {
-								return progress
-							}
-						}
-					} else if progress.MediaType != "episode" {
-						// Movies: match on name only (min 3 chars to avoid false positives)
-						cleanedProgressName := cleanFilenameForProgressMatch(progress.MovieName)
-						if len(cleanedProgressName) >= 3 && cleanedFilename != "" &&
-							strings.Contains(cleanedFilename, cleanedProgressName) {
-							return progress
-						}
-					}
-				}
-			}
-		}
-
-		// Pass 2: Name-only fallback for episodes — pick most recently updated match
-		var bestMatch *models.PlaybackProgress
-		for _, userID := range userIDsToTry {
-			if userProgress, ok := allProgress[userID]; ok {
-				for i := range userProgress {
-					progress := &userProgress[i]
-					if progress.MediaType == "episode" {
-						cleanedProgressName := cleanFilenameForProgressMatch(progress.SeriesName)
-						if cleanedProgressName != "" && cleanedFilename != "" &&
-							strings.Contains(cleanedFilename, cleanedProgressName) {
-							if bestMatch == nil || progress.UpdatedAt.After(bestMatch.UpdatedAt) {
-								bestMatch = &userProgress[i]
-							}
-						}
-					}
-				}
-			}
-		}
-		return bestMatch
+		return findProgressByFilename(allProgress, profileID, profileName, filename, nameToUserID)
 	}
 
 	streams := []map[string]interface{}{}
@@ -1366,12 +1305,19 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			}
 
 			// Match playback progress for position and media identification
-			matchedProgress := matchProgress(filename, session.ProfileID, session.ProfileName)
+			matchedProgress := findProgressByMediaMetadata(allProgress, session.ProfileID, session.ProfileName, session.MediaMetadata, nameToUserID)
+			if matchedProgress == nil {
+				matchedProgress = matchProgress(filename, session.ProfileID, session.ProfileName)
+			}
 			duration := session.Duration
 			var position, percent float64
-			var mediaType, title, episodeName string
-			var seasonNumber, episodeNumber, year int
-			var externalIDs map[string]string
+			mediaType := session.MediaMetadata.MediaType
+			title := session.MediaMetadata.Title
+			episodeName := session.MediaMetadata.EpisodeName
+			seasonNumber := session.MediaMetadata.SeasonNumber
+			episodeNumber := session.MediaMetadata.EpisodeNumber
+			year := session.MediaMetadata.Year
+			externalIDs := session.MediaMetadata.ExternalIDs
 
 			if matchedProgress != nil {
 				position = matchedProgress.Position
@@ -1399,6 +1345,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"path":             session.Path,
 				"original_path":    session.OriginalPath,
 				"filename":         filename,
+				"item_id":          session.MediaMetadata.ItemID,
 				"profile_id":       session.ProfileID,
 				"profile_name":     session.ProfileName,
 				"client_ip":        session.ClientIP,
@@ -1449,11 +1396,18 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		isPaused := idleDuration > pauseThreshold
 
 		// Match playback progress for position and media identification
-		matchedProgress := matchProgress(stream.Filename, stream.ProfileID, stream.ProfileName)
+		matchedProgress := findProgressByMediaMetadata(allProgress, stream.ProfileID, stream.ProfileName, stream.MediaMetadata, nameToUserID)
+		if matchedProgress == nil {
+			matchedProgress = matchProgress(stream.Filename, stream.ProfileID, stream.ProfileName)
+		}
 		var position, percent, duration float64
-		var mediaType, title, episodeName string
-		var seasonNumber, episodeNumber, year int
-		var externalIDs map[string]string
+		mediaType := stream.MediaMetadata.MediaType
+		title := stream.MediaMetadata.Title
+		episodeName := stream.MediaMetadata.EpisodeName
+		seasonNumber := stream.MediaMetadata.SeasonNumber
+		episodeNumber := stream.MediaMetadata.EpisodeNumber
+		year := stream.MediaMetadata.Year
+		externalIDs := stream.MediaMetadata.ExternalIDs
 
 		if matchedProgress != nil {
 			position = matchedProgress.Position
@@ -1478,6 +1432,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"type":             "direct",
 			"path":             stream.Path,
 			"filename":         stream.Filename,
+			"item_id":          stream.MediaMetadata.ItemID,
 			"profile_id":       stream.ProfileID,
 			"profile_name":     stream.ProfileName,
 			"client_ip":        stream.ClientIP,

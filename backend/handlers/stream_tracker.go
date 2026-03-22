@@ -33,6 +33,7 @@ type TrackedStream struct {
 	RangeEnd      int64
 	Method        string
 	UserAgent     string
+	MediaMetadata StreamMediaMetadata
 	done             chan struct{}
 	bytesCounter     *int64
 	activityCounter  *int64 // unix nanos of last byte transfer, updated atomically
@@ -103,6 +104,7 @@ func (t *StreamTracker) StartStreamWithAccount(r *http.Request, path string, con
 		RangeEnd:        rangeEnd,
 		Method:          r.Method,
 		UserAgent:       r.UserAgent(),
+		MediaMetadata:   parseStreamMediaMetadata(r),
 		done:            make(chan struct{}),
 		bytesCounter:    bytesCounter,
 		activityCounter: activityCounter,
@@ -166,6 +168,7 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 			RangeEnd:      s.RangeEnd,
 			Method:        s.Method,
 			UserAgent:     s.UserAgent,
+			MediaMetadata: s.MediaMetadata,
 		}
 		streams = append(streams, streamCopy)
 	}

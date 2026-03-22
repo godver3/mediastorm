@@ -332,6 +332,7 @@ type HLSSession struct {
 	ProfileID   string
 	ProfileName string
 	ClientIP    string
+	MediaMetadata StreamMediaMetadata
 
 	// Track selection (-1 means use default)
 	AudioTrackIndex    int // Selected audio stream index (ffprobe index), -1 = all/default

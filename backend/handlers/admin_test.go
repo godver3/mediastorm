@@ -7,7 +7,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"novastream/models"
 )
+
+type mockProgressService struct {
+	all map[string][]models.PlaybackProgress
+}
+
+func (m *mockProgressService) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
+	return m.all
+}
 
 func TestGetActiveStreams_PauseDetection(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -85,4 +95,69 @@ func TestGetActiveStreams_PauseDetection(t *testing.T) {
 	tracker.EndStream(activeID)
 	tracker.EndStream(pausedID)
 	tracker.EndStream(idleID)
+}
+
+func TestGetActiveStreams_UsesCanonicalMediaMetadataForProgressMatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+	handler.SetProgressService(&mockProgressService{
+		all: map[string][]models.PlaybackProgress{
+			"user1": {
+				{
+					ID:             "episode:tvdb:one-piece:S02E02",
+					MediaType:      "episode",
+					ItemID:         "tvdb:one-piece:S02E02",
+					Position:       612,
+					Duration:       1440,
+					PercentWatched: 42.5,
+					UpdatedAt:      time.Now().UTC(),
+					SeasonNumber:   2,
+					EpisodeNumber:  2,
+					SeriesName:     "One Piece",
+					EpisodeName:    "The Name of the Episode",
+				},
+			},
+		},
+	})
+
+	tracker := GetStreamTracker()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=user1&profileName=Alice&mediaType=episode&itemId=tvdb:one-piece:S02E02&title=One%20Piece&seasonNumber=2&episodeNumber=2&seriesName=One%20Piece&episodeName=The%20Name%20of%20the%20Episode",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(resp.Streams))
+	}
+
+	stream := resp.Streams[0]
+	if stream.Title != "One Piece" {
+		t.Fatalf("expected canonical title, got %q", stream.Title)
+	}
+	if stream.EpisodeName != "The Name of the Episode" {
+		t.Fatalf("expected canonical episode title, got %q", stream.EpisodeName)
+	}
+	if stream.PercentWatched != 42.5 {
+		t.Fatalf("expected matched progress 42.5, got %v", stream.PercentWatched)
+	}
+	if stream.CurrentPosition != 612 {
+		t.Fatalf("expected matched position 612, got %v", stream.CurrentPosition)
+	}
 }

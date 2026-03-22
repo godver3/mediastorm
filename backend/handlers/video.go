@@ -2861,6 +2861,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		profileID = r.URL.Query().Get("userId")
 	}
 	profileName := r.URL.Query().Get("profileName")
+	mediaMetadata := parseStreamMediaMetadata(r)
 
 	// Get clientID from query param or header
 	clientID := r.URL.Query().Get("clientId")
@@ -2914,6 +2915,9 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	session.mu.Lock()
+	session.MediaMetadata = mediaMetadata
+	session.mu.Unlock()
 
 	actualStartOffset := transcodingOffset
 	// Delta between actual keyframe position and requested position (negative = keyframe is earlier)

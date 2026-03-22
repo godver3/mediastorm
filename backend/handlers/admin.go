@@ -181,6 +181,7 @@ type StreamInfo struct {
 	CurrentPosition float64 `json:"current_position,omitempty"` // Estimated current playback position (seconds)
 	PercentWatched  float64 `json:"percent_watched,omitempty"`  // Progress percentage (0-100)
 	// Media identification (from matched playback progress)
+	ItemID        string            `json:"item_id,omitempty"`
 	MediaType     string            `json:"media_type,omitempty"`     // "movie" or "episode"
 	Title         string            `json:"title,omitempty"`          // Movie name or series name
 	Year          int               `json:"year,omitempty"`           // Release year (for movies)
@@ -199,6 +200,110 @@ type StreamsResponse struct {
 	Count   int          `json:"count"`
 	HLS     int          `json:"hls_count"`
 	Direct  int          `json:"direct_count"`
+}
+
+func findProgressByMediaMetadata(allProgress map[string][]models.PlaybackProgress, profileID, profileName string, meta StreamMediaMetadata, nameToUserID map[string]string) *models.PlaybackProgress {
+	userIDsToTry := []string{}
+	if profileID != "" {
+		userIDsToTry = append(userIDsToTry, profileID)
+	}
+	if profileName != "" {
+		if mappedID, ok := nameToUserID[strings.ToLower(profileName)]; ok && mappedID != profileID {
+			userIDsToTry = append(userIDsToTry, mappedID)
+		}
+	}
+
+	if meta.ItemID == "" {
+		return nil
+	}
+
+	normalizedItemID := strings.ToLower(strings.TrimSpace(meta.ItemID))
+	normalizedMediaType := strings.ToLower(strings.TrimSpace(meta.MediaType))
+	for _, userID := range userIDsToTry {
+		progressList, ok := allProgress[userID]
+		if !ok {
+			continue
+		}
+		for i := range progressList {
+			progress := &progressList[i]
+			if strings.ToLower(strings.TrimSpace(progress.ItemID)) == normalizedItemID &&
+				(normalizedMediaType == "" || strings.ToLower(strings.TrimSpace(progress.MediaType)) == normalizedMediaType) {
+				return progress
+			}
+		}
+	}
+
+	return nil
+}
+
+func findProgressByFilename(allProgress map[string][]models.PlaybackProgress, profileID, profileName, filename string, nameToUserID map[string]string) *models.PlaybackProgress {
+	cleanedFilename := cleanFilenameForMatch(filename)
+	lowerFilename := strings.ToLower(filename)
+
+	userIDsToTry := []string{}
+	if profileID != "" {
+		userIDsToTry = append(userIDsToTry, profileID)
+	}
+	if profileName != "" {
+		if mappedID, ok := nameToUserID[strings.ToLower(profileName)]; ok && mappedID != profileID {
+			userIDsToTry = append(userIDsToTry, mappedID)
+		}
+	}
+
+	for _, userID := range userIDsToTry {
+		if userProgress, ok := allProgress[userID]; ok {
+			if match := findMatchingProgressForStream(userProgress, cleanedFilename, lowerFilename); match != nil {
+				return match
+			}
+		}
+	}
+
+	return nil
+}
+
+func findMatchingProgressForStream(progressList []models.PlaybackProgress, cleanedFilename, lowerFilename string) *models.PlaybackProgress {
+	for i := range progressList {
+		progress := &progressList[i]
+		if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
+			for _, pattern := range seasonEpisodePatterns(progress.SeasonNumber, progress.EpisodeNumber) {
+				if strings.Contains(lowerFilename, pattern) {
+					cleanedProgressName := cleanFilenameForMatch(progress.SeriesName)
+					if cleanedProgressName != "" && cleanedFilename != "" &&
+						strings.Contains(cleanedFilename, cleanedProgressName) {
+						return progress
+					}
+				}
+			}
+		} else if progress.MediaType != "episode" {
+			cleanedProgressName := cleanFilenameForMatch(progress.MovieName)
+			if len(cleanedProgressName) >= 3 && cleanedFilename != "" &&
+				strings.Contains(cleanedFilename, cleanedProgressName) {
+				return progress
+			}
+		}
+	}
+
+	var bestMatch *models.PlaybackProgress
+	for i := range progressList {
+		progress := &progressList[i]
+		if progress.MediaType == "episode" {
+			cleanedProgressName := cleanFilenameForMatch(progress.SeriesName)
+			if cleanedProgressName != "" && cleanedFilename != "" &&
+				strings.Contains(cleanedFilename, cleanedProgressName) {
+				if bestMatch == nil || progress.UpdatedAt.After(bestMatch.UpdatedAt) {
+					bestMatch = &progressList[i]
+				}
+			}
+		}
+	}
+	return bestMatch
+}
+
+func seasonEpisodePatterns(season, episode int) []string {
+	return []string{
+		fmt.Sprintf("s%02de%02d", season, episode),
+		fmt.Sprintf("%dx%02d", season, episode),
+	}
 }
 
 // GetActiveStreams returns all active streams (both HLS and direct)
@@ -277,6 +382,14 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 				DVProfile:    session.DVProfile,
 				Segments:     session.SegmentsCreated,
 				StartOffset:  session.StartOffset,
+				ItemID:       session.MediaMetadata.ItemID,
+				MediaType:    session.MediaMetadata.MediaType,
+				Title:        session.MediaMetadata.Title,
+				Year:         session.MediaMetadata.Year,
+				SeasonNumber: session.MediaMetadata.SeasonNumber,
+				EpisodeNumber: session.MediaMetadata.EpisodeNumber,
+				EpisodeName:  session.MediaMetadata.EpisodeName,
+				ExternalIDs:  session.MediaMetadata.ExternalIDs,
 			}
 
 			session.mu.RUnlock()
@@ -311,6 +424,14 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			BytesStreamed: stream.BytesStreamed,
 			ContentLength: stream.ContentLength,
 			UserAgent:     stream.UserAgent,
+			ItemID:        stream.MediaMetadata.ItemID,
+			MediaType:     stream.MediaMetadata.MediaType,
+			Title:         stream.MediaMetadata.Title,
+			Year:          stream.MediaMetadata.Year,
+			SeasonNumber:  stream.MediaMetadata.SeasonNumber,
+			EpisodeNumber: stream.MediaMetadata.EpisodeNumber,
+			EpisodeName:   stream.MediaMetadata.EpisodeName,
+			ExternalIDs:   stream.MediaMetadata.ExternalIDs,
 		}
 		rawStreams = append(rawStreams, rawStream{info: info, streamID: stream.ID})
 		directCount++
@@ -336,65 +457,12 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		info := rs.info
-		cleanedFilename := cleanFilenameForMatch(info.Filename)
-
-		// Try to find matching playback progress
 		var matchedProgress *models.PlaybackProgress
-
-		// Helper to find matching progress in a user's list
-		findMatch := func(progressList []models.PlaybackProgress) *models.PlaybackProgress {
-			for i := range progressList {
-				progress := &progressList[i]
-				progressName := ""
-				if progress.MediaType == "episode" {
-					progressName = progress.SeriesName
-					// Also try to match season/episode from filename
-					if progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
-						// Check if filename contains S##E## pattern matching this episode
-						sePattern := strings.ToLower(formatSeasonEpisode(progress.SeasonNumber, progress.EpisodeNumber))
-						if strings.Contains(strings.ToLower(info.Filename), sePattern) {
-							cleanedProgressName := cleanFilenameForMatch(progressName)
-							if cleanedProgressName != "" && cleanedFilename != "" &&
-								strings.Contains(cleanedFilename, cleanedProgressName) {
-								return progress
-							}
-						}
-					}
-				} else {
-					progressName = progress.MovieName
-				}
-				cleanedProgressName := cleanFilenameForMatch(progressName)
-
-				// Check if progress name is contained in filename
-				if cleanedProgressName != "" && cleanedFilename != "" &&
-					strings.Contains(cleanedFilename, cleanedProgressName) {
-					return progress
-				}
-			}
-			return nil
-		}
-
-		// Determine which user ID to use for progress lookup
-		// Priority: ProfileID -> lookup by ProfileName -> empty
-		userIDsToTry := []string{}
-		if info.ProfileID != "" {
-			userIDsToTry = append(userIDsToTry, info.ProfileID)
-		}
-		// Also try looking up by profile name (handles case where ProfileID != user ID in progress)
-		if info.ProfileName != "" {
-			if mappedID, ok := nameToUserID[strings.ToLower(info.ProfileName)]; ok && mappedID != info.ProfileID {
-				userIDsToTry = append(userIDsToTry, mappedID)
-			}
-		}
-
-		// Try each user ID to find matching progress
-		for _, userID := range userIDsToTry {
-			if userProgress, ok := allProgress[userID]; ok {
-				if match := findMatch(userProgress); match != nil {
-					matchedProgress = match
-					break
-				}
-			}
+		if matchedProgress = findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
+			MediaType: info.MediaType,
+			ItemID:    info.ItemID,
+		}, nameToUserID); matchedProgress == nil {
+			matchedProgress = findProgressByFilename(allProgress, info.ProfileID, info.ProfileName, info.Filename, nameToUserID)
 		}
 
 		// Apply matched progress including media identification
