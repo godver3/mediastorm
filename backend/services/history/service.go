@@ -728,6 +728,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					if seriesDetails.Title.Poster != nil {
 						state.PosterURL = seriesDetails.Title.Poster.URL
 					}
+					if seriesDetails.Title.TextPoster != nil {
+						state.TextPosterURL = seriesDetails.Title.TextPoster.URL
+					}
 					if seriesDetails.Title.Backdrop != nil {
 						state.BackdropURL = seriesDetails.Title.Backdrop.URL
 					}
@@ -828,6 +831,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					if seriesDetails.Title.Poster != nil {
 						state.PosterURL = seriesDetails.Title.Poster.URL
 					}
+					if seriesDetails.Title.TextPoster != nil {
+						state.TextPosterURL = seriesDetails.Title.TextPoster.URL
+					}
 					if seriesDetails.Title.Backdrop != nil {
 						state.BackdropURL = seriesDetails.Title.Backdrop.URL
 					}
@@ -904,6 +910,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				// Add poster/backdrop from metadata
 				if movieDetails.Poster != nil {
 					movieState.PosterURL = movieDetails.Poster.URL
+				}
+				if movieDetails.TextPoster != nil {
+					movieState.TextPosterURL = movieDetails.TextPoster.URL
 				}
 				if movieDetails.Backdrop != nil {
 					movieState.BackdropURL = movieDetails.Backdrop.URL
@@ -3358,4 +3367,3 @@ func hasMatchingExternalID(a, b map[string]string) bool {
 	}
 	return false
 }
-
