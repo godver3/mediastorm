@@ -37,6 +37,7 @@ import (
 	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/invitations"
+	"novastream/services/localmedia"
 	"novastream/services/metadata"
 	"novastream/services/plex"
 	"novastream/services/sessions"
@@ -829,6 +830,7 @@ type AdminUIHandler struct {
 	loginTemplate         *template.Template
 	registerTemplate      *template.Template
 	accountsTemplate      *template.Template
+	libraryTemplate       *template.Template
 	kidsSettingsTemplate  *template.Template
 	backupTemplate        *template.Template
 	calendarTemplate      *template.Template
@@ -850,6 +852,7 @@ type AdminUIHandler struct {
 	traktClient           *trakt.Client
 	configManager         *config.Manager
 	metadataService       MetadataService
+	localMediaService     *localmedia.Service
 	calendarService       *calendar.Service
 	clientsService        clientsService
 	clientSettingsService clientSettingsService
@@ -879,6 +882,11 @@ func (h *AdminUIHandler) SetHistoryService(hs *history.Service) {
 // SetWatchlistService sets the watchlist service for importing items
 func (h *AdminUIHandler) SetWatchlistService(ws *watchlist.Service) {
 	h.watchlistService = ws
+}
+
+// SetLocalMediaService sets the local media service for library management.
+func (h *AdminUIHandler) SetLocalMediaService(ls *localmedia.Service) {
+	h.localMediaService = ls
 }
 
 // SetAccountsService sets the accounts service for account management
@@ -1058,6 +1066,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		loginTemplate:        loginTmpl,
 		registerTemplate:     registerTmpl,
 		accountsTemplate:     createPageTemplate("accounts.html"),
+		libraryTemplate:      createPageTemplate("library.html"),
 		kidsSettingsTemplate: createPageTemplate("kids_settings.html"),
 		backupTemplate:       createPageTemplate("backup.html"),
 		calendarTemplate:     createPageTemplate("calendar.html"),
@@ -1718,6 +1727,10 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, userID); !ok {
+		return
+	}
+
 	if h.userSettingsService == nil {
 		http.Error(w, "User settings service not available", http.StatusInternalServerError)
 		return
@@ -1784,6 +1797,10 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 	userID := r.URL.Query().Get("userId")
 	if userID == "" {
 		http.Error(w, "userId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if ok, _ := h.requireProfileScope(w, r, userID); !ok {
 		return
 	}
 
@@ -2056,6 +2073,27 @@ func (h *AdminUIHandler) profileBelongsToAccount(profileID, accountID string) bo
 		return false
 	}
 	return h.usersService.BelongsToAccount(profileID, accountID)
+}
+
+func (h *AdminUIHandler) requireAdminScope(w http.ResponseWriter, r *http.Request) bool {
+	isAdmin, _, _, _ := h.getPageRoleInfo(r)
+	if !isAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (h *AdminUIHandler) requireProfileScope(w http.ResponseWriter, r *http.Request, profileID string) (bool, string) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	if isAdmin {
+		return true, accountID
+	}
+	if !h.profileBelongsToAccount(profileID, accountID) {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return false, accountID
+	}
+	return true, accountID
 }
 
 // RequireAuth is middleware that allows any authenticated account and passes session to context
@@ -3019,6 +3057,10 @@ func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	var req SetProfilePinRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
@@ -3066,6 +3108,10 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" {
 		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
 		return
 	}
 
@@ -3119,7 +3165,22 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.usersService.CreateForAccount(req.AccountId, req.Name)
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	targetAccountID := req.AccountId
+	if isAdmin {
+		if strings.TrimSpace(targetAccountID) == "" {
+			http.Error(w, "accountId parameter required", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if strings.TrimSpace(targetAccountID) != "" && strings.TrimSpace(targetAccountID) != accountID {
+			http.Error(w, "cannot create profiles for another account", http.StatusForbidden)
+			return
+		}
+		targetAccountID = accountID
+	}
+
+	user, err := h.usersService.CreateForAccount(targetAccountID, req.Name)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") {
@@ -3184,6 +3245,10 @@ func (h *AdminUIHandler) RenameProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	var req RenameProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
@@ -3234,6 +3299,10 @@ func (h *AdminUIHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	err := h.usersService.Delete(profileID)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -3265,6 +3334,10 @@ func (h *AdminUIHandler) SetProfileColor(w http.ResponseWriter, r *http.Request)
 	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" {
 		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
 		return
 	}
 
@@ -3321,6 +3394,10 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	var req SetKidsProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
@@ -3374,6 +3451,10 @@ func (h *AdminUIHandler) SetProfileIcon(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	var req SetProfileIconRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
@@ -3424,6 +3505,10 @@ func (h *AdminUIHandler) ClearProfileIcon(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
 	user, err := h.usersService.ClearIconURL(profileID)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -3463,6 +3548,10 @@ func (h *AdminUIHandler) UploadProfileIcon(w http.ResponseWriter, r *http.Reques
 	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" {
 		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
 		return
 	}
 
@@ -3531,6 +3620,10 @@ func (h *AdminUIHandler) ServeProfileIcon(w http.ResponseWriter, r *http.Request
 	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" {
 		http.Error(w, "profileId parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
 		return
 	}
 
@@ -3663,6 +3756,9 @@ type AdminAccountWithProfiles struct {
 
 // GetUserAccounts returns all user accounts with their profiles
 func (h *AdminUIHandler) GetUserAccounts(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
 		return
@@ -3698,6 +3794,9 @@ type AdminCreateAccountRequest struct {
 
 // CreateUserAccount creates a new user account
 func (h *AdminUIHandler) CreateUserAccount(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
 		return
@@ -3749,6 +3848,9 @@ func (h *AdminUIHandler) CreateUserAccount(w http.ResponseWriter, r *http.Reques
 
 // DeleteUserAccount deletes an account
 func (h *AdminUIHandler) DeleteUserAccount(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
 		return
@@ -3786,6 +3888,9 @@ type ResetPasswordRequest struct {
 
 // ResetUserAccountPassword resets an account's password
 func (h *AdminUIHandler) ResetUserAccountPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
 		return
@@ -3864,6 +3969,9 @@ type RenameAccountRequest struct {
 
 // RenameUserAccount changes an account's username
 func (h *AdminUIHandler) RenameUserAccount(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		http.Error(w, "Accounts service not available", http.StatusInternalServerError)
 		return
@@ -3913,6 +4021,9 @@ type AdminReassignProfileRequest struct {
 
 // ReassignProfile moves a profile to a different account
 func (h *AdminUIHandler) ReassignProfile(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.usersService == nil || h.accountsService == nil {
 		http.Error(w, "Services not available", http.StatusInternalServerError)
 		return
@@ -3952,6 +4063,9 @@ func (h *AdminUIHandler) ReassignProfile(w http.ResponseWriter, r *http.Request)
 
 // HasDefaultPassword returns whether the master account has the default password
 func (h *AdminUIHandler) HasDefaultPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
 	if h.accountsService == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"hasDefaultPassword": false})
@@ -5304,6 +5418,213 @@ func (h *AdminUIHandler) AccountsPage(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Accounts template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// LibraryPage serves the local media library management page.
+func (h *AdminUIHandler) LibraryPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	if !isAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath:    basePath + "/library",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.libraryTemplate == nil {
+		http.Error(w, "Library template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.libraryTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Library template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+func (h *AdminUIHandler) requireLocalMediaAdmin(w http.ResponseWriter, r *http.Request) bool {
+	session := adminSessionFromContext(r.Context())
+	if session == nil || !session.IsMaster {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return false
+	}
+	if h.localMediaService == nil {
+		http.Error(w, "Local media service unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+func (h *AdminUIHandler) ListLocalMediaLibraries(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	libraries, err := h.localMediaService.ListLibraries(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if libraries == nil {
+		libraries = []models.LocalMediaLibrary{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(libraries)
+}
+
+func (h *AdminUIHandler) CreateLocalMediaLibrary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	var input models.LocalMediaLibraryCreateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	library, err := h.localMediaService.CreateLibrary(r.Context(), input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(library)
+}
+
+func (h *AdminUIHandler) DeleteLocalMediaLibrary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["libraryID"]
+	if err := h.localMediaService.DeleteLibrary(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AdminUIHandler) ScanLocalMediaLibrary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["libraryID"]
+	summary, err := h.localMediaService.StartScan(r.Context(), id)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, localmedia.ErrLibraryScanning) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(summary)
+}
+
+func (h *AdminUIHandler) ListLocalMediaItems(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["libraryID"]
+	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+	offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
+	items, err := h.localMediaService.ListItems(r.Context(), id, models.LocalMediaItemListQuery{
+		Filter: r.URL.Query().Get("filter"),
+		Sort:   r.URL.Query().Get("sort"),
+		Dir:    r.URL.Query().Get("dir"),
+		Query:  r.URL.Query().Get("query"),
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if items == nil {
+		items = &models.LocalMediaItemListResult{Items: []models.LocalMediaItem{}}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(items)
+}
+
+func (h *AdminUIHandler) SearchLocalMediaMetadata(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
+	results, err := h.localMediaService.SearchMetadata(r.Context(), query, mediaType)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if results == nil {
+		results = []models.SearchResult{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(results)
+}
+
+func (h *AdminUIHandler) BrowseLocalMediaDirectories(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	listing, err := h.localMediaService.BrowseDirectories(r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(listing)
+}
+
+func (h *AdminUIHandler) UpdateLocalMediaItemMatch(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	itemID := mux.Vars(r)["itemID"]
+	var input models.LocalMediaMatchInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	item, err := h.localMediaService.UpdateItemMatch(r.Context(), itemID, input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(item)
+}
+
+func (h *AdminUIHandler) DeleteLocalMediaItem(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	itemID := mux.Vars(r)["itemID"]
+	if err := h.localMediaService.DeleteItem(r.Context(), itemID); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, localmedia.ErrItemNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // KidsSettingsPage serves the kids profile settings page

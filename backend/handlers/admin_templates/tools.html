@@ -330,6 +330,7 @@
                             <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
+                            <option value="local_media_scan">Local Media Library Scan</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Continue Watching</option>
                         </select>
@@ -347,6 +348,15 @@
                                 Pre-resolves continue watching items for all profiles so playback starts instantly.
                                 Runs every 15 minutes and re-resolves entries based on dynamic TTL (tighter near air date, relaxed for catalog content).
                             </p>
+                        </div>
+                    </div>
+
+                    <div id="localMediaScanConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Library</label>
+                            <select id="newTaskLocalMediaLibrary" class="form-select">
+                            </select>
+                            <small class="text-muted">Pick which local media library should be rescanned on this schedule.</small>
                         </div>
                     </div>
 
@@ -654,6 +664,7 @@
                             <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
+                            <option value="local_media_scan">Local Media Library Scan</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Continue Watching</option>
                         </select>
@@ -663,6 +674,14 @@
                     <div class="form-group">
                         <label class="form-label">Task Name</label>
                         <input type="text" class="form-input" id="editTaskName" placeholder="e.g., Sync Family Plex Watchlist">
+                    </div>
+
+                    <div id="editLocalMediaScanConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Library</label>
+                            <select id="editTaskLocalMediaLibrary" class="form-select">
+                            </select>
+                        </div>
                     </div>
 
                     <!-- Plex Watchlist Sync specific config -->
@@ -1590,6 +1609,7 @@
     let traktPollInterval = null;
     let userProfiles = [];
     let mdblistAccounts = [];
+    let localMediaLibraries = [];
 
     // ========== Jellyfin State ==========
     let jellyfinAccounts = [];
@@ -1606,8 +1626,32 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
+
+    async function loadLocalMediaLibraries() {
+        try {
+            const response = await fetch(basePath + '/api/library/libraries');
+            const data = await response.json();
+            localMediaLibraries = Array.isArray(data) ? data : [];
+            populateLocalMediaLibrarySelects();
+        } catch (err) {
+            console.error('Failed to load local media libraries:', err);
+            localMediaLibraries = [];
+            populateLocalMediaLibrarySelects();
+        }
+    }
+
+    function populateLocalMediaLibrarySelects() {
+        const options = localMediaLibraries.length
+            ? localMediaLibraries.map(library => `<option value="${library.id}">${escapeHtml(library.name)} (${escapeHtml(library.type)})</option>`).join('')
+            : '<option value="">No libraries configured</option>';
+
+        const newSelect = document.getElementById('newTaskLocalMediaLibrary');
+        const editSelect = document.getElementById('editTaskLocalMediaLibrary');
+        if (newSelect) newSelect.innerHTML = options;
+        if (editSelect) editSelect.innerHTML = options;
+    }
 
     // ========== Plex Account Functions ==========
     async function loadPlexAccounts() {
@@ -3655,6 +3699,10 @@
                     const jfAccount = jellyfinAccounts.find(a => a.id === task.config.jellyfinAccountId);
                     if (jfAccount) accountName = jfAccount.name || jfAccount.username || 'Jellyfin Account';
                     accountSource = 'Jellyfin';
+                } else if (task.type === 'local_media_scan') {
+                    const library = localMediaLibraries.find(l => l.id === task.config.libraryId);
+                    if (library) accountName = library.name || 'Library';
+                    accountSource = 'Library';
                 }
                 const profile = userProfiles.find(p => p.id === task.config.profileId);
                 if (profile) profileName = profile.name || 'Profile';
@@ -3693,6 +3741,11 @@
                                 <strong>${escapeHtml(accountName)}</strong>
                                 <span>→</span>
                                 <strong>${escapeHtml(profileName)}</strong>
+                            </div>
+                            ` : task.type === 'local_media_scan' ? `
+                            <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-muted);">
+                                <span>${accountSource}:</span>
+                                <strong>${escapeHtml(accountName)}</strong>
                             </div>
                             ` : ''}
                         </div>
@@ -3789,6 +3842,7 @@
             case 'mdblist_history_sync': return 'MDBList History';
             case 'jellyfin_favorites_sync': return 'Jellyfin Favorites';
             case 'jellyfin_history_sync': return 'Jellyfin History';
+            case 'local_media_scan': return 'Local Media Scan';
             case 'backup': return 'System Backup';
             case 'prewarm': return 'Pre-warm';
             default: return type;
@@ -3913,6 +3967,7 @@
         const plexHistoryConfig = document.getElementById('plexHistorySyncConfig');
         const jellyfinFavConfig = document.getElementById('jellyfinFavoritesSyncConfig');
         const jellyfinHistConfig = document.getElementById('jellyfinHistorySyncConfig');
+        const localMediaScanConfig = document.getElementById('localMediaScanConfig');
         const backupConfig = document.getElementById('backupConfig');
         const prewarmConfig = document.getElementById('prewarmConfig');
         const syncOptions = document.getElementById('syncOptionsConfig');
@@ -3929,6 +3984,7 @@
         plexHistoryConfig.style.display = taskType === 'plex_history_sync' ? 'block' : 'none';
         jellyfinFavConfig.style.display = taskType === 'jellyfin_favorites_sync' ? 'block' : 'none';
         jellyfinHistConfig.style.display = taskType === 'jellyfin_history_sync' ? 'block' : 'none';
+        localMediaScanConfig.style.display = taskType === 'local_media_scan' ? 'block' : 'none';
         backupConfig.style.display = taskType === 'backup' ? 'block' : 'none';
         prewarmConfig.style.display = taskType === 'prewarm' ? 'block' : 'none';
 
@@ -4184,6 +4240,12 @@
                 showToast('Please select a Jellyfin account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'local_media_scan') {
+            config.libraryId = document.getElementById('newTaskLocalMediaLibrary').value;
+            if (!config.libraryId) {
+                showToast('Please select a library', 'error');
+                return;
+            }
         } else if (taskType === 'backup') {
             config.retentionDays = String(parseInt(document.getElementById('newBackupRetentionDays').value) || 30);
             config.retentionCount = String(parseInt(document.getElementById('newBackupRetentionCount').value) || 10);
@@ -4351,6 +4413,7 @@
         document.getElementById('editPlexHistorySyncConfig').style.display = 'none';
         document.getElementById('editJellyfinFavoritesSyncConfig').style.display = 'none';
         document.getElementById('editJellyfinHistorySyncConfig').style.display = 'none';
+        document.getElementById('editLocalMediaScanConfig').style.display = 'none';
         document.getElementById('editBackupConfig').style.display = 'none';
 
         // Set config values for Plex watchlist sync
@@ -4443,6 +4506,12 @@
             populateJellyfinSelect('editTaskJellyfinHistAccount');
             document.getElementById('editTaskJellyfinHistAccount').value = task.config.jellyfinAccountId || '';
             document.getElementById('editTaskJellyfinHistProfile').value = task.config.profileId || '';
+        }
+
+        if (task.type === 'local_media_scan' && task.config) {
+            document.getElementById('editLocalMediaScanConfig').style.display = 'block';
+            populateLocalMediaLibrarySelects();
+            document.getElementById('editTaskLocalMediaLibrary').value = task.config.libraryId || '';
         }
 
         // Set config values for backup task
@@ -4647,6 +4716,12 @@
 
             if (!config.jellyfinAccountId || !config.profileId) {
                 showToast('Please select a Jellyfin account and profile', 'error');
+                return;
+            }
+        } else if (taskType === 'local_media_scan') {
+            config.libraryId = document.getElementById('editTaskLocalMediaLibrary').value;
+            if (!config.libraryId) {
+                showToast('Please select a library', 'error');
                 return;
             }
         } else if (taskType === 'backup') {

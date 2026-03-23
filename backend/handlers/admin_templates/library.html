@@ -1,0 +1,1303 @@
+{{define "library"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Library - mediastorm Admin{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Library Management</h1>
+    <p>Add local media roots, scan files with best-guess matching, and fix low-confidence matches.</p>
+</div>
+
+<div class="grid grid-2" style="align-items: start;">
+    <div class="card">
+        <div class="card-header">
+            <h2>Add Library</h2>
+        </div>
+        <div class="card-body">
+            <form id="libraryForm" style="display: grid; gap: 0.875rem;">
+                <div class="form-group">
+                    <label class="form-label" for="libraryName">Name</label>
+                    <input id="libraryName" class="form-input" placeholder="Movies, TV Shows, Home Videos" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="libraryType">Type</label>
+                    <select id="libraryType" class="form-select">
+                        <option value="movie">Movies</option>
+                        <option value="show">Shows</option>
+                        <option value="other">Other Videos</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="libraryRootPath">Root Path</label>
+                    <div class="path-picker-row">
+                        <input id="libraryRootPath" class="form-input" placeholder="/Volumes/Media/Movies" required>
+                        <button class="btn btn-secondary" type="button" id="browseDirsBtn">Browse</button>
+                    </div>
+                    <div class="form-hint">Use the browser to pick a folder on the server filesystem.</div>
+                </div>
+                <button class="btn btn-primary" type="submit">Add Library</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>Scan Notes</h2>
+        </div>
+        <div class="card-body" style="display: grid; gap: 0.75rem; color: var(--text-secondary); font-size: 0.9rem;">
+            <p>Movie and show libraries try to match filenames to metadata automatically. Other libraries are still ffprobed and indexed, but skipped for metadata matching.</p>
+            <p>Low-confidence items stay visible for manual cleanup. Manual fixes are preserved until the next scan re-evaluates the file.</p>
+            <p>File details come from `ffprobe`, so the server needs `ffprobe` available in the configured transmux settings.</p>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 1.25rem;">
+    <div class="card-header">
+        <h2>Libraries</h2>
+    </div>
+    <div class="card-body">
+        <div id="librariesList" style="display: grid; gap: 0.875rem;">
+            <div class="loading"><div class="spinner"></div></div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 1.25rem;">
+    <div class="card-header" style="gap: 1rem; flex-wrap: wrap;">
+        <div>
+            <h2 id="itemsTitle">Library Items</h2>
+            <div id="itemsSubtitle" style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Select a library to inspect scan results.</div>
+        </div>
+        <div class="chip-groups">
+            <div class="chip-group">
+                <div class="chip-group-label">Filter</div>
+                <div class="chip-row" id="filterChipRow">
+                    <button class="btn btn-secondary btn-sm filter-btn active" data-filter="all">All</button>
+                    <button class="btn btn-secondary btn-sm filter-btn" data-filter="low_confidence">Low Confidence</button>
+                    <button class="btn btn-secondary btn-sm filter-btn" data-filter="unmatched">Unmatched</button>
+                    <button class="btn btn-secondary btn-sm filter-btn" data-filter="matched">Matched</button>
+                    <button class="btn btn-secondary btn-sm filter-btn" data-filter="manual">Manual</button>
+                </div>
+            </div>
+            <div class="chip-group">
+                <div class="chip-group-label">View</div>
+                <div class="chip-row" id="viewChipRow">
+                    <button class="btn btn-secondary btn-sm view-btn active" data-view="list">List</button>
+                    <button class="btn btn-secondary btn-sm view-btn" data-view="poster">Poster</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="library-toolbar-wrap">
+            <div class="library-toolbar">
+                <input id="itemsSearchInput" class="form-input" placeholder="Search path, detected title, or matched title">
+                <select id="itemsSortSelect" class="form-select">
+                    <option value="updated">Recently Updated</option>
+                    <option value="status">Status</option>
+                    <option value="confidence">Confidence</option>
+                    <option value="name">Name</option>
+                    <option value="year">Year</option>
+                    <option value="size">File Size</option>
+                    <option value="modified">File Modified</option>
+                </select>
+                <select id="itemsSortDirSelect" class="form-select">
+                    <option value="desc">Descending</option>
+                    <option value="asc">Ascending</option>
+                </select>
+                <button class="btn btn-secondary" type="button" id="applyItemsFiltersBtn">Apply</button>
+            </div>
+            <div id="itemsSummaryPills" class="summary-pills"></div>
+        </div>
+        <div id="itemsMeta" style="margin: 0.9rem 0 0.6rem; color: var(--text-muted); font-size: 0.85rem;"></div>
+        <div id="itemsList" style="display: grid; gap: 0.875rem; color: var(--text-muted);">
+            No library selected yet.
+        </div>
+        <div id="itemsPagination" class="library-pagination" style="display: none;">
+            <button class="btn btn-secondary btn-sm" type="button" id="itemsPrevBtn">Previous</button>
+            <div id="itemsPageLabel" style="color: var(--text-muted); font-size: 0.85rem;"></div>
+            <button class="btn btn-secondary btn-sm" type="button" id="itemsNextBtn">Next</button>
+        </div>
+    </div>
+</div>
+
+<div id="matchModal" class="dir-modal" aria-hidden="true">
+    <div class="dir-modal-card card">
+        <div class="card-header">
+            <div>
+                <h2>Rematch Item</h2>
+                <div id="matchModalSubtitle" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;"></div>
+            </div>
+            <button class="btn btn-secondary btn-sm" type="button" id="closeMatchModalBtn">Close</button>
+        </div>
+        <div class="card-body" style="display: grid; gap: 0.85rem;">
+            <div class="library-toolbar">
+                <input id="matchSearchInput" class="form-input" placeholder="Search metadata">
+                <select id="matchTypeSelect" class="form-select">
+                    <option value="movie">Movie</option>
+                    <option value="series">Series</option>
+                </select>
+                <button class="btn btn-primary" type="button" id="runMatchSearchBtn">Search</button>
+                <button class="btn btn-secondary" type="button" id="clearMatchBtn">Clear Match</button>
+            </div>
+            <div id="matchSearchResults" class="dir-list">
+                <div style="padding: 1rem; color: var(--text-muted);">Search to pick the correct title.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="directoryBrowserModal" class="dir-modal" aria-hidden="true">
+    <div class="dir-modal-card card">
+        <div class="card-header">
+            <h2>Select Library Folder</h2>
+            <button class="btn btn-secondary btn-sm" type="button" id="closeDirBrowserBtn">Close</button>
+        </div>
+        <div class="card-body" style="display: grid; gap: 0.75rem;">
+            <div class="path-picker-row">
+                <input id="directoryBrowserPath" class="form-input" placeholder="/Users/name/Media">
+                <button class="btn btn-secondary" type="button" id="goDirBrowserBtn">Go</button>
+            </div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button class="btn btn-secondary btn-sm" type="button" id="dirBrowserUpBtn">Up</button>
+                <button class="btn btn-primary btn-sm" type="button" id="dirBrowserUseBtn">Use This Folder</button>
+            </div>
+            <div id="directoryBrowserCurrent" style="font-size: 0.85rem; color: var(--text-secondary); word-break: break-word;"></div>
+            <div id="directoryBrowserList" class="dir-list">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.path-picker-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+}
+
+.path-picker-row .form-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.dir-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 300;
+    padding: 1rem;
+}
+
+.dir-modal.open {
+    display: flex;
+}
+
+.dir-modal-card {
+    width: min(760px, 100%);
+    max-height: min(78vh, 720px);
+    overflow: hidden;
+}
+
+.dir-list {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: auto;
+    max-height: 46vh;
+    background: var(--bg-tertiary);
+}
+
+.dir-entry {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.95rem 1rem;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    cursor: pointer;
+}
+
+.dir-entry:last-child {
+    border-bottom: none;
+}
+
+.dir-entry:hover {
+    background: var(--bg-hover);
+}
+
+.dir-entry-name {
+    font-weight: 500;
+    word-break: break-word;
+}
+
+.dir-entry-path {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    word-break: break-word;
+}
+
+.library-toolbar {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: minmax(0, 1.8fr) minmax(160px, 0.8fr) minmax(140px, 0.7fr) auto;
+    align-items: center;
+}
+
+.library-toolbar-wrap {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.chip-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.chip-groups {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.chip-group {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.chip-group-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.chip-row .btn {
+    border-radius: 999px;
+}
+
+.chip-row .btn.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 22%, var(--bg-secondary));
+    color: var(--text-primary);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.library-item-card {
+    border: 1px solid var(--border);
+}
+
+.library-select-card {
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.library-select-card.is-active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.library-select-card:hover {
+    transform: translateY(-1px);
+}
+
+.library-item-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.library-item-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.library-item-details {
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+}
+
+.library-pagination {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.summary-pills {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.summary-pill {
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 0.45rem 0.8rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.summary-pill.active {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+}
+
+.match-result {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    gap: 0.45rem;
+}
+
+.match-result:last-child {
+    border-bottom: none;
+}
+
+.library-items-poster {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+}
+
+.library-poster-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+
+.library-poster-image {
+    aspect-ratio: 2 / 3;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.library-poster-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.library-poster-fallback {
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.library-poster-body {
+    padding: 0.85rem;
+    display: grid;
+    gap: 0.6rem;
+}
+
+@media (max-width: 700px) {
+    .grid.grid-2 {
+        grid-template-columns: 1fr;
+    }
+
+    .path-picker-row {
+        flex-direction: column;
+    }
+
+    .path-picker-row .btn {
+        width: 100%;
+    }
+
+    .dir-modal {
+        padding: 0;
+    }
+
+    .dir-modal-card {
+        width: 100%;
+        max-height: 88vh;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+    }
+
+    .dir-list {
+        max-height: 54vh;
+    }
+
+    .dir-entry {
+        padding: 1rem;
+    }
+
+    .library-toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .chip-row {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 0.35rem;
+        margin: 0 -0.35rem;
+        padding-left: 0.35rem;
+        padding-right: 1.25rem;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        mask-image: linear-gradient(to right, transparent 0, black 10px, black calc(100% - 28px), transparent 100%);
+    }
+
+    .chip-row::-webkit-scrollbar {
+        display: none;
+    }
+
+    .chip-row .btn,
+    .summary-pill {
+        flex: 0 0 auto;
+        min-height: 2.4rem;
+    }
+
+    .chip-group-label {
+        padding-left: 0.35rem;
+    }
+
+    .library-toolbar-wrap {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--bg-primary);
+        padding-bottom: 0.4rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .library-poster-body .btn,
+    .library-item-actions .btn {
+        min-height: 2.5rem;
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
+    }
+}
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const isAdmin = {{json .IsAdmin}};
+let libraries = [];
+let selectedLibraryId = '';
+let currentFilter = 'all';
+let currentBrowsePath = '';
+let librariesPollHandle = 0;
+let currentItemsOffset = 0;
+const itemsPageSize = 50;
+let currentItemQuery = '';
+let currentSort = 'updated';
+let currentSortDir = 'desc';
+let expandedItems = new Set();
+let activeMatchItem = null;
+let currentItemsById = new Map();
+let currentMatchResults = [];
+let currentVisibleItems = [];
+let currentView = 'list';
+let itemsSearchDebounceHandle = 0;
+const libraryStateStorageKey = 'strmr.library.ui.v1';
+
+if (!isAdmin) {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelector('.main-content').innerHTML = '<div class="card"><div class="card-body" style="color: var(--danger);">Library management is only available to the master account.</div></div>';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (!isAdmin) return;
+  restoreLibraryUIState();
+  document.getElementById('libraryForm').addEventListener('submit', createLibrary);
+  document.getElementById('browseDirsBtn').addEventListener('click', openDirectoryBrowser);
+  document.getElementById('closeDirBrowserBtn').addEventListener('click', closeDirectoryBrowser);
+  document.getElementById('goDirBrowserBtn').addEventListener('click', () => loadDirectoryListing(document.getElementById('directoryBrowserPath').value.trim()));
+  document.getElementById('dirBrowserUpBtn').addEventListener('click', browseParentDirectory);
+  document.getElementById('dirBrowserUseBtn').addEventListener('click', useCurrentBrowseDirectory);
+  document.getElementById('applyItemsFiltersBtn').addEventListener('click', applyItemFilters);
+  document.getElementById('itemsSearchInput').addEventListener('input', onItemsSearchInput);
+  document.getElementById('itemsPrevBtn').addEventListener('click', () => changeItemsPage(-1));
+  document.getElementById('itemsNextBtn').addEventListener('click', () => changeItemsPage(1));
+  document.getElementById('closeMatchModalBtn').addEventListener('click', closeMatchModal);
+  document.getElementById('runMatchSearchBtn').addEventListener('click', searchMatchCandidates);
+  document.getElementById('clearMatchBtn').addEventListener('click', clearActiveMatch);
+  document.getElementById('matchSearchInput').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      searchMatchCandidates();
+    }
+  });
+  document.getElementById('directoryBrowserList').addEventListener('click', event => {
+    const button = event.target.closest('.dir-entry');
+    if (!button) return;
+    const path = button.dataset.path || '';
+    if (!path) return;
+    loadDirectoryListing(path);
+  });
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentFilter = btn.dataset.filter;
+      document.querySelectorAll('.filter-btn').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+      currentItemsOffset = 0;
+      persistLibraryUIState();
+      if (selectedLibraryId) loadItems(selectedLibraryId);
+    });
+  });
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentView = btn.dataset.view;
+      document.querySelectorAll('.view-btn').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+      persistLibraryUIState();
+      renderCurrentItems();
+    });
+  });
+  syncLibraryControls();
+  loadLibraries();
+  librariesPollHandle = window.setInterval(loadLibraries, 4000);
+});
+
+async function createLibrary(event) {
+  event.preventDefault();
+  const payload = {
+    name: document.getElementById('libraryName').value.trim(),
+    type: document.getElementById('libraryType').value,
+    rootPath: document.getElementById('libraryRootPath').value.trim(),
+  };
+  try {
+    const res = await fetch(basePath + '/api/library/libraries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    event.target.reset();
+    showToast('Library added');
+    await loadLibraries();
+  } catch (err) {
+    showToast(err.message || 'Failed to create library', 'error');
+  }
+}
+
+async function loadLibraries() {
+  const container = document.getElementById('librariesList');
+  try {
+    const res = await fetch(basePath + '/api/library/libraries');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    libraries = Array.isArray(data) ? data : [];
+    renderLibraries(container);
+    if (!selectedLibraryId && libraries.length > 0) {
+      selectedLibraryId = libraries[0].id;
+      loadItems(selectedLibraryId);
+    } else if (selectedLibraryId) {
+      const stillExists = libraries.find(l => l.id === selectedLibraryId);
+      if (stillExists && stillExists.lastScanStatus === 'scanning') {
+        loadItems(selectedLibraryId);
+      }
+    }
+  } catch (err) {
+    container.innerHTML = `<div style="color: var(--danger);">Failed to load libraries: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderLibraries(container) {
+  if (!libraries.length) {
+    container.innerHTML = '<div style="color: var(--text-muted);">No libraries configured yet.</div>';
+    return;
+  }
+  container.innerHTML = libraries.map(library => {
+    const activeClass = library.id === selectedLibraryId ? 'is-active' : '';
+    return `
+      <div class="card library-select-card ${activeClass}" onclick="selectLibrary('${library.id}')">
+        <div class="card-body" style="display: grid; gap: 0.75rem;">
+          <div style="display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+            <div>
+              <div style="font-weight: 600;">${escapeHtml(library.name)}</div>
+              <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(library.rootPath)}</div>
+            </div>
+            <div class="status-badge ${statusClass(library.lastScanStatus)}">${formatStatus(library.lastScanStatus)}</div>
+          </div>
+          <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
+            <span>${escapeHtml(library.type)}</span>
+            <span>${library.lastScanDiscovered || 0} files</span>
+            ${library.lastScanStatus === 'scanning' && library.lastScanTotal ? `<span>${Math.min(100, Math.round(((library.lastScanDiscovered || 0) / library.lastScanTotal) * 100))}% complete</span>` : ''}
+            <span>${library.lastScanMatched || 0} matched</span>
+            <span>${library.lastScanLowConfidence || 0} low confidence</span>
+            <span>${formatLastScanLabel(library)}</span>
+          </div>
+          ${renderScanProgress(library)}
+          ${library.lastScanError ? `<div style="color: var(--danger); font-size: 0.85rem;">${escapeHtml(library.lastScanError)}</div>` : ''}
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;" onclick="event.stopPropagation()">
+            <button class="btn btn-primary btn-sm" onclick="scanLibrary('${library.id}')" ${library.lastScanStatus === 'scanning' ? 'disabled' : ''}>${library.lastScanStatus === 'scanning' ? 'Scanning...' : 'Scan'}</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteLibrary('${library.id}')">Delete</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectLibrary(id) {
+  selectedLibraryId = id;
+  currentItemsOffset = 0;
+  expandedItems = new Set();
+  persistLibraryUIState();
+  renderLibraries(document.getElementById('librariesList'));
+  loadItems(id);
+}
+
+function renderScanProgress(library) {
+  if (library.lastScanStatus !== 'scanning' || !library.lastScanTotal) return '';
+  const processed = library.lastScanDiscovered || 0;
+  const total = library.lastScanTotal || 0;
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  return `
+    <div style="display: grid; gap: 0.35rem;">
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+        <span>Scanning media files</span>
+        <span>${processed} / ${total}</span>
+      </div>
+      <div style="height: 0.5rem; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden;">
+        <div style="height: 100%; width: ${percent}%; background: var(--accent); transition: width 0.25s ease;"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function scanLibrary(id) {
+  try {
+    const res = await fetch(basePath + '/api/library/libraries/' + encodeURIComponent(id) + '/scan', { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    const summary = await res.json();
+    const discovered = summary && typeof summary.discovered === 'number' ? summary.discovered : 0;
+    const matched = summary && typeof summary.matched === 'number' ? summary.matched : 0;
+    const lowConfidence = summary && typeof summary.lowConfidence === 'number' ? summary.lowConfidence : 0;
+    showToast(`Scan complete: ${discovered} files, ${matched} matched, ${lowConfidence} low confidence`);
+    await loadLibraries();
+    if (selectedLibraryId === id) {
+      await loadItems(id);
+    }
+  } catch (err) {
+    showToast(err.message || 'Failed to complete scan', 'error');
+  }
+}
+
+async function deleteLibrary(id) {
+  if (!confirm('Delete this library and all scanned items?')) return;
+  try {
+    const res = await fetch(basePath + '/api/library/libraries/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    if (selectedLibraryId === id) {
+      selectedLibraryId = '';
+      currentVisibleItems = [];
+      currentItemsById = new Map();
+      document.getElementById('itemsList').innerHTML = 'No library selected yet.';
+    }
+    showToast('Library deleted');
+    await loadLibraries();
+  } catch (err) {
+    showToast(err.message || 'Failed to delete library', 'error');
+  }
+}
+
+async function loadItems(libraryId) {
+  const library = libraries.find(x => x.id === libraryId);
+  const itemsTitle = document.getElementById('itemsTitle');
+  const itemsSubtitle = document.getElementById('itemsSubtitle');
+  const itemsMeta = document.getElementById('itemsMeta');
+  const itemsList = document.getElementById('itemsList');
+  const pageLabel = document.getElementById('itemsPageLabel');
+  const pagination = document.getElementById('itemsPagination');
+  const prevBtn = document.getElementById('itemsPrevBtn');
+  const nextBtn = document.getElementById('itemsNextBtn');
+  const itemsSummaryPills = document.getElementById('itemsSummaryPills');
+  itemsTitle.textContent = library ? library.name : 'Library Items';
+  itemsSubtitle.textContent = library ? `${library.rootPath} · ${library.type}` : 'Select a library to inspect scan results.';
+  itemsMeta.textContent = '';
+  itemsSummaryPills.innerHTML = renderSummaryPills(library);
+  itemsList.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  pagination.style.display = 'none';
+  currentVisibleItems = [];
+  currentItemsById = new Map();
+
+  try {
+    const params = new URLSearchParams({
+      filter: currentFilter,
+      sort: currentSort,
+      dir: currentSortDir,
+      limit: String(itemsPageSize),
+      offset: String(currentItemsOffset),
+    });
+    if (currentItemQuery) params.set('query', currentItemQuery);
+    const res = await fetch(basePath + '/api/library/libraries/' + encodeURIComponent(libraryId) + '/items?' + params.toString());
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    currentVisibleItems = items;
+    currentItemsById = new Map(items.map(item => [item.id, item]));
+    const total = Number(data.total) || 0;
+    const pageStart = total === 0 ? 0 : currentItemsOffset + 1;
+    const pageEnd = Math.min(total, currentItemsOffset + items.length);
+    itemsMeta.textContent = total ? `Showing ${pageStart}-${pageEnd} of ${total} items` : 'No items match the current filters';
+    pageLabel.textContent = total ? `Page ${Math.floor(currentItemsOffset / itemsPageSize) + 1} of ${Math.max(1, Math.ceil(total / itemsPageSize))}` : '';
+    prevBtn.disabled = currentItemsOffset <= 0;
+    nextBtn.disabled = currentItemsOffset + itemsPageSize >= total;
+    pagination.style.display = total > itemsPageSize ? 'flex' : 'none';
+    persistLibraryUIState();
+    if (!items.length) {
+      itemsList.innerHTML = '<div style="color: var(--text-muted);">No items for this filter.</div>';
+      return;
+    }
+    renderCurrentItems();
+  } catch (err) {
+    currentVisibleItems = [];
+    currentItemsById = new Map();
+    itemsList.innerHTML = `<div style="color: var(--danger);">Failed to load items: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderCurrentItems() {
+  const itemsList = document.getElementById('itemsList');
+  if (!currentVisibleItems.length) {
+    itemsList.className = '';
+    itemsList.style.display = 'grid';
+    itemsList.style.gap = '0.875rem';
+    itemsList.innerHTML = '<div style="color: var(--text-muted);">No items for this filter.</div>';
+    return;
+  }
+  if (currentView === 'poster') {
+    itemsList.className = 'library-items-poster';
+    itemsList.style.display = 'grid';
+    itemsList.style.gap = '1rem';
+    itemsList.innerHTML = currentVisibleItems.map(renderPosterItem).join('');
+    return;
+  }
+  itemsList.className = '';
+  itemsList.style.display = 'grid';
+  itemsList.style.gap = '0.875rem';
+  itemsList.innerHTML = currentVisibleItems.map(renderItem).join('');
+}
+
+function renderSummaryPills(library) {
+  if (!library) return '';
+  const unmatchedCount = Math.max(0, (library.lastScanDiscovered || 0) - (library.lastScanMatched || 0) - (library.lastScanLowConfidence || 0));
+  return `
+    <button type="button" class="summary-pill ${currentFilter === 'all' ? 'active' : ''}" onclick="setQuickFilter('all')">${library.lastScanDiscovered || 0} items</button>
+    <button type="button" class="summary-pill ${currentFilter === 'low_confidence' ? 'active' : ''}" onclick="setQuickFilter('low_confidence')">${library.lastScanLowConfidence || 0} low confidence</button>
+    <button type="button" class="summary-pill ${currentFilter === 'unmatched' ? 'active' : ''}" onclick="setQuickFilter('unmatched')">${unmatchedCount} unmatched</button>
+    <button type="button" class="summary-pill ${currentFilter === 'matched' ? 'active' : ''}" onclick="setQuickFilter('matched')">${library.lastScanMatched || 0} matched</button>
+  `;
+}
+
+function setQuickFilter(filter) {
+  currentFilter = filter;
+  currentItemsOffset = 0;
+  syncLibraryControls();
+  persistLibraryUIState();
+  if (selectedLibraryId) loadItems(selectedLibraryId);
+}
+
+function renderItem(item) {
+  const meta = item.metadata || {};
+  const probe = item.probe || {};
+  const badgeClass = item.isMissing ? 'offline' : item.matchStatus === 'matched' || item.matchStatus === 'manual' ? 'online' : item.matchStatus === 'low_confidence' ? 'warning' : 'offline';
+  const expanded = expandedItems.has(item.id);
+  const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
+  const year = meta.year || item.matchedYear || item.detectedYear || '';
+  const episodeLabel = item.seasonNumber && item.episodeNumber ? `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}` : '';
+  const resolutionLabel = probe.height ? `${probe.height}p` : (probe.width ? `${probe.width}x${probe.height}` : '');
+  const statusLabel = item.isMissing ? 'missing' : item.matchStatus.replace('_', ' ');
+  return `
+    <div class="card library-item-card">
+      <div class="card-body" style="display: grid; gap: 0.75rem;">
+        <div class="library-item-summary">
+          <div>
+            <div style="font-weight: 600;">${escapeHtml(title)}</div>
+            <div style="display: flex; gap: 0.6rem; flex-wrap: wrap; color: var(--text-muted); font-size: 0.85rem;">
+              ${episodeLabel ? `<span>${episodeLabel}</span>` : ''}
+              ${year ? `<span>${escapeHtml(String(year))}</span>` : ''}
+              ${resolutionLabel ? `<span>${escapeHtml(resolutionLabel)}</span>` : ''}
+            </div>
+          </div>
+          <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+        </div>
+        <div class="library-item-actions">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="toggleItemExpanded('${item.id}')">${expanded ? 'Collapse' : 'Expand'}</button>
+          ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept Match</button>` : ''}
+          <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
+          ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
+        </div>
+        ${expanded ? renderExpandedItemDetails(item, meta, probe) : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderPosterItem(item) {
+  const meta = item.metadata || {};
+  const probe = item.probe || {};
+  const poster = meta.poster && meta.poster.url ? meta.poster.url : '';
+  const badgeClass = item.isMissing ? 'offline' : item.matchStatus === 'matched' || item.matchStatus === 'manual' ? 'online' : item.matchStatus === 'low_confidence' ? 'warning' : 'offline';
+  const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
+  const year = meta.year || item.matchedYear || item.detectedYear || '';
+  const statusLabel = item.isMissing ? 'missing' : item.matchStatus.replace('_', ' ');
+  return `
+    <div class="library-poster-card">
+      <div class="library-poster-image">
+        ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}">` : `<div class="library-poster-fallback">${escapeHtml(title)}</div>`}
+      </div>
+      <div class="library-poster-body">
+        <div>
+          <div style="font-weight: 600;">${escapeHtml(title)}</div>
+          <div style="color: var(--text-muted); font-size: 0.85rem;">${year ? escapeHtml(String(year)) : escapeHtml(item.relativePath)}</div>
+        </div>
+        <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
+          <span>${probe.width ? `${probe.width}x${probe.height}` : 'Unknown video'}</span>
+          <span>${probe.durationSeconds ? formatDuration(probe.durationSeconds) : 'Unknown runtime'}</span>
+        </div>
+        <div class="library-item-actions">
+          ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept</button>` : ''}
+          <button class="btn btn-secondary btn-sm" type="button" onclick="togglePosterItemExpand('${item.id}')">${expandedItems.has(item.id) ? 'Details' : 'Details'}</button>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
+          ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
+        </div>
+        ${expandedItems.has(item.id) ? renderExpandedItemDetails(item, meta, probe) : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderExpandedItemDetails(item, meta, probe) {
+  const episodeLabel = item.seasonNumber && item.episodeNumber ? `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}` : 'N/A';
+  const matchLabel = meta.name ? `${meta.name}${meta.year ? ' (' + meta.year + ')' : ''}` : (item.matchedName ? `${item.matchedName}${item.matchedYear ? ' (' + item.matchedYear + ')' : ''}` : 'No metadata match');
+  const externalIds = item.externalIds || {};
+  const externalIdParts = [];
+  if (externalIds.imdb) externalIdParts.push(`IMDb: ${escapeHtml(externalIds.imdb)}`);
+  if (externalIds.tmdb) externalIdParts.push(`TMDb: ${escapeHtml(externalIds.tmdb)}`);
+  if (externalIds.tvdb) externalIdParts.push(`TVDB: ${escapeHtml(externalIds.tvdb)}`);
+  return `
+    <div class="library-item-details" style="display: grid; gap: 0.75rem;">
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
+        <span>Match: ${escapeHtml(matchLabel)}</span>
+        <span>${probe.width ? `${probe.width}x${probe.height}` : 'Unknown video'}</span>
+        <span>${probe.videoCodec ? escapeHtml(probe.videoCodec) : 'Unknown codec'}</span>
+        <span>${probe.durationSeconds ? formatDuration(probe.durationSeconds) : 'Unknown runtime'}</span>
+        <span>${item.sizeBytes ? formatBytes(item.sizeBytes) : 'Unknown size'}</span>
+      </div>
+      ${(meta.overview || meta.genres?.length) ? `
+        <div style="color: var(--text-secondary); font-size: 0.9rem;">
+          ${meta.overview ? escapeHtml(meta.overview) : ''}
+          ${meta.genres?.length ? `<div style="margin-top: 0.35rem; color: var(--text-muted);">${meta.genres.map(escapeHtml).join(' · ')}</div>` : ''}
+        </div>
+      ` : ''}
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
+        <span>Detected year: ${item.detectedYear || 'Unknown'}</span>
+        <span>Episode: ${episodeLabel}</span>
+        <span>Audio: ${probe.audioCodecs?.length ? probe.audioCodecs.map(escapeHtml).join(', ') : 'Unknown'}</span>
+        <span>HDR: ${probe.hdrFormat ? escapeHtml(probe.hdrFormat) : 'None'}</span>
+        <span>Subtitles: ${probe.subtitleStreams || 0}</span>
+        <span>Updated: ${formatDate(item.updatedAt)}</span>
+      </div>
+      ${item.isMissing ? `<div style="color: var(--danger); font-size: 0.85rem;">Missing since: ${formatDate(item.missingSince)}</div>` : ''}
+      ${externalIdParts.length ? `<div style="display: flex; gap: 1rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">${externalIdParts.map(value => `<span>${value}</span>`).join('')}</div>` : ''}
+      <div style="color: var(--text-muted); font-size: 0.85rem;">File: ${escapeHtml(item.relativePath || item.fileName || '')}</div>
+    </div>
+  `;
+}
+
+function toggleItemExpanded(itemId) {
+  if (expandedItems.has(itemId)) {
+    expandedItems.delete(itemId);
+  } else {
+    expandedItems.add(itemId);
+  }
+  renderCurrentItems();
+}
+
+function togglePosterItemExpand(itemId) {
+  toggleItemExpanded(itemId);
+}
+
+function applyItemFilters() {
+  currentItemQuery = document.getElementById('itemsSearchInput').value.trim();
+  currentSort = document.getElementById('itemsSortSelect').value;
+  currentSortDir = document.getElementById('itemsSortDirSelect').value;
+  currentItemsOffset = 0;
+  persistLibraryUIState();
+  if (selectedLibraryId) loadItems(selectedLibraryId);
+}
+
+function onItemsSearchInput() {
+  window.clearTimeout(itemsSearchDebounceHandle);
+  itemsSearchDebounceHandle = window.setTimeout(() => {
+    applyItemFilters();
+  }, 300);
+}
+
+function changeItemsPage(direction) {
+  const nextOffset = currentItemsOffset + (direction * itemsPageSize);
+  currentItemsOffset = Math.max(0, nextOffset);
+  persistLibraryUIState();
+  if (selectedLibraryId) loadItems(selectedLibraryId);
+}
+
+function openMatchModal(itemId) {
+  const item = currentItemsById.get(itemId);
+  activeMatchItem = item ? { id: itemId, item } : { id: itemId };
+  document.getElementById('matchModalSubtitle').textContent = item ? item.relativePath : '';
+  document.getElementById('matchSearchInput').value = item ? (item.detectedTitle || item.fileName || '') : '';
+  document.getElementById('matchTypeSelect').value = item && item.libraryType === 'show' ? 'series' : selectedLibraryType();
+  document.getElementById('matchSearchResults').innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">Search to pick the correct title.</div>';
+  document.getElementById('matchModal').classList.add('open');
+}
+
+function closeMatchModal() {
+  document.getElementById('matchModal').classList.remove('open');
+  activeMatchItem = null;
+  currentMatchResults = [];
+}
+
+function selectedLibraryType() {
+  const library = libraries.find(entry => entry.id === selectedLibraryId);
+  return library && library.type === 'show' ? 'series' : 'movie';
+}
+
+async function searchMatchCandidates() {
+  if (!activeMatchItem) return;
+  const query = document.getElementById('matchSearchInput').value.trim();
+  const mediaType = document.getElementById('matchTypeSelect').value;
+  const resultsEl = document.getElementById('matchSearchResults');
+  if (!query) {
+    showToast('Enter a search query first', 'error');
+    return;
+  }
+  resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const searchRes = await fetch(basePath + '/api/library/search?query=' + encodeURIComponent(query) + '&mediaType=' + encodeURIComponent(mediaType));
+    if (!searchRes.ok) throw new Error(await searchRes.text());
+    const data = await searchRes.json();
+    const results = Array.isArray(data) ? data : [];
+    currentMatchResults = results;
+    if (!results.length) {
+      resultsEl.innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">No metadata results found.</div>';
+      return;
+    }
+    resultsEl.innerHTML = results.map((result, index) => renderMatchResult(result, index)).join('');
+  } catch (err) {
+    resultsEl.innerHTML = `<div style="padding: 1rem; color: var(--danger);">Search failed: ${escapeHtml(err.message || 'Unknown error')}</div>`;
+  }
+}
+
+function renderMatchResult(result, index) {
+  const title = result && result.title ? result.title : {};
+  return `
+    <div class="match-result">
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+        <div style="font-weight: 600;">${escapeHtml(title.name || 'Unknown title')}${title.year ? ` (${title.year})` : ''}</div>
+        <div style="color: var(--text-muted); font-size: 0.85rem;">Result ${index + 1}${typeof result.score === 'number' ? ` · Score ${result.score}` : ''}</div>
+      </div>
+      ${title.overview ? `<div style="color: var(--text-secondary); font-size: 0.9rem;">${escapeHtml(title.overview)}</div>` : ''}
+      <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; color: var(--text-muted); font-size: 0.85rem;">
+        <span>${escapeHtml(title.mediaType || 'unknown')}</span>
+        <span>${title.imdbId ? escapeHtml(title.imdbId) : ''}</span>
+        <span>${title.tmdbId ? `tmdb:${title.tmdbId}` : ''}</span>
+        <span>${title.tvdbId ? `tvdb:${title.tvdbId}` : ''}</span>
+      </div>
+      <div>
+        <button class="btn btn-primary btn-sm" type="button" onclick="saveManualMatch(${index})">Use This Match</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveManualMatch(index) {
+  if (!activeMatchItem) return;
+  const title = currentMatchResults[index] && currentMatchResults[index].title ? currentMatchResults[index].title : null;
+  if (!title) {
+    showToast('Selected match is no longer available', 'error');
+    return;
+  }
+  const payload = {
+    matchedTitleId: title.id,
+    matchedMediaType: title.mediaType,
+    matchedName: title.name,
+    matchedYear: title.year || 0,
+    confidence: 1,
+    matchStatus: 'manual',
+    metadata: title,
+  };
+  await persistMatchPayload(payload, 'Manual match saved');
+}
+
+async function clearActiveMatch() {
+  if (!activeMatchItem) return;
+  await persistMatchPayload({
+    matchedTitleId: '',
+    matchedMediaType: '',
+    matchedName: '',
+    matchedYear: 0,
+    confidence: 0,
+    matchStatus: 'unmatched',
+    metadata: null,
+  }, 'Match cleared');
+}
+
+async function acceptSuggestedMatch(itemId) {
+  const item = currentItemsById.get(itemId);
+  if (!item) {
+    showToast('Item is no longer visible', 'error');
+    return;
+  }
+  const metadata = item.metadata || null;
+  const matchedTitleId = item.matchedTitleId || (metadata ? metadata.id : '');
+  const matchedMediaType = item.matchedMediaType || (metadata ? metadata.mediaType : '');
+  const matchedName = item.matchedName || (metadata ? metadata.name : '');
+  const matchedYear = item.matchedYear || (metadata ? metadata.year : 0);
+  if (!matchedTitleId || !matchedMediaType || !matchedName) {
+    showToast('This item does not have a suggested match to accept', 'error');
+    return;
+  }
+  await persistMatchForItem(itemId, {
+    matchedTitleId,
+    matchedMediaType,
+    matchedName,
+    matchedYear,
+    confidence: 1,
+    matchStatus: 'manual',
+    metadata,
+  }, 'Match accepted');
+}
+
+async function persistMatchPayload(payload, successMessage) {
+  if (!activeMatchItem) return;
+  await persistMatchForItem(activeMatchItem.id, payload, successMessage);
+}
+
+async function persistMatchForItem(itemId, payload, successMessage) {
+  try {
+    const saveRes = await fetch(basePath + '/api/library/items/' + encodeURIComponent(itemId) + '/match', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!saveRes.ok) throw new Error(await saveRes.text());
+    showToast(successMessage);
+    closeMatchModal();
+    if (selectedLibraryId) loadItems(selectedLibraryId);
+  } catch (err) {
+    showToast(err.message || 'Failed to save match', 'error');
+  }
+}
+
+async function deleteMissingItem(itemId) {
+  const item = currentItemsById.get(itemId);
+  if (!item || !item.isMissing) return;
+  if (!confirm('Delete this missing library item permanently?')) return;
+  try {
+    const res = await fetch(basePath + '/api/library/items/' + encodeURIComponent(itemId), {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showToast('Missing item deleted');
+    if (selectedLibraryId) loadItems(selectedLibraryId);
+  } catch (err) {
+    showToast(err.message || 'Failed to delete missing item', 'error');
+  }
+}
+
+function openDirectoryBrowser() {
+  const existing = document.getElementById('libraryRootPath').value.trim();
+  document.getElementById('directoryBrowserModal').classList.add('open');
+  loadDirectoryListing(existing || currentBrowsePath);
+}
+
+function closeDirectoryBrowser() {
+  document.getElementById('directoryBrowserModal').classList.remove('open');
+}
+
+function useCurrentBrowseDirectory() {
+  if (!currentBrowsePath) return;
+  document.getElementById('libraryRootPath').value = currentBrowsePath;
+  if (!document.getElementById('libraryName').value.trim()) {
+    const parts = currentBrowsePath.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      document.getElementById('libraryName').value = parts[parts.length - 1];
+    }
+  }
+  closeDirectoryBrowser();
+}
+
+function browseParentDirectory() {
+  if (!currentBrowsePath) return;
+  const upBtn = document.getElementById('dirBrowserUpBtn');
+  if (upBtn.dataset.parentPath) {
+    loadDirectoryListing(upBtn.dataset.parentPath);
+  }
+}
+
+async function loadDirectoryListing(path) {
+  const list = document.getElementById('directoryBrowserList');
+  const currentLabel = document.getElementById('directoryBrowserCurrent');
+  list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const res = await fetch(basePath + '/api/library/fs' + (path ? ('?path=' + encodeURIComponent(path)) : ''));
+    if (!res.ok) throw new Error(await res.text());
+    const listing = await res.json();
+    currentBrowsePath = listing.currentPath || '';
+    document.getElementById('directoryBrowserPath').value = currentBrowsePath;
+    currentLabel.textContent = currentBrowsePath || 'No folder selected';
+    const entries = Array.isArray(listing.entries) ? listing.entries : [];
+    const parentPath = listing.parentPath || '';
+    const upBtn = document.getElementById('dirBrowserUpBtn');
+    upBtn.disabled = !parentPath;
+    upBtn.dataset.parentPath = parentPath;
+    if (!entries.length) {
+      list.innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">No subdirectories here.</div>';
+      return;
+    }
+    list.innerHTML = entries.map(entry => `
+      <button class="dir-entry" type="button" data-path="${escapeHtml(entry.path)}">
+        <span class="dir-entry-name">${escapeHtml(entry.name)}</span>
+        <span class="dir-entry-path">${escapeHtml(entry.path)}</span>
+      </button>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div style="padding: 1rem; color: var(--danger);">Failed to load folders: ${escapeHtml(err.message || 'Unknown error')}</div>`;
+  }
+}
+
+function statusClass(status) {
+  if (status === 'complete') return 'online';
+  if (status === 'failed') return 'offline';
+  if (status === 'scanning') return 'warning';
+  return 'warning';
+}
+
+function formatStatus(status) {
+  return (status || 'idle').replace('_', ' ');
+}
+
+function formatDuration(seconds) {
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatDate(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return date.toLocaleString();
+}
+
+function formatLastScanLabel(library) {
+  if (!library || !library.lastScanFinishedAt) {
+    return library && library.lastScanStatus === 'scanning' ? 'Scanning now' : 'Never scanned';
+  }
+  return `Last scan ${formatRelativeTime(library.lastScanFinishedAt)}`;
+}
+
+function formatRelativeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'recently';
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function persistLibraryUIState() {
+  try {
+    localStorage.setItem(libraryStateStorageKey, JSON.stringify({
+      selectedLibraryId,
+      currentFilter,
+      currentItemQuery,
+      currentSort,
+      currentSortDir,
+      currentView,
+    }));
+  } catch (_) {}
+}
+
+function restoreLibraryUIState() {
+  try {
+    const raw = localStorage.getItem(libraryStateStorageKey);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return;
+    selectedLibraryId = typeof saved.selectedLibraryId === 'string' ? saved.selectedLibraryId : '';
+    currentFilter = typeof saved.currentFilter === 'string' ? saved.currentFilter : 'all';
+    currentItemQuery = typeof saved.currentItemQuery === 'string' ? saved.currentItemQuery : '';
+    currentSort = typeof saved.currentSort === 'string' ? saved.currentSort : 'updated';
+    currentSortDir = typeof saved.currentSortDir === 'string' ? saved.currentSortDir : 'desc';
+    currentView = typeof saved.currentView === 'string' ? saved.currentView : 'list';
+  } catch (_) {}
+}
+
+function syncLibraryControls() {
+  const searchInput = document.getElementById('itemsSearchInput');
+  const sortSelect = document.getElementById('itemsSortSelect');
+  const sortDirSelect = document.getElementById('itemsSortDirSelect');
+  if (searchInput) searchInput.value = currentItemQuery;
+  if (sortSelect) sortSelect.value = currentSort;
+  if (sortDirSelect) sortDirSelect.value = currentSortDir;
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.filter === currentFilter);
+  });
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === currentView);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+</script>
+{{end}}

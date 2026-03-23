@@ -135,7 +135,7 @@ type StreamingSettings struct {
 	MaxDownloadWorkers         int                      `json:"maxDownloadWorkers"`
 	MaxCacheSizeMB             int                      `json:"maxCacheSizeMB"`
 	ServiceMode                StreamingServiceMode     `json:"serviceMode"`
-	SearchMode                 SearchMode               `json:"searchMode"`      // Fast (early return) vs Accurate (wait for all results)
+	SearchMode                 SearchMode               `json:"searchMode"` // Fast (early return) vs Accurate (wait for all results)
 	DebridProviders            []DebridProviderSettings `json:"debridProviders,omitempty"`
 	MultiProviderMode          MultiProviderMode        `json:"multiProviderMode,omitempty"` // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec int                      `json:"usenetResolutionTimeoutSec"`  // Timeout for usenet content resolution in seconds (0 = no limit)
@@ -228,7 +228,7 @@ type PlaybackSettings struct {
 	DisablePrequeue           bool    `json:"disablePrequeue"`              // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
 	CreditsDetection          bool    `json:"creditsDetection"`             // Show a marker on the seek bar where credits begin
 	MaxConcurrentStreams      int     `json:"maxConcurrentStreams"`         // Global max concurrent VOD streams across all accounts (0 = unlimited)
-	MaxResultsPerResolution   int     `json:"maxResultsPerResolution"`     // Maximum number of results per resolution tier (0 = no limit)
+	MaxResultsPerResolution   int     `json:"maxResultsPerResolution"`      // Maximum number of results per resolution tier (0 = no limit)
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
@@ -325,15 +325,15 @@ const (
 
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB    float64     `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB  float64     `json:"maxSizeEpisodeGb"`
-	MaxResolution     string      `json:"maxResolution"`     // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	HDRDVPolicy       HDRDVPolicy `json:"hdrDvPolicy"`       // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
-	FilterOutTerms    []string    `json:"filterOutTerms"`              // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms    []string    `json:"preferredTerms"`              // Terms to prioritize in results (case-insensitive match in title)
-	NonPreferredTerms []string    `json:"nonPreferredTerms"`           // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
-	PreferredScraper  string                 `json:"preferredScraper,omitempty"`  // Name of the preferred torrent scraper (empty = none)
-	ServicePriority   StreamingServicePriority `json:"servicePriority"`             // Priority for service type in search results
+	MaxSizeMovieGB    float64                  `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB  float64                  `json:"maxSizeEpisodeGb"`
+	MaxResolution     string                   `json:"maxResolution"`              // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy       HDRDVPolicy              `json:"hdrDvPolicy"`                // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	FilterOutTerms    []string                 `json:"filterOutTerms"`             // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms    []string                 `json:"preferredTerms"`             // Terms to prioritize in results (case-insensitive match in title)
+	NonPreferredTerms []string                 `json:"nonPreferredTerms"`          // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
+	PreferredScraper  string                   `json:"preferredScraper,omitempty"` // Name of the preferred torrent scraper (empty = none)
+	ServicePriority   StreamingServicePriority `json:"servicePriority"`            // Priority for service type in search results
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.
@@ -383,10 +383,10 @@ type MDBListAccount struct {
 
 // MDBListSettings defines MDBList integration for aggregated ratings and scrobbling.
 type MDBListSettings struct {
-	APIKey         string           `json:"apiKey"`                     // Legacy global API key (used for ratings when no accounts configured)
+	APIKey         string           `json:"apiKey"` // Legacy global API key (used for ratings when no accounts configured)
 	Enabled        bool             `json:"enabled"`
-	EnabledRatings []string         `json:"enabledRatings"`             // Which rating sources to display: trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic
-	Accounts       []MDBListAccount `json:"accounts,omitempty"`         // Registered MDBList accounts
+	EnabledRatings []string         `json:"enabledRatings"`     // Which rating sources to display: trakt, imdb, tmdb, letterboxd, tomatoes, audience, metacritic
+	Accounts       []MDBListAccount `json:"accounts,omitempty"` // Registered MDBList accounts
 }
 
 // GetAccountByID returns an MDBList account by its ID, or nil if not found.
@@ -583,11 +583,12 @@ func (j *JellyfinSettings) RemoveAccount(id string) bool {
 type ScheduledTaskType string
 
 const (
-	ScheduledTaskTypePlexWatchlistSync ScheduledTaskType = "plex_watchlist_sync"
-	ScheduledTaskTypeTraktListSync     ScheduledTaskType = "trakt_list_sync"
-	ScheduledTaskTypeEPGRefresh        ScheduledTaskType = "epg_refresh"
-	ScheduledTaskTypePlaylistRefresh   ScheduledTaskType = "playlist_refresh"
-	ScheduledTaskTypeBackup            ScheduledTaskType = "backup"
+	ScheduledTaskTypePlexWatchlistSync     ScheduledTaskType = "plex_watchlist_sync"
+	ScheduledTaskTypeTraktListSync         ScheduledTaskType = "trakt_list_sync"
+	ScheduledTaskTypeEPGRefresh            ScheduledTaskType = "epg_refresh"
+	ScheduledTaskTypePlaylistRefresh       ScheduledTaskType = "playlist_refresh"
+	ScheduledTaskTypeBackup                ScheduledTaskType = "backup"
+	ScheduledTaskTypeLocalMediaScan        ScheduledTaskType = "local_media_scan"
 	ScheduledTaskTypeTraktHistorySync      ScheduledTaskType = "trakt_history_sync"
 	ScheduledTaskTypePrewarm               ScheduledTaskType = "prewarm"
 	ScheduledTaskTypePlexHistorySync       ScheduledTaskType = "plex_history_sync"
@@ -615,7 +616,7 @@ const (
 	ScheduledTaskFrequency6Hours  ScheduledTaskFrequency = "6hours"
 	ScheduledTaskFrequency12Hours ScheduledTaskFrequency = "12hours"
 	ScheduledTaskFrequencyDaily   ScheduledTaskFrequency = "daily"
-	ScheduledTaskFrequencyOnce   ScheduledTaskFrequency = "once"
+	ScheduledTaskFrequencyOnce    ScheduledTaskFrequency = "once"
 )
 
 // ScheduledTaskStatus represents the last run status
@@ -746,7 +747,7 @@ func DefaultSettings() Settings {
 			MaxSizeEpisodeGB: 0,                       // 0 means no limit
 			HDRDVPolicy:      HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
 			ServicePriority:  StreamingServicePriorityNone,
-			},
+		},
 		AnimeFiltering: AnimeFilteringSettings{},
 		UI: UISettings{
 			LoadingAnimationEnabled: true,

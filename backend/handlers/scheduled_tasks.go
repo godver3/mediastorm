@@ -181,6 +181,18 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate config for local media scans
+	if req.Type == config.ScheduledTaskTypeLocalMediaScan {
+		if req.Config == nil || req.Config["libraryId"] == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Local media scan requires libraryId in config",
+			})
+			return
+		}
+	}
+
 	// Validate config for MDBList watchlist sync
 	if req.Type == config.ScheduledTaskTypeMDBListWatchlistSync {
 		if req.Config == nil || req.Config["mdblistAccountId"] == "" || req.Config["profileId"] == "" {

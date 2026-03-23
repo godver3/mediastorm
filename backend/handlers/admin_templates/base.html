@@ -1748,7 +1748,7 @@
                 </a>
                 <!-- Media dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/tools")}}has-active{{end}}">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/tools") (hasSuffix .CurrentPath "/library")}}has-active{{end}}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="23 7 16 12 23 17 23 7"/>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -1788,6 +1788,17 @@
                             </svg>
                             Tools
                         </a>
+                        {{if .IsAdmin}}
+                        <a href="{{.BasePath}}/library" class="nav-link {{if hasSuffix .CurrentPath "/library"}}active{{end}}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H20"/>
+                                <path d="M3 10.5A2.5 2.5 0 0 1 5.5 8H20"/>
+                                <path d="M3 14.5A2.5 2.5 0 0 1 5.5 12H20"/>
+                                <path d="M3 18.5A2.5 2.5 0 0 1 5.5 16H20"/>
+                            </svg>
+                            Library
+                        </a>
+                        {{end}}
                     </div>
                 </div>
                 <!-- Media items (mobile only, flat) -->
@@ -1813,6 +1824,17 @@
                     </svg>
                     Tools
                 </a>
+                {{if .IsAdmin}}
+                <a href="{{.BasePath}}/library" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/library"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H20"/>
+                        <path d="M3 10.5A2.5 2.5 0 0 1 5.5 8H20"/>
+                        <path d="M3 14.5A2.5 2.5 0 0 1 5.5 12H20"/>
+                        <path d="M3 18.5A2.5 2.5 0 0 1 5.5 16H20"/>
+                    </svg>
+                    Library
+                </a>
+                {{end}}
                 {{if .IsAdmin}}
                 <!-- System dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">

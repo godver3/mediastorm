@@ -40,6 +40,7 @@ import (
 	"novastream/services/indexer"
 	"novastream/services/invitations"
 	"novastream/services/jellyfin"
+	"novastream/services/localmedia"
 	"novastream/services/mdblist"
 	"novastream/services/metadata"
 	"novastream/services/playback"
@@ -519,6 +520,11 @@ func main() {
 	}()
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
+	localMediaService, err := localmedia.NewService(store, metadataService, settings.Transmux.FFprobePath)
+	if err != nil {
+		log.Fatalf("failed to initialise local media service: %v", err)
+	}
+	localMediaProvider := localmedia.NewProvider(localMediaService)
 
 	// Startup handler bundles multiple API calls for low-power devices
 	startupHandler := handlers.NewStartupHandler(
@@ -559,7 +565,7 @@ func main() {
 
 	// Create composite streaming provider that handles both usenet and debrid
 	debridStreamingProvider := debrid.NewStreamingProvider(cfgManager)
-	compositeProvider := debrid.NewCompositeProvider(debridStreamingProvider, nzbSystem)
+	compositeProvider := debrid.NewCompositeProvider(localMediaProvider, debridStreamingProvider, nzbSystem)
 
 	// Create video handler with composite provider
 	videoHandler := handlers.NewVideoHandlerWithProvider(
@@ -612,6 +618,7 @@ func main() {
 	}
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager, userSettingsService)
+	localMediaHandler := handlers.NewLocalMediaHandler(localMediaService, userService, settings.Transmux.Enabled)
 
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
@@ -646,6 +653,7 @@ func main() {
 		debugHandler,
 		logsHandler,
 		liveHandler,
+		localMediaHandler,
 		epgHandler,
 		userSettingsHandler,
 		subtitlesHandler,
@@ -678,6 +686,7 @@ func main() {
 	schedulerService.SetEPGService(epgService)
 	schedulerService.SetHistoryService(historyService)
 	schedulerService.SetJellyfinClient(jellyfinClient)
+	schedulerService.SetLocalMediaService(localMediaService)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
 
 	// Rate limiter for admin/account login (5/min per IP)
@@ -695,6 +704,7 @@ func main() {
 	adminUIHandler.SetClientsService(clientsService)
 	adminUIHandler.SetClientSettingsService(clientSettingsService)
 	adminUIHandler.SetCalendarService(calendarService)
+	adminUIHandler.SetLocalMediaService(localMediaService)
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
@@ -711,6 +721,7 @@ func main() {
 	r.HandleFunc("/admin/prequeue", adminUIHandler.RequireAuth(adminUIHandler.PrequeuePage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/search", adminUIHandler.RequireAuth(adminUIHandler.SearchPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/library", adminUIHandler.RequireAuth(adminUIHandler.LibraryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/calendar", adminUIHandler.RequireAuth(adminUIHandler.CalendarPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/calendar", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarData)).Methods(http.MethodGet)
@@ -782,6 +793,15 @@ func main() {
 	r.HandleFunc("/admin/api/accounts/password", adminUIHandler.RequireAuth(adminUIHandler.ResetUserAccountPassword)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/accounts/max-streams", adminUIHandler.RequireMasterAuth(adminUIHandler.SetAccountMaxStreams)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/accounts/default-password", adminUIHandler.RequireAuth(adminUIHandler.HasDefaultPassword)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/library/libraries", adminUIHandler.RequireAuth(adminUIHandler.ListLocalMediaLibraries)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/library/libraries", adminUIHandler.RequireAuth(adminUIHandler.CreateLocalMediaLibrary)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/library/libraries/{libraryID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteLocalMediaLibrary)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/library/libraries/{libraryID}/scan", adminUIHandler.RequireAuth(adminUIHandler.ScanLocalMediaLibrary)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/library/libraries/{libraryID}/items", adminUIHandler.RequireAuth(adminUIHandler.ListLocalMediaItems)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/library/search", adminUIHandler.RequireAuth(adminUIHandler.SearchLocalMediaMetadata)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/library/fs", adminUIHandler.RequireAuth(adminUIHandler.BrowseLocalMediaDirectories)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/library/items/{itemID}/match", adminUIHandler.RequireAuth(adminUIHandler.UpdateLocalMediaItemMatch)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/library/items/{itemID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteLocalMediaItem)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/profiles/reassign", adminUIHandler.RequireAuth(adminUIHandler.ReassignProfile)).Methods(http.MethodPut)
 
 	// Invitation link management endpoints (master account only)
@@ -970,6 +990,7 @@ func main() {
 	r.HandleFunc("/account/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/library", adminUIHandler.RequireAuth(adminUIHandler.LibraryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet) // Shows as "Profiles" for non-admin
 	r.HandleFunc("/account/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/calendar", adminUIHandler.RequireAuth(adminUIHandler.CalendarPage)).Methods(http.MethodGet)
@@ -1032,6 +1053,15 @@ func main() {
 
 	// Protected account routes - MDBList accounts (read-only for regular accounts)
 	r.HandleFunc("/account/api/mdblist/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetMDBListAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/library/libraries", adminUIHandler.RequireAuth(adminUIHandler.ListLocalMediaLibraries)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/library/libraries", adminUIHandler.RequireAuth(adminUIHandler.CreateLocalMediaLibrary)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/library/libraries/{libraryID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteLocalMediaLibrary)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/library/libraries/{libraryID}/scan", adminUIHandler.RequireAuth(adminUIHandler.ScanLocalMediaLibrary)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/library/libraries/{libraryID}/items", adminUIHandler.RequireAuth(adminUIHandler.ListLocalMediaItems)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/library/search", adminUIHandler.RequireAuth(adminUIHandler.SearchLocalMediaMetadata)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/library/fs", adminUIHandler.RequireAuth(adminUIHandler.BrowseLocalMediaDirectories)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/library/items/{itemID}/match", adminUIHandler.RequireAuth(adminUIHandler.UpdateLocalMediaItemMatch)).Methods(http.MethodPut)
+	r.HandleFunc("/account/api/library/items/{itemID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteLocalMediaItem)).Methods(http.MethodDelete)
 
 	// Protected account routes - Trakt API (using account-scoped handler)
 	r.HandleFunc("/account/api/trakt/accounts", accountUIHandler.RequireAuth(accountUIHandler.GetTraktAccounts)).Methods(http.MethodGet)

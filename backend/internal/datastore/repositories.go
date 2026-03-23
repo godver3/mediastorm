@@ -146,9 +146,9 @@ type ContentPreferencesRepository interface {
 // PrequeueRepository manages prequeue entries.
 // Entries are stored as JSONB blobs due to their complex nested structure.
 type PrequeueRepository interface {
-	Get(ctx context.Context, id string) ([]byte, error)       // returns raw JSON
+	Get(ctx context.Context, id string) ([]byte, error) // returns raw JSON
 	GetByTitleUser(ctx context.Context, titleID, userID string) ([]byte, error)
-	List(ctx context.Context) ([][]byte, error)               // returns all entries as raw JSON
+	List(ctx context.Context) ([][]byte, error) // returns all entries as raw JSON
 	Upsert(ctx context.Context, id, titleID, userID, status string, data []byte, expiresAt interface{}) error
 	Delete(ctx context.Context, id string) error
 	DeleteExpired(ctx context.Context) (int64, error)
@@ -158,8 +158,8 @@ type PrequeueRepository interface {
 // PrewarmRepository manages prewarm entries.
 // Entries are stored as JSONB blobs due to their complex nested structure.
 type PrewarmRepository interface {
-	Get(ctx context.Context, id string) ([]byte, error)       // returns raw JSON
-	List(ctx context.Context) ([][]byte, error)               // returns all entries as raw JSON
+	Get(ctx context.Context, id string) ([]byte, error) // returns raw JSON
+	List(ctx context.Context) ([][]byte, error)         // returns all entries as raw JSON
 	Upsert(ctx context.Context, id, titleID, userID string, data []byte, expiresAt interface{}) error
 	Delete(ctx context.Context, id string) error
 	DeleteExpired(ctx context.Context) (int64, error)
@@ -179,4 +179,18 @@ type FileHealthRepository interface {
 // MediaFileRepository manages media file tracking.
 type MediaFileRepository interface {
 	Count(ctx context.Context) (int64, error)
+}
+
+type LocalMediaRepository interface {
+	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
+	GetLibrary(ctx context.Context, id string) (*models.LocalMediaLibrary, error)
+	CreateLibrary(ctx context.Context, library *models.LocalMediaLibrary) error
+	UpdateLibrary(ctx context.Context, library *models.LocalMediaLibrary) error
+	DeleteLibrary(ctx context.Context, id string) error
+	ListItemsByLibrary(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaItemListResult, error)
+	ListAllItemsByLibrary(ctx context.Context, libraryID string) ([]models.LocalMediaItem, error)
+	UpsertItem(ctx context.Context, item *models.LocalMediaItem) error
+	GetItem(ctx context.Context, id string) (*models.LocalMediaItem, error)
+	MarkItemsMissingNotSeenInScan(ctx context.Context, libraryID, scanID string, missingSince interface{}) error
+	DeleteItem(ctx context.Context, id string) error
 }

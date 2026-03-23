@@ -21,6 +21,7 @@ import (
 	"novastream/services/epg"
 	"novastream/services/history"
 	"novastream/services/jellyfin"
+	"novastream/services/localmedia"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
 	"novastream/services/trakt"
@@ -29,15 +30,16 @@ import (
 
 // Service manages scheduled task execution
 type Service struct {
-	configManager    *config.Manager
-	plexClient       *plex.Client
-	traktClient      *trakt.Client
-	jellyfinClient   *jellyfin.Client
-	watchlistService *watchlist.Service
-	epgService       *epg.Service
-	backupService    *backup.Service
-	historyService   *history.Service
-	prewarmService   *prewarm.Service
+	configManager     *config.Manager
+	plexClient        *plex.Client
+	traktClient       *trakt.Client
+	jellyfinClient    *jellyfin.Client
+	watchlistService  *watchlist.Service
+	epgService        *epg.Service
+	backupService     *backup.Service
+	historyService    *history.Service
+	prewarmService    *prewarm.Service
+	localMediaService *localmedia.Service
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -47,9 +49,9 @@ type Service struct {
 	wg      sync.WaitGroup
 
 	// Task state tracking (in-memory, not persisted)
-	taskRunning        map[string]bool
-	taskMu             sync.RWMutex
-	lastFullSyncTimes  map[string]time.Time // tracks last full Trakt history sync per task ID
+	taskRunning         map[string]bool
+	taskMu              sync.RWMutex
+	lastFullSyncTimes   map[string]time.Time // tracks last full Trakt history sync per task ID
 	lastFullSyncTimesMu sync.Mutex
 }
 
@@ -238,6 +240,10 @@ func (s *Service) getInterval(taskType config.ScheduledTaskType, freq config.Sch
 	}
 }
 
+func (s *Service) SetLocalMediaService(ls *localmedia.Service) {
+	s.localMediaService = ls
+}
+
 // executeTask runs a task and updates its status
 func (s *Service) executeTask(task config.ScheduledTask) {
 	// Mark as running
@@ -267,6 +273,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executePlaylistRefresh(task)
 	case config.ScheduledTaskTypeBackup:
 		result, err = s.executeBackup(task)
+	case config.ScheduledTaskTypeLocalMediaScan:
+		result, err = s.executeLocalMediaScan(task)
 	case config.ScheduledTaskTypeTraktHistorySync:
 		result, err = s.executeTraktHistorySync(task)
 	case config.ScheduledTaskTypePrewarm:
@@ -288,6 +296,24 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 
 	// Update task status in settings
 	s.updateTaskStatus(task.ID, err, result)
+}
+
+func (s *Service) executeLocalMediaScan(task config.ScheduledTask) (SyncResult, error) {
+	if s.localMediaService == nil {
+		return SyncResult{}, errors.New("local media service not configured")
+	}
+	libraryID := strings.TrimSpace(task.Config["libraryId"])
+	if libraryID == "" {
+		return SyncResult{}, errors.New("local media scan requires libraryId")
+	}
+	summary, err := s.localMediaService.StartScan(context.Background(), libraryID)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	return SyncResult{
+		Count:   summary.Discovered,
+		Message: fmt.Sprintf("Local media scan completed: %d discovered, %d matched, %d low confidence, %d unmatched", summary.Discovered, summary.Matched, summary.LowConfidence, summary.Unmatched),
+	}, nil
 }
 
 // updateTaskStatus updates a task's status in the settings file
@@ -3005,9 +3031,9 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 		MediaType   string `json:"mediatype"` // "movie" or "show"
 		IMDBID      string `json:"imdb_id"`
 		IDs         struct {
-			IMDB    string `json:"imdb"`
-			TMDB    int    `json:"tmdb"`
-			TVDB    *int   `json:"tvdb"` // nullable
+			IMDB string `json:"imdb"`
+			TMDB int    `json:"tmdb"`
+			TVDB *int   `json:"tvdb"` // nullable
 		} `json:"ids"`
 	}
 

@@ -40,11 +40,14 @@ func getScriptPaths(scriptName string) (scriptPath, pythonPath string, err error
 type ParsedTitle struct {
 	Title      string   `json:"title"`
 	Year       int      `json:"year,omitempty"`
+	IMDBID     string   `json:"imdbId,omitempty"`
+	TMDBID     int64    `json:"tmdbId,omitempty"`
+	TVDBID     int64    `json:"tvdbId,omitempty"`
 	Resolution string   `json:"resolution,omitempty"`
 	Quality    string   `json:"quality,omitempty"`
 	Codec      string   `json:"codec,omitempty"`
-	Audio      []string `json:"audio,omitempty"`      // Can be array
-	Channels   []string `json:"channels,omitempty"`   // Audio channels like 5.1
+	Audio      []string `json:"audio,omitempty"`    // Can be array
+	Channels   []string `json:"channels,omitempty"` // Audio channels like 5.1
 	Group      string   `json:"group,omitempty"`
 	Container  string   `json:"container,omitempty"`
 	Episodes   []int    `json:"episodes,omitempty"`
@@ -54,11 +57,11 @@ type ParsedTitle struct {
 	Hardcoded  bool     `json:"hardcoded,omitempty"`
 	Proper     bool     `json:"proper,omitempty"`
 	Repack     bool     `json:"repack,omitempty"`
-	Complete   bool     `json:"complete,omitempty"`   // Complete series/season pack
-	Volumes    []int    `json:"volumes,omitempty"`    // DVD/BD volume numbers (common in anime releases)
+	Complete   bool     `json:"complete,omitempty"` // Complete series/season pack
+	Volumes    []int    `json:"volumes,omitempty"`  // DVD/BD volume numbers (common in anime releases)
 	Site       string   `json:"site,omitempty"`
-	BitDepth   string   `json:"bit_depth,omitempty"`  // e.g., "10bit"
-	HDR        []string `json:"hdr,omitempty"`        // HDR formats like DV, HDR, HDR10+
+	BitDepth   string   `json:"bit_depth,omitempty"` // e.g., "10bit"
+	HDR        []string `json:"hdr,omitempty"`       // HDR formats like DV, HDR, HDR10+
 }
 
 // ParseTitle calls the Python PTT library to parse a media title

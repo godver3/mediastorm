@@ -106,6 +106,7 @@ func Register(
 	debugHandler *handlers.DebugHandler,
 	logsHandler *handlers.LogsHandler,
 	liveHandler *handlers.LiveHandler,
+	localMediaHandler *handlers.LocalMediaHandler,
 	epgHandler *handlers.EPGHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
 	subtitlesHandler *handlers.SubtitlesHandler,
@@ -291,6 +292,8 @@ func Register(
 	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/library/items/{itemID}/playback", localMediaHandler.GetPlayback).Methods(http.MethodGet)
+	protected.HandleFunc("/library/items/{itemID}/playback", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/live/usage", videoHandler.GetLiveUsage).Methods(http.MethodGet)
 	protected.HandleFunc("/live/usage", handleOptions).Methods(http.MethodOptions)

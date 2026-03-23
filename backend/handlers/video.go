@@ -97,8 +97,8 @@ type VideoHandler struct {
 	probeInFlight sync.Map
 
 	// Cropdetect cache — stores detected letterbox fractions per path
-	cropDetectCacheMu sync.RWMutex
-	cropDetectCache   map[string]*cropDetectCacheEntry
+	cropDetectCacheMu  sync.RWMutex
+	cropDetectCache    map[string]*cropDetectCacheEntry
 	cropDetectInFlight sync.Map
 
 	// Read-ahead range cache — prevents seek storms from hammering the debrid CDN.
@@ -514,7 +514,7 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 					"message":        fmt.Sprintf("Server stream limit reached (%d/%d)", totalActive, globalSettings.Playback.MaxConcurrentStreams),
 					"currentStreams": totalActive,
 					"maxStreams":     globalSettings.Playback.MaxConcurrentStreams,
-					"scope":         "global",
+					"scope":          "global",
 				})
 				return
 			}
@@ -544,7 +544,7 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 									"message":        fmt.Sprintf("Profile stream limit reached (%d/%d)", usage.CurrentStreams, usage.MaxStreams),
 									"currentStreams": usage.CurrentStreams,
 									"maxStreams":     usage.MaxStreams,
-									"scope":         "profile",
+									"scope":          "profile",
 								})
 								return
 							}
@@ -563,7 +563,7 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 							"message":        fmt.Sprintf("Account stream limit reached (%d/%d)", usage.CurrentStreams, usage.MaxStreams),
 							"currentStreams": usage.CurrentStreams,
 							"maxStreams":     usage.MaxStreams,
-							"scope":         "account",
+							"scope":          "account",
 						})
 						return
 					}
@@ -649,6 +649,8 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		return h.proxyExternalURL(w, r, cleanPath)
 	}
 
+	isLocalMediaPath := strings.HasPrefix(cleanPath, "localmedia:")
+
 	// Create a context with timeout to prevent hanging streams
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
@@ -659,7 +661,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	// seek storms from hammering the debrid CDN. ExoPlayer on Android TV generates
 	// hundreds of 2-byte range requests when seeking through DV files with
 	// interleaved tracks. Each CDN round trip takes ~1s, causing multi-second stalls.
-	if rangeHeader != "" && r.Method == http.MethodGet {
+	if rangeHeader != "" && r.Method == http.MethodGet && !isLocalMediaPath {
 		if rangeStart, rangeEnd, ok := parseByteRange(rangeHeader); ok {
 			rangeLen := rangeEnd - rangeStart + 1
 			if rangeLen > 0 && rangeLen <= rangeCacheMinFetchSize {
@@ -757,7 +759,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	// in non-interleaved MP4 files. The pool keeps CDN connections alive after
 	// client disconnects, so the next request at a nearby position is served
 	// from the buffer instead of making a new CDN round-trip.
-	if rangeHeader != "" && r.Method == http.MethodGet && h.streamPool != nil {
+	if rangeHeader != "" && r.Method == http.MethodGet && h.streamPool != nil && !isLocalMediaPath {
 		if reqStart, ok := parseRangeStart(rangeHeader); ok {
 			displayName := sanitizeExternalDisplayName(r.URL.Query().Get("displayName"))
 			if displayName == "" {
@@ -3122,7 +3124,7 @@ func (h *VideoHandler) GetStreamUsage(w http.ResponseWriter, r *http.Request) {
 				CurrentStreams:   total,
 				MaxStreams:       max,
 				AvailableStreams: available,
-				AtLimit:         total >= max,
+				AtLimit:          total >= max,
 			})
 			return
 		}
@@ -4475,7 +4477,6 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 		sort.Float64s(bottomFractions)
 		medianTop := topFractions[len(topFractions)/2]
 		medianBottom := bottomFractions[len(bottomFractions)/2]
-
 
 		// Asymmetry check: if top and bottom differ by more than 3%, discard both
 		if math.Abs(medianTop-medianBottom) > 0.03 {
