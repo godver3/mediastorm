@@ -132,3 +132,4 @@ monitor.sh
 
 # Backend scripts
 backend/scripts/build-docker.sh
+build.sh
