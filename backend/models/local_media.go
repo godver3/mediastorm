@@ -86,6 +86,9 @@ type LocalMediaItem struct {
 	MissingSince     *time.Time             `json:"missingSince,omitempty"`
 	ExternalIDs      *LocalMediaExternalIDs `json:"externalIds,omitempty"`
 	Metadata         *Title                 `json:"metadata,omitempty"`
+	EpisodeTitle     string                 `json:"episodeTitle,omitempty"`
+	EpisodeOverview  string                 `json:"episodeOverview,omitempty"`
+	EpisodeImage     *Image                 `json:"episodeImage,omitempty"`
 	Probe            *LocalMediaProbe       `json:"probe,omitempty"`
 	SizeBytes        int64                  `json:"sizeBytes"`
 	ModifiedAt       *time.Time             `json:"modifiedAt,omitempty"`
@@ -109,6 +112,65 @@ type LocalMediaItemListResult struct {
 	Total  int              `json:"total"`
 	Limit  int              `json:"limit"`
 	Offset int              `json:"offset"`
+}
+
+type LocalMediaSeasonGroup struct {
+	ID               string                   `json:"id"`
+	SeasonNumber     int                      `json:"seasonNumber"`
+	ItemCount        int                      `json:"itemCount"`
+	MissingCount     int                      `json:"missingCount"`
+	MatchStatus      LocalMediaMatchStatus    `json:"matchStatus"`
+	ConfidenceMin    float64                  `json:"confidenceMin"`
+	ConfidenceMax    float64                  `json:"confidenceMax"`
+	TotalSizeBytes   int64                    `json:"totalSizeBytes"`
+	LatestModifiedAt *time.Time               `json:"latestModifiedAt,omitempty"`
+	LatestUpdatedAt  *time.Time               `json:"latestUpdatedAt,omitempty"`
+	Episodes         []LocalMediaEpisodeGroup `json:"episodes"`
+}
+
+type LocalMediaEpisodeGroup struct {
+	ID               string                `json:"id"`
+	EpisodeNumber    int                   `json:"episodeNumber"`
+	EpisodeTitle     string                `json:"episodeTitle,omitempty"`
+	EpisodeOverview  string                `json:"episodeOverview,omitempty"`
+	EpisodeImage     *Image                `json:"episodeImage,omitempty"`
+	ItemCount        int                   `json:"itemCount"`
+	MissingCount     int                   `json:"missingCount"`
+	MatchStatus      LocalMediaMatchStatus `json:"matchStatus"`
+	ConfidenceMin    float64               `json:"confidenceMin"`
+	ConfidenceMax    float64               `json:"confidenceMax"`
+	TotalSizeBytes   int64                 `json:"totalSizeBytes"`
+	LatestModifiedAt *time.Time            `json:"latestModifiedAt,omitempty"`
+	LatestUpdatedAt  *time.Time            `json:"latestUpdatedAt,omitempty"`
+	Items            []LocalMediaItem      `json:"items"`
+}
+
+type LocalMediaItemGroup struct {
+	ID               string                  `json:"id"`
+	GroupType        string                  `json:"groupType"`
+	LibraryType      LocalMediaLibraryType   `json:"libraryType"`
+	Title            string                  `json:"title"`
+	Overview         string                  `json:"overview,omitempty"`
+	Year             int                     `json:"year,omitempty"`
+	Poster           *Image                  `json:"poster,omitempty"`
+	TextPoster       *Image                  `json:"textPoster,omitempty"`
+	ItemCount        int                     `json:"itemCount"`
+	MissingCount     int                     `json:"missingCount"`
+	MatchStatus      LocalMediaMatchStatus   `json:"matchStatus"`
+	ConfidenceMin    float64                 `json:"confidenceMin"`
+	ConfidenceMax    float64                 `json:"confidenceMax"`
+	TotalSizeBytes   int64                   `json:"totalSizeBytes"`
+	LatestModifiedAt *time.Time              `json:"latestModifiedAt,omitempty"`
+	LatestUpdatedAt  *time.Time              `json:"latestUpdatedAt,omitempty"`
+	Items            []LocalMediaItem        `json:"items,omitempty"`
+	Seasons          []LocalMediaSeasonGroup `json:"seasons,omitempty"`
+}
+
+type LocalMediaGroupListResult struct {
+	Groups []LocalMediaItemGroup `json:"groups"`
+	Total  int                   `json:"total"`
+	Limit  int                   `json:"limit"`
+	Offset int                   `json:"offset"`
 }
 
 type LocalMediaScanSummary struct {

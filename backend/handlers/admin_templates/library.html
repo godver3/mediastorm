@@ -89,6 +89,13 @@
                     <button class="btn btn-secondary btn-sm view-btn" data-view="poster">Poster</button>
                 </div>
             </div>
+            <div class="chip-group">
+                <div class="chip-group-label">Grouping</div>
+                <div class="chip-row" id="groupChipRow">
+                    <button class="btn btn-secondary btn-sm group-btn" data-grouped="false">Flat</button>
+                    <button class="btn btn-secondary btn-sm group-btn" data-grouped="true">Grouped</button>
+                </div>
+            </div>
         </div>
     </div>
     <div class="card-body">
@@ -299,6 +306,10 @@
     border: 1px solid var(--border);
 }
 
+.library-item-card .card-body {
+    padding: 0.8rem 0.9rem;
+}
+
 .library-select-card {
     cursor: pointer;
     transition: border-color 0.15s ease, transform 0.15s ease;
@@ -314,10 +325,59 @@
 }
 
 .library-item-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.8rem;
+    align-items: center;
+}
+
+.library-item-thumb {
+    width: 52px;
+    aspect-ratio: 2 / 3;
+    border-radius: 0.55rem;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--bg-tertiary) 88%, black);
+    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
     display: flex;
-    justify-content: space-between;
-    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.library-item-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.library-item-thumb-fallback {
+    padding: 0.45rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.62rem;
+    line-height: 1.2;
+}
+
+.library-item-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.3rem;
+}
+
+.library-item-title {
+    font-weight: 600;
+    color: #fff;
+    line-height: 1.25;
+    word-break: break-word;
+}
+
+.library-item-meta {
+    display: flex;
+    gap: 0.55rem;
     flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: 0.8rem;
 }
 
 .library-item-actions {
@@ -329,7 +389,7 @@
 
 .library-item-details {
     border-top: 1px solid var(--border);
-    padding-top: 0.9rem;
+    padding-top: 0.75rem;
 }
 
 .library-pagination {
@@ -416,6 +476,188 @@
     gap: 0.6rem;
 }
 
+.library-poster-title {
+    font-weight: 600;
+    color: #fff;
+}
+
+.library-group-list {
+    display: grid;
+    gap: 0.95rem;
+}
+
+.library-group-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+
+.library-group-header {
+    padding: 0.9rem;
+    display: grid;
+    gap: 0.85rem;
+    cursor: pointer;
+}
+
+.library-group-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.85rem;
+    align-items: center;
+}
+
+.library-group-thumb {
+    width: 62px;
+    aspect-ratio: 2 / 3;
+    border-radius: 0.65rem;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--bg-tertiary) 88%, black);
+    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.library-group-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.library-group-thumb-fallback {
+    padding: 0.5rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.68rem;
+    line-height: 1.2;
+}
+
+.library-group-title {
+    color: #fff;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.library-group-overview {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.library-group-meta,
+.library-group-stats {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.library-group-stats {
+    color: var(--text-secondary);
+}
+
+.library-group-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.library-group-details {
+    border-top: 1px solid var(--border);
+    padding: 0.9rem;
+    display: grid;
+    gap: 0.9rem;
+}
+
+.library-season-block {
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    border-radius: calc(var(--radius) - 2px);
+    overflow: hidden;
+    background: color-mix(in srgb, var(--bg-secondary) 80%, var(--bg-primary));
+}
+
+.library-season-header {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    color: inherit;
+    padding: 0.8rem 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    cursor: pointer;
+}
+
+.library-season-header:hover {
+    background: var(--bg-hover);
+}
+
+.library-season-label {
+    color: #fff;
+    font-weight: 600;
+}
+
+.library-season-items {
+    padding: 0.8rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+.library-episode-group {
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    border-radius: calc(var(--radius) - 3px);
+    background: color-mix(in srgb, var(--bg-secondary) 84%, var(--bg-primary));
+    overflow: hidden;
+}
+
+.library-episode-header {
+    padding: 0.8rem 0.9rem;
+    display: grid;
+    gap: 0.45rem;
+    cursor: pointer;
+}
+
+.library-episode-title {
+    color: #fff;
+    font-weight: 600;
+}
+
+.library-episode-overview {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.4;
+}
+
+.library-episode-items {
+    border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    padding: 0.8rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+@media (min-width: 701px) {
+    .library-item-actions {
+        gap: 0.4rem;
+        justify-content: flex-end;
+    }
+
+    .library-item-actions .btn {
+        min-height: 2rem;
+        padding: 0.35rem 0.7rem;
+    }
+
+    .library-group-actions .btn {
+        min-height: 2rem;
+        padding: 0.35rem 0.7rem;
+    }
+}
+
 @media (max-width: 700px) {
     .grid.grid-2 {
         grid-template-columns: 1fr;
@@ -493,6 +735,32 @@
         padding-left: 0.85rem;
         padding-right: 0.85rem;
     }
+
+    .library-item-card .card-body {
+        padding: 0.9rem;
+    }
+
+    .library-item-summary {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .library-item-summary .status-badge {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+
+    .library-item-thumb {
+        width: 48px;
+    }
+
+    .library-group-summary {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .library-group-summary .status-badge {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
 }
 </style>
 {{end}}
@@ -515,8 +783,13 @@ let activeMatchItem = null;
 let currentItemsById = new Map();
 let currentMatchResults = [];
 let currentVisibleItems = [];
+let currentVisibleGroups = [];
 let currentView = 'list';
+let currentGrouped = true;
 let itemsSearchDebounceHandle = 0;
+let expandedGroups = new Set();
+let expandedSeasons = new Set();
+let expandedEpisodeGroups = new Set();
 const libraryStateStorageKey = 'strmr.library.ui.v1';
 
 if (!isAdmin) {
@@ -570,7 +843,24 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.view-btn').forEach(x => x.classList.remove('active'));
       btn.classList.add('active');
       persistLibraryUIState();
-      renderCurrentItems();
+      if (selectedLibraryId) {
+        loadItems(selectedLibraryId);
+      } else {
+        renderCurrentItems();
+      }
+    });
+  });
+  document.querySelectorAll('.group-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentGrouped = btn.dataset.grouped === 'true';
+      document.querySelectorAll('.group-btn').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+      persistLibraryUIState();
+      if (selectedLibraryId) {
+        loadItems(selectedLibraryId);
+      } else {
+        renderCurrentItems();
+      }
     });
   });
   syncLibraryControls();
@@ -663,6 +953,9 @@ function selectLibrary(id) {
   selectedLibraryId = id;
   currentItemsOffset = 0;
   expandedItems = new Set();
+  expandedGroups = new Set();
+  expandedSeasons = new Set();
+  expandedEpisodeGroups = new Set();
   persistLibraryUIState();
   renderLibraries(document.getElementById('librariesList'));
   loadItems(id);
@@ -712,6 +1005,7 @@ async function deleteLibrary(id) {
     if (selectedLibraryId === id) {
       selectedLibraryId = '';
       currentVisibleItems = [];
+      currentVisibleGroups = [];
       currentItemsById = new Map();
       document.getElementById('itemsList').innerHTML = 'No library selected yet.';
     }
@@ -740,7 +1034,10 @@ async function loadItems(libraryId) {
   itemsList.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   pagination.style.display = 'none';
   currentVisibleItems = [];
+  currentVisibleGroups = [];
   currentItemsById = new Map();
+  expandedItems = new Set();
+  expandedEpisodeGroups = new Set();
 
   try {
     const params = new URLSearchParams({
@@ -751,28 +1048,33 @@ async function loadItems(libraryId) {
       offset: String(currentItemsOffset),
     });
     if (currentItemQuery) params.set('query', currentItemQuery);
-    const res = await fetch(basePath + '/api/library/libraries/' + encodeURIComponent(libraryId) + '/items?' + params.toString());
+    const endpoint = currentGrouped ? 'groups' : 'items';
+    const res = await fetch(basePath + '/api/library/libraries/' + encodeURIComponent(libraryId) + '/' + endpoint + '?' + params.toString());
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     const items = Array.isArray(data.items) ? data.items : [];
+    const groups = Array.isArray(data.groups) ? data.groups : [];
     currentVisibleItems = items;
-    currentItemsById = new Map(items.map(item => [item.id, item]));
+    currentVisibleGroups = groups;
+    currentItemsById = buildCurrentItemsMap(items, groups);
     const total = Number(data.total) || 0;
     const pageStart = total === 0 ? 0 : currentItemsOffset + 1;
-    const pageEnd = Math.min(total, currentItemsOffset + items.length);
-    itemsMeta.textContent = total ? `Showing ${pageStart}-${pageEnd} of ${total} items` : 'No items match the current filters';
+    const visibleCount = currentGrouped ? groups.length : items.length;
+    const pageEnd = Math.min(total, currentItemsOffset + visibleCount);
+    itemsMeta.textContent = total ? `Showing ${pageStart}-${pageEnd} of ${total} ${currentGrouped ? 'groups' : 'items'}` : `No ${currentGrouped ? 'groups' : 'items'} match the current filters`;
     pageLabel.textContent = total ? `Page ${Math.floor(currentItemsOffset / itemsPageSize) + 1} of ${Math.max(1, Math.ceil(total / itemsPageSize))}` : '';
     prevBtn.disabled = currentItemsOffset <= 0;
     nextBtn.disabled = currentItemsOffset + itemsPageSize >= total;
     pagination.style.display = total > itemsPageSize ? 'flex' : 'none';
     persistLibraryUIState();
-    if (!items.length) {
-      itemsList.innerHTML = '<div style="color: var(--text-muted);">No items for this filter.</div>';
+    if (!visibleCount) {
+      itemsList.innerHTML = `<div style="color: var(--text-muted);">No ${currentGrouped ? 'groups' : 'items'} for this filter.</div>`;
       return;
     }
     renderCurrentItems();
   } catch (err) {
     currentVisibleItems = [];
+    currentVisibleGroups = [];
     currentItemsById = new Map();
     itemsList.innerHTML = `<div style="color: var(--danger);">Failed to load items: ${escapeHtml(err.message)}</div>`;
   }
@@ -780,6 +1082,27 @@ async function loadItems(libraryId) {
 
 function renderCurrentItems() {
   const itemsList = document.getElementById('itemsList');
+  if (currentGrouped) {
+    if (!currentVisibleGroups.length) {
+      itemsList.className = '';
+      itemsList.style.display = 'grid';
+      itemsList.style.gap = '0.875rem';
+      itemsList.innerHTML = '<div style="color: var(--text-muted);">No groups for this filter.</div>';
+      return;
+    }
+    if (currentView === 'poster') {
+      itemsList.className = 'library-items-poster';
+      itemsList.style.display = 'grid';
+      itemsList.style.gap = '1rem';
+      itemsList.innerHTML = currentVisibleGroups.map(renderGroupedPosterItem).join('');
+    } else {
+      itemsList.className = 'library-group-list';
+      itemsList.style.display = 'grid';
+      itemsList.style.gap = '0.95rem';
+      itemsList.innerHTML = currentVisibleGroups.map(renderGroupedItem).join('');
+    }
+    return;
+  }
   if (!currentVisibleItems.length) {
     itemsList.className = '';
     itemsList.style.display = 'grid';
@@ -798,6 +1121,22 @@ function renderCurrentItems() {
   itemsList.style.display = 'grid';
   itemsList.style.gap = '0.875rem';
   itemsList.innerHTML = currentVisibleItems.map(renderItem).join('');
+}
+
+function buildCurrentItemsMap(items, groups) {
+  if (Array.isArray(items) && items.length) {
+    return new Map(items.map(item => [item.id, item]));
+  }
+  const map = new Map();
+  (Array.isArray(groups) ? groups : []).forEach(group => {
+    (Array.isArray(group.items) ? group.items : []).forEach(item => map.set(item.id, item));
+    (Array.isArray(group.seasons) ? group.seasons : []).forEach(season => {
+      (Array.isArray(season.episodes) ? season.episodes : []).forEach(episode => {
+        (Array.isArray(episode.items) ? episode.items : []).forEach(item => map.set(item.id, item));
+      });
+    });
+  });
+  return map;
 }
 
 function renderSummaryPills(library) {
@@ -822,8 +1161,10 @@ function setQuickFilter(filter) {
 function renderItem(item) {
   const meta = item.metadata || {};
   const probe = item.probe || {};
-  const badgeClass = item.isMissing ? 'offline' : item.matchStatus === 'matched' || item.matchStatus === 'manual' ? 'online' : item.matchStatus === 'low_confidence' ? 'warning' : 'offline';
+  const poster = (meta.textPoster && meta.textPoster.url) || (meta.poster && meta.poster.url) || '';
+  const badgeClass = item.isMissing ? 'offline' : matchStatusClass(item.matchStatus);
   const expanded = expandedItems.has(item.id);
+  const showDetails = currentGrouped || expanded;
   const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
   const year = meta.year || item.matchedYear || item.detectedYear || '';
   const episodeLabel = item.seasonNumber && item.episodeNumber ? `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}` : '';
@@ -832,24 +1173,28 @@ function renderItem(item) {
   return `
     <div class="card library-item-card">
       <div class="card-body" style="display: grid; gap: 0.75rem;">
-        <div class="library-item-summary">
-          <div>
-            <div style="font-weight: 600;">${escapeHtml(title)}</div>
-            <div style="display: flex; gap: 0.6rem; flex-wrap: wrap; color: var(--text-muted); font-size: 0.85rem;">
-              ${episodeLabel ? `<span>${episodeLabel}</span>` : ''}
+        <div class="library-item-summary"${currentGrouped ? '' : ` onclick="toggleItemExpanded('${item.id}')" style="cursor: pointer;"`}>
+          <div class="library-item-thumb">
+            ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}" loading="lazy">` : `<div class="library-item-thumb-fallback">${escapeHtml(title)}</div>`}
+          </div>
+          <div class="library-item-main">
+            <div class="library-item-title">${escapeHtml(title)}</div>
+            <div class="library-item-meta">
+              ${episodeLabel ? `<span>${episodeLabel}${item.episodeTitle ? ` · ${escapeHtml(item.episodeTitle)}` : ''}</span>` : ''}
               ${year ? `<span>${escapeHtml(String(year))}</span>` : ''}
               ${resolutionLabel ? `<span>${escapeHtml(resolutionLabel)}</span>` : ''}
             </div>
           </div>
-          <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+          <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center; justify-content: flex-end;" onclick="event.stopPropagation()">
+            <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+            <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
+          </div>
         </div>
-        <div class="library-item-actions">
-          <button class="btn btn-secondary btn-sm" type="button" onclick="toggleItemExpanded('${item.id}')">${expanded ? 'Collapse' : 'Expand'}</button>
+        <div class="library-item-actions" onclick="event.stopPropagation()">
           ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept Match</button>` : ''}
-          <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
           ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
         </div>
-        ${expanded ? renderExpandedItemDetails(item, meta, probe) : ''}
+        ${showDetails ? renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped }) : ''}
       </div>
     </div>
   `;
@@ -858,43 +1203,186 @@ function renderItem(item) {
 function renderPosterItem(item) {
   const meta = item.metadata || {};
   const probe = item.probe || {};
-  const poster = meta.poster && meta.poster.url ? meta.poster.url : '';
-  const badgeClass = item.isMissing ? 'offline' : item.matchStatus === 'matched' || item.matchStatus === 'manual' ? 'online' : item.matchStatus === 'low_confidence' ? 'warning' : 'offline';
+  const poster = (meta.textPoster && meta.textPoster.url) || (meta.poster && meta.poster.url) || '';
+  const badgeClass = item.isMissing ? 'offline' : matchStatusClass(item.matchStatus);
   const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
   const year = meta.year || item.matchedYear || item.detectedYear || '';
   const statusLabel = item.isMissing ? 'missing' : item.matchStatus.replace('_', ' ');
+  const showDetails = currentGrouped || expandedItems.has(item.id);
   return `
     <div class="library-poster-card">
-      <div class="library-poster-image">
+      <div class="library-poster-image"${currentGrouped ? '' : ` onclick="togglePosterItemExpand('${item.id}')" style="cursor: pointer;"`}>
         ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}">` : `<div class="library-poster-fallback">${escapeHtml(title)}</div>`}
       </div>
       <div class="library-poster-body">
-        <div>
-          <div style="font-weight: 600;">${escapeHtml(title)}</div>
-          <div style="color: var(--text-muted); font-size: 0.85rem;">${year ? escapeHtml(String(year)) : escapeHtml(item.relativePath)}</div>
+        <div${currentGrouped ? '' : ` onclick="togglePosterItemExpand('${item.id}')" style="cursor: pointer;"`}>
+          <div class="library-poster-title">${escapeHtml(title)}</div>
+          <div style="color: var(--text-muted); font-size: 0.85rem;">${episodeLabelForItem(item) || (year ? escapeHtml(String(year)) : escapeHtml(item.relativePath))}</div>
         </div>
-        <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+        <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center;" onclick="event.stopPropagation()">
+          <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
+        </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
           <span>${probe.width ? `${probe.width}x${probe.height}` : 'Unknown video'}</span>
           <span>${probe.durationSeconds ? formatDuration(probe.durationSeconds) : 'Unknown runtime'}</span>
         </div>
-        <div class="library-item-actions">
+        <div class="library-item-actions" onclick="event.stopPropagation()">
           ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept</button>` : ''}
-          <button class="btn btn-secondary btn-sm" type="button" onclick="togglePosterItemExpand('${item.id}')">${expandedItems.has(item.id) ? 'Details' : 'Details'}</button>
-          <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
           ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
         </div>
-        ${expandedItems.has(item.id) ? renderExpandedItemDetails(item, meta, probe) : ''}
+        ${showDetails ? renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped }) : ''}
       </div>
     </div>
   `;
 }
 
-function renderExpandedItemDetails(item, meta, probe) {
+function renderGroupedItem(group) {
+  const poster = (group.textPoster && group.textPoster.url) || (group.poster && group.poster.url) || '';
+  const expanded = expandedGroups.has(group.id);
+  const badgeClass = matchStatusClass(group.matchStatus);
+  const title = group.title || 'Untitled';
+  const secondaryBits = [];
+  if (group.year) secondaryBits.push(String(group.year));
+  if (group.groupType === 'movie_versions') {
+    secondaryBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  } else if (group.groupType === 'series') {
+    secondaryBits.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
+    secondaryBits.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
+    secondaryBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  } else {
+    secondaryBits.push(`${group.itemCount} file${group.itemCount === 1 ? '' : 's'}`);
+  }
+  if (group.missingCount) {
+    secondaryBits.push(`${group.missingCount} missing`);
+  }
+  return `
+    <div class="library-group-card">
+      <div class="library-group-header" onclick="toggleGroupExpanded('${group.id}')">
+        <div class="library-group-summary">
+          <div class="library-group-thumb">
+            ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}" loading="lazy">` : `<div class="library-group-thumb-fallback">${escapeHtml(title)}</div>`}
+          </div>
+          <div style="min-width: 0; display: grid; gap: 0.45rem;">
+            <div class="library-group-title">${escapeHtml(title)}</div>
+            <div class="library-group-meta">${secondaryBits.map(bit => `<span>${escapeHtml(bit)}</span>`).join('')}</div>
+            <div class="library-group-stats">
+              <span>${Math.round((group.confidenceMax || 0) * 100)}% max confidence</span>
+              <span>${formatBytes(group.totalSizeBytes || 0)}</span>
+              <span>${group.latestUpdatedAt ? `Updated ${escapeHtml(formatRelativeTime(group.latestUpdatedAt))}` : 'Updated recently'}</span>
+            </div>
+            ${group.overview ? `<div class="library-group-overview">${escapeHtml(group.overview)}</div>` : ''}
+          </div>
+          <div class="status-badge ${badgeClass}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+        </div>
+      </div>
+      ${expanded ? renderGroupedChildren(group) : ''}
+    </div>
+  `;
+}
+
+function renderGroupedPosterItem(group) {
+  const poster = (group.textPoster && group.textPoster.url) || (group.poster && group.poster.url) || '';
+  const expanded = expandedGroups.has(group.id);
+  const title = group.title || 'Untitled';
+  const metaBits = [];
+  if (group.year) metaBits.push(String(group.year));
+  if (group.groupType === 'series') {
+    metaBits.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
+    metaBits.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
+    metaBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  } else {
+    metaBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  }
+  return `
+    <div class="library-poster-card">
+      <div class="library-poster-image" onclick="toggleGroupExpanded('${group.id}')" style="cursor: pointer;">
+        ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}">` : `<div class="library-poster-fallback">${escapeHtml(title)}</div>`}
+      </div>
+      <div class="library-poster-body">
+        <div onclick="toggleGroupExpanded('${group.id}')" style="cursor: pointer;">
+          <div class="library-poster-title">${escapeHtml(title)}</div>
+          <div style="color: var(--text-muted); font-size: 0.85rem;">${metaBits.map(escapeHtml).join(' · ')}</div>
+        </div>
+        <div class="status-badge ${matchStatusClass(group.matchStatus)}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+        ${group.overview ? `<div class="library-group-overview">${escapeHtml(group.overview)}</div>` : ''}
+        ${expanded ? `<div onclick="event.stopPropagation()">${renderGroupedChildren(group)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderGroupedChildren(group) {
+  if (group.groupType === 'series') {
+    const seasons = Array.isArray(group.seasons) ? group.seasons : [];
+    return `
+      <div class="library-group-details">
+        ${seasons.map(renderSeasonGroup).join('')}
+      </div>
+    `;
+  }
+  const items = Array.isArray(group.items) ? group.items : [];
+  return `
+    <div class="library-group-details">
+      ${items.map(currentView === 'poster' ? renderPosterItem : renderItem).join('')}
+    </div>
+  `;
+}
+
+function renderSeasonGroup(season) {
+  const expanded = expandedSeasons.has(season.id);
+  const label = season.seasonNumber > 0 ? `Season ${season.seasonNumber}` : 'Specials / Unknown Season';
+  return `
+    <div class="library-season-block">
+      <button class="library-season-header" type="button" onclick="toggleSeasonExpanded('${season.id}')">
+        <div style="display: grid; gap: 0.3rem; text-align: left;">
+          <div class="library-season-label">${escapeHtml(label)}</div>
+          <div class="library-group-meta">
+            <span>${(season.episodes || []).length} episode${(season.episodes || []).length === 1 ? '' : 's'}</span>
+            <span>${season.itemCount || 0} item${season.itemCount === 1 ? '' : 's'}</span>
+            ${(season.missingCount || 0) ? `<span>${season.missingCount} missing</span>` : ''}
+            <span>${Math.round((season.confidenceMax || 0) * 100)}% max confidence</span>
+          </div>
+        </div>
+        <div class="status-badge ${matchStatusClass(season.matchStatus)}">${expanded ? 'Hide' : 'Show'}</div>
+      </button>
+      ${expanded ? `<div class="library-season-items">${(season.episodes || []).map(renderEpisodeGroup).join('')}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderEpisodeGroup(group) {
+  const expanded = expandedEpisodeGroups.has(group.id);
+  const episodeBits = [];
+  if (group.episodeNumber > 0) episodeBits.push(`E${String(group.episodeNumber).padStart(2, '0')}`);
+  if (group.itemCount) episodeBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  if (group.missingCount) episodeBits.push(`${group.missingCount} missing`);
+  return `
+    <div class="library-episode-group">
+      <div class="library-episode-header" onclick="toggleEpisodeGroupExpanded('${group.id}')">
+        <div style="display: flex; justify-content: space-between; gap: 0.75rem; align-items: start;">
+          <div style="min-width: 0; display: grid; gap: 0.35rem;">
+            <div class="library-episode-title">${escapeHtml(group.episodeTitle || (group.episodeNumber > 0 ? `Episode ${group.episodeNumber}` : 'Unknown Episode'))}</div>
+            <div class="library-group-meta">${episodeBits.map(bit => `<span>${escapeHtml(bit)}</span>`).join('')}</div>
+            ${group.episodeOverview ? `<div class="library-episode-overview">${escapeHtml(group.episodeOverview)}</div>` : ''}
+          </div>
+          <div class="status-badge ${matchStatusClass(group.matchStatus)}">${expanded ? 'Hide' : 'Show'}</div>
+        </div>
+      </div>
+      ${expanded ? `<div class="library-episode-items">${(group.items || []).map(currentView === 'poster' ? renderPosterItem : renderItem).join('')}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderExpandedItemDetails(item, meta, probe, options = {}) {
   const episodeLabel = item.seasonNumber && item.episodeNumber ? `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}` : 'N/A';
   const matchLabel = meta.name ? `${meta.name}${meta.year ? ' (' + meta.year + ')' : ''}` : (item.matchedName ? `${item.matchedName}${item.matchedYear ? ' (' + item.matchedYear + ')' : ''}` : 'No metadata match');
   const externalIds = item.externalIds || {};
   const externalIdParts = [];
+  const suppressSeriesOverview = options && options.suppressSeriesOverview && item.libraryType === 'show' && item.seasonNumber > 0;
+  const suppressGroupedOverview = options && options.suppressGroupedOverview;
+  const detailOverview = suppressGroupedOverview ? '' : (item.episodeOverview || meta.overview || '');
+  const shouldShowOverview = !suppressGroupedOverview && (Boolean(item.episodeOverview) || (!suppressSeriesOverview && (detailOverview || meta.genres?.length)));
   if (externalIds.imdb) externalIdParts.push(`IMDb: ${escapeHtml(externalIds.imdb)}`);
   if (externalIds.tmdb) externalIdParts.push(`TMDb: ${escapeHtml(externalIds.tmdb)}`);
   if (externalIds.tvdb) externalIdParts.push(`TVDB: ${escapeHtml(externalIds.tvdb)}`);
@@ -907,15 +1395,15 @@ function renderExpandedItemDetails(item, meta, probe) {
         <span>${probe.durationSeconds ? formatDuration(probe.durationSeconds) : 'Unknown runtime'}</span>
         <span>${item.sizeBytes ? formatBytes(item.sizeBytes) : 'Unknown size'}</span>
       </div>
-      ${(meta.overview || meta.genres?.length) ? `
+      ${shouldShowOverview ? `
         <div style="color: var(--text-secondary); font-size: 0.9rem;">
-          ${meta.overview ? escapeHtml(meta.overview) : ''}
+          ${detailOverview ? escapeHtml(detailOverview) : ''}
           ${meta.genres?.length ? `<div style="margin-top: 0.35rem; color: var(--text-muted);">${meta.genres.map(escapeHtml).join(' · ')}</div>` : ''}
         </div>
       ` : ''}
       <div style="display: flex; gap: 1rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
         <span>Detected year: ${item.detectedYear || 'Unknown'}</span>
-        <span>Episode: ${episodeLabel}</span>
+        <span>Episode: ${item.episodeTitle ? `${episodeLabel} · ${escapeHtml(item.episodeTitle)}` : episodeLabel}</span>
         <span>Audio: ${probe.audioCodecs?.length ? probe.audioCodecs.map(escapeHtml).join(', ') : 'Unknown'}</span>
         <span>HDR: ${probe.hdrFormat ? escapeHtml(probe.hdrFormat) : 'None'}</span>
         <span>Subtitles: ${probe.subtitleStreams || 0}</span>
@@ -939,6 +1427,33 @@ function toggleItemExpanded(itemId) {
 
 function togglePosterItemExpand(itemId) {
   toggleItemExpanded(itemId);
+}
+
+function toggleGroupExpanded(groupId) {
+  if (expandedGroups.has(groupId)) {
+    expandedGroups.delete(groupId);
+  } else {
+    expandedGroups.add(groupId);
+  }
+  renderCurrentItems();
+}
+
+function toggleSeasonExpanded(seasonId) {
+  if (expandedSeasons.has(seasonId)) {
+    expandedSeasons.delete(seasonId);
+  } else {
+    expandedSeasons.add(seasonId);
+  }
+  renderCurrentItems();
+}
+
+function toggleEpisodeGroupExpanded(groupId) {
+  if (expandedEpisodeGroups.has(groupId)) {
+    expandedEpisodeGroups.delete(groupId);
+  } else {
+    expandedEpisodeGroups.add(groupId);
+  }
+  renderCurrentItems();
 }
 
 function applyItemFilters() {
@@ -1200,6 +1715,12 @@ function formatStatus(status) {
   return (status || 'idle').replace('_', ' ');
 }
 
+function matchStatusClass(status) {
+  if (status === 'matched' || status === 'manual') return 'online';
+  if (status === 'low_confidence') return 'warning';
+  return 'offline';
+}
+
 function formatDuration(seconds) {
   const total = Math.round(seconds);
   const h = Math.floor(total / 3600);
@@ -1257,6 +1778,7 @@ function persistLibraryUIState() {
       currentSort,
       currentSortDir,
       currentView,
+      currentGrouped,
     }));
   } catch (_) {}
 }
@@ -1272,7 +1794,8 @@ function restoreLibraryUIState() {
     currentItemQuery = typeof saved.currentItemQuery === 'string' ? saved.currentItemQuery : '';
     currentSort = typeof saved.currentSort === 'string' ? saved.currentSort : 'updated';
     currentSortDir = typeof saved.currentSortDir === 'string' ? saved.currentSortDir : 'desc';
-    currentView = typeof saved.currentView === 'string' ? saved.currentView : 'list';
+    currentView = saved.currentView === 'poster' ? 'poster' : 'list';
+    currentGrouped = saved.currentGrouped !== false;
   } catch (_) {}
 }
 
@@ -1289,6 +1812,9 @@ function syncLibraryControls() {
   document.querySelectorAll('.view-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === currentView);
   });
+  document.querySelectorAll('.group-btn').forEach(btn => {
+    btn.classList.toggle('active', String(currentGrouped) === btn.dataset.grouped);
+  });
 }
 
 function escapeHtml(value) {
@@ -1298,6 +1824,17 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function episodeLabelForItem(item) {
+  if (!(item && item.seasonNumber && item.episodeNumber)) return '';
+  const code = `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}`;
+  return item.episodeTitle ? `${code} · ${escapeHtml(item.episodeTitle)}` : code;
+}
+
+function countDistinctEpisodes(group) {
+  if (!group || !Array.isArray(group.seasons)) return 0;
+  return group.seasons.reduce((total, season) => total + ((season && Array.isArray(season.episodes)) ? season.episodes.length : 0), 0);
 }
 </script>
 {{end}}

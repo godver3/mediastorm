@@ -5667,6 +5667,32 @@ func (h *AdminUIHandler) ListLocalMediaItems(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(items)
 }
 
+func (h *AdminUIHandler) ListLocalMediaGroups(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["libraryID"]
+	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+	offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
+	groups, err := h.localMediaService.ListGroups(r.Context(), id, models.LocalMediaItemListQuery{
+		Filter: r.URL.Query().Get("filter"),
+		Sort:   r.URL.Query().Get("sort"),
+		Dir:    r.URL.Query().Get("dir"),
+		Query:  r.URL.Query().Get("query"),
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if groups == nil {
+		groups = &models.LocalMediaGroupListResult{Groups: []models.LocalMediaItemGroup{}}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(groups)
+}
+
 func (h *AdminUIHandler) SearchLocalMediaMetadata(w http.ResponseWriter, r *http.Request) {
 	if !h.requireLocalMediaAdmin(w, r) {
 		return

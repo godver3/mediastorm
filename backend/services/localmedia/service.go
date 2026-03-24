@@ -249,7 +249,594 @@ func (s *Service) ListItems(ctx context.Context, libraryID string, query models.
 		return nil, err
 	}
 	hydrateLocalMediaItemResultExternalIDs(result)
+	s.enrichEpisodeMetadata(ctx, result.Items)
 	return result, nil
+}
+
+func (s *Service) ListGroups(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaGroupListResult, error) {
+	query.Filter = strings.TrimSpace(query.Filter)
+	switch query.Filter {
+	case "", "all", string(models.LocalMediaMatchStatusMatched), string(models.LocalMediaMatchStatusLowConfidence), string(models.LocalMediaMatchStatusUnmatched), string(models.LocalMediaMatchStatusManual):
+	default:
+		query.Filter = "all"
+	}
+
+	query.Sort = strings.TrimSpace(query.Sort)
+	switch query.Sort {
+	case "", "updated", "name", "confidence", "year", "size", "modified", "status":
+	default:
+		query.Sort = "updated"
+	}
+
+	query.Dir = strings.TrimSpace(query.Dir)
+	if query.Dir != "asc" && query.Dir != "desc" {
+		query.Dir = "desc"
+	}
+
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = 50
+	}
+	if query.Offset < 0 {
+		query.Offset = 0
+	}
+
+	items, err := s.repo.ListAllItemsByLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	result := &models.LocalMediaItemListResult{Items: items}
+	hydrateLocalMediaItemResultExternalIDs(result)
+	s.enrichEpisodeMetadata(ctx, result.Items)
+
+	filtered := make([]models.LocalMediaItem, 0, len(result.Items))
+	for _, item := range result.Items {
+		if localMediaItemMatchesQuery(item, query.Filter, query.Query) {
+			filtered = append(filtered, item)
+		}
+	}
+
+	groups := buildLocalMediaGroups(filtered)
+	sortLocalMediaGroups(groups, query.Sort, query.Dir)
+
+	total := len(groups)
+	start := min(query.Offset, total)
+	end := min(start+query.Limit, total)
+	if start < end {
+		groups = groups[start:end]
+	} else {
+		groups = []models.LocalMediaItemGroup{}
+	}
+
+	return &models.LocalMediaGroupListResult{
+		Groups: groups,
+		Total:  total,
+		Limit:  query.Limit,
+		Offset: query.Offset,
+	}, nil
+}
+
+type localMediaGroupAccumulator struct {
+	group   models.LocalMediaItemGroup
+	seasons map[int]*localMediaSeasonAccumulator
+}
+
+type localMediaSeasonAccumulator struct {
+	season   models.LocalMediaSeasonGroup
+	episodes map[string]*localMediaEpisodeAccumulator
+}
+
+type localMediaEpisodeAccumulator struct {
+	episode models.LocalMediaEpisodeGroup
+}
+
+func localMediaItemMatchesQuery(item models.LocalMediaItem, filter, rawQuery string) bool {
+	if filter != "" && filter != "all" && string(item.MatchStatus) != filter {
+		return false
+	}
+	query := strings.ToLower(strings.TrimSpace(rawQuery))
+	if query == "" {
+		return true
+	}
+	metaName := ""
+	if item.Metadata != nil {
+		metaName = item.Metadata.Name
+	}
+	fields := []string{
+		item.RelativePath,
+		item.FileName,
+		item.DetectedTitle,
+		item.MatchedName,
+		metaName,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildLocalMediaGroups(items []models.LocalMediaItem) []models.LocalMediaItemGroup {
+	acc := make(map[string]*localMediaGroupAccumulator)
+	order := make([]string, 0)
+
+	for _, item := range items {
+		key, groupType := localMediaGroupKey(item)
+		entry, ok := acc[key]
+		if !ok {
+			entry = &localMediaGroupAccumulator{
+				group: models.LocalMediaItemGroup{
+					ID:          key,
+					GroupType:   groupType,
+					LibraryType: item.LibraryType,
+				},
+				seasons: make(map[int]*localMediaSeasonAccumulator),
+			}
+			acc[key] = entry
+			order = append(order, key)
+		}
+		updateLocalMediaGroupSummary(&entry.group, item)
+		if item.LibraryType == models.LocalMediaLibraryTypeShow {
+			seasonNumber := item.SeasonNumber
+			seasonEntry, ok := entry.seasons[seasonNumber]
+			if !ok {
+				seasonEntry = &localMediaSeasonAccumulator{
+					season: models.LocalMediaSeasonGroup{
+						ID:           fmt.Sprintf("%s:season:%d", key, seasonNumber),
+						SeasonNumber: seasonNumber,
+					},
+					episodes: make(map[string]*localMediaEpisodeAccumulator),
+				}
+				entry.seasons[seasonNumber] = seasonEntry
+			}
+			updateLocalMediaSeasonSummary(&seasonEntry.season, item)
+			episodeKey := localMediaEpisodeGroupKey(item)
+			episodeEntry, ok := seasonEntry.episodes[episodeKey]
+			if !ok {
+				episodeEntry = &localMediaEpisodeAccumulator{
+					episode: models.LocalMediaEpisodeGroup{
+						ID:              fmt.Sprintf("%s:episode:%s", seasonEntry.season.ID, episodeKey),
+						EpisodeNumber:   item.EpisodeNumber,
+						EpisodeTitle:    strings.TrimSpace(item.EpisodeTitle),
+						EpisodeOverview: strings.TrimSpace(item.EpisodeOverview),
+						EpisodeImage:    item.EpisodeImage,
+					},
+				}
+				seasonEntry.episodes[episodeKey] = episodeEntry
+			}
+			updateLocalMediaEpisodeSummary(&episodeEntry.episode, item)
+			episodeEntry.episode.Items = append(episodeEntry.episode.Items, item)
+			continue
+		}
+		entry.group.Items = append(entry.group.Items, item)
+	}
+
+	groups := make([]models.LocalMediaItemGroup, 0, len(order))
+	for _, key := range order {
+		entry := acc[key]
+		group := entry.group
+		if group.LibraryType == models.LocalMediaLibraryTypeShow {
+			seasonNumbers := make([]int, 0, len(entry.seasons))
+			for seasonNumber := range entry.seasons {
+				seasonNumbers = append(seasonNumbers, seasonNumber)
+			}
+			sort.Ints(seasonNumbers)
+			seasons := make([]models.LocalMediaSeasonGroup, 0, len(seasonNumbers))
+			for _, seasonNumber := range seasonNumbers {
+				season := entry.seasons[seasonNumber].season
+				episodeKeys := make([]string, 0, len(entry.seasons[seasonNumber].episodes))
+				for episodeKey := range entry.seasons[seasonNumber].episodes {
+					episodeKeys = append(episodeKeys, episodeKey)
+				}
+				sort.Strings(episodeKeys)
+				episodes := make([]models.LocalMediaEpisodeGroup, 0, len(episodeKeys))
+				season.ItemCount = 0
+				for _, episodeKey := range episodeKeys {
+					episode := entry.seasons[seasonNumber].episodes[episodeKey].episode
+					sortLocalMediaItems(episode.Items, "quality", "desc")
+					episode.ItemCount = len(episode.Items)
+					season.ItemCount += episode.ItemCount
+					episodes = append(episodes, episode)
+				}
+				sortLocalMediaEpisodeGroups(episodes)
+				season.Episodes = episodes
+				seasons = append(seasons, season)
+			}
+			group.Seasons = seasons
+			group.ItemCount = 0
+			for _, season := range seasons {
+				group.ItemCount += season.ItemCount
+			}
+		} else {
+			sortLocalMediaItems(group.Items, "quality", "desc")
+			group.ItemCount = len(group.Items)
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func localMediaGroupKey(item models.LocalMediaItem) (string, string) {
+	switch item.LibraryType {
+	case models.LocalMediaLibraryTypeShow:
+		if id := localMediaResolvedTitleID(item); id != "" {
+			return "series:" + id, "series"
+		}
+		return fmt.Sprintf("series:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "series"
+	case models.LocalMediaLibraryTypeMovie:
+		if id := localMediaResolvedTitleID(item); id != "" {
+			return "movie:" + id, "movie_versions"
+		}
+		return fmt.Sprintf("movie:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "movie_versions"
+	default:
+		return "file:" + item.ID, "file"
+	}
+}
+
+func updateLocalMediaGroupSummary(group *models.LocalMediaItemGroup, item models.LocalMediaItem) {
+	if group.Title == "" {
+		group.Title = localMediaResolvedTitle(item)
+	}
+	if group.Overview == "" && item.Metadata != nil && strings.TrimSpace(item.Metadata.Overview) != "" {
+		group.Overview = strings.TrimSpace(item.Metadata.Overview)
+	}
+	if group.Year == 0 {
+		group.Year = localMediaResolvedYear(item)
+	}
+	if group.Poster == nil && item.Metadata != nil && item.Metadata.Poster != nil {
+		group.Poster = item.Metadata.Poster
+	}
+	if group.TextPoster == nil && item.Metadata != nil && item.Metadata.TextPoster != nil {
+		group.TextPoster = item.Metadata.TextPoster
+	}
+	if group.MatchStatus == "" || localMediaMatchStatusRank(item.MatchStatus) > localMediaMatchStatusRank(group.MatchStatus) {
+		group.MatchStatus = item.MatchStatus
+	}
+	if item.IsMissing {
+		group.MissingCount++
+	}
+	group.TotalSizeBytes += item.SizeBytes
+	if group.ConfidenceMin == 0 || item.Confidence < group.ConfidenceMin {
+		group.ConfidenceMin = item.Confidence
+	}
+	if item.Confidence > group.ConfidenceMax {
+		group.ConfidenceMax = item.Confidence
+	}
+	group.LatestModifiedAt = latestTimePtr(group.LatestModifiedAt, item.ModifiedAt)
+	group.LatestUpdatedAt = latestTimePtr(group.LatestUpdatedAt, &item.UpdatedAt)
+}
+
+func updateLocalMediaSeasonSummary(season *models.LocalMediaSeasonGroup, item models.LocalMediaItem) {
+	if season.MatchStatus == "" || localMediaMatchStatusRank(item.MatchStatus) > localMediaMatchStatusRank(season.MatchStatus) {
+		season.MatchStatus = item.MatchStatus
+	}
+	if item.IsMissing {
+		season.MissingCount++
+	}
+	season.TotalSizeBytes += item.SizeBytes
+	if season.ConfidenceMin == 0 || item.Confidence < season.ConfidenceMin {
+		season.ConfidenceMin = item.Confidence
+	}
+	if item.Confidence > season.ConfidenceMax {
+		season.ConfidenceMax = item.Confidence
+	}
+	season.LatestModifiedAt = latestTimePtr(season.LatestModifiedAt, item.ModifiedAt)
+	season.LatestUpdatedAt = latestTimePtr(season.LatestUpdatedAt, &item.UpdatedAt)
+}
+
+func updateLocalMediaEpisodeSummary(episode *models.LocalMediaEpisodeGroup, item models.LocalMediaItem) {
+	if episode.EpisodeTitle == "" && strings.TrimSpace(item.EpisodeTitle) != "" {
+		episode.EpisodeTitle = strings.TrimSpace(item.EpisodeTitle)
+	}
+	if episode.EpisodeOverview == "" && strings.TrimSpace(item.EpisodeOverview) != "" {
+		episode.EpisodeOverview = strings.TrimSpace(item.EpisodeOverview)
+	}
+	if episode.EpisodeImage == nil && item.EpisodeImage != nil {
+		episode.EpisodeImage = item.EpisodeImage
+	}
+	if episode.MatchStatus == "" || localMediaMatchStatusRank(item.MatchStatus) > localMediaMatchStatusRank(episode.MatchStatus) {
+		episode.MatchStatus = item.MatchStatus
+	}
+	if item.IsMissing {
+		episode.MissingCount++
+	}
+	episode.TotalSizeBytes += item.SizeBytes
+	if episode.ConfidenceMin == 0 || item.Confidence < episode.ConfidenceMin {
+		episode.ConfidenceMin = item.Confidence
+	}
+	if item.Confidence > episode.ConfidenceMax {
+		episode.ConfidenceMax = item.Confidence
+	}
+	episode.LatestModifiedAt = latestTimePtr(episode.LatestModifiedAt, item.ModifiedAt)
+	episode.LatestUpdatedAt = latestTimePtr(episode.LatestUpdatedAt, &item.UpdatedAt)
+}
+
+func sortLocalMediaGroups(groups []models.LocalMediaItemGroup, sortBy, dir string) {
+	desc := dir != "asc"
+	sort.SliceStable(groups, func(i, j int) bool {
+		a := groups[i]
+		b := groups[j]
+		cmp := compareLocalMediaGroups(a, b, sortBy)
+		if cmp == 0 {
+			cmp = strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(a.ID, b.ID)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func compareLocalMediaGroups(a, b models.LocalMediaItemGroup, sortBy string) int {
+	switch sortBy {
+	case "name":
+		return strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
+	case "confidence":
+		return compareFloat64(a.ConfidenceMax, b.ConfidenceMax)
+	case "year":
+		return compareInt(a.Year, b.Year)
+	case "size":
+		return compareInt64(a.TotalSizeBytes, b.TotalSizeBytes)
+	case "modified":
+		return compareTimePtr(a.LatestModifiedAt, b.LatestModifiedAt)
+	case "status":
+		return compareInt(localMediaMatchStatusRank(a.MatchStatus), localMediaMatchStatusRank(b.MatchStatus))
+	default:
+		return compareTimePtr(a.LatestUpdatedAt, b.LatestUpdatedAt)
+	}
+}
+
+func sortLocalMediaItems(items []models.LocalMediaItem, mode, dir string) {
+	desc := dir == "desc"
+	sort.SliceStable(items, func(i, j int) bool {
+		a := items[i]
+		b := items[j]
+		cmp := 0
+		switch mode {
+		case "episode":
+			cmp = compareInt(a.SeasonNumber, b.SeasonNumber)
+			if cmp == 0 {
+				cmp = compareInt(a.EpisodeNumber, b.EpisodeNumber)
+			}
+		case "quality":
+			cmp = compareInt(localMediaQualityScore(a), localMediaQualityScore(b))
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(strings.ToLower(a.RelativePath), strings.ToLower(b.RelativePath))
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(a.ID, b.ID)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func localMediaResolvedTitleID(item models.LocalMediaItem) string {
+	if strings.TrimSpace(item.MatchedTitleID) != "" {
+		return strings.TrimSpace(item.MatchedTitleID)
+	}
+	if item.Metadata != nil && strings.TrimSpace(item.Metadata.ID) != "" {
+		return strings.TrimSpace(item.Metadata.ID)
+	}
+	return ""
+}
+
+func localMediaResolvedTitle(item models.LocalMediaItem) string {
+	if item.Metadata != nil && strings.TrimSpace(item.Metadata.Name) != "" {
+		return strings.TrimSpace(item.Metadata.Name)
+	}
+	if strings.TrimSpace(item.MatchedName) != "" {
+		return strings.TrimSpace(item.MatchedName)
+	}
+	if strings.TrimSpace(item.DetectedTitle) != "" {
+		return strings.TrimSpace(item.DetectedTitle)
+	}
+	return strings.TrimSpace(item.FileName)
+}
+
+func localMediaResolvedYear(item models.LocalMediaItem) int {
+	if item.Metadata != nil && item.Metadata.Year > 0 {
+		return item.Metadata.Year
+	}
+	if item.MatchedYear > 0 {
+		return item.MatchedYear
+	}
+	return item.DetectedYear
+}
+
+func normalizeLocalMediaGroupText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(".", " ", "_", " ", "-", " ", "/", " ")
+	value = replacer.Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func localMediaMatchStatusRank(status models.LocalMediaMatchStatus) int {
+	switch status {
+	case models.LocalMediaMatchStatusUnmatched:
+		return 4
+	case models.LocalMediaMatchStatusLowConfidence:
+		return 3
+	case models.LocalMediaMatchStatusManual:
+		return 2
+	case models.LocalMediaMatchStatusMatched:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func localMediaEpisodeGroupKey(item models.LocalMediaItem) string {
+	if item.EpisodeNumber > 0 {
+		return fmt.Sprintf("%03d", item.EpisodeNumber)
+	}
+	if strings.TrimSpace(item.EpisodeTitle) != "" {
+		return "title:" + normalizeLocalMediaGroupText(item.EpisodeTitle)
+	}
+	return "file:" + item.ID
+}
+
+func localMediaQualityScore(item models.LocalMediaItem) int {
+	score := 0
+	if item.Probe != nil {
+		score += item.Probe.Width * item.Probe.Height
+		if item.Probe.HDRFormat != "" {
+			score += 10000000
+		}
+		if item.Probe.VideoCodec != "" {
+			score += len(item.Probe.VideoCodec)
+		}
+	}
+	score += int(item.SizeBytes / (1024 * 1024))
+	return score
+}
+
+func latestTimePtr(current, candidate *time.Time) *time.Time {
+	if candidate == nil {
+		return current
+	}
+	if current == nil || candidate.After(*current) {
+		value := *candidate
+		return &value
+	}
+	return current
+}
+
+func compareInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareFloat64(a, b float64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareTimePtr(a, b *time.Time) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
+	case a.Before(*b):
+		return -1
+	case a.After(*b):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func sortLocalMediaEpisodeGroups(groups []models.LocalMediaEpisodeGroup) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		a := groups[i]
+		b := groups[j]
+		cmp := compareInt(a.EpisodeNumber, b.EpisodeNumber)
+		if cmp == 0 {
+			cmp = strings.Compare(strings.ToLower(a.EpisodeTitle), strings.ToLower(b.EpisodeTitle))
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(a.ID, b.ID)
+		}
+		return cmp < 0
+	})
+}
+
+func (s *Service) enrichEpisodeMetadata(ctx context.Context, items []models.LocalMediaItem) {
+	if s.metadata == nil || len(items) == 0 {
+		return
+	}
+
+	type seriesKey struct {
+		id string
+	}
+	type episodeInfo struct {
+		title    string
+		overview string
+		image    *models.Image
+	}
+
+	seriesItems := make(map[seriesKey][]*models.LocalMediaItem)
+	for i := range items {
+		item := &items[i]
+		if item.LibraryType != models.LocalMediaLibraryTypeShow || item.SeasonNumber <= 0 || item.EpisodeNumber <= 0 {
+			continue
+		}
+		keyID := localMediaResolvedTitleID(*item)
+		if keyID == "" && item.Metadata == nil && strings.TrimSpace(item.MatchedName) == "" && strings.TrimSpace(item.DetectedTitle) == "" {
+			continue
+		}
+		seriesItems[seriesKey{id: fmt.Sprintf("%s|%s|%d", keyID, localMediaResolvedTitle(*item), localMediaResolvedYear(*item))}] = append(seriesItems[seriesKey{id: fmt.Sprintf("%s|%s|%d", keyID, localMediaResolvedTitle(*item), localMediaResolvedYear(*item))}], item)
+	}
+
+	for _, groupedItems := range seriesItems {
+		if len(groupedItems) == 0 {
+			continue
+		}
+		seed := groupedItems[0]
+		query := models.SeriesDetailsQuery{
+			TitleID: localMediaResolvedTitleID(*seed),
+			Name:    localMediaResolvedTitle(*seed),
+			Year:    localMediaResolvedYear(*seed),
+		}
+		if seed.Metadata != nil {
+			query.IMDBID = seed.Metadata.IMDBID
+			query.TMDBID = seed.Metadata.TMDBID
+			query.TVDBID = seed.Metadata.TVDBID
+		}
+		details, err := s.metadata.SeriesDetails(ctx, query)
+		if err != nil || details == nil {
+			continue
+		}
+		episodeMap := make(map[string]episodeInfo)
+		for _, season := range details.Seasons {
+			for _, episode := range season.Episodes {
+				episodeMap[fmt.Sprintf("%d:%d", season.Number, episode.EpisodeNumber)] = episodeInfo{
+					title:    strings.TrimSpace(episode.Name),
+					overview: strings.TrimSpace(episode.Overview),
+					image:    episode.Image,
+				}
+			}
+		}
+		for _, item := range groupedItems {
+			if info, ok := episodeMap[fmt.Sprintf("%d:%d", item.SeasonNumber, item.EpisodeNumber)]; ok {
+				item.EpisodeTitle = info.title
+				item.EpisodeOverview = info.overview
+				item.EpisodeImage = info.image
+			}
+		}
+	}
 }
 
 func (s *Service) GetItem(ctx context.Context, itemID string) (*models.LocalMediaItem, error) {
