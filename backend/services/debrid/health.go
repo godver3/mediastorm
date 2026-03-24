@@ -142,6 +142,22 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		if streamURL == "" {
 			streamURL = result.Link
 		}
+		if rawName := strings.TrimSpace(result.Attributes["raw_name"]); rawName != "" {
+			log.Printf("[debrid-health] pre-resolved raw display: title=%q raw_name=%q raw_title=%q tracker=%q scraper=%q",
+				result.Title,
+				rawName,
+				strings.TrimSpace(result.Attributes["raw_title"]),
+				strings.TrimSpace(result.Attributes["tracker"]),
+				strings.TrimSpace(result.Attributes["scraper"]),
+			)
+		} else {
+			log.Printf("[debrid-health] pre-resolved raw display: title=%q raw_title=%q tracker=%q scraper=%q",
+				result.Title,
+				strings.TrimSpace(result.Attributes["raw_title"]),
+				strings.TrimSpace(result.Attributes["tracker"]),
+				strings.TrimSpace(result.Attributes["scraper"]),
+			)
+		}
 		if IsKnownPlaceholderURL(streamURL) {
 			log.Printf("[debrid-health] pre-resolved stream %s is a known placeholder URL", result.Title)
 			return &DebridHealthCheck{

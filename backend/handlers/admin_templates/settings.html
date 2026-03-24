@@ -1728,11 +1728,11 @@
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
 
-        // Show reminder when adding an AIOStreams scraper
-        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && value === 'aiostreams') {
+        // Show reminder when adding direct-stream capable sources
+        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && ['aiostreams', 'comet', 'mediafusion'].includes(String(value))) {
             const timeout = currentSettings.streaming?.indexerTimeoutSec || 5;
             if (timeout <= 5) {
-                showToast('AIOStreams may need more than the default 5s search timeout. Consider increasing it under Search & Resolution.', 'info');
+                showToast('Direct-stream addons may need more than the default 5s search timeout. Consider increasing it under Search & Resolution.', 'info');
             }
         }
 
@@ -2531,6 +2531,22 @@
         }
         const isTestable = testableSections.includes(sectionKey);
         const itemsHtml = items.map((item, index) => {
+            let typeBadgesHtml = '';
+            if (sectionKey === 'torrentScrapers') {
+                const scraperType = String(item.type || '');
+                const badgeStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;';
+                if (['aiostreams', 'comet', 'mediafusion'].includes(scraperType)) {
+                    typeBadgesHtml =
+                        '<span style="' + badgeStyle + 'background:rgba(245,158,11,0.16);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);">TOR</span>' +
+                        '<span style="' + badgeStyle + 'background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35);">DIR</span>';
+                } else if (scraperType) {
+                    typeBadgesHtml =
+                        '<span style="' + badgeStyle + 'background:rgba(245,158,11,0.16);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);">TOR</span>';
+                }
+            } else if (sectionKey === 'usenet') {
+                typeBadgesHtml =
+                    '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:36px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;background:rgba(59,130,246,0.16);color:#60a5fa;border:1px solid rgba(96,165,250,0.35);">USN</span>';
+            }
             const fieldsHtml = Object.entries(sectionDef.fields)
                 .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
                 .map(([fieldKey, fieldDef]) => {
@@ -2566,9 +2582,13 @@
                     'AIOStreams typically needs more than the default 5s search timeout. Increase it under <strong>Search &amp; Resolution</strong>.' +
                     '</div>';
             }
-            return '<div class="array-item"><div class="array-item-header"><div class="array-item-title">'+(item.name || item.id || 'Item '+(index+1))+'</div><div class="array-item-actions">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
+            const badgesTitleHtml = typeBadgesHtml
+                ? '<div class="array-item-type-badges-row" style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap;margin-top:0.15rem;">'+typeBadgesHtml+'</div>'
+                : '';
+            return '<div class="array-item"><div class="array-item-header" style="align-items:flex-start;"><div class="array-item-title" style="display:flex;flex-direction:column;align-items:flex-start;"><span>'+(item.name || item.id || 'Item '+(index+1))+'</span>'+badgesTitleHtml+'</div><div class="array-item-actions" style="align-items:flex-start;">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
         }).join('');
-        return '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
+        const styles = '<style></style>';
+        return styles + '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
     }
     // Render provider priority reorder UI for streaming section
     function renderProviderPriorityUI() {

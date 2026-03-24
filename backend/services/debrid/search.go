@@ -147,6 +147,13 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			}
 			log.Printf("[debrid] Initializing Comet scraper: %s at %s (options: %s)", scraperCfg.Name, baseURL, scraperCfg.Options)
 			scrapers = append(scrapers, NewCometScraper(httpClient, baseURL, scraperCfg.Options, scraperCfg.Name))
+		case "mediafusion":
+			baseURL := scraperCfg.URL
+			if baseURL == "" {
+				baseURL = mediafusionDefaultBaseURL
+			}
+			log.Printf("[debrid] Initializing MediaFusion scraper: %s at %s", scraperCfg.Name, baseURL)
+			scrapers = append(scrapers, NewMediaFusionScraper(httpClient, baseURL, scraperCfg.Name))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
@@ -206,10 +213,10 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 	bypassForAIO := globalSettings.Display.BypassFilteringForAIOStreamsOnly
 	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
-		MaxSizeEpisodeGB: models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
-		MaxResolution:    globalSettings.Filtering.MaxResolution,
-		HDRDVPolicy:      models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
+		MaxResolution:     globalSettings.Filtering.MaxResolution,
+		HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
 		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
 		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,

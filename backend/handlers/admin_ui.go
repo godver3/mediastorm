@@ -440,16 +440,17 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"torrentScrapers": map[string]interface{}{
-		"label":    "Torrent Scrapers",
-		"icon":     "magnet",
-		"group":    "sources",
-		"order":    1,
-		"is_array": true,
+		"label":       "Torrent & Stream Sources",
+		"description": "Configure search addons used for debrid and direct playback discovery. Some sources return torrent candidates (Torrentio, Jackett, Zilean, Nyaa), while others may return ready-to-play direct stream URLs (AIOStreams, Comet, MediaFusion). Streaming mode still controls whether playback uses Usenet, Debrid, or Hybrid resolution.",
+		"icon":        "magnet",
+		"group":       "sources",
+		"order":       1,
+		"is_array":    true,
 		"fields": map[string]interface{}{
 			"name":                     map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa", "comet"}, "description": "Scraper type", "order": 1},
+			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"}, "description": "Source/addon type", "order": 1},
 			"options":                  map[string]interface{}{"type": "text", "label": "Options", "description": "URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
-			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams/Comet: full Stremio addon URL; for Torrentio: custom base URL replacing https://torrentio.strem.fun — use for self-hosted instances or pre-configured Torrentio URLs, leave blank for default)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "https://torrentio.strem.fun"},
+			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams/Comet/MediaFusion: full Stremio addon URL; for Torrentio: custom base URL replacing https://torrentio.strem.fun — use for self-hosted instances or pre-configured Torrentio URLs, leave blank for default)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "mediafusion"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "https://torrentio.strem.fun"},
 			"apiKey":                   map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
 			"config.passthroughFormat": map[string]interface{}{"type": "boolean", "label": "Passthrough Format", "description": "Show raw AIOStreams format in manual selection (emoji-formatted details)", "showWhen": map[string]interface{}{"field": "type", "value": "aiostreams"}, "order": 5},
 			"config.category":          map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
@@ -2375,6 +2376,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		h.testNyaaScraper(w)
 	case "comet":
 		h.testCometScraper(w, req)
+	case "mediafusion":
+		h.testMediaFusionScraper(w, req)
 	case "torrentio":
 		fallthrough
 	default:
@@ -2842,6 +2845,106 @@ func (h *AdminUIHandler) testCometScraper(w http.ResponseWriter, req TestScraper
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": fmt.Sprintf("Comet is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
+	})
+}
+
+// testMediaFusionScraper tests a MediaFusion instance by fetching its manifest and a test playback/stream endpoint.
+func (h *AdminUIHandler) testMediaFusionScraper(w http.ResponseWriter, req TestScraperRequest) {
+	client := &http.Client{Timeout: 20 * time.Second}
+
+	baseURL := strings.TrimSpace(req.URL)
+	if baseURL == "" {
+		baseURL = "https://mediafusion.elfhosted.com"
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/manifest.json")
+
+	manifestURL := fmt.Sprintf("%s/manifest.json", baseURL)
+	manifestReq, err := http.NewRequest(http.MethodGet, manifestURL, nil)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create request: %v", err),
+		})
+		return
+	}
+	addBrowserHeaders(manifestReq)
+
+	resp, err := client.Do(manifestReq)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("MediaFusion connection failed: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("MediaFusion returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	var manifest struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to parse manifest: %v", err),
+		})
+		return
+	}
+
+	testEndpoints := []string{
+		fmt.Sprintf("%s/playback/movie/tt0133093.json", baseURL),
+		fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL),
+	}
+
+	for _, streamURL := range testEndpoints {
+		streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
+		if err != nil {
+			continue
+		}
+		addBrowserHeaders(streamReq)
+
+		streamResp, err := client.Do(streamReq)
+		if err != nil {
+			continue
+		}
+		if streamResp.StatusCode >= 400 {
+			streamResp.Body.Close()
+			continue
+		}
+
+		var streamResult struct {
+			Streams []interface{} `json:"streams"`
+		}
+		if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
+			streamResp.Body.Close()
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": fmt.Sprintf("MediaFusion is working (%s v%s)", manifest.Name, manifest.Version),
+			})
+			return
+		}
+		streamResp.Body.Close()
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("MediaFusion is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("MediaFusion is reachable (%s v%s), but no test playback endpoint responded successfully", manifest.Name, manifest.Version),
 	})
 }
 
