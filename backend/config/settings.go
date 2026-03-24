@@ -217,6 +217,7 @@ type PlaybackSettings struct {
 	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
 	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
 	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
+	PauseWhenAppInactive      bool    `json:"pauseWhenAppInactive"` // Pause playback when the app becomes inactive or backgrounded
 	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`       // Scaling factor for subtitle size (1.0 = default)
 	SeekForwardSeconds        int     `json:"seekForwardSeconds"`           // Seconds to skip forward (default 30)
@@ -732,7 +733,7 @@ func DefaultSettings() Settings {
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
+		Playback:  PlaybackSettings{PreferredPlayer: "native", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{

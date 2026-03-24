@@ -221,11 +221,12 @@ type PlaybackSettings struct {
 	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
 	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
 	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
+	PauseWhenAppInactive      bool    `json:"pauseWhenAppInactive,omitempty"`
 	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`            // Scaling factor for subtitle size (1.0 = default)
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause,omitempty"` // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart,omitempty"`   // Seconds to rewind when resuming from saved progress (default 0)
-	MaxConcurrentStreams      *int    `json:"maxConcurrentStreams,omitempty"`     // Per-profile concurrent stream limit (nil = use account limit)
+	MaxConcurrentStreams      *int    `json:"maxConcurrentStreams,omitempty"`    // Per-profile concurrent stream limit (nil = use account limit)
 	MaxResultsPerResolution   *int    `json:"maxResultsPerResolution,omitempty"` // Maximum number of results per resolution tier (0 = no limit)
 }
 
@@ -280,9 +281,10 @@ type AnimeFilteringSettings struct {
 func DefaultUserSettings() UserSettings {
 	return UserSettings{
 		Playback: PlaybackSettings{
-			PreferredPlayer:  "native",
-			UseLoadingScreen: false,
-			SubtitleSize:     1.0,
+			PreferredPlayer:      "native",
+			PauseWhenAppInactive: false,
+			UseLoadingScreen:     false,
+			SubtitleSize:         1.0,
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: []ShelfConfig{

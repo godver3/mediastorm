@@ -426,6 +426,18 @@ function renderSettings() {
                         <input type="number" id="subtitleSize" value="${s.playback.subtitleSize || 1.0}" min="0.5" max="3" step="0.1" onchange="markChanged()">
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Pause When App Is Covered</h4>
+                        <p>Pause playback when the app becomes inactive or backgrounded</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="pauseWhenAppInactive" ${s.playback.pauseWhenAppInactive ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <!-- Temporarily hidden: loading screen disabled across the board
                 <div class="setting-row">
                     <div class="setting-label">
@@ -567,6 +579,7 @@ function collectSettings() {
             preferredSubtitleLanguage: document.getElementById('subtitleLanguage').value,
             preferredSubtitleMode: document.getElementById('subtitleMode').value,
             subtitleSize: parseFloat(document.getElementById('subtitleSize').value) || 1.0,
+            pauseWhenAppInactive: document.getElementById('pauseWhenAppInactive').checked,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },
         homeShelves: currentSettings.homeShelves || { shelves: [] },

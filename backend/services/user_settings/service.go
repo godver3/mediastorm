@@ -228,6 +228,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.PreferredAudioLanguage != "" ||
 		s.Playback.PreferredSubtitleLanguage != "" ||
 		s.Playback.PreferredSubtitleMode != "" ||
+		s.Playback.PauseWhenAppInactive ||
 		s.Playback.UseLoadingScreen ||
 		s.Playback.SubtitleSize != 0 {
 		return false

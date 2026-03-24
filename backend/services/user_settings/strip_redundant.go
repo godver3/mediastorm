@@ -119,18 +119,19 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			PreferredAudioLanguage:    g.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage: g.Playback.PreferredSubtitleLanguage,
 			PreferredSubtitleMode:     g.Playback.PreferredSubtitleMode,
+			PauseWhenAppInactive:      g.Playback.PauseWhenAppInactive,
 			UseLoadingScreen:          g.Playback.UseLoadingScreen,
 			SubtitleSize:              g.Playback.SubtitleSize,
 			RewindOnResumeFromPause:   g.Playback.RewindOnResumeFromPause,
 			RewindOnPlaybackStart:     g.Playback.RewindOnPlaybackStart,
 		},
 		Filtering: models.FilterSettings{
-			MaxSizeMovieGB:                   models.FloatPtr(g.Filtering.MaxSizeMovieGB),
-			MaxSizeEpisodeGB:                 models.FloatPtr(g.Filtering.MaxSizeEpisodeGB),
-			MaxResolution:                    g.Filtering.MaxResolution,
-			HDRDVPolicy:                      models.HDRDVPolicy(g.Filtering.HDRDVPolicy),
-			FilterOutTerms:                   g.Filtering.FilterOutTerms,
-			PreferredTerms:                   g.Filtering.PreferredTerms,
+			MaxSizeMovieGB:    models.FloatPtr(g.Filtering.MaxSizeMovieGB),
+			MaxSizeEpisodeGB:  models.FloatPtr(g.Filtering.MaxSizeEpisodeGB),
+			MaxResolution:     g.Filtering.MaxResolution,
+			HDRDVPolicy:       models.HDRDVPolicy(g.Filtering.HDRDVPolicy),
+			FilterOutTerms:    g.Filtering.FilterOutTerms,
+			PreferredTerms:    g.Filtering.PreferredTerms,
 			NonPreferredTerms: g.Filtering.NonPreferredTerms,
 		},
 		AnimeFiltering: models.AnimeFilteringSettings{
@@ -138,8 +139,8 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			AnimePreferredLanguage: models.StringPtr(g.AnimeFiltering.AnimePreferredLanguage),
 		},
 		Display: models.DisplaySettings{
-			BadgeVisibility:                 g.Display.BadgeVisibility,
-			WatchStateIconStyle:             g.Display.WatchStateIconStyle,
+			BadgeVisibility:                  g.Display.BadgeVisibility,
+			WatchStateIconStyle:              g.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly),
 		},
 		HomeShelves: models.HomeShelvesSettings{
@@ -186,6 +187,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.PreferredSubtitleMode == "" {
 		eff.Playback.PreferredSubtitleMode = g.Playback.PreferredSubtitleMode
+	}
+	if !eff.Playback.PauseWhenAppInactive {
+		eff.Playback.PauseWhenAppInactive = g.Playback.PauseWhenAppInactive
 	}
 	if eff.Playback.SubtitleSize == 0 {
 		eff.Playback.SubtitleSize = g.Playback.SubtitleSize
@@ -293,6 +297,10 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.PreferredSubtitleMode != "" && p.PreferredSubtitleMode == g.PreferredSubtitleMode {
 		p.PreferredSubtitleMode = ""
+		changed = true
+	}
+	if p.PauseWhenAppInactive && p.PauseWhenAppInactive == g.PauseWhenAppInactive {
+		p.PauseWhenAppInactive = false
 		changed = true
 	}
 	if p.SubtitleSize != 0 && p.SubtitleSize == g.SubtitleSize {
