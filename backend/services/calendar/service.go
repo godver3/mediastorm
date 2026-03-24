@@ -44,10 +44,12 @@ type userCalendar struct {
 	RefreshedAt time.Time
 }
 
+const RecentDaysWindow = 7
+
 // Status holds the current state of the calendar background worker.
 type Status struct {
 	Running         bool      `json:"running"`
-	State           string    `json:"state"`           // "idle", "refreshing", "stopped"
+	State           string    `json:"state"` // "idle", "refreshing", "stopped"
 	LastRefreshAt   time.Time `json:"lastRefreshAt"`
 	LastRefreshMs   int64     `json:"lastRefreshMs"`
 	NextRefreshAt   time.Time `json:"nextRefreshAt"`
@@ -292,7 +294,9 @@ func (s *Service) calendarSourcesEnabled(userID string) models.CalendarSettings 
 func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 	ctx := context.Background()
 	now := time.Now().UTC()
-	cutoff := now.AddDate(0, 0, s.maxDays)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	windowStart := todayStart.AddDate(0, 0, -RecentDaysWindow)
+	cutoff := todayStart.AddDate(0, 0, s.maxDays)
 	seen := make(map[string]bool) // dedup key
 
 	sources := s.calendarSourcesEnabled(userID)
@@ -300,26 +304,26 @@ func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 
 	// 1. Series + movies from watchlist
 	if models.BoolVal(sources.Watchlist, true) {
-		wlSeries := s.collectSeriesFromWatchlist(ctx, userID, now, cutoff, seen)
+		wlSeries := s.collectSeriesFromWatchlist(ctx, userID, windowStart, cutoff, seen)
 		items = append(items, wlSeries...)
-		wlMovies := s.collectMoviesFromWatchlist(ctx, userID, now, cutoff, seen)
+		wlMovies := s.collectMoviesFromWatchlist(ctx, userID, windowStart, cutoff, seen)
 		items = append(items, wlMovies...)
 	}
 
 	// 2. Series from continue-watching (history)
 	if models.BoolVal(sources.History, true) {
-		cwItems := s.collectFromHistory(ctx, userID, now, cutoff, seen)
+		cwItems := s.collectFromHistory(ctx, userID, windowStart, cutoff, seen)
 		items = append(items, cwItems...)
 	}
 
 	// 3. Content from trending lists
 	if models.BoolVal(sources.Trending, true) {
-		trendingItems := s.collectFromTrending(ctx, now, cutoff, seen)
+		trendingItems := s.collectFromTrending(ctx, windowStart, cutoff, seen)
 		items = append(items, trendingItems...)
 	}
 
 	// 4. Content from MDBList custom lists (per-shelf filtering)
-	mdbItems := s.collectFromMDBLists(ctx, userID, sources, now, cutoff, seen)
+	mdbItems := s.collectFromMDBLists(ctx, userID, sources, windowStart, cutoff, seen)
 	items = append(items, mdbItems...)
 
 	// Sort by full UTC datetime (not raw date string) so shows crossing
@@ -334,7 +338,7 @@ func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 }
 
 // collectSeriesFromWatchlist fetches upcoming episodes for series on the user's watchlist.
-func (s *Service) collectSeriesFromWatchlist(ctx context.Context, userID string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func (s *Service) collectSeriesFromWatchlist(ctx context.Context, userID string, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	wlItems, err := s.watchlist.List(userID)
 	if err != nil {
 		log.Printf("[calendar] watchlist list error user=%s: %v", userID, err)
@@ -346,14 +350,14 @@ func (s *Service) collectSeriesFromWatchlist(ctx context.Context, userID string,
 		if wl.MediaType != "series" {
 			continue
 		}
-		eps := s.fetchUpcomingEpisodes(ctx, wl.Name, wl.Year, wl.ExternalIDs, wl.PosterURL, "watchlist", now, cutoff, seen)
+		eps := s.fetchUpcomingEpisodes(ctx, wl.Name, wl.Year, wl.ExternalIDs, wl.PosterURL, "watchlist", windowStart, cutoff, seen)
 		items = append(items, eps...)
 	}
 	return items
 }
 
 // collectFromHistory fetches upcoming episodes for series the user is currently watching.
-func (s *Service) collectFromHistory(ctx context.Context, userID string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func (s *Service) collectFromHistory(ctx context.Context, userID string, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	cwItems, err := s.history.ListContinueWatching(userID)
 	if err != nil {
 		log.Printf("[calendar] continue watching error user=%s: %v", userID, err)
@@ -362,7 +366,7 @@ func (s *Service) collectFromHistory(ctx context.Context, userID string, now, cu
 
 	var items []models.CalendarItem
 	for _, cw := range cwItems {
-		eps := s.fetchUpcomingEpisodes(ctx, cw.SeriesTitle, cw.Year, cw.ExternalIDs, cw.PosterURL, "history", now, cutoff, seen)
+		eps := s.fetchUpcomingEpisodes(ctx, cw.SeriesTitle, cw.Year, cw.ExternalIDs, cw.PosterURL, "history", windowStart, cutoff, seen)
 		items = append(items, eps...)
 	}
 	return items
@@ -370,7 +374,7 @@ func (s *Service) collectFromHistory(ctx context.Context, userID string, now, cu
 
 // collectMoviesFromWatchlist checks movies on the watchlist for upcoming release dates.
 // Adds separate calendar items for each unreleased release type (theatrical, digital, physical, etc.).
-func (s *Service) collectMoviesFromWatchlist(ctx context.Context, userID string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func (s *Service) collectMoviesFromWatchlist(ctx context.Context, userID string, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	wlItems, err := s.watchlist.List(userID)
 	if err != nil {
 		return nil
@@ -386,13 +390,13 @@ func (s *Service) collectMoviesFromWatchlist(ctx context.Context, userID string,
 		if err != nil || details == nil {
 			continue
 		}
-		items = append(items, collectMovieReleases(details, "watchlist", now, cutoff, seen)...)
+		items = append(items, collectMovieReleases(details, "watchlist", windowStart, cutoff, seen)...)
 	}
 	return items
 }
 
 // collectFromTrending fetches upcoming content from trending movies and series.
-func (s *Service) collectFromTrending(ctx context.Context, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func (s *Service) collectFromTrending(ctx context.Context, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	var items []models.CalendarItem
 
 	// Trending movies — already have release date data from TMDB enrichment
@@ -401,7 +405,7 @@ func (s *Service) collectFromTrending(ctx context.Context, now, cutoff time.Time
 		log.Printf("[calendar] trending movies error: %v", err)
 	} else {
 		for i := range trendingMovies {
-			items = append(items, collectMovieReleases(&trendingMovies[i].Title, "trending", now, cutoff, seen)...)
+			items = append(items, collectMovieReleases(&trendingMovies[i].Title, "trending", windowStart, cutoff, seen)...)
 		}
 	}
 
@@ -422,7 +426,7 @@ func (s *Service) collectFromTrending(ctx context.Context, now, cutoff time.Time
 				posterURL = ts.Title.Poster.URL
 			}
 			extIDs := buildExternalIDs(ts.Title.IMDBID, ts.Title.TMDBID, ts.Title.TVDBID)
-			eps := s.fetchUpcomingEpisodes(ctx, ts.Title.Name, ts.Title.Year, extIDs, posterURL, "trending", now, cutoff, seen)
+			eps := s.fetchUpcomingEpisodes(ctx, ts.Title.Name, ts.Title.Year, extIDs, posterURL, "trending", windowStart, cutoff, seen)
 			items = append(items, eps...)
 		}
 	}
@@ -432,7 +436,7 @@ func (s *Service) collectFromTrending(ctx context.Context, now, cutoff time.Time
 
 // collectFromMDBLists fetches upcoming content from the user's custom MDBList shelves.
 // Each shelf is individually controlled via calSources.MDBListShelves (nil = all enabled).
-func (s *Service) collectFromMDBLists(ctx context.Context, userID string, calSources models.CalendarSettings, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func (s *Service) collectFromMDBLists(ctx context.Context, userID string, calSources models.CalendarSettings, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	settings, err := s.userSettings.Get(userID)
 	if err != nil || settings == nil {
 		return nil
@@ -458,7 +462,7 @@ func (s *Service) collectFromMDBLists(ctx context.Context, userID string, calSou
 // collectMovieReleases extracts calendar items from a movie's release dates.
 // For each release type (theatrical, digital, etc.), only the earliest upcoming
 // date is used so the calendar isn't cluttered with duplicate regional releases.
-func collectMovieReleases(title *models.Title, source string, now, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
+func collectMovieReleases(title *models.Title, source string, windowStart, cutoff time.Time, seen map[string]bool) []models.CalendarItem {
 	if title == nil {
 		return nil
 	}
@@ -496,7 +500,7 @@ func collectMovieReleases(title *models.Title, source string, now, cutoff time.T
 			continue
 		}
 		d, err := parseDate(rel.Date)
-		if err != nil || d.Before(now) || d.After(cutoff) {
+		if err != nil || d.Before(windowStart) || d.After(cutoff) {
 			continue
 		}
 		existing := earliestByType[rel.Type]
@@ -512,7 +516,7 @@ func collectMovieReleases(title *models.Title, source string, now, cutoff time.T
 
 	var items []models.CalendarItem
 	for _, rel := range earliestByType {
-		if item, ok := makeMovieReleaseItem(title, rel, posterURL, extIDs, source, now, cutoff, seen); ok {
+		if item, ok := makeMovieReleaseItem(title, rel, posterURL, extIDs, source, windowStart, cutoff, seen); ok {
 			items = append(items, item)
 		}
 	}
@@ -521,9 +525,9 @@ func collectMovieReleases(title *models.Title, source string, now, cutoff time.T
 }
 
 // makeMovieReleaseItem creates a CalendarItem from a movie release, if it's in the date window.
-func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL string, extIDs map[string]string, source string, now, cutoff time.Time, seen map[string]bool) (models.CalendarItem, bool) {
+func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL string, extIDs map[string]string, source string, windowStart, cutoff time.Time, seen map[string]bool) (models.CalendarItem, bool) {
 	releaseDate, err := parseDate(rel.Date)
-	if err != nil || releaseDate.Before(now) || releaseDate.After(cutoff) {
+	if err != nil || releaseDate.Before(windowStart) || releaseDate.After(cutoff) {
 		return models.CalendarItem{}, false
 	}
 	key := fmt.Sprintf("movie:%d:%s", title.TMDBID, rel.Type)
@@ -552,7 +556,7 @@ func (s *Service) fetchUpcomingEpisodes(
 	externalIDs map[string]string,
 	posterURL string,
 	source string,
-	now, cutoff time.Time,
+	windowStart, cutoff time.Time,
 	seen map[string]bool,
 ) []models.CalendarItem {
 	query := buildSeriesQuery(seriesName, year, externalIDs)
@@ -585,7 +589,7 @@ func (s *Service) fetchUpcomingEpisodes(
 				continue
 			}
 			airDateTime := ParseAirDateTime(ep.AiredDate, airsTime, airsTimezone)
-			if airDateTime.Before(now) || airDateTime.After(cutoff) {
+			if airDateTime.Before(windowStart) || airDateTime.After(cutoff) {
 				continue
 			}
 

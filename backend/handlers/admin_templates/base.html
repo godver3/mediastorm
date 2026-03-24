@@ -1748,7 +1748,7 @@
                 </a>
                 <!-- Media dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library")}}has-active{{end}}">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library")}}has-active{{end}}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="23 7 16 12 23 17 23 7"/>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -1766,14 +1766,14 @@
                             </svg>
                             History
                         </a>
-                        <a href="{{.BasePath}}/calendar" class="nav-link {{if hasSuffix .CurrentPath "/calendar"}}active{{end}}">
+                        <a href="{{.BasePath}}/schedule" class="nav-link {{if or (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule")}}active{{end}}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                                 <line x1="16" y1="2" x2="16" y2="6"/>
                                 <line x1="8" y1="2" x2="8" y2="6"/>
                                 <line x1="3" y1="10" x2="21" y2="10"/>
                             </svg>
-                            Calendar
+                            Schedule
                         </a>
                         <a href="{{.BasePath}}/search" class="nav-link {{if hasSuffix .CurrentPath "/search"}}active{{end}}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1803,14 +1803,14 @@
                     </svg>
                     History
                 </a>
-                <a href="{{.BasePath}}/calendar" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/calendar"}}active{{end}}">
+                <a href="{{.BasePath}}/schedule" class="nav-link mobile-nav-link {{if or (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule")}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                         <line x1="16" y1="2" x2="16" y2="6"/>
                         <line x1="8" y1="2" x2="8" y2="6"/>
                         <line x1="3" y1="10" x2="21" y2="10"/>
                     </svg>
-                    Calendar
+                    Schedule
                 </a>
                 {{if .IsAdmin}}
                 <a href="{{.BasePath}}/library" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/library"}}active{{end}}">

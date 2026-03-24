@@ -120,10 +120,13 @@ func TestBuildUserCalendar_WatchlistSeries(t *testing.T) {
 	svc := New(meta, wl, hist, us, users)
 	items := svc.buildUserCalendar("user1")
 
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (recent + upcoming), got %d", len(items))
 	}
-	item := items[0]
+	if items[0].EpisodeTitle != "Past Episode" {
+		t.Fatalf("expected first item to be recent past episode, got %q", items[0].EpisodeTitle)
+	}
+	item := items[1]
 	if item.Title != "Test Show" {
 		t.Errorf("expected title 'Test Show', got %q", item.Title)
 	}
@@ -198,8 +201,8 @@ func TestBuildUserCalendar_MovieReleaseTypes(t *testing.T) {
 	meta, wl, hist, us, users := defaultMocks()
 	meta.movies[500] = &models.Title{
 		Name: "Upcoming Movie", TMDBID: 500, Year: 2026,
-		Poster: &models.Image{URL: "https://example.com/poster.jpg"},
-		Theatrical: &models.Release{Type: "theatrical", Date: futureDate(14), Released: false},
+		Poster:      &models.Image{URL: "https://example.com/poster.jpg"},
+		Theatrical:  &models.Release{Type: "theatrical", Date: futureDate(14), Released: false},
 		HomeRelease: &models.Release{Type: "digital", Date: futureDate(60), Released: false},
 		Releases: []models.Release{
 			{Type: "theatrical", Date: futureDate(14), Released: false},
@@ -278,7 +281,7 @@ func TestBuildUserCalendar_MovieSkipsAlreadyReleasedTypes(t *testing.T) {
 	meta.movies[800] = &models.Title{
 		Name: "Already Out Movie", TMDBID: 800, Year: 2025,
 		Releases: []models.Release{
-			{Type: "theatrical", Date: pastDate(30), Released: true, Country: "US"},  // already released
+			{Type: "theatrical", Date: pastDate(30), Released: true, Country: "US"},   // already released
 			{Type: "theatrical", Date: futureDate(5), Released: false, Country: "FR"}, // regional, should be skipped
 			{Type: "digital", Date: futureDate(14), Released: false, Country: "US"},   // not yet released in any region
 		},

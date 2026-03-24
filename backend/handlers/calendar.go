@@ -69,10 +69,11 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	if cached == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(models.CalendarResponse{
-			Items:    []models.CalendarItem{},
-			Total:    0,
-			Timezone: loc.String(),
-			Days:     days,
+			Items:      []models.CalendarItem{},
+			Total:      0,
+			Timezone:   loc.String(),
+			Days:       days,
+			RecentDays: calendar.RecentDaysWindow,
 		})
 		return
 	}
@@ -80,6 +81,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	// Compute the date window in the user's timezone
 	nowInTZ := time.Now().In(loc)
 	todayStart := time.Date(nowInTZ.Year(), nowInTZ.Month(), nowInTZ.Day(), 0, 0, 0, 0, loc)
+	recentStart := todayStart.AddDate(0, 0, -calendar.RecentDaysWindow)
 	cutoff := todayStart.AddDate(0, 0, days)
 
 	// Filter and TZ-adjust items
@@ -95,7 +97,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone)
 		airInTZ := airDT.In(loc)
 		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
-		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
+		if airDateInTZ.Before(recentStart) || airDateInTZ.After(cutoff) {
 			continue
 		}
 
@@ -127,6 +129,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		Total:       len(result),
 		Timezone:    loc.String(),
 		Days:        days,
+		RecentDays:  calendar.RecentDaysWindow,
 		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
 	})
 }

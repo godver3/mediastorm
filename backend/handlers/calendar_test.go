@@ -199,6 +199,72 @@ func TestGetCalendar_TimezoneApplied(t *testing.T) {
 	if resp.Timezone != "America/New_York" {
 		t.Errorf("expected timezone 'America/New_York', got %q", resp.Timezone)
 	}
+	if resp.RecentDays != calendar.RecentDaysWindow {
+		t.Errorf("expected recentDays %d, got %d", calendar.RecentDaysWindow, resp.RecentDays)
+	}
+}
+
+func TestGetCalendar_IncludesRecentlyAiredItems(t *testing.T) {
+	recentDate := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+
+	meta := &calendarMockMetadataWithData{
+		series: map[int64]*models.SeriesDetails{
+			100: {
+				Title: models.Title{
+					Name: "Recent Show", TVDBID: 100,
+					AirsTime: "21:00", AirsTimezone: "America/New_York",
+				},
+				Seasons: []models.SeriesSeason{
+					{
+						Number: 1,
+						Episodes: []models.SeriesEpisode{
+							{SeasonNumber: 1, EpisodeNumber: 4, AiredDate: recentDate, Name: "Recent Episode"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	svc := calendar.New(
+		meta,
+		&calendarMockWatchlistWithData{
+			items: []models.WatchlistItem{
+				{
+					MediaType:   "series",
+					Name:        "Recent Show",
+					ExternalIDs: map[string]string{"tvdb": "100"},
+				},
+			},
+		},
+		&calendarMockHistory{},
+		&calendarMockUserSettings{},
+		&calendarMockUsers{},
+	)
+
+	h := handlers.NewCalendarHandler(svc, &mockCalendarUserService{exists: map[string]bool{"user1": true}}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/calendar?tz=America/New_York", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetCalendar(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp models.CalendarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Total != 1 {
+		t.Fatalf("expected 1 recently aired item, got %d", resp.Total)
+	}
+	if resp.Items[0].AirDate != recentDate {
+		t.Fatalf("expected air date %s, got %s", recentDate, resp.Items[0].AirDate)
+	}
 }
 
 // --- Richer mocks for AirTime conversion test ---

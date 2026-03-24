@@ -5873,7 +5873,7 @@ func (h *AdminUIHandler) ConnectionsPage(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// CalendarPage serves the calendar admin page
+// CalendarPage serves the schedule page.
 func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
 	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
 	usersList := h.getScopedUsers(isAdmin, accountID)
@@ -5884,7 +5884,7 @@ func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
 	settings, _ := mgr.Load()
 
 	data := AdminPageData{
-		CurrentPath:    basePath + "/calendar",
+		CurrentPath:    basePath + "/schedule",
 		BasePath:       basePath,
 		ServerBasePath: h.serverBasePath,
 		IsAdmin:        isAdmin,
@@ -5903,7 +5903,7 @@ func (h *AdminUIHandler) CalendarPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.calendarTemplate.ExecuteTemplate(w, "base", data); err != nil {
-		fmt.Printf("Calendar template error: %v\n", err)
+		fmt.Printf("Schedule template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
@@ -5958,16 +5958,18 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 	if cached == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(models.CalendarResponse{
-			Items:    []models.CalendarItem{},
-			Total:    0,
-			Timezone: loc.String(),
-			Days:     days,
+			Items:      []models.CalendarItem{},
+			Total:      0,
+			Timezone:   loc.String(),
+			Days:       days,
+			RecentDays: calendar.RecentDaysWindow,
 		})
 		return
 	}
 
 	nowInTZ := time.Now().In(loc)
 	todayStart := time.Date(nowInTZ.Year(), nowInTZ.Month(), nowInTZ.Day(), 0, 0, 0, 0, loc)
+	recentStart := todayStart.AddDate(0, 0, -calendar.RecentDaysWindow)
 	cutoff := todayStart.AddDate(0, 0, days)
 
 	var result []models.CalendarItem
@@ -5981,7 +5983,7 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone)
 		airInTZ := airDT.In(loc)
 		airDateInTZ := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
-		if airDateInTZ.Before(todayStart) || airDateInTZ.After(cutoff) {
+		if airDateInTZ.Before(recentStart) || airDateInTZ.After(cutoff) {
 			continue
 		}
 		adjusted := item
@@ -6002,6 +6004,7 @@ func (h *AdminUIHandler) GetCalendarData(w http.ResponseWriter, r *http.Request)
 		Total:       len(result),
 		Timezone:    loc.String(),
 		Days:        days,
+		RecentDays:  calendar.RecentDaysWindow,
 		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
 	})
 }

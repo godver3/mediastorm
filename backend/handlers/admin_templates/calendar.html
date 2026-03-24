@@ -1,11 +1,11 @@
 {{template "base" .}}
 
-{{define "title"}}Calendar - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
+{{define "title"}}Schedule - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
 
 {{define "content"}}
 {{if .NoProfiles}}
 <div class="page-header">
-    <h1>Calendar</h1>
+    <h1>Schedule</h1>
     <p>Upcoming episodes and movie releases</p>
 </div>
 <div class="card" style="margin-top: 2rem;">
@@ -23,7 +23,7 @@
 {{else}}
 <div class="page-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
     <div>
-        <h1>Calendar</h1>
+        <h1>Schedule</h1>
         <p>Upcoming episodes and movie releases from your sources</p>
     </div>
     <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
@@ -46,6 +46,19 @@
             </svg>
             Refresh
         </button>
+    </div>
+</div>
+
+<!-- View Controls -->
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button id="viewListBtn" class="btn btn-primary" onclick="setViewMode('list')">List View</button>
+        <button id="viewCalendarBtn" class="btn btn-secondary" onclick="setViewMode('calendar')">Calendar View</button>
+    </div>
+    <div id="calendarMonthToolbar" style="display: none; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <button id="calendarPrevBtn" class="btn btn-secondary" onclick="changeCalendarMonth(-1)">Previous Month</button>
+        <div id="calendarMonthLabel" style="min-width: 160px; text-align: center; font-weight: 600; color: var(--text-secondary);">-</div>
+        <button id="calendarNextBtn" class="btn btn-secondary" onclick="changeCalendarMonth(1)">Next Month</button>
     </div>
 </div>
 
@@ -86,14 +99,14 @@
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
-            Calendar Sources
+            Schedule Sources
         </h2>
         <svg id="settingsChevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--text-muted); transition: transform 0.2s;">
             <polyline points="6 9 12 15 18 9"/>
         </svg>
     </div>
     <div id="settingsPanel" class="card-body" style="display: none; border-top: 1px solid var(--border);">
-        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;">Choose which sources populate this profile's calendar. Changes are saved automatically.</p>
+        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-bottom: 1rem;">Choose which sources populate this profile's schedule. Changes are saved automatically.</p>
         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
             <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
                 <div>
@@ -122,7 +135,7 @@
     </div>
 </div>
 
-<!-- Calendar Content -->
+<!-- Schedule Content -->
 <div class="card">
     <div class="card-header">
         <h2>
@@ -132,7 +145,7 @@
                 <line x1="8" y1="2" x2="8" y2="6"/>
                 <line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
-            Upcoming
+            Upcoming Schedule
         </h2>
         <div id="calendarCount" style="color: var(--text-muted); font-size: 0.875rem;">-</div>
     </div>
@@ -140,7 +153,7 @@
         <div id="calendarContainer">
             <div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);">
                 <div class="spinner" style="margin-right: 0.5rem;"></div>
-                Loading calendar...
+                Loading schedule...
             </div>
         </div>
     </div>
@@ -153,6 +166,9 @@
 <script>
     let calendarData = [];
     let currentSource = 'all';
+    let currentView = 'list';
+    let currentCalendarMonth = null;
+    let recentDaysWindow = 7;
     let userSettings = null;
 
     // Global MDBList shelves from server config (injected at page load)
@@ -174,6 +190,19 @@
         return basePath;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function getScheduleApiPath() {
+        return getBasePath() + '/api/schedule';
+    }
+
     function formatRelativeDate(dateStr) {
         const date = new Date(dateStr + 'T00:00:00');
         const now = new Date();
@@ -183,6 +212,10 @@
 
         if (diffDays === 0) return 'Today';
         if (diffDays === 1) return 'Tomorrow';
+        if (diffDays === -1) return 'Yesterday';
+        if (diffDays < 0 && diffDays >= -recentDaysWindow) {
+            return date.toLocaleDateString('en-US', { weekday: 'long' });
+        }
         if (diffDays < 7) return date.toLocaleDateString('en-US', { weekday: 'long' });
         return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     }
@@ -257,16 +290,169 @@
         renderCalendar();
     }
 
-    function renderCalendar() {
-        const container = document.getElementById('calendarContainer');
-        const countEl = document.getElementById('calendarCount');
+    function setViewMode(view) {
+        currentView = view;
 
-        // Filter by source
-        const filtered = currentSource === 'all'
+        const listBtn = document.getElementById('viewListBtn');
+        const calendarBtn = document.getElementById('viewCalendarBtn');
+        const monthToolbar = document.getElementById('calendarMonthToolbar');
+
+        if (view === 'calendar') {
+            listBtn.classList.remove('btn-primary');
+            listBtn.classList.add('btn-secondary');
+            calendarBtn.classList.remove('btn-secondary');
+            calendarBtn.classList.add('btn-primary');
+            monthToolbar.style.display = 'flex';
+        } else {
+            calendarBtn.classList.remove('btn-primary');
+            calendarBtn.classList.add('btn-secondary');
+            listBtn.classList.remove('btn-secondary');
+            listBtn.classList.add('btn-primary');
+            monthToolbar.style.display = 'none';
+        }
+
+        ensureCurrentCalendarMonth();
+        renderCalendar();
+    }
+
+    function getFilteredCalendarItems() {
+        return currentSource === 'all'
             ? calendarData
             : calendarData.filter(item => item.source === currentSource);
+    }
 
-        countEl.textContent = filtered.length + ' items';
+    function getVisibleMonths() {
+        const months = new Map();
+        const now = new Date();
+        const windowStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const windowEnd = new Date(now.getFullYear(), now.getMonth() + Number(getSelectedDays()), 1);
+
+        for (let cursor = new Date(windowStart); cursor <= windowEnd; cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)) {
+            const key = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0');
+            months.set(key, new Date(cursor));
+        }
+
+        getFilteredCalendarItems().forEach(item => {
+            const date = new Date(item.airDate + 'T00:00:00');
+            const key = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+            if (!months.has(key)) {
+                months.set(key, new Date(date.getFullYear(), date.getMonth(), 1));
+            }
+        });
+
+        return Array.from(months.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([, value]) => value);
+    }
+
+    function ensureCurrentCalendarMonth() {
+        const months = getVisibleMonths();
+        if (months.length === 0) {
+            currentCalendarMonth = null;
+            return;
+        }
+
+        const firstKey = months[0].getFullYear() + '-' + String(months[0].getMonth() + 1).padStart(2, '0');
+        const hasCurrent = months.some(month => {
+            const key = month.getFullYear() + '-' + String(month.getMonth() + 1).padStart(2, '0');
+            return key === currentCalendarMonth;
+        });
+
+        if (!currentCalendarMonth || !hasCurrent) {
+            currentCalendarMonth = firstKey;
+        }
+    }
+
+    function changeCalendarMonth(direction) {
+        const months = getVisibleMonths();
+        if (months.length === 0) return;
+
+        ensureCurrentCalendarMonth();
+        const currentIndex = months.findIndex(month => {
+            const key = month.getFullYear() + '-' + String(month.getMonth() + 1).padStart(2, '0');
+            return key === currentCalendarMonth;
+        });
+
+        const nextIndex = Math.min(Math.max(currentIndex + direction, 0), months.length - 1);
+        const next = months[nextIndex];
+        currentCalendarMonth = next.getFullYear() + '-' + String(next.getMonth() + 1).padStart(2, '0');
+        renderCalendar();
+    }
+
+    function formatEpisodeRange(items) {
+        const episodeNumbers = items
+            .map(item => Number(item.episodeNumber || 0))
+            .filter(num => Number.isFinite(num) && num > 0)
+            .sort((a, b) => a - b);
+
+        if (episodeNumbers.length === 0) {
+            return '';
+        }
+
+        const uniqueEpisodes = Array.from(new Set(episodeNumbers));
+        const season = String(items[0].seasonNumber || 0).padStart(2, '0');
+
+        if (uniqueEpisodes.length === 1) {
+            return 'S' + season + 'E' + String(uniqueEpisodes[0]).padStart(2, '0');
+        }
+
+        let isContiguous = true;
+        for (let i = 1; i < uniqueEpisodes.length; i++) {
+            if (uniqueEpisodes[i] !== uniqueEpisodes[i - 1] + 1) {
+                isContiguous = false;
+                break;
+            }
+        }
+
+        if (isContiguous) {
+            return 'S' + season + 'E' + String(uniqueEpisodes[0]).padStart(2, '0') + '-' + String(uniqueEpisodes[uniqueEpisodes.length - 1]).padStart(2, '0');
+        }
+
+        return 'S' + season + 'E' + uniqueEpisodes.map(num => String(num).padStart(2, '0')).join(', ');
+    }
+
+    function aggregateCalendarDayItems(items) {
+        const groups = new Map();
+
+        items.forEach(item => {
+            const key = item.mediaType === 'series'
+                ? ['series', item.title, item.seasonNumber || 0, item.airDate, item.source].join('::')
+                : ['movie', item.title, item.airDate, item.releaseType || '', item.source].join('::');
+
+            if (!groups.has(key)) {
+                groups.set(key, []);
+            }
+            groups.get(key).push(item);
+        });
+
+        return Array.from(groups.values()).map(groupItems => {
+            const first = groupItems[0];
+            const sortedItems = [...groupItems].sort((a, b) => {
+                const aEpisode = Number(a.episodeNumber || 0);
+                const bEpisode = Number(b.episodeNumber || 0);
+                return aEpisode - bEpisode || a.title.localeCompare(b.title);
+            });
+            const label = first.mediaType === 'series'
+                ? formatEpisodeRange(sortedItems)
+                : (first.releaseType ? (first.releaseType.charAt(0).toUpperCase() + first.releaseType.slice(1)) : 'Movie');
+
+            return {
+                title: first.title,
+                mediaType: first.mediaType,
+                source: first.source,
+                timeLabel: formatAirTime(first),
+                badgeLabel: label,
+                count: sortedItems.length,
+            };
+        }).sort((a, b) => {
+            const typeOrder = a.mediaType.localeCompare(b.mediaType);
+            if (typeOrder !== 0) return typeOrder;
+            return a.title.localeCompare(b.title);
+        });
+    }
+
+    function renderCalendarList(filtered) {
+        const container = document.getElementById('calendarContainer');
 
         if (filtered.length === 0) {
             container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--text-muted);">' +
@@ -354,6 +540,154 @@
         container.innerHTML = html;
     }
 
+    function renderCalendarMonth(filtered) {
+        const container = document.getElementById('calendarContainer');
+        ensureCurrentCalendarMonth();
+
+        if (!currentCalendarMonth) {
+            container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--text-muted);">' +
+                '<p>No months available in this range</p></div>';
+            return;
+        }
+
+        const [year, month] = currentCalendarMonth.split('-').map(Number);
+        const firstOfMonth = new Date(year, month - 1, 1);
+        const monthName = firstOfMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        document.getElementById('calendarMonthLabel').textContent = monthName;
+
+        const months = getVisibleMonths();
+        const currentIndex = months.findIndex(value => {
+            const key = value.getFullYear() + '-' + String(value.getMonth() + 1).padStart(2, '0');
+            return key === currentCalendarMonth;
+        });
+        document.getElementById('calendarPrevBtn').disabled = currentIndex <= 0;
+        document.getElementById('calendarNextBtn').disabled = currentIndex === -1 || currentIndex >= months.length - 1;
+
+        const itemsByDate = {};
+        filtered.forEach(item => {
+            if (!itemsByDate[item.airDate]) itemsByDate[item.airDate] = [];
+            itemsByDate[item.airDate].push(item);
+        });
+
+        const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const recentStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - recentDaysWindow);
+        const selectedMonthStart = new Date(year, month - 1, 1);
+        let displayStart = new Date(selectedMonthStart);
+
+        const isCurrentMonth = selectedMonthStart.getFullYear() === today.getFullYear() && selectedMonthStart.getMonth() === today.getMonth();
+        if (isCurrentMonth) {
+            if (recentStart > displayStart) {
+                displayStart = new Date(recentStart);
+            }
+        }
+
+        const displayStartWeekday = (displayStart.getDay() + 6) % 7;
+        displayStart.setDate(displayStart.getDate() - displayStartWeekday);
+
+        let html = '<div style="padding: 1rem;">';
+        html += '<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem;">';
+        weekdays.forEach(day => {
+            html += '<div style="padding: 0.5rem 0.25rem; text-align: center; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);">' + day + '</div>';
+        });
+        html += '</div>';
+        html += '<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.5rem;">';
+        const todayKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+        const totalCells = 42;
+
+        for (let offset = 0; offset < totalCells; offset++) {
+            const cellDate = new Date(displayStart);
+            cellDate.setDate(displayStart.getDate() + offset);
+
+            const cellYear = cellDate.getFullYear();
+            const cellMonth = cellDate.getMonth() + 1;
+            const cellDay = cellDate.getDate();
+            const dateKey = cellYear + '-' + String(cellMonth).padStart(2, '0') + '-' + String(cellDay).padStart(2, '0');
+            const items = (itemsByDate[dateKey] || []).sort((a, b) => {
+                const aTime = a.airTime || '99:99';
+                const bTime = b.airTime || '99:99';
+                return aTime.localeCompare(bTime) || a.title.localeCompare(b.title);
+            });
+            const aggregatedItems = aggregateCalendarDayItems(items);
+            const isToday = dateKey === todayKey;
+            const isSelectedMonth = cellYear === year && cellMonth === month;
+            const isRecentHistoryGap = isCurrentMonth && cellDate < recentStart && items.length === 0;
+
+            if (isRecentHistoryGap) {
+                html += '<div style="min-height: 140px; border-radius: var(--radius); background: transparent;"></div>';
+                continue;
+            }
+
+            const borderStyle = isToday
+                ? '1px solid var(--accent)'
+                : (isSelectedMonth ? '1px solid var(--border)' : '1px dashed var(--border)');
+            const backgroundStyle = isToday
+                ? 'rgba(99, 102, 241, 0.06)'
+                : (isSelectedMonth ? 'var(--bg-secondary)' : 'rgba(255, 255, 255, 0.02)');
+            const opacityStyle = isSelectedMonth ? '1' : '0.82';
+
+            html += '<div style="min-height: 140px; padding: 0.6rem; border: ' + borderStyle + '; border-radius: var(--radius); background: ' + backgroundStyle + '; display: flex; flex-direction: column; gap: 0.5rem; opacity: ' + opacityStyle + ';">';
+            html += '<div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">';
+            html += '<div style="font-size: 0.875rem; font-weight: 700; color: ' + (isToday ? 'var(--accent)' : (isSelectedMonth ? 'var(--text-primary)' : 'var(--text-muted)')) + ';">' + cellDay + '</div>';
+            if (items.length > 0) {
+                html += '<div style="font-size: 0.6875rem; color: var(--text-muted);">' + items.length + ' item' + (items.length !== 1 ? 's' : '') + '</div>';
+            } else if (!isSelectedMonth) {
+                html += '<div style="font-size: 0.6875rem; color: var(--text-muted); text-transform: uppercase;">' + cellDate.toLocaleDateString('en-US', { month: 'short' }) + '</div>';
+            }
+            html += '</div>';
+
+            if (items.length === 0) {
+                html += '<div style="flex: 1; border-radius: 8px; background: var(--bg-tertiary); opacity: ' + (isSelectedMonth ? '0.35' : '0.2') + ';"></div>';
+            } else {
+                html += '<div style="display: flex; flex-direction: column; gap: 0.35rem;">';
+                aggregatedItems.slice(0, 4).forEach(item => {
+                    const palette = item.mediaType === 'series'
+                        ? {
+                            background: 'rgba(99, 102, 241, 0.12)',
+                            border: 'rgba(99, 102, 241, 0.35)',
+                            accent: 'var(--accent)',
+                        }
+                        : {
+                            background: 'rgba(34, 197, 94, 0.12)',
+                            border: 'rgba(34, 197, 94, 0.35)',
+                            accent: 'var(--success)',
+                        };
+
+                    html += '<div title="' + escapeHtml(item.title) + '" style="padding: 0.4rem 0.45rem; border-radius: 8px; background: ' + palette.background + '; border: 1px solid ' + palette.border + '; font-size: 0.75rem; line-height: 1.25;">';
+                    html += '<div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + escapeHtml(item.title) + '</div>';
+                    html += '<div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: 0.15rem; color: var(--text-muted);">';
+                    html += '<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: ' + palette.accent + '; font-weight: 600;">' + escapeHtml(item.badgeLabel) + '</span>';
+                    html += '<span style="flex-shrink: 0;">' + escapeHtml(item.timeLabel || item.source) + '</span>';
+                    html += '</div>';
+                    html += '</div>';
+                });
+                if (aggregatedItems.length > 4) {
+                    html += '<div style="font-size: 0.75rem; color: var(--text-muted); padding: 0.15rem 0.2rem;">+' + (aggregatedItems.length - 4) + ' more</div>';
+                }
+                html += '</div>';
+            }
+
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        container.innerHTML = html;
+    }
+
+    function renderCalendar() {
+        const countEl = document.getElementById('calendarCount');
+        const filtered = getFilteredCalendarItems();
+        countEl.textContent = filtered.length + ' items';
+
+        if (currentView === 'calendar') {
+            renderCalendarMonth(filtered);
+            return;
+        }
+
+        renderCalendarList(filtered);
+    }
+
     async function loadCalendarSettings() {
         const profileId = getSelectedProfile();
         try {
@@ -428,7 +762,7 @@
                 body: JSON.stringify(userSettings),
             });
             if (resp.ok) {
-                showToast('Calendar settings saved');
+                showToast('Schedule settings saved');
             } else {
                 showToast('Failed to save settings', 'danger');
             }
@@ -443,7 +777,7 @@
         const days = getSelectedDays();
         const container = document.getElementById('calendarContainer');
 
-        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading calendar...</div>';
+        container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted);"><div class="spinner" style="margin-right: 0.5rem;"></div>Loading schedule...</div>';
 
         // Reset source filter
         currentSource = 'all';
@@ -456,7 +790,7 @@
 
         try {
             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            const url = getBasePath() + '/api/calendar?user=' + encodeURIComponent(profileId) + '&days=' + days + '&tz=' + encodeURIComponent(tz);
+            const url = getScheduleApiPath() + '?user=' + encodeURIComponent(profileId) + '&days=' + days + '&tz=' + encodeURIComponent(tz);
             const resp = await fetch(url);
             if (!resp.ok) {
                 const errText = await resp.text();
@@ -464,6 +798,7 @@
             }
             const data = await resp.json();
             calendarData = data.items || [];
+            recentDaysWindow = Number(data.recentDays || 7);
 
             // Update stats
             const episodes = calendarData.filter(i => i.mediaType === 'series').length;
@@ -488,10 +823,11 @@
                 document.getElementById('lastRefreshed').textContent = 'not yet';
             }
 
+            ensureCurrentCalendarMonth();
             renderCalendar();
         } catch (e) {
-            console.error('Error loading calendar:', e);
-            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load calendar</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">' + e.message + '</p></div>';
+            console.error('Error loading schedule:', e);
+            container.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><p>Failed to load schedule</p><p style="font-size: 0.75rem; margin-top: 0.5rem;">' + e.message + '</p></div>';
         }
 
         // Load settings in parallel
