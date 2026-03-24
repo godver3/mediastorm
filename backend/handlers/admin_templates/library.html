@@ -157,6 +157,21 @@
     </div>
 </div>
 
+<div id="posterDetailsModal" class="dir-modal" aria-hidden="true">
+    <div class="dir-modal-card card poster-details-card">
+        <div class="card-header">
+            <div>
+                <h2 id="posterDetailsTitle">Details</h2>
+                <div id="posterDetailsSubtitle" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;"></div>
+            </div>
+            <button class="btn btn-secondary btn-sm" type="button" id="closePosterDetailsBtn">Close</button>
+        </div>
+        <div class="card-body">
+            <div id="posterDetailsContent" style="display: grid; gap: 0.9rem;"></div>
+        </div>
+    </div>
+</div>
+
 <div id="directoryBrowserModal" class="dir-modal" aria-hidden="true">
     <div class="dir-modal-card card">
         <div class="card-header">
@@ -197,10 +212,11 @@
     inset: 0;
     background: rgba(0, 0, 0, 0.72);
     display: none;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: center;
     z-index: 300;
     padding: 1rem;
+    overflow: auto;
 }
 
 .dir-modal.open {
@@ -211,6 +227,19 @@
     width: min(760px, 100%);
     max-height: min(78vh, 720px);
     overflow: hidden;
+    margin-top: 4vh;
+}
+
+.poster-details-card {
+    max-height: min(86vh, 860px);
+    display: flex;
+    flex-direction: column;
+}
+
+.poster-details-card .card-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
 }
 
 .dir-list {
@@ -672,7 +701,7 @@
     }
 
     .dir-modal {
-        padding: 0;
+        padding: 0.75rem 0 0;
     }
 
     .dir-modal-card {
@@ -680,6 +709,7 @@
         max-height: 88vh;
         border-bottom-left-radius: 0;
         border-bottom-right-radius: 0;
+        margin-top: 0;
     }
 
     .dir-list {
@@ -790,6 +820,8 @@ let itemsSearchDebounceHandle = 0;
 let expandedGroups = new Set();
 let expandedSeasons = new Set();
 let expandedEpisodeGroups = new Set();
+let activePosterDetails = null;
+let lockedScrollY = 0;
 const libraryStateStorageKey = 'strmr.library.ui.v1';
 
 if (!isAdmin) {
@@ -812,6 +844,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('itemsPrevBtn').addEventListener('click', () => changeItemsPage(-1));
   document.getElementById('itemsNextBtn').addEventListener('click', () => changeItemsPage(1));
   document.getElementById('closeMatchModalBtn').addEventListener('click', closeMatchModal);
+  document.getElementById('closePosterDetailsBtn').addEventListener('click', closePosterDetailsModal);
   document.getElementById('runMatchSearchBtn').addEventListener('click', searchMatchCandidates);
   document.getElementById('clearMatchBtn').addEventListener('click', clearActiveMatch);
   document.getElementById('matchSearchInput').addEventListener('keydown', event => {
@@ -1158,13 +1191,14 @@ function setQuickFilter(filter) {
   if (selectedLibraryId) loadItems(selectedLibraryId);
 }
 
-function renderItem(item) {
+function renderItem(item, options = {}) {
   const meta = item.metadata || {};
   const probe = item.probe || {};
   const poster = (meta.textPoster && meta.textPoster.url) || (meta.poster && meta.poster.url) || '';
   const badgeClass = item.isMissing ? 'offline' : matchStatusClass(item.matchStatus);
   const expanded = expandedItems.has(item.id);
-  const showDetails = currentGrouped || expanded;
+  const forceCollapsible = options.forceCollapsible === true;
+  const showDetails = forceCollapsible ? expanded : (currentGrouped || expanded);
   const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
   const year = meta.year || item.matchedYear || item.detectedYear || '';
   const episodeLabel = item.seasonNumber && item.episodeNumber ? `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}` : '';
@@ -1173,7 +1207,7 @@ function renderItem(item) {
   return `
     <div class="card library-item-card">
       <div class="card-body" style="display: grid; gap: 0.75rem;">
-        <div class="library-item-summary"${currentGrouped ? '' : ` onclick="toggleItemExpanded('${item.id}')" style="cursor: pointer;"`}>
+        <div class="library-item-summary"${(currentGrouped && !forceCollapsible) ? '' : ` onclick="toggleItemExpanded('${item.id}')" style="cursor: pointer;"`}>
           <div class="library-item-thumb">
             ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}" loading="lazy">` : `<div class="library-item-thumb-fallback">${escapeHtml(title)}</div>`}
           </div>
@@ -1194,7 +1228,7 @@ function renderItem(item) {
           ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept Match</button>` : ''}
           ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
         </div>
-        ${showDetails ? renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped }) : ''}
+        ${showDetails ? renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped && !forceCollapsible }) : ''}
       </div>
     </div>
   `;
@@ -1208,14 +1242,13 @@ function renderPosterItem(item) {
   const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
   const year = meta.year || item.matchedYear || item.detectedYear || '';
   const statusLabel = item.isMissing ? 'missing' : item.matchStatus.replace('_', ' ');
-  const showDetails = currentGrouped || expandedItems.has(item.id);
   return `
     <div class="library-poster-card">
-      <div class="library-poster-image"${currentGrouped ? '' : ` onclick="togglePosterItemExpand('${item.id}')" style="cursor: pointer;"`}>
+      <div class="library-poster-image" onclick="openPosterItemModal('${item.id}')" style="cursor: pointer;">
         ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}">` : `<div class="library-poster-fallback">${escapeHtml(title)}</div>`}
       </div>
       <div class="library-poster-body">
-        <div${currentGrouped ? '' : ` onclick="togglePosterItemExpand('${item.id}')" style="cursor: pointer;"`}>
+        <div onclick="openPosterItemModal('${item.id}')" style="cursor: pointer;">
           <div class="library-poster-title">${escapeHtml(title)}</div>
           <div style="color: var(--text-muted); font-size: 0.85rem;">${episodeLabelForItem(item) || (year ? escapeHtml(String(year)) : escapeHtml(item.relativePath))}</div>
         </div>
@@ -1231,7 +1264,6 @@ function renderPosterItem(item) {
           ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept</button>` : ''}
           ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
         </div>
-        ${showDetails ? renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped }) : ''}
       </div>
     </div>
   `;
@@ -1283,7 +1315,6 @@ function renderGroupedItem(group) {
 
 function renderGroupedPosterItem(group) {
   const poster = (group.textPoster && group.textPoster.url) || (group.poster && group.poster.url) || '';
-  const expanded = expandedGroups.has(group.id);
   const title = group.title || 'Untitled';
   const metaBits = [];
   if (group.year) metaBits.push(String(group.year));
@@ -1296,17 +1327,15 @@ function renderGroupedPosterItem(group) {
   }
   return `
     <div class="library-poster-card">
-      <div class="library-poster-image" onclick="toggleGroupExpanded('${group.id}')" style="cursor: pointer;">
+      <div class="library-poster-image" onclick="openPosterGroupModal('${group.id}')" style="cursor: pointer;">
         ${poster ? `<img src="${escapeHtml(poster)}" alt="${escapeHtml(title)}">` : `<div class="library-poster-fallback">${escapeHtml(title)}</div>`}
       </div>
       <div class="library-poster-body">
-        <div onclick="toggleGroupExpanded('${group.id}')" style="cursor: pointer;">
+        <div onclick="openPosterGroupModal('${group.id}')" style="cursor: pointer;">
           <div class="library-poster-title">${escapeHtml(title)}</div>
           <div style="color: var(--text-muted); font-size: 0.85rem;">${metaBits.map(escapeHtml).join(' · ')}</div>
         </div>
         <div class="status-badge ${matchStatusClass(group.matchStatus)}">${escapeHtml(formatStatus(group.matchStatus))}</div>
-        ${group.overview ? `<div class="library-group-overview">${escapeHtml(group.overview)}</div>` : ''}
-        ${expanded ? `<div onclick="event.stopPropagation()">${renderGroupedChildren(group)}</div>` : ''}
       </div>
     </div>
   `;
@@ -1422,6 +1451,7 @@ function toggleItemExpanded(itemId) {
   } else {
     expandedItems.add(itemId);
   }
+  if (refreshPosterDetailsModal()) return;
   renderCurrentItems();
 }
 
@@ -1435,6 +1465,7 @@ function toggleGroupExpanded(groupId) {
   } else {
     expandedGroups.add(groupId);
   }
+  if (refreshPosterDetailsModal()) return;
   renderCurrentItems();
 }
 
@@ -1444,6 +1475,7 @@ function toggleSeasonExpanded(seasonId) {
   } else {
     expandedSeasons.add(seasonId);
   }
+  if (refreshPosterDetailsModal()) return;
   renderCurrentItems();
 }
 
@@ -1453,6 +1485,7 @@ function toggleEpisodeGroupExpanded(groupId) {
   } else {
     expandedEpisodeGroups.add(groupId);
   }
+  if (refreshPosterDetailsModal()) return;
   renderCurrentItems();
 }
 
@@ -1493,6 +1526,138 @@ function closeMatchModal() {
   document.getElementById('matchModal').classList.remove('open');
   activeMatchItem = null;
   currentMatchResults = [];
+}
+
+function openPosterItemModal(itemId) {
+  const item = currentItemsById.get(itemId);
+  if (!item) return;
+  activePosterDetails = { type: 'item', id: itemId };
+  const meta = item.metadata || {};
+  const probe = item.probe || {};
+  const title = meta.name || item.matchedName || item.detectedTitle || item.fileName || 'Item details';
+  const subtitle = episodeLabelForItem(item) || item.relativePath || item.fileName || '';
+  document.getElementById('posterDetailsTitle').textContent = title;
+  document.getElementById('posterDetailsSubtitle').textContent = subtitle;
+  document.getElementById('posterDetailsContent').innerHTML = renderPosterItemModalContent(item, meta, probe);
+  lockBackgroundScroll();
+  document.getElementById('posterDetailsModal').classList.add('open');
+}
+
+function openPosterGroupModal(groupId) {
+  const group = currentVisibleGroups.find(entry => entry.id === groupId);
+  if (!group) return;
+  activePosterDetails = { type: 'group', id: groupId };
+  document.getElementById('posterDetailsTitle').textContent = group.title || 'Group details';
+  document.getElementById('posterDetailsSubtitle').textContent = renderPosterGroupSubtitle(group);
+  document.getElementById('posterDetailsContent').innerHTML = renderPosterGroupModalContent(group);
+  lockBackgroundScroll();
+  document.getElementById('posterDetailsModal').classList.add('open');
+}
+
+function closePosterDetailsModal() {
+  document.getElementById('posterDetailsModal').classList.remove('open');
+  document.getElementById('posterDetailsContent').innerHTML = '';
+  activePosterDetails = null;
+  unlockBackgroundScroll();
+}
+
+function refreshPosterDetailsModal() {
+  if (!activePosterDetails) return false;
+  if (activePosterDetails.type === 'item') {
+    openPosterItemModal(activePosterDetails.id);
+    return true;
+  }
+  if (activePosterDetails.type === 'group') {
+    openPosterGroupModal(activePosterDetails.id);
+    return true;
+  }
+  return false;
+}
+
+function renderPosterItemModalContent(item, meta, probe) {
+  const title = meta.name || item.matchedName || item.detectedTitle || item.fileName;
+  const statusLabel = item.isMissing ? 'missing' : item.matchStatus.replace('_', ' ');
+  const badgeClass = item.isMissing ? 'offline' : matchStatusClass(item.matchStatus);
+  return `
+    <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center;">
+      <div class="status-badge ${badgeClass}">${escapeHtml(statusLabel)} · ${Math.round((item.confidence || 0) * 100)}%</div>
+      ${item.matchStatus === 'low_confidence' && (item.matchedTitleId || meta.id) ? `<button class="btn btn-secondary btn-sm" type="button" onclick="acceptSuggestedMatch('${item.id}')">Accept</button>` : ''}
+      <button class="btn btn-primary btn-sm" type="button" onclick="openMatchModal('${item.id}')">Rematch</button>
+      ${item.isMissing ? `<button class="btn btn-danger btn-sm" type="button" onclick="deleteMissingItem('${item.id}')">Delete</button>` : ''}
+    </div>
+    ${renderExpandedItemDetails(item, meta, probe, { suppressSeriesOverview: true, suppressGroupedOverview: currentGrouped })}
+  `;
+}
+
+function renderPosterGroupSubtitle(group) {
+  const parts = [];
+  if (group.year) parts.push(String(group.year));
+  if (group.groupType === 'series') {
+    parts.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
+    parts.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
+    parts.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  } else {
+    parts.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  }
+  return parts.join(' · ');
+}
+
+function renderPosterGroupModalContent(group) {
+  const badgeClass = matchStatusClass(group.matchStatus);
+  const childrenHtml = group.groupType === 'series'
+    ? (group.seasons || []).map(renderPosterModalSeason).join('')
+    : `<div style="display: grid; gap: 0.75rem;">${(group.items || []).map(item => renderItem(item, { forceCollapsible: true })).join('')}</div>`;
+  return `
+    <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center;">
+      <div class="status-badge ${badgeClass}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+      <div style="color: var(--text-secondary); font-size: 0.85rem;">${Math.round((group.confidenceMax || 0) * 100)}% max confidence</div>
+      <div style="color: var(--text-secondary); font-size: 0.85rem;">${formatBytes(group.totalSizeBytes || 0)}</div>
+    </div>
+    ${group.overview ? `<div style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.5;">${escapeHtml(group.overview)}</div>` : ''}
+    <div style="display: grid; gap: 0.85rem;">${childrenHtml}</div>
+  `;
+}
+
+function renderPosterModalSeason(season) {
+  const expanded = expandedSeasons.has(season.id);
+  const label = season.seasonNumber > 0 ? `Season ${season.seasonNumber}` : 'Specials / Unknown Season';
+  return `
+    <div class="library-season-block">
+      <button class="library-season-header" type="button" onclick="toggleSeasonExpanded('${season.id}')">
+        <div style="display: grid; gap: 0.3rem; text-align: left;">
+          <div class="library-season-label">${escapeHtml(label)}</div>
+          <div class="library-group-meta">
+            <span>${(season.episodes || []).length} episode${(season.episodes || []).length === 1 ? '' : 's'}</span>
+            <span>${season.itemCount || 0} item${season.itemCount === 1 ? '' : 's'}</span>
+            ${(season.missingCount || 0) ? `<span>${season.missingCount} missing</span>` : ''}
+          </div>
+        </div>
+        <div class="status-badge ${matchStatusClass(season.matchStatus)}">${expanded ? 'Hide' : 'Show'}</div>
+      </button>
+      ${expanded ? `<div class="library-season-items">${(season.episodes || []).map(renderPosterModalEpisodeGroup).join('')}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderPosterModalEpisodeGroup(group) {
+  const bits = [];
+  if (group.episodeNumber > 0) bits.push(`E${String(group.episodeNumber).padStart(2, '0')}`);
+  if (group.itemCount) bits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
+  return `
+    <div class="library-episode-group">
+      <div class="library-episode-header" style="cursor: default;">
+        <div style="display: flex; justify-content: space-between; gap: 0.75rem; align-items: start;">
+          <div style="min-width: 0; display: grid; gap: 0.35rem;">
+            <div class="library-episode-title">${escapeHtml(group.episodeTitle || (group.episodeNumber > 0 ? `Episode ${group.episodeNumber}` : 'Unknown Episode'))}</div>
+            <div class="library-group-meta">${bits.map(bit => `<span>${escapeHtml(bit)}</span>`).join('')}</div>
+            ${group.episodeOverview ? `<div class="library-episode-overview">${escapeHtml(group.episodeOverview)}</div>` : ''}
+          </div>
+          <div class="status-badge ${matchStatusClass(group.matchStatus)}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+        </div>
+      </div>
+      <div class="library-episode-items">${(group.items || []).map(item => renderItem(item, { forceCollapsible: true })).join('')}</div>
+    </div>
+  `;
 }
 
 function selectedLibraryType() {
@@ -1621,6 +1786,7 @@ async function persistMatchForItem(itemId, payload, successMessage) {
     if (!saveRes.ok) throw new Error(await saveRes.text());
     showToast(successMessage);
     closeMatchModal();
+    closePosterDetailsModal();
     if (selectedLibraryId) loadItems(selectedLibraryId);
   } catch (err) {
     showToast(err.message || 'Failed to save match', 'error');
@@ -1637,6 +1803,7 @@ async function deleteMissingItem(itemId) {
     });
     if (!res.ok) throw new Error(await res.text());
     showToast('Missing item deleted');
+    closePosterDetailsModal();
     if (selectedLibraryId) loadItems(selectedLibraryId);
   } catch (err) {
     showToast(err.message || 'Failed to delete missing item', 'error');
@@ -1835,6 +2002,31 @@ function episodeLabelForItem(item) {
 function countDistinctEpisodes(group) {
   if (!group || !Array.isArray(group.seasons)) return 0;
   return group.seasons.reduce((total, season) => total + ((season && Array.isArray(season.episodes)) ? season.episodes.length : 0), 0);
+}
+
+function lockBackgroundScroll() {
+  if (document.body.classList.contains('scroll-locked')) return;
+  lockedScrollY = window.scrollY || window.pageYOffset || 0;
+  document.body.classList.add('scroll-locked');
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${lockedScrollY}px`;
+  document.body.style.left = '0';
+  document.body.style.right = '0';
+  document.body.style.width = '100%';
+  document.body.style.overflow = 'hidden';
+}
+
+function unlockBackgroundScroll() {
+  if (!document.body.classList.contains('scroll-locked')) return;
+  document.body.classList.remove('scroll-locked');
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  document.body.style.width = '';
+  document.body.style.overflow = '';
+  window.scrollTo(0, lockedScrollY || 0);
+  lockedScrollY = 0;
 }
 </script>
 {{end}}
