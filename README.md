@@ -157,3 +157,7 @@ Native playback powered by [KSPlayer](https://github.com/kingslay/KSPlayer) on i
 ## License
 
 MIT
+
+## Links
+
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/mediastorm)
