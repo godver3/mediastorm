@@ -823,6 +823,7 @@ let expandedEpisodeGroups = new Set();
 let activePosterDetails = null;
 let lockedScrollY = 0;
 const libraryStateStorageKey = 'strmr.library.ui.v1';
+let lastSelectedLibraryScanStatus = '';
 
 if (!isAdmin) {
   document.addEventListener('DOMContentLoaded', () => {
@@ -929,14 +930,26 @@ async function loadLibraries() {
     const res = await fetch(basePath + '/api/library/libraries');
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
+    const previousSelectedLibrary = selectedLibraryId
+      ? libraries.find(library => library.id === selectedLibraryId)
+      : null;
     libraries = Array.isArray(data) ? data : [];
     renderLibraries(container);
     if (!selectedLibraryId && libraries.length > 0) {
       selectedLibraryId = libraries[0].id;
+      lastSelectedLibraryScanStatus = libraries[0].lastScanStatus || '';
       loadItems(selectedLibraryId);
     } else if (selectedLibraryId) {
       const stillExists = libraries.find(l => l.id === selectedLibraryId);
-      if (stillExists && stillExists.lastScanStatus === 'scanning') {
+      if (!stillExists) {
+        lastSelectedLibraryScanStatus = '';
+        return;
+      }
+      updateSelectedLibrarySummary(stillExists);
+      const previousScanStatus = previousSelectedLibrary ? (previousSelectedLibrary.lastScanStatus || '') : lastSelectedLibraryScanStatus;
+      const nextScanStatus = stillExists.lastScanStatus || '';
+      lastSelectedLibraryScanStatus = nextScanStatus;
+      if (previousScanStatus !== nextScanStatus) {
         loadItems(selectedLibraryId);
       }
     }
@@ -984,6 +997,8 @@ function renderLibraries(container) {
 
 function selectLibrary(id) {
   selectedLibraryId = id;
+  const selectedLibrary = libraries.find(library => library.id === id);
+  lastSelectedLibraryScanStatus = selectedLibrary ? (selectedLibrary.lastScanStatus || '') : '';
   currentItemsOffset = 0;
   expandedItems = new Set();
   expandedGroups = new Set();
@@ -1051,19 +1066,14 @@ async function deleteLibrary(id) {
 
 async function loadItems(libraryId) {
   const library = libraries.find(x => x.id === libraryId);
-  const itemsTitle = document.getElementById('itemsTitle');
-  const itemsSubtitle = document.getElementById('itemsSubtitle');
   const itemsMeta = document.getElementById('itemsMeta');
   const itemsList = document.getElementById('itemsList');
   const pageLabel = document.getElementById('itemsPageLabel');
   const pagination = document.getElementById('itemsPagination');
   const prevBtn = document.getElementById('itemsPrevBtn');
   const nextBtn = document.getElementById('itemsNextBtn');
-  const itemsSummaryPills = document.getElementById('itemsSummaryPills');
-  itemsTitle.textContent = library ? library.name : 'Library Items';
-  itemsSubtitle.textContent = library ? `${library.rootPath} · ${library.type}` : 'Select a library to inspect scan results.';
+  updateSelectedLibrarySummary(library);
   itemsMeta.textContent = '';
-  itemsSummaryPills.innerHTML = renderSummaryPills(library);
   itemsList.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   pagination.style.display = 'none';
   currentVisibleItems = [];
@@ -1111,6 +1121,16 @@ async function loadItems(libraryId) {
     currentItemsById = new Map();
     itemsList.innerHTML = `<div style="color: var(--danger);">Failed to load items: ${escapeHtml(err.message)}</div>`;
   }
+}
+
+function updateSelectedLibrarySummary(library) {
+  const itemsTitle = document.getElementById('itemsTitle');
+  const itemsSubtitle = document.getElementById('itemsSubtitle');
+  const itemsSummaryPills = document.getElementById('itemsSummaryPills');
+  if (!itemsTitle || !itemsSubtitle || !itemsSummaryPills) return;
+  itemsTitle.textContent = library ? library.name : 'Library Items';
+  itemsSubtitle.textContent = library ? `${library.rootPath} · ${library.type}` : 'Select a library to inspect scan results.';
+  itemsSummaryPills.innerHTML = renderSummaryPills(library);
 }
 
 function renderCurrentItems() {
