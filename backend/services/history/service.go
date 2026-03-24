@@ -2257,7 +2257,9 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			}
 		}
 
-		// "Most recent wins" — skip if local item has a newer WatchedAt
+		// "Most recent wins" for watched items.
+		// Also preserve a manual local unwatch when the imported event is not newer
+		// than the last known watched timestamp on the local item.
 		if exists && existing.Watched {
 			incomingTime := update.WatchedAt
 			if incomingTime.IsZero() {
@@ -2276,6 +2278,18 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				continue
 			}
 			log.Printf("[history] import: UPDATE (trakt newer) %s %q localWatchedAt=%s -> traktWatchedAt=%s seriesID=%s",
+				update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+		} else if exists && !existing.Watched {
+			incomingTime := update.WatchedAt
+			if incomingTime.IsZero() {
+				incomingTime = now
+			}
+			if !existing.WatchedAt.IsZero() && (existing.WatchedAt.After(incomingTime) || existing.WatchedAt.Equal(incomingTime)) {
+				log.Printf("[history] import: SKIP (manual unwatch newer/equal) %s %q localWatchedAt=%s importedWatchedAt=%s seriesID=%s",
+					update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+				continue
+			}
+			log.Printf("[history] import: RESTORE (external newer than manual unwatch baseline) %s %q localWatchedAt=%s -> importedWatchedAt=%s seriesID=%s",
 				update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
 		} else if !exists {
 			log.Printf("[history] import: NEW %s %q watchedAt=%s seriesID=%s",

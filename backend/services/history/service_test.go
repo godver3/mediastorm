@@ -1046,6 +1046,154 @@ func TestImportWatchHistory_MostRecentWins(t *testing.T) {
 	}
 }
 
+func TestImportWatchHistory_PreservesManualUnwatchAgainstOlderOrEqualImport(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	unwatched := false
+	watchedAt := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() watched error = %v", err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11",
+		Watched:       &unwatched,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() unwatched error = %v", err)
+	}
+
+	imported, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11 Imported",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("expected 0 imported for equal watchedAt after manual unwatch, got %d", imported)
+	}
+
+	item, err := svc.GetWatchHistoryItem(userID, "episode", "tmdb:tv:100:s03e11")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected watch history item to exist")
+	}
+	if item.Watched {
+		t.Fatal("expected manual unwatch to be preserved")
+	}
+}
+
+func TestImportWatchHistory_AllowsNewerExternalRewatchAfterManualUnwatch(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	unwatched := false
+	initialWatchedAt := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	rewatchAt := time.Date(2025, 6, 20, 12, 0, 0, 0, time.UTC)
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11",
+		Watched:       &watched,
+		WatchedAt:     initialWatchedAt,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() watched error = %v", err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11",
+		Watched:       &unwatched,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() unwatched error = %v", err)
+	}
+
+	imported, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:100:s03e11",
+		Name:          "S03E11 Imported",
+		Watched:       &watched,
+		WatchedAt:     rewatchAt,
+		SeriesID:      "tmdb:tv:100",
+		SeriesName:    "Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs:   map[string]string{"tmdb": "100"},
+	}})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("expected 1 imported for newer external rewatch, got %d", imported)
+	}
+
+	item, err := svc.GetWatchHistoryItem(userID, "episode", "tmdb:tv:100:s03e11")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected watch history item to exist")
+	}
+	if !item.Watched {
+		t.Fatal("expected newer external rewatch to restore watched state")
+	}
+	if !item.WatchedAt.Equal(rewatchAt) {
+		t.Fatalf("expected watchedAt %s, got %s", rewatchAt.Format(time.RFC3339), item.WatchedAt.Format(time.RFC3339))
+	}
+}
+
 func TestImportWatchHistory_Dedup(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
