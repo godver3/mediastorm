@@ -2425,8 +2425,22 @@ func alternateItemIDs(mediaType, primaryID string, externalIDs map[string]string
 			add(v)
 		}
 	}
-	// For episodes, the itemID encodes season/episode so alternates would need
-	// the same S##E## suffix — not worth the complexity since shows rarely differ.
+	if mediaType == "episode" {
+		lowerPrimary := strings.ToLower(primaryID)
+		idx := strings.LastIndex(lowerPrimary, ":s")
+		if idx != -1 {
+			suffix := primaryID[idx:]
+			if v, ok := externalIDs["tvdb"]; ok && v != "" {
+				add(fmt.Sprintf("tvdb:series:%s%s", v, suffix))
+			}
+			if v, ok := externalIDs["tmdb"]; ok && v != "" {
+				add(fmt.Sprintf("tmdb:tv:%s%s", v, suffix))
+			}
+			if v, ok := externalIDs["imdb"]; ok && v != "" {
+				add(fmt.Sprintf("imdb:%s%s", v, suffix))
+			}
+		}
+	}
 
 	return ids
 }

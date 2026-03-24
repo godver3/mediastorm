@@ -1980,6 +1980,12 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		}
 		// Clear playback progress when watched status changes (both marking as watched and unwatched)
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
+		// For episodes, also clear any matching progress stored under a different ID format.
+		if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+				progressCleared = true
+			}
+		}
 	}
 	if update.ExternalIDs != nil {
 		item.ExternalIDs = update.ExternalIDs
@@ -2104,6 +2110,12 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 			// Clear playback progress when watched status changes (both marking as watched and unwatched)
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
+			}
+			// For episodes, also clear any matching progress stored under a different ID format.
+			if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
+				if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+					progressCleared = true
+				}
 			}
 		}
 		if update.ExternalIDs != nil {
@@ -2620,6 +2632,13 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		EpisodeName:    update.EpisodeName,
 		MovieName:      update.MovieName,
 		Year:           update.Year,
+	}
+
+	// For episodes, collapse same-episode progress stored under alternate ID formats
+	// before writing the new row. This keeps each episode in a single "in progress"
+	// state even when different sources use TMDB/TVDB/IMDB-based item IDs.
+	if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
+		s.clearOtherEpisodeProgressByExternalIDMatchLocked(perUser, key, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
 	}
 
 	perUser[key] = progress
@@ -3312,6 +3331,36 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 		}
 
 		// Check if this progress entry shares any external ID with the update
+		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+			delete(perUser, key)
+			if progress.HiddenFromContinueWatching {
+				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+			}
+			anyCleared = true
+		}
+	}
+
+	return anyCleared
+}
+
+// clearOtherEpisodeProgressByExternalIDMatchLocked removes duplicate in-progress rows
+// for the same episode stored under alternate ID formats, preserving the entry whose
+// key matches keepKey. Callers must hold s.mu before invoking this helper.
+func (s *Service) clearOtherEpisodeProgressByExternalIDMatchLocked(perUser map[string]models.PlaybackProgress, keepKey string, seasonNumber, episodeNumber int, externalIDs map[string]string) bool {
+	if seasonNumber <= 0 || episodeNumber <= 0 || len(externalIDs) == 0 {
+		return false
+	}
+
+	anyCleared := false
+	for key, progress := range perUser {
+		if key == keepKey {
+			continue
+		}
+		if progress.MediaType != "episode" ||
+			progress.SeasonNumber != seasonNumber ||
+			progress.EpisodeNumber != episodeNumber {
+			continue
+		}
 		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
 			delete(perUser, key)
 			if progress.HiddenFromContinueWatching {

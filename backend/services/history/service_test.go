@@ -1194,6 +1194,118 @@ func TestImportWatchHistory_AllowsNewerExternalRewatchAfterManualUnwatch(t *test
 	}
 }
 
+func TestUpdateWatchHistory_UnwatchedClearsCrossProviderProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-cross-progress"
+	watched := false
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:114868:s03e11",
+		Position:      600,
+		Duration:      2400,
+		SeriesID:      "tmdb:tv:114868",
+		SeriesName:    "Record of Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		EpisodeName:   "Episode 11",
+		ExternalIDs: map[string]string{
+			"tvdb": "393810",
+			"tmdb": "114868",
+			"imdb": "tt13676344",
+		},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:393810:s03e11",
+		Name:          "Episode 11",
+		Watched:       &watched,
+		SeriesID:      "tvdb:series:393810",
+		SeriesName:    "Record of Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		ExternalIDs: map[string]string{
+			"tvdb": "393810",
+			"tmdb": "114868",
+			"imdb": "tt13676344",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 0 {
+		t.Fatalf("expected cross-provider progress to be cleared on manual unwatch, got %d items: %+v", len(progressItems), progressItems)
+	}
+}
+
+func TestUpdatePlaybackProgress_DedupesCrossProviderEpisodeProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-progress-dedupe"
+	externalIDs := map[string]string{
+		"tvdb": "393810",
+		"tmdb": "114868",
+		"imdb": "tt13676344",
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:114868:s03e11",
+		Position:      600,
+		Duration:      2400,
+		SeriesID:      "tmdb:tv:114868",
+		SeriesName:    "Record of Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		EpisodeName:   "Episode 11",
+		ExternalIDs:   externalIDs,
+	}); err != nil {
+		t.Fatalf("first UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:393810:s03e11",
+		Position:      900,
+		Duration:      2400,
+		SeriesID:      "tvdb:series:393810",
+		SeriesName:    "Record of Ragnarok",
+		SeasonNumber:  3,
+		EpisodeNumber: 11,
+		EpisodeName:   "Episode 11",
+		ExternalIDs:   externalIDs,
+	}); err != nil {
+		t.Fatalf("second UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 deduped progress item, got %d: %+v", len(progressItems), progressItems)
+	}
+	if progressItems[0].ItemID != "tvdb:series:393810:s03e11" {
+		t.Fatalf("expected latest progress key to win, got %q", progressItems[0].ItemID)
+	}
+}
+
 func TestImportWatchHistory_Dedup(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
