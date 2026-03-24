@@ -25,10 +25,15 @@
 .conn-card.pass { border-color: var(--success-color, #4caf50); }
 .conn-card.fail { border-color: var(--error-color, #f44336); }
 .conn-card.unconfigured { border-color: var(--border-color, #333); opacity: 0.6; }
-.conn-card-header { display: flex; justify-content: space-between; align-items: center; }
+.conn-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .conn-card-name { font-weight: 600; font-size: 14px; }
-.conn-card-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--badge-bg, #333); color: var(--text-secondary, #aaa); }
-.conn-card-status { display: flex; align-items: center; gap: 6px; font-size: 13px; min-height: 20px; }
+.conn-card-badges { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.conn-card-badge { display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em; }
+.conn-card-badge-tor { background:rgba(245,158,11,0.16);color:#f59e0b;border:1px solid rgba(245,158,11,0.35); }
+.conn-card-badge-dir { background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35); }
+.conn-card-badge-usn { background:rgba(59,130,246,0.16);color:#60a5fa;border:1px solid rgba(96,165,250,0.35); }
+.conn-card-badge-meta { background: rgba(99, 102, 241, 0.14); color: var(--accent); border: 1px solid rgba(99, 102, 241, 0.28); }
+.conn-card-status { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 20px; flex-wrap: wrap; }
 .conn-card-status .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot.pending { background: var(--text-secondary, #888); }
 .dot.testing { background: var(--warning-color, #ff9800); animation: pulse 1s infinite; }
@@ -36,6 +41,7 @@
 .dot.fail { background: var(--error-color, #f44336); }
 .dot.unconfigured { background: var(--text-secondary, #555); }
 .conn-card-message { font-size: 12px; color: var(--text-secondary, #888); word-break: break-word; }
+.conn-card-time { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 </style>
 
@@ -43,52 +49,127 @@
 let settings = {{json .Settings}};
 let testCards = [];
 
-function createCard(group, name, badge) {
-    return { group, name, badge, status: 'pending', message: '' };
+function createCard(group, name, badgeHtml, key, payload) {
+    return { group, name, badgeHtml, key, payload, status: 'pending', message: '', durationMs: null };
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function createBadge(label, className) {
+    return `<span class="conn-card-badge ${className}">${escapeHtml(label)}</span>`;
+}
+
+function getStatusLabel(status) {
+    if (status === 'pending') return 'Waiting...';
+    if (status === 'testing') return 'Testing...';
+    if (status === 'pass') return 'Connected';
+    if (status === 'unconfigured') return 'Not Configured';
+    return 'Failed';
+}
+
+function formatDuration(durationMs) {
+    if (durationMs == null || Number.isNaN(durationMs)) return '';
+    if (durationMs < 1000) return `${Math.round(durationMs)} ms`;
+    return `${(durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1)} s`;
+}
+
+function getScraperBadges(item) {
+    const type = String(item?.type || '').toLowerCase();
+    if (['aiostreams', 'comet', 'mediafusion'].includes(type)) {
+        return createBadge('TOR', 'conn-card-badge-tor') + createBadge('DIR', 'conn-card-badge-dir');
+    }
+    return createBadge('TOR', 'conn-card-badge-tor');
 }
 
 function buildCards() {
     testCards = [];
 
-    // Metadata services
-    testCards.push(createCard('Metadata Services', 'TVDB', 'metadata'));
-    testCards.push(createCard('Metadata Services', 'TMDB', 'metadata'));
-    testCards.push(createCard('Metadata Services', 'Gemini', 'metadata'));
+    testCards.push(createCard('Metadata Services', 'TVDB', createBadge('META', 'conn-card-badge-meta'), 'metadata:tvdb'));
+    testCards.push(createCard('Metadata Services', 'TMDB', createBadge('META', 'conn-card-badge-meta'), 'metadata:tmdb'));
+    testCards.push(createCard('Metadata Services', 'Gemini', createBadge('META', 'conn-card-badge-meta'), 'metadata:gemini'));
 
-    // Content services
-    testCards.push(createCard('Content Services', 'OpenSubtitles', 'subtitles'));
-    testCards.push(createCard('Content Services', 'MDBList', 'mdblist'));
+    testCards.push(createCard('Content Services', 'OpenSubtitles', createBadge('META', 'conn-card-badge-meta'), 'subtitles'));
+    testCards.push(createCard('Content Services', 'MDBList', createBadge('META', 'conn-card-badge-meta'), 'mdblist'));
 
-    // Live TV
     if (settings.live && settings.live.mode) {
-        testCards.push(createCard('Live TV', settings.live.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist', settings.live.mode));
+        testCards.push(
+            createCard(
+                'Live TV',
+                settings.live.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist',
+                createBadge(String(settings.live.mode || 'live').toUpperCase(), 'conn-card-badge-meta'),
+                'live'
+            )
+        );
     }
 
-    // Indexers
     if (settings.indexers) {
         settings.indexers.forEach((item, i) => {
-            if (item.enabled) testCards.push(createCard('Indexers', item.name || ('Indexer ' + (i+1)), 'indexer'));
+            if (item.enabled) {
+                testCards.push(
+                    createCard(
+                        'Usenet Indexers',
+                        item.name || ('Indexer ' + (i + 1)),
+                        createBadge('USN', 'conn-card-badge-usn'),
+                        `indexer:${i}`,
+                        item
+                    )
+                );
+            }
         });
     }
 
-    // Torrent Scrapers
     if (settings.torrentScrapers) {
         settings.torrentScrapers.forEach((item, i) => {
-            if (item.enabled) testCards.push(createCard('Torrent Scrapers', item.name || ('Scraper ' + (i+1)), 'scraper'));
+            if (item.enabled) {
+                testCards.push(
+                    createCard(
+                        'Torrent & Stream Sources',
+                        item.name || ('Scraper ' + (i + 1)),
+                        getScraperBadges(item),
+                        `scraper:${i}`,
+                        item
+                    )
+                );
+            }
         });
     }
 
-    // Usenet Providers
     if (settings.usenet) {
         settings.usenet.forEach((item, i) => {
-            if (item.enabled) testCards.push(createCard('Usenet Providers', item.name || ('Provider ' + (i+1)), 'usenet'));
+            if (item.enabled) {
+                testCards.push(
+                    createCard(
+                        'Usenet Providers',
+                        item.name || ('Provider ' + (i + 1)),
+                        createBadge('USN', 'conn-card-badge-usn'),
+                        `usenet:${i}`,
+                        item
+                    )
+                );
+            }
         });
     }
 
-    // Debrid Providers
     if (settings.debridProviders) {
         settings.debridProviders.forEach((item, i) => {
-            if (item.enabled) testCards.push(createCard('Debrid Providers', item.name || ('Provider ' + (i+1)), 'debrid'));
+            if (item.enabled) {
+                testCards.push(
+                    createCard(
+                        'Debrid Providers',
+                        item.name || ('Provider ' + (i + 1)),
+                        createBadge('DIR', 'conn-card-badge-dir'),
+                        `debrid:${i}`,
+                        item
+                    )
+                );
+            }
         });
     }
 }
@@ -109,14 +190,15 @@ function renderCards() {
             cards.map(c => `
                 <div class="conn-card ${c.status}" id="conn-card-${c.index}">
                     <div class="conn-card-header">
-                        <span class="conn-card-name">${c.name}</span>
-                        <span class="conn-card-badge">${c.badge}</span>
+                        <span class="conn-card-name">${escapeHtml(c.name)}</span>
+                        <div class="conn-card-badges">${c.badgeHtml || ''}</div>
                     </div>
                     <div class="conn-card-status">
                         <span class="dot ${c.status}"></span>
-                        <span>${c.status === 'pending' ? 'Waiting...' : c.status === 'testing' ? 'Testing...' : c.status === 'pass' ? 'Connected' : c.status === 'unconfigured' ? 'Not configured' : 'Failed'}</span>
+                        <span>${getStatusLabel(c.status)}</span>
+                        ${c.durationMs != null ? `<span class="conn-card-time">${formatDuration(c.durationMs)}</span>` : ''}
                     </div>
-                    ${c.message ? '<div class="conn-card-message">' + c.message + '</div>' : ''}
+                    ${c.message ? '<div class="conn-card-message">' + escapeHtml(c.message) + '</div>' : ''}
                 </div>
             `).join('') +
             '</div>';
@@ -124,20 +206,28 @@ function renderCards() {
     }
 }
 
-function updateCard(index, status, message) {
+function updateCard(index, status, message, durationMs) {
     testCards[index].status = status;
     testCards[index].message = message || '';
+    testCards[index].durationMs = durationMs ?? null;
     const el = document.getElementById('conn-card-' + index);
     if (!el) return;
     el.className = 'conn-card ' + status;
     const statusEl = el.querySelector('.conn-card-status');
-    const label = status === 'testing' ? 'Testing...' : status === 'pass' ? 'Connected' : status === 'unconfigured' ? 'Not configured' : 'Failed';
-    statusEl.innerHTML = `<span class="dot ${status}"></span><span>${label}</span>`;
+    statusEl.innerHTML = `<span class="dot ${status}"></span><span>${getStatusLabel(status)}</span>${durationMs != null ? `<span class="conn-card-time">${formatDuration(durationMs)}</span>` : ''}`;
     const msgEl = el.querySelector('.conn-card-message');
     if (message) {
-        if (msgEl) { msgEl.textContent = message; }
-        else { const m = document.createElement('div'); m.className = 'conn-card-message'; m.textContent = message; el.appendChild(m); }
-    } else if (msgEl) { msgEl.remove(); }
+        if (msgEl) {
+            msgEl.textContent = message;
+        } else {
+            const m = document.createElement('div');
+            m.className = 'conn-card-message';
+            m.textContent = message;
+            el.appendChild(m);
+        }
+    } else if (msgEl) {
+        msgEl.remove();
+    }
 }
 
 async function testPost(endpoint, payload) {
@@ -149,8 +239,7 @@ async function runAllTests() {
     const btn = document.getElementById('retest-all-btn');
     btn.disabled = true;
 
-    // Reset all to testing
-    testCards.forEach((_, i) => updateCard(i, 'testing', ''));
+    testCards.forEach((_, i) => updateCard(i, 'testing', '', null));
 
     const promises = [];
 
@@ -158,35 +247,40 @@ async function runAllTests() {
         const card = testCards[i];
         let p;
 
-        if (card.group === 'Metadata Services') {
-            // Metadata uses a single endpoint returning array results
+        if (card.key && card.key.startsWith('metadata:')) {
             if (!promises._metadataPromise) {
+                const startedAt = performance.now();
                 promises._metadataPromise = testPost(basePath + '/api/test/metadata', {
                     tvdbApiKey: settings.metadata?.tvdbApiKey || '',
                     tmdbApiKey: settings.metadata?.tmdbApiKey || '',
                     geminiApiKey: settings.metadata?.geminiApiKey || ''
-                });
+                }).then(result => ({
+                    result,
+                    durationMs: performance.now() - startedAt,
+                }));
             }
-            p = promises._metadataPromise.then(result => {
+            p = promises._metadataPromise.then(({ result, durationMs }) => {
                 const providerMap = { 'TVDB': 0, 'TMDB': 1, 'Gemini': 2 };
                 const idx = providerMap[card.name];
                 if (result.results && result.results[idx]) {
-                    const r = result.results[idx];
-                    if (r.message === 'Not configured') return { unconfigured: true, message: r.message };
-                    return r;
+                    const providerResult = result.results[idx];
+                    if (providerResult.message === 'Not configured') {
+                        return { unconfigured: true, message: providerResult.message, durationMs };
+                    }
+                    return { ...providerResult, durationMs };
                 }
-                return result;
+                return { ...result, durationMs };
             });
-        } else if (card.badge === 'subtitles') {
+        } else if (card.key === 'subtitles') {
             p = testPost(basePath + '/api/test/subtitles', {
                 username: settings.subtitles?.openSubtitlesUsername || '',
                 password: settings.subtitles?.openSubtitlesPassword || ''
             });
-        } else if (card.badge === 'mdblist') {
+        } else if (card.key === 'mdblist') {
             p = testPost(basePath + '/api/test/mdblist', {
                 apiKey: settings.mdblist?.apiKey || ''
             });
-        } else if (card.group === 'Live TV') {
+        } else if (card.key === 'live') {
             p = testPost(basePath + '/api/test/live', {
                 mode: settings.live?.mode || '',
                 playlistUrl: settings.live?.playlistUrl || '',
@@ -194,40 +288,39 @@ async function runAllTests() {
                 xtreamUsername: settings.live?.xtreamUsername || '',
                 xtreamPassword: settings.live?.xtreamPassword || ''
             });
-        } else if (card.badge === 'indexer') {
-            const items = settings.indexers || [];
-            const idx = items.filter(x => x.enabled).indexOf(items.find((x, j) => x.enabled && x.name === card.name));
-            const item = items.filter(x => x.enabled).find(x => x.name === card.name) || items.filter(x => x.enabled)[0];
+        } else if (card.key && card.key.startsWith('indexer:')) {
+            const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name });
-        } else if (card.badge === 'scraper') {
-            const items = settings.torrentScrapers || [];
-            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
-            if (item) p = testPost(basePath + '/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey });
-        } else if (card.badge === 'usenet') {
-            const items = settings.usenet || [];
-            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
+        } else if (card.key && card.key.startsWith('scraper:')) {
+            const item = card.payload;
+            if (item) p = testPost(basePath + '/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey, options: item.options });
+        } else if (card.key && card.key.startsWith('usenet:')) {
+            const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/usenet-provider', { name: item.name, host: item.host, port: item.port, ssl: item.ssl, username: item.username, password: item.password });
-        } else if (card.badge === 'debrid') {
-            const items = settings.debridProviders || [];
-            const item = items.filter(x => x.enabled).find(x => x.name === card.name);
+        } else if (card.key && card.key.startsWith('debrid:')) {
+            const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/debrid-provider', { name: item.name, provider: item.provider, apiKey: item.apiKey });
         }
 
         if (p) {
             const cardIndex = i;
-            promises.push(p.then(result => {
-                if (result.unconfigured) {
-                    updateCard(cardIndex, 'unconfigured', result.message || 'Not configured');
-                } else if (result.success) {
-                    updateCard(cardIndex, 'pass', result.message || '');
-                } else {
-                    updateCard(cardIndex, 'fail', result.error || 'Test failed');
-                }
-            }).catch(err => {
-                updateCard(cardIndex, 'fail', err.message);
-            }));
+            const startedAt = performance.now();
+            promises.push(
+                p.then(result => {
+                    const durationMs = result?.durationMs ?? (performance.now() - startedAt);
+                    if (result.unconfigured) {
+                        updateCard(cardIndex, 'unconfigured', result.message || 'Not configured', durationMs);
+                    } else if (result.success) {
+                        updateCard(cardIndex, 'pass', result.message || '', durationMs);
+                    } else {
+                        updateCard(cardIndex, 'fail', result.error || 'Test failed', durationMs);
+                    }
+                }).catch(err => {
+                    updateCard(cardIndex, 'fail', err.message, performance.now() - startedAt);
+                })
+            );
         } else {
-            updateCard(i, 'unconfigured', 'Not configured');
+            updateCard(i, 'unconfigured', 'Not configured', null);
         }
     }
 
