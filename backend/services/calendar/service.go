@@ -749,19 +749,20 @@ func (s *Service) fetchUpcomingEpisodes(
 			seen[key] = true
 
 			items = append(items, models.CalendarItem{
-				Title:         details.Title.Name,
-				EpisodeTitle:  ep.Name,
-				MediaType:     "series",
-				SeasonNumber:  ep.SeasonNumber,
-				EpisodeNumber: ep.EpisodeNumber,
-				AirDate:       ep.AiredDate,
-				AirTime:       airsTime,
-				AirTimezone:   airsTimezone,
-				Network:       details.Title.Network,
-				PosterURL:     posterURL,
-				Year:          details.Title.Year,
-				ExternalIDs:   extIDs,
-				Source:        source,
+				Title:           details.Title.Name,
+				EpisodeTitle:    ep.Name,
+				EpisodeOverview: strings.TrimSpace(ep.Overview),
+				MediaType:       "series",
+				SeasonNumber:    ep.SeasonNumber,
+				EpisodeNumber:   ep.EpisodeNumber,
+				AirDate:         ep.AiredDate,
+				AirTime:         airsTime,
+				AirTimezone:     airsTimezone,
+				Network:         details.Title.Network,
+				PosterURL:       posterURL,
+				Year:            details.Title.Year,
+				ExternalIDs:     extIDs,
+				Source:          source,
 			})
 		}
 	}
