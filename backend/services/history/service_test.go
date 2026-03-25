@@ -939,13 +939,13 @@ func TestImportWatchHistory_NoScrobble(t *testing.T) {
 	watched := true
 	updates := []models.WatchHistoryUpdate{
 		{
-			MediaType:     "movie",
-			ItemID:        "tmdb:movie:550",
-			Name:          "Fight Club",
-			Year:          1999,
-			Watched:       &watched,
-			WatchedAt:     time.Now().UTC(),
-			ExternalIDs:   map[string]string{"tmdb": "550", "imdb": "tt0137523"},
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:550",
+			Name:        "Fight Club",
+			Year:        1999,
+			Watched:     &watched,
+			WatchedAt:   time.Now().UTC(),
+			ExternalIDs: map[string]string{"tmdb": "550", "imdb": "tt0137523"},
 		},
 		{
 			MediaType:     "episode",
@@ -1056,7 +1056,7 @@ func TestImportWatchHistory_PreservesManualUnwatchAgainstOlderOrEqualImport(t *t
 	userID := "user-1"
 	watched := true
 	unwatched := false
-	watchedAt := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	watchedAt := time.Now().UTC().Add(-48 * time.Hour)
 
 	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
 		MediaType:     "episode",
@@ -1128,8 +1128,8 @@ func TestImportWatchHistory_AllowsNewerExternalRewatchAfterManualUnwatch(t *test
 	userID := "user-1"
 	watched := true
 	unwatched := false
-	initialWatchedAt := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	rewatchAt := time.Date(2025, 6, 20, 12, 0, 0, 0, time.UTC)
+	initialWatchedAt := time.Now().UTC().Add(-48 * time.Hour)
+	rewatchAt := time.Now().UTC().Add(1 * time.Hour)
 
 	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
 		MediaType:     "episode",
@@ -2245,13 +2245,13 @@ func TestImportWatchHistory_CrossProviderEpisodeDedup(t *testing.T) {
 func TestBuildCanonicalSeriesIDMap_TMDBMerge(t *testing.T) {
 	items := []models.WatchHistoryItem{
 		{
-			MediaType:  "episode",
-			SeriesID:   "tmdb:tv:12345",
+			MediaType:   "episode",
+			SeriesID:    "tmdb:tv:12345",
 			ExternalIDs: map[string]string{"tmdb": "12345"},
 		},
 		{
-			MediaType:  "episode",
-			SeriesID:   "tvdb:series:67890",
+			MediaType:   "episode",
+			SeriesID:    "tvdb:series:67890",
 			ExternalIDs: map[string]string{"tmdb": "12345", "tvdb": "67890"},
 		},
 	}

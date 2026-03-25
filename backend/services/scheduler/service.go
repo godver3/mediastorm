@@ -2356,6 +2356,21 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				}
 			}
 
+			latestWatchState, err := s.latestWatchStateForItem(profileID, update.MediaType, altIDs)
+			if err != nil {
+				log.Printf("[scheduler] Failed to load local watch state for %s: %v", update.ItemID, err)
+				continue
+			}
+			if latestWatchState != nil {
+				// Compare against the newest local watch-state change for this item,
+				// not just the last watched timestamp. This lets newer partial progress
+				// beat older watch/unwatch state, while still rejecting stale resume
+				// imports after a more recent local watch-state change.
+				if !latestWatchState.UpdatedAt.IsZero() && !latestWatchState.UpdatedAt.Before(traktItem.PausedAt) {
+					continue
+				}
+			}
+
 			// If local progress exists, only import if Trakt progress meaningfully differs.
 			// This prevents the push→pull round-trip from bumping timestamps on every sync.
 			if localProgress != nil && localProgress.Duration > 0 {
@@ -2407,6 +2422,43 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 		log.Printf("[scheduler] Imported %d playback positions from Trakt", imported)
 	}
 	return nil
+}
+
+func (s *Service) latestWatchStateForItem(profileID, mediaType string, itemIDs []string) (*models.WatchHistoryItem, error) {
+	var latest *models.WatchHistoryItem
+	for _, itemID := range itemIDs {
+		item, err := s.historyService.GetWatchHistoryItem(profileID, mediaType, itemID)
+		if err != nil {
+			return nil, err
+		}
+		if item == nil {
+			continue
+		}
+		if latest == nil || isNewerWatchState(item, latest) {
+			copy := *item
+			latest = &copy
+		}
+	}
+	return latest, nil
+}
+
+func isNewerWatchState(candidate, current *models.WatchHistoryItem) bool {
+	if current == nil {
+		return true
+	}
+	if candidate == nil {
+		return false
+	}
+	if candidate.UpdatedAt.After(current.UpdatedAt) {
+		return true
+	}
+	if current.UpdatedAt.After(candidate.UpdatedAt) {
+		return false
+	}
+	if candidate.Watched != current.Watched {
+		return !candidate.Watched
+	}
+	return candidate.ID < current.ID
 }
 
 // traktPlaybackItemToUpdate converts a Trakt PlaybackItem to a PlaybackProgressUpdate.

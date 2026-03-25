@@ -60,6 +60,7 @@ type WatchHistoryItem struct {
 	Year        int               `json:"year,omitempty"`
 	Watched     bool              `json:"watched"` // Manual watch flag
 	WatchedAt   time.Time         `json:"watchedAt,omitempty"`
+	UpdatedAt   time.Time         `json:"updatedAt,omitempty"`
 	ExternalIDs map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields

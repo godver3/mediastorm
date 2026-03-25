@@ -1851,6 +1851,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 			ItemID:    normalizedItemID,
 			Watched:   true,
 			WatchedAt: now,
+			UpdatedAt: now,
 		}
 	} else {
 		// Toggle existing item
@@ -1858,6 +1859,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 		if item.Watched {
 			item.WatchedAt = now
 		}
+		item.UpdatedAt = now
 	}
 
 	// Update metadata if provided
@@ -1964,6 +1966,10 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		item.Year = update.Year
 	}
 	if update.Watched != nil {
+		stateUpdatedAt := now
+		if !update.WatchedAt.IsZero() {
+			stateUpdatedAt = update.WatchedAt.UTC()
+		}
 		item.Watched = *update.Watched
 		if *update.Watched {
 			// Only set WatchedAt on the unwatched→watched transition, or when
@@ -1978,6 +1984,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 				item.WatchedAt = now
 			}
 		}
+		item.UpdatedAt = stateUpdatedAt
 		// Clear playback progress when watched status changes (both marking as watched and unwatched)
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
 		// For episodes, also clear any matching progress stored under a different ID format.
@@ -2098,6 +2105,10 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 			item.Year = update.Year
 		}
 		if update.Watched != nil {
+			stateUpdatedAt := now
+			if !update.WatchedAt.IsZero() {
+				stateUpdatedAt = update.WatchedAt.UTC()
+			}
 			item.Watched = *update.Watched
 			if *update.Watched {
 				// Use provided timestamp if set, otherwise use now
@@ -2107,6 +2118,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 					item.WatchedAt = now
 				}
 			}
+			item.UpdatedAt = stateUpdatedAt
 			// Clear playback progress when watched status changes (both marking as watched and unwatched)
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
@@ -2273,11 +2285,11 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		// Also preserve a manual local unwatch when the imported event is not newer
 		// than the last known watched timestamp on the local item.
 		if exists && existing.Watched {
-			incomingTime := update.WatchedAt
-			if incomingTime.IsZero() {
-				incomingTime = now
+			incomingStateTime := update.WatchedAt
+			if incomingStateTime.IsZero() {
+				incomingStateTime = now
 			}
-			if existing.WatchedAt.After(incomingTime) || existing.WatchedAt.Equal(incomingTime) {
+			if !existing.UpdatedAt.IsZero() && (existing.UpdatedAt.After(incomingStateTime) || existing.UpdatedAt.Equal(incomingStateTime)) {
 				// Already recorded, but still clean up any stale playback progress
 				// that may exist under a different ID format.
 				if update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
@@ -2286,23 +2298,23 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 					}
 				}
 				log.Printf("[history] import: SKIP (local newer) %s %q watchedAt=%s (trakt=%s)",
-					update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339))
+					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339))
 				continue
 			}
 			log.Printf("[history] import: UPDATE (trakt newer) %s %q localWatchedAt=%s -> traktWatchedAt=%s seriesID=%s",
-				update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+				update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339), update.SeriesID)
 		} else if exists && !existing.Watched {
-			incomingTime := update.WatchedAt
-			if incomingTime.IsZero() {
-				incomingTime = now
+			incomingStateTime := update.WatchedAt
+			if incomingStateTime.IsZero() {
+				incomingStateTime = now
 			}
-			if !existing.WatchedAt.IsZero() && (existing.WatchedAt.After(incomingTime) || existing.WatchedAt.Equal(incomingTime)) {
+			if !existing.UpdatedAt.IsZero() && (existing.UpdatedAt.After(incomingStateTime) || existing.UpdatedAt.Equal(incomingStateTime)) {
 				log.Printf("[history] import: SKIP (manual unwatch newer/equal) %s %q localWatchedAt=%s importedWatchedAt=%s seriesID=%s",
-					update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339), update.SeriesID)
 				continue
 			}
 			log.Printf("[history] import: RESTORE (external newer than manual unwatch baseline) %s %q localWatchedAt=%s -> importedWatchedAt=%s seriesID=%s",
-				update.MediaType, update.Name, existing.WatchedAt.Format(time.RFC3339), incomingTime.Format(time.RFC3339), update.SeriesID)
+				update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339), update.SeriesID)
 		} else if !exists {
 			log.Printf("[history] import: NEW %s %q watchedAt=%s seriesID=%s",
 				update.MediaType, update.Name, update.WatchedAt.Format(time.RFC3339), update.SeriesID)
@@ -2326,6 +2338,10 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			item.Year = update.Year
 		}
 		if update.Watched != nil {
+			stateUpdatedAt := now
+			if !update.WatchedAt.IsZero() {
+				stateUpdatedAt = update.WatchedAt.UTC()
+			}
 			item.Watched = *update.Watched
 			if *update.Watched {
 				if !update.WatchedAt.IsZero() {
@@ -2334,6 +2350,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 					item.WatchedAt = now
 				}
 			}
+			item.UpdatedAt = stateUpdatedAt
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
 			}
@@ -2481,6 +2498,14 @@ func (s *Service) loadWatchHistory() error {
 				item.ItemID = normalizedItemID
 				item.ID = normalizedID
 			}
+			if item.UpdatedAt.IsZero() {
+				if !item.WatchedAt.IsZero() {
+					item.UpdatedAt = item.WatchedAt.UTC()
+				} else {
+					item.UpdatedAt = time.Now().UTC()
+				}
+				needsSave = true
+			}
 
 			// Migrate old-format episode entries: if itemID is just the series ID but
 			// has season/episode numbers, convert to new format (seriesId:s01e02)
@@ -2506,7 +2531,7 @@ func (s *Service) loadWatchHistory() error {
 					perUser[key] = item
 				} else if existing.Watched && !item.Watched {
 					// Keep existing (it's watched)
-				} else if item.WatchedAt.After(existing.WatchedAt) {
+				} else if item.UpdatedAt.After(existing.UpdatedAt) {
 					// Both same status, keep more recent
 					perUser[key] = item
 				}
