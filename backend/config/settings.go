@@ -786,7 +786,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeHybrid, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
@@ -1111,7 +1111,7 @@ func (m *Manager) Load() (Settings, error) {
 		s.Streaming.MaxCacheSizeMB = 100
 	}
 	if s.Streaming.ServiceMode == "" {
-		s.Streaming.ServiceMode = StreamingServiceModeUsenet
+		s.Streaming.ServiceMode = StreamingServiceModeHybrid
 	}
 	// Backfill ServicePriority if not set
 	if s.Filtering.ServicePriority == "" {

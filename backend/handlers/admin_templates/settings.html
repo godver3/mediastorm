@@ -246,7 +246,7 @@
         // Skip validation for user-specific settings or non-admin users
         if (selectedUserId || !isAdmin) return errors;
 
-        const serviceMode = currentSettings.streaming?.serviceMode || 'debrid';
+        const serviceMode = currentSettings.streaming?.serviceMode || 'hybrid';
         const needsDebrid = serviceMode === 'debrid' || serviceMode === 'hybrid';
         const needsUsenet = serviceMode === 'usenet' || serviceMode === 'hybrid';
 
@@ -255,8 +255,9 @@
         if (isEmpty(currentSettings.streaming?.serviceMode)) streamingErrors.fields.serviceMode = 'Service mode is required';
         if (Object.keys(streamingErrors.fields).length > 0) errors.streaming = streamingErrors;
 
-        // Debrid Providers - at least one enabled if debrid/hybrid mode
-        if (needsDebrid) {
+        // Debrid Providers - required only in debrid-only mode.
+        // Hybrid mode can still function with the usenet side alone.
+        if (serviceMode === 'debrid') {
             const debridProviders = currentSettings.streaming?.debridProviders || [];
             if (!hasEnabledItem(debridProviders)) {
                 errors.debridProviders = {
@@ -266,8 +267,9 @@
             }
         }
 
-        // Usenet Providers - at least one enabled if usenet/hybrid mode
-        if (needsUsenet) {
+        // Usenet Providers - required only in usenet-only mode.
+        // Hybrid mode can still function with the debrid side alone.
+        if (serviceMode === 'usenet') {
             const usenetProviders = currentSettings.usenet || [];
             if (!hasEnabledItem(usenetProviders)) {
                 errors.usenet = {
@@ -293,8 +295,8 @@
             }
         }
 
-        // Indexers - required if usenet/hybrid mode
-        if (needsUsenet) {
+        // Indexers - required only in usenet-only mode.
+        if (serviceMode === 'usenet') {
             const indexers = currentSettings.indexers || [];
             if (!hasEnabledItem(indexers)) {
                 errors.indexers = {
@@ -304,8 +306,8 @@
             }
         }
 
-        // Torrent Scrapers - required if debrid/hybrid mode
-        if (needsDebrid) {
+        // Torrent Scrapers - required only in debrid-only mode.
+        if (serviceMode === 'debrid') {
             const scrapers = currentSettings.torrentScrapers || [];
             if (!hasEnabledItem(scrapers)) {
                 errors.torrentScrapers = {
