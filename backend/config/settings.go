@@ -655,6 +655,8 @@ const (
 	ScheduledTaskTypeMDBListHistorySync    ScheduledTaskType = "mdblist_history_sync"
 )
 
+const ScheduledTaskLocalMediaAllLibraries = "__all__"
+
 // BackupRetentionSettings controls how backups are automatically cleaned up
 type BackupRetentionSettings struct {
 	RetentionDays  int `json:"retentionDays"`  // Delete backups older than X days (0 = never auto-delete)

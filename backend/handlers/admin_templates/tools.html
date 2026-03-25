@@ -357,6 +357,7 @@
                             <select id="newTaskLocalMediaLibrary" class="form-select">
                             </select>
                             <small class="text-muted">Pick which local media library should be rescanned on this schedule.</small>
+                            <small class="text-muted">Choose All Libraries to run the scan against every configured local media library.</small>
                         </div>
                     </div>
 
@@ -681,6 +682,7 @@
                             <label class="form-label">Library</label>
                             <select id="editTaskLocalMediaLibrary" class="form-select">
                             </select>
+                            <small class="text-muted">Choose All Libraries to run the scan against every configured local media library.</small>
                         </div>
                     </div>
 
@@ -1610,6 +1612,7 @@
     let userProfiles = [];
     let mdblistAccounts = [];
     let localMediaLibraries = [];
+    const ALL_LOCAL_MEDIA_LIBRARIES_VALUE = '__all__';
 
     // ========== Jellyfin State ==========
     let jellyfinAccounts = [];
@@ -1642,9 +1645,22 @@
         }
     }
 
+    function getLocalMediaLibraryLabel(libraryId) {
+        if (libraryId === ALL_LOCAL_MEDIA_LIBRARIES_VALUE) {
+            return 'All Libraries';
+        }
+        const library = localMediaLibraries.find(l => l.id === libraryId);
+        if (library) {
+            return library.name || 'Library';
+        }
+        return 'Unknown Library';
+    }
+
     function populateLocalMediaLibrarySelects() {
         const options = localMediaLibraries.length
-            ? localMediaLibraries.map(library => `<option value="${library.id}">${escapeHtml(library.name)} (${escapeHtml(library.type)})</option>`).join('')
+            ? [`<option value="${ALL_LOCAL_MEDIA_LIBRARIES_VALUE}">All Libraries</option>`]
+                .concat(localMediaLibraries.map(library => `<option value="${library.id}">${escapeHtml(library.name)} (${escapeHtml(library.type)})</option>`))
+                .join('')
             : '<option value="">No libraries configured</option>';
 
         const newSelect = document.getElementById('newTaskLocalMediaLibrary');
@@ -3700,8 +3716,7 @@
                     if (jfAccount) accountName = jfAccount.name || jfAccount.username || 'Jellyfin Account';
                     accountSource = 'Jellyfin';
                 } else if (task.type === 'local_media_scan') {
-                    const library = localMediaLibraries.find(l => l.id === task.config.libraryId);
-                    if (library) accountName = library.name || 'Library';
+                    accountName = getLocalMediaLibraryLabel(task.config.libraryId);
                     accountSource = 'Library';
                 }
                 const profile = userProfiles.find(p => p.id === task.config.profileId);

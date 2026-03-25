@@ -79,7 +79,7 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 			return fmt.Errorf("Invalid sync direction. Must be trakt_to_local, local_to_trakt, or bidirectional")
 		}
 	case config.ScheduledTaskTypeLocalMediaScan:
-		if taskConfig == nil || taskConfig["libraryId"] == "" {
+		if taskConfig == nil || strings.TrimSpace(taskConfig["libraryId"]) == "" {
 			return errors.New("Local media scan requires libraryId in config")
 		}
 	case config.ScheduledTaskTypeMDBListWatchlistSync:

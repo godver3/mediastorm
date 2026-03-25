@@ -179,6 +179,24 @@ func TestCreateTask_PlexHistorySyncValidation(t *testing.T) {
 	})
 }
 
+func TestCreateTask_LocalMediaScanAllLibrariesValidation(t *testing.T) {
+	h := newTestScheduledTasksHandler(t)
+
+	body := map[string]interface{}{
+		"type":    string(config.ScheduledTaskTypeLocalMediaScan),
+		"name":    "Scan all libraries",
+		"enabled": true,
+		"config": map[string]string{
+			"libraryId": config.ScheduledTaskLocalMediaAllLibraries,
+		},
+	}
+
+	rec := postCreateTask(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateTask_JellyfinFavoritesSyncValidation(t *testing.T) {
 	h := newTestScheduledTasksHandler(t)
 

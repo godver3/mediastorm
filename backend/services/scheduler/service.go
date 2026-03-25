@@ -40,7 +40,7 @@ type Service struct {
 	backupService     *backup.Service
 	historyService    *history.Service
 	prewarmService    *prewarm.Service
-	localMediaService *localmedia.Service
+	localMediaService localMediaScanner
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -59,6 +59,11 @@ type Service struct {
 type schedulerUsersProvider interface {
 	Exists(id string) bool
 	ListAll() []models.User
+}
+
+type localMediaScanner interface {
+	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
+	StartScan(ctx context.Context, libraryID string) (models.LocalMediaScanSummary, error)
 }
 
 // SyncResult contains the result of a sync operation including dry run details
@@ -312,10 +317,48 @@ func (s *Service) executeLocalMediaScan(task config.ScheduledTask) (SyncResult, 
 	if libraryID == "" {
 		return SyncResult{}, errors.New("local media scan requires libraryId")
 	}
+
+	if libraryID == config.ScheduledTaskLocalMediaAllLibraries {
+		libraries, err := s.localMediaService.ListLibraries(context.Background())
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("list local media libraries: %w", err)
+		}
+		if len(libraries) == 0 {
+			return SyncResult{}, errors.New("no local media libraries configured")
+		}
+
+		var total models.LocalMediaScanSummary
+		scanned := 0
+		for _, library := range libraries {
+			summary, err := s.localMediaService.StartScan(context.Background(), library.ID)
+			if err != nil {
+				return SyncResult{}, fmt.Errorf("scan library %q: %w", library.Name, err)
+			}
+			scanned++
+			total.Discovered += summary.Discovered
+			total.Matched += summary.Matched
+			total.LowConfidence += summary.LowConfidence
+			total.Unmatched += summary.Unmatched
+		}
+
+		return SyncResult{
+			Count: total.Discovered,
+			Message: fmt.Sprintf(
+				"Local media scan completed for %d libraries: %d discovered, %d matched, %d low confidence, %d unmatched",
+				scanned,
+				total.Discovered,
+				total.Matched,
+				total.LowConfidence,
+				total.Unmatched,
+			),
+		}, nil
+	}
+
 	summary, err := s.localMediaService.StartScan(context.Background(), libraryID)
 	if err != nil {
 		return SyncResult{}, err
 	}
+
 	return SyncResult{
 		Count:   summary.Discovered,
 		Message: fmt.Sprintf("Local media scan completed: %d discovered, %d matched, %d low confidence, %d unmatched", summary.Discovered, summary.Matched, summary.LowConfidence, summary.Unmatched),

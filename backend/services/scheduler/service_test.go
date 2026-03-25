@@ -1,16 +1,33 @@
 package scheduler
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"novastream/config"
 	"novastream/models"
 	"novastream/services/history"
 )
 
 type fakeSchedulerUsersProvider struct {
 	users map[string]models.User
+}
+
+type fakeLocalMediaScanner struct {
+	libraries []models.LocalMediaLibrary
+	summaries map[string]models.LocalMediaScanSummary
+	scanned   []string
+}
+
+func (f *fakeLocalMediaScanner) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error) {
+	return append([]models.LocalMediaLibrary(nil), f.libraries...), nil
+}
+
+func (f *fakeLocalMediaScanner) StartScan(ctx context.Context, libraryID string) (models.LocalMediaScanSummary, error) {
+	f.scanned = append(f.scanned, libraryID)
+	return f.summaries[libraryID], nil
 }
 
 func (f *fakeSchedulerUsersProvider) Exists(id string) bool {
@@ -198,5 +215,40 @@ func TestLatestWatchStateForItem_PrefersNewestStateAcrossIDVariants(t *testing.T
 	}
 	if item.Watched {
 		t.Fatal("expected newer explicit unwatched state to win across ID variants")
+	}
+}
+
+func TestExecuteLocalMediaScan_AllLibraries(t *testing.T) {
+	scanner := &fakeLocalMediaScanner{
+		libraries: []models.LocalMediaLibrary{
+			{ID: "lib-1", Name: "Movies"},
+			{ID: "lib-2", Name: "Shows"},
+		},
+		summaries: map[string]models.LocalMediaScanSummary{
+			"lib-1": {Discovered: 10, Matched: 8, LowConfidence: 1, Unmatched: 1},
+			"lib-2": {Discovered: 20, Matched: 18, LowConfidence: 1, Unmatched: 1},
+		},
+	}
+	svc := &Service{localMediaService: scanner}
+
+	result, err := svc.executeLocalMediaScan(config.ScheduledTask{
+		Config: map[string]string{
+			"libraryId": config.ScheduledTaskLocalMediaAllLibraries,
+		},
+	})
+	if err != nil {
+		t.Fatalf("executeLocalMediaScan() error = %v", err)
+	}
+	if got, want := len(scanner.scanned), 2; got != want {
+		t.Fatalf("scanned %d libraries, want %d", got, want)
+	}
+	if scanner.scanned[0] != "lib-1" || scanner.scanned[1] != "lib-2" {
+		t.Fatalf("scan order = %v, want [lib-1 lib-2]", scanner.scanned)
+	}
+	if result.Count != 30 {
+		t.Fatalf("result.Count = %d, want 30", result.Count)
+	}
+	if !strings.Contains(result.Message, "completed for 2 libraries") {
+		t.Fatalf("result.Message = %q, want aggregated all-libraries summary", result.Message)
 	}
 }
