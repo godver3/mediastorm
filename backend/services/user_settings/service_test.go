@@ -239,3 +239,115 @@ func TestUpdate_PreservesLiveTVMaxStreamsOnly(t *testing.T) {
 		t.Fatalf("MaxStreams = %v, want 4", got.LiveTV.MaxStreams)
 	}
 }
+
+func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if err := svc.Update("user-calendar", models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := svc.GetWithDefaults("user-calendar", models.DefaultUserSettings())
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+
+	if len(got.HomeShelves.Shelves) != 4 {
+		t.Fatalf("expected 4 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
+	}
+
+	var calendar *models.ShelfConfig
+	for i := range got.HomeShelves.Shelves {
+		if got.HomeShelves.Shelves[i].ID == "calendar" {
+			calendar = &got.HomeShelves.Shelves[i]
+			break
+		}
+	}
+	if calendar == nil {
+		t.Fatal("expected calendar shelf to be backfilled")
+	}
+	if calendar.Name != "Coming Up" {
+		t.Fatalf("expected calendar shelf name Coming Up, got %q", calendar.Name)
+	}
+	if calendar.Order != 1 {
+		t.Fatalf("expected calendar shelf order 1, got %d", calendar.Order)
+	}
+	if !calendar.Enabled {
+		t.Fatal("expected calendar shelf to be enabled by default")
+	}
+}
+
+func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{
+  "user-1": {
+    "homeShelves": {
+      "shelves": [
+        { "id": "continue-watching", "name": "Continue Watching", "enabled": true, "order": 0 },
+        { "id": "watchlist", "name": "Your Watchlist", "enabled": true, "order": 1 },
+        { "id": "trending-movies", "name": "Trending Movies", "enabled": true, "order": 2 },
+        { "id": "trending-tv", "name": "Trending TV Shows", "enabled": true, "order": 3 }
+      ]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "user_settings.json"), []byte(raw), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	got, err := svc.Get("user-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected migrated settings")
+	}
+	if len(got.HomeShelves.Shelves) != 5 {
+		t.Fatalf("expected 5 shelves after migration, got %d", len(got.HomeShelves.Shelves))
+	}
+
+	var calendar *models.ShelfConfig
+	for i := range got.HomeShelves.Shelves {
+		if got.HomeShelves.Shelves[i].ID == "calendar" {
+			calendar = &got.HomeShelves.Shelves[i]
+			break
+		}
+	}
+	if calendar == nil {
+		t.Fatal("expected calendar shelf to be migrated in")
+	}
+	if calendar.Order != 1 {
+		t.Fatalf("expected calendar shelf order 1, got %d", calendar.Order)
+	}
+
+	var watchlist *models.ShelfConfig
+	for i := range got.HomeShelves.Shelves {
+		if got.HomeShelves.Shelves[i].ID == "watchlist" {
+			watchlist = &got.HomeShelves.Shelves[i]
+			break
+		}
+	}
+	if watchlist == nil {
+		t.Fatal("expected watchlist shelf to remain after migration")
+	}
+	if watchlist.Order != 2 {
+		t.Fatalf("expected watchlist to shift to order 2, got %d", watchlist.Order)
+	}
+}

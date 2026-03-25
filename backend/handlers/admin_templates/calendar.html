@@ -87,6 +87,7 @@
     <button class="btn btn-primary source-btn active" data-source="all" onclick="filterSource('all', this)">All</button>
     <button class="btn btn-secondary source-btn" data-source="watchlist" onclick="filterSource('watchlist', this)">Watchlist</button>
     <button class="btn btn-secondary source-btn" data-source="history" onclick="filterSource('history', this)">Continue Watching</button>
+    <button class="btn btn-secondary source-btn" data-source="top-trending" onclick="filterSource('top-trending', this)">Top Trending</button>
     <button class="btn btn-secondary source-btn" data-source="trending" onclick="filterSource('trending', this)">Trending</button>
     <button class="btn btn-secondary source-btn" data-source="mdblist" onclick="filterSource('mdblist', this)">MDBList</button>
 </div>
@@ -124,10 +125,24 @@
             </label>
             <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
                 <div>
+                    <div style="font-weight: 500;">Top Trending (20)</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming content from the first 20 trending movies and series</div>
+                </div>
+                <input type="checkbox" id="srcTopTrending" checked onchange="saveCalendarSettings()">
+            </label>
+            <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
+                <div>
                     <div style="font-weight: 500;">Trending</div>
-                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming content from trending movies and series</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming content from the rest of the trending movies and series lists</div>
                 </div>
                 <input type="checkbox" id="srcTrending" checked onchange="saveCalendarSettings()">
+            </label>
+            <label class="toggle-row" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: pointer;">
+                <div>
+                    <div style="font-weight: 500;">MDBList Shelves</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-muted);">Upcoming content from enabled MDBList shelves below</div>
+                </div>
+                <input type="checkbox" id="srcMDBLists" checked onchange="saveCalendarSettings()">
             </label>
             <!-- MDBList per-shelf toggles (dynamically populated) -->
             <div id="mdblistShelvesContainer"></div>
@@ -698,7 +713,9 @@
             const cal = userSettings.calendar || {};
             document.getElementById('srcWatchlist').checked = cal.watchlist !== false;
             document.getElementById('srcHistory').checked = cal.history !== false;
+            document.getElementById('srcTopTrending').checked = cal.topTrending !== false;
             document.getElementById('srcTrending').checked = cal.trending !== false;
+            document.getElementById('srcMDBLists').checked = cal.mdblists !== false;
 
             // Render MDBList per-shelf toggles
             renderMDBListShelves(cal);
@@ -741,7 +758,9 @@
         const cal = userSettings.calendar || {};
         cal.watchlist = document.getElementById('srcWatchlist').checked;
         cal.history = document.getElementById('srcHistory').checked;
+        cal.topTrending = document.getElementById('srcTopTrending').checked;
         cal.trending = document.getElementById('srcTrending').checked;
+        cal.mdblists = document.getElementById('srcMDBLists').checked;
 
         // Collect per-shelf MDBList settings
         const shelfToggles = document.querySelectorAll('.mdblist-shelf-toggle');

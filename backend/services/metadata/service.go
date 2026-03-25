@@ -27,16 +27,16 @@ import (
 )
 
 type Service struct {
-	client       *tvdbClient
-	tmdb         *tmdbClient
-	gemini       *geminiClient
-	mdblist      *mdblistClient
-	cache        *fileCache
+	client  *tvdbClient
+	tmdb    *tmdbClient
+	gemini  *geminiClient
+	mdblist *mdblistClient
+	cache   *fileCache
 	// Separate cache for stable ID mappings (TMDB↔IMDB) with 7x longer TTL
-	idCache      *fileCache
+	idCache *fileCache
 	// Separate cache for MDBList ratings — long TTL, persists across restarts
 	ratingsCache *fileCache
-	demo    bool
+	demo         bool
 
 	// Cache TTL in hours (stored for reuse when updating clients)
 	ttlHours int
@@ -55,8 +55,8 @@ type Service struct {
 	cacheStopCh      chan struct{}
 	cacheStatusMu    sync.RWMutex
 	cacheStatus      CacheManagerStatus
-	customListInfoFn  func() []CustomListInfo  // returns configured custom MDBList URLs with display names
-	ratingItemsFn     func() []RatingItem      // returns all items that need ratings (watchlist, continue watching, user lists)
+	customListInfoFn func() []CustomListInfo // returns configured custom MDBList URLs with display names
+	ratingItemsFn    func() []RatingItem     // returns all items that need ratings (watchlist, continue watching, user lists)
 
 	// Progress tracking for long-running enrichment operations
 	progressMu    sync.RWMutex
@@ -65,16 +65,16 @@ type Service struct {
 
 // CacheManagerStatus holds the current state of the background cache manager.
 type CacheManagerStatus struct {
-	Running          bool      `json:"running"`
-	Status           string    `json:"status"`           // "idle", "warming", "refreshing"
-	LastRefreshAt    time.Time `json:"lastRefreshAt"`
-	LastRefreshMs    int64     `json:"lastRefreshMs"`
-	NextRefreshAt    time.Time `json:"nextRefreshAt"`
-	RefreshInterval  string    `json:"refreshInterval"`
-	MoviesCached     int       `json:"moviesCached"`
-	SeriesCached     int       `json:"seriesCached"`
-	CustomListsCached int      `json:"customListsCached"`
-	LastError        string    `json:"lastError,omitempty"`
+	Running           bool      `json:"running"`
+	Status            string    `json:"status"` // "idle", "warming", "refreshing"
+	LastRefreshAt     time.Time `json:"lastRefreshAt"`
+	LastRefreshMs     int64     `json:"lastRefreshMs"`
+	NextRefreshAt     time.Time `json:"nextRefreshAt"`
+	RefreshInterval   string    `json:"refreshInterval"`
+	MoviesCached      int       `json:"moviesCached"`
+	SeriesCached      int       `json:"seriesCached"`
+	CustomListsCached int       `json:"customListsCached"`
+	LastError         string    `json:"lastError,omitempty"`
 }
 
 // formatInterval formats a duration as a human-friendly string like "2h" or "30m".
@@ -5559,6 +5559,15 @@ type CustomListOptions struct {
 	UserID         string
 	HistorySvc     HistoryChecker // nil if hideWatched is false
 	Label          string         // optional display name for progress tracking (e.g. shelf name)
+}
+
+// GetCustomListForCalendar fetches a custom MDBList with the lighter-weight options calendar needs.
+func (s *Service) GetCustomListForCalendar(ctx context.Context, listURL string, limit int, label string) ([]models.TrendingItem, error) {
+	items, _, _, err := s.GetCustomList(ctx, listURL, CustomListOptions{
+		Limit: limit,
+		Label: label,
+	})
+	return items, err
 }
 
 // cachedMovieExtended fetches TVDB movie extended data with file caching.

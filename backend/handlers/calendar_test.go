@@ -62,6 +62,9 @@ func (m *calendarMockMetadata) MovieDetails(_ context.Context, _ models.MovieDet
 func (m *calendarMockMetadata) Trending(_ context.Context, _ string) ([]models.TrendingItem, error) {
 	return nil, nil
 }
+func (m *calendarMockMetadata) GetCustomListForCalendar(_ context.Context, _ string, _ int, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
 
 type calendarMockWatchlist struct{}
 
@@ -283,6 +286,9 @@ func (m *calendarMockMetadataWithData) MovieDetails(_ context.Context, _ models.
 	return nil, nil
 }
 func (m *calendarMockMetadataWithData) Trending(_ context.Context, _ string) ([]models.TrendingItem, error) {
+	return nil, nil
+}
+func (m *calendarMockMetadataWithData) GetCustomListForCalendar(_ context.Context, _ string, _ int, _ string) ([]models.TrendingItem, error) {
 	return nil, nil
 }
 

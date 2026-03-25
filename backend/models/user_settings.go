@@ -47,7 +47,9 @@ type UserSettings struct {
 type CalendarSettings struct {
 	Watchlist      *bool           `json:"watchlist,omitempty"`      // Include series episodes & movie releases from watchlist
 	History        *bool           `json:"history,omitempty"`        // Include upcoming episodes for series being watched
-	Trending       *bool           `json:"trending,omitempty"`       // Include upcoming content from trending lists
+	Trending       *bool           `json:"trending,omitempty"`       // Include the non-top-20 remainder of the trending lists
+	TopTrending    *bool           `json:"topTrending,omitempty"`    // Include the top 20 entries from the trending lists
+	MDBLists       *bool           `json:"mdblists,omitempty"`       // Include content from enabled MDBList shelves
 	MDBListShelves map[string]bool `json:"mdblistShelves,omitempty"` // Per-shelf calendar enable: shelf ID -> enabled (nil = all enabled)
 }
 
@@ -247,6 +249,62 @@ type HomeShelvesSettings struct {
 	Shelves []ShelfConfig `json:"shelves"`
 }
 
+// DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
+func DefaultHomeShelfConfigs() []ShelfConfig {
+	return []ShelfConfig{
+		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 1},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 2},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 3},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 4},
+	}
+}
+
+// EnsureDefaultHomeShelves adds any missing built-in shelves while preserving existing custom shelves and ordering.
+func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
+	if len(shelves) == 0 {
+		return DefaultHomeShelfConfigs(), true
+	}
+
+	nextShelves := append([]ShelfConfig(nil), shelves...)
+	changed := false
+
+	hasShelf := func(id string) bool {
+		for _, shelf := range nextShelves {
+			if shelf.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasShelf("calendar") {
+		insertOrder := 1
+		for _, shelf := range nextShelves {
+			if shelf.ID == "continue-watching" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "calendar",
+			Name:    "Coming Up",
+			Enabled: true,
+			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	return nextShelves, changed
+}
+
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
 type HDRDVPolicy string
 
@@ -287,12 +345,7 @@ func DefaultUserSettings() UserSettings {
 			SubtitleSize:         1.0,
 		},
 		HomeShelves: HomeShelvesSettings{
-			Shelves: []ShelfConfig{
-				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
-				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
-				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
-				{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 3},
-			},
+			Shelves: DefaultHomeShelfConfigs(),
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   FloatPtr(0),
@@ -314,9 +367,11 @@ func DefaultUserSettings() UserSettings {
 			RemoteBackendUrl: "",
 		},
 		Calendar: CalendarSettings{
-			Watchlist: BoolPtr(true),
-			History:   BoolPtr(true),
-			Trending:  BoolPtr(true),
+			Watchlist:   BoolPtr(true),
+			History:     BoolPtr(true),
+			Trending:    BoolPtr(true),
+			TopTrending: BoolPtr(true),
+			MDBLists:    BoolPtr(true),
 		},
 	}
 }

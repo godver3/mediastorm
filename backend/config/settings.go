@@ -312,6 +312,62 @@ type HomeShelvesSettings struct {
 	ExploreCardPosition ExploreCardPosition `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
 }
 
+// DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
+func DefaultHomeShelfConfigs() []ShelfConfig {
+	return []ShelfConfig{
+		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 1},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 2},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 3},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 4},
+	}
+}
+
+// EnsureDefaultHomeShelves adds any missing built-in shelves while preserving existing custom shelves and ordering.
+func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
+	if len(shelves) == 0 {
+		return DefaultHomeShelfConfigs(), true
+	}
+
+	nextShelves := append([]ShelfConfig(nil), shelves...)
+	changed := false
+
+	hasShelf := func(id string) bool {
+		for _, shelf := range nextShelves {
+			if shelf.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasShelf("calendar") {
+		insertOrder := 1
+		for _, shelf := range nextShelves {
+			if shelf.ID == "continue-watching" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "calendar",
+			Name:    "Coming Up",
+			Enabled: true,
+			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	return nextShelves, changed
+}
+
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
 type HDRDVPolicy string
 
@@ -736,12 +792,7 @@ func DefaultSettings() Settings {
 		Playback:  PlaybackSettings{PreferredPlayer: "native", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
-			Shelves: []ShelfConfig{
-				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
-				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
-				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
-				{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 3},
-			},
+			Shelves: DefaultHomeShelfConfigs(),
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   0,                       // 0 means no limit
@@ -1137,14 +1188,9 @@ func (m *Manager) Load() (Settings, error) {
 		}
 	}
 
-	// Backfill HomeShelves if empty
-	if len(s.HomeShelves.Shelves) == 0 {
-		s.HomeShelves.Shelves = []ShelfConfig{
-			{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
-			{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
-			{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
-			{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 3},
-		}
+	// Backfill HomeShelves and add newly introduced built-in shelves.
+	if shelves, changed := EnsureDefaultHomeShelves(s.HomeShelves.Shelves); changed {
+		s.HomeShelves.Shelves = shelves
 	}
 
 	// Backfill shelf type for mdblist shelves missing the type field (legacy data)

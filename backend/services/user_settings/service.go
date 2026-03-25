@@ -180,6 +180,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.BadgeVisibility == nil {
 			settings.Display = defaults.Display
 		}
+		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
+			settings.HomeShelves.Shelves = shelves
+		}
 		return settings, nil
 	}
 
@@ -301,6 +304,8 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	if s.Calendar.Watchlist != nil ||
 		s.Calendar.History != nil ||
 		s.Calendar.Trending != nil ||
+		s.Calendar.TopTrending != nil ||
+		s.Calendar.MDBLists != nil ||
 		len(s.Calendar.MDBListShelves) > 0 {
 		return false
 	}
@@ -345,6 +350,10 @@ func (s *Service) load() error {
 		needsSave := false
 		for userID, us := range s.settings {
 			changed := false
+			if shelves, shelvesChanged := models.EnsureDefaultHomeShelves(us.HomeShelves.Shelves); shelvesChanged {
+				us.HomeShelves.Shelves = shelves
+				changed = true
+			}
 			for i := range us.HomeShelves.Shelves {
 				id := us.HomeShelves.Shelves[i].ID
 				if (id == "trending-movies" || id == "trending-tv") && us.HomeShelves.Shelves[i].HideUnreleased {
@@ -431,6 +440,11 @@ func (s *Service) load() error {
 	// Migrate: force hideUnreleased=false on trending shelves (curated lists handle this now)
 	for userID, us := range settings {
 		changed := false
+		if shelves, shelvesChanged := models.EnsureDefaultHomeShelves(us.HomeShelves.Shelves); shelvesChanged {
+			us.HomeShelves.Shelves = shelves
+			changed = true
+			needsSave = true
+		}
 		for i := range us.HomeShelves.Shelves {
 			id := us.HomeShelves.Shelves[i].ID
 			if (id == "trending-movies" || id == "trending-tv") && us.HomeShelves.Shelves[i].HideUnreleased {

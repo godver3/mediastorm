@@ -11,9 +11,10 @@ import (
 // --- Mock services ---
 
 type mockMetadata struct {
-	series   map[int64]*models.SeriesDetails
-	movies   map[int64]*models.Title
-	trending map[string][]models.TrendingItem
+	series      map[int64]*models.SeriesDetails
+	movies      map[int64]*models.Title
+	trending    map[string][]models.TrendingItem
+	customLists map[string][]models.TrendingItem
 }
 
 func (m *mockMetadata) SeriesDetails(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
@@ -32,6 +33,13 @@ func (m *mockMetadata) MovieDetails(_ context.Context, req models.MovieDetailsQu
 
 func (m *mockMetadata) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
 	if items, ok := m.trending[mediaType]; ok {
+		return items, nil
+	}
+	return nil, nil
+}
+
+func (m *mockMetadata) GetCustomListForCalendar(_ context.Context, listURL string, _ int, _ string) ([]models.TrendingItem, error) {
+	if items, ok := m.customLists[listURL]; ok {
 		return items, nil
 	}
 	return nil, nil
@@ -84,9 +92,10 @@ func pastDate(daysAgo int) string {
 
 func defaultMocks() (*mockMetadata, *mockWatchlist, *mockHistory, *mockUserSettings, *mockUsers) {
 	return &mockMetadata{
-			series:   map[int64]*models.SeriesDetails{},
-			movies:   map[int64]*models.Title{},
-			trending: map[string][]models.TrendingItem{},
+			series:      map[int64]*models.SeriesDetails{},
+			movies:      map[int64]*models.Title{},
+			trending:    map[string][]models.TrendingItem{},
+			customLists: map[string][]models.TrendingItem{},
 		},
 		&mockWatchlist{items: map[string][]models.WatchlistItem{}},
 		&mockHistory{items: map[string][]models.SeriesWatchState{}},
@@ -166,6 +175,26 @@ func TestBuildUserCalendar_HistorySeries(t *testing.T) {
 	}
 	if items[0].Source != "history" {
 		t.Errorf("expected source 'history', got %q", items[0].Source)
+	}
+}
+
+func TestBuildUserCalendar_HistorySkipsMovieResumeEntries(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	hist.items["user1"] = []models.SeriesWatchState{
+		{
+			SeriesID:    "tvdb:movie:16721",
+			SeriesTitle: "Top Gun: Maverick",
+			Year:        2022,
+			ExternalIDs: map[string]string{"tvdb": "16721", "imdb": "tt1745960"},
+			NextEpisode: nil,
+		},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items for movie resume entries in history, got %d", len(items))
 	}
 }
 
@@ -320,8 +349,8 @@ func TestBuildUserCalendar_TrendingMovies(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 trending movie item, got %d", len(items))
 	}
-	if items[0].Source != "trending" {
-		t.Errorf("expected source 'trending', got %q", items[0].Source)
+	if items[0].Source != "top-trending" {
+		t.Errorf("expected source 'top-trending', got %q", items[0].Source)
 	}
 	if items[0].ReleaseType != "theatrical" {
 		t.Errorf("expected releaseType 'theatrical', got %q", items[0].ReleaseType)
@@ -353,8 +382,8 @@ func TestBuildUserCalendar_TrendingSeries(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 trending series item, got %d", len(items))
 	}
-	if items[0].Source != "trending" {
-		t.Errorf("expected source 'trending', got %q", items[0].Source)
+	if items[0].Source != "top-trending" {
+		t.Errorf("expected source 'top-trending', got %q", items[0].Source)
 	}
 	if items[0].EpisodeTitle != "New Ep" {
 		t.Errorf("expected episode title 'New Ep', got %q", items[0].EpisodeTitle)
@@ -423,7 +452,10 @@ func TestBuildUserCalendar_SettingsDisableTrending(t *testing.T) {
 	}
 	// Disable trending source
 	us.settings["user1"] = &models.UserSettings{
-		Calendar: models.CalendarSettings{Trending: models.BoolPtr(false)},
+		Calendar: models.CalendarSettings{
+			Trending:    models.BoolPtr(false),
+			TopTrending: models.BoolPtr(false),
+		},
 	}
 
 	svc := New(meta, wl, hist, us, users)
@@ -455,6 +487,9 @@ func TestBuildUserCalendar_SettingsDefaultsAllEnabled(t *testing.T) {
 
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item (defaults = all enabled), got %d", len(items))
+	}
+	if items[0].Source != "top-trending" {
+		t.Fatalf("expected default trending item to come from top-trending, got %q", items[0].Source)
 	}
 }
 
@@ -529,14 +564,107 @@ func TestBuildUserCalendar_MDBListPerShelfDisable(t *testing.T) {
 			},
 		},
 	}
+	meta.customLists["https://mdblist.com/lists/test/list1/json"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "Disabled List Movie",
+				MediaType:  "movie",
+				TMDBID:     9001,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(7), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(7), Released: false}},
+			},
+		},
+	}
+	meta.customLists["https://mdblist.com/lists/test/list2/json"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "Enabled List Movie",
+				MediaType:  "movie",
+				TMDBID:     9002,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(9), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(9), Released: false}},
+			},
+		},
+	}
 
 	svc := New(meta, wl, hist, us, users)
-	// collectFromMDBLists is a placeholder but we can verify the per-shelf
-	// filtering doesn't panic and respects settings
 	items := svc.buildUserCalendar("user1")
-	// No items expected since MDBList collection is a placeholder
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item from enabled MDBList shelf, got %d", len(items))
+	}
+	if items[0].Title != "Enabled List Movie" {
+		t.Fatalf("expected enabled shelf item, got %q", items[0].Title)
+	}
+	if items[0].Source != "mdblist" {
+		t.Fatalf("expected source mdblist, got %q", items[0].Source)
+	}
+}
+
+func TestBuildUserCalendar_SettingsDisableTopTrendingOnly(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	trendingItems := make([]models.TrendingItem, 25)
+	for i := range trendingItems {
+		trendingItems[i] = models.TrendingItem{
+			Rank: i + 1,
+			Title: models.Title{
+				Name:       fmt.Sprintf("Trending Film %d", i+1),
+				MediaType:  "movie",
+				TMDBID:     int64(1000 + i),
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(7 + (i % 2)), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(7 + (i % 2)), Released: false}},
+			},
+		}
+	}
+	meta.trending["movie"] = trendingItems
+	us.settings["user1"] = &models.UserSettings{
+		Calendar: models.CalendarSettings{TopTrending: models.BoolPtr(false)},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 5 {
+		t.Fatalf("expected only the non-top-20 trailing items, got %d", len(items))
+	}
+	for _, item := range items {
+		if item.Source != "trending" {
+			t.Fatalf("expected trending source when top-trending disabled, got %q", item.Source)
+		}
+	}
+}
+
+func TestBuildUserCalendar_SettingsDisableMDBLists(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	us.settings["user1"] = &models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "mdb-1", Name: "My List", Enabled: true, Type: "mdblist", ListURL: "https://mdblist.com/lists/test/list1/json"},
+			},
+		},
+		Calendar: models.CalendarSettings{
+			MDBLists: models.BoolPtr(false),
+		},
+	}
+	meta.customLists["https://mdblist.com/lists/test/list1/json"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "MDBList Movie",
+				MediaType:  "movie",
+				TMDBID:     9100,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(8), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(8), Released: false}},
+			},
+		},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
 	if len(items) != 0 {
-		t.Fatalf("expected 0 items (mdblist is placeholder), got %d", len(items))
+		t.Fatalf("expected 0 items with MDBLists disabled, got %d", len(items))
 	}
 }
 
@@ -631,8 +759,8 @@ func TestGet_OnDemandBuildForUncachedUser(t *testing.T) {
 	if len(cal.Items) != 1 {
 		t.Fatalf("expected 1 trending item for u2, got %d", len(cal.Items))
 	}
-	if cal.Items[0].Source != "trending" {
-		t.Errorf("expected source 'trending', got %q", cal.Items[0].Source)
+	if cal.Items[0].Source != "top-trending" {
+		t.Errorf("expected source 'top-trending', got %q", cal.Items[0].Source)
 	}
 
 	// Subsequent Get should return cached result

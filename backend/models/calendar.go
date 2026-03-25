@@ -15,7 +15,7 @@ type CalendarItem struct {
 	PosterURL     string            `json:"posterUrl,omitempty"`
 	Year          int               `json:"year,omitempty"`
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"` // imdb, tvdb, tmdb
-	Source        string            `json:"source"`                // "watchlist" | "history" | "trending" | "mdblist"
+	Source        string            `json:"source"`                // "watchlist" | "history" | "trending" | "top-trending" | "mdblist"
 }
 
 // CalendarResponse is the API response for the calendar endpoint.

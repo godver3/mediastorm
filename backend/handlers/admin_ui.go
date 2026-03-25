@@ -1822,6 +1822,9 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return
 	}
+	if h.calendarService != nil {
+		h.calendarService.Refresh()
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
@@ -1843,6 +1846,9 @@ func (h *AdminUIHandler) ResetUserSettings(w http.ResponseWriter, r *http.Reques
 	if err := h.userSettingsService.Delete(userID); err != nil {
 		http.Error(w, "Failed to reset user settings", http.StatusInternalServerError)
 		return
+	}
+	if h.calendarService != nil {
+		h.calendarService.Refresh()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
