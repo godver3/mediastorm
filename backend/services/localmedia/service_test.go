@@ -304,6 +304,115 @@ func TestStartScanMarksMissingItemsInsteadOfDeleting(t *testing.T) {
 	}
 }
 
+func TestUpdateLibraryPersistsFilterSettings(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:             "lib1",
+			Name:           "Movies",
+			Type:           models.LocalMediaLibraryTypeMovie,
+			RootPath:       root,
+			LastScanStatus: models.LocalMediaScanStatusIdle,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
+	service := &Service{repo: repo}
+
+	updated, err := service.UpdateLibrary(context.Background(), "lib1", models.LocalMediaLibraryCreateInput{
+		Name:             "Movies HD",
+		Type:             models.LocalMediaLibraryTypeMovie,
+		RootPath:         root,
+		FilterOutTerms:   []string{"Trailer", " Featurette ", "trailer"},
+		MinFileSizeBytes: 512 * 1024 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("UpdateLibrary error: %v", err)
+	}
+
+	if updated.Name != "Movies HD" {
+		t.Fatalf("updated.Name = %q, want %q", updated.Name, "Movies HD")
+	}
+	if len(updated.FilterOutTerms) != 2 {
+		t.Fatalf("updated.FilterOutTerms = %#v, want 2 unique entries", updated.FilterOutTerms)
+	}
+	if updated.MinFileSizeBytes != 512*1024*1024 {
+		t.Fatalf("updated.MinFileSizeBytes = %d", updated.MinFileSizeBytes)
+	}
+}
+
+func TestStartScanDeletesItemsExcludedByFilterTerms(t *testing.T) {
+	root := t.TempDir()
+	mainPath := root + "/Movie.Title.2024.mkv"
+	trailerPath := root + "/Movie.Title.2024.Trailer.mkv"
+	if err := os.WriteFile(mainPath, []byte("main-video"), 0o644); err != nil {
+		t.Fatalf("write main file: %v", err)
+	}
+	if err := os.WriteFile(trailerPath, []byte("trailer-video"), 0o644); err != nil {
+		t.Fatalf("write trailer file: %v", err)
+	}
+
+	now := time.Now().UTC().Add(-time.Hour)
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:               "lib1",
+			Name:             "Movies",
+			Type:             models.LocalMediaLibraryTypeMovie,
+			RootPath:         root,
+			FilterOutTerms:   []string{"Trailer"},
+			LastScanStatus:   models.LocalMediaScanStatusIdle,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+			MinFileSizeBytes: 0,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"Movie.Title.2024.Trailer.mkv": {
+				ID:           "trailer1",
+				LibraryID:    "lib1",
+				RelativePath: "Movie.Title.2024.Trailer.mkv",
+				FilePath:     trailerPath,
+				FileName:     "Movie.Title.2024.Trailer.mkv",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+		},
+	}
+	service := &Service{
+		repo:        repo,
+		ffprobePath: "ffprobe",
+		scans:       make(map[string]scanState),
+	}
+
+	summary, err := service.StartScan(context.Background(), "lib1")
+	if err != nil {
+		t.Fatalf("StartScan error: %v", err)
+	}
+	if summary.Discovered != 1 {
+		t.Fatalf("summary.Discovered = %d, want 1", summary.Discovered)
+	}
+	if _, exists := repo.items["Movie.Title.2024.Trailer.mkv"]; exists {
+		t.Fatal("excluded trailer item still present after scan")
+	}
+	if _, exists := repo.items["Movie.Title.2024.mkv"]; !exists {
+		t.Fatal("main movie item not stored after scan")
+	}
+}
+
+func TestShouldIncludeLocalMediaFileRespectsMinimumSize(t *testing.T) {
+	library := models.LocalMediaLibrary{
+		MinFileSizeBytes: 100,
+	}
+
+	include, reason := shouldIncludeLocalMediaFile(library, "Show/S01E01.mkv", 99)
+	if include {
+		t.Fatal("include = true, want false")
+	}
+	if reason != "min_size" {
+		t.Fatalf("reason = %q, want %q", reason, "min_size")
+	}
+}
+
 func TestDeleteItemRequiresMissingState(t *testing.T) {
 	repo := &fakeLocalMediaRepo{
 		items: map[string]*models.LocalMediaItem{

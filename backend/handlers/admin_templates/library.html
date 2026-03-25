@@ -13,7 +13,10 @@
 <div class="grid grid-2" style="align-items: start;">
     <div class="card">
         <div class="card-header">
-            <h2>Add Library</h2>
+            <div>
+                <h2 id="libraryFormTitle">Add Library</h2>
+                <div id="libraryFormSubtitle" style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">Create a new library root and scan profile.</div>
+            </div>
         </div>
         <div class="card-body">
             <form id="libraryForm" style="display: grid; gap: 0.875rem;">
@@ -37,7 +40,20 @@
                     </div>
                     <div class="form-hint">Use the browser to pick a folder on the server filesystem.</div>
                 </div>
-                <button class="btn btn-primary" type="submit">Add Library</button>
+                <div class="form-group">
+                    <label class="form-label" for="libraryFilterOutTerms">Filter Out Terms</label>
+                    <textarea id="libraryFilterOutTerms" class="form-input" rows="4" placeholder="Trailer&#10;Featurette&#10;Sample"></textarea>
+                    <div class="form-hint">One term per line or comma-separated. Matching is case-insensitive against the relative file path.</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="libraryMinFileSizeMb" id="libraryMinFileSizeLabel">Minimum Movie File Size (MB)</label>
+                    <input id="libraryMinFileSizeMb" class="form-input" type="number" min="0" step="1" placeholder="0">
+                    <div class="form-hint" id="libraryMinFileSizeHint">Files smaller than this are ignored during scans. Use `0` to disable the limit.</div>
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-primary" type="submit" id="librarySubmitBtn">Add Library</button>
+                    <button class="btn btn-secondary" type="button" id="cancelLibraryEditBtn" style="display: none;">Cancel Edit</button>
+                </div>
             </form>
         </div>
     </div>
@@ -809,7 +825,7 @@ let currentItemQuery = '';
 let currentSort = 'updated';
 let currentSortDir = 'desc';
 let expandedItems = new Set();
-let activeMatchItem = null;
+let activeMatchTarget = null;
 let currentItemsById = new Map();
 let currentMatchResults = [];
 let currentVisibleItems = [];
@@ -820,6 +836,7 @@ let itemsSearchDebounceHandle = 0;
 let expandedGroups = new Set();
 let expandedSeasons = new Set();
 let expandedEpisodeGroups = new Set();
+let editingLibraryId = '';
 let activePosterDetails = null;
 let lockedScrollY = 0;
 const libraryStateStorageKey = 'strmr.library.ui.v1';
@@ -836,6 +853,8 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreLibraryUIState();
   document.getElementById('libraryForm').addEventListener('submit', createLibrary);
   document.getElementById('browseDirsBtn').addEventListener('click', openDirectoryBrowser);
+  document.getElementById('libraryType').addEventListener('change', syncLibraryFormSettings);
+  document.getElementById('cancelLibraryEditBtn').addEventListener('click', resetLibraryForm);
   document.getElementById('closeDirBrowserBtn').addEventListener('click', closeDirectoryBrowser);
   document.getElementById('goDirBrowserBtn').addEventListener('click', () => loadDirectoryListing(document.getElementById('directoryBrowserPath').value.trim()));
   document.getElementById('dirBrowserUpBtn').addEventListener('click', browseParentDirectory);
@@ -898,29 +917,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   syncLibraryControls();
+  syncLibraryFormSettings();
+  resetLibraryForm();
   loadLibraries();
   librariesPollHandle = window.setInterval(loadLibraries, 4000);
 });
 
 async function createLibrary(event) {
   event.preventDefault();
+  const minFileSizeBytes = parseLibraryMinFileSizeBytes();
+  if (minFileSizeBytes === null) return;
   const payload = {
     name: document.getElementById('libraryName').value.trim(),
     type: document.getElementById('libraryType').value,
     rootPath: document.getElementById('libraryRootPath').value.trim(),
+    filterOutTerms: parseFilterOutTerms(document.getElementById('libraryFilterOutTerms').value),
+    minFileSizeBytes,
   };
   try {
-    const res = await fetch(basePath + '/api/library/libraries', {
-      method: 'POST',
+    const isEditing = Boolean(editingLibraryId);
+    const endpoint = isEditing
+      ? (basePath + '/api/library/libraries/' + encodeURIComponent(editingLibraryId))
+      : (basePath + '/api/library/libraries');
+    const res = await fetch(endpoint, {
+      method: isEditing ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error(await res.text());
-    event.target.reset();
-    showToast('Library added');
+    showToast(isEditing ? 'Library updated' : 'Library added');
+    resetLibraryForm();
     await loadLibraries();
   } catch (err) {
-    showToast(err.message || 'Failed to create library', 'error');
+    showToast(err.message || (editingLibraryId ? 'Failed to update library' : 'Failed to create library'), 'error');
   }
 }
 
@@ -978,6 +1007,8 @@ function renderLibraries(container) {
           <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.85rem;">
             <span>${escapeHtml(library.type)}</span>
             <span>${library.lastScanDiscovered || 0} files</span>
+            ${library.minFileSizeBytes ? `<span>Min size ${formatBytes(library.minFileSizeBytes)}</span>` : ''}
+            ${(Array.isArray(library.filterOutTerms) && library.filterOutTerms.length) ? `<span>Exclude ${escapeHtml(library.filterOutTerms.join(', '))}</span>` : ''}
             ${library.lastScanStatus === 'scanning' && library.lastScanTotal ? `<span>${Math.min(100, Math.round(((library.lastScanDiscovered || 0) / library.lastScanTotal) * 100))}% complete</span>` : ''}
             <span>${library.lastScanMatched || 0} matched</span>
             <span>${library.lastScanLowConfidence || 0} low confidence</span>
@@ -987,6 +1018,7 @@ function renderLibraries(container) {
           ${library.lastScanError ? `<div style="color: var(--danger); font-size: 0.85rem;">${escapeHtml(library.lastScanError)}</div>` : ''}
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;" onclick="event.stopPropagation()">
             <button class="btn btn-primary btn-sm" onclick="scanLibrary('${library.id}')" ${library.lastScanStatus === 'scanning' ? 'disabled' : ''}>${library.lastScanStatus === 'scanning' ? 'Scanning...' : 'Scan'}</button>
+            <button class="btn btn-secondary btn-sm" onclick="editLibrary('${library.id}')">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteLibrary('${library.id}')">Delete</button>
           </div>
         </div>
@@ -1057,11 +1089,27 @@ async function deleteLibrary(id) {
       currentItemsById = new Map();
       document.getElementById('itemsList').innerHTML = 'No library selected yet.';
     }
+    if (editingLibraryId === id) {
+      resetLibraryForm();
+    }
     showToast('Library deleted');
     await loadLibraries();
   } catch (err) {
     showToast(err.message || 'Failed to delete library', 'error');
   }
+}
+
+function editLibrary(id) {
+  const library = libraries.find(entry => entry.id === id);
+  if (!library) return;
+  editingLibraryId = id;
+  document.getElementById('libraryName').value = library.name || '';
+  document.getElementById('libraryType').value = library.type || 'movie';
+  document.getElementById('libraryRootPath').value = library.rootPath || '';
+  document.getElementById('libraryFilterOutTerms').value = formatFilterOutTerms(library.filterOutTerms);
+  document.getElementById('libraryMinFileSizeMb').value = bytesToMegabytesString(library.minFileSizeBytes);
+  syncLibraryFormSettings();
+  document.getElementById('libraryForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 async function loadItems(libraryId) {
@@ -1294,6 +1342,7 @@ function renderGroupedItem(group) {
   const expanded = expandedGroups.has(group.id);
   const badgeClass = matchStatusClass(group.matchStatus);
   const title = group.title || 'Untitled';
+  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
   const secondaryBits = [];
   if (group.year) secondaryBits.push(String(group.year));
   if (group.groupType === 'movie_versions') {
@@ -1325,7 +1374,10 @@ function renderGroupedItem(group) {
             </div>
             ${group.overview ? `<div class="library-group-overview">${escapeHtml(group.overview)}</div>` : ''}
           </div>
-          <div class="status-badge ${badgeClass}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+          <div class="library-group-actions" onclick="event.stopPropagation()">
+            <div class="status-badge ${badgeClass}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+            ${canBulkRematch ? `<button class="btn btn-primary btn-sm" type="button" onclick="openGroupMatchModal('${group.id}')">Bulk Rematch</button>` : ''}
+          </div>
         </div>
       </div>
       ${expanded ? renderGroupedChildren(group) : ''}
@@ -1336,6 +1388,7 @@ function renderGroupedItem(group) {
 function renderGroupedPosterItem(group) {
   const poster = (group.textPoster && group.textPoster.url) || (group.poster && group.poster.url) || '';
   const title = group.title || 'Untitled';
+  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
   const metaBits = [];
   if (group.year) metaBits.push(String(group.year));
   if (group.groupType === 'series') {
@@ -1356,6 +1409,7 @@ function renderGroupedPosterItem(group) {
           <div style="color: var(--text-muted); font-size: 0.85rem;">${metaBits.map(escapeHtml).join(' · ')}</div>
         </div>
         <div class="status-badge ${matchStatusClass(group.matchStatus)}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+        ${canBulkRematch ? `<button class="btn btn-primary btn-sm" type="button" onclick="openGroupMatchModal('${group.id}')">Bulk Rematch</button>` : ''}
       </div>
     </div>
   `;
@@ -1533,18 +1587,33 @@ function changeItemsPage(direction) {
 }
 
 function openMatchModal(itemId) {
-  const item = currentItemsById.get(itemId);
-  activeMatchItem = item ? { id: itemId, item } : { id: itemId };
-  document.getElementById('matchModalSubtitle').textContent = item ? item.relativePath : '';
-  document.getElementById('matchSearchInput').value = item ? (item.detectedTitle || item.fileName || '') : '';
-  document.getElementById('matchTypeSelect').value = item && item.libraryType === 'show' ? 'series' : selectedLibraryType();
+  const target = buildMatchTargetForItem(itemId);
+  if (!target) return;
+  activeMatchTarget = target;
+  document.getElementById('matchModalSubtitle').textContent = target.subtitle || '';
+  document.getElementById('matchSearchInput').value = target.defaultQuery || '';
+  document.getElementById('matchTypeSelect').value = target.mediaType || selectedLibraryType();
+  document.getElementById('matchSearchResults').innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">Search to pick the correct title.</div>';
+  document.getElementById('matchModal').classList.add('open');
+}
+
+function openGroupMatchModal(groupId) {
+  const target = buildMatchTargetForGroup(groupId);
+  if (!target) {
+    showToast('This group is not available for bulk rematching', 'error');
+    return;
+  }
+  activeMatchTarget = target;
+  document.getElementById('matchModalSubtitle').textContent = target.subtitle || '';
+  document.getElementById('matchSearchInput').value = target.defaultQuery || '';
+  document.getElementById('matchTypeSelect').value = target.mediaType || 'series';
   document.getElementById('matchSearchResults').innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">Search to pick the correct title.</div>';
   document.getElementById('matchModal').classList.add('open');
 }
 
 function closeMatchModal() {
   document.getElementById('matchModal').classList.remove('open');
-  activeMatchItem = null;
+  activeMatchTarget = null;
   currentMatchResults = [];
 }
 
@@ -1624,12 +1693,14 @@ function renderPosterGroupSubtitle(group) {
 
 function renderPosterGroupModalContent(group) {
   const badgeClass = matchStatusClass(group.matchStatus);
+  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
   const childrenHtml = group.groupType === 'series'
     ? (group.seasons || []).map(renderPosterModalSeason).join('')
     : `<div style="display: grid; gap: 0.75rem;">${(group.items || []).map(item => renderItem(item, { forceCollapsible: true })).join('')}</div>`;
   return `
     <div style="display: flex; gap: 0.45rem; flex-wrap: wrap; align-items: center;">
       <div class="status-badge ${badgeClass}">${escapeHtml(formatStatus(group.matchStatus))}</div>
+      ${canBulkRematch ? `<button class="btn btn-primary btn-sm" type="button" onclick="openGroupMatchModal('${group.id}')">Bulk Rematch</button>` : ''}
       <div style="color: var(--text-secondary); font-size: 0.85rem;">${Math.round((group.confidenceMax || 0) * 100)}% max confidence</div>
       <div style="color: var(--text-secondary); font-size: 0.85rem;">${formatBytes(group.totalSizeBytes || 0)}</div>
     </div>
@@ -1685,8 +1756,55 @@ function selectedLibraryType() {
   return library && library.type === 'show' ? 'series' : 'movie';
 }
 
+function buildMatchTargetForItem(itemId) {
+  const item = currentItemsById.get(itemId);
+  if (!item) return null;
+  return {
+    mode: 'item',
+    itemIds: [itemId],
+    subtitle: item.relativePath || '',
+    defaultQuery: item.detectedTitle || item.matchedName || item.fileName || '',
+    mediaType: item.libraryType === 'show' ? 'series' : selectedLibraryType(),
+  };
+}
+
+function buildMatchTargetForGroup(groupId) {
+  const group = currentVisibleGroups.find(entry => entry.id === groupId);
+  if (!group || group.groupType !== 'series') return null;
+  const items = collectGroupItems(group);
+  if (!items.length) return null;
+  const subtitleParts = [`${items.length} item${items.length === 1 ? '' : 's'}`];
+  const episodeCount = countDistinctEpisodes(group);
+  if (episodeCount > 0) {
+    subtitleParts.unshift(`${episodeCount} episode${episodeCount === 1 ? '' : 's'}`);
+  }
+  return {
+    mode: 'group',
+    itemIds: items.map(item => item.id),
+    subtitle: `${group.title || 'Series'} · ${subtitleParts.join(' · ')}`,
+    defaultQuery: group.title || items[0].matchedName || items[0].detectedTitle || items[0].fileName || '',
+    mediaType: 'series',
+  };
+}
+
+function collectGroupItems(group) {
+  if (!group) return [];
+  if (Array.isArray(group.items) && group.items.length) {
+    return group.items.filter(item => item && item.id);
+  }
+  const items = [];
+  (group.seasons || []).forEach(season => {
+    (season.episodes || []).forEach(episode => {
+      (episode.items || []).forEach(item => {
+        if (item && item.id) items.push(item);
+      });
+    });
+  });
+  return items;
+}
+
 async function searchMatchCandidates() {
-  if (!activeMatchItem) return;
+  if (!activeMatchTarget) return;
   const query = document.getElementById('matchSearchInput').value.trim();
   const mediaType = document.getElementById('matchTypeSelect').value;
   const resultsEl = document.getElementById('matchSearchResults');
@@ -1734,7 +1852,7 @@ function renderMatchResult(result, index) {
 }
 
 async function saveManualMatch(index) {
-  if (!activeMatchItem) return;
+  if (!activeMatchTarget) return;
   const title = currentMatchResults[index] && currentMatchResults[index].title ? currentMatchResults[index].title : null;
   if (!title) {
     showToast('Selected match is no longer available', 'error');
@@ -1749,11 +1867,11 @@ async function saveManualMatch(index) {
     matchStatus: 'manual',
     metadata: title,
   };
-  await persistMatchPayload(payload, 'Manual match saved');
+  await persistMatchPayload(payload, activeMatchTarget.itemIds.length > 1 ? `Bulk match saved for ${activeMatchTarget.itemIds.length} items` : 'Manual match saved');
 }
 
 async function clearActiveMatch() {
-  if (!activeMatchItem) return;
+  if (!activeMatchTarget) return;
   await persistMatchPayload({
     matchedTitleId: '',
     matchedMediaType: '',
@@ -1762,7 +1880,7 @@ async function clearActiveMatch() {
     confidence: 0,
     matchStatus: 'unmatched',
     metadata: null,
-  }, 'Match cleared');
+  }, activeMatchTarget.itemIds.length > 1 ? `Cleared matches for ${activeMatchTarget.itemIds.length} items` : 'Match cleared');
 }
 
 async function acceptSuggestedMatch(itemId) {
@@ -1792,18 +1910,25 @@ async function acceptSuggestedMatch(itemId) {
 }
 
 async function persistMatchPayload(payload, successMessage) {
-  if (!activeMatchItem) return;
-  await persistMatchForItem(activeMatchItem.id, payload, successMessage);
+  if (!activeMatchTarget) return;
+  await persistMatchForItems(activeMatchTarget.itemIds, payload, successMessage);
 }
 
 async function persistMatchForItem(itemId, payload, successMessage) {
+  await persistMatchForItems([itemId], payload, successMessage);
+}
+
+async function persistMatchForItems(itemIds, payload, successMessage) {
+  if (!Array.isArray(itemIds) || !itemIds.length) return;
   try {
-    const saveRes = await fetch(basePath + '/api/library/items/' + encodeURIComponent(itemId) + '/match', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!saveRes.ok) throw new Error(await saveRes.text());
+    for (const itemId of itemIds) {
+      const saveRes = await fetch(basePath + '/api/library/items/' + encodeURIComponent(itemId) + '/match', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!saveRes.ok) throw new Error(await saveRes.text());
+    }
     showToast(successMessage);
     closeMatchModal();
     closePosterDetailsModal();
@@ -1929,6 +2054,44 @@ function formatBytes(bytes) {
   return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function bytesToMegabytesString(bytes) {
+  const value = Number(bytes) || 0;
+  if (!value) return '';
+  return String(Math.round(value / (1024 * 1024)));
+}
+
+function parseLibraryMinFileSizeBytes() {
+  const raw = document.getElementById('libraryMinFileSizeMb').value.trim();
+  if (!raw) return 0;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    showToast('Minimum file size must be zero or greater', 'error');
+    return null;
+  }
+  return Math.round(value * 1024 * 1024);
+}
+
+function parseFilterOutTerms(value) {
+  if (!value) return [];
+  const terms = value
+    .split(/\r?\n|,/)
+    .map(term => term.trim())
+    .filter(Boolean);
+  const unique = [];
+  const seen = new Set();
+  terms.forEach(term => {
+    const key = term.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(term);
+  });
+  return unique;
+}
+
+function formatFilterOutTerms(terms) {
+  return Array.isArray(terms) ? terms.join('\n') : '';
+}
+
 function formatDate(value) {
   if (!value) return 'Unknown';
   const date = new Date(value);
@@ -1984,6 +2147,37 @@ function restoreLibraryUIState() {
     currentView = saved.currentView === 'poster' ? 'poster' : 'list';
     currentGrouped = saved.currentGrouped !== false;
   } catch (_) {}
+}
+
+function resetLibraryForm() {
+  editingLibraryId = '';
+  const form = document.getElementById('libraryForm');
+  if (form) form.reset();
+  document.getElementById('libraryType').value = 'movie';
+  syncLibraryFormSettings();
+}
+
+function syncLibraryFormSettings() {
+  const type = document.getElementById('libraryType').value || 'movie';
+  const isEditing = Boolean(editingLibraryId);
+  const titleByType = {
+    movie: 'Minimum Movie File Size (MB)',
+    show: 'Minimum Episode File Size (MB)',
+    other: 'Minimum File Size (MB)',
+  };
+  const hintByType = {
+    movie: 'Files smaller than this are ignored during scans. Useful for excluding trailers, extras, and samples in movie libraries.',
+    show: 'Files smaller than this are ignored during scans. Useful for excluding clips, extras, and short featurettes in show libraries.',
+    other: 'Files smaller than this are ignored during scans. Use `0` to disable the limit.',
+  };
+  document.getElementById('libraryMinFileSizeLabel').textContent = titleByType[type] || titleByType.movie;
+  document.getElementById('libraryMinFileSizeHint').textContent = hintByType[type] || hintByType.movie;
+  document.getElementById('libraryFormTitle').textContent = isEditing ? 'Edit Library' : 'Add Library';
+  document.getElementById('libraryFormSubtitle').textContent = isEditing
+    ? 'Update scan filters, file-size rules, or the library root.'
+    : 'Create a new library root and scan profile.';
+  document.getElementById('librarySubmitBtn').textContent = isEditing ? 'Save Changes' : 'Add Library';
+  document.getElementById('cancelLibraryEditBtn').style.display = isEditing ? 'inline-flex' : 'none';
 }
 
 function syncLibraryControls() {

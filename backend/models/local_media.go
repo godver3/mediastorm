@@ -33,6 +33,8 @@ type LocalMediaLibrary struct {
 	Name               string                `json:"name"`
 	Type               LocalMediaLibraryType `json:"type"`
 	RootPath           string                `json:"rootPath"`
+	FilterOutTerms     []string              `json:"filterOutTerms,omitempty"`
+	MinFileSizeBytes   int64                 `json:"minFileSizeBytes,omitempty"`
 	CreatedAt          time.Time             `json:"createdAt"`
 	UpdatedAt          time.Time             `json:"updatedAt"`
 	LastScanStartedAt  *time.Time            `json:"lastScanStartedAt,omitempty"`
@@ -181,9 +183,11 @@ type LocalMediaScanSummary struct {
 }
 
 type LocalMediaLibraryCreateInput struct {
-	Name     string                `json:"name"`
-	Type     LocalMediaLibraryType `json:"type"`
-	RootPath string                `json:"rootPath"`
+	Name             string                `json:"name"`
+	Type             LocalMediaLibraryType `json:"type"`
+	RootPath         string                `json:"rootPath"`
+	FilterOutTerms   []string              `json:"filterOutTerms"`
+	MinFileSizeBytes int64                 `json:"minFileSizeBytes"`
 }
 
 type LocalMediaMatchInput struct {

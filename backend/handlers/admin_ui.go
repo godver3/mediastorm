@@ -5617,6 +5617,29 @@ func (h *AdminUIHandler) CreateLocalMediaLibrary(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(library)
 }
 
+func (h *AdminUIHandler) UpdateLocalMediaLibrary(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLocalMediaAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["libraryID"]
+	var input models.LocalMediaLibraryCreateInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	library, err := h.localMediaService.UpdateLibrary(r.Context(), id, input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, localmedia.ErrLibraryScanning) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(library)
+}
+
 func (h *AdminUIHandler) DeleteLocalMediaLibrary(w http.ResponseWriter, r *http.Request) {
 	if !h.requireLocalMediaAdmin(w, r) {
 		return

@@ -45,6 +45,12 @@ type scanState struct {
 	startedAt  time.Time
 }
 
+type scanFileCandidate struct {
+	path         string
+	relativePath string
+	sizeBytes    int64
+}
+
 type Service struct {
 	store       *datastore.DataStore
 	repo        datastore.LocalMediaRepository
@@ -112,37 +118,58 @@ func (s *Service) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary
 }
 
 func (s *Service) CreateLibrary(ctx context.Context, input models.LocalMediaLibraryCreateInput) (*models.LocalMediaLibrary, error) {
-	name := strings.TrimSpace(input.Name)
-	rootPath := strings.TrimSpace(input.RootPath)
-	if name == "" {
-		return nil, ErrLibraryNameNeeded
-	}
-	if rootPath == "" {
-		return nil, ErrLibraryPathNeeded
-	}
-	if input.Type == "" {
-		return nil, ErrLibraryTypeNeeded
-	}
-
-	info, err := os.Stat(rootPath)
+	name, rootPath, filterOutTerms, minFileSizeBytes, err := validateLocalMediaLibraryInput(input)
 	if err != nil {
-		return nil, fmt.Errorf("stat library path: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("library path is not a directory: %s", rootPath)
+		return nil, err
 	}
 
 	now := time.Now().UTC()
 	library := &models.LocalMediaLibrary{
-		ID:             uuid.NewString(),
-		Name:           name,
-		Type:           input.Type,
-		RootPath:       rootPath,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		LastScanStatus: models.LocalMediaScanStatusIdle,
+		ID:               uuid.NewString(),
+		Name:             name,
+		Type:             input.Type,
+		RootPath:         rootPath,
+		FilterOutTerms:   filterOutTerms,
+		MinFileSizeBytes: minFileSizeBytes,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		LastScanStatus:   models.LocalMediaScanStatusIdle,
 	}
 	if err := s.repo.CreateLibrary(ctx, library); err != nil {
+		return nil, err
+	}
+	return library, nil
+}
+
+func (s *Service) UpdateLibrary(ctx context.Context, libraryID string, input models.LocalMediaLibraryCreateInput) (*models.LocalMediaLibrary, error) {
+	if strings.TrimSpace(libraryID) == "" {
+		return nil, ErrLibraryNotFound
+	}
+
+	library, err := s.repo.GetLibrary(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	if library == nil {
+		return nil, ErrLibraryNotFound
+	}
+	if library.LastScanStatus == models.LocalMediaScanStatusScanning {
+		return nil, ErrLibraryScanning
+	}
+
+	name, rootPath, filterOutTerms, minFileSizeBytes, err := validateLocalMediaLibraryInput(input)
+	if err != nil {
+		return nil, err
+	}
+
+	library.Name = name
+	library.Type = input.Type
+	library.RootPath = rootPath
+	library.FilterOutTerms = filterOutTerms
+	library.MinFileSizeBytes = minFileSizeBytes
+	library.UpdatedAt = time.Now().UTC()
+
+	if err := s.repo.UpdateLibrary(ctx, library); err != nil {
 		return nil, err
 	}
 	return library, nil
@@ -1012,21 +1039,44 @@ func (s *Service) scanLibrary(ctx context.Context, library models.LocalMediaLibr
 }
 
 func (s *Service) discoverAndMatch(ctx context.Context, library models.LocalMediaLibrary, scanID string) (models.LocalMediaScanSummary, error) {
-	videoFiles, err := collectVideoFiles(library.RootPath)
+	candidates, err := collectVideoFiles(library.RootPath)
 	if err != nil {
 		return models.LocalMediaScanSummary{}, err
 	}
+
+	videoFiles := make([]scanFileCandidate, 0, len(candidates))
+	skippedByTerm := 0
+	skippedBySize := 0
+	for _, candidate := range candidates {
+		include, reason := shouldIncludeLocalMediaFile(library, candidate.relativePath, candidate.sizeBytes)
+		if include {
+			videoFiles = append(videoFiles, candidate)
+			continue
+		}
+		switch reason {
+		case "filter_term":
+			skippedByTerm++
+		case "min_size":
+			skippedBySize++
+		}
+	}
+
 	library.LastScanTotal = len(videoFiles)
 	library.UpdatedAt = time.Now().UTC()
 	if err := s.repo.UpdateLibrary(ctx, &library); err != nil {
 		log.Printf("[localmedia] failed to persist scan total library=%q id=%s: %v", library.Name, library.ID, err)
 	}
-	log.Printf("[localmedia] discovered %d candidate video files library=%q id=%s", len(videoFiles), library.Name, library.ID)
+	log.Printf("[localmedia] discovered %d candidate video files library=%q id=%s included=%d skipped_filter_terms=%d skipped_min_size=%d", len(candidates), library.Name, library.ID, len(videoFiles), skippedByTerm, skippedBySize)
 
-	detectedByPath := s.detectTitlesForFiles(videoFiles, library.Type)
+	videoFilePaths := make([]string, 0, len(videoFiles))
+	for _, candidate := range videoFiles {
+		videoFilePaths = append(videoFilePaths, candidate.path)
+	}
+	detectedByPath := s.detectTitlesForFiles(videoFilePaths, library.Type)
 	summary := models.LocalMediaScanSummary{}
 	buildErrors := 0
 	reusedItems := 0
+	deletedExcludedItems := 0
 	metadataCache := &scanMetadataCache{details: make(map[string]*models.Title)}
 	existingItems, err := s.repo.ListAllItemsByLibrary(ctx, library.ID)
 	if err != nil {
@@ -1037,18 +1087,29 @@ func (s *Service) discoverAndMatch(ctx context.Context, library models.LocalMedi
 		existingByRelativePath[item.RelativePath] = item
 	}
 
-	for index, filePath := range videoFiles {
-		relativePath, relErr := filepath.Rel(library.RootPath, filePath)
-		if relErr != nil {
-			buildErrors++
+	for _, candidate := range candidates {
+		include, _ := shouldIncludeLocalMediaFile(library, candidate.relativePath, candidate.sizeBytes)
+		if include {
 			continue
 		}
-		existing, hasExisting := existingByRelativePath[relativePath]
-		item, reused, err := s.buildItem(ctx, library, filePath, detectedByPath[filePath], metadataCache, scanID, existing, hasExisting)
+		existing, exists := existingByRelativePath[candidate.relativePath]
+		if !exists {
+			continue
+		}
+		if err := s.repo.DeleteItem(ctx, existing.ID); err != nil {
+			return summary, err
+		}
+		delete(existingByRelativePath, candidate.relativePath)
+		deletedExcludedItems++
+	}
+
+	for index, candidate := range videoFiles {
+		existing, hasExisting := existingByRelativePath[candidate.relativePath]
+		item, reused, err := s.buildItem(ctx, library, candidate.path, detectedByPath[candidate.path], metadataCache, scanID, existing, hasExisting)
 		if err != nil {
 			buildErrors++
 			if buildErrors <= 10 || buildErrors%100 == 0 {
-				log.Printf("[localmedia] item build failed library=%q id=%s file=%q error_count=%d err=%v", library.Name, library.ID, filePath, buildErrors, err)
+				log.Printf("[localmedia] item build failed library=%q id=%s file=%q error_count=%d err=%v", library.Name, library.ID, candidate.path, buildErrors, err)
 			}
 			continue
 		}
@@ -1065,7 +1126,7 @@ func (s *Service) discoverAndMatch(ctx context.Context, library models.LocalMedi
 			summary.Unmatched++
 		}
 		if upsertErr := s.repo.UpsertItem(ctx, &item); upsertErr != nil {
-			log.Printf("[localmedia] item upsert failed library=%q id=%s file=%q err=%v", library.Name, library.ID, filePath, upsertErr)
+			log.Printf("[localmedia] item upsert failed library=%q id=%s file=%q err=%v", library.Name, library.ID, candidate.path, upsertErr)
 			return summary, upsertErr
 		}
 
@@ -1103,7 +1164,61 @@ func (s *Service) discoverAndMatch(ctx context.Context, library models.LocalMedi
 	if reusedItems > 0 {
 		log.Printf("[localmedia] reused %d unchanged items library=%q id=%s", reusedItems, library.Name, library.ID)
 	}
+	if deletedExcludedItems > 0 {
+		log.Printf("[localmedia] removed %d items now excluded by library settings library=%q id=%s", deletedExcludedItems, library.Name, library.ID)
+	}
 	return summary, nil
+}
+
+func validateLocalMediaLibraryInput(input models.LocalMediaLibraryCreateInput) (string, string, []string, int64, error) {
+	name := strings.TrimSpace(input.Name)
+	rootPath := strings.TrimSpace(input.RootPath)
+	if name == "" {
+		return "", "", nil, 0, ErrLibraryNameNeeded
+	}
+	if rootPath == "" {
+		return "", "", nil, 0, ErrLibraryPathNeeded
+	}
+	if input.Type == "" {
+		return "", "", nil, 0, ErrLibraryTypeNeeded
+	}
+	if input.MinFileSizeBytes < 0 {
+		return "", "", nil, 0, fmt.Errorf("minimum file size must be zero or greater")
+	}
+
+	info, err := os.Stat(rootPath)
+	if err != nil {
+		return "", "", nil, 0, fmt.Errorf("stat library path: %w", err)
+	}
+	if !info.IsDir() {
+		return "", "", nil, 0, fmt.Errorf("library path is not a directory: %s", rootPath)
+	}
+
+	return name, rootPath, normalizeLibraryFilterTerms(input.FilterOutTerms), input.MinFileSizeBytes, nil
+}
+
+func normalizeLibraryFilterTerms(terms []string) []string {
+	if len(terms) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(terms))
+	seen := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		trimmed := strings.TrimSpace(term)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	if len(normalized) == 0 {
+		return []string{}
+	}
+	return normalized
 }
 
 func (s *Service) buildItem(ctx context.Context, library models.LocalMediaLibrary, filePath string, detected detectedTitle, metadataCache *scanMetadataCache, scanID string, existing models.LocalMediaItem, hasExisting bool) (models.LocalMediaItem, bool, error) {
@@ -1608,8 +1723,8 @@ func extractExternalIDs(value string) (string, int64, int64) {
 	return imdbID, tmdbID, tvdbID
 }
 
-func collectVideoFiles(root string) ([]string, error) {
-	var files []string
+func collectVideoFiles(root string) ([]scanFileCandidate, error) {
+	var files []scanFileCandidate
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -1618,11 +1733,45 @@ func collectVideoFiles(root string) ([]string, error) {
 			return nil
 		}
 		if isVideoFile(path) {
-			files = append(files, path)
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				return nil
+			}
+			relativePath, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return nil
+			}
+			files = append(files, scanFileCandidate{
+				path:         path,
+				relativePath: relativePath,
+				sizeBytes:    info.Size(),
+			})
 		}
 		return nil
 	})
 	return files, err
+}
+
+func shouldIncludeLocalMediaFile(library models.LocalMediaLibrary, relativePath string, sizeBytes int64) (bool, string) {
+	if library.MinFileSizeBytes > 0 && sizeBytes < library.MinFileSizeBytes {
+		return false, "min_size"
+	}
+
+	if len(library.FilterOutTerms) == 0 {
+		return true, ""
+	}
+
+	normalizedPath := strings.ToLower(strings.ReplaceAll(relativePath, "\\", "/"))
+	for _, rawTerm := range library.FilterOutTerms {
+		term := strings.ToLower(strings.TrimSpace(rawTerm))
+		if term == "" {
+			continue
+		}
+		if strings.Contains(normalizedPath, term) {
+			return false, "filter_term"
+		}
+	}
+	return true, ""
 }
 
 func isVideoFile(path string) bool {
