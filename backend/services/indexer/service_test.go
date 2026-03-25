@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"novastream/config"
@@ -158,10 +159,13 @@ func TestSearchTorznab_IndexerCategories(t *testing.T) {
 func TestSearchTorznab_MultipleIndexers(t *testing.T) {
 	// Track categories received per request
 	var requestLog []string
+	var requestLogMu sync.Mutex
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cat := r.URL.Query().Get("cat")
+		requestLogMu.Lock()
 		requestLog = append(requestLog, cat)
+		requestLogMu.Unlock()
 		w.Header().Set("Content-Type", "application/xml")
 		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel></channel></rss>`))
@@ -198,11 +202,12 @@ func TestSearchTorznab_MultipleIndexers(t *testing.T) {
 		t.Fatalf("expected 3 requests, got %d", len(requestLog))
 	}
 
-	// Check each request had the correct categories
 	expectedCats := []string{"2000,2040", "5000,5030", ""}
+	sort.Strings(requestLog)
+	sort.Strings(expectedCats)
 	for i, expected := range expectedCats {
 		if requestLog[i] != expected {
-			t.Errorf("request %d: expected categories '%s', got '%s'", i, expected, requestLog[i])
+			t.Errorf("categories[%d]: expected %q, got %q", i, expected, requestLog[i])
 		}
 	}
 }
@@ -281,8 +286,8 @@ func (m *mockMetadataSearchOnly) Search(_ context.Context, _ string, _ string) (
 
 // mockMetadataWithAliases implements both Search, FetchAliases, and FetchAliasesWithLanguage.
 type mockMetadataWithAliases struct {
-	results    []models.SearchResult
-	aliases    map[int64][]string               // tvdbID -> aliases (for FetchAliases)
+	results     []models.SearchResult
+	aliases     map[int64][]string               // tvdbID -> aliases (for FetchAliases)
 	langAliases map[int64][]models.LanguageAlias // tvdbID -> language-tagged aliases
 }
 
@@ -831,14 +836,14 @@ func TestSanitizeNewznabQuery(t *testing.T) {
 	}{
 		{"Good Luck, Have Fun, Don't Die", "Good Luck Have Fun Dont Die"},
 		{"Don't Stop Me Now", "Dont Stop Me Now"},
-		{"It\u2019s a Wonderful Life", "Its a Wonderful Life"},                // curly apostrophe
-		{"Hello: World!", "Hello World"},                                      // colon and exclamation
-		{"What?", "What"},                                                     // question mark
-		{"Tom & Jerry", "Tom Jerry"},                                          // ampersand
-		{`She said "hi"`, "She said hi"},                                      // double quotes
-		{"normal title", "normal title"},                                      // no change
-		{"multiple   spaces", "multiple spaces"},                              // space collapse
-		{"(brackets) [and] {braces}", "brackets and braces"},                  // brackets
+		{"It\u2019s a Wonderful Life", "Its a Wonderful Life"},                  // curly apostrophe
+		{"Hello: World!", "Hello World"},                                        // colon and exclamation
+		{"What?", "What"},                                                       // question mark
+		{"Tom & Jerry", "Tom Jerry"},                                            // ampersand
+		{`She said "hi"`, "She said hi"},                                        // double quotes
+		{"normal title", "normal title"},                                        // no change
+		{"multiple   spaces", "multiple spaces"},                                // space collapse
+		{"(brackets) [and] {braces}", "brackets and braces"},                    // brackets
 		{"Udachi, vesel'ia, ne sdokhni 2026", "Udachi veselia ne sdokhni 2026"}, // transliterated apostrophe + commas
 	}
 	for _, tt := range tests {

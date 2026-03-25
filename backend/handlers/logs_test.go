@@ -481,7 +481,8 @@ func TestLogsHandler_ReadCombinedLogEntries_AllOrigins(t *testing.T) {
 	if entries[1].Origin != "frontend" {
 		t.Fatalf("expected second entry to be frontend, got %s", entries[1].Origin)
 	}
-	if !strings.Contains(entries[1].Line, "frontend:client-789") {
+	expectedTag := "frontend:" + truncateLogIdentifier("client-789")
+	if !strings.Contains(entries[1].Line, expectedTag) {
 		t.Fatalf("expected frontend line decoration, got %s", entries[1].Line)
 	}
 }

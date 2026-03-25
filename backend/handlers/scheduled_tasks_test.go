@@ -7,10 +7,31 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
 
 	"novastream/config"
+	"novastream/models"
 	"novastream/services/scheduler"
 )
+
+type fakeScheduledTaskUsersProvider struct {
+	users map[string]models.User
+}
+
+func (f *fakeScheduledTaskUsersProvider) Exists(id string) bool {
+	_, ok := f.users[id]
+	return ok
+}
+
+func (f *fakeScheduledTaskUsersProvider) ListAll() []models.User {
+	result := make([]models.User, 0, len(f.users))
+	for _, user := range f.users {
+		result = append(result, user)
+	}
+	return result
+}
 
 // newTestScheduledTasksHandler creates a handler with a real config manager
 // backed by a temp file and a minimal scheduler service.
@@ -21,7 +42,12 @@ func newTestScheduledTasksHandler(t *testing.T) *ScheduledTasksHandler {
 		t.Fatalf("save initial settings: %v", err)
 	}
 	svc := scheduler.NewService(mgr, nil, nil, nil)
-	return NewScheduledTasksHandler(mgr, svc)
+	users := &fakeScheduledTaskUsersProvider{
+		users: map[string]models.User{
+			"prof-1": {ID: "prof-1", Name: models.DefaultUserName},
+		},
+	}
+	return NewScheduledTasksHandler(mgr, svc, users)
 }
 
 // postCreateTask is a helper that sends a POST to CreateTask and returns the recorder.
@@ -213,7 +239,7 @@ func TestCreateTask_JellyfinFavoritesSyncValidation(t *testing.T) {
 			"enabled": true,
 			"config": map[string]string{
 				"jellyfinAccountId": "acct-1",
-				"profileId":        "prof-1",
+				"profileId":         "prof-1",
 			},
 		}
 		rec := postCreateTask(t, h, body)
@@ -283,7 +309,7 @@ func TestCreateTask_JellyfinHistorySyncValidation(t *testing.T) {
 			"enabled": true,
 			"config": map[string]string{
 				"jellyfinAccountId": "acct-1",
-				"profileId":        "prof-1",
+				"profileId":         "prof-1",
 			},
 		}
 		rec := postCreateTask(t, h, body)
@@ -291,4 +317,84 @@ func TestCreateTask_JellyfinHistorySyncValidation(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+func TestCreateTask_InvalidProfileIDValidation(t *testing.T) {
+	h := newTestScheduledTasksHandler(t)
+
+	body := map[string]interface{}{
+		"type":    string(config.ScheduledTaskTypeTraktHistorySync),
+		"name":    "Trakt history sync",
+		"enabled": true,
+		"config": map[string]string{
+			"traktAccountId": "acct-1",
+			"profileId":      "missing-profile",
+		},
+	}
+
+	rec := postCreateTask(t, h, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := resp["error"]; got != `profileId "missing-profile" does not exist` {
+		t.Fatalf("expected invalid profile error, got %v", got)
+	}
+}
+
+func TestUpdateTask_InvalidProfileIDValidation(t *testing.T) {
+	h := newTestScheduledTasksHandler(t)
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	settings.ScheduledTasks.Tasks = append(settings.ScheduledTasks.Tasks, config.ScheduledTask{
+		ID:         "task-1",
+		Type:       config.ScheduledTaskTypeTraktHistorySync,
+		Name:       "Trakt history sync",
+		Frequency:  config.ScheduledTaskFrequency12Hours,
+		Config:     map[string]string{"traktAccountId": "acct-1", "profileId": "prof-1"},
+		Enabled:    true,
+		LastStatus: config.ScheduledTaskStatusPending,
+		CreatedAt:  time.Now().UTC(),
+	})
+	if err := h.configManager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	body := map[string]interface{}{
+		"config": map[string]string{
+			"traktAccountId": "acct-1",
+			"profileId":      "missing-profile",
+		},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/api/scheduled-tasks/task-1", bytes.NewReader(b))
+	req = mux.SetURLVars(req, map[string]string{"taskID": "task-1"})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.UpdateTask(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := resp["error"]; got != `profileId "missing-profile" does not exist` {
+		t.Fatalf("expected invalid profile error, got %v", got)
+	}
 }

@@ -2,13 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 
 	"novastream/config"
+	"novastream/models"
 	"novastream/services/scheduler"
 )
 
@@ -16,14 +20,112 @@ import (
 type ScheduledTasksHandler struct {
 	configManager    *config.Manager
 	schedulerService *scheduler.Service
+	usersService     scheduledTaskUsersProvider
+}
+
+type scheduledTaskUsersProvider interface {
+	Exists(id string) bool
+	ListAll() []models.User
 }
 
 // NewScheduledTasksHandler creates a new scheduled tasks handler
-func NewScheduledTasksHandler(configManager *config.Manager, schedulerService *scheduler.Service) *ScheduledTasksHandler {
+func NewScheduledTasksHandler(configManager *config.Manager, schedulerService *scheduler.Service, usersService scheduledTaskUsersProvider) *ScheduledTasksHandler {
 	return &ScheduledTasksHandler{
 		configManager:    configManager,
 		schedulerService: schedulerService,
+		usersService:     usersService,
 	}
+}
+
+func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig map[string]string, usersService scheduledTaskUsersProvider) error {
+	requireProfile := func(accountKey, message string) error {
+		if taskConfig == nil || taskConfig[accountKey] == "" || taskConfig["profileId"] == "" {
+			return errors.New(message)
+		}
+		return validateScheduledTaskProfileID(taskConfig["profileId"], usersService)
+	}
+
+	switch taskType {
+	case config.ScheduledTaskTypePlexWatchlistSync:
+		return requireProfile("plexAccountId", "Plex watchlist sync requires plexAccountId and profileId in config")
+	case config.ScheduledTaskTypeTraktListSync:
+		if err := requireProfile("traktAccountId", "Trakt list sync requires traktAccountId and profileId in config"); err != nil {
+			return err
+		}
+		listType := taskConfig["listType"]
+		if listType == "" {
+			taskConfig["listType"] = "watchlist"
+			return nil
+		}
+		if listType != "watchlist" && listType != "collection" && listType != "favorites" && listType != "custom" {
+			return fmt.Errorf("Invalid list type. Must be watchlist, collection, favorites, or custom")
+		}
+		if listType == "custom" && taskConfig["customListId"] == "" {
+			return fmt.Errorf("Custom list sync requires customListId in config")
+		}
+	case config.ScheduledTaskTypePlexHistorySync:
+		return requireProfile("plexAccountId", "Plex history sync requires plexAccountId and profileId in config")
+	case config.ScheduledTaskTypeJellyfinFavoritesSync:
+		return requireProfile("jellyfinAccountId", "Jellyfin favorites sync requires jellyfinAccountId and profileId in config")
+	case config.ScheduledTaskTypeJellyfinHistorySync:
+		return requireProfile("jellyfinAccountId", "Jellyfin history sync requires jellyfinAccountId and profileId in config")
+	case config.ScheduledTaskTypeTraktHistorySync:
+		if err := requireProfile("traktAccountId", "Trakt history sync requires traktAccountId and profileId in config"); err != nil {
+			return err
+		}
+		if taskConfig["syncDirection"] == "" {
+			taskConfig["syncDirection"] = "trakt_to_local"
+		} else if taskConfig["syncDirection"] != "trakt_to_local" && taskConfig["syncDirection"] != "local_to_trakt" && taskConfig["syncDirection"] != "bidirectional" {
+			return fmt.Errorf("Invalid sync direction. Must be trakt_to_local, local_to_trakt, or bidirectional")
+		}
+	case config.ScheduledTaskTypeLocalMediaScan:
+		if taskConfig == nil || taskConfig["libraryId"] == "" {
+			return errors.New("Local media scan requires libraryId in config")
+		}
+	case config.ScheduledTaskTypeMDBListWatchlistSync:
+		return requireProfile("mdblistAccountId", "MDBList watchlist sync requires mdblistAccountId and profileId in config")
+	case config.ScheduledTaskTypeMDBListHistorySync:
+		if err := requireProfile("mdblistAccountId", "MDBList history sync requires mdblistAccountId and profileId in config"); err != nil {
+			return err
+		}
+		if taskConfig["syncDirection"] == "" {
+			taskConfig["syncDirection"] = "mdblist_to_local"
+		} else if taskConfig["syncDirection"] != "mdblist_to_local" && taskConfig["syncDirection"] != "local_to_mdblist" && taskConfig["syncDirection"] != "bidirectional" {
+			return fmt.Errorf("Invalid sync direction. Must be mdblist_to_local, local_to_mdblist, or bidirectional")
+		}
+	}
+
+	return nil
+}
+
+func validateScheduledTaskProfileID(profileID string, usersService scheduledTaskUsersProvider) error {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" || usersService == nil {
+		return nil
+	}
+	if usersService.Exists(profileID) {
+		return nil
+	}
+	if profileID != models.DefaultUserID {
+		return fmt.Errorf("profileId %q does not exist", profileID)
+	}
+
+	users := usersService.ListAll()
+	if len(users) == 1 {
+		return nil
+	}
+
+	primaryCount := 0
+	for _, user := range users {
+		if user.Name == models.DefaultUserName {
+			primaryCount++
+		}
+	}
+	if primaryCount == 1 {
+		return nil
+	}
+
+	return fmt.Errorf("profileId %q does not exist", profileID)
 }
 
 // ListTasks returns all scheduled tasks with current status
@@ -77,155 +179,13 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 		req.Frequency = config.ScheduledTaskFrequency12Hours
 	}
 
-	// Validate config for Plex watchlist sync
-	if req.Type == config.ScheduledTaskTypePlexWatchlistSync {
-		if req.Config == nil || req.Config["plexAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Plex watchlist sync requires plexAccountId and profileId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for Trakt list sync
-	if req.Type == config.ScheduledTaskTypeTraktListSync {
-		if req.Config == nil || req.Config["traktAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Trakt list sync requires traktAccountId and profileId in config",
-			})
-			return
-		}
-		// Validate listType
-		listType := req.Config["listType"]
-		if listType == "" {
-			req.Config["listType"] = "watchlist" // Default to watchlist
-		} else if listType != "watchlist" && listType != "collection" && listType != "favorites" && listType != "custom" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Invalid list type. Must be watchlist, collection, favorites, or custom",
-			})
-			return
-		}
-		// Validate customListId if listType is custom
-		if listType == "custom" && req.Config["customListId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Custom list sync requires customListId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for Plex history sync
-	if req.Type == config.ScheduledTaskTypePlexHistorySync {
-		if req.Config == nil || req.Config["plexAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Plex history sync requires plexAccountId and profileId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for Jellyfin favorites sync
-	if req.Type == config.ScheduledTaskTypeJellyfinFavoritesSync {
-		if req.Config == nil || req.Config["jellyfinAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Jellyfin favorites sync requires jellyfinAccountId and profileId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for Jellyfin history sync
-	if req.Type == config.ScheduledTaskTypeJellyfinHistorySync {
-		if req.Config == nil || req.Config["jellyfinAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Jellyfin history sync requires jellyfinAccountId and profileId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for Trakt history sync
-	if req.Type == config.ScheduledTaskTypeTraktHistorySync {
-		if req.Config == nil || req.Config["traktAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Trakt history sync requires traktAccountId and profileId in config",
-			})
-			return
-		}
-		// Default syncDirection to trakt_to_local
-		if req.Config["syncDirection"] == "" {
-			req.Config["syncDirection"] = "trakt_to_local"
-		} else if req.Config["syncDirection"] != "trakt_to_local" && req.Config["syncDirection"] != "local_to_trakt" && req.Config["syncDirection"] != "bidirectional" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Invalid sync direction. Must be trakt_to_local, local_to_trakt, or bidirectional",
-			})
-			return
-		}
-	}
-
-	// Validate config for local media scans
-	if req.Type == config.ScheduledTaskTypeLocalMediaScan {
-		if req.Config == nil || req.Config["libraryId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Local media scan requires libraryId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for MDBList watchlist sync
-	if req.Type == config.ScheduledTaskTypeMDBListWatchlistSync {
-		if req.Config == nil || req.Config["mdblistAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "MDBList watchlist sync requires mdblistAccountId and profileId in config",
-			})
-			return
-		}
-	}
-
-	// Validate config for MDBList history sync
-	if req.Type == config.ScheduledTaskTypeMDBListHistorySync {
-		if req.Config == nil || req.Config["mdblistAccountId"] == "" || req.Config["profileId"] == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "MDBList history sync requires mdblistAccountId and profileId in config",
-			})
-			return
-		}
-		// Default syncDirection to mdblist_to_local
-		if req.Config["syncDirection"] == "" {
-			req.Config["syncDirection"] = "mdblist_to_local"
-		} else if req.Config["syncDirection"] != "mdblist_to_local" && req.Config["syncDirection"] != "local_to_mdblist" && req.Config["syncDirection"] != "bidirectional" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": "Invalid sync direction. Must be mdblist_to_local, local_to_mdblist, or bidirectional",
-			})
-			return
-		}
+	if err := validateScheduledTaskConfig(req.Type, req.Config, h.usersService); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
 	}
 
 	task := config.ScheduledTask{
@@ -338,6 +298,15 @@ func (h *ScheduledTasksHandler) UpdateTask(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Task not found",
+		})
+		return
+	}
+
+	if err := validateScheduledTaskConfig(updatedTask.Type, updatedTask.Config, h.usersService); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
 		})
 		return
 	}

@@ -9,16 +9,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"testing"
 	"strings"
+	"testing"
 	"time"
 
 	"novastream/config"
 	"novastream/handlers"
 	"novastream/models"
 	"novastream/services/accounts"
-	"novastream/services/metadata"
 	"novastream/services/invitations"
+	"novastream/services/metadata"
 	"novastream/services/sessions"
 	"novastream/services/user_settings"
 	"novastream/services/users"
@@ -114,6 +114,10 @@ func createAuthenticatedRequest(t *testing.T, method, url string, body []byte, s
 		t.Fatalf("failed to create session: %v", err)
 	}
 
+	req.AddCookie(&http.Cookie{
+		Name:  "strmr_admin_session",
+		Value: session.Token,
+	})
 	req.Header.Set("Authorization", "Bearer "+session.Token)
 	return req
 }
@@ -150,12 +154,21 @@ func TestAdminUIHandler_GetSchema(t *testing.T) {
 }
 
 func TestAdminUIHandler_HasDefaultPassword(t *testing.T) {
-	handler, _ := setupAdminUIHandler(t)
+	handler, tmpDir := setupAdminUIHandler(t)
+	accountsService, _ := accounts.NewService(tmpDir)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetAccountsService(accountsService)
+	handler.SetSessionsService(sessionsService)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/default-password", nil)
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	req := createAuthenticatedRequest(t, http.MethodGet, "/api/auth/default-password", nil, sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.HasDefaultPassword(rec, req)
+	handler.RequireMasterAuth(handler.HasDefaultPassword)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("HasDefaultPassword status = %d, want %d", rec.Code, http.StatusOK)
@@ -249,7 +262,7 @@ func TestAdminUIHandler_GetUserAccounts(t *testing.T) {
 	req := createAuthenticatedRequest(t, http.MethodGet, "/api/admin/accounts", nil, sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.GetUserAccounts(rec, req)
+	handler.RequireMasterAuth(handler.GetUserAccounts)(rec, req)
 
 	// Should succeed or require auth
 	if rec.Code != http.StatusOK && rec.Code != http.StatusUnauthorized {
@@ -279,7 +292,7 @@ func TestAdminUIHandler_CreateUserAccount(t *testing.T) {
 	req := createAuthenticatedRequest(t, http.MethodPost, "/api/admin/accounts", body, sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.CreateUserAccount(rec, req)
+	handler.RequireMasterAuth(handler.CreateUserAccount)(rec, req)
 
 	// Should succeed or require auth
 	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated && rec.Code != http.StatusUnauthorized {
@@ -538,7 +551,7 @@ func TestAdminUIHandler_DeleteUserAccount_NotFound(t *testing.T) {
 	req := createAuthenticatedRequest(t, http.MethodDelete, "/api/admin/accounts/nonexistent", nil, sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.DeleteUserAccount(rec, req)
+	handler.RequireMasterAuth(handler.DeleteUserAccount)(rec, req)
 
 	// Should return not found or bad request
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnauthorized {
@@ -562,7 +575,7 @@ func TestAdminUIHandler_ResetUserAccountPassword_InvalidJSON(t *testing.T) {
 	req := createAuthenticatedRequest(t, http.MethodPut, "/api/admin/accounts/test/password", []byte("invalid json"), sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.ResetUserAccountPassword(rec, req)
+	handler.RequireMasterAuth(handler.ResetUserAccountPassword)(rec, req)
 
 	// Should return bad request
 	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnauthorized {
@@ -586,7 +599,7 @@ func TestAdminUIHandler_RenameUserAccount_InvalidJSON(t *testing.T) {
 	req := createAuthenticatedRequest(t, http.MethodPut, "/api/admin/accounts/test/username", []byte("invalid json"), sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.RenameUserAccount(rec, req)
+	handler.RequireMasterAuth(handler.RenameUserAccount)(rec, req)
 
 	// Should return bad request
 	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnauthorized {

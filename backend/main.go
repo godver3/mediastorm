@@ -685,9 +685,10 @@ func main() {
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	schedulerService.SetEPGService(epgService)
 	schedulerService.SetHistoryService(historyService)
+	schedulerService.SetUsersService(userService)
 	schedulerService.SetJellyfinClient(jellyfinClient)
 	schedulerService.SetLocalMediaService(localMediaService)
-	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService)
+	scheduledTasksHandler := handlers.NewScheduledTasksHandler(cfgManager, schedulerService, userService)
 
 	// Rate limiter for admin/account login (5/min per IP)
 	adminLoginLimiter := api.NewIPRateLimiter(rate.Every(12*time.Second), 5)

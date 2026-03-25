@@ -34,6 +34,7 @@ type Service struct {
 	plexClient        *plex.Client
 	traktClient       *trakt.Client
 	jellyfinClient    *jellyfin.Client
+	usersService      schedulerUsersProvider
 	watchlistService  *watchlist.Service
 	epgService        *epg.Service
 	backupService     *backup.Service
@@ -53,6 +54,11 @@ type Service struct {
 	taskMu              sync.RWMutex
 	lastFullSyncTimes   map[string]time.Time // tracks last full Trakt history sync per task ID
 	lastFullSyncTimesMu sync.Mutex
+}
+
+type schedulerUsersProvider interface {
+	Exists(id string) bool
+	ListAll() []models.User
 }
 
 // SyncResult contains the result of a sync operation including dry run details
@@ -462,13 +468,72 @@ func (s *Service) SetJellyfinClient(jellyfinClient *jellyfin.Client) {
 	s.jellyfinClient = jellyfinClient
 }
 
+// SetUsersService sets the users service for validating and resolving profile IDs.
+func (s *Service) SetUsersService(usersService schedulerUsersProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usersService = usersService
+}
+
+func (s *Service) resolveTaskProfileID(task config.ScheduledTask) (string, error) {
+	profileID := strings.TrimSpace(task.Config["profileId"])
+	if profileID == "" {
+		return "", errors.New("missing profileId in task config")
+	}
+	return s.resolveProfileID(profileID)
+}
+
+func (s *Service) resolveProfileID(profileID string) (string, error) {
+	s.mu.RLock()
+	usersService := s.usersService
+	s.mu.RUnlock()
+
+	if usersService == nil {
+		return profileID, nil
+	}
+
+	if usersService.Exists(profileID) {
+		return profileID, nil
+	}
+
+	if profileID != models.DefaultUserID {
+		return "", fmt.Errorf("profile %q not found", profileID)
+	}
+
+	users := usersService.ListAll()
+	if len(users) == 0 {
+		return "", fmt.Errorf("legacy profile %q could not be resolved: no profiles exist", profileID)
+	}
+
+	if len(users) == 1 {
+		log.Printf("[scheduler] Resolved legacy profile id %q to %q", profileID, users[0].ID)
+		return users[0].ID, nil
+	}
+
+	var primaryMatches []models.User
+	for _, user := range users {
+		if user.Name == models.DefaultUserName {
+			primaryMatches = append(primaryMatches, user)
+		}
+	}
+	if len(primaryMatches) == 1 {
+		log.Printf("[scheduler] Resolved legacy profile id %q to primary profile %q", profileID, primaryMatches[0].ID)
+		return primaryMatches[0].ID, nil
+	}
+
+	return "", fmt.Errorf("legacy profile %q could not be resolved automatically; update the task to use a current profile id", profileID)
+}
+
 // executePlexWatchlistSync syncs a Plex watchlist to/from a profile
 func (s *Service) executePlexWatchlistSync(task config.ScheduledTask) (SyncResult, error) {
 	plexAccountID := task.Config["plexAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if plexAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing plexAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	// Read sync options with defaults
@@ -935,11 +1000,14 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 // executeTraktListSync syncs a Trakt list to/from a profile
 func (s *Service) executeTraktListSync(task config.ScheduledTask) (SyncResult, error) {
 	traktAccountID := task.Config["traktAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 	listType := task.Config["listType"] // watchlist, collection, favorites, custom
 
 	if traktAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing traktAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	if listType == "" {
@@ -1730,10 +1798,13 @@ func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult
 	}
 
 	traktAccountID := task.Config["traktAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if traktAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing traktAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	syncDirection := task.Config["syncDirection"]
@@ -2586,10 +2657,13 @@ func (s *Service) executePlexHistorySync(task config.ScheduledTask) (SyncResult,
 	}
 
 	plexAccountID := task.Config["plexAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if plexAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing plexAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	dryRun := task.Config["dryRun"] == "true"
@@ -2703,10 +2777,13 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 	}
 
 	jellyfinAccountID := task.Config["jellyfinAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if jellyfinAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing jellyfinAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	syncDirection := task.Config["syncDirection"]
@@ -2874,10 +2951,13 @@ func (s *Service) executeJellyfinHistorySync(task config.ScheduledTask) (SyncRes
 	}
 
 	jellyfinAccountID := task.Config["jellyfinAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if jellyfinAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing jellyfinAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	dryRun := task.Config["dryRun"] == "true"
@@ -2985,10 +3065,13 @@ func (s *Service) executeJellyfinHistorySync(task config.ScheduledTask) (SyncRes
 // executeMDBListWatchlistSync imports an MDBList user's watchlist to local.
 func (s *Service) executeMDBListWatchlistSync(task config.ScheduledTask) (SyncResult, error) {
 	mdblistAccountID := task.Config["mdblistAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if mdblistAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing mdblistAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	syncDirection := task.Config["syncDirection"]
@@ -3197,10 +3280,13 @@ func (s *Service) executeMDBListHistorySync(task config.ScheduledTask) (SyncResu
 	}
 
 	mdblistAccountID := task.Config["mdblistAccountId"]
-	profileID := task.Config["profileId"]
+	profileID, err := s.resolveTaskProfileID(task)
 
 	if mdblistAccountID == "" || profileID == "" {
 		return SyncResult{}, errors.New("missing mdblistAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
 	}
 
 	syncDirection := task.Config["syncDirection"]
