@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/javi11/nntppool"
+	"novastream/internal/usenet"
 )
 
 // AltMountConfig represents the subset of configuration needed by altmount packages
@@ -89,13 +90,38 @@ func (ca *ConfigAdapter) GetConfig() *AltMountConfig {
 		}
 	}
 
+	// Dynamically cap download workers based on provider connection limits
+	// and the number of active usenet readers (concurrent streams).
+	// Each stream gets an equal share of available connections minus headroom.
+	maxWorkers := settings.Streaming.MaxDownloadWorkers
+	totalConns := 0
+	for _, u := range settings.Usenet {
+		if u.Enabled && u.Host != "" {
+			totalConns += u.Connections
+		}
+	}
+	if totalConns > 0 {
+		const headroom = 2 // reserve for STAT commands / health checks
+		readers := int(usenet.ActiveReaders())
+		if readers < 1 {
+			readers = 1
+		}
+		perStreamCap := (totalConns - headroom) / readers
+		if perStreamCap < 4 {
+			perStreamCap = 4 // floor: at least 4 workers per stream
+		}
+		if maxWorkers > perStreamCap {
+			maxWorkers = perStreamCap
+		}
+	}
+
 	return &AltMountConfig{
 		RClone: RCloneConfig{
 			Password: "", // Not used in NovaStream
 			Salt:     "", // Not used in NovaStream
 		},
 		Streaming: StreamingConfig{
-			MaxDownloadWorkers: settings.Streaming.MaxDownloadWorkers,
+			MaxDownloadWorkers: maxWorkers,
 			MaxCacheSizeMB:     settings.Streaming.MaxCacheSizeMB,
 		},
 		Import: ImportConfig{
@@ -125,8 +151,9 @@ func (ca *ConfigAdapter) GetConfigGetter() ConfigGetter {
 
 // ToNNTPProviders converts NovaStream usenet settings to NNTP provider configs
 const (
-	// Close idle sockets aggressively so providers with short idle limits don't reset them out from under us.
-	defaultMaxConnectionIdleTimeSeconds = 120
+	// Close idle sockets quickly so connections are freed promptly after playback stops,
+	// leaving headroom for new streams without hitting provider connection limits.
+	defaultMaxConnectionIdleTimeSeconds = 10
 	// Give each connection a reasonable upper bound before we recycle it even if it stays active.
 	defaultMaxConnectionTTLSeconds = 900
 )

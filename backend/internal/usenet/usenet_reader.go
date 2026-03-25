@@ -23,6 +23,11 @@ var (
 
 const defaultDownloadWorkers = 15
 
+// ActiveReaders returns the current number of active usenet readers.
+func ActiveReaders() int64 {
+	return atomic.LoadInt64(&activeReaders)
+}
+
 var (
 	_ io.ReadCloser = &usenetReader{}
 )
