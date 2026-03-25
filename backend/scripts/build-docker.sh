@@ -21,11 +21,15 @@ echo ""
 # Parse flags
 PUSH=false
 PLATFORMS="linux/amd64,linux/arm64"
+KEEP_BUILDER=false
+BUILDER_NAME=""
 for arg in "$@"; do
     case "$arg" in
         --push) PUSH=true ;;
         --amd64) PLATFORMS="linux/amd64" ;;
         --arm64) PLATFORMS="linux/arm64" ;;
+        --keep-builder) KEEP_BUILDER=true ;;
+        --builder=*) BUILDER_NAME="${arg#*=}" ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -33,6 +37,10 @@ for arg in "$@"; do
             echo "  --push     Push images to Docker Hub after building"
             echo "  --amd64    Build only linux/amd64 (faster for testing)"
             echo "  --arm64    Build only linux/arm64"
+            echo "  --keep-builder"
+            echo "             Keep the buildx builder after the build finishes"
+            echo "  --builder=NAME"
+            echo "             Use the specified buildx builder name"
             echo "  -h,--help  Show this help"
             echo ""
             echo "By default, builds linux/amd64 and linux/arm64 without pushing."
@@ -45,13 +53,29 @@ for arg in "$@"; do
     esac
 done
 
-# Ensure buildx builder exists with multi-platform support
-BUILDER_NAME="mediastorm-builder"
-if ! docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
-    echo "Creating buildx builder: $BUILDER_NAME"
-    docker buildx create --name "$BUILDER_NAME" --use --driver docker-container
-else
+BUILDER_CREATED=false
+cleanup() {
+    if [[ "$BUILDER_CREATED" == "true" && "$KEEP_BUILDER" != "true" ]]; then
+        echo ""
+        echo "Removing temporary buildx builder: $BUILDER_NAME"
+        docker buildx rm --force "$BUILDER_NAME" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT
+
+# Use a temporary builder by default so build cache state does not accumulate
+# indefinitely between local runs.
+if [[ -z "$BUILDER_NAME" ]]; then
+    BUILDER_NAME="mediastorm-builder-$(date +%s)-$$"
+fi
+
+if docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
+    echo "Using existing buildx builder: $BUILDER_NAME"
     docker buildx use "$BUILDER_NAME"
+else
+    echo "Creating buildx builder: $BUILDER_NAME"
+    docker buildx create --name "$BUILDER_NAME" --use --driver docker-container >/dev/null
+    BUILDER_CREATED=true
 fi
 
 TAGS=(
