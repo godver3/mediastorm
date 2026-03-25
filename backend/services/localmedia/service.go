@@ -926,7 +926,10 @@ func (s *Service) DeleteItem(ctx context.Context, itemID string) error {
 	if !item.IsMissing {
 		return errors.New("local media item can only be deleted when marked missing")
 	}
-	return s.repo.DeleteItem(ctx, itemID)
+	if err := s.repo.DeleteItem(ctx, itemID); err != nil {
+		return err
+	}
+	return s.refreshLibrarySummary(ctx, item.LibraryID)
 }
 
 func (s *Service) UpdateItemMatch(ctx context.Context, itemID string, input models.LocalMediaMatchInput) (*models.LocalMediaItem, error) {
@@ -953,8 +956,55 @@ func (s *Service) UpdateItemMatch(ctx context.Context, itemID string, input mode
 	if err := s.repo.UpsertItem(ctx, item); err != nil {
 		return nil, err
 	}
+	if err := s.refreshLibrarySummary(ctx, item.LibraryID); err != nil {
+		return nil, err
+	}
 	hydrateLocalMediaItemExternalIDs(item)
 	return item, nil
+}
+
+func (s *Service) refreshLibrarySummary(ctx context.Context, libraryID string) error {
+	libraryID = strings.TrimSpace(libraryID)
+	if libraryID == "" {
+		return nil
+	}
+
+	library, err := s.repo.GetLibrary(ctx, libraryID)
+	if err != nil {
+		return err
+	}
+	if library == nil {
+		return ErrLibraryNotFound
+	}
+	if library.LastScanStatus == models.LocalMediaScanStatusScanning {
+		return nil
+	}
+
+	items, err := s.repo.ListAllItemsByLibrary(ctx, libraryID)
+	if err != nil {
+		return err
+	}
+
+	discovered := len(items)
+	matched := 0
+	lowConfidence := 0
+	for _, item := range items {
+		switch item.MatchStatus {
+		case models.LocalMediaMatchStatusMatched, models.LocalMediaMatchStatusManual:
+			matched++
+		case models.LocalMediaMatchStatusLowConfidence:
+			lowConfidence++
+		}
+	}
+
+	library.LastScanDiscovered = discovered
+	library.LastScanMatched = matched
+	library.LastScanLowConf = lowConfidence
+	if library.LastScanTotal < discovered {
+		library.LastScanTotal = discovered
+	}
+	library.UpdatedAt = time.Now().UTC()
+	return s.repo.UpdateLibrary(ctx, library)
 }
 
 func (s *Service) StartScan(ctx context.Context, libraryID string) (models.LocalMediaScanSummary, error) {

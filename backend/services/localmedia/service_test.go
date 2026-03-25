@@ -434,6 +434,11 @@ func TestDeleteItemRequiresMissingState(t *testing.T) {
 func TestDeleteItemDeletesMissingItem(t *testing.T) {
 	now := time.Now().UTC()
 	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:                 "lib1",
+			LastScanStatus:     models.LocalMediaScanStatusComplete,
+			LastScanDiscovered: 1,
+		},
 		items: map[string]*models.LocalMediaItem{
 			"movie.mkv": {
 				ID:           "item1",
@@ -451,5 +456,66 @@ func TestDeleteItemDeletesMissingItem(t *testing.T) {
 	}
 	if len(repo.items) != 0 {
 		t.Fatalf("items stored = %d, want 0", len(repo.items))
+	}
+	if repo.library.LastScanDiscovered != 0 {
+		t.Fatalf("LastScanDiscovered = %d, want 0", repo.library.LastScanDiscovered)
+	}
+	if repo.library.LastScanMatched != 0 {
+		t.Fatalf("LastScanMatched = %d, want 0", repo.library.LastScanMatched)
+	}
+	if repo.library.LastScanLowConf != 0 {
+		t.Fatalf("LastScanLowConf = %d, want 0", repo.library.LastScanLowConf)
+	}
+}
+
+func TestUpdateItemMatchRefreshesLibrarySummary(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:                 "lib1",
+			LastScanStatus:     models.LocalMediaScanStatusComplete,
+			LastScanDiscovered: 1,
+			LastScanMatched:    0,
+			LastScanLowConf:    1,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"show/S01E01.mkv": {
+				ID:            "item1",
+				LibraryID:     "lib1",
+				RelativePath:  "show/S01E01.mkv",
+				FileName:      "S01E01.mkv",
+				MatchStatus:   models.LocalMediaMatchStatusLowConfidence,
+				DetectedTitle: "Example Show",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			},
+		},
+	}
+	service := &Service{repo: repo}
+
+	updated, err := service.UpdateItemMatch(context.Background(), "item1", models.LocalMediaMatchInput{
+		MatchedTitleID:   "tmdb:tv:123",
+		MatchedMediaType: "series",
+		MatchedName:      "Example Show",
+		MatchedYear:      2024,
+		Confidence:       1,
+		MatchStatus:      models.LocalMediaMatchStatusManual,
+	})
+	if err != nil {
+		t.Fatalf("UpdateItemMatch error: %v", err)
+	}
+	if updated.MatchStatus != models.LocalMediaMatchStatusManual {
+		t.Fatalf("updated.MatchStatus = %q, want %q", updated.MatchStatus, models.LocalMediaMatchStatusManual)
+	}
+	if repo.library.LastScanDiscovered != 1 {
+		t.Fatalf("LastScanDiscovered = %d, want 1", repo.library.LastScanDiscovered)
+	}
+	if repo.library.LastScanMatched != 1 {
+		t.Fatalf("LastScanMatched = %d, want 1", repo.library.LastScanMatched)
+	}
+	if repo.library.LastScanLowConf != 0 {
+		t.Fatalf("LastScanLowConf = %d, want 0", repo.library.LastScanLowConf)
 	}
 }
