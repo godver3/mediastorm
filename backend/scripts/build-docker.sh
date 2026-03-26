@@ -8,7 +8,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="godver3/mediastorm"
 DOCKERFILE="backend/Dockerfile"
 
-# Read version (line 1 = semantic version, line 2 = build ID)
+# Stamp build ID (line 2 of version.txt) with current date, then read version
+BUILD_ID=$(date +%Y%m%d)
+sed -i '' "2s/.*/${BUILD_ID}/" "$REPO_ROOT/backend/version.txt"
+
 VERSION=$(sed -n '1p' "$REPO_ROOT/backend/version.txt" | tr -d '[:space:]')
 COMMIT_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
 
@@ -19,13 +22,13 @@ echo "Image:    $IMAGE"
 echo ""
 
 # Parse flags
-PUSH=false
+PUSH=true
 PLATFORMS="linux/amd64,linux/arm64"
 KEEP_BUILDER=false
 BUILDER_NAME=""
 for arg in "$@"; do
     case "$arg" in
-        --push) PUSH=true ;;
+        --no-push) PUSH=false ;;
         --amd64) PLATFORMS="linux/amd64" ;;
         --arm64) PLATFORMS="linux/arm64" ;;
         --keep-builder) KEEP_BUILDER=true ;;
@@ -34,7 +37,7 @@ for arg in "$@"; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --push     Push images to Docker Hub after building"
+            echo "  --no-push  Skip pushing to Docker Hub (build only)"
             echo "  --amd64    Build only linux/amd64 (faster for testing)"
             echo "  --arm64    Build only linux/arm64"
             echo "  --keep-builder"
@@ -43,7 +46,7 @@ for arg in "$@"; do
             echo "             Use the specified buildx builder name"
             echo "  -h,--help  Show this help"
             echo ""
-            echo "By default, builds linux/amd64 and linux/arm64 without pushing."
+            echo "By default, builds linux/amd64 and linux/arm64 and pushes to Docker Hub."
             exit 0
             ;;
         *)
