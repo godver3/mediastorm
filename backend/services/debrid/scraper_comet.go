@@ -110,7 +110,7 @@ func (c *CometScraper) Search(ctx context.Context, req SearchRequest) ([]ScrapeR
 				streamID = fmt.Sprintf("%s:%d:%d", imdbID, req.Parsed.Season, episode)
 			}
 
-			streams, err := c.fetchStreams(ctx, stremioType, streamID)
+			streams, err := c.fetchStreams(ctx, stremioType, streamID, req.Parsed.Title)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("comet %s %s: %w", stremioType, streamID, err))
 				continue
@@ -271,7 +271,7 @@ func (s cometStream) attributes() map[string]string {
 	return attrs
 }
 
-func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id string) ([]cometStream, error) {
+func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id, fallbackTitle string) ([]cometStream, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty stream id")
 	}
@@ -339,10 +339,17 @@ func (c *CometScraper) fetchStreams(ctx context.Context, mediaType, id string) (
 			fileIdx = *stream.FileIdx
 		}
 
-		// For URL-based streams, prefer filename from behaviorHints
+		// For URL-based streams, prefer filename from behaviorHints.
+		// Some Comet streams omit both filename and title text while still
+		// returning a valid URL/infohash for a fully-resolved IMDb/episode lookup.
+		// Fall back to the resolved metadata title so downstream filtering
+		// doesn't reject an otherwise valid stream with an empty title.
 		titleText := filename
 		if titleText == "" {
 			titleText = deriveTitle(rawTitle)
+		}
+		if titleText == "" {
+			titleText = strings.TrimSpace(fallbackTitle)
 		}
 
 		sizeBytes := parseSize(rawTitle)

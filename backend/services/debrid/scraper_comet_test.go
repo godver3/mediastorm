@@ -365,6 +365,49 @@ func TestCometSearchErrorHandling(t *testing.T) {
 	}
 }
 
+func TestCometSearchFallsBackToParsedTitleWhenStreamTitleMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"streams": [
+				{
+					"name": "Comet\n1080p",
+					"title": "",
+					"url": "https://example.com/stream.mkv"
+				}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	scraper := NewCometScraper(nil, server.URL, "", "Comet")
+
+	req := SearchRequest{
+		Query: "Passez au salon S01E01",
+		Parsed: ParsedQuery{
+			Title:     "Passez au salon",
+			Season:    1,
+			Episode:   1,
+			MediaType: MediaTypeSeries,
+		},
+		IMDBID: "tt38242134",
+	}
+
+	results, err := scraper.Search(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	if results[0].Title != "Passez au salon" {
+		t.Fatalf("expected parsed title fallback, got %q", results[0].Title)
+	}
+}
+
 func TestCometTestConnection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, "manifest.json") {
