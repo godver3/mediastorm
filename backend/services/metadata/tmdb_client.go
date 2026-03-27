@@ -375,6 +375,8 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 			})
 			result.Logo = buildTMDBImage(usable[0].FilePath, tmdbLogoSize, "logo")
 			if result.Logo != nil {
+				result.Logo.Language = usable[0].ISO6391
+				result.Logo.IsFallbackLanguage = usable[0].ISO6391 != preferredLang
 				result.Logo.IsDark = c.isImageDark(ctx, result.Logo.URL)
 			}
 		}
@@ -913,15 +915,15 @@ func (c *tmdbClient) movieDetailsFetch(ctx context.Context, tmdbID int64) (*mode
 	}
 
 	var movie struct {
-		ID                  int64  `json:"id"`
-		Title               string `json:"title"`
-		Overview            string `json:"overview"`
-		PosterPath          string `json:"poster_path"`
-		BackdropPath        string `json:"backdrop_path"`
-		ReleaseDate         string `json:"release_date"`
-		IMDBId              string `json:"imdb_id"`
-		Runtime             int    `json:"runtime"`
-		Genres              []struct {
+		ID           int64  `json:"id"`
+		Title        string `json:"title"`
+		Overview     string `json:"overview"`
+		PosterPath   string `json:"poster_path"`
+		BackdropPath string `json:"backdrop_path"`
+		ReleaseDate  string `json:"release_date"`
+		IMDBId       string `json:"imdb_id"`
+		Runtime      int    `json:"runtime"`
+		Genres       []struct {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
 		} `json:"genres"`
@@ -1723,8 +1725,8 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 	var payload struct {
 		Cast []struct {
 			ID               int64   `json:"id"`
-			Title            string  `json:"title"`       // Movies
-			Name             string  `json:"name"`        // TV shows
+			Title            string  `json:"title"` // Movies
+			Name             string  `json:"name"`  // TV shows
 			Overview         string  `json:"overview"`
 			PosterPath       string  `json:"poster_path"`
 			BackdropPath     string  `json:"backdrop_path"`
@@ -2036,8 +2038,12 @@ func (c *tmdbClient) fetchTitleSeedInfo(ctx context.Context, mediaType string, t
 		endpoint = endpoint + "?api_key=" + c.apiKey
 		// TMDB returns "keywords" for movies, "results" for TV
 		var payload struct {
-			Keywords []struct{ ID int64 `json:"id"` } `json:"keywords"`
-			Results  []struct{ ID int64 `json:"id"` } `json:"results"`
+			Keywords []struct {
+				ID int64 `json:"id"`
+			} `json:"keywords"`
+			Results []struct {
+				ID int64 `json:"id"`
+			} `json:"results"`
 		}
 		if e := c.doGET(ctx, endpoint, &payload); e != nil {
 			kwCh <- kwResult{err: e}

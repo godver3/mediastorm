@@ -673,7 +673,7 @@ func (s *Service) GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64)
 	if mediaType == "movie" {
 		// Try TMDB-only cache first (used when no TVDB ID was available)
 		if tmdbID > 0 {
-			cacheID := cacheKey("tmdb", "movie", "details", "v1", s.client.language, strconv.FormatInt(tmdbID, 10))
+			cacheID := cacheKey("tmdb", "movie", "details", "v2", s.client.language, strconv.FormatInt(tmdbID, 10))
 			var cached models.Title
 			if ok, _ := s.cache.get(cacheID, &cached); ok && cached.TextPoster != nil {
 				return cached.TextPoster.URL
@@ -690,14 +690,14 @@ func (s *Service) GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64)
 			}
 		}
 		if movieTVDBID > 0 {
-			cacheID := cacheKey("tvdb", "movie", "details", "v3", s.client.language, strconv.FormatInt(movieTVDBID, 10))
+			cacheID := cacheKey("tvdb", "movie", "details", "v4", s.client.language, strconv.FormatInt(movieTVDBID, 10))
 			var cached models.Title
 			if ok, _ := s.cache.get(cacheID, &cached); ok && cached.TextPoster != nil {
 				return cached.TextPoster.URL
 			}
 		}
 	} else if tvdbID > 0 {
-		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && cached.Title.TextPoster != nil {
 			return cached.Title.TextPoster.URL
@@ -1391,7 +1391,7 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 	log.Printf("[metadata] fetching movie details from TMDB tmdbId=%d name=%q", req.TMDBID, req.Name)
 
 	// Check cache with TMDB key
-	cacheID := cacheKey("tmdb", "movie", "details", "v1", s.client.language, strconv.FormatInt(req.TMDBID, 10))
+	cacheID := cacheKey("tmdb", "movie", "details", "v2", s.client.language, strconv.FormatInt(req.TMDBID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
 		log.Printf("[metadata] movie details cache hit (TMDB) tmdbId=%d lang=%s", req.TMDBID, s.client.language)
@@ -2481,7 +2481,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
@@ -2515,12 +2515,16 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		// Parallel enrichment of cached series data from TMDB
 		tmdbOK := cachedTMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured()
 		var (
-			enrichWg      sync.WaitGroup
-			enrichCredits *models.Credits
-			enrichLogo    *models.Image
-			enrichGenres  []string
-			enrichCertOK  bool
-			enrichCert    string
+			enrichWg           sync.WaitGroup
+			enrichCredits      *models.Credits
+			enrichLogo         *models.Image
+			enrichGenres       []string
+			enrichCertOK       bool
+			enrichCert         string
+			seasonTranslations map[int64]struct {
+				name     string
+				overview string
+			}
 		)
 
 		if cached.Title.Credits == nil && tmdbOK {
@@ -2569,6 +2573,55 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}()
 		}
 
+		genericSeasonIDs := make([]int64, 0)
+		for _, season := range cached.Seasons {
+			trimmedName := strings.TrimSpace(season.Name)
+			if season.TVDBID <= 0 || trimmedName == "" {
+				continue
+			}
+			if strings.EqualFold(trimmedName, fmt.Sprintf("Season %d", season.Number)) {
+				genericSeasonIDs = append(genericSeasonIDs, season.TVDBID)
+			}
+		}
+		if len(genericSeasonIDs) > 0 {
+			enrichWg.Add(1)
+			go func(seasonIDs []int64) {
+				defer enrichWg.Done()
+				results := make(map[int64]struct {
+					name     string
+					overview string
+				})
+				var mu sync.Mutex
+				var wg sync.WaitGroup
+				for _, seasonID := range seasonIDs {
+					wg.Add(1)
+					go func(seasonID int64) {
+						defer wg.Done()
+						translation, err := s.client.seasonTranslations(seasonID, s.client.language)
+						if err != nil || translation == nil {
+							return
+						}
+						name := strings.TrimSpace(translation.Name)
+						overview := strings.TrimSpace(translation.Overview)
+						if name == "" && overview == "" {
+							return
+						}
+						mu.Lock()
+						results[seasonID] = struct {
+							name     string
+							overview string
+						}{
+							name:     name,
+							overview: overview,
+						}
+						mu.Unlock()
+					}(seasonID)
+				}
+				wg.Wait()
+				seasonTranslations = results
+			}(genericSeasonIDs)
+		}
+
 		enrichWg.Wait()
 
 		// Apply results and do a single cache write
@@ -2592,6 +2645,27 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			cached.Title.Certification = enrichCert
 			log.Printf("[metadata] content rating added to cached series tmdbId=%d rating=%s", cachedTMDBID, enrichCert)
 			cacheUpdated = true
+		}
+		if len(seasonTranslations) > 0 {
+			for i := range cached.Seasons {
+				season := &cached.Seasons[i]
+				if season.TVDBID <= 0 {
+					continue
+				}
+				trans, ok := seasonTranslations[season.TVDBID]
+				if !ok {
+					continue
+				}
+				if trans.name != "" && !strings.EqualFold(strings.TrimSpace(trans.name), strings.TrimSpace(season.Name)) {
+					season.Name = trans.name
+					log.Printf("[metadata] upgraded cached season name tvdbId=%d season=%d lang=%s name=%q", tvdbID, season.Number, s.client.language, trans.name)
+					cacheUpdated = true
+				}
+				if trans.overview != "" && strings.TrimSpace(trans.overview) != strings.TrimSpace(season.Overview) {
+					season.Overview = trans.overview
+					cacheUpdated = true
+				}
+			}
 		}
 
 		// IsDaily detection depends on genres, so run after parallel block
@@ -2642,7 +2716,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if strings.Contains(err.Error(), "404 Not Found") {
 			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
 				tvdbID = altID
-				cacheID = cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 				base, err = s.getTVDBSeriesDetails(tvdbID)
 			}
 		}
@@ -3149,7 +3223,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	}
 
 	// Check the same file cache used by SeriesDetails
-	cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details lite cache hit tvdbId=%d seasons=%d", tvdbID, len(cached.Seasons))
@@ -3194,7 +3268,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		if strings.Contains(extResult.err.Error(), "404 Not Found") {
 			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
 				tvdbID = altID
-				cacheID = cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 				// Drain the translation channel from the failed ID
 				<-transChan
 				// Re-fetch with the correct ID
@@ -3475,7 +3549,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 			continue
 		}
 
-		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 			log.Printf("[metadata] batch series cache hit index=%d tvdbId=%d name=%q", i, tvdbID, query.Name)
@@ -3598,7 +3672,7 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 		}
 
 		// Check the full SeriesDetails cache
-		cacheID := cacheKey("tvdb", "series", "details", "v6", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok {
 			extracted := extractTitleFields(&cached.Title, fields)
@@ -4491,7 +4565,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	}
 
 	// Check cache (v2 adds collection data)
-	cacheID := cacheKey("tvdb", "movie", "details", "v3", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "movie", "details", "v4", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
 		log.Printf("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -227,6 +228,119 @@ func TestGetCustomListMovieTranslations(t *testing.T) {
 	}
 	if item.Title.Overview != "This is the English movie overview" {
 		t.Errorf("expected translated overview 'This is the English movie overview', got %q", item.Title.Overview)
+	}
+}
+
+func TestSeriesDetailsUpgradesCachedLiteSeasonNames(t *testing.T) {
+	var (
+		mu                   sync.Mutex
+		seasonTranslationHit int
+	)
+
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			mu.Lock()
+			defer mu.Unlock()
+
+			path := req.URL.Path
+			query := req.URL.Query()
+
+			if path == "/v4/login" {
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
+			if path == "/v4/series/12345/extended" {
+				if query.Get("meta") == "artworks" {
+					body := bytes.NewBufferString(`{"data":{"id":12345,"artworks":[]}}`)
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+				}
+				if query.Get("meta") != "episodes,seasons,artworks" {
+					t.Fatalf("unexpected meta query: %q", query.Get("meta"))
+				}
+				body := bytes.NewBufferString(`{"data":{
+					"id":12345,
+					"name":"Test Series",
+					"overview":"Series overview",
+					"year":"2024",
+					"remoteIds":[],
+					"artworks":[],
+					"seasons":[
+						{"id":777,"number":1,"type":{"type":"official","name":"Official"}}
+					],
+					"episodes":[
+						{"id":9001,"name":"Pilot","overview":"Episode overview","seasonNumber":1,"number":1,"aired":"2024-01-01","runtime":24}
+					]
+				}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
+			if path == "/v4/series/12345/translations/eng" {
+				body := bytes.NewBufferString(`{"data":{"name":"Test Series","overview":"Series overview"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
+			if path == "/v4/series/12345/episodes/official/eng" {
+				if query.Get("page") != "0" {
+					t.Fatalf("unexpected page query: %q", query.Get("page"))
+				}
+				body := bytes.NewBufferString(`{"data":{"episodes":[
+					{"id":9001,"name":"Pilot","overview":"Episode overview","seasonNumber":1,"number":1,"aired":"2024-01-01","runtime":24}
+				]},"links":{"next":null}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
+			if path == "/v4/seasons/777/translations/eng" {
+				seasonTranslationHit++
+				body := bytes.NewBufferString(`{"data":{"name":"East Blue","overview":"Saga overview"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
+			t.Fatalf("unhandled request: %s %s", req.Method, (&url.URL{Path: path, RawQuery: req.URL.RawQuery}).String())
+			return nil, nil
+		}),
+	}
+
+	tempDir := t.TempDir()
+	service := &Service{
+		client:  newTVDBClient("test-api-key", "eng", httpc, 24),
+		cache:   newFileCache(tempDir, 24),
+		idCache: newFileCache(tempDir, 24*7),
+	}
+	service.client.minInterval = 0
+
+	query := models.SeriesDetailsQuery{
+		TVDBID: 12345,
+		Name:   "Test Series",
+		Year:   2024,
+	}
+
+	lite, err := service.SeriesDetailsLite(context.Background(), query)
+	if err != nil {
+		t.Fatalf("SeriesDetailsLite failed: %v", err)
+	}
+	if len(lite.Seasons) != 1 {
+		t.Fatalf("expected 1 lite season, got %d", len(lite.Seasons))
+	}
+	if lite.Seasons[0].Name != "Season 1" {
+		t.Fatalf("expected lite season name to be generic, got %q", lite.Seasons[0].Name)
+	}
+
+	full, err := service.SeriesDetails(context.Background(), query)
+	if err != nil {
+		t.Fatalf("SeriesDetails failed: %v", err)
+	}
+	if len(full.Seasons) != 1 {
+		t.Fatalf("expected 1 full season, got %d", len(full.Seasons))
+	}
+	if full.Seasons[0].Name != "East Blue" {
+		t.Fatalf("expected upgraded season name %q, got %q", "East Blue", full.Seasons[0].Name)
+	}
+	if full.Seasons[0].Overview != "Saga overview" {
+		t.Fatalf("expected upgraded season overview %q, got %q", "Saga overview", full.Seasons[0].Overview)
+	}
+	if seasonTranslationHit == 0 {
+		t.Fatal("expected full SeriesDetails to fetch season translations for cached lite data")
 	}
 }
 
