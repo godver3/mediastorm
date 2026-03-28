@@ -26,10 +26,10 @@ type indexerService interface {
 var _ indexerService = (*indexer.Service)(nil)
 
 type IndexerHandler struct {
-	Service        indexerService
-	MetadataSvc    SeriesDetailsProvider
+	Service          indexerService
+	MetadataSvc      SeriesDetailsProvider
 	MovieMetadataSvc MovieDetailsProvider
-	DemoMode       bool
+	DemoMode         bool
 }
 
 func NewIndexerHandler(s indexerService, demoMode bool) *IndexerHandler {
@@ -133,6 +133,11 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		EpisodeAirYear:  episodeAirYear,
 	}
 
+	useDownloadRanking := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("downloadRanking")), "true")
+	if useDownloadRanking {
+		opts.UseDownloadRanking = true
+	}
+
 	// Check if caller wants filtered results included
 	includeFiltered := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeFiltered"))) == "true"
 
@@ -215,6 +220,7 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 			max = parsed
 		}
 	}
+	useDownloadRanking := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("downloadRanking")), "true")
 
 	// Get series metadata for TV shows
 	var episodeResolver *filter.SeriesEpisodeResolver
@@ -255,19 +261,20 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := indexer.SearchOptions{
-		Query:           query,
-		Categories:      categories,
-		MaxResults:      max,
-		IMDBID:          imdbID,
-		MediaType:       mediaType,
-		Year:            year,
-		UserID:          userID,
-		ClientID:        clientID,
-		EpisodeResolver: episodeResolver,
-		IsDaily:         isDaily,
-		IsAnime:         isAnime,
-		TargetAirDate:   targetAirDate,
-		EpisodeAirYear:  episodeAirYear,
+		Query:              query,
+		Categories:         categories,
+		MaxResults:         max,
+		IMDBID:             imdbID,
+		MediaType:          mediaType,
+		Year:               year,
+		UserID:             userID,
+		ClientID:           clientID,
+		EpisodeResolver:    episodeResolver,
+		IsDaily:            isDaily,
+		IsAnime:            isAnime,
+		TargetAirDate:      targetAirDate,
+		EpisodeAirYear:     episodeAirYear,
+		UseDownloadRanking: useDownloadRanking,
 	}
 
 	results, err := h.Service.SearchTest(r.Context(), opts)

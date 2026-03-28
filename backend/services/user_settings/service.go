@@ -248,7 +248,9 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Filtering.MaxResolution != "" ||
 		s.Filtering.HDRDVPolicy != "" ||
 		len(s.Filtering.FilterOutTerms) > 0 ||
-		len(s.Filtering.PreferredTerms) > 0 {
+		len(s.Filtering.PreferredTerms) > 0 ||
+		len(s.Filtering.NonPreferredTerms) > 0 ||
+		len(s.Filtering.DownloadPreferredTerms) > 0 {
 		return false
 	}
 

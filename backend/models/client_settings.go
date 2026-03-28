@@ -5,15 +5,16 @@ package models
 // and explicit values (including zero/false).
 type ClientFilterSettings struct {
 	// Filtering overrides
-	MaxSizeMovieGB                   *float64     `json:"maxSizeMovieGb,omitempty"`
-	MaxSizeEpisodeGB                 *float64     `json:"maxSizeEpisodeGb,omitempty"`
-	MaxResolution                    *string      `json:"maxResolution,omitempty"`
-	HDRDVPolicy                      *HDRDVPolicy `json:"hdrDvPolicy,omitempty"`
-	FilterOutTerms                   *[]string    `json:"filterOutTerms,omitempty"`
-	PreferredTerms                   *[]string    `json:"preferredTerms,omitempty"`
-	NonPreferredTerms       *[]string    `json:"nonPreferredTerms,omitempty"`
-	AnimeLanguageEnabled    *bool        `json:"animeLanguageEnabled,omitempty"`
-	AnimePreferredLanguage          *string      `json:"animePreferredLanguage,omitempty"`
+	MaxSizeMovieGB         *float64     `json:"maxSizeMovieGb,omitempty"`
+	MaxSizeEpisodeGB       *float64     `json:"maxSizeEpisodeGb,omitempty"`
+	MaxResolution          *string      `json:"maxResolution,omitempty"`
+	HDRDVPolicy            *HDRDVPolicy `json:"hdrDvPolicy,omitempty"`
+	FilterOutTerms         *[]string    `json:"filterOutTerms,omitempty"`
+	PreferredTerms         *[]string    `json:"preferredTerms,omitempty"`
+	NonPreferredTerms      *[]string    `json:"nonPreferredTerms,omitempty"`
+	DownloadPreferredTerms *[]string    `json:"downloadPreferredTerms,omitempty"`
+	AnimeLanguageEnabled   *bool        `json:"animeLanguageEnabled,omitempty"`
+	AnimePreferredLanguage *string      `json:"animePreferredLanguage,omitempty"`
 
 	// Network settings for URL switching based on WiFi
 	HomeWifiSSID     *string `json:"homeWifiSSID,omitempty"`
@@ -39,6 +40,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.FilterOutTerms == nil &&
 		c.PreferredTerms == nil &&
 		c.NonPreferredTerms == nil &&
+		c.DownloadPreferredTerms == nil &&
 		c.AnimeLanguageEnabled == nil &&
 		c.AnimePreferredLanguage == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&

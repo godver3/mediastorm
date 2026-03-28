@@ -128,7 +128,7 @@ func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSv
 		debridSvc = debrid.NewSearchService(cfg)
 	}
 	return &Service{
-		cfg:            cfg,
+		cfg: cfg,
 		httpc: &http.Client{
 			Timeout: 20 * time.Second,
 			Transport: &http.Transport{
@@ -157,7 +157,7 @@ func (s *Service) SetClientSettingsProvider(provider clientSettingsProvider) {
 // still cascade through the global -> profile -> client override chain.
 type effectiveOverrides struct {
 	BypassFilteringForAIOStreamsOnly *bool
-	MaxResultsPerResolution         *int
+	MaxResultsPerResolution          *int
 }
 
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
@@ -165,17 +165,18 @@ type effectiveOverrides struct {
 func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) (models.FilterSettings, models.AnimeFilteringSettings, effectiveOverrides) {
 	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
-		MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
-		MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
-		MaxResolution:     globalSettings.Filtering.MaxResolution,
-		HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
-		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
-		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
+		MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:       models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
+		MaxResolution:          globalSettings.Filtering.MaxResolution,
+		HDRDVPolicy:            models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		FilterOutTerms:         globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:         globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms:      globalSettings.Filtering.NonPreferredTerms,
+		DownloadPreferredTerms: globalSettings.Filtering.DownloadPreferredTerms,
 	}
 	overrides := effectiveOverrides{
 		BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
-		MaxResultsPerResolution:         models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
+		MaxResultsPerResolution:          models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
 	}
 	animeSettings := models.AnimeFilteringSettings{
 		AnimeLanguageEnabled:   models.BoolPtr(globalSettings.AnimeFiltering.AnimeLanguageEnabled),
@@ -210,6 +211,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if profileFiltering.NonPreferredTerms != nil {
 				filterSettings.NonPreferredTerms = profileFiltering.NonPreferredTerms
+			}
+			if profileFiltering.DownloadPreferredTerms != nil {
+				filterSettings.DownloadPreferredTerms = profileFiltering.DownloadPreferredTerms
 			}
 			if userSettings.Display.BypassFilteringForAIOStreamsOnly != nil {
 				overrides.BypassFilteringForAIOStreamsOnly = userSettings.Display.BypassFilteringForAIOStreamsOnly
@@ -254,6 +258,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.NonPreferredTerms != nil {
 				filterSettings.NonPreferredTerms = *clientSettings.NonPreferredTerms
+			}
+			if clientSettings.DownloadPreferredTerms != nil {
+				filterSettings.DownloadPreferredTerms = *clientSettings.DownloadPreferredTerms
 			}
 			if clientSettings.BypassFilteringForAIOStreamsOnly != nil {
 				overrides.BypassFilteringForAIOStreamsOnly = clientSettings.BypassFilteringForAIOStreamsOnly
@@ -479,6 +486,69 @@ func comparePreferredScraper(i, j models.NZBResult, preferredScraper string) int
 	return 0
 }
 
+func (s *Service) buildScoringContext(opts SearchOptions, settings config.Settings, filterSettings models.FilterSettings, animeSettings models.AnimeFilteringSettings) ScoringContext {
+	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
+	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
+	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
+
+	if opts.IsAnime && models.BoolVal(animeSettings.AnimeLanguageEnabled, false) {
+		langCode := ""
+		if animeSettings.AnimePreferredLanguage != nil {
+			langCode = *animeSettings.AnimePreferredLanguage
+		}
+		if langCode == "" {
+			langCode = "eng"
+		}
+		animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
+		if len(animePref) > 0 {
+			preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
+		}
+		if len(animeNonPref) > 0 {
+			nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
+		}
+		log.Printf("[indexer] Anime language preference enabled (lang=%s): injected %d preferred + %d non-preferred terms", langCode, len(animePref), len(animeNonPref))
+	}
+
+	return ScoringContext{
+		RankingCriteria:        rankingCriteria,
+		ServicePriority:        settings.Filtering.ServicePriority,
+		PreferredTerms:         preferredTerms,
+		NonPreferredTerms:      nonPreferredTerms,
+		DownloadPreferredTerms: filter.CompileTerms(filterSettings.DownloadPreferredTerms),
+		UseDownloadRanking:     opts.UseDownloadRanking,
+		PreferredLang:          settings.Metadata.Language,
+		PreferredScraper:       settings.Filtering.PreferredScraper,
+	}
+}
+
+func (s *Service) sortResultsByScore(results []models.NZBResult, scoringCtx ScoringContext) {
+	if len(results) == 0 {
+		return
+	}
+
+	type scoredResult struct {
+		result models.NZBResult
+		score  int
+	}
+
+	scored := make([]scoredResult, len(results))
+	for i, result := range results {
+		score, _ := ScoreResult(result, scoringCtx)
+		scored[i] = scoredResult{
+			result: result,
+			score:  score,
+		}
+	}
+
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	for i := range scored {
+		results[i] = scored[i].result
+	}
+}
+
 type SearchOptions struct {
 	Query                 string
 	Categories            []string
@@ -497,6 +567,7 @@ type SearchOptions struct {
 	EpisodeAirYear        int                         // Year the target episode aired (for year filter tolerance)
 	IncludeFiltered       bool                        // When true, return filtered results alongside passed results
 	SkipFilter            bool                        // When true, skip filtering entirely (used by SearchTest)
+	UseDownloadRanking    bool                        // When true, apply download-only preferred terms as a final ranking boost
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
@@ -655,75 +726,9 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	if bypassRanking {
 		log.Printf("[indexer] Bypassing mediastorm ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	} else {
-		// Get effective ranking criteria (cascade: global -> profile -> client)
-		rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q", len(aggregated), len(rankingCriteria), settings.Filtering.ServicePriority)
-
-		// Cache settings needed for comparison functions
-		servicePriority := settings.Filtering.ServicePriority
-		preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
-		nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
-
-		// Inject anime language terms when enabled and content is anime
-		if opts.IsAnime && models.BoolVal(animeSettings.AnimeLanguageEnabled, false) {
-			langCode := ""
-			if animeSettings.AnimePreferredLanguage != nil {
-				langCode = *animeSettings.AnimePreferredLanguage
-			}
-			if langCode == "" {
-				langCode = "eng"
-			}
-			animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
-			if len(animePref) > 0 {
-				preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
-			}
-			if len(animeNonPref) > 0 {
-				nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
-			}
-			log.Printf("[indexer] Anime language preference enabled (lang=%s): injected %d preferred + %d non-preferred terms", langCode, len(animePref), len(animeNonPref))
-		}
-
-		preferredLang := settings.Metadata.Language
-		preferredScraper := settings.Filtering.PreferredScraper
-
-		sort.SliceStable(aggregated, func(i, j int) bool {
-			for _, criterion := range rankingCriteria {
-				if !criterion.Enabled {
-					continue
-				}
-
-				var result int
-				switch criterion.ID {
-				case config.RankingServicePriority:
-					result = compareServicePriority(aggregated[i], aggregated[j], servicePriority)
-				case config.RankingPreferredTerms:
-					result = comparePreferredTerms(aggregated[i], aggregated[j], preferredTerms)
-				case config.RankingNonPreferredTerms:
-					result = compareNonPreferredTerms(aggregated[i], aggregated[j], nonPreferredTerms)
-				case config.RankingResolution:
-					result = compareResolution(aggregated[i], aggregated[j])
-				case config.RankingLanguage:
-					result = compareLanguage(aggregated[i], aggregated[j], preferredLang)
-				case config.RankingSize:
-					result = compareSize(aggregated[i], aggregated[j])
-				case config.RankingPreferredScraper:
-					result = comparePreferredScraper(aggregated[i], aggregated[j], preferredScraper)
-				}
-
-				if result != 0 {
-					return result < 0
-				}
-			}
-
-			// Final tiebreaker: prefer year-matched results only when all
-			// user-configured criteria are tied. This prevents results from
-			// scrapers that include the year in titles from dominating over
-			// ranking criteria like resolution or size.
-			if ym := compareYearMatch(aggregated[i], aggregated[j]); ym != 0 {
-				return ym < 0
-			}
-			return false
-		})
+		scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings)
+		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q, downloadRanking=%v", len(aggregated), len(scoringCtx.RankingCriteria), settings.Filtering.ServicePriority, opts.UseDownloadRanking)
+		s.sortResultsByScore(aggregated, scoringCtx)
 	}
 
 	// Debug: log all results after sorting
@@ -886,37 +891,7 @@ func (s *Service) SearchTest(ctx context.Context, opts SearchOptions) ([]models.
 	filterOpts := s.buildFilterOptions(opts, filterSettings)
 	detailed := filter.ResultsWithDetails(rawResults, filterOpts)
 
-	// Build scoring context
-	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
-	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
-
-	// Inject anime language terms for scoring
-	if opts.IsAnime && models.BoolVal(animeSettings.AnimeLanguageEnabled, false) {
-		langCode := ""
-		if animeSettings.AnimePreferredLanguage != nil {
-			langCode = *animeSettings.AnimePreferredLanguage
-		}
-		if langCode == "" {
-			langCode = "eng"
-		}
-		animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
-		if len(animePref) > 0 {
-			preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
-		}
-		if len(animeNonPref) > 0 {
-			nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
-		}
-	}
-
-	scoringCtx := ScoringContext{
-		RankingCriteria:   rankingCriteria,
-		ServicePriority:   settings.Filtering.ServicePriority,
-		PreferredTerms:    preferredTerms,
-		NonPreferredTerms: nonPreferredTerms,
-		PreferredLang:     settings.Metadata.Language,
-		PreferredScraper:  settings.Filtering.PreferredScraper,
-	}
+	scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings)
 
 	// Score all results and separate passed/filtered
 	var passed, filtered []models.ScoredNZBResult
@@ -1216,44 +1191,8 @@ func (s *Service) sortResults(results []models.NZBResult, opts SearchOptions, se
 		return
 	}
 
-	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-	servicePriority := settings.Filtering.ServicePriority
-	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
-	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
-	preferredLang := settings.Metadata.Language
-	preferredScraper := settings.Filtering.PreferredScraper
-
-	sort.SliceStable(results, func(i, j int) bool {
-		for _, criterion := range rankingCriteria {
-			if !criterion.Enabled {
-				continue
-			}
-			var result int
-			switch criterion.ID {
-			case config.RankingServicePriority:
-				result = compareServicePriority(results[i], results[j], servicePriority)
-			case config.RankingPreferredTerms:
-				result = comparePreferredTerms(results[i], results[j], preferredTerms)
-			case config.RankingNonPreferredTerms:
-				result = compareNonPreferredTerms(results[i], results[j], nonPreferredTerms)
-			case config.RankingResolution:
-				result = compareResolution(results[i], results[j])
-			case config.RankingLanguage:
-				result = compareLanguage(results[i], results[j], preferredLang)
-			case config.RankingSize:
-				result = compareSize(results[i], results[j])
-			case config.RankingPreferredScraper:
-				result = comparePreferredScraper(results[i], results[j], preferredScraper)
-			}
-			if result != 0 {
-				return result < 0
-			}
-		}
-		if ym := compareYearMatch(results[i], results[j]); ym != 0 {
-			return ym < 0
-		}
-		return false
-	})
+	scoringCtx := s.buildScoringContext(opts, settings, filterSettings, models.AnimeFilteringSettings{})
+	s.sortResultsByScore(results, scoringCtx)
 }
 
 // SplitSearchResult holds results from either debrid or usenet search
@@ -1308,33 +1247,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
 
-	// Prepare ranking criteria and settings for sorting (same as main Search function)
-	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
-	servicePriority := settings.Filtering.ServicePriority
-	preferredTerms := filter.CompileTerms(filterSettings.PreferredTerms)
-	nonPreferredTerms := filter.CompileTerms(filterSettings.NonPreferredTerms)
-
-	// Inject anime language terms when enabled and content is anime
-	if opts.IsAnime && models.BoolVal(animeSettings2.AnimeLanguageEnabled, false) {
-		langCode := ""
-		if animeSettings2.AnimePreferredLanguage != nil {
-			langCode = *animeSettings2.AnimePreferredLanguage
-		}
-		if langCode == "" {
-			langCode = "eng"
-		}
-		animePref, animeNonPref, _ := filter.GetAnimeLanguageTerms(langCode)
-		if len(animePref) > 0 {
-			preferredTerms = append(preferredTerms, filter.CompileTerms(animePref)...)
-		}
-		if len(animeNonPref) > 0 {
-			nonPreferredTerms = append(nonPreferredTerms, filter.CompileTerms(animeNonPref)...)
-		}
-		log.Printf("[indexer] Anime language preference enabled (lang=%s): injected %d preferred + %d non-preferred terms", langCode, len(animePref), len(animeNonPref))
-	}
-
-	preferredLang := settings.Metadata.Language
-	preferredScraper2 := settings.Filtering.PreferredScraper
+	scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings2)
 
 	// Helper to inject daily show attributes into results (same as Search path)
 	injectDailyAttrs := func(results []models.NZBResult) {
@@ -1359,37 +1272,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		if len(results) == 0 {
 			return
 		}
-		sort.SliceStable(results, func(i, j int) bool {
-			for _, criterion := range rankingCriteria {
-				if !criterion.Enabled {
-					continue
-				}
-				var result int
-				switch criterion.ID {
-				case config.RankingServicePriority:
-					result = compareServicePriority(results[i], results[j], servicePriority)
-				case config.RankingPreferredTerms:
-					result = comparePreferredTerms(results[i], results[j], preferredTerms)
-				case config.RankingNonPreferredTerms:
-					result = compareNonPreferredTerms(results[i], results[j], nonPreferredTerms)
-				case config.RankingResolution:
-					result = compareResolution(results[i], results[j])
-				case config.RankingLanguage:
-					result = compareLanguage(results[i], results[j], preferredLang)
-				case config.RankingSize:
-					result = compareSize(results[i], results[j])
-				case config.RankingPreferredScraper:
-					result = comparePreferredScraper(results[i], results[j], preferredScraper2)
-				}
-				if result != 0 {
-					return result < 0
-				}
-			}
-			if ym := compareYearMatch(results[i], results[j]); ym != 0 {
-				return ym < 0
-			}
-			return false
-		})
+		s.sortResultsByScore(results, scoringCtx)
 	}
 
 	// Launch debrid search
@@ -2325,4 +2208,3 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 
 	return aioEnabled && !otherEnabled
 }
-

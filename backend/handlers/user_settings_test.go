@@ -19,12 +19,13 @@ import (
 
 // fakeUserSettingsService implements userSettingsService for testing.
 type fakeUserSettingsService struct {
-	getSettings         *models.UserSettings
-	getErr              error
-	getWithDefaultsVal  models.UserSettings
-	getWithDefaultsErr  error
-	updateErr           error
-	deleteErr           error
+	getSettings        *models.UserSettings
+	getErr             error
+	getWithDefaultsVal models.UserSettings
+	getWithDefaultsErr error
+	lastDefaults       models.UserSettings
+	updateErr          error
+	deleteErr          error
 }
 
 func (f *fakeUserSettingsService) Get(userID string) (*models.UserSettings, error) {
@@ -32,6 +33,7 @@ func (f *fakeUserSettingsService) Get(userID string) (*models.UserSettings, erro
 }
 
 func (f *fakeUserSettingsService) GetWithDefaults(userID string, defaults models.UserSettings) (models.UserSettings, error) {
+	f.lastDefaults = defaults
 	return f.getWithDefaultsVal, f.getWithDefaultsErr
 }
 
@@ -208,5 +210,34 @@ func TestUserSettingsHandler_Options(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestUserSettingsHandler_GetSettings_DefaultsIncludeDownloadPreferredTerms(t *testing.T) {
+	settingsSvc := &fakeUserSettingsService{}
+	usersSvc := &fakeUserExistsService{exists: true}
+	tmpDir := t.TempDir()
+	cfgMgr := config.NewManager(tmpDir + "/settings.json")
+
+	settings := config.DefaultSettings()
+	settings.Filtering.DownloadPreferredTerms = []string{"x265=3"}
+	if err := cfgMgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := handlers.NewUserSettingsHandler(settingsSvc, usersSvc, cfgMgr)
+
+	defaults := h.GetSettings
+	_ = defaults
+
+	r := userSettingsRequest(http.MethodGet, "/", nil, map[string]string{"userID": "u1"})
+	w := httptest.NewRecorder()
+	h.GetSettings(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := settingsSvc.lastDefaults.Filtering.DownloadPreferredTerms; len(got) != 1 || got[0] != "x265=3" {
+		t.Fatalf("downloadPreferredTerms defaults = %v, want [x265=3]", got)
 	}
 }

@@ -604,7 +604,6 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	}
 	log.Printf("[prequeue] TIMING: search complete, %d combined results (elapsed: %v)", len(allResults), time.Since(workerStart))
 
-
 	// Update status to resolving
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 		e.Status = playback.PrequeueStatusResolving
@@ -805,7 +804,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 				if contentPref, err := h.contentPreferencesSvc.Get(userID, contentID); err == nil && contentPref != nil {
 					log.Printf("[prequeue] Found per-content preference for %s: audioLang=%q, subLang=%q, subMode=%q",
 						contentID, contentPref.AudioLanguage, contentPref.SubtitleLanguage, contentPref.SubtitleMode)
-						// Sanitize content preference values
+					// Sanitize content preference values
 					contentPref.AudioLanguage = sanitizeLanguageCode(contentPref.AudioLanguage)
 					contentPref.SubtitleLanguage = sanitizeLanguageCode(contentPref.SubtitleLanguage)
 					contentPref.SubtitleMode = strings.TrimSpace(strings.Trim(contentPref.SubtitleMode, "'\""))

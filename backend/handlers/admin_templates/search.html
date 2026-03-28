@@ -100,6 +100,14 @@
             <p class="form-hint">Select a user to test their filtering preferences, or use global settings</p>
         </div>
 
+        <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="downloadRankingToggle">
+                <span>Use download ranking</span>
+            </label>
+            <p class="form-hint">Applies download preferred terms as an extra final ranking boost for testing prequeue/download selection</p>
+        </div>
+
         <!-- Scrape Button -->
         <button id="scrapeBtn" class="btn btn-primary" onclick="runScrape()">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -455,6 +463,10 @@
             const selectedUserId = document.getElementById('userSelect').value;
             if (selectedUserId) {
                 params.set('userId', selectedUserId);
+            }
+
+            if (document.getElementById('downloadRankingToggle').checked) {
+                params.set('downloadRanking', 'true');
             }
 
             const results = await apiCall(`/api/indexers/search-test?${params.toString()}`);

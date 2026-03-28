@@ -12,13 +12,17 @@ import (
 
 // ScoringContext holds the settings needed to score results.
 type ScoringContext struct {
-	RankingCriteria   []config.RankingCriterion
-	ServicePriority   config.StreamingServicePriority
-	PreferredTerms    []filter.CompiledTerm
-	NonPreferredTerms []filter.CompiledTerm
-	PreferredLang     string
-	PreferredScraper  string
+	RankingCriteria        []config.RankingCriterion
+	ServicePriority        config.StreamingServicePriority
+	PreferredTerms         []filter.CompiledTerm
+	NonPreferredTerms      []filter.CompiledTerm
+	DownloadPreferredTerms []filter.CompiledTerm
+	UseDownloadRanking     bool
+	PreferredLang          string
+	PreferredScraper       string
 }
+
+const downloadPreferredTermsMultiplier = 100000
 
 // ScoreResult computes an absolute score and breakdown for a single NZBResult.
 func ScoreResult(result models.NZBResult, ctx ScoringContext) (int, []models.ScoreBreakdownItem) {
@@ -69,6 +73,16 @@ func ScoreResult(result models.NZBResult, ctx ScoringContext) (int, []models.Sco
 			Reason:    "confirmed year match",
 		})
 		totalScore += 10
+	}
+
+	if ctx.UseDownloadRanking {
+		points, reason := scoreDownloadPreferredTerms(result, ctx.DownloadPreferredTerms)
+		breakdown = append(breakdown, models.ScoreBreakdownItem{
+			Criterion: "Download Preferred Terms",
+			Points:    points,
+			Reason:    reason,
+		})
+		totalScore += points
 	}
 
 	return totalScore, breakdown
@@ -149,4 +163,15 @@ func scorePreferredScraper(r models.NZBResult, preferredScraper string, weight i
 		return weight, fmt.Sprintf("matches preferred scraper '%s'", preferredScraper)
 	}
 	return 0, fmt.Sprintf("not preferred scraper (is '%s')", r.Indexer)
+}
+
+func scoreDownloadPreferredTerms(r models.NZBResult, terms []filter.CompiledTerm) (int, string) {
+	if len(terms) == 0 {
+		return 0, "download ranking enabled, but no download preferred terms configured"
+	}
+	totalWeight, matchedNames := filter.SumMatchedWeights(r.Title, terms)
+	if totalWeight > 0 {
+		return downloadPreferredTermsMultiplier * totalWeight, fmt.Sprintf("matches download preferred terms '%s' (combined weight %d)", strings.Join(matchedNames, ", "), totalWeight)
+	}
+	return 0, "no download preferred terms matched"
 }

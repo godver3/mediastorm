@@ -95,8 +95,8 @@ func TestScoreResult_Size(t *testing.T) {
 		},
 	}
 
-	big := models.NZBResult{Title: "Movie", SizeBytes: 10 * 1024 * 1024 * 1024}   // 10GB
-	small := models.NZBResult{Title: "Movie", SizeBytes: 1 * 1024 * 1024 * 1024}   // 1GB
+	big := models.NZBResult{Title: "Movie", SizeBytes: 10 * 1024 * 1024 * 1024}  // 10GB
+	small := models.NZBResult{Title: "Movie", SizeBytes: 1 * 1024 * 1024 * 1024} // 1GB
 
 	sBig, _ := ScoreResult(big, ctx)
 	sSmall, _ := ScoreResult(small, ctx)
@@ -225,8 +225,8 @@ func TestScoreResult_WeightedNonPreferredTerms(t *testing.T) {
 		NonPreferredTerms: filter.CompileTerms([]string{"CAM=3", "HDTS"}),
 	}
 
-	cam := models.NZBResult{Title: "Movie.2024.CAM"} // weight 3
-	hdts := models.NZBResult{Title: "Movie.2024.HDTS"} // weight 1
+	cam := models.NZBResult{Title: "Movie.2024.CAM"}      // weight 3
+	hdts := models.NZBResult{Title: "Movie.2024.HDTS"}    // weight 1
 	clean := models.NZBResult{Title: "Movie.2024.BluRay"} // weight 0
 
 	sCam, _ := ScoreResult(cam, ctx)
@@ -279,5 +279,37 @@ func TestScoreResult_BackwardCompat_NoWeights(t *testing.T) {
 
 	if scoreWith <= scoreWithout {
 		t.Fatalf("expected preferred term match (%d) > no match (%d)", scoreWith, scoreWithout)
+	}
+}
+
+func TestScoreResult_DownloadPreferredTerms(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 0},
+		},
+		DownloadPreferredTerms: filter.CompileTerms([]string{"season pack=3", "complete"}),
+		UseDownloadRanking:     true,
+	}
+
+	match := models.NZBResult{Title: "Show.S01.1080p.Season.Pack.Complete"}
+	plain := models.NZBResult{Title: "Show.S01E01.2160p"}
+
+	scoreMatch, breakdownMatch := ScoreResult(match, ctx)
+	scorePlain, _ := ScoreResult(plain, ctx)
+
+	if scoreMatch <= scorePlain {
+		t.Fatalf("expected download preferred match (%d) > plain result (%d)", scoreMatch, scorePlain)
+	}
+	found := false
+	for _, item := range breakdownMatch {
+		if item.Criterion == "Download Preferred Terms" {
+			found = true
+			if item.Points <= 0 {
+				t.Fatalf("expected positive download preferred term score, got %d", item.Points)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected download preferred terms breakdown item")
 	}
 }

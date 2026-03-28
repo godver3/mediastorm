@@ -126,13 +126,14 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			RewindOnPlaybackStart:     g.Playback.RewindOnPlaybackStart,
 		},
 		Filtering: models.FilterSettings{
-			MaxSizeMovieGB:    models.FloatPtr(g.Filtering.MaxSizeMovieGB),
-			MaxSizeEpisodeGB:  models.FloatPtr(g.Filtering.MaxSizeEpisodeGB),
-			MaxResolution:     g.Filtering.MaxResolution,
-			HDRDVPolicy:       models.HDRDVPolicy(g.Filtering.HDRDVPolicy),
-			FilterOutTerms:    g.Filtering.FilterOutTerms,
-			PreferredTerms:    g.Filtering.PreferredTerms,
-			NonPreferredTerms: g.Filtering.NonPreferredTerms,
+			MaxSizeMovieGB:         models.FloatPtr(g.Filtering.MaxSizeMovieGB),
+			MaxSizeEpisodeGB:       models.FloatPtr(g.Filtering.MaxSizeEpisodeGB),
+			MaxResolution:          g.Filtering.MaxResolution,
+			HDRDVPolicy:            models.HDRDVPolicy(g.Filtering.HDRDVPolicy),
+			FilterOutTerms:         g.Filtering.FilterOutTerms,
+			PreferredTerms:         g.Filtering.PreferredTerms,
+			NonPreferredTerms:      g.Filtering.NonPreferredTerms,
+			DownloadPreferredTerms: g.Filtering.DownloadPreferredTerms,
 		},
 		AnimeFiltering: models.AnimeFilteringSettings{
 			AnimeLanguageEnabled:   models.BoolPtr(g.AnimeFiltering.AnimeLanguageEnabled),
@@ -225,6 +226,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Filtering.NonPreferredTerms == nil {
 		eff.Filtering.NonPreferredTerms = g.Filtering.NonPreferredTerms
+	}
+	if eff.Filtering.DownloadPreferredTerms == nil {
+		eff.Filtering.DownloadPreferredTerms = g.Filtering.DownloadPreferredTerms
 	}
 	if eff.Display.BypassFilteringForAIOStreamsOnly == nil {
 		eff.Display.BypassFilteringForAIOStreamsOnly = models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly)
@@ -352,6 +356,10 @@ func stripFiltering(f *models.FilterSettings, g config.FilterSettings) bool {
 		f.NonPreferredTerms = nil
 		changed = true
 	}
+	if f.DownloadPreferredTerms != nil && stringSliceEqualUnordered(f.DownloadPreferredTerms, g.DownloadPreferredTerms) {
+		f.DownloadPreferredTerms = nil
+		changed = true
+	}
 	return changed
 }
 
@@ -458,6 +466,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.NonPreferredTerms != nil && stringSliceEqualUnordered(*cs.NonPreferredTerms, eff.Filtering.NonPreferredTerms) {
 		cs.NonPreferredTerms = nil
+		changed = true
+	}
+	if cs.DownloadPreferredTerms != nil && stringSliceEqualUnordered(*cs.DownloadPreferredTerms, eff.Filtering.DownloadPreferredTerms) {
+		cs.DownloadPreferredTerms = nil
 		changed = true
 	}
 	if cs.BypassFilteringForAIOStreamsOnly != nil && eff.Display.BypassFilteringForAIOStreamsOnly != nil && *cs.BypassFilteringForAIOStreamsOnly == *eff.Display.BypassFilteringForAIOStreamsOnly {

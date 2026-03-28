@@ -382,15 +382,16 @@ const (
 
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
-	MaxSizeMovieGB    float64                  `json:"maxSizeMovieGb"`
-	MaxSizeEpisodeGB  float64                  `json:"maxSizeEpisodeGb"`
-	MaxResolution     string                   `json:"maxResolution"`              // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
-	HDRDVPolicy       HDRDVPolicy              `json:"hdrDvPolicy"`                // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
-	FilterOutTerms    []string                 `json:"filterOutTerms"`             // Terms to filter out from results (case-insensitive match in title)
-	PreferredTerms    []string                 `json:"preferredTerms"`             // Terms to prioritize in results (case-insensitive match in title)
-	NonPreferredTerms []string                 `json:"nonPreferredTerms"`          // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
-	PreferredScraper  string                   `json:"preferredScraper,omitempty"` // Name of the preferred torrent scraper (empty = none)
-	ServicePriority   StreamingServicePriority `json:"servicePriority"`            // Priority for service type in search results
+	MaxSizeMovieGB         float64                  `json:"maxSizeMovieGb"`
+	MaxSizeEpisodeGB       float64                  `json:"maxSizeEpisodeGb"`
+	MaxResolution          string                   `json:"maxResolution"`                    // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
+	HDRDVPolicy            HDRDVPolicy              `json:"hdrDvPolicy"`                      // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	FilterOutTerms         []string                 `json:"filterOutTerms"`                   // Terms to filter out from results (case-insensitive match in title)
+	PreferredTerms         []string                 `json:"preferredTerms"`                   // Terms to prioritize in results (case-insensitive match in title)
+	NonPreferredTerms      []string                 `json:"nonPreferredTerms"`                // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)
+	DownloadPreferredTerms []string                 `json:"downloadPreferredTerms,omitempty"` // Terms to strongly prioritize only for download/prequeue selection
+	PreferredScraper       string                   `json:"preferredScraper,omitempty"`       // Name of the preferred torrent scraper (empty = none)
+	ServicePriority        StreamingServicePriority `json:"servicePriority"`                  // Priority for service type in search results
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.

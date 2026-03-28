@@ -333,9 +333,10 @@ var SettingsSchema = map[string]interface{}{
 				},
 				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
 			},
-			"filterOutTerms":    map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
-			"preferredTerms":    map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
-			"nonPreferredTerms": map[string]interface{}{"type": "weighted-tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results. Each term has a weight (1-10) that controls how strongly it penalizes ranking. Higher weights push results lower. Wrap in /slashes/ for regex."},
+			"filterOutTerms":         map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
+			"preferredTerms":         map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
+			"nonPreferredTerms":      map[string]interface{}{"type": "weighted-tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results. Each term has a weight (1-10) that controls how strongly it penalizes ranking. Higher weights push results lower. Wrap in /slashes/ for regex."},
+			"downloadPreferredTerms": map[string]interface{}{"type": "weighted-tags", "label": "Download Preferred Terms", "description": "Terms to strongly prioritize only during download actions. They do not affect normal interactive search or playback prequeue ranking. Wrap in /slashes/ for regex."},
 			"preferredScraper": map[string]interface{}{
 				"type":        "select",
 				"label":       "Preferred Scraper",

@@ -95,6 +95,25 @@ func TestIndexerHandler_Search(t *testing.T) {
 	}
 }
 
+func TestIndexerHandler_SearchDownloadRanking(t *testing.T) {
+	fake := &fakeIndexerService{
+		results: []models.NZBResult{{Title: "The Expanse", Indexer: "nzbPlanet", SizeBytes: 1234}},
+	}
+	handler := NewIndexerHandler(fake, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=The+Expanse&downloadRanking=true", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if !fake.lastOpts.UseDownloadRanking {
+		t.Fatal("expected UseDownloadRanking=true to be forwarded to search service")
+	}
+}
+
 func TestIndexerHandler_SearchDefaultLimit(t *testing.T) {
 	fake := &fakeIndexerService{results: []models.NZBResult{}}
 	handler := NewIndexerHandler(fake, false)
@@ -205,6 +224,27 @@ func TestIndexerHandler_SearchTest(t *testing.T) {
 	}
 	if payload[0].Title != "The Expanse S01E01" {
 		t.Fatalf("expected title 'The Expanse S01E01', got %q", payload[0].Title)
+	}
+}
+
+func TestIndexerHandler_SearchTestDownloadRanking(t *testing.T) {
+	fake := &fakeIndexerService{
+		results: []models.NZBResult{
+			{Title: "The Expanse S01E01", Indexer: "nzbPlanet", SizeBytes: 1234},
+		},
+	}
+	handler := NewIndexerHandler(fake, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search-test?q=The+Expanse+S01E01&mediaType=series&downloadRanking=true", nil)
+	rec := httptest.NewRecorder()
+
+	handler.SearchTest(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if !fake.lastOpts.UseDownloadRanking {
+		t.Fatal("expected UseDownloadRanking=true to be forwarded to indexer service")
 	}
 }
 
