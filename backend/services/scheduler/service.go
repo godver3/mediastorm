@@ -75,6 +75,11 @@ type SyncResult struct {
 	Message  string // Optional message for display
 }
 
+const (
+	traktPlaybackStopThreshold    = 80.0
+	traktPlaybackWatchedThreshold = 90.0
+)
+
 // NewService creates a new scheduler service
 func NewService(
 	configManager *config.Manager,
@@ -1887,9 +1892,27 @@ func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult
 
 	switch syncDirection {
 	case "trakt_to_local":
-		return s.syncTraktHistoryToLocal(task, traktAccount, profileID, dryRun)
+		result, err := s.syncTraktHistoryToLocal(task, traktAccount, profileID, dryRun)
+		if err != nil {
+			return result, err
+		}
+		if !dryRun {
+			if err := s.syncPlaybackFromTrakt(traktAccount, profileID, nil); err != nil {
+				log.Printf("[scheduler] Warning: sync playback from Trakt failed: %v", err)
+			}
+		}
+		return result, nil
 	case "local_to_trakt":
-		return s.syncLocalHistoryToTrakt(task, traktAccount, profileID, dryRun)
+		result, err := s.syncLocalHistoryToTrakt(task, traktAccount, profileID, dryRun)
+		if err != nil {
+			return result, err
+		}
+		if !dryRun {
+			if _, err := s.syncPlaybackToTrakt(traktAccount, profileID); err != nil {
+				log.Printf("[scheduler] Warning: sync playback to Trakt failed: %v", err)
+			}
+		}
+		return result, nil
 	case "bidirectional":
 		return s.syncHistoryBidirectional(task, traktAccount, profileID, dryRun)
 	default:
@@ -2207,7 +2230,7 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 		return toTraktResult, fmt.Errorf("local to trakt: %w", err)
 	}
 
-	// Sync partial playback positions (non-fatal errors).
+	// Sync playback positions in both directions for bidirectional tasks too.
 	// Push first, then pull — passing exported keys so the pull skips items
 	// we just pushed (their Trakt paused_at is artificially fresh).
 	if !dryRun {
@@ -2229,9 +2252,10 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 	return combined, nil
 }
 
-// syncPlaybackToTrakt exports partial playback progress (1-80%) to Trakt via scrobble/pause.
-// Trakt requires scrobble/stop for progress above ~80%, so we cap at 80% here.
-// Items at 90%+ are already handled by the existing watch history sync.
+// syncPlaybackToTrakt exports playback progress to Trakt.
+// Partial progress below the watched threshold remains incomplete locally.
+// Trakt requires scrobble/stop for higher in-progress percentages, so:
+// 1-79% uses pause, 80-89% uses stop, and 90%+ becomes watched history.
 // Returns the set of exported item keys (mediaType:itemID) so the caller can
 // exclude them from a subsequent pull to avoid the push→pull timestamp round-trip.
 func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profileID string) (map[string]bool, error) {
@@ -2247,16 +2271,55 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 
 	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
 	accessToken := traktAccount.AccessToken
+	var moviesToHistory []trakt.SyncMovie
+	type playbackShowKey struct {
+		tvdbID int
+		tmdbID int
+		imdbID string
+	}
+	showSeasonsToHistory := make(map[playbackShowKey]map[int][]trakt.SyncEpisode)
+	showIDsToHistory := make(map[playbackShowKey]trakt.SyncIDs)
 
 	for _, item := range items {
-		// Only sync items with meaningful partial progress
-		// Trakt requires scrobble/stop above ~80%, so cap at 80% for pause-based sync
-		if item.PercentWatched <= 1 || item.PercentWatched >= 80 {
+		if item.PercentWatched <= 1 {
 			continue
 		}
 
 		// Need valid external IDs to match on Trakt
 		if len(item.ExternalIDs) == 0 {
+			continue
+		}
+
+		if playbackPercentCountsAsWatched(item.PercentWatched) {
+			switch item.MediaType {
+			case "movie":
+				moviesToHistory = append(moviesToHistory, trakt.SyncMovie{
+					WatchedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+					IDs:       externalIDsToSyncIDs(item.ExternalIDs),
+				})
+			case "episode":
+				ids := seriesIDToSyncIDs(item.SeriesID, item.ExternalIDs)
+				if ids.TVDB == 0 && ids.TMDB == 0 && ids.IMDB == "" {
+					continue
+				}
+				if item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+					continue
+				}
+				sk := playbackShowKey{tvdbID: ids.TVDB, tmdbID: ids.TMDB, imdbID: ids.IMDB}
+				if showSeasonsToHistory[sk] == nil {
+					showSeasonsToHistory[sk] = make(map[int][]trakt.SyncEpisode)
+				}
+				showSeasonsToHistory[sk][item.SeasonNumber] = append(showSeasonsToHistory[sk][item.SeasonNumber], trakt.SyncEpisode{
+					Number:    item.EpisodeNumber,
+					WatchedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+				})
+				showIDsToHistory[sk] = ids
+			}
+			exported[strings.ToLower(item.MediaType)+":"+strings.ToLower(item.ItemID)] = true
+			continue
+		}
+
+		if !playbackPercentCountsAsProgress(item.PercentWatched) {
 			continue
 		}
 
@@ -2284,19 +2347,52 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 			continue
 		}
 
-		// ScrobblePause saves the position on Trakt without triggering "now watching"
-		if _, err := s.traktClient.ScrobblePause(accessToken, req); err != nil {
-			if errors.Is(err, trakt.ErrNotFound) {
+		var syncErr error
+		if playbackPercentNeedsStop(item.PercentWatched) {
+			_, syncErr = s.traktClient.ScrobbleStop(accessToken, req)
+		} else {
+			// ScrobblePause saves the position on Trakt without triggering "now watching"
+			_, syncErr = s.traktClient.ScrobblePause(accessToken, req)
+		}
+		if syncErr != nil {
+			if errors.Is(syncErr, trakt.ErrNotFound) {
 				continue
 			}
-			log.Printf("[scheduler] Failed to sync playback for %s %s: %v", item.MediaType, item.ItemID, err)
+			log.Printf("[scheduler] Failed to sync playback for %s %s: %v", item.MediaType, item.ItemID, syncErr)
 			continue
 		}
 		exported[strings.ToLower(item.MediaType)+":"+strings.ToLower(item.ItemID)] = true
 	}
 
+	if len(moviesToHistory) > 0 || len(showSeasonsToHistory) > 0 {
+		var shows []trakt.SyncShow
+		for sk, seasonEpisodes := range showSeasonsToHistory {
+			var seasons []trakt.SyncSeason
+			for seasonNumber, episodes := range seasonEpisodes {
+				if len(episodes) == 0 {
+					continue
+				}
+				seasons = append(seasons, trakt.SyncSeason{
+					Number:   seasonNumber,
+					Episodes: episodes,
+				})
+			}
+			shows = append(shows, trakt.SyncShow{
+				IDs:     showIDsToHistory[sk],
+				Seasons: seasons,
+			})
+		}
+		syncReq := trakt.SyncHistoryRequest{
+			Movies: moviesToHistory,
+			Shows:  shows,
+		}
+		if _, err := s.traktClient.AddToHistory(traktAccount.AccessToken, syncReq); err != nil {
+			return exported, fmt.Errorf("add high-progress playback to trakt history: %w", err)
+		}
+	}
+
 	if len(exported) > 0 {
-		log.Printf("[scheduler] Exported %d partial playback positions to Trakt", len(exported))
+		log.Printf("[scheduler] Exported %d playback positions to Trakt", len(exported))
 	}
 	return exported, nil
 }
@@ -2327,6 +2423,7 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 	}
 
 	imported := 0
+	watchedImported := 0
 
 	for _, mediaType := range []string{"movies", "episodes"} {
 		traktItems, err := s.traktClient.GetPlaybackProgress(accessToken, mediaType)
@@ -2374,6 +2471,19 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				}
 			}
 			if exported {
+				continue
+			}
+
+			if playbackPercentCountsAsWatched(traktItem.Progress) {
+				historyUpdate := s.traktPlaybackItemToHistoryUpdate(traktItem)
+				if historyUpdate == nil {
+					continue
+				}
+				if _, err := s.historyService.ImportWatchHistory(profileID, []models.WatchHistoryUpdate{*historyUpdate}); err != nil {
+					log.Printf("[scheduler] Failed to import Trakt playback as watch history for %s: %v", update.ItemID, err)
+					continue
+				}
+				watchedImported++
 				continue
 			}
 
@@ -2464,6 +2574,9 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 	if imported > 0 {
 		log.Printf("[scheduler] Imported %d playback positions from Trakt", imported)
 	}
+	if watchedImported > 0 {
+		log.Printf("[scheduler] Imported %d Trakt playback items as watched history", watchedImported)
+	}
 	return nil
 }
 
@@ -2502,6 +2615,18 @@ func isNewerWatchState(candidate, current *models.WatchHistoryItem) bool {
 		return !candidate.Watched
 	}
 	return candidate.ID < current.ID
+}
+
+func playbackPercentCountsAsProgress(percent float64) bool {
+	return percent > 1 && percent < traktPlaybackWatchedThreshold
+}
+
+func playbackPercentNeedsStop(percent float64) bool {
+	return percent >= traktPlaybackStopThreshold && percent < traktPlaybackWatchedThreshold
+}
+
+func playbackPercentCountsAsWatched(percent float64) bool {
+	return percent >= traktPlaybackWatchedThreshold
 }
 
 // traktPlaybackItemToUpdate converts a Trakt PlaybackItem to a PlaybackProgressUpdate.
@@ -2558,6 +2683,35 @@ func (s *Service) traktPlaybackItemToUpdate(item trakt.PlaybackItem) *models.Pla
 		update.EpisodeNumber = item.Episode.Number
 	} else {
 		return nil
+	}
+
+	return update
+}
+
+func (s *Service) traktPlaybackItemToHistoryUpdate(item trakt.PlaybackItem) *models.WatchHistoryUpdate {
+	progressUpdate := s.traktPlaybackItemToUpdate(item)
+	if progressUpdate == nil {
+		return nil
+	}
+
+	watched := true
+	update := &models.WatchHistoryUpdate{
+		MediaType:     progressUpdate.MediaType,
+		ItemID:        progressUpdate.ItemID,
+		Watched:       &watched,
+		WatchedAt:     item.PausedAt,
+		ExternalIDs:   progressUpdate.ExternalIDs,
+		SeasonNumber:  progressUpdate.SeasonNumber,
+		EpisodeNumber: progressUpdate.EpisodeNumber,
+		SeriesID:      progressUpdate.SeriesID,
+		SeriesName:    progressUpdate.SeriesName,
+		Year:          progressUpdate.Year,
+	}
+
+	if progressUpdate.MediaType == "episode" {
+		update.Name = progressUpdate.EpisodeName
+	} else {
+		update.Name = progressUpdate.MovieName
 	}
 
 	return update
