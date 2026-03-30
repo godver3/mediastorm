@@ -92,3 +92,41 @@ func TestUsenetHandlerServiceError(t *testing.T) {
 		t.Fatalf("expected status 502, got %d", rec.Code)
 	}
 }
+
+func TestUsenetHandlerProbeForTracksNoProber(t *testing.T) {
+	// When probeForTracks=true but no prober is configured, the response should
+	// indicate tracksProbed=true and include a trackProbeError.
+	svc := &fakeUsenetService{
+		response: &models.NZBHealthCheck{Status: "healthy", Healthy: true, CheckedSegments: 3, TotalSegments: 3},
+	}
+	handler := NewUsenetHandler(svc) // no ConfigureTrackProbing called
+
+	payload := map[string]any{
+		"result":         models.NZBResult{DownloadURL: "https://example.com/file.nzb"},
+		"probeForTracks": true,
+	}
+	buf, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/usenet/health", bytes.NewReader(buf))
+	rec := httptest.NewRecorder()
+
+	handler.CheckHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var resp models.NZBHealthCheck
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.Healthy {
+		t.Fatalf("expected healthy response")
+	}
+	if !resp.TracksProbed {
+		t.Fatalf("expected tracksProbed=true")
+	}
+	if resp.TrackProbeError == "" {
+		t.Fatalf("expected trackProbeError to be set when prober is not configured")
+	}
+}

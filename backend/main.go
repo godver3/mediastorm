@@ -581,6 +581,19 @@ func main() {
 		videoHandler.ConfigureLocalWebDAVAccess(localBaseURL, settings.WebDAV.Prefix, settings.WebDAV.Username, settings.WebDAV.Password)
 	}
 
+	// Enable usenet track probing when WebDAV and ffprobe are both configured.
+	if settings.WebDAV.Enabled && strings.TrimSpace(settings.Transmux.FFprobePath) != "" {
+		localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Server.Port)
+		usenetHandler.ConfigureTrackProbing(
+			nzbSystem.ImporterService(),
+			settings.Transmux.FFprobePath,
+			localBaseURL,
+			settings.WebDAV.Prefix,
+			settings.WebDAV.Username,
+			settings.WebDAV.Password,
+		)
+	}
+
 	// Wire up prequeue handler with video prober, HLS creator, metadata prober, user settings, and config
 	// This allows prequeue to detect Dolby Vision/HDR10, create HLS sessions, and select tracks with proper defaults
 	if videoHandler != nil {
