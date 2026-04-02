@@ -1299,7 +1299,7 @@
     }
 
     // Map filtering field paths to client settings keys
-    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
     const clientDisplayFields = ['bypassFilteringForAioStreamsOnly'];
     const clientPlaybackFields = ['maxResultsPerResolution'];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
@@ -3118,6 +3118,7 @@
                 if (aa.length !== bb.length) return false;
                 return aa.every((v, i) => v === bb[i]);
             };
+            if (!arrEq(pf.requiredTerms, filtering.requiredTerms)) continue;
             if (!arrEq(pf.filterOutTerms, filtering.filterOutTerms)) continue;
             if (!arrEq(pf.preferredTerms, filtering.preferredTerms)) continue;
             if (!arrEq(pf.nonPreferredTerms, filtering.nonPreferredTerms)) continue;
@@ -3190,6 +3191,7 @@
             target.filtering.maxSizeEpisodeGb = preset.filtering.maxSizeEpisodeGb;
             target.filtering.maxResolution = preset.filtering.maxResolution;
             target.filtering.hdrDvPolicy = preset.filtering.hdrDvPolicy;
+            target.filtering.requiredTerms = preset.filtering.requiredTerms || [];
             target.filtering.filterOutTerms = preset.filtering.filterOutTerms || [];
             target.filtering.preferredTerms = preset.filtering.preferredTerms || [];
             target.filtering.nonPreferredTerms = preset.filtering.nonPreferredTerms || [];
@@ -3232,6 +3234,7 @@
         const criteria = [...(ranking.criteria || currentSettings.ranking?.criteria || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
         const enabledCriteria = criteria.filter(c => c.enabled);
         const preferredScraper = filtering.preferredScraper || currentSettings.filtering?.preferredScraper || '';
+        const requiredTerms = filtering.requiredTerms || [];
         const filterOutTerms = filtering.filterOutTerms || [];
         const preferredTerms = filtering.preferredTerms || [];
         const nonPreferredTerms = filtering.nonPreferredTerms || [];
@@ -3246,6 +3249,7 @@
         if (enabledCriteria.length > 0) {
             summaryItems.push('<strong>Ranking priority:</strong> ' + criteriaNames.join(' &rarr; '));
         }
+        if (requiredTerms.length > 0) summaryItems.push('<strong>Required:</strong> ' + requiredTerms.join(', '));
         if (filterOutTerms.length > 0) summaryItems.push('<strong>Filtered out:</strong> ' + filterOutTerms.join(', '));
         if (preferredTerms.length > 0) summaryItems.push('<strong>Preferred:</strong> ' + preferredTerms.map(t => { const p = parseWeightedTerm(t); return p.weight > 1 ? p.term + ' (x' + p.weight + ')' : p.term; }).join(', '));
         if (nonPreferredTerms.length > 0) summaryItems.push('<strong>Non-preferred:</strong> ' + nonPreferredTerms.map(t => { const p = parseWeightedTerm(t); return p.weight > 1 ? p.term + ' (x' + p.weight + ')' : p.term; }).join(', '));
@@ -3274,7 +3278,7 @@
                 { title: 'Dune.Part.Two.2024.720p.WEB-DL.x264', resolution: 720, size: 2.1, scraper: 'Torrentio', preferred: [], nonPreferred: [], service: 'debrid' },
                 { title: 'Dune.Part.Two.2024.CAM.x264', resolution: 720, size: 1.8, scraper: 'Jackett', preferred: [], nonPreferred: ['CAM'], service: 'debrid' },
             ],
-            filtering, enabledCriteria, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
+            filtering, enabledCriteria, requiredTerms, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
         ));
 
         // Example 2: Mixed scrapers
@@ -3289,7 +3293,7 @@
                 { title: 'The.Last.of.Us.S02E01.1080p.HDTS.x264', resolution: 1080, size: 1.9, scraper: 'Zilean', preferred: [], nonPreferred: ['HDTS'], service: 'debrid' },
                 { title: 'The.Last.of.Us.S02E01.720p.WEB-DL.x264', resolution: 720, size: 1.1, scraper: 'Jackett', preferred: [], nonPreferred: [], service: 'debrid' },
             ],
-            filtering, enabledCriteria, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
+            filtering, enabledCriteria, requiredTerms, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
         ));
 
         // Example 3: Size filtering + mixed quality
@@ -3304,7 +3308,7 @@
                 { title: 'Oppenheimer.2023.720p.WEB-DL.x264', resolution: 720, size: 2.2, scraper: 'Zilean', preferred: [], nonPreferred: [], service: 'debrid' },
                 { title: 'Oppenheimer.2023.HDCAM.x264', resolution: 720, size: 1.5, scraper: 'Jackett', preferred: [], nonPreferred: ['HDCAM'], service: 'debrid' },
             ],
-            filtering, enabledCriteria, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
+            filtering, enabledCriteria, requiredTerms, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy
         ));
 
         return summaryHtml + examples.join('');
@@ -3332,7 +3336,7 @@
         }
         return matched;
     }
-    function generateExample(title, description, results, filtering, enabledCriteria, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy) {
+    function generateExample(title, description, results, filtering, enabledCriteria, requiredTerms, preferredTerms, nonPreferredTerms, filterOutTerms, preferredScraper, maxSizeMovie, maxResolution, hdrDvPolicy) {
         // Step 1: Apply filtering
         const resolutionValues = {'2160p': 2160, '1080p': 1080, '720p': 720, '480p': 480};
         const maxRes = resolutionValues[maxResolution] || 99999;
@@ -3341,8 +3345,11 @@
         const removedResults = [];
         for (const r of results) {
             let reason = '';
+            if (requiredTerms.length > 0 && !requiredTerms.some(t => r.title.toLowerCase().includes(t.toLowerCase()))) {
+                reason = 'Missing required term';
+            }
             // Filter out terms
-            if (filterOutTerms.some(t => r.title.toLowerCase().includes(t.toLowerCase()))) {
+            else if (filterOutTerms.some(t => r.title.toLowerCase().includes(t.toLowerCase()))) {
                 reason = 'Matches filter-out term';
             }
             // Max size

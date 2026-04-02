@@ -324,6 +324,7 @@ type FilterSettings struct {
 	MaxSizeEpisodeGB       *float64    `json:"maxSizeEpisodeGb,omitempty"`
 	MaxResolution          string      `json:"maxResolution,omitempty"`          // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	HDRDVPolicy            HDRDVPolicy `json:"hdrDvPolicy,omitempty"`            // HDR/DV inclusion policy: "none" (no exclusion), "hdr" (include HDR + DV 7/8), "hdr_dv" (include all HDR/DV)
+	RequiredTerms          []string    `json:"requiredTerms,omitempty"`          // Terms where at least one must match for a result to be kept
 	FilterOutTerms         []string    `json:"filterOutTerms,omitempty"`         // Terms to filter out from results (case-insensitive match in title)
 	PreferredTerms         []string    `json:"preferredTerms,omitempty"`         // Terms to prioritize in results (case-insensitive match in title)
 	NonPreferredTerms      []string    `json:"nonPreferredTerms,omitempty"`      // Terms to derank in results (case-insensitive match in title, ranked lower but not removed)

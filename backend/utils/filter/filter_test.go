@@ -94,6 +94,54 @@ func TestResults_NoFiltering(t *testing.T) {
 	}
 }
 
+func TestResults_RequiredTermsAny(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "Test.Movie.2024.1080p.Multi"},
+		{Title: "Test.Movie.2024.1080p.French"},
+		{Title: "Test.Movie.2024.1080p.English"},
+	}
+
+	opts := Options{
+		ExpectedTitle: "Test Movie",
+		ExpectedYear:  2024,
+		IsMovie:       true,
+		RequiredTerms: []string{"Multi", "French"},
+	}
+
+	filtered := Results(results, opts)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 results after required-term filtering, got %d", len(filtered))
+	}
+
+	gotTitles := map[string]bool{}
+	for _, r := range filtered {
+		gotTitles[r.Title] = true
+	}
+	if !gotTitles["Test.Movie.2024.1080p.Multi"] || !gotTitles["Test.Movie.2024.1080p.French"] {
+		t.Fatalf("unexpected required-term matches: %+v", filtered)
+	}
+}
+
+func TestResults_RequiredTermsRegex(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "Test.Movie.2024.1080p.MULTi"},
+		{Title: "Test.Movie.2024.1080p.VOSTFR"},
+		{Title: "Test.Movie.2024.1080p.English"},
+	}
+
+	opts := Options{
+		ExpectedTitle: "Test Movie",
+		ExpectedYear:  2024,
+		IsMovie:       true,
+		RequiredTerms: []string{`/\b(?:Multi|VOSTFR)\b/`},
+	}
+
+	filtered := Results(results, opts)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 regex-required matches, got %d", len(filtered))
+	}
+}
+
 func TestResults_AlternateTitles(t *testing.T) {
 	results := []models.NZBResult{
 		{Title: "La.Casa.de.Papel.S01E01.1080p.NF.WEB-DL.x265"},
@@ -140,8 +188,8 @@ func TestResults_MediaTypeFiltering(t *testing.T) {
 	// Test that TV show results are filtered out when searching for movies
 	t.Run("movie search rejects TV patterns", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},            // Movie pattern - should match
-			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"},          // TV pattern - should be filtered
+			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},             // Movie pattern - should match
+			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"},           // TV pattern - should be filtered
 			{Title: "Trigger.Point.S03E01.Episode.1.1080p.AMZN.WEB-DL"}, // TV pattern - should be filtered
 		}
 
@@ -168,9 +216,9 @@ func TestResults_MediaTypeFiltering(t *testing.T) {
 	// Test that movie results are filtered out when searching for TV shows
 	t.Run("TV search rejects movie patterns", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"},           // TV pattern - should match
-			{Title: "Trigger.Point.S02E05.720p.HDTV.x264"},              // TV pattern - should match
-			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},             // Movie pattern - should be filtered
+			{Title: "Trigger.Point.S01E01.1080p.WEB-DL.x264"}, // TV pattern - should match
+			{Title: "Trigger.Point.S02E05.720p.HDTV.x264"},    // TV pattern - should match
+			{Title: "Trigger.Point.2022.1080p.BluRay.x264"},   // Movie pattern - should be filtered
 		}
 
 		opts := Options{
@@ -437,9 +485,9 @@ func TestResults_AnimeVolumeReleases(t *testing.T) {
 	t.Run("TV search accepts volume releases", func(t *testing.T) {
 		// Use titles where PTT won't misinterpret numbers as years
 		results := []models.NZBResult{
-			{Title: "Cowboy.Bebop.Vol.01.DVD.Remux"},        // Volume release - should match
-			{Title: "Cowboy.Bebop.Vol.1-6.Complete"},        // Multi-volume - should match
-			{Title: "Cowboy.Bebop.S01E01.1080p.WEB-DL"},     // Standard TV - should match
+			{Title: "Cowboy.Bebop.Vol.01.DVD.Remux"},    // Volume release - should match
+			{Title: "Cowboy.Bebop.Vol.1-6.Complete"},    // Multi-volume - should match
+			{Title: "Cowboy.Bebop.S01E01.1080p.WEB-DL"}, // Standard TV - should match
 		}
 
 		opts := Options{
@@ -461,9 +509,9 @@ func TestResults_AnimeVolumeReleases(t *testing.T) {
 
 	t.Run("movie search rejects volume releases", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Anime.Movie.2020.1080p.BluRay.x264"},        // Movie pattern - should match
-			{Title: "Anime.Movie.Vol.01.DVD.Remux"},              // Volume release - should be rejected
-			{Title: "Anime.Movie.S01E01.1080p.WEB-DL"},           // TV pattern - should be rejected
+			{Title: "Anime.Movie.2020.1080p.BluRay.x264"}, // Movie pattern - should match
+			{Title: "Anime.Movie.Vol.01.DVD.Remux"},       // Volume release - should be rejected
+			{Title: "Anime.Movie.S01E01.1080p.WEB-DL"},    // TV pattern - should be rejected
 		}
 
 		opts := Options{
@@ -603,9 +651,9 @@ func TestResults_RegressionMovieVsTVPatterns(t *testing.T) {
 
 	t.Run("movie search rejects all TV patterns including volumes", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Test.Movie.2020.1080p.BluRay.x264"},     // Movie - should match
-			{Title: "Test.Movie.S01E01.1080p.WEB-DL"},        // Season/episode - reject
-			{Title: "Test.Movie.Vol.01.DVD.Remux"},           // Volume - reject
+			{Title: "Test.Movie.2020.1080p.BluRay.x264"}, // Movie - should match
+			{Title: "Test.Movie.S01E01.1080p.WEB-DL"},    // Season/episode - reject
+			{Title: "Test.Movie.Vol.01.DVD.Remux"},       // Volume - reject
 		}
 
 		opts := Options{
@@ -632,10 +680,10 @@ func TestResults_RegressionMovieVsTVPatterns(t *testing.T) {
 	t.Run("TV search still requires some TV indicator without resolver", func(t *testing.T) {
 		// Without an EpisodeResolver, we should still require some TV indicator
 		results := []models.NZBResult{
-			{Title: "Show.Name.S01E01.1080p.WEB-DL"},        // Has S##E## - pass
-			{Title: "Show.Name.Vol.01.DVD"},                 // Has volume - pass
-			{Title: "Show.Name.COMPLETE.1080p"},             // Has complete flag - pass
-			{Title: "Show.Name.2020.1080p.BluRay"},          // Looks like movie - reject
+			{Title: "Show.Name.S01E01.1080p.WEB-DL"}, // Has S##E## - pass
+			{Title: "Show.Name.Vol.01.DVD"},          // Has volume - pass
+			{Title: "Show.Name.COMPLETE.1080p"},      // Has complete flag - pass
+			{Title: "Show.Name.2020.1080p.BluRay"},   // Looks like movie - reject
 		}
 
 		opts := Options{
@@ -757,10 +805,10 @@ func TestResults_SeriesYearMismatch(t *testing.T) {
 	// This prevents e.g. Scrubs (2001) season packs from matching a search for Scrubs (2026)
 	t.Run("rejects old series results when year is set", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Scrubs.S01E01.2026.1080p.WEB-DL.x264"},              // Correct year - should match
-			{Title: "Scrubs.2001.S01.COMPLETE.1080p.BluRay.x265-GROUP"},   // Wrong year (2001) - should be rejected
-			{Title: "Scrubs.2001.S01-S09.COMPLETE.1080p.BluRay.x265"},     // Wrong year (2001) - should be rejected
-			{Title: "Scrubs.S01E01.1080p.WEB-DL.x264"},                   // No year - should be kept (leniency)
+			{Title: "Scrubs.S01E01.2026.1080p.WEB-DL.x264"},             // Correct year - should match
+			{Title: "Scrubs.2001.S01.COMPLETE.1080p.BluRay.x265-GROUP"}, // Wrong year (2001) - should be rejected
+			{Title: "Scrubs.2001.S01-S09.COMPLETE.1080p.BluRay.x265"},   // Wrong year (2001) - should be rejected
+			{Title: "Scrubs.S01E01.1080p.WEB-DL.x264"},                  // No year - should be kept (leniency)
 		}
 
 		opts := Options{
@@ -789,9 +837,9 @@ func TestResults_SeriesYearMismatch(t *testing.T) {
 
 	t.Run("year within tolerance passes for series", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Show.Name.2025.S01E01.1080p.WEB-DL"},  // Within ±1 year - should match
-			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"},  // Exact year - should match
-			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"},  // Too far off - should be rejected
+			{Title: "Show.Name.2025.S01E01.1080p.WEB-DL"}, // Within ±1 year - should match
+			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"}, // Exact year - should match
+			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"}, // Too far off - should be rejected
 		}
 
 		opts := Options{
@@ -816,11 +864,11 @@ func TestResults_EpisodeAirYear(t *testing.T) {
 	// the series premiere year is far off. E.g., One Piece (2023) S02E01 aired in 2026.
 	t.Run("accepts results matching episode air year", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "ONE.PIECE.2023.S02E01.1080p.WEB-DL.x264"},             // Matches series year - should pass
-			{Title: "ONE.PIECE.S02E01.2026.1080p.WEB-DL.x264"},             // Matches episode air year - should pass
-			{Title: "One.Piece.S02.2026.1080p.WEBRip.x265"},                // Matches episode air year - should pass
-			{Title: "ONE.PIECE.S02E01.2020.1080p.WEB-DL.x264"},             // Matches neither - should be rejected
-			{Title: "ONE.PIECE.S02E01.1080p.WEB-DL.x264"},                  // No year - should be kept (leniency)
+			{Title: "ONE.PIECE.2023.S02E01.1080p.WEB-DL.x264"}, // Matches series year - should pass
+			{Title: "ONE.PIECE.S02E01.2026.1080p.WEB-DL.x264"}, // Matches episode air year - should pass
+			{Title: "One.Piece.S02.2026.1080p.WEBRip.x265"},    // Matches episode air year - should pass
+			{Title: "ONE.PIECE.S02E01.2020.1080p.WEB-DL.x264"}, // Matches neither - should be rejected
+			{Title: "ONE.PIECE.S02E01.1080p.WEB-DL.x264"},      // No year - should be kept (leniency)
 		}
 
 		opts := Options{
@@ -849,8 +897,8 @@ func TestResults_EpisodeAirYear(t *testing.T) {
 
 	t.Run("no episode air year falls back to standard check", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"},  // Matches series year
-			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"},  // Too far from series year, no episode air year set
+			{Title: "Show.Name.2023.S01E01.1080p.WEB-DL"}, // Matches series year
+			{Title: "Show.Name.2026.S01E01.1080p.WEB-DL"}, // Too far from series year, no episode air year set
 		}
 
 		opts := Options{
@@ -912,11 +960,11 @@ func TestResults_SpinoffTitleRejection(t *testing.T) {
 	// and should be rejected by title similarity filtering
 	t.Run("After the First 48 rejected when searching The First 48", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "The.First.48.S10E01.WS.DSR.XviD-CRiMSON"},                  // Correct show - should match
-			{Title: "After.the.First.48.S10E01.1080p.HEVC.x265-MeGusta"},         // Spinoff - should be rejected
-			{Title: "After.the.First.48.S10E01.1080p.WEB.h264-EDITH"},            // Spinoff - should be rejected
-			{Title: "After.the.First.48.S10E01.720p.HEVC.x265-MeGusta"},          // Spinoff - should be rejected
-			{Title: "Art.in.the.Twenty-First.Century.S10E01.480p.x264-mSD"},      // Different show - should be rejected
+			{Title: "The.First.48.S10E01.WS.DSR.XviD-CRiMSON"},              // Correct show - should match
+			{Title: "After.the.First.48.S10E01.1080p.HEVC.x265-MeGusta"},    // Spinoff - should be rejected
+			{Title: "After.the.First.48.S10E01.1080p.WEB.h264-EDITH"},       // Spinoff - should be rejected
+			{Title: "After.the.First.48.S10E01.720p.HEVC.x265-MeGusta"},     // Spinoff - should be rejected
+			{Title: "Art.in.the.Twenty-First.Century.S10E01.480p.x264-mSD"}, // Different show - should be rejected
 		}
 
 		opts := Options{
@@ -989,10 +1037,10 @@ func TestResults_ForeignLanguageTitles(t *testing.T) {
 
 	t.Run("multiple language alternates", func(t *testing.T) {
 		results := []models.NZBResult{
-			{Title: "Formula.1.:.Pilotes.de.leur.destin.2019.S08E04.1080p"},       // French
-			{Title: "Formula.1.Zivot.u.sestoj.brzini.S08E04.1080p"},               // Croatian-ish
-			{Title: "Formula.1.Drive.to.Survive.S08E04.1080p"},                    // English
-			{Title: "Completely.Different.Show.S01E01.1080p"},                      // Unrelated
+			{Title: "Formula.1.:.Pilotes.de.leur.destin.2019.S08E04.1080p"}, // French
+			{Title: "Formula.1.Zivot.u.sestoj.brzini.S08E04.1080p"},         // Croatian-ish
+			{Title: "Formula.1.Drive.to.Survive.S08E04.1080p"},              // English
+			{Title: "Completely.Different.Show.S01E01.1080p"},               // Unrelated
 		}
 
 		opts := Options{

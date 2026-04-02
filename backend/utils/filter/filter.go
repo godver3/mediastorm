@@ -50,7 +50,7 @@ type EpisodeCountResolver interface {
 // SeriesEpisodeResolver is a concrete implementation of EpisodeCountResolver
 // that uses pre-fetched series episode data.
 type SeriesEpisodeResolver struct {
-	TotalEpisodes     int         // Total episodes across all seasons
+	TotalEpisodes       int         // Total episodes across all seasons
 	SeasonEpisodeCounts map[int]int // Map of season number -> episode count
 }
 
@@ -98,9 +98,10 @@ type Options struct {
 	MaxResolution       string      // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	HDRDVPolicy         HDRDVPolicy // HDR/DV inclusion policy
 	AlternateTitles     []string
-	FilterOutTerms      []string               // Terms to filter out from results (case-insensitive match in title)
-	TotalSeriesEpisodes int                    // Deprecated: use EpisodeResolver instead
-	EpisodeResolver     EpisodeCountResolver   // Resolver for accurate episode counts from metadata
+	RequiredTerms       []string             // Terms where at least one must match for a result to be kept
+	FilterOutTerms      []string             // Terms to filter out from results (case-insensitive match in title)
+	TotalSeriesEpisodes int                  // Deprecated: use EpisodeResolver instead
+	EpisodeResolver     EpisodeCountResolver // Resolver for accurate episode counts from metadata
 	// Target episode filtering (for TV shows)
 	TargetSeason          int    // Target season number (e.g., 22 for S22E68)
 	TargetEpisode         int    // Target episode number within season (e.g., 68 for S22E68)
@@ -243,6 +244,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 	}
 
 	detailed := make([]FilteredResult, 0, len(results))
+	compiledRequiredTerms := CompileTerms(opts.RequiredTerms)
 	compiledFilterOutTerms := CompileTerms(opts.FilterOutTerms)
 
 	reject := func(result models.NZBResult, reason string) {
@@ -250,6 +252,13 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 	}
 
 	for i, result := range results {
+		if len(compiledRequiredTerms) > 0 && !MatchesAnyTerm(result.Title, compiledRequiredTerms) {
+			reason := "missing required terms"
+			log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+			reject(result, reason)
+			continue
+		}
+
 		// Check filter out terms first (before parsing)
 		if matchedTerm := MatchedTerm(result.Title, compiledFilterOutTerms); matchedTerm != "" {
 			reason := fmt.Sprintf("matches filter-out term '%s'", matchedTerm)

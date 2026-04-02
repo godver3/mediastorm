@@ -169,6 +169,7 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		MaxSizeEpisodeGB:       models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:          globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:            models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		RequiredTerms:          globalSettings.Filtering.RequiredTerms,
 		FilterOutTerms:         globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:         globalSettings.Filtering.PreferredTerms,
 		NonPreferredTerms:      globalSettings.Filtering.NonPreferredTerms,
@@ -202,6 +203,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if profileFiltering.HDRDVPolicy != "" {
 				filterSettings.HDRDVPolicy = profileFiltering.HDRDVPolicy
+			}
+			if profileFiltering.RequiredTerms != nil {
+				filterSettings.RequiredTerms = profileFiltering.RequiredTerms
 			}
 			if profileFiltering.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = profileFiltering.FilterOutTerms
@@ -249,6 +253,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.HDRDVPolicy != nil {
 				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
+			}
+			if clientSettings.RequiredTerms != nil {
+				filterSettings.RequiredTerms = *clientSettings.RequiredTerms
 			}
 			if clientSettings.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
@@ -1178,6 +1185,7 @@ func (s *Service) buildFilterOptions(opts SearchOptions, filterSettings models.F
 		MaxResolution:    filterSettings.MaxResolution,
 		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
 		AlternateTitles:  alternateTitles,
+		RequiredTerms:    filterSettings.RequiredTerms,
 		FilterOutTerms:   filterSettings.FilterOutTerms,
 		EpisodeResolver:  opts.EpisodeResolver,
 		IsDaily:          opts.IsDaily,
@@ -1740,6 +1748,7 @@ func (s *Service) searchUsenet(ctx context.Context, settings config.Settings, op
 		MaxSizeEpisodeGB: models.FloatPtr(settings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    settings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
+		RequiredTerms:    settings.Filtering.RequiredTerms,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}
 	return s.searchUsenetWithFilter(ctx, settings, opts, baseParsed, alternateTitles, searchQueries, filterSettings)
@@ -1875,6 +1884,7 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 		MaxResolution:    filterSettings.MaxResolution,
 		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
 		AlternateTitles:  alternateTitles,
+		RequiredTerms:    filterSettings.RequiredTerms,
 		FilterOutTerms:   filterSettings.FilterOutTerms,
 		IsDaily:          opts.IsDaily,
 		TargetAirDate:    opts.TargetAirDate,
@@ -1893,6 +1903,7 @@ func (s *Service) applyUsenetFiltering(results []models.NZBResult, settings conf
 		MaxSizeEpisodeGB: models.FloatPtr(settings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:    settings.Filtering.MaxResolution,
 		HDRDVPolicy:      models.HDRDVPolicy(settings.Filtering.HDRDVPolicy),
+		RequiredTerms:    settings.Filtering.RequiredTerms,
 		FilterOutTerms:   settings.Filtering.FilterOutTerms,
 	}
 	return s.applyUsenetFilteringWithSettings(results, opts, baseParsed, queryParsed, alternateTitles, filterSettings)

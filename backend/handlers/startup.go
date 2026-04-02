@@ -455,6 +455,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 			MaxResolution:     globalSettings.Filtering.MaxResolution,
 			HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+			RequiredTerms:     globalSettings.Filtering.RequiredTerms,
 			FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:    globalSettings.Filtering.PreferredTerms,
 			NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,

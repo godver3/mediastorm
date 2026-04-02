@@ -333,6 +333,7 @@ var SettingsSchema = map[string]interface{}{
 				},
 				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
 			},
+			"requiredTerms":          map[string]interface{}{"type": "tags", "label": "Required Terms", "description": "At least one of these terms must match for a result to be kept. Wrap in /slashes/ for regex, e.g. /\\b(?:Multi|French)\\b/."},
 			"filterOutTerms":         map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
 			"preferredTerms":         map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
 			"nonPreferredTerms":      map[string]interface{}{"type": "weighted-tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results. Each term has a weight (1-10) that controls how strongly it penalizes ranking. Higher weights push results lower. Wrap in /slashes/ for regex."},
@@ -1249,8 +1250,9 @@ func (h *AdminUIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 // buildStreamsPayload builds the streams JSON payload for both the REST and SSE endpoints.
 func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]byte, error) {
 	// Pause detection thresholds
-	const pauseThreshold = 30 * time.Second // No activity for 30s = paused
-	const hideThreshold = 60 * time.Second  // Paused for 30s beyond pause threshold = hide from dashboard
+	const heartbeatEndedThreshold = 25 * time.Second
+	const transportPauseThreshold = 30 * time.Second
+	const transportHideThreshold = 60 * time.Second
 	now := time.Now()
 
 	// Get allowed profile IDs for this account (for filtering)
@@ -1274,10 +1276,6 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		for _, user := range h.usersService.ListAll() {
 			nameToUserID[strings.ToLower(user.Name)] = user.ID
 		}
-	}
-
-	matchProgress := func(filename, profileID, profileName string) *models.PlaybackProgress {
-		return findProgressByFilename(allProgress, profileID, profileName, filename, nameToUserID)
 	}
 
 	streams := []map[string]interface{}{}
@@ -1305,12 +1303,6 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			if hlsActivity.IsZero() {
 				hlsActivity = session.LastAccess
 			}
-			hlsIdleDuration := now.Sub(hlsActivity)
-			if hlsIdleDuration > hideThreshold {
-				session.mu.RUnlock()
-				continue // Hidden: idle too long
-			}
-			hlsIsPaused := hlsIdleDuration > pauseThreshold
 			// Skip streams that don't belong to this account's profiles
 			if !isAdmin && !allowedProfileIDs[session.ProfileID] {
 				session.mu.RUnlock()
@@ -1323,9 +1315,6 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 
 			// Match playback progress for position and media identification
 			matchedProgress := findProgressByMediaMetadata(allProgress, session.ProfileID, session.ProfileName, session.MediaMetadata, nameToUserID)
-			if matchedProgress == nil {
-				matchedProgress = matchProgress(filename, session.ProfileID, session.ProfileName)
-			}
 			duration := session.Duration
 			var position, percent float64
 			mediaType := session.MediaMetadata.MediaType
@@ -1385,7 +1374,23 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"episode_name":   episodeName,
 				"externalIds":    externalIDs,
 			}
-			if hlsIsPaused || (matchedProgress != nil && matchedProgress.IsPaused) {
+			if matchedProgress != nil {
+				heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
+				if heartbeatAge > heartbeatEndedThreshold {
+					session.mu.RUnlock()
+					continue
+				}
+			} else {
+				hlsIdleDuration := now.Sub(hlsActivity)
+				if hlsIdleDuration > transportHideThreshold {
+					session.mu.RUnlock()
+					continue // Hidden: idle too long
+				}
+				if hlsIdleDuration > transportPauseThreshold {
+					hlsStreamData["is_paused"] = true
+				}
+			}
+			if matchedProgress != nil && matchedProgress.IsPaused {
 				hlsStreamData["is_paused"] = true
 			}
 			if matchedProgress != nil {
@@ -1406,17 +1411,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		}
 
 		// Pause detection: check how long since last byte transfer
-		idleDuration := now.Sub(stream.LastActivity)
-		if idleDuration > hideThreshold {
-			continue // Hidden: idle too long
-		}
-		isPaused := idleDuration > pauseThreshold
-
 		// Match playback progress for position and media identification
 		matchedProgress := findProgressByMediaMetadata(allProgress, stream.ProfileID, stream.ProfileName, stream.MediaMetadata, nameToUserID)
-		if matchedProgress == nil {
-			matchedProgress = matchProgress(stream.Filename, stream.ProfileID, stream.ProfileName)
-		}
 		var position, percent, duration float64
 		mediaType := stream.MediaMetadata.MediaType
 		title := stream.MediaMetadata.Title
@@ -1470,7 +1466,21 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"episode_name":   episodeName,
 			"externalIds":    externalIDs,
 		}
-		if isPaused || (matchedProgress != nil && matchedProgress.IsPaused) {
+		if matchedProgress != nil {
+			heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
+			if heartbeatAge > heartbeatEndedThreshold {
+				continue
+			}
+		} else {
+			idleDuration := now.Sub(stream.LastActivity)
+			if idleDuration > transportHideThreshold {
+				continue // Hidden: idle too long
+			}
+			if idleDuration > transportPauseThreshold {
+				streamData["is_paused"] = true
+			}
+		}
+		if matchedProgress != nil && matchedProgress.IsPaused {
 			streamData["is_paused"] = true
 		}
 		if matchedProgress != nil {
@@ -1769,6 +1779,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 			MaxResolution:     globalSettings.Filtering.MaxResolution,
 			HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+			RequiredTerms:     globalSettings.Filtering.RequiredTerms,
 			FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 			PreferredTerms:    globalSettings.Filtering.PreferredTerms,
 			NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
@@ -1881,6 +1892,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 		MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:     globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		RequiredTerms:     globalSettings.Filtering.RequiredTerms,
 		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
 		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,

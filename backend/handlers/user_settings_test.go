@@ -220,6 +220,7 @@ func TestUserSettingsHandler_GetSettings_DefaultsIncludeDownloadPreferredTerms(t
 	cfgMgr := config.NewManager(tmpDir + "/settings.json")
 
 	settings := config.DefaultSettings()
+	settings.Filtering.RequiredTerms = []string{"Multi", "French"}
 	settings.Filtering.DownloadPreferredTerms = []string{"x265=3"}
 	if err := cfgMgr.Save(settings); err != nil {
 		t.Fatalf("save settings: %v", err)
@@ -239,5 +240,8 @@ func TestUserSettingsHandler_GetSettings_DefaultsIncludeDownloadPreferredTerms(t
 	}
 	if got := settingsSvc.lastDefaults.Filtering.DownloadPreferredTerms; len(got) != 1 || got[0] != "x265=3" {
 		t.Fatalf("downloadPreferredTerms defaults = %v, want [x265=3]", got)
+	}
+	if got := settingsSvc.lastDefaults.Filtering.RequiredTerms; len(got) != 2 || got[0] != "Multi" || got[1] != "French" {
+		t.Fatalf("requiredTerms defaults = %v, want [Multi French]", got)
 	}
 }

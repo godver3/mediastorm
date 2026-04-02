@@ -9,6 +9,7 @@ type ClientFilterSettings struct {
 	MaxSizeEpisodeGB       *float64     `json:"maxSizeEpisodeGb,omitempty"`
 	MaxResolution          *string      `json:"maxResolution,omitempty"`
 	HDRDVPolicy            *HDRDVPolicy `json:"hdrDvPolicy,omitempty"`
+	RequiredTerms          *[]string    `json:"requiredTerms,omitempty"`
 	FilterOutTerms         *[]string    `json:"filterOutTerms,omitempty"`
 	PreferredTerms         *[]string    `json:"preferredTerms,omitempty"`
 	NonPreferredTerms      *[]string    `json:"nonPreferredTerms,omitempty"`
@@ -37,6 +38,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.MaxSizeEpisodeGB == nil &&
 		c.MaxResolution == nil &&
 		c.HDRDVPolicy == nil &&
+		c.RequiredTerms == nil &&
 		c.FilterOutTerms == nil &&
 		c.PreferredTerms == nil &&
 		c.NonPreferredTerms == nil &&
