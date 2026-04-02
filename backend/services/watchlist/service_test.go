@@ -225,3 +225,131 @@ func TestServiceLoadsLegacyFormat(t *testing.T) {
 		t.Fatalf("expected legacy item name, got %q", items[0].Name)
 	}
 }
+
+func TestServiceCanonicalizesIDsAndMergesVariants(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("expected service, got error: %v", err)
+	}
+
+	first, err := svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "1084242",
+		MediaType: "movie",
+		Name:      "Zootopia 2",
+		Year:      2025,
+		ExternalIDs: map[string]string{
+			"imdb": "tt26443597",
+			"tmdb": "1084242",
+		},
+		SyncSource: "plex:task",
+	})
+	if err != nil {
+		t.Fatalf("failed to add first item: %v", err)
+	}
+	if first.ID != "tmdb:movie:1084242" {
+		t.Fatalf("first canonical ID = %q, want %q", first.ID, "tmdb:movie:1084242")
+	}
+
+	second, err := svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "tmdb:movie:1084242",
+		MediaType: "movie",
+		Name:      "Zootopia 2",
+		Year:      2025,
+		ExternalIDs: map[string]string{
+			"imdb": "tt26443597",
+			"tmdb": "1084242",
+			"tvdb": "344109",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add second item: %v", err)
+	}
+	if second.ID != "tvdb:movie:344109" {
+		t.Fatalf("second canonical ID = %q, want %q", second.ID, "tvdb:movie:344109")
+	}
+
+	items, err := svc.List(models.DefaultUserID)
+	if err != nil {
+		t.Fatalf("list returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 merged item, got %d", len(items))
+	}
+	if items[0].ID != "tvdb:movie:344109" {
+		t.Fatalf("merged item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	}
+	if items[0].SyncSource != "plex:task" {
+		t.Fatalf("expected sync source to be preserved, got %q", items[0].SyncSource)
+	}
+	if got := items[0].ExternalIDs["imdb"]; got != "tt26443597" {
+		t.Fatalf("expected imdb external ID to be preserved, got %q", got)
+	}
+}
+
+func TestServiceReconcileMergesRowsWithSharedExternalIDs(t *testing.T) {
+	dir := t.TempDir()
+	payload := map[string][]models.WatchlistItem{
+		models.DefaultUserID: {
+			{
+				ID:        "tmdb:movie:1084242",
+				MediaType: "movie",
+				Name:      "Zootopia 2",
+				Year:      2025,
+				AddedAt:   time.Date(2026, 3, 28, 1, 0, 0, 0, time.UTC),
+				ExternalIDs: map[string]string{
+					"tmdb": "1084242",
+					"imdb": "tt26443597",
+				},
+			},
+			{
+				ID:        "tvdb:movie:344109",
+				MediaType: "movie",
+				Name:      "Zootopia 2",
+				Year:      2025,
+				AddedAt:   time.Date(2026, 3, 28, 2, 0, 0, 0, time.UTC),
+				ExternalIDs: map[string]string{
+					"tmdb": "1084242",
+					"imdb": "tt26443597",
+					"tvdb": "344109",
+					"plex": "63d15b0b38992be08a0efa6f",
+				},
+				SyncSource: "plex:task",
+			},
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal seed watchlist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "watchlist.json"), data, 0o644); err != nil {
+		t.Fatalf("failed to seed watchlist file: %v", err)
+	}
+
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+
+	if err := svc.Reconcile(); err != nil {
+		t.Fatalf("reconcile returned error: %v", err)
+	}
+
+	items, err := svc.List(models.DefaultUserID)
+	if err != nil {
+		t.Fatalf("list returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 reconciled item, got %d", len(items))
+	}
+	if items[0].ID != "tvdb:movie:344109" {
+		t.Fatalf("reconciled item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	}
+	if items[0].SyncSource != "plex:task" {
+		t.Fatalf("expected sync source to survive reconcile, got %q", items[0].SyncSource)
+	}
+	if got := items[0].ExternalIDs["plex"]; got != "63d15b0b38992be08a0efa6f" {
+		t.Fatalf("expected plex external ID to survive reconcile, got %q", got)
+	}
+}

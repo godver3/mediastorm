@@ -15,8 +15,8 @@ func PrepareSubtitleTracks(streams []SubtitleStreamInfo) []SubtitleTrackInfo {
 	tracks := make([]SubtitleTrackInfo, len(streams))
 	for i, s := range streams {
 		tracks[i] = SubtitleTrackInfo{
-			Index:         i,         // Relative index for frontend track selection
-			AbsoluteIndex: s.Index,   // Absolute ffprobe stream index for ffmpeg -map
+			Index:         i,       // Relative index for frontend track selection
+			AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
 			Language:      s.Language,
 			Title:         s.Title,
 			Codec:         s.Codec,
@@ -96,6 +96,8 @@ func ConvertSessionsToInfo(
 		sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
 			SessionID:    session.ID,
 			VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
+			SubtitleURL:  "/api/video/subtitles/" + session.ID + "/" + subtitleExtractOutputFileName(session.OutputFormat),
+			Format:       session.OutputFormat,
 			TrackIndex:   relativeIdx,
 			Language:     stream.Language,
 			Title:        stream.Title,
@@ -136,6 +138,8 @@ func ConvertSessionsFromPlaybackTracks(
 		sessionInfos[relativeIdx] = &models.SubtitleSessionInfo{
 			SessionID:    session.ID,
 			VTTUrl:       "/api/video/subtitles/" + session.ID + "/subtitles.vtt",
+			SubtitleURL:  "/api/video/subtitles/" + session.ID + "/" + subtitleExtractOutputFileName(session.OutputFormat),
+			Format:       session.OutputFormat,
 			TrackIndex:   relativeIdx,
 			Language:     track.Language,
 			Title:        track.Title,

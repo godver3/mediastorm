@@ -161,3 +161,151 @@ func TestGetActiveStreams_UsesCanonicalMediaMetadataForProgressMatch(t *testing.
 		t.Fatalf("expected matched position 612, got %v", stream.CurrentPosition)
 	}
 }
+
+func TestGetActiveStreams_UsesCanonicalMetadataWithoutFilenameInference(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+
+	tracker := GetStreamTracker()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=user1&profileName=Alice&mediaType=movie&itemId=tmdb:1234&title=The%20Matrix&movieName=The%20Matrix&year=1999",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(resp.Streams))
+	}
+
+	stream := resp.Streams[0]
+	if stream.Title != "The Matrix" {
+		t.Fatalf("expected canonical title, got %q", stream.Title)
+	}
+	if stream.MediaType != "movie" {
+		t.Fatalf("expected media type movie, got %q", stream.MediaType)
+	}
+	if stream.Filename != "obfuscated-file-abc123.mkv" {
+		t.Fatalf("expected original filename to remain for diagnostics, got %q", stream.Filename)
+	}
+	if stream.PercentWatched != 0 {
+		t.Fatalf("expected no inferred progress without a heartbeat row, got %v", stream.PercentWatched)
+	}
+}
+
+func TestGetActiveStreams_HeartbeatPausedMarksPaused(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+	handler.SetProgressService(&mockProgressService{
+		all: map[string][]models.PlaybackProgress{
+			"user1": {
+				{
+					ID:             "movie:tmdb:1234",
+					MediaType:      "movie",
+					ItemID:         "tmdb:1234",
+					Position:       600,
+					Duration:       7200,
+					PercentWatched: 8.3,
+					UpdatedAt:      time.Now().UTC(),
+					IsPaused:       true,
+					MovieName:      "The Matrix",
+					Year:           1999,
+				},
+			},
+		},
+	})
+
+	tracker := GetStreamTracker()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=user1&profileName=Alice&mediaType=movie&itemId=tmdb:1234&title=The%20Matrix&movieName=The%20Matrix&year=1999",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(resp.Streams))
+	}
+	if !resp.Streams[0].IsPaused {
+		t.Fatalf("expected stream to be paused from heartbeat payload")
+	}
+}
+
+func TestGetActiveStreams_HeartbeatAgeRemovesEnded(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+	handler.SetProgressService(&mockProgressService{
+		all: map[string][]models.PlaybackProgress{
+			"user1": {
+				{
+					ID:             "movie:tmdb:1234",
+					MediaType:      "movie",
+					ItemID:         "tmdb:1234",
+					Position:       600,
+					Duration:       7200,
+					PercentWatched: 8.3,
+					UpdatedAt:      time.Now().Add(-26 * time.Second).UTC(),
+					MovieName:      "The Matrix",
+					Year:           1999,
+				},
+			},
+		},
+	})
+
+	tracker := GetStreamTracker()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=user1&profileName=Alice&mediaType=movie&itemId=tmdb:1234&title=The%20Matrix&movieName=The%20Matrix&year=1999",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 0 {
+		t.Fatalf("expected ended stream to be removed, got %d streams", len(resp.Streams))
+	}
+}

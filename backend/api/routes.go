@@ -343,6 +343,7 @@ func Register(
 	protected.HandleFunc("/video/subtitles/tracks", videoHandler.ProbeSubtitleTracks).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/subtitles/start", videoHandler.StartSubtitleExtract).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/subtitles/{sessionID}/subtitles.vtt", videoHandler.ServeExtractedSubtitles).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/subtitles/{sessionID}/subtitles.ass", videoHandler.ServeExtractedSubtitles).Methods(http.MethodGet, http.MethodOptions)
 
 	// Subtitle search endpoints (using subliminal)
 	protected.HandleFunc("/subtitles/search", subtitlesHandler.Search).Methods(http.MethodGet)

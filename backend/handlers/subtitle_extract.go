@@ -28,8 +28,10 @@ type SubtitleExtractSession struct {
 	Path           string
 	SubtitleTrack  int
 	StartOffset    float64 // Resume position in seconds for seeking
+	OutputFormat   string
 	OutputDir      string
 	VTTPath        string
+	OutputPath     string
 	CreatedAt      time.Time
 	LastAccess     time.Time
 	cmd            *exec.Cmd
@@ -313,16 +315,47 @@ func (m *SubtitleExtractManager) cleanupSessionLocked(session *SubtitleExtractSe
 	}
 }
 
+func normalizeSubtitleExtractFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "ass", "ssa":
+		return "ass"
+	default:
+		return "vtt"
+	}
+}
+
+func subtitleExtractOutputFileName(format string) string {
+	if normalizeSubtitleExtractFormat(format) == "ass" {
+		return "subtitles.ass"
+	}
+	return "subtitles.vtt"
+}
+
+func subtitleExtractContentType(format string) string {
+	if normalizeSubtitleExtractFormat(format) == "ass" {
+		return "text/x-ssa; charset=utf-8"
+	}
+	return "text/vtt; charset=utf-8"
+}
+
+func emptySubtitleExtractContent(format string) string {
+	if normalizeSubtitleExtractFormat(format) == "ass" {
+		return "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+	}
+	return "WEBVTT\n\n"
+}
+
 // getOrCreateSession gets an existing session or creates a new one
-func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path string, subtitleTrack int, startOffset float64) (*SubtitleExtractSession, error) {
+func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path string, subtitleTrack int, startOffset float64, format string) (*SubtitleExtractSession, error) {
+	format = normalizeSubtitleExtractFormat(format)
 	// Create a session key based on path and track
-	sessionKey := fmt.Sprintf("%s:%d", path, subtitleTrack)
+	sessionKey := fmt.Sprintf("%s:%d:%s", path, subtitleTrack, format)
 
 	m.mu.Lock()
 
 	// Check for existing session
 	for id, session := range m.sessions {
-		if session.Path == path && session.SubtitleTrack == subtitleTrack {
+		if session.Path == path && session.SubtitleTrack == subtitleTrack && session.OutputFormat == format {
 			// Calculate offset difference
 			offsetDiff := startOffset - session.StartOffset
 
@@ -358,14 +391,18 @@ func (m *SubtitleExtractManager) getOrCreateSession(ctx context.Context, path st
 	}
 
 	vttPath := filepath.Join(outputDir, "subtitles.vtt")
+	outputFormat := format
+	outputPath := filepath.Join(outputDir, subtitleExtractOutputFileName(format))
 
 	session := &SubtitleExtractSession{
 		ID:            sessionID,
 		Path:          path,
 		SubtitleTrack: subtitleTrack,
 		StartOffset:   startOffset,
+		OutputFormat:  outputFormat,
 		OutputDir:     outputDir,
 		VTTPath:       vttPath,
+		OutputPath:    outputPath,
 		CreatedAt:     time.Now(),
 		LastAccess:    time.Now(),
 	}
@@ -605,8 +642,9 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 
 	log.Printf("[subtitle-extract] session %s: starting extraction from %s (startOffset=%.1f)", session.ID, streamURL, session.StartOffset)
 
-	// Build ffmpeg command to extract subtitle track to VTT
-	// Use the absolute stream index, not the relative subtitle index
+	// Build ffmpeg command to extract the subtitle track in the requested output format.
+	// Use the absolute stream index, not the relative subtitle index.
+	outputFormat := normalizeSubtitleExtractFormat(session.OutputFormat)
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -622,11 +660,23 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 	args = append(args,
 		"-i", streamURL,
 		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
-		"-c", "webvtt",
-		"-f", "webvtt",
-		"-flush_packets", "1",
-		session.VTTPath,
 	)
+
+	switch outputFormat {
+	case "ass":
+		args = append(args,
+			"-c:s", "ass",
+			"-f", "ass",
+			session.OutputPath,
+		)
+	default:
+		args = append(args,
+			"-c:s", "webvtt",
+			"-f", "webvtt",
+			"-flush_packets", "1",
+			session.OutputPath,
+		)
+	}
 
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 
@@ -674,14 +724,18 @@ func (m *SubtitleExtractManager) startExtraction(session *SubtitleExtractSession
 		return
 	}
 
-	// Parse first cue time for subtitle sync
-	firstCueTime := parseFirstVTTCueTime(session.VTTPath)
-	session.mu.Lock()
-	session.FirstCueTime = firstCueTime
-	session.firstCueParsed = true
-	session.mu.Unlock()
+	if outputFormat == "vtt" {
+		// Parse first cue time for subtitle sync when VTT timestamps are available.
+		firstCueTime := parseFirstVTTCueTime(session.OutputPath)
+		session.mu.Lock()
+		session.FirstCueTime = firstCueTime
+		session.firstCueParsed = true
+		session.mu.Unlock()
+		log.Printf("[subtitle-extract] session %s: extraction complete, format=%s firstCueTime=%.3f", session.ID, outputFormat, firstCueTime)
+		return
+	}
 
-	log.Printf("[subtitle-extract] session %s: extraction complete, firstCueTime=%.3f", session.ID, firstCueTime)
+	log.Printf("[subtitle-extract] session %s: extraction complete, format=%s", session.ID, outputFormat)
 }
 
 // ProbeSubtitleTracks probes a file and returns available subtitle tracks
@@ -999,11 +1053,12 @@ func mergeKaraokeCues(content string) string {
 	return result.String()
 }
 
-// ServeSubtitles serves the VTT file for a session
+// ServeSubtitles serves the extracted subtitle file for a session.
 func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, session *SubtitleExtractSession) {
 	session.mu.Lock()
 	session.LastAccess = time.Now()
-	vttPath := session.VTTPath
+	outputPath := session.OutputPath
+	outputFormat := normalizeSubtitleExtractFormat(session.OutputFormat)
 	extractionErr := session.extractionErr
 	extractionDone := session.extractionDone
 	startOffset := session.StartOffset
@@ -1018,26 +1073,27 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	}
 
 	// Check if file exists (might not be ready yet)
-	stat, err := os.Stat(vttPath)
+	stat, err := os.Stat(outputPath)
 	if os.IsNotExist(err) {
-		// Return empty VTT header if file doesn't exist yet
-		log.Printf("[subtitle-extract] serve %s: VTT file not ready yet, returning empty header", sessionID[:8])
-		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		log.Printf("[subtitle-extract] serve %s: subtitle file not ready yet, returning empty %s scaffold", sessionID[:8], outputFormat)
+		emptyContent := emptySubtitleExtractContent(outputFormat)
+		w.Header().Set("Content-Type", subtitleExtractContentType(outputFormat))
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Write([]byte("WEBVTT\n\n"))
+		w.Header().Set("Content-Length", strconv.Itoa(len(emptyContent)))
+		w.Write([]byte(emptyContent))
 		return
 	}
 	if err != nil {
-		log.Printf("[subtitle-extract] serve %s: failed to stat VTT file: %v", sessionID[:8], err)
+		log.Printf("[subtitle-extract] serve %s: failed to stat subtitle file: %v", sessionID[:8], err)
 		http.Error(w, "failed to stat subtitle file", http.StatusInternalServerError)
 		return
 	}
 
 	// Read and serve the current contents
-	content, err := os.ReadFile(vttPath)
+	content, err := os.ReadFile(outputPath)
 	if err != nil {
-		log.Printf("[subtitle-extract] serve %s: failed to read VTT file: %v", sessionID[:8], err)
+		log.Printf("[subtitle-extract] serve %s: failed to read subtitle file: %v", sessionID[:8], err)
 		http.Error(w, "failed to read subtitle file", http.StatusInternalServerError)
 		return
 	}
@@ -1045,42 +1101,44 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 	contentStr := string(content)
 	contentLen := len(content)
 
-	// Parse cue stats for debug logging
-	cueCount, firstCueStart, lastCueEnd := parseVTTCueStats(contentStr)
 	status := "extracting"
 	if extractionDone {
 		status = "done"
 	}
 
-	// Detect edge cases
-	trimmedContent := strings.TrimSpace(contentStr)
-	isHeaderOnly := trimmedContent == "WEBVTT" || trimmedContent == "WEBVTT\n"
-	hasTimestamps := strings.Contains(contentStr, "-->")
+	processedContent := contentStr
+	if outputFormat == "vtt" {
+		cueCount, firstCueStart, lastCueEnd := parseVTTCueStats(contentStr)
+		trimmedContent := strings.TrimSpace(contentStr)
+		isHeaderOnly := trimmedContent == "WEBVTT" || trimmedContent == "WEBVTT\n"
+		hasTimestamps := strings.Contains(contentStr, "-->")
 
-	if isHeaderOnly {
-		log.Printf("[subtitle-extract] serve %s: WARNING - VTT is header-only (%d bytes), extraction may not have started or no cues yet",
-			sessionID[:8], contentLen)
-	} else if !hasTimestamps && contentLen > 10 {
-		log.Printf("[subtitle-extract] serve %s: WARNING - VTT has %d bytes but NO timestamps, possibly truncated/corrupted",
-			sessionID[:8], contentLen)
-		// Log first part of content for debugging
-		preview := contentStr
-		if len(preview) > 200 {
-			preview = preview[:200]
+		if isHeaderOnly {
+			log.Printf("[subtitle-extract] serve %s: WARNING - VTT is header-only (%d bytes), extraction may not have started or no cues yet",
+				sessionID[:8], contentLen)
+		} else if !hasTimestamps && contentLen > 10 {
+			log.Printf("[subtitle-extract] serve %s: WARNING - VTT has %d bytes but NO timestamps, possibly truncated/corrupted",
+				sessionID[:8], contentLen)
+			preview := contentStr
+			if len(preview) > 200 {
+				preview = preview[:200]
+			}
+			log.Printf("[subtitle-extract] serve %s: content preview: %q", sessionID[:8], preview)
+		} else if cueCount == 0 && hasTimestamps {
+			log.Printf("[subtitle-extract] serve %s: WARNING - VTT has timestamps but parsed 0 cues, parse issue?",
+				sessionID[:8])
 		}
-		log.Printf("[subtitle-extract] serve %s: content preview: %q", sessionID[:8], preview)
-	} else if cueCount == 0 && hasTimestamps {
-		log.Printf("[subtitle-extract] serve %s: WARNING - VTT has timestamps but parsed 0 cues, parse issue?",
-			sessionID[:8])
+
+		log.Printf("[subtitle-extract] serve %s: format=%s %d bytes, %d cues, range: %.2f-%.2fs, startOffset: %.1f, status: %s",
+			sessionID[:8], outputFormat, stat.Size(), cueCount, firstCueStart, lastCueEnd, startOffset, status)
+
+		processedContent = mergeKaraokeCues(contentStr)
+	} else {
+		log.Printf("[subtitle-extract] serve %s: format=%s %d bytes, startOffset: %.1f, status: %s",
+			sessionID[:8], outputFormat, stat.Size(), startOffset, status)
 	}
 
-	log.Printf("[subtitle-extract] serve %s: %d bytes, %d cues, range: %.2f-%.2fs, startOffset: %.1f, status: %s",
-		sessionID[:8], stat.Size(), cueCount, firstCueStart, lastCueEnd, startOffset, status)
-
-	// Post-process VTT to merge karaoke character cues (from ASS conversion)
-	processedContent := mergeKaraokeCues(contentStr)
-
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Content-Type", subtitleExtractContentType(outputFormat))
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Length", strconv.Itoa(len(processedContent)))
@@ -1125,15 +1183,16 @@ func (h *VideoHandler) StartSubtitleExtract(w http.ResponseWriter, r *http.Reque
 	if startOffsetStr := r.URL.Query().Get("startOffset"); startOffsetStr != "" {
 		startOffset, _ = strconv.ParseFloat(startOffsetStr, 64)
 	}
+	format := normalizeSubtitleExtractFormat(r.URL.Query().Get("format"))
 
-	log.Printf("[subtitle-extract] StartSubtitleExtract request: path=%s subtitleTrack=%d startOffset=%.1f", cleanPath, subtitleTrack, startOffset)
+	log.Printf("[subtitle-extract] StartSubtitleExtract request: path=%s subtitleTrack=%d startOffset=%.1f format=%s", cleanPath, subtitleTrack, startOffset, format)
 
 	if h.subtitleExtractManager == nil {
 		http.Error(w, "subtitle extraction not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	session, err := h.subtitleExtractManager.getOrCreateSession(r.Context(), cleanPath, subtitleTrack, startOffset)
+	session, err := h.subtitleExtractManager.getOrCreateSession(r.Context(), cleanPath, subtitleTrack, startOffset, format)
 	if err != nil {
 		log.Printf("[subtitle-extract] failed to create session: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1149,7 +1208,8 @@ func (h *VideoHandler) StartSubtitleExtract(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"sessionId":    session.ID,
-		"subtitleUrl":  fmt.Sprintf("/api/video/subtitles/%s/subtitles.vtt", session.ID),
+		"subtitleUrl":  fmt.Sprintf("/api/video/subtitles/%s/%s", session.ID, subtitleExtractOutputFileName(session.OutputFormat)),
+		"format":       session.OutputFormat,
 		"firstCueTime": firstCueTime,
 	})
 }

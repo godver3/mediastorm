@@ -135,13 +135,14 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 	}
 
 	mediaType := strings.ToLower(strings.TrimSpace(input.MediaType))
+	input.MediaType = mediaType
+	input.ExternalIDs = normaliseExternalIDs(input.ExternalIDs)
+	input.ID = canonicalWatchlistID(mediaType, input.ID, input.ExternalIDs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	perUser := s.ensureUserLocked(userID)
-
-	key := mediaType + ":" + input.ID
-	item, exists := perUser[key]
+	item, exists := s.takeMergedItemLocked(perUser, mediaType, input.ID, input.ExternalIDs)
 
 	if !exists {
 		item = models.WatchlistItem{
@@ -179,7 +180,7 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 			for k, v := range input.ExternalIDs {
 				copyIDs[k] = v
 			}
-			item.ExternalIDs = copyIDs
+			item.ExternalIDs = mergeStringMaps(item.ExternalIDs, copyIDs)
 		}
 	}
 	if len(input.Genres) > 0 {
@@ -196,6 +197,8 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 	if input.SyncedAt != nil {
 		item.SyncedAt = input.SyncedAt
 	}
+	item.ID = canonicalWatchlistID(mediaType, input.ID, item.ExternalIDs)
+	key := item.Key()
 
 	perUser[key] = item
 
@@ -459,8 +462,264 @@ func (s *Service) ensureUserLocked(userID string) map[string]models.WatchlistIte
 
 func normaliseItem(item models.WatchlistItem) models.WatchlistItem {
 	item.MediaType = strings.ToLower(strings.TrimSpace(item.MediaType))
+	item.ExternalIDs = normaliseExternalIDs(item.ExternalIDs)
+	item.ID = canonicalWatchlistID(item.MediaType, item.ID, item.ExternalIDs)
 	if item.AddedAt.IsZero() {
 		item.AddedAt = time.Now().UTC()
 	}
 	return item
+}
+
+// Reconcile normalizes watchlist identities, merges equivalent variants, and
+// persists the canonicalized state. It is intended for one-off cleanup and safe
+// to call repeatedly.
+func (s *Service) Reconcile() error {
+	if err := s.load(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reconciled := make(map[string]map[string]models.WatchlistItem, len(s.items))
+	for userID, items := range s.items {
+		perUser := make(map[string]models.WatchlistItem, len(items))
+		for _, item := range items {
+			normalised := normaliseItem(item)
+			merged, found := s.takeMergedItemLocked(perUser, normalised.MediaType, normalised.ID, normalised.ExternalIDs)
+			if found {
+				normalised = mergeWatchlistItems(merged, normalised)
+			}
+			perUser[normalised.Key()] = normalised
+		}
+		reconciled[userID] = perUser
+	}
+	s.items = reconciled
+	return s.saveLocked()
+}
+
+func (s *Service) takeMergedItemLocked(perUser map[string]models.WatchlistItem, mediaType, canonicalID string, externalIDs map[string]string) (models.WatchlistItem, bool) {
+	var merged models.WatchlistItem
+	found := false
+	for _, key := range watchlistCandidateKeys(mediaType, canonicalID, externalIDs) {
+		existing, ok := perUser[key]
+		if !ok {
+			continue
+		}
+		if !found {
+			merged = existing
+			found = true
+		} else {
+			merged = mergeWatchlistItems(merged, existing)
+		}
+		delete(perUser, key)
+	}
+	for key, existing := range perUser {
+		if !watchlistItemsEquivalent(mediaType, canonicalID, externalIDs, existing) {
+			continue
+		}
+		if !found {
+			merged = existing
+			found = true
+		} else {
+			merged = mergeWatchlistItems(merged, existing)
+		}
+		delete(perUser, key)
+	}
+	return merged, found
+}
+
+func mergeWatchlistItems(base, incoming models.WatchlistItem) models.WatchlistItem {
+	base.ExternalIDs = normaliseExternalIDs(base.ExternalIDs)
+	incoming.ExternalIDs = normaliseExternalIDs(incoming.ExternalIDs)
+	if base.ID == "" {
+		base.ID = incoming.ID
+	}
+	if base.MediaType == "" {
+		base.MediaType = incoming.MediaType
+	}
+	if base.Name == "" {
+		base.Name = incoming.Name
+	}
+	if base.Overview == "" {
+		base.Overview = incoming.Overview
+	}
+	if base.Year == 0 {
+		base.Year = incoming.Year
+	}
+	if base.PosterURL == "" {
+		base.PosterURL = incoming.PosterURL
+	}
+	if base.TextPosterURL == "" {
+		base.TextPosterURL = incoming.TextPosterURL
+	}
+	if base.BackdropURL == "" {
+		base.BackdropURL = incoming.BackdropURL
+	}
+	if base.RuntimeMinutes == 0 {
+		base.RuntimeMinutes = incoming.RuntimeMinutes
+	}
+	if base.AddedAt.IsZero() || (!incoming.AddedAt.IsZero() && incoming.AddedAt.Before(base.AddedAt)) {
+		base.AddedAt = incoming.AddedAt
+	}
+	if strings.TrimSpace(base.SyncSource) == "" {
+		base.SyncSource = incoming.SyncSource
+	}
+	if base.SyncedAt == nil || (incoming.SyncedAt != nil && incoming.SyncedAt.After(*base.SyncedAt)) {
+		base.SyncedAt = incoming.SyncedAt
+	}
+	base.ExternalIDs = mergeStringMaps(base.ExternalIDs, incoming.ExternalIDs)
+	if len(base.Genres) == 0 && len(incoming.Genres) > 0 {
+		base.Genres = append([]string{}, incoming.Genres...)
+	}
+	base.ID = canonicalWatchlistID(base.MediaType, base.ID, base.ExternalIDs)
+	return base
+}
+
+func mergeStringMaps(base, incoming map[string]string) map[string]string {
+	if len(base) == 0 && len(incoming) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(incoming))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range incoming {
+		if strings.TrimSpace(out[k]) == "" && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func normaliseExternalIDs(ids map[string]string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(ids))
+	for k, v := range ids {
+		key := strings.ToLower(strings.TrimSpace(k))
+		value := strings.TrimSpace(v)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func canonicalWatchlistID(mediaType, id string, externalIDs map[string]string) string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	id = strings.TrimSpace(id)
+	switch mediaType {
+	case "movie":
+		if v := strings.TrimSpace(externalIDs["tvdb"]); v != "" {
+			return "tvdb:movie:" + v
+		}
+		if v := strings.TrimSpace(externalIDs["tmdb"]); v != "" {
+			return "tmdb:movie:" + v
+		}
+		if v := strings.TrimSpace(externalIDs["imdb"]); v != "" {
+			return v
+		}
+	case "series":
+		if v := strings.TrimSpace(externalIDs["tvdb"]); v != "" {
+			return "tvdb:series:" + v
+		}
+		if v := strings.TrimSpace(externalIDs["tmdb"]); v != "" {
+			return "tmdb:tv:" + v
+		}
+		if v := strings.TrimSpace(externalIDs["imdb"]); v != "" {
+			return v
+		}
+	}
+	return id
+}
+
+func watchlistCandidateKeys(mediaType, canonicalID string, externalIDs map[string]string) []string {
+	candidates := make([]string, 0, 8)
+	seen := make(map[string]bool)
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		key := strings.ToLower(mediaType + ":" + id)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		candidates = append(candidates, mediaType+":"+id)
+	}
+
+	add(canonicalID)
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "movie":
+		if v := strings.TrimSpace(externalIDs["tvdb"]); v != "" {
+			add("tvdb:movie:" + v)
+			add(v)
+		}
+		if v := strings.TrimSpace(externalIDs["tmdb"]); v != "" {
+			add("tmdb:movie:" + v)
+			add(v)
+		}
+	case "series":
+		if v := strings.TrimSpace(externalIDs["tvdb"]); v != "" {
+			add("tvdb:series:" + v)
+			add(v)
+		}
+		if v := strings.TrimSpace(externalIDs["tmdb"]); v != "" {
+			add("tmdb:tv:" + v)
+			add(v)
+		}
+	}
+	if v := strings.TrimSpace(externalIDs["imdb"]); v != "" {
+		add(v)
+		add("imdb:" + v)
+	}
+	return candidates
+}
+
+func watchlistItemsEquivalent(mediaType, canonicalID string, externalIDs map[string]string, existing models.WatchlistItem) bool {
+	if strings.ToLower(strings.TrimSpace(existing.MediaType)) != strings.ToLower(strings.TrimSpace(mediaType)) {
+		return false
+	}
+
+	incomingTokens := watchlistIdentityTokens(mediaType, canonicalID, externalIDs)
+	if len(incomingTokens) == 0 {
+		return false
+	}
+
+	for token := range watchlistIdentityTokens(existing.MediaType, existing.ID, existing.ExternalIDs) {
+		if incomingTokens[token] {
+			return true
+		}
+	}
+	return false
+}
+
+func watchlistIdentityTokens(mediaType, id string, externalIDs map[string]string) map[string]bool {
+	tokens := make(map[string]bool, 8)
+	add := func(kind, value string) {
+		kind = strings.ToLower(strings.TrimSpace(kind))
+		value = strings.ToLower(strings.TrimSpace(value))
+		if kind == "" || value == "" {
+			return
+		}
+		tokens[kind+":"+value] = true
+	}
+
+	add("id", id)
+	for key, value := range normaliseExternalIDs(externalIDs) {
+		add(key, value)
+	}
+
+	canonicalID := canonicalWatchlistID(mediaType, id, externalIDs)
+	if canonicalID != "" {
+		add("id", canonicalID)
+	}
+
+	return tokens
 }

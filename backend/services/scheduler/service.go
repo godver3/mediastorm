@@ -657,7 +657,9 @@ func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavi
 	existingItems, _ := s.watchlistService.List(profileID)
 	existingKeys := make(map[string]bool)
 	for _, item := range existingItems {
-		existingKeys[item.Key()] = true
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			existingKeys[key] = true
+		}
 	}
 
 	// Import to watchlist service
@@ -681,13 +683,10 @@ func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavi
 		extIDs["plex"] = item.RatingKey
 
 		mediaType := plex.NormalizeMediaType(item.Type)
-		itemKey := mediaType + ":" + itemID
-
-		// Track this item key for deletion checking
-		plexItemKeys[itemKey] = true
-
-		// Check if this is a new item (not already in local)
-		isNew := !existingKeys[itemKey]
+		for _, key := range schedulerWatchlistMatchKeys(mediaType, itemID, extIDs) {
+			plexItemKeys[key] = true
+		}
+		isNew := !schedulerWatchlistHasAnyKey(existingKeys, mediaType, itemID, extIDs)
 
 		if dryRun {
 			if isNew {
@@ -730,10 +729,7 @@ func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavi
 			log.Printf("[scheduler] Failed to list local items for deletion check: %v", err)
 		} else {
 			for _, localItem := range localItems {
-				localKey := localItem.Key()
-
-				// Check if item still exists in Plex watchlist
-				if plexItemKeys[localKey] {
+				if schedulerWatchlistHasAnyKey(plexItemKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 					continue // Item still in Plex, keep it
 				}
 
@@ -803,10 +799,19 @@ func (s *Service) syncLocalToPlex(authToken, profileID, syncSource, deleteBehavi
 	exported := 0
 
 	for _, localItem := range localItems {
-		// Get Plex ratingKey from external IDs
+		// Get Plex ratingKey from external IDs, resolving via discover search when
+		// the item was added locally from a non-Plex source.
 		plexID := ""
 		if localItem.ExternalIDs != nil {
 			plexID = localItem.ExternalIDs["plex"]
+		}
+		if plexID == "" && localItem.ExternalIDs != nil {
+			resolvedID, err := s.plexClient.ResolveRatingKey(authToken, localItem.Name, localItem.MediaType, localItem.Year, localItem.ExternalIDs)
+			if err != nil {
+				log.Printf("[scheduler] Failed to resolve Plex ID for %s: %v", localItem.Name, err)
+			} else if resolvedID != "" {
+				plexID = resolvedID
+			}
 		}
 
 		if plexID == "" {
@@ -911,8 +916,7 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 
 	// Build maps for quick lookup
 	// plexByKey: mediaType:id -> plex item
-	plexByKey := make(map[string]plex.WatchlistItem)
-	plexExtIDs := make(map[string]map[string]string)
+	plexKeys := make(map[string]bool)
 
 	for i, item := range plexItems {
 		itemID := item.RatingKey
@@ -929,35 +933,38 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 
 		extIDs["plex"] = item.RatingKey
 		mediaType := plex.NormalizeMediaType(item.Type)
-		key := mediaType + ":" + itemID
-
-		plexByKey[key] = item
-		plexExtIDs[key] = extIDs
+		for _, key := range schedulerWatchlistMatchKeys(mediaType, itemID, extIDs) {
+			plexKeys[key] = true
+		}
 	}
 
-	// localByKey: mediaType:id -> local item
-	localByKey := make(map[string]models.WatchlistItem)
+	localKeys := make(map[string]bool)
 	for _, item := range localItems {
-		localByKey[item.Key()] = item
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			localKeys[key] = true
+		}
 	}
 
 	synced := 0
 
 	// Step 1: Sync Plex → Local (items in Plex not in local)
-	for key, plexItem := range plexByKey {
-		if _, exists := localByKey[key]; exists {
-			continue // Already in local
+	for i, plexItem := range plexItems {
+		extIDs := map[string]string{}
+		if i < len(externalIDs) && externalIDs[i] != nil {
+			extIDs = externalIDs[i]
 		}
-
-		extIDs := plexExtIDs[key]
 		itemID := plexItem.RatingKey
 		if tmdbID, ok := extIDs["tmdb"]; ok && tmdbID != "" {
 			itemID = tmdbID
 		} else if imdbID, ok := extIDs["imdb"]; ok && imdbID != "" {
 			itemID = imdbID
 		}
-
+		extIDs["plex"] = plexItem.RatingKey
 		mediaType := plex.NormalizeMediaType(plexItem.Type)
+
+		if schedulerWatchlistHasAnyKey(localKeys, mediaType, itemID, extIDs) {
+			continue // Already in local
+		}
 
 		if dryRun {
 			log.Printf("[scheduler] DRY RUN: Would import from Plex: %s (%s)", plexItem.Title, mediaType)
@@ -992,15 +999,24 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 	}
 
 	// Step 2: Sync Local → Plex (items in local not in Plex)
-	for key, localItem := range localByKey {
-		if _, exists := plexByKey[key]; exists {
+	for _, localItem := range localItems {
+		if schedulerWatchlistHasAnyKey(plexKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 			continue // Already in Plex
 		}
 
-		// Get Plex ratingKey from external IDs
+		// Get Plex ratingKey from external IDs, resolving via discover search when
+		// the item was added locally from a non-Plex source.
 		plexID := ""
 		if localItem.ExternalIDs != nil {
 			plexID = localItem.ExternalIDs["plex"]
+		}
+		if plexID == "" && localItem.ExternalIDs != nil {
+			resolvedID, err := s.plexClient.ResolveRatingKey(authToken, localItem.Name, localItem.MediaType, localItem.Year, localItem.ExternalIDs)
+			if err != nil {
+				log.Printf("[scheduler] Failed to resolve Plex ID for %s: %v", localItem.Name, err)
+			} else if resolvedID != "" {
+				plexID = resolvedID
+			}
 		}
 
 		if plexID == "" {
@@ -1254,7 +1270,9 @@ func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID,
 	existingItems, _ := s.watchlistService.List(profileID)
 	existingKeys := make(map[string]bool)
 	for _, item := range existingItems {
-		existingKeys[item.Key()] = true
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			existingKeys[key] = true
+		}
 	}
 
 	imported := 0
@@ -1268,13 +1286,10 @@ func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID,
 			itemID = imdbID
 		}
 
-		itemKey := item.MediaType + ":" + itemID
-
-		// Track this item key for deletion checking
-		traktItemKeys[itemKey] = true
-
-		// Check if this is a new item (not already in local)
-		isNew := !existingKeys[itemKey]
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, itemID, item.IDs) {
+			traktItemKeys[key] = true
+		}
+		isNew := !schedulerWatchlistHasAnyKey(existingKeys, item.MediaType, itemID, item.IDs)
 
 		if dryRun {
 			if isNew {
@@ -1315,10 +1330,7 @@ func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID,
 			log.Printf("[scheduler] Failed to list local items for deletion check: %v", err)
 		} else {
 			for _, localItem := range localItems {
-				localKey := localItem.Key()
-
-				// Check if item still exists in Trakt list
-				if traktItemKeys[localKey] {
+				if schedulerWatchlistHasAnyKey(traktItemKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 					continue // Item still in Trakt, keep it
 				}
 
@@ -1380,22 +1392,30 @@ func (s *Service) syncLocalToTrakt(traktAccount *config.TraktAccount, profileID,
 	// Build set of Trakt item keys for quick lookup
 	traktItemKeys := make(map[string]bool)
 	for _, item := range traktItems {
-		var key string
+		var itemID string
+		var mediaType string
+		extIDs := map[string]string{}
 		if item.Movie != nil {
+			mediaType = "movie"
+			extIDs = trakt.IDsToMap(item.Movie.IDs)
 			if item.Movie.IDs.TMDB != 0 {
-				key = "movie:" + strconv.Itoa(item.Movie.IDs.TMDB)
+				itemID = strconv.Itoa(item.Movie.IDs.TMDB)
 			} else if item.Movie.IDs.IMDB != "" {
-				key = "movie:" + item.Movie.IDs.IMDB
+				itemID = item.Movie.IDs.IMDB
 			}
 		} else if item.Show != nil {
+			mediaType = "series"
+			extIDs = trakt.IDsToMap(item.Show.IDs)
 			if item.Show.IDs.TMDB != 0 {
-				key = "series:" + strconv.Itoa(item.Show.IDs.TMDB)
+				itemID = strconv.Itoa(item.Show.IDs.TMDB)
 			} else if item.Show.IDs.IMDB != "" {
-				key = "series:" + item.Show.IDs.IMDB
+				itemID = item.Show.IDs.IMDB
 			}
 		}
-		if key != "" {
-			traktItemKeys[key] = true
+		if itemID != "" {
+			for _, key := range schedulerWatchlistMatchKeys(mediaType, itemID, extIDs) {
+				traktItemKeys[key] = true
+			}
 		}
 	}
 
@@ -1407,11 +1427,12 @@ func (s *Service) syncLocalToTrakt(traktAccount *config.TraktAccount, profileID,
 	exported := 0
 
 	for _, localItem := range localItems {
-		localKey := localItem.Key()
-		localItemKeys[localKey] = true
+		for _, key := range schedulerWatchlistMatchKeys(localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
+			localItemKeys[key] = true
+		}
 
 		// Check if already in Trakt
-		if traktItemKeys[localKey] {
+		if schedulerWatchlistHasAnyKey(traktItemKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 			continue // Already in Trakt
 		}
 
@@ -1479,32 +1500,38 @@ func (s *Service) syncLocalToTrakt(traktAccount *config.TraktAccount, profileID,
 		removed := 0
 
 		for _, traktItem := range traktItems {
-			var key string
+			var itemID string
+			var mediaType string
+			extIDs := map[string]string{}
 			var movie *trakt.Movie
 			var show *trakt.Show
 
 			if traktItem.Movie != nil {
 				movie = traktItem.Movie
+				mediaType = "movie"
+				extIDs = trakt.IDsToMap(movie.IDs)
 				if movie.IDs.TMDB != 0 {
-					key = "movie:" + strconv.Itoa(movie.IDs.TMDB)
+					itemID = strconv.Itoa(movie.IDs.TMDB)
 				} else if movie.IDs.IMDB != "" {
-					key = "movie:" + movie.IDs.IMDB
+					itemID = movie.IDs.IMDB
 				}
 			} else if traktItem.Show != nil {
 				show = traktItem.Show
+				mediaType = "series"
+				extIDs = trakt.IDsToMap(show.IDs)
 				if show.IDs.TMDB != 0 {
-					key = "series:" + strconv.Itoa(show.IDs.TMDB)
+					itemID = strconv.Itoa(show.IDs.TMDB)
 				} else if show.IDs.IMDB != "" {
-					key = "series:" + show.IDs.IMDB
+					itemID = show.IDs.IMDB
 				}
 			}
 
-			if key == "" {
+			if itemID == "" {
 				continue
 			}
 
 			// Check if item exists in local watchlist
-			if localItemKeys[key] {
+			if schedulerWatchlistHasAnyKey(localItemKeys, mediaType, itemID, extIDs) {
 				continue // Item in local, keep in Trakt
 			}
 
@@ -1525,8 +1552,8 @@ func (s *Service) syncLocalToTrakt(traktAccount *config.TraktAccount, profileID,
 				log.Printf("[scheduler] DRY RUN: Would remove from Trakt watchlist: %s", name)
 				result.ToRemove = append(result.ToRemove, config.DryRunItem{
 					Name:      name,
-					MediaType: key[:strings.Index(key, ":")],
-					ID:        key[strings.Index(key, ":")+1:],
+					MediaType: mediaType,
+					ID:        itemID,
 				})
 				removed++
 				continue
@@ -1583,7 +1610,7 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 	}
 
 	// Build maps for quick lookup
-	traktByKey := make(map[string]TraktListItem)
+	traktKeys := make(map[string]bool)
 	for _, item := range traktItems {
 		itemID := item.IDs["trakt"]
 		if tmdbID, ok := item.IDs["tmdb"]; ok && tmdbID != "" {
@@ -1591,28 +1618,31 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 		} else if imdbID, ok := item.IDs["imdb"]; ok && imdbID != "" {
 			itemID = imdbID
 		}
-		key := item.MediaType + ":" + itemID
-		traktByKey[key] = item
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, itemID, item.IDs) {
+			traktKeys[key] = true
+		}
 	}
 
-	localByKey := make(map[string]models.WatchlistItem)
+	localKeys := make(map[string]bool)
 	for _, item := range localItems {
-		localByKey[item.Key()] = item
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			localKeys[key] = true
+		}
 	}
 
 	synced := 0
 
 	// Step 1: Sync Trakt → Local (items in Trakt not in local)
-	for key, traktItem := range traktByKey {
-		if _, exists := localByKey[key]; exists {
-			continue // Already in local
-		}
-
+	for _, traktItem := range traktItems {
 		itemID := traktItem.IDs["trakt"]
 		if tmdbID, ok := traktItem.IDs["tmdb"]; ok && tmdbID != "" {
 			itemID = tmdbID
 		} else if imdbID, ok := traktItem.IDs["imdb"]; ok && imdbID != "" {
 			itemID = imdbID
+		}
+
+		if schedulerWatchlistHasAnyKey(localKeys, traktItem.MediaType, itemID, traktItem.IDs) {
+			continue // Already in local
 		}
 
 		if dryRun {
@@ -1651,8 +1681,8 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 		var moviesToAdd []trakt.SyncMovie
 		var showsToAdd []trakt.SyncShow
 
-		for key, localItem := range localByKey {
-			if _, exists := traktByKey[key]; exists {
+		for _, localItem := range localItems {
+			if schedulerWatchlistHasAnyKey(traktKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 				continue // Already in Trakt
 			}
 
@@ -3087,7 +3117,9 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 	existingItems, _ := s.watchlistService.List(profileID)
 	existingKeys := make(map[string]bool)
 	for _, item := range existingItems {
-		existingKeys[item.Key()] = true
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			existingKeys[key] = true
+		}
 	}
 
 	imported := 0
@@ -3102,10 +3134,11 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 			itemID = imdbID
 		}
 
-		itemKey := mediaType + ":" + itemID
-		jfItemKeys[itemKey] = true
+		for _, key := range schedulerWatchlistMatchKeys(mediaType, itemID, item.ProviderIDs) {
+			jfItemKeys[key] = true
+		}
 
-		isNew := !existingKeys[itemKey]
+		isNew := !schedulerWatchlistHasAnyKey(existingKeys, mediaType, itemID, item.ProviderIDs)
 
 		if dryRun {
 			if isNew {
@@ -3152,7 +3185,7 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 			log.Printf("[scheduler] Failed to list local items for deletion check: %v", err)
 		} else {
 			for _, localItem := range localItems {
-				if jfItemKeys[localItem.Key()] {
+				if schedulerWatchlistHasAnyKey(jfItemKeys, localItem.MediaType, localItem.ID, localItem.ExternalIDs) {
 					continue
 				}
 				if deleteBehavior == "delete" && localItem.SyncSource != syncSource {
@@ -3408,17 +3441,12 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 	// Build set of MDBList item keys for deletion checking
 	mdblistItemKeys := make(map[string]bool)
 
-	// Build existing keys index using ALL external IDs for cross-ID matching
-	// Local items may use different primary IDs (e.g. TMDB "1111873") while
-	// MDBList returns IMDB ("tt27489557") — both refer to the same item.
+	// Build existing keys index using all stable identifiers for cross-ID matching.
 	existingItems, _ := s.watchlistService.List(profileID)
 	existingKeys := make(map[string]bool)
 	for _, item := range existingItems {
-		existingKeys[item.MediaType+":"+item.ID] = true
-		for _, v := range item.ExternalIDs {
-			if v != "" {
-				existingKeys[item.MediaType+":"+v] = true
-			}
+		for _, key := range schedulerWatchlistMatchKeys(item.MediaType, item.ID, item.ExternalIDs) {
+			existingKeys[key] = true
 		}
 	}
 
@@ -3454,20 +3482,10 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 			continue
 		}
 
-		itemKey := mediaType + ":" + itemID
-		mdblistItemKeys[itemKey] = true
-
-		// Check if ANY of this item's IDs match an existing local item
-		isNew := true
-		for _, v := range extIDs {
-			if existingKeys[mediaType+":"+v] {
-				isNew = false
-				break
-			}
+		for _, key := range schedulerWatchlistMatchKeys(mediaType, itemID, extIDs) {
+			mdblistItemKeys[key] = true
 		}
-		if !isNew && !existingKeys[itemKey] {
-			// Item exists by cross-ID but not by primary key — still not new
-		}
+		isNew := !schedulerWatchlistHasAnyKey(existingKeys, mediaType, itemID, extIDs)
 
 		if dryRun {
 			if isNew {
@@ -3503,7 +3521,7 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 		localItems, err := s.watchlistService.List(profileID)
 		if err == nil {
 			for _, item := range localItems {
-				if item.SyncSource == syncSource && !mdblistItemKeys[item.MediaType+":"+item.ID] {
+				if item.SyncSource == syncSource && !schedulerWatchlistHasAnyKey(mdblistItemKeys, item.MediaType, item.ID, item.ExternalIDs) {
 					if _, err := s.watchlistService.Remove(profileID, item.MediaType, item.ID); err != nil {
 						log.Printf("[scheduler] Failed to remove stale MDBList watchlist item: %v", err)
 					}
@@ -3516,6 +3534,82 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 	log.Printf("[scheduler] Imported %d items from MDBList watchlist", imported)
 
 	return result, nil
+}
+
+func schedulerWatchlistHasAnyKey(keys map[string]bool, mediaType, id string, externalIDs map[string]string) bool {
+	for _, key := range schedulerWatchlistMatchKeys(mediaType, id, externalIDs) {
+		if keys[key] {
+			return true
+		}
+	}
+	return false
+}
+
+func schedulerWatchlistMatchKeys(mediaType, id string, externalIDs map[string]string) []string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	id = strings.TrimSpace(id)
+	externalIDs = schedulerNormalizeExternalIDs(externalIDs)
+
+	keys := make([]string, 0, 8)
+	seen := make(map[string]bool)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		key := mediaType + ":" + value
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+
+	add(id)
+	switch mediaType {
+	case "movie":
+		if v := externalIDs["tvdb"]; v != "" {
+			add("tvdb:movie:" + v)
+			add(v)
+		}
+		if v := externalIDs["tmdb"]; v != "" {
+			add("tmdb:movie:" + v)
+			add(v)
+		}
+	case "series":
+		if v := externalIDs["tvdb"]; v != "" {
+			add("tvdb:series:" + v)
+			add(v)
+		}
+		if v := externalIDs["tmdb"]; v != "" {
+			add("tmdb:tv:" + v)
+			add(v)
+		}
+	}
+	if v := externalIDs["imdb"]; v != "" {
+		add(v)
+		add("imdb:" + v)
+	}
+	return keys
+}
+
+func schedulerNormalizeExternalIDs(externalIDs map[string]string) map[string]string {
+	if len(externalIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(externalIDs))
+	for key, value := range externalIDs {
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // executeMDBListHistorySync syncs watch history between MDBList and local.

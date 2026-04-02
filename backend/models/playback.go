@@ -4,33 +4,35 @@ package models
 type SubtitleSessionInfo struct {
 	SessionID    string  `json:"sessionId"`
 	VTTUrl       string  `json:"vttUrl"`
+	SubtitleURL  string  `json:"subtitleUrl,omitempty"`
+	Format       string  `json:"format,omitempty"`
 	TrackIndex   int     `json:"trackIndex"`
 	Language     string  `json:"language"`
 	Title        string  `json:"title"`
 	Codec        string  `json:"codec"`
 	IsForced     bool    `json:"isForced"`
-	IsExtracting bool    `json:"isExtracting"`          // true if extraction is still in progress
+	IsExtracting bool    `json:"isExtracting"`           // true if extraction is still in progress
 	FirstCueTime float64 `json:"firstCueTime,omitempty"` // Time of first extracted cue (for subtitle sync)
 }
 
 // BatchEpisodeTarget describes one episode to resolve within a batch request.
 type BatchEpisodeTarget struct {
-	SeasonNumber         int    `json:"seasonNumber"`
-	EpisodeNumber        int    `json:"episodeNumber"`
-	EpisodeCode          string `json:"episodeCode,omitempty"`
-	AbsoluteEpisodeNumber int   `json:"absoluteEpisodeNumber,omitempty"`
-	AirDate              string `json:"airDate,omitempty"`
-	IsDaily              bool   `json:"isDaily,omitempty"`
+	SeasonNumber          int    `json:"seasonNumber"`
+	EpisodeNumber         int    `json:"episodeNumber"`
+	EpisodeCode           string `json:"episodeCode,omitempty"`
+	AbsoluteEpisodeNumber int    `json:"absoluteEpisodeNumber,omitempty"`
+	AirDate               string `json:"airDate,omitempty"`
+	IsDaily               bool   `json:"isDaily,omitempty"`
 }
 
 // BatchEpisodeResult is the per-episode outcome of a batch resolve.
 type BatchEpisodeResult struct {
-	SeasonNumber         int                 `json:"seasonNumber"`
-	EpisodeNumber        int                 `json:"episodeNumber"`
-	EpisodeCode          string              `json:"episodeCode,omitempty"`
-	AbsoluteEpisodeNumber int                `json:"absoluteEpisodeNumber,omitempty"`
-	Resolution           *PlaybackResolution `json:"resolution,omitempty"`
-	Error                string              `json:"error,omitempty"`
+	SeasonNumber          int                 `json:"seasonNumber"`
+	EpisodeNumber         int                 `json:"episodeNumber"`
+	EpisodeCode           string              `json:"episodeCode,omitempty"`
+	AbsoluteEpisodeNumber int                 `json:"absoluteEpisodeNumber,omitempty"`
+	Resolution            *PlaybackResolution `json:"resolution,omitempty"`
+	Error                 string              `json:"error,omitempty"`
 }
 
 // BatchResolveResponse wraps the per-episode results of a batch resolve.

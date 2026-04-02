@@ -203,6 +203,19 @@ type WatchlistItemWithDetails struct {
 	ExternalIDs map[string]string
 }
 
+type discoverSearchResponse struct {
+	MediaContainer struct {
+		SearchResults []struct {
+			ID           string `json:"id"`
+			Title        string `json:"title"`
+			SearchResult []struct {
+				Metadata json.RawMessage `json:"Metadata"`
+				Score    float64         `json:"score"`
+			} `json:"SearchResult"`
+		} `json:"SearchResults"`
+	} `json:"MediaContainer"`
+}
+
 // GetWatchlistWithProgress retrieves watchlist with progress reporting and parallel detail fetching
 func (c *Client) GetWatchlistWithProgress(authToken string, progress ProgressCallback) ([]WatchlistItem, error) {
 	if progress != nil {
@@ -401,6 +414,104 @@ func (c *Client) GetItemDetails(authToken string, ratingKey string) (map[string]
 	}
 
 	return ids, nil
+}
+
+// ResolveRatingKey attempts to find a Plex discover rating key for the given title
+// and external IDs. It searches Plex Discover by title, then verifies candidates
+// using their detailed external IDs.
+func (c *Client) ResolveRatingKey(authToken, title, mediaType string, year int, externalIDs map[string]string) (string, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", nil
+	}
+
+	searchType := "movies"
+	if strings.EqualFold(mediaType, "series") || strings.EqualFold(mediaType, "show") {
+		searchType = "tv"
+	}
+
+	params := url.Values{}
+	params.Set("query", title)
+	params.Set("limit", "10")
+	params.Set("searchTypes", searchType)
+	params.Set("includeMetadata", "1")
+	params.Set("searchProviders", "discover")
+
+	searchURL := fmt.Sprintf("%s/library/search?%s", plexDiscoverBaseURL, params.Encode())
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create search request: %w", err)
+	}
+
+	c.setPlexHeaders(req)
+	req.Header.Set("X-Plex-Token", authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("plex search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("plex search failed: %s - %s", resp.Status, string(body))
+	}
+
+	var searchResp discoverSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return "", fmt.Errorf("decode search response: %w", err)
+	}
+
+	candidates := make([]WatchlistItem, 0, 10)
+	for _, group := range searchResp.MediaContainer.SearchResults {
+		for _, result := range group.SearchResult {
+			var item WatchlistItem
+			if len(result.Metadata) == 0 || string(result.Metadata) == "null" {
+				continue
+			}
+			if err := json.Unmarshal(result.Metadata, &item); err != nil {
+				continue
+			}
+			if item.RatingKey == "" {
+				continue
+			}
+			candidates = append(candidates, item)
+		}
+	}
+
+	wantType := NormalizeMediaType(mediaType)
+	for _, candidate := range candidates {
+		if wantType != "" && NormalizeMediaType(candidate.Type) != wantType {
+			continue
+		}
+		if year != 0 && candidate.Year != 0 && candidate.Year != year {
+			continue
+		}
+
+		candidateIDs, err := c.GetItemDetails(authToken, candidate.RatingKey)
+		if err != nil || len(candidateIDs) == 0 {
+			continue
+		}
+		if externalIDMatch(externalIDs, candidateIDs) {
+			return candidate.RatingKey, nil
+		}
+	}
+
+	return "", nil
+}
+
+func externalIDMatch(localIDs, plexIDs map[string]string) bool {
+	if len(localIDs) == 0 || len(plexIDs) == 0 {
+		return false
+	}
+	for _, key := range []string{"imdb", "tmdb", "tvdb"} {
+		localValue := strings.TrimSpace(localIDs[key])
+		plexValue := strings.TrimSpace(plexIDs[key])
+		if localValue != "" && plexValue != "" && localValue == plexValue {
+			return true
+		}
+	}
+	return false
 }
 
 // AddToWatchlist adds an item to the user's Plex watchlist

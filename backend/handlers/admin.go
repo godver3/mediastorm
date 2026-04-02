@@ -188,10 +188,10 @@ type StreamInfo struct {
 	SeasonNumber  int               `json:"season_number,omitempty"`  // Season number (for episodes)
 	EpisodeNumber int               `json:"episode_number,omitempty"` // Episode number (for episodes)
 	EpisodeName   string            `json:"episode_name,omitempty"`   // Episode title (for episodes)
-	ExternalIDs   map[string]string `json:"externalIds,omitempty"` // tmdbId, tvdbId, imdbId
+	ExternalIDs   map[string]string `json:"externalIds,omitempty"`    // tmdbId, tvdbId, imdbId
 	// Pause detection
-	IsPaused      bool      `json:"is_paused,omitempty"`       // True if no recent activity (likely paused)
-	PausedSince   time.Time `json:"paused_since,omitempty"`    // When the stream was detected as paused
+	IsPaused    bool      `json:"is_paused,omitempty"`    // True if no recent activity (likely paused)
+	PausedSince time.Time `json:"paused_since,omitempty"` // When the stream was detected as paused
 }
 
 // StreamsResponse is the response for the streams endpoint
@@ -324,9 +324,15 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 		allProgress = h.progressService.ListAllPlaybackProgress()
 	}
 
-	// Pause detection thresholds
-	const pauseThreshold = 30 * time.Second // No activity for 30s = paused
-	const hideThreshold = 60 * time.Second  // Paused for 30s beyond pause threshold = hide from dashboard
+	// VOD heartbeat expiry is driven by player progress updates.
+	// Paused state comes from the heartbeat payload itself; missed heartbeats
+	// indicate the stream has stopped/ended.
+	const heartbeatEndedThreshold = 25 * time.Second
+
+	// Transport activity remains as a fallback for streams without a canonical
+	// playback heartbeat, such as streams missing stable media metadata.
+	const transportPauseThreshold = 30 * time.Second
+	const transportHideThreshold = 60 * time.Second
 	now := time.Now()
 
 	// Collect all raw streams first
@@ -365,31 +371,31 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			}
 
 			info := StreamInfo{
-				ID:           session.ID,
-				Type:         "hls",
-				Path:         session.Path,
-				OriginalPath: session.OriginalPath,
-				Filename:     filename,
-				ClientIP:     session.ClientIP,
-				ProfileID:    session.ProfileID,
-				ProfileName:  profileName,
-				CreatedAt:    session.CreatedAt,
-				LastAccess:   lastActivity,
-				Duration:     session.Duration,
+				ID:            session.ID,
+				Type:          "hls",
+				Path:          session.Path,
+				OriginalPath:  session.OriginalPath,
+				Filename:      filename,
+				ClientIP:      session.ClientIP,
+				ProfileID:     session.ProfileID,
+				ProfileName:   profileName,
+				CreatedAt:     session.CreatedAt,
+				LastAccess:    lastActivity,
+				Duration:      session.Duration,
 				BytesStreamed: session.BytesStreamed,
-				HasDV:        session.HasDV && !session.DVDisabled,
-				HasHDR:       session.HasHDR,
-				DVProfile:    session.DVProfile,
-				Segments:     session.SegmentsCreated,
-				StartOffset:  session.StartOffset,
-				ItemID:       session.MediaMetadata.ItemID,
-				MediaType:    session.MediaMetadata.MediaType,
-				Title:        session.MediaMetadata.Title,
-				Year:         session.MediaMetadata.Year,
-				SeasonNumber: session.MediaMetadata.SeasonNumber,
+				HasDV:         session.HasDV && !session.DVDisabled,
+				HasHDR:        session.HasHDR,
+				DVProfile:     session.DVProfile,
+				Segments:      session.SegmentsCreated,
+				StartOffset:   session.StartOffset,
+				ItemID:        session.MediaMetadata.ItemID,
+				MediaType:     session.MediaMetadata.MediaType,
+				Title:         session.MediaMetadata.Title,
+				Year:          session.MediaMetadata.Year,
+				SeasonNumber:  session.MediaMetadata.SeasonNumber,
 				EpisodeNumber: session.MediaMetadata.EpisodeNumber,
-				EpisodeName:  session.MediaMetadata.EpisodeName,
-				ExternalIDs:  session.MediaMetadata.ExternalIDs,
+				EpisodeName:   session.MediaMetadata.EpisodeName,
+				ExternalIDs:   session.MediaMetadata.ExternalIDs,
 			}
 
 			session.mu.RUnlock()
@@ -457,13 +463,10 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		info := rs.info
-		var matchedProgress *models.PlaybackProgress
-		if matchedProgress = findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
+		matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
 			MediaType: info.MediaType,
 			ItemID:    info.ItemID,
-		}, nameToUserID); matchedProgress == nil {
-			matchedProgress = findProgressByFilename(allProgress, info.ProfileID, info.ProfileName, info.Filename, nameToUserID)
-		}
+		}, nameToUserID)
 
 		// Apply matched progress including media identification
 		if matchedProgress != nil {
@@ -568,15 +571,29 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		// Pause detection: mark as paused if no recent activity
-		idleDuration := now.Sub(info.LastAccess)
-		if idleDuration > pauseThreshold {
-			// Hide streams that have been idle too long
-			if idleDuration > hideThreshold {
+		if matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
+			MediaType: info.MediaType,
+			ItemID:    info.ItemID,
+		}, nameToUserID); matchedProgress != nil && !matchedProgress.UpdatedAt.IsZero() {
+			heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
+			if heartbeatAge > heartbeatEndedThreshold {
 				continue
 			}
-			info.IsPaused = true
-			info.PausedSince = info.LastAccess
+			if matchedProgress.IsPaused {
+				info.IsPaused = true
+				info.PausedSince = matchedProgress.UpdatedAt
+			}
+		} else {
+			// Pause detection: mark as paused if no recent transport activity
+			idleDuration := now.Sub(info.LastAccess)
+			if idleDuration > transportPauseThreshold {
+				// Hide streams that have been idle too long
+				if idleDuration > transportHideThreshold {
+					continue
+				}
+				info.IsPaused = true
+				info.PausedSince = info.LastAccess
+			}
 		}
 
 		response.Streams = append(response.Streams, *info)
