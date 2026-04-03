@@ -11,13 +11,25 @@ import (
 // --- Mock services ---
 
 type mockMetadata struct {
-	series      map[int64]*models.SeriesDetails
-	movies      map[int64]*models.Title
-	trending    map[string][]models.TrendingItem
-	customLists map[string][]models.TrendingItem
+	series             map[int64]*models.SeriesDetails
+	movies             map[int64]*models.Title
+	trending           map[string][]models.TrendingItem
+	customLists        map[string][]models.TrendingItem
+	trendingCalls      map[string]int
+	seriesDetailsCalls int
+	seriesLiteCalls    int
 }
 
 func (m *mockMetadata) SeriesDetails(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.seriesDetailsCalls++
+	if d, ok := m.series[req.TVDBID]; ok {
+		return d, nil
+	}
+	return nil, fmt.Errorf("series not found")
+}
+
+func (m *mockMetadata) SeriesDetailsLite(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.seriesLiteCalls++
 	if d, ok := m.series[req.TVDBID]; ok {
 		return d, nil
 	}
@@ -32,6 +44,10 @@ func (m *mockMetadata) MovieDetails(_ context.Context, req models.MovieDetailsQu
 }
 
 func (m *mockMetadata) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
+	if m.trendingCalls == nil {
+		m.trendingCalls = make(map[string]int)
+	}
+	m.trendingCalls[mediaType]++
 	if items, ok := m.trending[mediaType]; ok {
 		return items, nil
 	}
@@ -46,10 +62,15 @@ func (m *mockMetadata) GetCustomListForCalendar(_ context.Context, listURL strin
 }
 
 type mockWatchlist struct {
-	items map[string][]models.WatchlistItem
+	items     map[string][]models.WatchlistItem
+	listCalls map[string]int
 }
 
 func (m *mockWatchlist) List(userID string) ([]models.WatchlistItem, error) {
+	if m.listCalls == nil {
+		m.listCalls = make(map[string]int)
+	}
+	m.listCalls[userID]++
 	return m.items[userID], nil
 }
 
@@ -92,12 +113,13 @@ func pastDate(daysAgo int) string {
 
 func defaultMocks() (*mockMetadata, *mockWatchlist, *mockHistory, *mockUserSettings, *mockUsers) {
 	return &mockMetadata{
-			series:      map[int64]*models.SeriesDetails{},
-			movies:      map[int64]*models.Title{},
-			trending:    map[string][]models.TrendingItem{},
-			customLists: map[string][]models.TrendingItem{},
+			series:        map[int64]*models.SeriesDetails{},
+			movies:        map[int64]*models.Title{},
+			trending:      map[string][]models.TrendingItem{},
+			customLists:   map[string][]models.TrendingItem{},
+			trendingCalls: map[string]int{},
 		},
-		&mockWatchlist{items: map[string][]models.WatchlistItem{}},
+		&mockWatchlist{items: map[string][]models.WatchlistItem{}, listCalls: map[string]int{}},
 		&mockHistory{items: map[string][]models.SeriesWatchState{}},
 		&mockUserSettings{settings: map[string]*models.UserSettings{}},
 		&mockUsers{users: []models.User{{ID: "user1"}}}
@@ -665,6 +687,126 @@ func TestBuildUserCalendar_SettingsDisableMDBLists(t *testing.T) {
 
 	if len(items) != 0 {
 		t.Fatalf("expected 0 items with MDBLists disabled, got %d", len(items))
+	}
+}
+
+func TestBuildUserCalendar_FetchesWatchlistOnce(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{Name: "Show", TVDBID: 100},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(5)},
+			}},
+		},
+	}
+	meta.movies[500] = &models.Title{
+		Name: "Movie", TMDBID: 500,
+		Theatrical: &models.Release{Type: "theatrical", Date: futureDate(7), Released: false},
+		Releases: []models.Release{
+			{Type: "theatrical", Date: futureDate(7), Released: false},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tvdb:100", MediaType: "series", Name: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+		{ID: "tmdb:500", MediaType: "movie", Name: "Movie", ExternalIDs: map[string]string{"tmdb": "500"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if wl.listCalls["user1"] != 1 {
+		t.Fatalf("expected watchlist to be fetched once, got %d", wl.listCalls["user1"])
+	}
+}
+
+func TestBuildUserCalendar_FetchesTrendingOncePerMediaType(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.trending["movie"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name: "Trending Film", TMDBID: 600,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(7), Released: false},
+				Releases: []models.Release{
+					{Type: "theatrical", Date: futureDate(7), Released: false},
+				},
+			},
+		},
+		{
+			Rank: 21,
+			Title: models.Title{
+				Name: "Trailing Film", TMDBID: 601,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(8), Released: false},
+				Releases: []models.Release{
+					{Type: "theatrical", Date: futureDate(8), Released: false},
+				},
+			},
+		},
+	}
+	meta.trending["series"] = []models.TrendingItem{
+		{Rank: 1, Title: models.Title{Name: "Top Show", TVDBID: 300, Status: "Continuing"}},
+		{Rank: 21, Title: models.Title{Name: "Trailing Show", TVDBID: 301, Status: "Continuing"}},
+	}
+	meta.series[300] = &models.SeriesDetails{
+		Title: models.Title{Name: "Top Show", TVDBID: 300},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Top Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(2)},
+			}},
+		},
+	}
+	meta.series[301] = &models.SeriesDetails{
+		Title: models.Title{Name: "Trailing Show", TVDBID: 301},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Trailing Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(3)},
+			}},
+		},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(items))
+	}
+	if meta.trendingCalls["movie"] != 1 {
+		t.Fatalf("expected movie trending to be fetched once, got %d", meta.trendingCalls["movie"])
+	}
+	if meta.trendingCalls["series"] != 1 {
+		t.Fatalf("expected series trending to be fetched once, got %d", meta.trendingCalls["series"])
+	}
+}
+
+func TestBuildUserCalendar_UsesSeriesDetailsLite(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{Name: "Show", TVDBID: 100},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Ep", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(5)},
+			}},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tvdb:100", MediaType: "series", Name: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildUserCalendar("user1")
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if meta.seriesLiteCalls == 0 {
+		t.Fatal("expected SeriesDetailsLite to be used")
+	}
+	if meta.seriesDetailsCalls != 0 {
+		t.Fatalf("expected full SeriesDetails to be skipped, got %d calls", meta.seriesDetailsCalls)
 	}
 }
 
