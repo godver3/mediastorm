@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -416,10 +417,34 @@ func (s *Service) saveLocked() error {
 	return nil
 }
 
+func (s *Service) pruneInvalidClientsLocked(validUserIDs map[string]struct{}) []models.Client {
+	var removed []models.Client
+	for id, c := range s.clients {
+		if _, ok := validUserIDs[c.UserID]; ok {
+			continue
+		}
+		delete(s.clients, id)
+		removed = append(removed, c)
+	}
+	return removed
+}
+
 // syncToDB writes the full in-memory clients state to PostgreSQL.
 func (s *Service) syncToDB() error {
 	ctx := context.Background()
 	return s.store.WithTx(ctx, func(tx *datastore.Tx) error {
+		users, err := tx.Users().List(ctx)
+		if err != nil {
+			return fmt.Errorf("list users: %w", err)
+		}
+		validUserIDs := make(map[string]struct{}, len(users))
+		for _, u := range users {
+			validUserIDs[u.ID] = struct{}{}
+		}
+		for _, c := range s.pruneInvalidClientsLocked(validUserIDs) {
+			log.Printf("[clients] pruning orphaned client %q for missing user %q", c.ID, c.UserID)
+		}
+
 		// Get existing DB state to detect deletes
 		existing, err := tx.Clients().List(ctx)
 		if err != nil {
