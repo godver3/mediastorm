@@ -270,6 +270,50 @@ func (s *Service) Get(userID string) *userCalendar {
 	return s.buildAndCacheUserCalendar(userID, false)
 }
 
+// peek returns the cached calendar without triggering a build. Returns nil if
+// no calendar has been built for the user yet. Use this in latency-sensitive
+// paths where triggering a full calendar build is unacceptable.
+func (s *Service) peek(userID string) *userCalendar {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cache[userID]
+}
+
+// GetForHomeShelf returns a small window of calendar items (daysBack before
+// today through daysForward after today) suitable for the home-screen shelf.
+// It reads only from the pre-built cache — it never triggers a calendar build —
+// so it is safe to call in latency-sensitive contexts like the startup bundle.
+// Returns nil when the calendar has not yet been built for this user.
+func (s *Service) GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward int) []models.CalendarItem {
+	cached := s.peek(userID)
+	if cached == nil {
+		return nil
+	}
+
+	now := time.Now().In(loc)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	windowStart := today.AddDate(0, 0, -daysBack)
+	windowEnd := today.AddDate(0, 0, daysForward)
+
+	var result []models.CalendarItem
+	for _, item := range cached.Items {
+		airDT := ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone)
+		airInTZ := airDT.In(loc)
+		airDate := time.Date(airInTZ.Year(), airInTZ.Month(), airInTZ.Day(), 0, 0, 0, 0, loc)
+		if airDate.Before(windowStart) || airDate.After(windowEnd) {
+			continue
+		}
+		adjusted := item
+		adjusted.AirDate = airInTZ.Format("2006-01-02")
+		if item.AirTime != "" {
+			adjusted.AirTime = airInTZ.Format("15:04")
+			adjusted.AirTimezone = loc.String()
+		}
+		result = append(result, adjusted)
+	}
+	return result
+}
+
 // refreshAll rebuilds calendar data for all users.
 func (s *Service) refreshAll() {
 	allUsers := s.users.List()

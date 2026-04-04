@@ -541,6 +541,7 @@ func main() {
 	// Calendar service provides upcoming content from watchlist, history, and MDBList
 	calendarService := calendar.New(metadataService, watchlistService, historyService, userSettingsService, userService)
 	calendarHandler := handlers.NewCalendarHandler(calendarService, userService, *demoMode)
+	startupHandler.SetCalendar(calendarService)
 
 	// Create prequeue handler now that history service is available
 	// Video prober and HLS creator are optional - we'll set them after videoHandler is created

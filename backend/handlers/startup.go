@@ -27,6 +27,12 @@ const startupShelfLimit = 20
 // let the frontend fetch trending independently.
 const startupTrendingTimeout = 10 * time.Second
 
+// startupCalendarService is the subset of the calendar service used by the
+// startup handler. It reads only from the pre-built cache (non-blocking).
+type startupCalendarService interface {
+	GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward int) []models.CalendarItem
+}
+
 // StartupHandler serves a combined startup payload to reduce the number of
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
@@ -38,6 +44,7 @@ type StartupHandler struct {
 	cfgManager    *config.Manager
 	users         userService
 	usersProvider usersServiceInterface // for kids profile filtering
+	calendar      startupCalendarService
 }
 
 // NewStartupHandler constructs a StartupHandler.
@@ -59,6 +66,12 @@ func NewStartupHandler(
 	}
 }
 
+// SetCalendar injects the calendar service. Called after construction because
+// the calendar service is created after the startup handler in main.go.
+func (h *StartupHandler) SetCalendar(cal startupCalendarService) {
+	h.calendar = cal
+}
+
 // StartupResponse is the combined payload returned by GET /api/users/{userID}/startup.
 type StartupResponse struct {
 	UserSettings          *models.UserSettings      `json:"userSettings"`
@@ -69,6 +82,9 @@ type StartupResponse struct {
 	WatchHistory          []models.WatchHistoryItem `json:"watchHistory"`
 	TrendingMovies        *DiscoverNewResponse      `json:"trendingMovies"`
 	TrendingSeries        *DiscoverNewResponse      `json:"trendingSeries"`
+	// CalendarItems contains the home-shelf calendar window (yesterday + next 2 days).
+	// Populated from the pre-built calendar cache; empty if the cache is not ready yet.
+	CalendarItems []models.CalendarItem `json:"calendarItems,omitempty"`
 }
 
 // GetStartup returns all initial user data in a single response.
@@ -170,6 +186,23 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		}
 		playbackProgress = pp
 	}()
+
+	// 5b. Calendar home-shelf items (yesterday + next 2 days). Non-blocking:
+	// reads only from the pre-built in-memory cache; returns empty when not ready.
+	if h.calendar != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tzName := strings.TrimSpace(r.URL.Query().Get("tz"))
+			loc := time.UTC
+			if tzName != "" {
+				if parsed, err := time.LoadLocation(tzName); err == nil {
+					loc = parsed
+				}
+			}
+			resp.CalendarItems = h.calendar.GetForHomeShelf(userID, loc, 1, 2)
+		}()
+	}
 
 	// 6-7. Trending movies + series — these call Trending() which on cold cache
 	// can take 20-30s for TMDB enrichment. Run them with a deadline so they
