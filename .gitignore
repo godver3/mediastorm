@@ -132,4 +132,9 @@ monitor.sh
 
 # Backend scripts
 backend/scripts/build-docker.sh
+backend/scripts/reconcile_watchlist/
 build.sh
+
+# Deployment and utility scripts
+deploy/
+scripts/
