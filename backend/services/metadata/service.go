@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"errors"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -61,6 +62,10 @@ type Service struct {
 	// Progress tracking for long-running enrichment operations
 	progressMu    sync.RWMutex
 	progressTasks map[string]*ProgressTask
+
+	// Guards against concurrent background re-enrichment of the same trending list.
+	// At most one enrichment goroutine per media type runs at a time.
+	trendingEnrichInProgress sync.Map
 }
 
 // CacheManagerStatus holds the current state of the background cache manager.
@@ -342,13 +347,17 @@ func (s *Service) GetCacheManagerStatus() CacheManagerStatus {
 	s.cacheStatusMu.RLock()
 	defer s.cacheStatusMu.RUnlock()
 	status := s.cacheStatus
-	// Count cached items
-	movieKey := cacheKey("mdblist", "trending", "movie", "v4")
+	// Count cached items using the same v6+language key that Trending() reads.
+	lang := ""
+	if s.client != nil {
+		lang = s.client.language
+	}
+	movieKey := cacheKey("mdblist", "trending", "movie", "v6", lang)
 	var movies []models.TrendingItem
 	if ok, _ := s.cache.get(movieKey, &movies); ok {
 		status.MoviesCached = len(movies)
 	}
-	seriesKey := cacheKey("mdblist", "trending", "series", "v4")
+	seriesKey := cacheKey("mdblist", "trending", "series", "v6", lang)
 	var series []models.TrendingItem
 	if ok, _ := s.cache.get(seriesKey, &series); ok {
 		status.SeriesCached = len(series)
@@ -381,8 +390,13 @@ func (s *Service) RefreshTrendingCache() {
 
 		// Invalidate trending cache entries by overwriting with empty slices,
 		// then re-warm to fetch fresh data from MDBList + TMDB/TVDB.
-		_ = s.cache.set(cacheKey("mdblist", "trending", "movie", "v4"), []models.TrendingItem{})
-		_ = s.cache.set(cacheKey("mdblist", "trending", "series", "v4"), []models.TrendingItem{})
+		// Use the same v6+language key that Trending() reads.
+		lang := ""
+		if s.client != nil {
+			lang = s.client.language
+		}
+		_ = s.cache.set(cacheKey("mdblist", "trending", "movie", "v6", lang), []models.TrendingItem{})
+		_ = s.cache.set(cacheKey("mdblist", "trending", "series", "v6", lang), []models.TrendingItem{})
 
 		s.warmTrendingCache()
 		elapsed := time.Since(start)
@@ -845,7 +859,10 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
-		// Re-enrich cached items that are missing certifications
+		// If any items are missing certifications, kick off enrichment in the
+		// background so the caller receives the cached list immediately rather
+		// than waiting for TMDB API calls. The updated list is written back to
+		// the cache and will be served on the next request.
 		needsEnrich := false
 		for _, item := range cached {
 			if item.Title.Certification == "" && (item.Title.TMDBID > 0 || item.Title.IMDBID != "") {
@@ -854,12 +871,24 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 			}
 		}
 		if needsEnrich {
-			if normalized == "movie" {
-				s.enrichTrendingMovieReleases(enrichCtx, cached)
-			} else {
-				s.enrichTrendingTVContentRatings(enrichCtx, cached)
+			// Only spawn one enrichment goroutine per media type at a time.
+			// If one is already running (e.g. from a concurrent request or the
+			// background cache manager), skip — it will write the result to disk
+			// and the next request will pick it up.
+			if _, alreadyRunning := s.trendingEnrichInProgress.LoadOrStore(normalized, struct{}{}); !alreadyRunning {
+				toEnrich := make([]models.TrendingItem, len(cached))
+				copy(toEnrich, cached)
+				enrichKey := key
+				go func() {
+					defer s.trendingEnrichInProgress.Delete(normalized)
+					if normalized == "movie" {
+						s.enrichTrendingMovieReleases(enrichCtx, toEnrich)
+					} else {
+						s.enrichTrendingTVContentRatings(enrichCtx, toEnrich)
+					}
+					_ = s.cache.set(enrichKey, toEnrich)
+				}()
 			}
-			_ = s.cache.set(key, cached)
 		}
 		return cached, nil
 	}
@@ -906,11 +935,11 @@ func (s *Service) enrichDemoArtwork(ctx context.Context, items []models.Trending
 
 		// Fetch artwork from TVDB
 		if mediaType == "movie" {
-			if ext, err := s.client.movieExtended(title.TVDBID, []string{"artwork"}); err == nil {
+			if ext, err := s.cachedMovieExtended(title.TVDBID, []string{"artwork"}); err == nil {
 				applyTVDBArtworks(title, ext.Artworks)
 			}
 		} else {
-			if ext, err := s.client.seriesExtended(title.TVDBID, []string{"artworks"}); err == nil {
+			if ext, err := s.cachedSeriesExtended(title.TVDBID, []string{"artworks"}); err == nil {
 				log.Printf("[demo] series tvdbId=%d poster=%q image=%q fanart=%q artworks=%d",
 					title.TVDBID, ext.Poster, ext.Image, ext.Fanart, len(ext.Artworks))
 				// Apply direct poster/fanart fields first
@@ -1262,7 +1291,7 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 				title.Popularity = tvdbDetails.Score
 			}
 			// Fetch extended data for artwork and genres
-			if ext, err := s.client.movieExtended(*movie.TVDBID, []string{"artwork"}); err == nil {
+			if ext, err := s.cachedMovieExtended(*movie.TVDBID, []string{"artwork"}); err == nil {
 				applyTVDBArtworks(title, ext.Artworks)
 				if genres := tvdbGenreNames(ext.Genres); len(genres) > 0 {
 					title.Genres = genres
@@ -1334,7 +1363,7 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 		}
 
 		if title.TVDBID > 0 {
-			if ext, err := s.client.movieExtended(title.TVDBID, []string{"artwork"}); err == nil {
+			if ext, err := s.cachedMovieExtended(title.TVDBID, []string{"artwork"}); err == nil {
 				applyTVDBArtworks(title, ext.Artworks)
 				if len(title.Genres) == 0 {
 					if genres := tvdbGenreNames(ext.Genres); len(genres) > 0 {
@@ -1435,7 +1464,7 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 	}
 
 	// Fetch cast credits from TMDB
-	if credits, err := s.tmdb.fetchCredits(ctx, "movie", req.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
+	if credits, err := s.cachedFetchCredits(ctx, "movie", req.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
 		movieTitle.Credits = credits
 		log.Printf("[metadata] fetched %d cast members for movie (TMDB) tmdbId=%d", len(credits.Cast), req.TMDBID)
 	} else if err != nil {
@@ -2490,7 +2519,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		// If cached data doesn't have backdrop, enrich with artworks
 		if cached.Title.Backdrop == nil {
 			log.Printf("[metadata] cached series missing backdrop, fetching artworks tvdbId=%d", tvdbID)
-			if extended, err := s.client.seriesExtended(tvdbID, []string{"artworks"}); err == nil {
+			if extended, err := s.cachedSeriesExtended(tvdbID, []string{"artworks"}); err == nil {
 				log.Printf("[metadata] received %d artworks for cached series tvdbId=%d", len(extended.Artworks), tvdbID)
 				applyTVDBArtworks(&cached.Title, extended.Artworks)
 				if cached.Title.Backdrop != nil {
@@ -2532,7 +2561,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			go func() {
 				defer enrichWg.Done()
 				log.Printf("[metadata] cached series missing credits, fetching from TMDB tvdbId=%d tmdbId=%d", tvdbID, cachedTMDBID)
-				if c, err := s.tmdb.fetchCredits(ctx, "series", cachedTMDBID); err == nil && c != nil && len(c.Cast) > 0 {
+				if c, err := s.cachedFetchCredits(ctx, "series", cachedTMDBID); err == nil && c != nil && len(c.Cast) > 0 {
 					enrichCredits = c
 				} else if err != nil {
 					log.Printf("[metadata] failed to fetch credits for cached series tmdbId=%d err=%v", cachedTMDBID, err)
@@ -2544,7 +2573,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			enrichWg.Add(1)
 			go func() {
 				defer enrichWg.Done()
-				if images, err := s.tmdb.fetchImages(ctx, "series", cachedTMDBID); err == nil && images != nil && images.Logo != nil {
+				if images, err := s.cachedFetchImages(ctx, "series", cachedTMDBID); err == nil && images != nil && images.Logo != nil {
 					enrichLogo = images.Logo
 				}
 			}()
@@ -2725,7 +2754,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		}
 	}
 
-	extended, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
+	extended, err := s.cachedSeriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
 	if err != nil {
 
 		log.Printf("[metadata] series details extended fetch error tvdbId=%d err=%v", tvdbID, err)
@@ -3092,7 +3121,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 	// Fetch cast credits from TMDB if configured
 	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-		if credits, err := s.tmdb.fetchCredits(ctx, "series", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
+		if credits, err := s.cachedFetchCredits(ctx, "series", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
 			seriesTitle.Credits = credits
 			details.Title = seriesTitle // Update the details with credits
 			log.Printf("[metadata] fetched %d cast members for series tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
@@ -3103,7 +3132,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 	// Fetch logo and textless poster from TMDB if configured
 	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-		if images, err := s.tmdb.fetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
+		if images, err := s.cachedFetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
 			if images.Logo != nil {
 				seriesTitle.Logo = images.Logo
 				log.Printf("[metadata] fetched logo for series tmdbId=%d", seriesTitle.TMDBID)
@@ -3246,7 +3275,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	localizedEpsChan := make(chan map[int64]tvdbEpisode, 1)
 
 	go func() {
-		ext, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
+		ext, err := s.cachedSeriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
 		extChan <- struct {
 			data tvdbSeriesExtendedData
 			err  error
@@ -3272,7 +3301,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 				// Drain the translation channel from the failed ID
 				<-transChan
 				// Re-fetch with the correct ID
-				ext, err := s.client.seriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
+				ext, err := s.cachedSeriesExtended(tvdbID, []string{"episodes", "seasons", "artworks"})
 				if err != nil {
 					return nil, fmt.Errorf("failed to fetch extended series metadata (fallback): %w", err)
 				}
@@ -3876,7 +3905,7 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	}
 
 	// Fetch extended data with artworks only (no episodes)
-	extended, err := s.client.seriesExtended(tvdbID, []string{"artworks"})
+	extended, err := s.cachedSeriesExtended(tvdbID, []string{"artworks"})
 	if err != nil {
 		log.Printf("[metadata] series info extended fetch error tvdbId=%d err=%v", tvdbID, err)
 		return nil, fmt.Errorf("failed to fetch extended series info: %w", err)
@@ -4586,7 +4615,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			tmdbIDForCredits = req.TMDBID
 		}
 		if cached.Credits == nil && tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-			if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
+			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
 				cached.Credits = credits
 				log.Printf("[metadata] credits added to cached movie: %d cast members tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
 				_ = s.cache.set(cacheID, cached)
@@ -4600,7 +4629,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}
 		// Only fetch logo if missing - don't replace existing poster to avoid visual flash
 		if cached.Logo == nil && tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-			if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
+			if images, err := s.cachedFetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
 				if images.Logo != nil {
 					cached.Logo = images.Logo
 					log.Printf("[metadata] logo added to cached movie tmdbId=%d", tmdbIDForImages)
@@ -4681,7 +4710,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	log.Printf("[metadata] movie title constructed tvdbId=%d finalName=%q translatedName=%q baseName=%q", tvdbID, finalName, translatedName, base.Name)
 
 	var extended *tvdbMovieExtendedData
-	if ext, err := s.client.movieExtended(tvdbID, []string{"artwork"}); err == nil {
+	if ext, err := s.cachedMovieExtended(tvdbID, []string{"artwork"}); err == nil {
 		extended = &ext
 		applyTVDBArtworks(&movieTitle, ext.Artworks)
 		if movieTitle.Backdrop == nil {
@@ -4696,7 +4725,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 
 	// Get extended data for remote IDs (reuse earlier fetch when possible)
 	if extended == nil {
-		if ext, err := s.client.movieExtended(tvdbID, []string{}); err == nil {
+		if ext, err := s.cachedMovieExtended(tvdbID, []string{}); err == nil {
 			extended = &ext
 		} else {
 			log.Printf("[metadata] movie extended fetch failed tvdbId=%d err=%v", tvdbID, err)
@@ -4786,7 +4815,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		enrichWg.Add(1)
 		go func() {
 			defer enrichWg.Done()
-			if credits, err := s.tmdb.fetchCredits(ctx, "movie", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
+			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
 				movieTitle.Credits = credits
 				log.Printf("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
 			} else if err != nil {
@@ -4800,7 +4829,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		enrichWg.Add(1)
 		go func() {
 			defer enrichWg.Done()
-			if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForEnrichment); err == nil && images != nil {
+			if images, err := s.cachedFetchImages(ctx, "movie", tmdbIDForEnrichment); err == nil && images != nil {
 				if images.Logo != nil {
 					movieTitle.Logo = images.Logo
 					log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForEnrichment)
@@ -4927,7 +4956,11 @@ func (s *Service) enrichMovieReleases(ctx context.Context, title *models.Title, 
 	// Use v2 cache key to include certification
 	cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
 	var cached cachedReleasesWithCert
-	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Releases) > 0 {
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		// Negative cache hit: TMDB had no release data for this movie; don't retry.
+		if len(cached.Releases) == 0 {
+			return false
+		}
 		title.Releases = append([]models.Release(nil), cached.Releases...)
 		title.Certification = cached.Certification
 		s.ensureMovieReleasePointers(title)
@@ -4938,6 +4971,9 @@ func (s *Service) enrichMovieReleases(ctx context.Context, title *models.Title, 
 	if err != nil || len(result.Releases) == 0 {
 		if err != nil {
 			log.Printf("[metadata] WARN: tmdb release dates fetch failed tmdbId=%d err=%v", tmdbID, err)
+		} else {
+			// No release data on TMDB; negatively cache so we don't retry on every enrichment cycle.
+			_ = s.cache.set(cacheID, cachedReleasesWithCert{})
 		}
 		return false
 	}
@@ -5276,7 +5312,7 @@ func (s *Service) fetchTVDBSeriesTrailers(tvdbID int64) ([]models.Trailer, error
 		return cached, nil
 	}
 
-	extended, err := s.client.seriesExtended(tvdbID, []string{"trailers"})
+	extended, err := s.cachedSeriesExtended(tvdbID, []string{"trailers"})
 	if err != nil {
 		return nil, err
 	}
@@ -5295,7 +5331,7 @@ func (s *Service) fetchTVDBMovieTrailers(tvdbID int64) ([]models.Trailer, error)
 		return cached, nil
 	}
 
-	extended, err := s.client.movieExtended(tvdbID, []string{"trailers"})
+	extended, err := s.cachedMovieExtended(tvdbID, []string{"trailers"})
 	if err != nil {
 		return nil, err
 	}
@@ -5673,6 +5709,47 @@ func (s *Service) cachedSeriesExtended(tvdbID int64, meta []string) (tvdbSeriesE
 		return tvdbSeriesExtendedData{}, err
 	}
 	_ = s.cache.set(cacheID, result)
+	return result, nil
+}
+
+// cachedFetchCredits fetches TMDB cast credits with file caching.
+func (s *Service) cachedFetchCredits(ctx context.Context, mediaType string, tmdbID int64) (*models.Credits, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+	key := cacheKey("tmdb", "credits", "v1", mediaType, fmt.Sprintf("%d", tmdbID))
+	var cached models.Credits
+	if ok, _ := s.cache.get(key, &cached); ok {
+		return &cached, nil
+	}
+	result, err := s.tmdb.fetchCredits(ctx, mediaType, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		_ = s.cache.set(key, result)
+	}
+	return result, nil
+}
+
+// cachedFetchImages fetches TMDB logo and poster images with file caching.
+// The cached result includes the IsDark flag computed at fetch time.
+func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbID int64) (*tmdbImagesResult, error) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+	key := cacheKey("tmdb", "images", "v1", mediaType, fmt.Sprintf("%d", tmdbID))
+	var cached tmdbImagesResult
+	if ok, _ := s.cache.get(key, &cached); ok {
+		return &cached, nil
+	}
+	result, err := s.tmdb.fetchImages(ctx, mediaType, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		_ = s.cache.set(key, result)
+	}
 	return result, nil
 }
 
