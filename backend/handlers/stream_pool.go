@@ -19,13 +19,13 @@ const (
 	poolMaxSlotsPerFile = 4                 // max concurrent CDN connections per file
 	poolSlotBufferMax   = 32 * 1024 * 1024  // 32MB sliding window buffer per slot
 	poolSlotBufferTrim  = 24 * 1024 * 1024  // trim to 24MB when buffer exceeds max
-	poolSlotIdleTimeout = 30 * time.Second   // evict slots with no readers for this long
-	poolReaperInterval  = 10 * time.Second   // how often to check for idle slots
+	poolSlotIdleTimeout = 30 * time.Second  // evict slots with no readers for this long
+	poolReaperInterval  = 10 * time.Second  // how often to check for idle slots
 	poolSlotReadChunk   = 256 * 1024        // 256KB CDN read chunks
-	poolSlotBufferHard  = 128 * 1024 * 1024  // 128MB hard limit per slot (when readers prevent trim)
-	poolMaxWaitAhead    = 8 * 1024 * 1024    // reuse slot if CDN reader is within 8MB of target
-	poolWaitTimeout     = 10 * time.Second    // max time to wait for CDN reader to reach target
-	poolMinPreBuffer    = 4 * 1024 * 1024    // 4MB minimum buffer before serving starts (prevents stalls on 4K)
+	poolSlotBufferHard  = 128 * 1024 * 1024 // 128MB hard limit per slot (when readers prevent trim)
+	poolMaxWaitAhead    = 8 * 1024 * 1024   // reuse slot if CDN reader is within 8MB of target
+	poolWaitTimeout     = 10 * time.Second  // max time to wait for CDN reader to reach target
+	poolMinPreBuffer    = 4 * 1024 * 1024   // 4MB minimum buffer before serving starts (prevents stalls on 4K)
 )
 
 // streamPool maintains persistent CDN connections that survive client disconnects.
@@ -64,6 +64,9 @@ type poolSlot struct {
 	lastAccess    time.Time
 	readers       int32 // atomic: active reader count
 	minReaderPos  int64 // lowest active reader position (updated by readers under mu)
+	totalRead     int64 // cumulative bytes read from CDN into this slot
+	lastReadAt    time.Time
+	readStartedAt time.Time
 
 	// Notification: closed when new data is written, then replaced with a fresh channel
 	signal chan struct{}
@@ -159,6 +162,8 @@ func (p *streamPool) serve(
 	}()
 
 	ctx := r.Context()
+	requestStartedAt := time.Now()
+	rangeHeader := r.Header.Get("Range")
 
 	// Wait for initial data to be available at the requested position
 	slot.mu.Lock()
@@ -168,6 +173,9 @@ func (p *streamPool) serve(
 	filename := slot.filename
 	contentType := slot.contentType
 	status := slot.respStatus
+	slotTotalRead := slot.totalRead
+	slotLastReadAt := slot.lastReadAt
+	slotReadStartedAt := slot.readStartedAt
 	ch := slot.signal
 	slot.mu.Unlock()
 
@@ -189,8 +197,9 @@ func (p *streamPool) serve(
 			gap = 0
 		}
 		waitStart := time.Now()
-		log.Printf("[stream-pool] WAIT-START: path=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v preBuffer=%d/%d",
-			path, reqStart, endPos, gap, slot.startByte, false, buffered, poolMinPreBuffer)
+		log.Printf("[stream-pool] WAIT-START: path=%q range=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v preBuffer=%d/%d slotTotalRead=%d slotAge=%v sinceLastRead=%v readers=%d",
+			path, rangeHeader, reqStart, endPos, gap, slot.startByte, false, buffered, poolMinPreBuffer,
+			slotTotalRead, time.Since(slotReadStartedAt).Round(time.Millisecond), time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 		waitDeadline := time.After(poolWaitTimeout)
 		for {
 			select {
@@ -198,12 +207,14 @@ func (p *streamPool) serve(
 				slot.mu.Lock()
 				endPos = slot.startByte + int64(len(slot.data))
 				done := slot.cdnDone
+				slotTotalRead = slot.totalRead
+				slotLastReadAt = slot.lastReadAt
 				ch = slot.signal
 				slot.mu.Unlock()
 				buffered = endPos - reqStart
 				if reqStart < endPos && (buffered >= poolMinPreBuffer || done) {
-					log.Printf("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d preBuffer=%d",
-						path, time.Since(waitStart).Round(time.Millisecond), gap, endPos, buffered)
+					log.Printf("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d preBuffer=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
+						path, time.Since(waitStart).Round(time.Millisecond), gap, endPos, buffered, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					goto dataReady
 				}
 				if done && reqStart >= endPos {
@@ -215,17 +226,19 @@ func (p *streamPool) serve(
 				currentEnd := slot.startByte + int64(len(slot.data))
 				remaining := reqStart - currentEnd
 				cdnDone := slot.cdnDone
+				slotTotalRead = slot.totalRead
+				slotLastReadAt = slot.lastReadAt
 				slot.mu.Unlock()
 				buffered = currentEnd - reqStart
 				if buffered > 0 {
 					// Timeout but we have some data — serve what we have rather than failing
-					log.Printf("[stream-pool] WAIT-PARTIAL: path=%q waited=%v preBuffer=%d/%d (serving with partial buffer)",
-						path, time.Since(waitStart).Round(time.Millisecond), buffered, poolMinPreBuffer)
+					log.Printf("[stream-pool] WAIT-PARTIAL: path=%q waited=%v preBuffer=%d/%d slotTotalRead=%d sinceLastRead=%v readers=%d (serving with partial buffer)",
+						path, time.Since(waitStart).Round(time.Millisecond), buffered, poolMinPreBuffer, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					endPos = currentEnd
 					goto dataReady
 				}
-				log.Printf("[stream-pool] TIMEOUT waiting for data: reqStart=%d endPos=%d remaining=%d cdnDone=%v elapsed=%v",
-					reqStart, currentEnd, remaining, cdnDone, time.Since(waitStart).Round(time.Millisecond))
+				log.Printf("[stream-pool] TIMEOUT waiting for data: path=%q reqStart=%d endPos=%d remaining=%d cdnDone=%v elapsed=%v slotTotalRead=%d sinceLastRead=%v readers=%d",
+					path, reqStart, currentEnd, remaining, cdnDone, time.Since(waitStart).Round(time.Millisecond), slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 				return false, nil
 			case <-ctx.Done():
 				return true, nil
@@ -293,8 +306,8 @@ dataReady:
 	pos := reqStart
 	var totalWritten int64
 
-	log.Printf("[stream-pool] serving: path=%q reqStart=%d slotStart=%d buffered=%d",
-		path, reqStart, slot.startByte, endPos-slot.startByte)
+	log.Printf("[stream-pool] serving: path=%q range=%q reqStart=%d slotStart=%d buffered=%d slotTotalRead=%d readers=%d",
+		path, rangeHeader, reqStart, slot.startByte, endPos-slot.startByte, slotTotalRead, atomic.LoadInt32(&slot.readers))
 
 	for {
 		slot.mu.Lock()
@@ -318,9 +331,19 @@ dataReady:
 			ch = slot.signal
 			slot.lastAccess = time.Now()
 			slot.mu.Unlock()
+			waitForDataStart := time.Now()
 
 			select {
 			case <-ch:
+				if waited := time.Since(waitForDataStart); waited >= 200*time.Millisecond {
+					slot.mu.Lock()
+					currentEnd := slot.startByte + int64(len(slot.data))
+					slotTotalRead = slot.totalRead
+					slotLastReadAt = slot.lastReadAt
+					slot.mu.Unlock()
+					log.Printf("[stream-pool] READER-WAIT: path=%q pos=%d waited=%v currentEnd=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
+						path, pos, waited.Round(time.Millisecond), currentEnd, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
+				}
 				continue
 			case <-ctx.Done():
 				return true, nil
@@ -374,7 +397,12 @@ dataReady:
 		}
 	}
 
-	log.Printf("[stream-pool] stream complete: path=%q written=%d", path, totalWritten)
+	elapsed := time.Since(requestStartedAt)
+	rateMBps := 0.0
+	if elapsed > 0 {
+		rateMBps = (float64(totalWritten) / 1024.0 / 1024.0) / elapsed.Seconds()
+	}
+	log.Printf("[stream-pool] stream complete: path=%q written=%d elapsed=%v avgRate=%.2fMBps", path, totalWritten, elapsed.Round(time.Millisecond), rateMBps)
 	return true, nil
 }
 
@@ -461,17 +489,19 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 	}
 
 	slot := &poolSlot{
-		path:        path,
-		startByte:   reqPos,
-		data:        make([]byte, 0, 1024*1024), // start 1MB, grows as needed
-		ctx:         ctx,
-		cancel:      cancel,
-		totalSize:   totalSize,
-		filename:    resp.Filename,
-		respStatus:  resp.Status,
-		contentType: contentType,
-		lastAccess:  time.Now(),
-		signal:      make(chan struct{}),
+		path:          path,
+		startByte:     reqPos,
+		data:          make([]byte, 0, 1024*1024), // start 1MB, grows as needed
+		ctx:           ctx,
+		cancel:        cancel,
+		totalSize:     totalSize,
+		filename:      resp.Filename,
+		respStatus:    resp.Status,
+		contentType:   contentType,
+		lastAccess:    time.Now(),
+		lastReadAt:    time.Now(),
+		readStartedAt: time.Now(),
+		signal:        make(chan struct{}),
 	}
 
 	// Register slot, evicting the least recently used slot if at capacity
@@ -506,7 +536,7 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 	// Start background CDN reader
 	go slot.backgroundReader(resp)
 
-	log.Printf("[stream-pool] NEW slot: path=%q startByte=%d totalSize=%d", path, reqPos, totalSize)
+	log.Printf("[stream-pool] NEW slot: path=%q startByte=%d totalSize=%d contentType=%q status=%d", path, reqPos, totalSize, contentType, resp.Status)
 	return slot, nil
 }
 
@@ -575,6 +605,8 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 		if n > 0 {
 			s.mu.Lock()
 			s.data = append(s.data, buf[:n]...)
+			s.totalRead += int64(n)
+			s.lastReadAt = time.Now()
 			// Trim when buffer exceeds the sliding window size, but ONLY
 			// when no readers are active. When readers are consuming data,
 			// let the buffer grow toward the hard limit (poolSlotBufferHard)
@@ -658,8 +690,8 @@ func abs64(x int64) int64 {
 
 // PoolStats holds a snapshot of stream pool memory and slot usage.
 type PoolStats struct {
-	TotalSlots   int
-	ActiveSlots  int   // slots with active readers
+	TotalSlots    int
+	ActiveSlots   int   // slots with active readers
 	TotalBufferMB int64 // total buffer memory across all slots
 }
 
