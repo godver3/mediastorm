@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"novastream/config"
@@ -118,9 +119,14 @@ type mockMetadataServiceStartup struct {
 	seriesItems []models.TrendingItem
 	movieErr    error
 	seriesErr   error
+	mu          sync.Mutex
+	calls       []string
 }
 
 func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, mediaType)
+	m.mu.Unlock()
 	if mediaType == "movie" {
 		return m.movieItems, m.movieErr
 	}
@@ -412,5 +418,46 @@ func TestStartupHandler_EmptyUserID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestStartupHandler_CanSkipTrendingSections(t *testing.T) {
+	metadata := &mockMetadataServiceStartup{
+		movieItems:  []models.TrendingItem{{Rank: 1, Title: models.Title{Name: "Trending Movie"}}},
+		seriesItems: []models.TrendingItem{{Rank: 1, Title: models.Title{Name: "Trending Series"}}},
+	}
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{},
+		&mockWatchlistService{},
+		&mockHistoryService{},
+		metadata,
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/startup?includeTrendingMovies=false&includeTrendingSeries=false", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetStartup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(metadata.calls) != 0 {
+		t.Fatalf("expected no trending calls, got %v", metadata.calls)
+	}
+
+	var resp handlers.StartupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TrendingMovies != nil {
+		t.Fatalf("expected trendingMovies to be nil when excluded")
+	}
+	if resp.TrendingSeries != nil {
+		t.Fatalf("expected trendingSeries to be nil when excluded")
 	}
 }

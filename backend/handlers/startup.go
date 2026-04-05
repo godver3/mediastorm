@@ -103,6 +103,8 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	includeTrendingMovies := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeTrendingMovies"))) != "false"
+	includeTrendingSeries := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeTrendingSeries"))) != "false"
 
 	resp := StartupResponse{}
 	var wg sync.WaitGroup
@@ -214,58 +216,67 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		movies *DiscoverNewResponse
 		series *DiscoverNewResponse
 	}
-	trendingCtx, trendingCancel := context.WithTimeout(r.Context(), startupTrendingTimeout)
-	defer trendingCancel()
-	trendingCh := make(chan trendingResult, 1)
+	var trendingCtx context.Context
+	var trendingCancel context.CancelFunc
+	var trendingCh chan trendingResult
+	if includeTrendingMovies || includeTrendingSeries {
+		trendingCtx, trendingCancel = context.WithTimeout(r.Context(), startupTrendingTimeout)
+		defer trendingCancel()
+		trendingCh = make(chan trendingResult, 1)
 
-	go func() {
-		var result trendingResult
-		var trendingWg sync.WaitGroup
-		var mu sync.Mutex
-
-		// Trending movies (slimmed — heavy Title fields stripped for startup)
-		trendingWg.Add(1)
 		go func() {
-			defer trendingWg.Done()
-			items, err := h.metadata.Trending(trendingCtx, "movie")
-			if err != nil {
-				log.Printf("[startup] trending movies error: %v", err)
-				return
-			}
-			items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
-			total := len(items)
-			if len(items) > startupShelfLimit {
-				items = items[:startupShelfLimit]
-			}
-			items = slimTrendingItems(items)
-			mu.Lock()
-			result.movies = &DiscoverNewResponse{Items: items, Total: total}
-			mu.Unlock()
-		}()
+			var result trendingResult
+			var trendingWg sync.WaitGroup
+			var mu sync.Mutex
 
-		// Trending series (slimmed — heavy Title fields stripped for startup)
-		trendingWg.Add(1)
-		go func() {
-			defer trendingWg.Done()
-			items, err := h.metadata.Trending(trendingCtx, "series")
-			if err != nil {
-				log.Printf("[startup] trending series error: %v", err)
-				return
+			if includeTrendingMovies {
+				// Trending movies (slimmed — heavy Title fields stripped for startup)
+				trendingWg.Add(1)
+				go func() {
+					defer trendingWg.Done()
+					items, err := h.metadata.Trending(trendingCtx, "movie")
+					if err != nil {
+						log.Printf("[startup] trending movies error: %v", err)
+						return
+					}
+					items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+					total := len(items)
+					if len(items) > startupShelfLimit {
+						items = items[:startupShelfLimit]
+					}
+					items = slimTrendingItems(items)
+					mu.Lock()
+					result.movies = &DiscoverNewResponse{Items: items, Total: total}
+					mu.Unlock()
+				}()
 			}
-			items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
-			total := len(items)
-			if len(items) > startupShelfLimit {
-				items = items[:startupShelfLimit]
-			}
-			items = slimTrendingItems(items)
-			mu.Lock()
-			result.series = &DiscoverNewResponse{Items: items, Total: total}
-			mu.Unlock()
-		}()
 
-		trendingWg.Wait()
-		trendingCh <- result
-	}()
+			if includeTrendingSeries {
+				// Trending series (slimmed — heavy Title fields stripped for startup)
+				trendingWg.Add(1)
+				go func() {
+					defer trendingWg.Done()
+					items, err := h.metadata.Trending(trendingCtx, "series")
+					if err != nil {
+						log.Printf("[startup] trending series error: %v", err)
+						return
+					}
+					items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
+					total := len(items)
+					if len(items) > startupShelfLimit {
+						items = items[:startupShelfLimit]
+					}
+					items = slimTrendingItems(items)
+					mu.Lock()
+					result.series = &DiscoverNewResponse{Items: items, Total: total}
+					mu.Unlock()
+				}()
+			}
+
+			trendingWg.Wait()
+			trendingCh <- result
+		}()
+	}
 
 	// Wait for all fast goroutines (settings, watchlist, continue watching, history)
 	wg.Wait()
@@ -274,13 +285,15 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	// When trending times out, leave TrendingMovies/TrendingSeries as nil so the
 	// frontend JSON receives null and falls back to independent fetches.
 	trendingCompleted := false
-	select {
-	case tr := <-trendingCh:
-		resp.TrendingMovies = tr.movies
-		resp.TrendingSeries = tr.series
-		trendingCompleted = true
-	case <-trendingCtx.Done():
-		log.Printf("[startup] trending data timed out after %v, returning partial response", startupTrendingTimeout)
+	if trendingCh != nil {
+		select {
+		case tr := <-trendingCh:
+			resp.TrendingMovies = tr.movies
+			resp.TrendingSeries = tr.series
+			trendingCompleted = true
+		case <-trendingCtx.Done():
+			log.Printf("[startup] trending data timed out after %v, returning partial response", startupTrendingTimeout)
+		}
 	}
 
 	// Ensure nil slices become empty arrays in JSON
