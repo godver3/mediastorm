@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"novastream/models"
+	"sync"
 	"testing"
 	"time"
 )
@@ -11,6 +12,7 @@ import (
 // --- Mock services ---
 
 type mockMetadata struct {
+	mu                 sync.Mutex
 	series             map[int64]*models.SeriesDetails
 	movies             map[int64]*models.Title
 	trending           map[string][]models.TrendingItem
@@ -21,7 +23,9 @@ type mockMetadata struct {
 }
 
 func (m *mockMetadata) SeriesDetails(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.mu.Lock()
 	m.seriesDetailsCalls++
+	m.mu.Unlock()
 	if d, ok := m.series[req.TVDBID]; ok {
 		return d, nil
 	}
@@ -29,7 +33,9 @@ func (m *mockMetadata) SeriesDetails(_ context.Context, req models.SeriesDetails
 }
 
 func (m *mockMetadata) SeriesDetailsLite(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.mu.Lock()
 	m.seriesLiteCalls++
+	m.mu.Unlock()
 	if d, ok := m.series[req.TVDBID]; ok {
 		return d, nil
 	}
@@ -44,6 +50,8 @@ func (m *mockMetadata) MovieDetails(_ context.Context, req models.MovieDetailsQu
 }
 
 func (m *mockMetadata) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.trendingCalls == nil {
 		m.trendingCalls = make(map[string]int)
 	}
@@ -62,11 +70,18 @@ func (m *mockMetadata) GetCustomListForCalendar(_ context.Context, listURL strin
 }
 
 type mockWatchlist struct {
+	mu        sync.Mutex
 	items     map[string][]models.WatchlistItem
 	listCalls map[string]int
+	delays    map[string]time.Duration
 }
 
 func (m *mockWatchlist) List(userID string) ([]models.WatchlistItem, error) {
+	if delay := m.delays[userID]; delay > 0 {
+		time.Sleep(delay)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.listCalls == nil {
 		m.listCalls = make(map[string]int)
 	}
@@ -119,7 +134,7 @@ func defaultMocks() (*mockMetadata, *mockWatchlist, *mockHistory, *mockUserSetti
 			customLists:   map[string][]models.TrendingItem{},
 			trendingCalls: map[string]int{},
 		},
-		&mockWatchlist{items: map[string][]models.WatchlistItem{}, listCalls: map[string]int{}},
+		&mockWatchlist{items: map[string][]models.WatchlistItem{}, listCalls: map[string]int{}, delays: map[string]time.Duration{}},
 		&mockHistory{items: map[string][]models.SeriesWatchState{}},
 		&mockUserSettings{settings: map[string]*models.UserSettings{}},
 		&mockUsers{users: []models.User{{ID: "user1"}}}
@@ -863,6 +878,157 @@ func TestRefreshAll(t *testing.T) {
 	if len(cal2.Items) != 0 {
 		t.Errorf("expected 0 items for u2, got %d", len(cal2.Items))
 	}
+}
+
+func TestRefreshAll_BuildsUsersConcurrently(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	users.users = []models.User{{ID: "slow"}, {ID: "fast"}}
+	wl.delays["slow"] = 250 * time.Millisecond
+
+	svc := New(meta, wl, hist, us, users)
+
+	done := make(chan struct{})
+	go func() {
+		svc.refreshAll()
+		close(done)
+	}()
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if svc.peek("fast") != nil {
+			<-done
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	<-done
+	t.Fatal("expected fast user calendar to be built before slow user finished")
+}
+
+func TestRefreshAllLite_BuildsUsersConcurrently(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	users.users = []models.User{{ID: "slow"}, {ID: "fast"}}
+	wl.delays["slow"] = 250 * time.Millisecond
+
+	svc := New(meta, wl, hist, us, users)
+
+	done := make(chan struct{})
+	go func() {
+		svc.refreshAllLite()
+		close(done)
+	}()
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if svc.peekLite("fast") != nil {
+			<-done
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	<-done
+	t.Fatal("expected fast lite calendar to be built before slow user finished")
+}
+
+func TestBuildLiteUserCalendar_UsesWatchlistAndHistoryOnly(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.trending["movie"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "Trending Film",
+				MediaType:  "movie",
+				TMDBID:     600,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(1), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(1), Released: false}},
+			},
+		},
+	}
+	us.settings["user1"] = &models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "mdb-1", Name: "My List", Enabled: true, Type: "mdblist", ListURL: "https://mdblist.com/lists/test/list1/json"},
+			},
+		},
+	}
+	meta.customLists["https://mdblist.com/lists/test/list1/json"] = []models.TrendingItem{
+		{
+			Rank: 1,
+			Title: models.Title{
+				Name:       "MDBList Movie",
+				MediaType:  "movie",
+				TMDBID:     9100,
+				Theatrical: &models.Release{Type: "theatrical", Date: futureDate(1), Released: false},
+				Releases:   []models.Release{{Type: "theatrical", Date: futureDate(1), Released: false}},
+			},
+		},
+	}
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{Name: "Show", TVDBID: 100},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Soon", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: futureDate(1)},
+			}},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tvdb:100", MediaType: "series", Name: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+	hist.items["user1"] = []models.SeriesWatchState{
+		{SeriesID: "tvdb:100", SeriesTitle: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	items := svc.buildLiteUserCalendar("user1")
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 lite item from watchlist/history sources, got %d", len(items))
+	}
+	if items[0].Source != "history" {
+		t.Fatalf("expected lite series item to come from history, got %q", items[0].Source)
+	}
+	if meta.trendingCalls["movie"] != 0 {
+		t.Fatalf("expected lite build to skip trending, got %d movie trending calls", meta.trendingCalls["movie"])
+	}
+}
+
+func TestGetForHomeShelf_UsesLiteCacheNotFullCache(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{Name: "Show", TVDBID: 100},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Soon", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: futureDate(1)},
+			}},
+		},
+	}
+	wl.items["user1"] = []models.WatchlistItem{
+		{ID: "tvdb:100", MediaType: "series", Name: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+	hist.items["user1"] = []models.SeriesWatchState{
+		{SeriesID: "tvdb:100", SeriesTitle: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	if got := svc.GetForHomeShelf("user1", time.UTC, 1, 2); got != nil {
+		t.Fatalf("expected empty result before lite cache build, got %d items", len(got))
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		items := svc.GetForHomeShelf("user1", time.UTC, 1, 2)
+		if len(items) == 1 {
+			if svc.peek("user1") != nil {
+				t.Fatal("expected full calendar cache to remain empty")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("expected lite cache to populate asynchronously for home shelf")
 }
 
 func TestGet_OnDemandBuildForUncachedUser(t *testing.T) {
