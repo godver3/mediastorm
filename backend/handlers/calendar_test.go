@@ -56,6 +56,9 @@ type calendarMockMetadata struct{}
 func (m *calendarMockMetadata) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	return nil, nil
 }
+func (m *calendarMockMetadata) SeriesDetailsLite(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return nil, nil
+}
 func (m *calendarMockMetadata) MovieDetails(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
 	return nil, nil
 }
@@ -282,6 +285,12 @@ func (m *calendarMockMetadataWithData) SeriesDetails(_ context.Context, req mode
 	}
 	return nil, fmt.Errorf("not found")
 }
+func (m *calendarMockMetadataWithData) SeriesDetailsLite(_ context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	if d, ok := m.series[req.TVDBID]; ok {
+		return d, nil
+	}
+	return nil, fmt.Errorf("not found")
+}
 func (m *calendarMockMetadataWithData) MovieDetails(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
 	return nil, nil
 }
@@ -367,10 +376,22 @@ func TestGetCalendar_AirTimeConvertedToUserTZ(t *testing.T) {
 	if item.AirTimezone != "Australia/Sydney" {
 		t.Errorf("AirTimezone should be user's TZ 'Australia/Sydney', got %q", item.AirTimezone)
 	}
-	// 21:00 EST = 02:00 UTC next day. In AEDT (UTC+11) that's 13:00 next day.
-	// In AEST (UTC+10) that's 12:00 next day. Check it's one of these.
-	if item.AirTime != "13:00" && item.AirTime != "12:00" {
-		t.Errorf("expected AirTime ~12:00 or 13:00 (Sydney), got %q", item.AirTime)
+
+	sourceLoc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetLoc, err := time.LoadLocation("Australia/Sydney")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDateTime, err := time.ParseInLocation("2006-01-02 15:04", futureDate+" 21:00", sourceLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedAirTime := sourceDateTime.In(targetLoc).Format("15:04")
+	if item.AirTime != expectedAirTime {
+		t.Errorf("expected AirTime %q (Sydney), got %q", expectedAirTime, item.AirTime)
 	}
 }
 
