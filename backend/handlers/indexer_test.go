@@ -156,7 +156,10 @@ func TestIndexerHandler_SearchError(t *testing.T) {
 func TestIndexerHandler_SearchMovieAnimeDetection(t *testing.T) {
 	fake := &fakeIndexerService{results: []models.NZBResult{}}
 	movieSvc := &fakeMovieMetadataService{
-		title: &models.Title{Genres: []string{"Animation", "Fantasy"}},
+		title: &models.Title{
+			Genres:       []string{"Animation", "Fantasy"},
+			OriginalName: "千と千尋の神隠し",
+		},
 	}
 	handler := NewIndexerHandler(fake, false)
 	handler.SetMovieMetadataService(movieSvc)
@@ -177,7 +180,7 @@ func TestIndexerHandler_SearchMovieAnimeDetection(t *testing.T) {
 func TestIndexerHandler_SearchMovieNonAnime(t *testing.T) {
 	fake := &fakeIndexerService{results: []models.NZBResult{}}
 	movieSvc := &fakeMovieMetadataService{
-		title: &models.Title{Genres: []string{"Action", "Thriller"}},
+		title: &models.Title{Genres: []string{"Animation", "Family"}},
 	}
 	handler := NewIndexerHandler(fake, false)
 	handler.SetMovieMetadataService(movieSvc)

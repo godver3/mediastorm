@@ -915,15 +915,17 @@ func (c *tmdbClient) movieDetailsFetch(ctx context.Context, tmdbID int64) (*mode
 	}
 
 	var movie struct {
-		ID           int64  `json:"id"`
-		Title        string `json:"title"`
-		Overview     string `json:"overview"`
-		PosterPath   string `json:"poster_path"`
-		BackdropPath string `json:"backdrop_path"`
-		ReleaseDate  string `json:"release_date"`
-		IMDBId       string `json:"imdb_id"`
-		Runtime      int    `json:"runtime"`
-		Genres       []struct {
+		ID               int64  `json:"id"`
+		Title            string `json:"title"`
+		OriginalTitle    string `json:"original_title"`
+		OriginalLanguage string `json:"original_language"`
+		Overview         string `json:"overview"`
+		PosterPath       string `json:"poster_path"`
+		BackdropPath     string `json:"backdrop_path"`
+		ReleaseDate      string `json:"release_date"`
+		IMDBId           string `json:"imdb_id"`
+		Runtime          int    `json:"runtime"`
+		Genres           []struct {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
 		} `json:"genres"`
@@ -946,6 +948,12 @@ func (c *tmdbClient) movieDetailsFetch(ctx context.Context, tmdbID int64) (*mode
 		TMDBID:         movie.ID,
 		IMDBID:         movie.IMDBId,
 		RuntimeMinutes: movie.Runtime,
+	}
+	if originalTitle := strings.TrimSpace(movie.OriginalTitle); originalTitle != "" && !strings.EqualFold(originalTitle, movie.Title) {
+		title.OriginalName = originalTitle
+	}
+	if originalLanguage := strings.TrimSpace(movie.OriginalLanguage); originalLanguage != "" {
+		title.Language = originalLanguage
 	}
 
 	if year := parseTMDBYear(movie.ReleaseDate, ""); year != 0 {

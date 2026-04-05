@@ -106,13 +106,10 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			IMDBID: imdbID,
 		}
 		if movieTitle, err := h.MovieMetadataSvc.MovieInfo(r.Context(), movieQuery); err == nil && movieTitle != nil {
-			for _, genre := range movieTitle.Genres {
-				genreLower := strings.ToLower(genre)
-				if genreLower == "animation" || genreLower == "anime" {
-					isAnime = true
-					log.Printf("[indexer] Movie %q is anime (genre=%q) - applying anime language preferences", query, genre)
-					break
-				}
+			if isAnimeTitle(movieTitle) {
+				isAnime = true
+				log.Printf("[indexer] Movie %q is anime (genres=%v originalName=%q language=%q) - applying anime language preferences",
+					query, movieTitle.Genres, movieTitle.OriginalName, movieTitle.Language)
 			}
 		}
 	}
@@ -410,14 +407,7 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 		Year:    details.Title.Year,
 	}
 
-	// Check if this is anime content from the genres
-	for _, genre := range details.Title.Genres {
-		genreLower := strings.ToLower(genre)
-		if genreLower == "animation" || genreLower == "anime" {
-			result.IsAnime = true
-			break
-		}
-	}
+	result.IsAnime = isAnimeTitle(&details.Title)
 
 	// Build season -> episode count map for episode resolver
 	seasonCounts := make(map[int]int)

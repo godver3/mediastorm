@@ -562,13 +562,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			IMDBID:  imdbID,
 		}
 		if movieTitle, err := h.movieMetadataSvc.MovieInfo(ctx, movieQuery); err == nil && movieTitle != nil {
-			for _, genre := range movieTitle.Genres {
-				genreLower := strings.ToLower(genre)
-				if genreLower == "animation" || genreLower == "anime" {
-					isAnime = true
-					log.Printf("[prequeue] Movie %q is anime (genre=%q) - applying anime language preferences", titleName, genre)
-					break
-				}
+			if isAnimeTitle(movieTitle) {
+				isAnime = true
+				log.Printf("[prequeue] Movie %q is anime (genres=%v originalName=%q language=%q) - applying anime language preferences",
+					titleName, movieTitle.Genres, movieTitle.OriginalName, movieTitle.Language)
 			}
 		}
 	}
@@ -1381,13 +1378,10 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	}
 
 	// Check if this is anime content from the genres
-	for _, genre := range details.Title.Genres {
-		genreLower := strings.ToLower(genre)
-		if genreLower == "animation" || genreLower == "anime" {
-			result.IsAnime = true
-			log.Printf("[prequeue] Series %q is anime (genre=%q) - will wait for all scrapers including Nyaa", details.Title.Name, genre)
-			break
-		}
+	if isAnimeTitle(&details.Title) {
+		result.IsAnime = true
+		log.Printf("[prequeue] Series %q is anime (genres=%v originalName=%q language=%q timezone=%q) - will wait for all scrapers including Nyaa",
+			details.Title.Name, details.Title.Genres, details.Title.OriginalName, details.Title.Language, details.Title.AirsTimezone)
 	}
 
 	if len(details.Seasons) == 0 {

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
-	"errors"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -4899,6 +4899,10 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	}
 	if title.Name == "" && tmdbMovie.Name != "" {
 		title.Name = tmdbMovie.Name
+		updated = true
+	}
+	if title.OriginalName == "" && tmdbMovie.OriginalName != "" {
+		title.OriginalName = tmdbMovie.OriginalName
 		updated = true
 	}
 	if title.Year == 0 && tmdbMovie.Year > 0 {

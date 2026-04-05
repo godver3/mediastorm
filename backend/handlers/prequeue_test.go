@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"novastream/models"
@@ -21,32 +20,64 @@ func (m *mockMovieDetailsProvider) MovieInfo(_ context.Context, _ models.MovieDe
 func TestPrequeueMovieAnimeDetection(t *testing.T) {
 	tests := []struct {
 		name      string
-		genres    []string
+		title     models.Title
 		wantAnime bool
 	}{
 		{
-			name:      "anime genre detected",
-			genres:    []string{"Adventure", "Anime", "Fantasy"},
+			name: "anime genre detected",
+			title: models.Title{
+				Name:   "Ponyo",
+				Genres: []string{"Adventure", "Anime", "Fantasy"},
+			},
 			wantAnime: true,
 		},
 		{
-			name:      "animation genre detected",
-			genres:    []string{"Animation", "Family"},
+			name: "east asian animated movie detected via original title",
+			title: models.Title{
+				Name:         "Spirited Away",
+				OriginalName: "千と千尋の神隠し",
+				Genres:       []string{"Animation", "Family"},
+			},
 			wantAnime: true,
 		},
 		{
-			name:      "case insensitive anime",
-			genres:    []string{"Drama", "ANIME"},
+			name: "case insensitive anime",
+			title: models.Title{
+				Name:   "Ponyo",
+				Genres: []string{"Drama", "ANIME"},
+			},
 			wantAnime: true,
 		},
 		{
-			name:      "non-anime movie",
-			genres:    []string{"Action", "Drama"},
+			name: "western animated movie is not anime",
+			title: models.Title{
+				Name:   "Hop",
+				Genres: []string{"Animation", "Family"},
+			},
 			wantAnime: false,
 		},
 		{
-			name:      "empty genres",
-			genres:    []string{},
+			name: "east asian animated movie detected via language",
+			title: models.Title{
+				Name:     "Ne Zha",
+				Language: "zho",
+				Genres:   []string{"Animation", "Fantasy"},
+			},
+			wantAnime: true,
+		},
+		{
+			name: "non-anime movie",
+			title: models.Title{
+				Name:   "John Wick",
+				Genres: []string{"Action", "Drama"},
+			},
+			wantAnime: false,
+		},
+		{
+			name: "empty genres",
+			title: models.Title{
+				Name: "Unknown",
+			},
 			wantAnime: false,
 		},
 	}
@@ -55,10 +86,7 @@ func TestPrequeueMovieAnimeDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := &PrequeueHandler{
 				movieMetadataSvc: &mockMovieDetailsProvider{
-					title: &models.Title{
-						Name:   "Ponyo",
-						Genres: tt.genres,
-					},
+					title: &tt.title,
 				},
 			}
 
@@ -73,13 +101,7 @@ func TestPrequeueMovieAnimeDetection(t *testing.T) {
 					Year:    2008,
 				}
 				if movieTitle, err := handler.movieMetadataSvc.MovieInfo(context.Background(), movieQuery); err == nil && movieTitle != nil {
-					for _, genre := range movieTitle.Genres {
-						genreLower := strings.ToLower(genre)
-						if genreLower == "animation" || genreLower == "anime" {
-							isAnime = true
-							break
-						}
-					}
+					isAnime = isAnimeTitle(movieTitle)
 				}
 			}
 
