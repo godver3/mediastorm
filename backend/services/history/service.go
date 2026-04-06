@@ -638,23 +638,42 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 			// Priority 1: In-progress episode (resume watching)
 			// Skip if the in-progress episode is already marked as watched in history
-			// (e.g. Trakt sync marked it complete while stale playback progress remains).
+			// (e.g. Trakt sync marked it complete while stale playback progress remains),
+			// or if it points behind the furthest watched episode and is not newer than
+			// the latest watch-history activity for the series.
 			inProgressAlreadyWatched := false
+			inProgressStaleBehindLatestWatched := false
 			if t.inProgress != nil {
+				var latestWatchedAt time.Time
+				var furthestWatched *models.WatchHistoryItem
 				for _, ep := range t.episodes {
 					if ep.SeasonNumber == t.inProgress.SeasonNumber && ep.EpisodeNumber == t.inProgress.EpisodeNumber {
 						inProgressAlreadyWatched = true
-						break
+					}
+					if ep.WatchedAt.After(latestWatchedAt) {
+						latestWatchedAt = ep.WatchedAt
+					}
+					if furthestWatched == nil || compareEpisodeOrder(ep.SeasonNumber, ep.EpisodeNumber, furthestWatched.SeasonNumber, furthestWatched.EpisodeNumber) > 0 {
+						episode := ep
+						furthestWatched = &episode
 					}
 				}
-				if inProgressAlreadyWatched {
+				if !inProgressAlreadyWatched && furthestWatched != nil &&
+					compareEpisodeOrder(furthestWatched.SeasonNumber, furthestWatched.EpisodeNumber, t.inProgress.SeasonNumber, t.inProgress.EpisodeNumber) > 0 &&
+					!t.inProgress.UpdatedAt.After(latestWatchedAt) {
+					inProgressStaleBehindLatestWatched = true
+				}
+				if inProgressAlreadyWatched || inProgressStaleBehindLatestWatched {
 					// Clean up all stale progress entries for this series where
-					// the episode is already in watch history.
+					// the episode is already in watch history, or stale progress
+					// points behind the furthest watched episode for the series.
 					watchedEps := make(map[string]bool, len(t.episodes))
 					for _, ep := range t.episodes {
 						watchedEps[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)] = true
 					}
 					seriesExtIDs := t.inProgress.ExternalIDs
+					targetSeason := t.inProgress.SeasonNumber
+					targetEpisode := t.inProgress.EpisodeNumber
 					userID := userID
 					go func() {
 						s.mu.Lock()
@@ -671,7 +690,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 							if !hasMatchingExternalID(prog.ExternalIDs, seriesExtIDs) {
 								continue
 							}
-							if watchedEps[episodeKey(prog.SeasonNumber, prog.EpisodeNumber)] {
+							if watchedEps[episodeKey(prog.SeasonNumber, prog.EpisodeNumber)] ||
+								(prog.SeasonNumber == targetSeason && prog.EpisodeNumber == targetEpisode) {
 								log.Printf("[history] cleaning up stale progress %s (episode already watched)", key)
 								delete(perUser, key)
 								cleaned++
@@ -683,7 +703,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					}()
 				}
 			}
-			if t.inProgress != nil && !inProgressAlreadyWatched {
+			if t.inProgress != nil && !inProgressAlreadyWatched && !inProgressStaleBehindLatestWatched {
 				// The in-progress episode IS the next episode to watch
 				nextEpisode = &models.EpisodeReference{
 					SeasonNumber:  t.inProgress.SeasonNumber,
@@ -811,6 +831,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					UpdatedAt:   mostRecentEpisode.WatchedAt,
 					LastWatched: s.convertToEpisodeRef(mostRecentEpisode),
 					NextEpisode: nextEpisode,
+				}
+				if promotedAt, ok := continueWatchingRecentReleaseTime(nextEpisode); ok && promotedAt.After(state.UpdatedAt) {
+					state.UpdatedAt = promotedAt
 				}
 
 				// Build watched episodes map
@@ -969,6 +992,41 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	})
 
 	return continueWatching, nil
+}
+
+const continueWatchingRecentReleaseWindow = 72 * time.Hour
+
+func continueWatchingRecentReleaseTime(nextEpisode *models.EpisodeReference) (time.Time, bool) {
+	if nextEpisode == nil {
+		return time.Time{}, false
+	}
+
+	var releaseTime time.Time
+	switch {
+	case strings.TrimSpace(nextEpisode.AirDateTimeUTC) != "":
+		parsed, err := time.Parse(time.RFC3339, nextEpisode.AirDateTimeUTC)
+		if err != nil {
+			return time.Time{}, false
+		}
+		releaseTime = parsed.UTC()
+	case strings.TrimSpace(nextEpisode.AirDate) != "":
+		parsed, err := time.Parse("2006-01-02", nextEpisode.AirDate)
+		if err != nil {
+			return time.Time{}, false
+		}
+		releaseTime = parsed.UTC()
+	default:
+		return time.Time{}, false
+	}
+
+	now := time.Now().UTC()
+	if releaseTime.After(now) {
+		return time.Time{}, false
+	}
+	if now.Sub(releaseTime) > continueWatchingRecentReleaseWindow {
+		return time.Time{}, false
+	}
+	return releaseTime, true
 }
 
 // getMovieMetadataWithCache retrieves movie metadata with caching.
@@ -1440,6 +1498,13 @@ func (s *Service) saveLocked() error {
 
 func episodeKey(season, episode int) string {
 	return fmt.Sprintf("s%02de%02d", season, episode)
+}
+
+func compareEpisodeOrder(seasonA, episodeA, seasonB, episodeB int) int {
+	if seasonA != seasonB {
+		return seasonA - seasonB
+	}
+	return episodeA - episodeB
 }
 
 // buildCanonicalSeriesIDMap scans watch history and progress items to find series

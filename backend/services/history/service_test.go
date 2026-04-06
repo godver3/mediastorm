@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 // Mock metadata service for testing
 type mockMetadataService struct {
 	seriesDetails *models.SeriesDetails
+	seriesByID    map[string]*models.SeriesDetails
 	movieDetails  *models.Title
 	err           error
 }
@@ -21,6 +23,20 @@ type mockMetadataService struct {
 func (m *mockMetadataService) SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	if m.err != nil {
 		return nil, m.err
+	}
+	if m.seriesByID != nil {
+		if req.TitleID != "" {
+			if details, ok := m.seriesByID[req.TitleID]; ok {
+				return details, nil
+			}
+		}
+		if req.TVDBID > 0 {
+			for _, details := range m.seriesByID {
+				if details != nil && details.Title.TVDBID == req.TVDBID {
+					return details, nil
+				}
+			}
+		}
 	}
 	return m.seriesDetails, nil
 }
@@ -1848,6 +1864,102 @@ func TestEpisodeState_ContinueWatchingSkipsWatchedInProgress(t *testing.T) {
 	t.Fatal("Test Show not found in continue watching")
 }
 
+func TestEpisodeState_ContinueWatchingSkipsStaleBehindLatestWatchedInProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:76177"
+	userID := "user-snl-stale"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Saturday Night Live",
+				TVDBID: 76177,
+			},
+			Seasons: []models.SeriesSeason{
+				{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "ep-101", Name: "October 11 - George Carlin", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "1975-10-11"},
+					},
+				},
+				{
+					Number: 51,
+					Episodes: []models.SeriesEpisode{
+						{ID: "ep-5114", Name: "S51E14", SeasonNumber: 51, EpisodeNumber: 14, AiredDate: "2026-03-08"},
+						{ID: "ep-5115", Name: "S51E15", SeasonNumber: 51, EpisodeNumber: 15, AiredDate: "2026-03-15"},
+						{ID: "ep-5116", Name: "S51E16", SeasonNumber: 51, EpisodeNumber: 16, AiredDate: "2026-03-22"},
+					},
+				},
+			},
+		},
+	})
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e01",
+		Position:      90,
+		Duration:      3600,
+		Timestamp:     time.Date(2026, 3, 2, 3, 7, 30, 0, time.UTC),
+		SeriesID:      seriesID,
+		SeriesName:    "Saturday Night Live",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"tvdb": "76177"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	watched := true
+	for _, watchedEpisode := range []struct {
+		season    int
+		episode   int
+		watchedAt time.Time
+	}{
+		{season: 51, episode: 14, watchedAt: time.Date(2026, 3, 9, 2, 49, 58, 0, time.UTC)},
+		{season: 51, episode: 15, watchedAt: time.Date(2026, 3, 18, 2, 28, 57, 0, time.UTC)},
+	} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        fmt.Sprintf("%s:s%02de%02d", seriesID, watchedEpisode.season, watchedEpisode.episode),
+			Name:          "SNL",
+			Watched:       &watched,
+			WatchedAt:     watchedEpisode.watchedAt,
+			SeriesID:      seriesID,
+			SeriesName:    "Saturday Night Live",
+			SeasonNumber:  watchedEpisode.season,
+			EpisodeNumber: watchedEpisode.episode,
+			ExternalIDs:   map[string]string{"tvdb": "76177"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "Saturday Night Live" {
+			if item.NextEpisode == nil {
+				t.Fatal("expected next episode for Saturday Night Live")
+			}
+			if item.NextEpisode.SeasonNumber != 51 || item.NextEpisode.EpisodeNumber != 16 {
+				t.Fatalf("expected next episode S51E16, got S%02dE%02d", item.NextEpisode.SeasonNumber, item.NextEpisode.EpisodeNumber)
+			}
+			return
+		}
+	}
+
+	t.Fatal("Saturday Night Live not found in continue watching")
+}
+
 func TestEpisodeState_ContinueWatchingUpdatedAtUsesLatestTimestamp(t *testing.T) {
 	// When an in-progress episode is present, the continue watching updatedAt
 	// should reflect the most recent activity (watch history or progress).
@@ -2169,6 +2281,191 @@ func TestEpisodeState_UnreleasedEpisodeFallback(t *testing.T) {
 		}
 	}
 	t.Fatal("Future Show not found in continue watching — unreleased fallback should prevent exclusion")
+}
+
+func TestContinueWatching_RecentlyReleasedNextEpisodePromotesItem(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-promote"
+	watched := true
+	now := time.Now().UTC()
+	releaseTime := now.Add(-2 * time.Hour)
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tvdb:series:90001": {
+				Title: models.Title{
+					ID:           "tvdb:series:90001",
+					Name:         "Promoted Show",
+					TVDBID:       90001,
+					AirsTime:     releaseTime.Format("15:04"),
+					AirsTimezone: "UTC",
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "promote-ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+						{ID: "promote-ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: releaseTime.Format("2006-01-02")},
+					},
+				}},
+			},
+			"tvdb:series:90002": {
+				Title: models.Title{
+					ID:     "tvdb:series:90002",
+					Name:   "Recent Watch Show",
+					TVDBID: 90002,
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "recent-ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+						{ID: "recent-ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-08"},
+					},
+				}},
+			},
+		},
+	})
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:90001:s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     now.Add(-48 * time.Hour),
+		SeriesID:      "tvdb:series:90001",
+		SeriesName:    "Promoted Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:90002:s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     now.Add(-4 * time.Hour),
+		SeriesID:      "tvdb:series:90002",
+		SeriesName:    "Recent Watch Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 continue watching items, got %d", len(items))
+	}
+
+	if items[0].SeriesTitle != "Promoted Show" {
+		t.Fatalf("expected Promoted Show to sort first after recent release promotion, got %q", items[0].SeriesTitle)
+	}
+	if items[0].NextEpisode == nil || items[0].NextEpisode.EpisodeNumber != 2 {
+		t.Fatalf("expected promoted item to keep immediate next episode E02, got %+v", items[0].NextEpisode)
+	}
+}
+
+func TestContinueWatching_BehindOnBacklogDoesNotPromoteLaterRecentAiredEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-backlog"
+	watched := true
+	now := time.Now().UTC()
+	releaseTime := now.Add(-2 * time.Hour)
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tvdb:series:91001": {
+				Title: models.Title{
+					ID:           "tvdb:series:91001",
+					Name:         "Behind Show",
+					TVDBID:       91001,
+					AirsTime:     releaseTime.Format("15:04"),
+					AirsTimezone: "UTC",
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "behind-ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+						{ID: "behind-ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-02"},
+						{ID: "behind-ep-3", Name: "Ep 3", SeasonNumber: 1, EpisodeNumber: 3, AiredDate: releaseTime.Format("2006-01-02")},
+					},
+				}},
+			},
+			"tvdb:series:91002": {
+				Title: models.Title{
+					ID:     "tvdb:series:91002",
+					Name:   "Recent Watch Show",
+					TVDBID: 91002,
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "recent-ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+						{ID: "recent-ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2025-01-08"},
+					},
+				}},
+			},
+		},
+	})
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:91001:s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     now.Add(-48 * time.Hour),
+		SeriesID:      "tvdb:series:91001",
+		SeriesName:    "Behind Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:91002:s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     now.Add(-4 * time.Hour),
+		SeriesID:      "tvdb:series:91002",
+		SeriesName:    "Recent Watch Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 continue watching items, got %d", len(items))
+	}
+	if items[0].SeriesTitle != "Recent Watch Show" {
+		t.Fatalf("expected backlog show not to be promoted ahead of more recently watched content, got %q first", items[0].SeriesTitle)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "Behind Show" {
+			if item.NextEpisode == nil || item.NextEpisode.EpisodeNumber != 2 {
+				t.Fatalf("expected immediate next episode to remain episode 2, got %+v", item.NextEpisode)
+			}
+			return
+		}
+	}
+	t.Fatal("Behind Show not found in continue watching")
 }
 
 func TestImportWatchHistory_CrossProviderEpisodeDedup(t *testing.T) {
