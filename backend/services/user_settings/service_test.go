@@ -101,6 +101,62 @@ func TestGetWithDefaults_SanitizesDefaultsFallback(t *testing.T) {
 	}
 }
 
+func TestGetWithDefaults_DisplayAppLanguageFallsBackToGlobal(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	defaults := models.UserSettings{
+		Display: models.DisplaySettings{
+			AppLanguage: "fr",
+		},
+	}
+
+	got, err := svc.GetWithDefaults("no-settings-user", defaults)
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+	if got.Display.AppLanguage != "fr" {
+		t.Fatalf("display.appLanguage = %q, want %q", got.Display.AppLanguage, "fr")
+	}
+}
+
+func TestGetWithDefaults_DisplayAppLanguagePreservesUserOverride(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if err := svc.Update("user1", models.UserSettings{
+		Display: models.DisplaySettings{
+			AppLanguage: "en",
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	defaults := models.UserSettings{
+		Display: models.DisplaySettings{
+			AppLanguage:     "fr",
+			BadgeVisibility: []string{"watchProgress"},
+		},
+	}
+
+	got, err := svc.GetWithDefaults("user1", defaults)
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+	if got.Display.AppLanguage != "en" {
+		t.Fatalf("display.appLanguage = %q, want %q", got.Display.AppLanguage, "en")
+	}
+	if len(got.Display.BadgeVisibility) != 1 || got.Display.BadgeVisibility[0] != "watchProgress" {
+		t.Fatalf("badgeVisibility = %#v, want fallback defaults", got.Display.BadgeVisibility)
+	}
+}
+
 func TestIsSettingsEmpty_Default(t *testing.T) {
 	if !isSettingsEmpty(models.UserSettings{}) {
 		t.Error("empty UserSettings should be considered empty")
@@ -161,6 +217,17 @@ func TestIsSettingsEmpty_WithLiveTVMaxStreams(t *testing.T) {
 	}
 	if isSettingsEmpty(s) {
 		t.Error("settings with LiveTV.MaxStreams set should NOT be empty")
+	}
+}
+
+func TestIsSettingsEmpty_WithDisplayAppLanguage(t *testing.T) {
+	s := models.UserSettings{
+		Display: models.DisplaySettings{
+			AppLanguage: "fr",
+		},
+	}
+	if isSettingsEmpty(s) {
+		t.Error("settings with Display.AppLanguage set should NOT be empty")
 	}
 }
 

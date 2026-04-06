@@ -570,8 +570,19 @@ var SettingsSchema = map[string]interface{}{
 				"order":       3,
 			},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet.", "order": 4},
-			"showParsedBadges":                 map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
-			"cleanPosters":                     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
+			"showParsedBadges": map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
+			"cleanPosters":     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
+			"appLanguage": map[string]interface{}{
+				"type":        "select",
+				"label":       "App Language",
+				"description": "Language for the app UI. Leave blank to use the device locale.",
+				"order":       7,
+				"options": []map[string]interface{}{
+					{"value": "", "label": "Device Default"},
+					{"value": "en", "label": "English"},
+					{"value": "fr", "label": "Français"},
+				},
+			},
 		},
 	},
 	"metadata": map[string]interface{}{
@@ -1794,6 +1805,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			BadgeVisibility:                  globalSettings.Display.BadgeVisibility,
 			WatchStateIconStyle:              globalSettings.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
+			AppLanguage:                      globalSettings.Display.AppLanguage,
 		},
 	}
 

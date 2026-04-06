@@ -139,6 +139,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 		},
 		Display: models.DisplaySettings{
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
+			AppLanguage:                      globalSettings.Display.AppLanguage,
 		},
 		LiveTV: models.LiveTVSettings{
 			HiddenChannels:     []string{},

@@ -176,9 +176,18 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
 		}
 
-		// Fill in missing Display section from defaults
+		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
 		if settings.Display.BadgeVisibility == nil {
-			settings.Display = defaults.Display
+			settings.Display.BadgeVisibility = defaults.Display.BadgeVisibility
+		}
+		if settings.Display.WatchStateIconStyle == "" {
+			settings.Display.WatchStateIconStyle = defaults.Display.WatchStateIconStyle
+		}
+		if settings.Display.BypassFilteringForAIOStreamsOnly == nil {
+			settings.Display.BypassFilteringForAIOStreamsOnly = defaults.Display.BypassFilteringForAIOStreamsOnly
+		}
+		if settings.Display.AppLanguage == "" {
+			settings.Display.AppLanguage = defaults.Display.AppLanguage
 		}
 		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
 			settings.HomeShelves.Shelves = shelves
@@ -275,7 +284,9 @@ func isSettingsEmpty(s models.UserSettings) bool {
 
 	// Check Display
 	if len(s.Display.BadgeVisibility) > 0 ||
-		s.Display.BypassFilteringForAIOStreamsOnly != nil {
+		s.Display.WatchStateIconStyle != "" ||
+		s.Display.BypassFilteringForAIOStreamsOnly != nil ||
+		s.Display.AppLanguage != "" {
 		return false
 	}
 

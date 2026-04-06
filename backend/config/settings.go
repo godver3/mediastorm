@@ -424,6 +424,8 @@ type DisplaySettings struct {
 	ShowParsedBadges bool `json:"showParsedBadges,omitempty"`
 	// CleanPosters hides text overlays and gradient backgrounds on poster cards.
 	CleanPosters bool `json:"cleanPosters,omitempty"`
+	// AppLanguage overrides the app UI language (ISO 639-1 code, e.g. "en", "fr"). Empty = use device locale.
+	AppLanguage string `json:"appLanguage,omitempty"`
 }
 
 // SubtitleSettings defines subtitle provider configuration.

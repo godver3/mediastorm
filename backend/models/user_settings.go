@@ -85,6 +85,8 @@ type DisplaySettings struct {
 	WatchStateIconStyle string `json:"watchStateIconStyle,omitempty"`
 	// BypassFilteringForAIOStreamsOnly skips mediastorm filtering/ranking when AIOStreams is the only enabled scraper.
 	BypassFilteringForAIOStreamsOnly *bool `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	// AppLanguage overrides the app UI language (ISO 639-1 code, e.g. "en", "fr"). Empty = use device locale.
+	AppLanguage string `json:"appLanguage,omitempty"`
 }
 
 // LiveTVSettings contains per-user Live TV preferences.

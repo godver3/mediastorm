@@ -249,6 +249,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	if eff.Display.WatchStateIconStyle == "" {
 		eff.Display.WatchStateIconStyle = g.Display.WatchStateIconStyle
 	}
+	if eff.Display.AppLanguage == "" {
+		eff.Display.AppLanguage = g.Display.AppLanguage
+	}
 
 	// HomeShelves
 	if len(eff.HomeShelves.Shelves) == 0 {
@@ -386,6 +389,10 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 	}
 	if d.BypassFilteringForAIOStreamsOnly != nil && *d.BypassFilteringForAIOStreamsOnly == g.BypassFilteringForAIOStreamsOnly {
 		d.BypassFilteringForAIOStreamsOnly = nil
+		changed = true
+	}
+	if d.AppLanguage != "" && d.AppLanguage == g.AppLanguage {
+		d.AppLanguage = ""
 		changed = true
 	}
 	return changed
