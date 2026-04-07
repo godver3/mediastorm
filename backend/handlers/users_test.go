@@ -548,6 +548,23 @@ func TestUsersHandler_SetKidsProfile_Success(t *testing.T) {
 	}
 }
 
+func TestUsersHandler_SetKidsProfile_MasterBypass(t *testing.T) {
+	// Master account should be able to configure kids profiles on non-default accounts
+	// even when BelongsToAccount returns false (different account)
+	expected := models.User{ID: "u1", IsKidsProfile: true}
+	svc := &fakeUsersService{existsVal: true, belongsTo: false, setKidsUser: expected}
+	h := handlers.NewUsersHandler(svc)
+
+	body := map[string]bool{"isKidsProfile": true}
+	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	w := httptest.NewRecorder()
+	h.SetKidsProfile(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (master should bypass ownership check)", w.Code, http.StatusOK)
+	}
+}
+
 func TestUsersHandler_SetKidsMode_Success(t *testing.T) {
 	expected := models.User{ID: "u1", KidsMode: "rating"}
 	svc := &fakeUsersService{getOK: true, getUser: models.User{ID: "u1"}, belongsTo: true, setKidsModeUser: expected}
@@ -588,6 +605,23 @@ func TestUsersHandler_SetKidsMode_Forbidden(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestUsersHandler_SetKidsMode_MasterBypass(t *testing.T) {
+	// Master account should be able to configure kids mode on any profile,
+	// even when BelongsToAccount returns false (profile belongs to non-default account)
+	expected := models.User{ID: "u1", KidsMode: "rating"}
+	svc := &fakeUsersService{getOK: true, getUser: models.User{ID: "u1"}, belongsTo: false, setKidsModeUser: expected}
+	h := handlers.NewUsersHandler(svc)
+
+	body := map[string]string{"mode": "rating"}
+	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	w := httptest.NewRecorder()
+	h.SetKidsMode(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (master should bypass ownership check)", w.Code, http.StatusOK)
 	}
 }
 

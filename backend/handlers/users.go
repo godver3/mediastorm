@@ -741,9 +741,14 @@ func (h *UsersHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify profile belongs to the logged-in account
-	accountID := auth.GetAccountID(r)
-	if !h.Service.BelongsToAccount(id, accountID) {
+	// Verify profile belongs to the logged-in account (skip for master accounts)
+	if !auth.IsMaster(r) {
+		accountID := auth.GetAccountID(r)
+		if !h.Service.BelongsToAccount(id, accountID) {
+			http.Error(w, "profile not found", http.StatusNotFound)
+			return
+		}
+	} else if !h.Service.Exists(id) {
 		http.Error(w, "profile not found", http.StatusNotFound)
 		return
 	}
@@ -773,10 +778,17 @@ func (h *UsersHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // canConfigureKidsProfile checks if the caller can configure a kids profile's settings.
-// The caller must belong to the same account as the target profile.
+// Master accounts can configure any profile. Regular accounts can only configure profiles
+// that belong to their own account.
 // Note: The frontend handles the UI restrictions to prevent kids profiles from accessing
 // the configuration interface. The backend just verifies account ownership.
 func (h *UsersHandler) canConfigureKidsProfile(r *http.Request, profileID string) bool {
+	// Master accounts can configure any profile's kids settings
+	if auth.IsMaster(r) {
+		_, ok := h.Service.Get(profileID)
+		return ok
+	}
+
 	// Get the target profile
 	_, ok := h.Service.Get(profileID)
 	if !ok {
