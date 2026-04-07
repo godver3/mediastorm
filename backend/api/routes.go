@@ -120,7 +120,6 @@ func Register(
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
 	homepageAPIKey string,
-	localeHandler *handlers.LocaleHandler,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 
@@ -150,9 +149,6 @@ func Register(
 	accountsHandler := handlers.NewAccountsHandler(accountsSvc, sessionsSvc, usersSvc)
 	api.HandleFunc("/auth/default-password", RateLimitHandlerFunc(defaultPwLimiter, accountsHandler.HasDefaultPassword)).Methods(http.MethodGet)
 	api.HandleFunc("/auth/default-password", accountsHandler.Options).Methods(http.MethodOptions)
-
-	// Global app locale (public — needed by login screen before auth)
-	api.HandleFunc("/locale", localeHandler.GetLocale).Methods(http.MethodGet, http.MethodOptions)
 
 	// Profile icon endpoint (public - needed for Image components that can't send auth headers)
 	// Must be registered before protected routes to avoid auth middleware

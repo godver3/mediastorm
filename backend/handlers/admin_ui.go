@@ -575,7 +575,7 @@ var SettingsSchema = map[string]interface{}{
 			"appLanguage": map[string]interface{}{
 				"type":        "select",
 				"label":       "App Language",
-				"description": "Language for the app UI. Leave blank to use the device locale.",
+				"description": "Language for the app UI. Defaults to the device locale unless you choose an override here.",
 				"order":       7,
 				"options": []map[string]interface{}{
 					{"value": "", "label": "Device Default"},

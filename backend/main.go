@@ -681,7 +681,6 @@ func main() {
 		sessionsService,
 		userService,
 		settings.Server.HomepageAPIKey,
-		handlers.NewLocaleHandler(cfgManager),
 	)
 
 	// Register Trakt accounts API routes
