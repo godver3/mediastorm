@@ -821,7 +821,7 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	filterSettings, _, _ := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	filterSettings, _, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 	filterOpts := s.buildFilterOptions(rawOpts, filterSettings)
 
 	detailed := filter.ResultsWithDetails(rawResults, filterOpts)
@@ -851,6 +851,22 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		s.sortResults(passedNZB, opts, settings, filterSettings)
 		for i, r := range passedNZB {
 			passed[i].NZBResult = r
+		}
+
+		// Apply per-resolution limit to passed results (same as Search path)
+		maxPerRes := models.IntVal(filterOverrides.MaxResultsPerResolution, 0)
+		if maxPerRes > 0 {
+			resolutionCounts := map[int]int{}
+			var limited []models.ScoredNZBResult
+			for _, r := range passed {
+				res := extractResolutionFromResult(r.NZBResult)
+				if resolutionCounts[res] < maxPerRes {
+					limited = append(limited, r)
+					resolutionCounts[res]++
+				}
+			}
+			log.Printf("[indexer] Per-resolution limit=%d applied to passed results: %d -> %d", maxPerRes, len(passed), len(limited))
+			passed = limited
 		}
 	}
 
