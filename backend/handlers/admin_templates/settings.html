@@ -289,9 +289,10 @@
             }
         } else if (servicePriority === 'debrid') {
             const debridProviders = currentSettings.streaming?.debridProviders || [];
-            if (!hasEnabledItem(debridProviders)) {
+            const aiostreamsScrapers = (currentSettings.torrentScrapers || []).filter(s => s.type === 'aiostreams' && s.enabled);
+            if (!hasEnabledItem(debridProviders) && aiostreamsScrapers.length === 0) {
                 if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
-                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider';
+                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider or AIOStreams source';
             }
         }
 
