@@ -1156,12 +1156,24 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	// admin explicitly saves them; existing entries are preserved as-is.
 	if h.localMediaService != nil {
 		if libs, err := h.localMediaService.ListLibraries(r.Context()); err == nil {
+			libNameByID := make(map[string]string, len(libs))
+			for _, lib := range libs {
+				libNameByID["local-library-"+lib.ID] = lib.Name
+			}
 			existing := make(map[string]bool, len(settings.HomeShelves.Shelves))
 			maxOrder := -1
-			for _, s := range settings.HomeShelves.Shelves {
+			for i, s := range settings.HomeShelves.Shelves {
 				existing[s.ID] = true
 				if s.Order > maxOrder {
 					maxOrder = s.Order
+				}
+				if s.Type == "local-library" {
+					if libName, ok := libNameByID[s.ID]; ok {
+						want := "Recently Added - " + libName
+						if settings.HomeShelves.Shelves[i].Name != want {
+							settings.HomeShelves.Shelves[i].Name = want
+						}
+					}
 				}
 			}
 			injected := 0
@@ -1170,7 +1182,7 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 				if !existing[id] {
 					settings.HomeShelves.Shelves = append(settings.HomeShelves.Shelves, config.ShelfConfig{
 						ID:      id,
-						Name:    lib.Name,
+						Name:    "Recently Added - " + lib.Name,
 						Enabled: true,
 						Order:   maxOrder + 1 + injected,
 						Type:    "local-library",

@@ -199,19 +199,37 @@ func injectLocalLibraryShelves(shelves []models.ShelfConfig, libs []models.Local
 		log.Printf("[user-settings] injectLocalLibraryShelves: library id=%s name=%q type=%s", lib.ID, lib.Name, lib.Type)
 	}
 
-	result := append([]models.ShelfConfig(nil), shelves...)
+	// Build a lookup from shelf ID to library name for renaming existing shelves
+	libNameByID := make(map[string]string, len(libs))
+	for _, lib := range libs {
+		libNameByID["local-library-"+lib.ID] = lib.Name
+	}
+
+	result := make([]models.ShelfConfig, 0, len(shelves))
+	for _, s := range shelves {
+		if s.Type == "local-library" {
+			if libName, ok := libNameByID[s.ID]; ok {
+				want := "Recently Added - " + libName
+				if s.Name != want {
+					s.Name = want
+				}
+			}
+		}
+		result = append(result, s)
+	}
+
 	injected := 0
 	for _, lib := range libs {
 		id := "local-library-" + lib.ID
 		if !existing[id] {
 			result = append(result, models.ShelfConfig{
 				ID:      id,
-				Name:    lib.Name,
+				Name:    "Recently Added - " + lib.Name,
 				Enabled: true,
 				Order:   maxOrder + 1 + injected,
 				Type:    "local-library",
 			})
-			log.Printf("[user-settings] injectLocalLibraryShelves: injected new shelf id=%s name=%q", id, lib.Name)
+			log.Printf("[user-settings] injectLocalLibraryShelves: injected new shelf id=%s name=%q", id, "Recently Added - "+lib.Name)
 			injected++
 		} else {
 			log.Printf("[user-settings] injectLocalLibraryShelves: shelf id=%s already present, skipping", id)
