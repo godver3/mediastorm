@@ -184,6 +184,8 @@
     let clientsForUser = []; // Clients for the selected user
     let profilesData = []; // Profiles with PIN status
     let accountsData = []; // User accounts with profiles
+    let traktAccountsData = []; // Available Trakt accounts for the current admin/account scope
+    let traktListsCache = {}; // accountId -> custom lists
     let hasDefaultPassword = false; // Whether admin has default password
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
@@ -2307,6 +2309,11 @@
         // If profile has type/listUrl, they must match global
         if (profileShelf.type && profileShelf.type !== globalShelf.type) return false;
         if (profileShelf.listUrl && profileShelf.listUrl !== globalShelf.listUrl) return false;
+        if (profileShelf.limit !== undefined && profileShelf.limit !== globalShelf.limit) return false;
+        if (profileShelf.hideUnreleased !== undefined && profileShelf.hideUnreleased !== globalShelf.hideUnreleased) return false;
+        if (profileShelf.traktAccountId && profileShelf.traktAccountId !== globalShelf.traktAccountId) return false;
+        if (profileShelf.traktListType && profileShelf.traktListType !== globalShelf.traktListType) return false;
+        if (profileShelf.traktListId && profileShelf.traktListId !== globalShelf.traktListId) return false;
         return true;
     }
 
@@ -2685,7 +2692,7 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
-            const isCustom = !!s.listUrl || (s.type === 'mdblist') || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-')));
+            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-')));
             const typeLabel = isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '';
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
 
@@ -2762,8 +2769,24 @@
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Type</label>'+
                     '<select id="newShelfType" onchange="onShelfTypeChange()">'+
                         '<option value="mdblist">MDBList</option>'+
+                        '<option value="trakt">Trakt</option>'+
                         '<option value="streaming-service">Streaming Service</option>'+
                     '</select>'+
+                '</div>'+
+                '<div class="form-group" id="traktAccountGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Trakt Account</label>'+
+                    '<select id="newShelfTraktAccount" onchange="onTraktShelfSourceChange()"></select>'+
+                '</div>'+
+                '<div class="form-group" id="traktListTypeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">List Type</label>'+
+                    '<select id="newShelfTraktListType" onchange="onTraktShelfSourceChange()">'+
+                        '<option value="watchlist">Watchlist</option>'+
+                        '<option value="custom">Custom List</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group" id="traktListGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Custom List</label>'+
+                    '<select id="newShelfTraktList" onchange="onTraktShelfSourceChange()"></select>'+
                 '</div>'+
                 // Streaming service fields (shown when type=streaming-service)
                 '<div class="form-group" id="streamingServiceGroup" style="display:none;">'+
@@ -2902,7 +2925,66 @@
     function getShelfTypeLabel(type) {
         switch (type) {
             case 'mdblist': return 'MDBList';
+            case 'trakt': return 'Trakt';
             default: return type || 'MDBList';
+        }
+    }
+
+    function getAvailableTraktAccountsForShelfForm() {
+        let accounts = [...traktAccountsData];
+        if (selectedUserId) {
+            const profile = profilesData.find((p) => p.id === selectedUserId);
+            const linkedId = profile?.traktAccountId || '';
+            accounts = linkedId ? accounts.filter((acc) => acc.id === linkedId) : [];
+        } else if (isAdmin) {
+            accounts = [
+                { id: '__all__', name: 'All Trakt Accounts', connected: true, username: '' },
+                ...accounts,
+            ];
+        }
+        return accounts;
+    }
+
+    function renderTraktAccountOptions(selectId, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const accounts = getAvailableTraktAccountsForShelfForm();
+        if (accounts.length === 0) {
+            select.innerHTML = '<option value="">No Trakt accounts available</option>';
+            return;
+        }
+        select.innerHTML = accounts.map((acc) => {
+            const label = acc.id === '__all__'
+                ? acc.name
+                : `${acc.name}${acc.username ? ' (' + acc.username + ')' : ''}${acc.connected ? '' : ' [Not Connected]'}`;
+            const disabled = acc.id !== '__all__' && !acc.connected ? 'disabled' : '';
+            const selected = acc.id === selectedValue ? 'selected' : '';
+            return `<option value="${acc.id}" ${selected} ${disabled}>${label}</option>`;
+        }).join('');
+        if (!selectedValue && select.options.length > 0) {
+            select.value = select.options[0].value;
+        }
+    }
+
+    async function renderTraktListOptions(selectId, accountId, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        if (!accountId || accountId === '__all__') {
+            select.innerHTML = '<option value="">Not available</option>';
+            return;
+        }
+        select.innerHTML = '<option value="">Loading...</option>';
+        const lists = await loadTraktLists(accountId);
+        if (!lists.length) {
+            select.innerHTML = '<option value="">No custom lists found</option>';
+            return;
+        }
+        select.innerHTML = lists.map((list) => {
+            const selected = list.id === selectedValue ? 'selected' : '';
+            return `<option value="${list.id}" ${selected}>${list.name}</option>`;
+        }).join('');
+        if (!selectedValue && select.options.length > 0) {
+            select.value = select.options[0].value;
         }
     }
 
@@ -2919,14 +3001,22 @@
     function onShelfTypeChange() {
         const type = document.getElementById('newShelfType')?.value;
         const isStreaming = type === 'streaming-service';
+        const isTrakt = type === 'trakt';
         document.getElementById('streamingServiceGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('streamingMediaTypeGroup').style.display = isStreaming ? '' : 'none';
-        document.getElementById('mdblistUrlGroup').style.display = isStreaming ? 'none' : '';
+        document.getElementById('traktAccountGroup').style.display = isTrakt ? '' : 'none';
+        document.getElementById('traktListTypeGroup').style.display = isTrakt ? '' : 'none';
+        document.getElementById('traktListGroup').style.display = 'none';
+        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt) ? 'none' : '';
         const hint = document.getElementById('shelfFormHint');
         if (hint) {
-            hint.style.display = isStreaming ? 'none' : '';
+            hint.style.display = (isStreaming || isTrakt) ? 'none' : '';
         }
         if (isStreaming) onStreamingServiceChange();
+        else if (isTrakt) {
+            renderTraktAccountOptions('newShelfTraktAccount');
+            onTraktShelfSourceChange();
+        }
         else {
             document.getElementById('newShelfName').value = '';
         }
@@ -2942,6 +3032,30 @@
         if (mediaType === 'movies') name += ' Movies';
         else if (mediaType === 'shows') name += ' Shows';
         document.getElementById('newShelfName').value = name;
+    }
+
+    async function onTraktShelfSourceChange() {
+        const accountId = document.getElementById('newShelfTraktAccount')?.value || '';
+        const listType = document.getElementById('newShelfTraktListType')?.value || 'watchlist';
+        const listGroup = document.getElementById('traktListGroup');
+        if (listGroup) {
+            listGroup.style.display = listType === 'custom' && accountId !== '__all__' ? '' : 'none';
+        }
+        if (listType === 'custom' && accountId && accountId !== '__all__') {
+            await renderTraktListOptions('newShelfTraktList', accountId);
+        }
+
+        const nameInput = document.getElementById('newShelfName');
+        if (!nameInput) return;
+        const accounts = getAvailableTraktAccountsForShelfForm();
+        const account = accounts.find((acc) => acc.id === accountId);
+        if (listType === 'watchlist') {
+            nameInput.value = accountId === '__all__' ? 'All Trakt Watchlists' : `${account?.name || 'Trakt'} Watchlist`;
+            return;
+        }
+        const listSelect = document.getElementById('newShelfTraktList');
+        const listName = listSelect?.selectedOptions?.[0]?.textContent || 'Trakt List';
+        nameInput.value = listName;
     }
 
     // Add custom shelf
@@ -2998,6 +3112,41 @@
             if (mediaType === 'shows' || mediaType === 'both') addStreamingShelf('shows', 'Shows');
 
             // Reset form
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
+        } else if (shelfType === 'trakt') {
+            const accountId = document.getElementById('newShelfTraktAccount')?.value?.trim();
+            const traktListType = document.getElementById('newShelfTraktListType')?.value?.trim() || 'watchlist';
+            const traktListId = document.getElementById('newShelfTraktList')?.value?.trim() || '';
+            const name = nameInput?.value?.trim();
+
+            if (!accountId || !name) {
+                alert('Please select a Trakt account and enter a name');
+                return;
+            }
+            if (traktListType === 'custom' && (!traktListId || accountId === '__all__')) {
+                alert('Please select a Trakt custom list from a specific account');
+                return;
+            }
+
+            const id = `trakt-${accountId}-${traktListType}-${traktListId || 'watchlist'}-${Date.now()}`;
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id,
+                name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: 'trakt',
+                traktAccountId: accountId,
+                traktListType,
+                traktListId: traktListType === 'custom' ? traktListId : '',
+                limit,
+                hideUnreleased,
+            });
+
             if (typeSelect) typeSelect.value = 'mdblist';
             nameInput.value = '';
             if (limitInput) limitInput.value = '0';
@@ -3076,6 +3225,36 @@
         const shelf = shelves.find(s => s.id === shelfId);
         if (!shelf) return;
 
+        const isTraktShelf = shelf.type === 'trakt';
+        const traktAccounts = getAvailableTraktAccountsForShelfForm();
+        const traktAccountOptions = traktAccounts.map((acc) => {
+            const selected = acc.id === (shelf.traktAccountId || '') ? 'selected' : '';
+            return `<option value="${acc.id}" ${selected}>${acc.name}${acc.username ? ' (' + acc.username + ')' : ''}</option>`;
+        }).join('');
+        const traktListType = shelf.traktListType || 'watchlist';
+        const traktListTypeOptions =
+            `<option value="watchlist" ${traktListType === 'watchlist' ? 'selected' : ''}>Watchlist</option>` +
+            `<option value="custom" ${traktListType === 'custom' ? 'selected' : ''}>Custom List</option>`;
+        const traktSourceFields = isTraktShelf ? `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Trakt Account</label>
+                        <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">${traktAccountOptions}</select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">List Type</label>
+                        <select id="editShelfTraktListType" onchange="onEditTraktShelfSourceChange()" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">${traktListTypeOptions}</select>
+                    </div>
+                    <div id="editShelfTraktListGroup" style="margin-bottom:12px;display:${traktListType === 'custom' ? 'block' : 'none'};">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Custom List</label>
+                        <select id="editShelfTraktList" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;"><option value="">Loading...</option></select>
+                    </div>
+        ` : `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
+                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+        `;
+
         // Create modal HTML
         const modalHtml = `
             <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
@@ -3085,10 +3264,7 @@
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
                         <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
-                    <div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
-                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
+                    ${traktSourceFields}
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
                         <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
@@ -3113,6 +3289,9 @@
 
         // Focus the name input
         document.getElementById('editShelfName').focus();
+        if (isTraktShelf) {
+            onEditTraktShelfSourceChange(shelf.traktListId || '');
+        }
 
         // Close on escape key
         const handleEscape = (e) => {
@@ -3136,20 +3315,25 @@
         if (modal) modal.remove();
     }
 
+    async function onEditTraktShelfSourceChange(selectedListId) {
+        const accountId = document.getElementById('editShelfTraktAccount')?.value || '';
+        const listType = document.getElementById('editShelfTraktListType')?.value || 'watchlist';
+        const group = document.getElementById('editShelfTraktListGroup');
+        if (group) {
+            group.style.display = listType === 'custom' && accountId !== '__all__' ? 'block' : 'none';
+        }
+        if (listType === 'custom' && accountId && accountId !== '__all__') {
+            await renderTraktListOptions('editShelfTraktList', accountId, selectedListId || document.getElementById('editShelfTraktList')?.value || '');
+        }
+    }
+
     function saveEditedShelf(shelfId) {
         const nameInput = document.getElementById('editShelfName');
-        const urlInput = document.getElementById('editShelfUrl');
         const limitInput = document.getElementById('editShelfLimit');
         const hideUnreleasedInput = document.getElementById('editShelfHideUnreleased');
         const name = nameInput?.value?.trim();
-        let url = urlInput?.value?.trim();
         const limit = parseInt(limitInput?.value || '0', 10) || 0;
         const hideUnreleased = hideUnreleasedInput?.checked || false;
-
-        if (!name || !url) {
-            alert('Please enter both a name and URL');
-            return;
-        }
 
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
@@ -3162,18 +3346,36 @@
         const shelf = shelves.find(s => s.id === shelfId);
         if (!shelf) return;
 
-        // Validate URL based on existing type
-        if (!validateShelfUrl(shelf.type, url)) {
+        if (!name) {
+            alert('Please enter a name');
             return;
         }
-
-        // Auto-fix URL based on existing type
-        url = fixShelfUrl(shelf.type, url);
-
         shelf.name = name;
-        shelf.listUrl = url;
         shelf.limit = limit;
         shelf.hideUnreleased = hideUnreleased;
+        if (shelf.type === 'trakt') {
+            const accountId = document.getElementById('editShelfTraktAccount')?.value?.trim();
+            const listType = document.getElementById('editShelfTraktListType')?.value?.trim() || 'watchlist';
+            const listId = document.getElementById('editShelfTraktList')?.value?.trim() || '';
+            if (!accountId) {
+                alert('Please select a Trakt account');
+                return;
+            }
+            if (listType === 'custom' && (!listId || accountId === '__all__')) {
+                alert('Please select a custom Trakt list from a specific account');
+                return;
+            }
+            shelf.traktAccountId = accountId;
+            shelf.traktListType = listType;
+            shelf.traktListId = listType === 'custom' ? listId : '';
+        } else {
+            const urlInput = document.getElementById('editShelfUrl');
+            let url = urlInput?.value?.trim();
+            if (!url || !validateShelfUrl(shelf.type, url)) {
+                return;
+            }
+            shelf.listUrl = fixShelfUrl(shelf.type, url);
+        }
         closeEditShelfModal();
         renderSettings();
     }
@@ -4128,6 +4330,37 @@
         }
     }
 
+    async function loadTraktAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/trakt/accounts');
+            if (response.ok) {
+                const data = await response.json();
+                traktAccountsData = data.accounts || [];
+            } else {
+                console.error('Failed to load Trakt accounts');
+                traktAccountsData = [];
+            }
+        } catch (e) {
+            console.error('Error loading Trakt accounts:', e);
+            traktAccountsData = [];
+        }
+    }
+
+    async function loadTraktLists(accountId) {
+        if (!accountId || accountId === '__all__') return [];
+        if (traktListsCache[accountId]) return traktListsCache[accountId];
+        try {
+            const response = await fetch(`${basePath}/api/trakt/accounts/${encodeURIComponent(accountId)}/lists`);
+            if (!response.ok) return [];
+            const data = await response.json();
+            traktListsCache[accountId] = data.lists || [];
+            return traktListsCache[accountId];
+        } catch (e) {
+            console.error('Error loading Trakt lists:', e);
+            return [];
+        }
+    }
+
     async function checkDefaultPassword() {
         try {
             const response = await fetch(basePath + '/api/accounts/default-password');
@@ -4929,7 +5162,7 @@
         const urlProfileId = new URLSearchParams(window.location.search).get('profileId');
 
         if (isAdmin) {
-            await Promise.all([loadProfiles(), loadAccounts(), checkDefaultPassword()]);
+            await Promise.all([loadProfiles(), loadAccounts(), loadTraktAccounts(), checkDefaultPassword()]);
             const selector = document.getElementById('userSelector');
             // Pre-select from query param if provided
             if (urlProfileId && selector) {
@@ -4949,7 +5182,7 @@
             // This fixes the indicator showing for profiles with saved settings that match global
             await recalculateAllUserOverrides();
         } else {
-            await loadProfiles();
+            await Promise.all([loadProfiles(), loadTraktAccounts()]);
             const selector = document.getElementById('userSelector');
             // Pre-select from query param if provided
             if (urlProfileId && selector) {

@@ -240,8 +240,11 @@ type ShelfConfig struct {
 	Name           string `json:"name"`                     // Display name
 	Enabled        bool   `json:"enabled"`                  // Whether the shelf is visible
 	Order          int    `json:"order"`                    // Sort order (lower numbers appear first)
-	Type           string `json:"type,omitempty"`           // "builtin" (default), "mdblist" for custom lists, or "local-library" for local media libraries
+	Type           string `json:"type,omitempty"`           // "builtin" (default), "mdblist", "trakt", or "local-library"
 	ListURL        string `json:"listUrl,omitempty"`        // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	TraktAccountID string `json:"traktAccountId,omitempty"` // Trakt account ID, or "__all__" for master-account global watchlists
+	TraktListType  string `json:"traktListType,omitempty"`  // "watchlist" or "custom"
+	TraktListID    string `json:"traktListId,omitempty"`    // Trakt custom list slug/ID when traktListType == "custom"
 	Limit          int    `json:"limit,omitempty"`          // Optional limit on number of items returned (0 = no limit)
 	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content
 }

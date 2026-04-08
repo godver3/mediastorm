@@ -170,12 +170,17 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 	result := make([]models.ShelfConfig, len(configShelves))
 	for i, s := range configShelves {
 		result[i] = models.ShelfConfig{
-			ID:      s.ID,
-			Name:    s.Name,
-			Enabled: s.Enabled,
-			Order:   s.Order,
-			Type:    s.Type,
-			ListURL: s.ListURL,
+			ID:             s.ID,
+			Name:           s.Name,
+			Enabled:        s.Enabled,
+			Order:          s.Order,
+			Type:           s.Type,
+			ListURL:        s.ListURL,
+			TraktAccountID: s.TraktAccountID,
+			TraktListType:  s.TraktListType,
+			TraktListID:    s.TraktListID,
+			Limit:          s.Limit,
+			HideUnreleased: s.HideUnreleased,
 		}
 	}
 	return result

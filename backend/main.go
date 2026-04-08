@@ -507,8 +507,10 @@ func main() {
 	customListsHandler.SetMetadataService(metadataService)
 	// Wire up users service to metadata handler for kids profile filtering
 	metadataHandler.SetUsersService(userService)
+	metadataHandler.SetAccountsService(accountsService)
 	// Wire up watchlist service to metadata handler for AI recommendations
 	metadataHandler.SetWatchlistService(watchlistService)
+	metadataHandler.SetTraktClient(traktClient)
 
 	// Backfill text poster URLs for existing watchlist items (one-time, background)
 	go func() {
@@ -788,6 +790,7 @@ func main() {
 	// Content discovery endpoints (for admin kids-settings preview)
 	r.HandleFunc("/admin/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/lists/trakt", adminUIHandler.RequireAuth(metadataHandler.TraktList)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for admin kids-settings page)
 	r.HandleFunc("/admin/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
@@ -1040,6 +1043,7 @@ func main() {
 	// Content discovery endpoints (for account kids-settings preview)
 	r.HandleFunc("/account/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/lists/trakt", adminUIHandler.RequireAuth(metadataHandler.TraktList)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for account kids-settings page)
 	r.HandleFunc("/account/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)

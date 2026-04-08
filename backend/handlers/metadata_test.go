@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/metadata"
+	"novastream/services/trakt"
 )
 
 type fakeMetadataService struct {
@@ -30,6 +32,7 @@ type fakeMetadataService struct {
 	discoverByGenreResp  []models.TrendingItem
 	discoverByGenreTotal int
 	discoverByGenreErr   error
+	curatedResp          []models.TrendingItem
 
 	lastTrendingType        string
 	lastSearchQuery         string
@@ -40,6 +43,8 @@ type fakeMetadataService struct {
 	lastDiscoverGenreID     int64
 	lastDiscoverGenreLimit  int
 	lastDiscoverGenreOffset int
+	lastCuratedItems        []metadata.CuratedItem
+	lastCuratedLabel        string
 }
 
 func (f *fakeMetadataService) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
@@ -139,8 +144,10 @@ func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ metad
 	return nil, 0, 0, nil
 }
 
-func (f *fakeMetadataService) GetCuratedList(_ context.Context, _ []metadata.CuratedItem, _ string) ([]models.TrendingItem, error) {
-	return nil, nil
+func (f *fakeMetadataService) GetCuratedList(_ context.Context, items []metadata.CuratedItem, label string) ([]models.TrendingItem, error) {
+	f.lastCuratedItems = items
+	f.lastCuratedLabel = label
+	return f.curatedResp, nil
 }
 
 func (f *fakeMetadataService) ExtractTrailerStreamURL(_ context.Context, _ string) (string, error) {
@@ -231,6 +238,21 @@ type fakeUsersServiceForSearch struct {
 func (f *fakeUsersServiceForSearch) Get(id string) (models.User, bool) {
 	u, ok := f.users[id]
 	return u, ok
+}
+
+type fakeAccountsServiceForMetadata struct {
+	accounts map[string]models.Account
+}
+
+func (f *fakeAccountsServiceForMetadata) Get(id string) (models.Account, bool) {
+	account, ok := f.accounts[id]
+	return account, ok
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func testConfigManager(t *testing.T) *config.Manager {
@@ -344,6 +366,89 @@ func TestMetadataHandler_SearchError(t *testing.T) {
 	}
 	if payload["error"] == "" {
 		t.Fatalf("expected error message, got %v", payload)
+	}
+}
+
+func TestMetadataHandler_TraktListWatchlist(t *testing.T) {
+	origURL := trakt.GetBaseURLForTest()
+	defer trakt.SetBaseURLForTest(origURL)
+	trakt.SetBaseURLForTest("https://trakt.test")
+
+	fake := &fakeMetadataService{
+		curatedResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "movie:329865", Name: "Arrival", MediaType: "movie"}},
+		},
+	}
+	mgr := testConfigManager(t)
+	settings := config.DefaultSettings()
+	settings.Trakt.Accounts = []config.TraktAccount{
+		{
+			ID:             "trakt-1",
+			Name:           "Main Trakt",
+			OwnerAccountID: "acct-1",
+			ClientID:       "client-id",
+			ClientSecret:   "client-secret",
+			AccessToken:    "access-token",
+			ExpiresAt:      time.Now().Add(24 * time.Hour).Unix(),
+		},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := NewMetadataHandler(fake, mgr)
+	traktClient := trakt.NewClient("client-id", "client-secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/users/me/watchlist" {
+				t.Fatalf("unexpected trakt path %s", r.URL.Path)
+			}
+			body := `[{"type":"movie","listed_at":"` + time.Now().UTC().Format(time.RFC3339) + `","movie":{"title":"Arrival","year":2016,"ids":{"imdb":"tt2543164","tmdb":329865,"trakt":42}}}]`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header: http.Header{
+					"X-Pagination-Item-Count": []string{"1"},
+				},
+				Body: io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	})
+	handler.SetTraktClient(traktClient)
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"user-1": {ID: "user-1", AccountID: "acct-1", Name: "Profile"},
+		},
+	})
+	handler.SetAccountsService(&fakeAccountsServiceForMetadata{
+		accounts: map[string]models.Account{
+			"acct-1": {ID: "acct-1", Username: "account"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/trakt?userId=user-1&accountId=trakt-1&listType=watchlist&name=My+Trakt+Shelf", nil)
+	rec := httptest.NewRecorder()
+
+	handler.TraktList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastCuratedLabel != "My Trakt Shelf" {
+		t.Fatalf("expected curated label to be forwarded, got %q", fake.lastCuratedLabel)
+	}
+	if len(fake.lastCuratedItems) != 1 {
+		t.Fatalf("expected 1 curated item, got %d", len(fake.lastCuratedItems))
+	}
+	if fake.lastCuratedItems[0].IMDBID != "tt2543164" || fake.lastCuratedItems[0].MediaType != "movie" {
+		t.Fatalf("unexpected curated item: %+v", fake.lastCuratedItems[0])
+	}
+
+	var payload TraktShelfResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Total != 1 || len(payload.Items) != 1 || payload.Items[0].Title.Name != "Arrival" {
+		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"novastream/models"
 	"novastream/services/kids"
 	metadatapkg "novastream/services/metadata"
+	"novastream/services/trakt"
 )
 
 type metadataService interface {
@@ -80,13 +82,19 @@ type usersServiceInterface interface {
 	Get(id string) (models.User, bool)
 }
 
+type accountsServiceInterface interface {
+	Get(id string) (models.Account, bool)
+}
+
 type MetadataHandler struct {
 	Service          metadataService
 	CfgManager       *config.Manager
 	UserSettings     userSettingsProvider
 	HistoryService   historyServiceInterface
 	UsersService     usersServiceInterface
+	AccountsService  accountsServiceInterface
 	WatchlistService watchlistLister
+	TraktClient      *trakt.Client
 }
 
 func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *MetadataHandler {
@@ -108,9 +116,17 @@ func (h *MetadataHandler) SetUsersService(service usersServiceInterface) {
 	h.UsersService = service
 }
 
+func (h *MetadataHandler) SetAccountsService(service accountsServiceInterface) {
+	h.AccountsService = service
+}
+
 // SetWatchlistService sets the watchlist service for AI recommendations.
 func (h *MetadataHandler) SetWatchlistService(service watchlistLister) {
 	h.WatchlistService = service
+}
+
+func (h *MetadataHandler) SetTraktClient(client *trakt.Client) {
+	h.TraktClient = client
 }
 
 // DiscoverNewResponse wraps trending items with total count for pagination
@@ -927,6 +943,356 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+type traktShelfSourceItem struct {
+	Title     string
+	Year      int
+	MediaType string
+	IMDBID    string
+	TMDBID    string
+	TVDBID    string
+	TraktID   string
+	ListedAt  int64
+}
+
+type traktShelfDedupeItem struct {
+	item traktShelfSourceItem
+}
+
+type TraktShelfResponse struct {
+	Items           []models.TrendingItem `json:"items"`
+	Total           int                   `json:"total"`
+	UnfilteredTotal int                   `json:"unfilteredTotal,omitempty"`
+}
+
+// TraktList returns enriched Trakt watchlist/custom-list items for use in home shelves.
+func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
+	if h.TraktClient == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "trakt client unavailable"})
+		return
+	}
+	if h.UsersService == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "users service unavailable"})
+		return
+	}
+
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "userId parameter required"})
+		return
+	}
+	user, ok := h.UsersService.Get(userID)
+	if !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "user not found"})
+		return
+	}
+
+	accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
+	listType := strings.TrimSpace(r.URL.Query().Get("listType"))
+	listID := strings.TrimSpace(r.URL.Query().Get("listId"))
+	if accountID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "accountId parameter required"})
+		return
+	}
+	if listType != "watchlist" && listType != "custom" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid listType"})
+		return
+	}
+	if listType == "custom" && listID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "listId parameter required for custom lists"})
+		return
+	}
+	if accountID == "__all__" && listType != "watchlist" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "all accounts is only supported for watchlists"})
+		return
+	}
+
+	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
+	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	settings, err := h.CfgManager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "failed to load settings"})
+		return
+	}
+
+	traktAccounts, err := h.resolveTraktShelfAccounts(user, settings, accountID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		status := http.StatusForbidden
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	sourceItems, err := h.fetchTraktShelfItems(r.Context(), settings, traktAccounts, listType, listID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	curated := make([]metadatapkg.CuratedItem, 0, len(sourceItems))
+	for _, item := range sourceItems {
+		curated = append(curated, metadatapkg.CuratedItem{
+			Title:     item.Title,
+			Year:      item.Year,
+			IMDBID:    item.IMDBID,
+			MediaType: item.MediaType,
+		})
+	}
+
+	label := strings.TrimSpace(r.URL.Query().Get("name"))
+	if label == "" {
+		if listType == "watchlist" {
+			label = "Trakt Watchlist"
+		} else {
+			label = "Trakt List"
+		}
+	}
+
+	items, err := h.Service.GetCuratedList(r.Context(), curated, label)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	unfilteredTotal := len(items)
+	if hideUnreleased {
+		items = filterUnreleasedItems(items)
+	}
+	if hideWatched && h.HistoryService != nil {
+		items = filterWatchedItems(items, userID, h.HistoryService)
+	}
+	filteredTotal := len(items)
+
+	if offset > 0 && offset < len(items) {
+		items = items[offset:]
+	} else if offset >= len(items) {
+		items = []models.TrendingItem{}
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+
+	enrichTrendingRatings(items, h.Service)
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := TraktShelfResponse{
+		Items: items,
+		Total: filteredTotal,
+	}
+	if hideUnreleased || hideWatched {
+		resp.UnfilteredTotal = unfilteredTotal
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *MetadataHandler) resolveTraktShelfAccounts(user models.User, settings config.Settings, requestedAccountID string) ([]config.TraktAccount, error) {
+	if requestedAccountID == "__all__" {
+		if h.AccountsService == nil {
+			return nil, fmt.Errorf("accounts service unavailable")
+		}
+		account, ok := h.AccountsService.Get(user.AccountID)
+		if !ok || !account.IsMaster {
+			return nil, fmt.Errorf("all trakt accounts are only available to master accounts")
+		}
+		accounts := make([]config.TraktAccount, 0, len(settings.Trakt.Accounts))
+		for _, acc := range settings.Trakt.Accounts {
+			if strings.TrimSpace(acc.AccessToken) != "" {
+				accounts = append(accounts, acc)
+			}
+		}
+		return accounts, nil
+	}
+
+	acc := settings.Trakt.GetAccountByID(requestedAccountID)
+	if acc == nil {
+		return nil, fmt.Errorf("trakt account not found")
+	}
+
+	if h.AccountsService != nil {
+		if account, ok := h.AccountsService.Get(user.AccountID); ok && account.IsMaster {
+			return []config.TraktAccount{*acc}, nil
+		}
+	}
+	if acc.OwnerAccountID != "" && acc.OwnerAccountID != user.AccountID {
+		return nil, fmt.Errorf("trakt account is not available to this profile")
+	}
+
+	return []config.TraktAccount{*acc}, nil
+}
+
+func (h *MetadataHandler) fetchTraktShelfItems(ctx context.Context, settings config.Settings, accounts []config.TraktAccount, listType, listID string) ([]traktShelfSourceItem, error) {
+	_ = ctx
+	seen := make(map[string]traktShelfDedupeItem)
+
+	for _, account := range accounts {
+		accountCopy := account
+		accessToken, err := h.TraktClient.EnsureValidToken(&accountCopy, h.CfgManager)
+		if err != nil {
+			return nil, fmt.Errorf("validate trakt token for %s: %w", account.Name, err)
+		}
+		if accessToken == "" {
+			continue
+		}
+
+		h.TraktClient.UpdateCredentials(account.ClientID, account.ClientSecret)
+
+		switch listType {
+		case "watchlist":
+			watchlistItems, err := h.TraktClient.GetAllWatchlist(accessToken)
+			if err != nil {
+				return nil, fmt.Errorf("fetch trakt watchlist for %s: %w", account.Name, err)
+			}
+			for _, item := range watchlistItems {
+				normalized, ok := normalizeTraktWatchlistItem(item)
+				if ok {
+					upsertTraktShelfItem(seen, normalized)
+				}
+			}
+		case "custom":
+			listItems, err := h.TraktClient.GetAllListItems(accessToken, listID)
+			if err != nil {
+				return nil, fmt.Errorf("fetch trakt list for %s: %w", account.Name, err)
+			}
+			for _, item := range listItems {
+				normalized, ok := normalizeTraktCustomListItem(item)
+				if ok {
+					upsertTraktShelfItem(seen, normalized)
+				}
+			}
+		}
+	}
+
+	items := make([]traktShelfSourceItem, 0, len(seen))
+	for _, entry := range seen {
+		items = append(items, entry.item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].ListedAt > items[j].ListedAt
+	})
+	return items, nil
+}
+
+func normalizeTraktWatchlistItem(item trakt.WatchlistItem) (traktShelfSourceItem, bool) {
+	switch {
+	case item.Movie != nil:
+		ids := trakt.IDsToMap(item.Movie.IDs)
+		return traktShelfSourceItem{
+			Title:     item.Movie.Title,
+			Year:      item.Movie.Year,
+			MediaType: "movie",
+			IMDBID:    ids["imdb"],
+			TMDBID:    ids["tmdb"],
+			TVDBID:    ids["tvdb"],
+			TraktID:   ids["trakt"],
+			ListedAt:  item.ListedAt.Unix(),
+		}, true
+	case item.Show != nil:
+		ids := trakt.IDsToMap(item.Show.IDs)
+		return traktShelfSourceItem{
+			Title:     item.Show.Title,
+			Year:      item.Show.Year,
+			MediaType: "series",
+			IMDBID:    ids["imdb"],
+			TMDBID:    ids["tmdb"],
+			TVDBID:    ids["tvdb"],
+			TraktID:   ids["trakt"],
+			ListedAt:  item.ListedAt.Unix(),
+		}, true
+	default:
+		return traktShelfSourceItem{}, false
+	}
+}
+
+func normalizeTraktCustomListItem(item trakt.ListItem) (traktShelfSourceItem, bool) {
+	switch {
+	case item.Movie != nil:
+		ids := trakt.IDsToMap(item.Movie.IDs)
+		return traktShelfSourceItem{
+			Title:     item.Movie.Title,
+			Year:      item.Movie.Year,
+			MediaType: "movie",
+			IMDBID:    ids["imdb"],
+			TMDBID:    ids["tmdb"],
+			TVDBID:    ids["tvdb"],
+			TraktID:   ids["trakt"],
+			ListedAt:  item.ListedAt.Unix(),
+		}, true
+	case item.Show != nil:
+		ids := trakt.IDsToMap(item.Show.IDs)
+		return traktShelfSourceItem{
+			Title:     item.Show.Title,
+			Year:      item.Show.Year,
+			MediaType: "series",
+			IMDBID:    ids["imdb"],
+			TMDBID:    ids["tmdb"],
+			TVDBID:    ids["tvdb"],
+			TraktID:   ids["trakt"],
+			ListedAt:  item.ListedAt.Unix(),
+		}, true
+	default:
+		return traktShelfSourceItem{}, false
+	}
+}
+
+func upsertTraktShelfItem(seen map[string]traktShelfDedupeItem, item traktShelfSourceItem) {
+	keyParts := []string{item.MediaType}
+	switch {
+	case item.IMDBID != "":
+		keyParts = append(keyParts, "imdb", item.IMDBID)
+	case item.TMDBID != "":
+		keyParts = append(keyParts, "tmdb", item.TMDBID)
+	case item.TVDBID != "":
+		keyParts = append(keyParts, "tvdb", item.TVDBID)
+	case item.TraktID != "":
+		keyParts = append(keyParts, "trakt", item.TraktID)
+	default:
+		keyParts = append(keyParts, "title", strings.ToLower(strings.TrimSpace(item.Title)), strconv.Itoa(item.Year))
+	}
+	key := strings.Join(keyParts, ":")
+	existing, ok := seen[key]
+	if !ok || item.ListedAt > existing.item.ListedAt {
+		seen[key] = traktShelfDedupeItem{item: item}
+	}
 }
 
 // CuratedList enriches a caller-provided list of items (POST with JSON body).

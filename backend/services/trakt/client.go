@@ -27,6 +27,23 @@ func setBaseURL(url string) {
 	traktAPIBaseURL = url
 }
 
+// SetBaseURLForTest overrides the Trakt API base URL. Intended for tests outside this package.
+func SetBaseURLForTest(url string) {
+	setBaseURL(url)
+}
+
+// GetBaseURLForTest returns the current Trakt API base URL. Intended for tests outside this package.
+func GetBaseURLForTest() string {
+	return traktAPIBaseURL
+}
+
+// SetHTTPClientForTest overrides the HTTP client. Intended for tests outside this package.
+func (c *Client) SetHTTPClientForTest(httpClient *http.Client) {
+	if httpClient != nil {
+		c.httpClient = httpClient
+	}
+}
+
 // Client handles Trakt API interactions for OAuth and data fetching
 type Client struct {
 	httpClient   *http.Client
@@ -1027,10 +1044,10 @@ func (c *Client) AddToWatchlist(accessToken string, movies []SyncMovie, shows []
 
 // ScrobbleRequest represents the request body for /scrobble/{action}
 type ScrobbleRequest struct {
-	Movie   *ScrobbleMovie   `json:"movie,omitempty"`
-	Show    *ScrobbleShow    `json:"show,omitempty"`
-	Episode *ScrobbleEpisode `json:"episode,omitempty"`
-	Progress float64         `json:"progress"`
+	Movie    *ScrobbleMovie   `json:"movie,omitempty"`
+	Show     *ScrobbleShow    `json:"show,omitempty"`
+	Episode  *ScrobbleEpisode `json:"episode,omitempty"`
+	Progress float64          `json:"progress"`
 }
 
 // ScrobbleMovie identifies a movie in a scrobble request
@@ -1049,16 +1066,16 @@ type ScrobbleShow struct {
 
 // ScrobbleEpisode identifies an episode in a scrobble request
 type ScrobbleEpisode struct {
-	Season int    `json:"season"`
-	Number int    `json:"number"`
-	Title  string `json:"title,omitempty"`
+	Season int     `json:"season"`
+	Number int     `json:"number"`
+	Title  string  `json:"title,omitempty"`
 	IDs    SyncIDs `json:"ids,omitempty"`
 }
 
 // ScrobbleResponse represents the response from /scrobble/{action}
 type ScrobbleResponse struct {
-	ID      int64   `json:"id"`
-	Action  string  `json:"action"`
+	ID       int64   `json:"id"`
+	Action   string  `json:"action"`
 	Progress float64 `json:"progress"`
 }
 

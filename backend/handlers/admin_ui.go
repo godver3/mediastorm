@@ -507,8 +507,8 @@ var SettingsSchema = map[string]interface{}{
 			"type": map[string]interface{}{
 				"type":        "select",
 				"label":       "Type",
-				"options":     []string{"builtin", "mdblist", "local-library"},
-				"description": "Shelf type (builtin, custom MDBList, or local media library)",
+				"options":     []string{"builtin", "mdblist", "trakt", "local-library"},
+				"description": "Shelf type (builtin, custom MDBList, Trakt, or local media library)",
 				"order":       2,
 			},
 			"listUrl": map[string]interface{}{
