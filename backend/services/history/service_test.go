@@ -2631,3 +2631,81 @@ func TestImportWatchHistory_CrossProviderMovieDedup(t *testing.T) {
 		t.Fatalf("expected 1 movie entry after cross-provider dedup, got %d", movieCount)
 	}
 }
+
+// TestImportWatchHistory_CrossProviderDedupSkipPreservesItem verifies that when
+// cross-provider dedup fires but the local item is newer (SKIP path), the item
+// is still saved under the new canonical key and not lost from history.
+// Regression test for: Trakt import deletes old key on dedup but skips re-adding
+// under new key, causing the item to vanish and triggering a re-scrobble loop.
+func TestImportWatchHistory_CrossProviderDedupSkipPreservesItem(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+
+	localTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	olderTraktTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC) // equal — triggers SKIP
+
+	// Simulate: player watched movie, stored under TMDB key
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:37797",
+			Name:        "Ponyo",
+			Watched:     &watched,
+			WatchedAt:   localTime,
+			ExternalIDs: map[string]string{"tmdb": "37797", "imdb": "tt0876563"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("initial import error: %v", err)
+	}
+
+	// Simulate: Trakt sync returns same movie under TVDB key (equal timestamp → SKIP)
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tvdb:movie:370",
+			Name:        "Ponyo",
+			Watched:     &watched,
+			WatchedAt:   olderTraktTime,
+			ExternalIDs: map[string]string{"tvdb": "370", "imdb": "tt0876563"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("trakt import error: %v", err)
+	}
+
+	// Item must still exist — previously the cross-provider dedup deleted the TMDB key
+	// and the SKIP path continued without re-adding under the TVDB key.
+	items, _ := svc.ListWatchHistory(userID)
+	movieCount := 0
+	for _, item := range items {
+		if item.MediaType == "movie" && item.Name == "Ponyo" {
+			movieCount++
+			if item.ItemID != "tvdb:movie:370" {
+				t.Errorf("expected item re-keyed to tvdb:movie:370, got %s", item.ItemID)
+			}
+			if !item.Watched {
+				t.Error("expected item to remain watched")
+			}
+			// WatchedAt must not have changed (local was newer/equal)
+			if !item.WatchedAt.Equal(localTime) {
+				t.Errorf("expected WatchedAt=%v, got %v", localTime, item.WatchedAt)
+			}
+		}
+	}
+	if movieCount != 1 {
+		t.Fatalf("expected 1 Ponyo entry after cross-provider dedup+skip, got %d (item lost from history)", movieCount)
+	}
+
+	// Verify the old TMDB key is gone (re-keyed, not duplicated)
+	tmdbItem, _ := svc.GetWatchHistoryItem(userID, "movie", "tmdb:movie:37797")
+	if tmdbItem != nil {
+		t.Error("expected old TMDB-keyed entry to be gone after re-key, but it still exists")
+	}
+}

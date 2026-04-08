@@ -2299,6 +2299,11 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		key := makeWatchKey(update.MediaType, normalizedItemID)
 		existing, exists := perUser[key]
 
+		// crossProviderRekeyed is set when dedup finds the item under a different key and
+		// deletes the old entry. In that case the SKIP path must re-save under the new key
+		// to prevent the item from disappearing and triggering a re-scrobble loop.
+		crossProviderRekeyed := false
+
 		// Cross-provider dedup: if no direct match, look for an existing entry
 		// with matching external IDs and same season/episode numbers.
 		if !exists && update.SeasonNumber > 0 && update.EpisodeNumber > 0 && len(update.ExternalIDs) > 0 {
@@ -2312,6 +2317,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 					// Found a match under a different key — merge into existing entry
 					existing = perUser[idx.watchKey]
 					exists = true
+					crossProviderRekeyed = true
 					// Remove old key, will re-key under new canonical key below
 					delete(perUser, idx.watchKey)
 					// Clean up old index entries
@@ -2338,6 +2344,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				if hasMatchingExternalID(update.ExternalIDs, existingItem.ExternalIDs) {
 					existing = existingItem
 					exists = true
+					crossProviderRekeyed = true
 					delete(perUser, existingKey)
 					log.Printf("[history] import: DEDUP cross-provider movie %q (old key %s -> new key %s)",
 						update.Name, existingKey, key)
@@ -2364,6 +2371,14 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				}
 				log.Printf("[history] import: SKIP (local newer) %s %q watchedAt=%s (trakt=%s)",
 					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339))
+				// If cross-provider dedup deleted the old key, re-save under the new canonical
+				// key so the item isn't lost, which would cause a re-scrobble loop.
+				if crossProviderRekeyed {
+					existing.ID = key
+					existing.ItemID = normalizedItemID
+					perUser[key] = existing
+					imported++
+				}
 				continue
 			}
 			log.Printf("[history] import: UPDATE (trakt newer) %s %q localWatchedAt=%s -> traktWatchedAt=%s seriesID=%s",
@@ -2376,6 +2391,13 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			if !existing.UpdatedAt.IsZero() && (existing.UpdatedAt.After(incomingStateTime) || existing.UpdatedAt.Equal(incomingStateTime)) {
 				log.Printf("[history] import: SKIP (manual unwatch newer/equal) %s %q localWatchedAt=%s importedWatchedAt=%s seriesID=%s",
 					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339), update.SeriesID)
+				// If cross-provider dedup deleted the old key, re-save under the new canonical key.
+				if crossProviderRekeyed {
+					existing.ID = key
+					existing.ItemID = normalizedItemID
+					perUser[key] = existing
+					imported++
+				}
 				continue
 			}
 			log.Printf("[history] import: RESTORE (external newer than manual unwatch baseline) %s %q localWatchedAt=%s -> importedWatchedAt=%s seriesID=%s",
