@@ -43,6 +43,10 @@ type HistoryHandler struct {
 	DemoMode bool
 }
 
+type hideContinueWatchingRequest struct {
+	SeriesID string `json:"seriesId"`
+}
+
 func NewHistoryHandler(service historyService, users userService, demoMode bool) *HistoryHandler {
 	return &HistoryHandler{Service: service, Users: users, DemoMode: demoMode}
 }
@@ -111,6 +115,42 @@ func (h *HistoryHandler) HideFromContinueWatching(w http.ResponseWriter, r *http
 
 	vars := mux.Vars(r)
 	seriesID := strings.TrimSpace(vars["seriesID"])
+	if seriesID == "" {
+		http.Error(w, "series id is required", http.StatusBadRequest)
+		return
+	}
+
+	err := h.Service.HideFromContinueWatching(userID, seriesID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, history.ErrUserIDRequired):
+			status = http.StatusBadRequest
+		case errors.Is(err, history.ErrSeriesIDRequired):
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HideFromContinueWatchingByBody hides a series/movie from the continue watching list using a JSON body.
+// This avoids path-segment routing issues for local-media IDs that contain slashes.
+func (h *HistoryHandler) HideFromContinueWatchingByBody(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	var req hideContinueWatchingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	seriesID := strings.TrimSpace(req.SeriesID)
 	if seriesID == "" {
 		http.Error(w, "series id is required", http.StatusBadRequest)
 		return

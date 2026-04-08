@@ -15,9 +15,11 @@ import (
 )
 
 type fakeHistoryService struct {
-	state models.SeriesWatchState
-	items []models.SeriesWatchState
-	err   error
+	state        models.SeriesWatchState
+	items        []models.SeriesWatchState
+	err          error
+	hideUserID   string
+	hideSeriesID string
 }
 
 func (f *fakeHistoryService) RecordEpisode(userID string, payload models.EpisodeWatchPayload) (models.SeriesWatchState, error) {
@@ -87,6 +89,8 @@ func (f *fakeHistoryService) ListAllPlaybackProgress() map[string][]models.Playb
 }
 
 func (f *fakeHistoryService) HideFromContinueWatching(userID, seriesID string) error {
+	f.hideUserID = userID
+	f.hideSeriesID = seriesID
 	return f.err
 }
 
@@ -150,5 +154,27 @@ func TestHistoryHandler_ListContinueWatching(t *testing.T) {
 	}
 	if len(response) != 1 || response[0].SeriesID != "s1" {
 		t.Fatalf("unexpected response %+v", response)
+	}
+}
+
+func TestHistoryHandler_HideFromContinueWatchingByBody(t *testing.T) {
+	svc := &fakeHistoryService{}
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
+
+	body := bytes.NewBufferString(`{"seriesId":"localmedia:folder/file.mkv"}`)
+	req := httptest.NewRequest(http.MethodPost, "/users/user/history/continue/hide", body)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user"})
+	rec := httptest.NewRecorder()
+
+	handler.HideFromContinueWatchingByBody(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status %d", rec.Code)
+	}
+	if svc.hideUserID != "user" {
+		t.Fatalf("unexpected user id %q", svc.hideUserID)
+	}
+	if svc.hideSeriesID != "localmedia:folder/file.mkv" {
+		t.Fatalf("unexpected series id %q", svc.hideSeriesID)
 	}
 }
