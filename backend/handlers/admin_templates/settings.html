@@ -2796,6 +2796,8 @@
                         '<option value="disney">Disney+</option>'+
                         '<option value="amazon">Amazon Prime</option>'+
                         '<option value="appletv">Apple TV+</option>'+
+                        '<option value="paramount">Paramount+</option>'+
+                        '<option value="hbomax">HBO Max</option>'+
                         '<option value="hulu">Hulu</option>'+
                     '</select>'+
                 '</div>'+
@@ -2990,11 +2992,13 @@
 
     // Streaming service URL data (mirrors lists.tsx STREAMING_SERVICES)
     const STREAMING_SERVICES = {
-        netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/garycrawfordgc/netflix-movies',       shows: 'https://mdblist.com/lists/garycrawfordgc/netflix-shows' },
-        disney:   { name: 'Disney+',       movies: 'https://mdblist.com/lists/garycrawfordgc/disney-movies',        shows: 'https://mdblist.com/lists/garycrawfordgc/disney-shows' },
-        amazon:   { name: 'Amazon Prime',  movies: 'https://mdblist.com/lists/garycrawfordgc/amazon-prime-movies',  shows: 'https://mdblist.com/lists/garycrawfordgc/amazon-prime-shows' },
-        appletv:  { name: 'Apple TV+',     movies: 'https://mdblist.com/lists/slimshizn/apple-tv-movies',           shows: 'https://mdblist.com/lists/hdlists/apple-tv-shows-series-2021-2025' },
-        hulu:     { name: 'Hulu',          movies: 'https://mdblist.com/lists/garycrawfordgc/hulu-movies',          shows: 'https://mdblist.com/lists/garycrawfordgc/hulu-shows' },
+        netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/snoak/netflix-top-10-movies/json',        shows: 'https://mdblist.com/lists/snoak/netflix-top-10-shows/json' },
+        disney:   { name: 'Disney+',       movies: 'https://mdblist.com/lists/snoak/disney-plus-top-10-movies/json',   shows: 'https://mdblist.com/lists/snoak/disney-plus-top-10-tv-shows/json' },
+        amazon:   { name: 'Amazon Prime',  movies: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-shows/json',   shows: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-tv-shows/json' },
+        appletv:  { name: 'Apple TV+',     movies: 'https://mdblist.com/lists/snoak/apple-tv-top-10-movies/json',      shows: 'https://mdblist.com/lists/snoak/apple-tv-top-10-tv-shows/json' },
+        paramount:{ name: 'Paramount+',    movies: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-movies/json',shows: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-tv-shows/json' },
+        hbomax:   { name: 'HBO Max',       movies: 'https://mdblist.com/lists/snoak/hbo-top-10-movies-2/json',         shows: 'https://mdblist.com/lists/snoak/hbo-top-10-tv-shows/json' },
+        hulu:     { name: 'Hulu',          movies: 'https://mdblist.com/lists/snoak/top-hulu-movies/json',             shows: 'https://mdblist.com/lists/snoak/top-tv-shows-hulu/json' },
     };
 
     // Update form fields when shelf type changes
