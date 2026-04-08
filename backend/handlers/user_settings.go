@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,10 +23,16 @@ type userSettingsService interface {
 
 var _ userSettingsService = (*user_settings.Service)(nil)
 
+// localLibraryLister is the minimal interface needed to fetch local media libraries.
+type localLibraryLister interface {
+	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
+}
+
 type UserSettingsHandler struct {
 	Service       userSettingsService
 	Users         userService
 	ConfigManager *config.Manager
+	LocalMedia    localLibraryLister
 }
 
 func NewUserSettingsHandler(service userSettingsService, users userService, configManager *config.Manager) *UserSettingsHandler {
@@ -111,6 +119,13 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 		maxStreams = 0
 	}
 
+	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
+	if h.LocalMedia != nil {
+		if libs, err := h.LocalMedia.ListLibraries(context.Background()); err == nil {
+			shelves = injectLocalLibraryShelves(shelves, libs)
+		}
+	}
+
 	return models.UserSettings{
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:           globalSettings.Playback.PreferredPlayer,
@@ -124,7 +139,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
+			Shelves: shelves,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -161,6 +176,45 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 			Order:   s.Order,
 			Type:    s.Type,
 			ListURL: s.ListURL,
+		}
+	}
+	return result
+}
+
+// injectLocalLibraryShelves adds any local media libraries that are not yet present
+// in the shelves list. Existing entries (from saved settings) are preserved as-is,
+// so the admin can configure ordering and enable/disable without losing their changes.
+func injectLocalLibraryShelves(shelves []models.ShelfConfig, libs []models.LocalMediaLibrary) []models.ShelfConfig {
+	existing := make(map[string]bool, len(shelves))
+	maxOrder := -1
+	for _, s := range shelves {
+		existing[s.ID] = true
+		if s.Order > maxOrder {
+			maxOrder = s.Order
+		}
+	}
+
+	log.Printf("[user-settings] injectLocalLibraryShelves: %d existing shelves, %d libraries", len(shelves), len(libs))
+	for _, lib := range libs {
+		log.Printf("[user-settings] injectLocalLibraryShelves: library id=%s name=%q type=%s", lib.ID, lib.Name, lib.Type)
+	}
+
+	result := append([]models.ShelfConfig(nil), shelves...)
+	injected := 0
+	for _, lib := range libs {
+		id := "local-library-" + lib.ID
+		if !existing[id] {
+			result = append(result, models.ShelfConfig{
+				ID:      id,
+				Name:    lib.Name,
+				Enabled: true,
+				Order:   maxOrder + 1 + injected,
+				Type:    "local-library",
+			})
+			log.Printf("[user-settings] injectLocalLibraryShelves: injected new shelf id=%s name=%q", id, lib.Name)
+			injected++
+		} else {
+			log.Printf("[user-settings] injectLocalLibraryShelves: shelf id=%s already present, skipping", id)
 		}
 	}
 	return result

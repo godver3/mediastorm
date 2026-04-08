@@ -192,6 +192,34 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
 			settings.HomeShelves.Shelves = shelves
 		}
+		// Inject any non-builtin shelves from defaults (e.g. newly-added local library
+		// or mdblist shelves) that are not yet present in the user's saved settings.
+		// We only inject non-builtin types so that built-in shelves the user deliberately
+		// removed (e.g. trending-tv) are not silently re-added.
+		if len(defaults.HomeShelves.Shelves) > 0 {
+			existing := make(map[string]bool, len(settings.HomeShelves.Shelves))
+			maxOrder := -1
+			for _, sh := range settings.HomeShelves.Shelves {
+				existing[sh.ID] = true
+				if sh.Order > maxOrder {
+					maxOrder = sh.Order
+				}
+			}
+			injected := 0
+			for _, sh := range defaults.HomeShelves.Shelves {
+				if sh.Type == "" || sh.Type == "builtin" {
+					continue
+				}
+				if !existing[sh.ID] {
+					sh.Order = maxOrder + 1 + injected
+					settings.HomeShelves.Shelves = append(settings.HomeShelves.Shelves, sh)
+					log.Printf("[user-settings] GetWithDefaults(%q): injected missing shelf id=%s name=%q type=%s", userID, sh.ID, sh.Name, sh.Type)
+					injected++
+				} else {
+					log.Printf("[user-settings] GetWithDefaults(%q): shelf id=%s already present (type=%s)", userID, sh.ID, sh.Type)
+				}
+			}
+		}
 		return settings, nil
 	}
 

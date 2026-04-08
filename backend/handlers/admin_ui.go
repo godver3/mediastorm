@@ -507,8 +507,8 @@ var SettingsSchema = map[string]interface{}{
 			"type": map[string]interface{}{
 				"type":        "select",
 				"label":       "Type",
-				"options":     []string{"builtin", "mdblist"},
-				"description": "Shelf type (builtin or custom MDBList)",
+				"options":     []string{"builtin", "mdblist", "local-library"},
+				"description": "Shelf type (builtin, custom MDBList, or local media library)",
 				"order":       2,
 			},
 			"listUrl": map[string]interface{}{
@@ -570,8 +570,8 @@ var SettingsSchema = map[string]interface{}{
 				"order":       3,
 			},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet.", "order": 4},
-			"showParsedBadges": map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
-			"cleanPosters":     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
+			"showParsedBadges":                 map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 5},
+			"cleanPosters":                     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 6},
 			"appLanguage": map[string]interface{}{
 				"type":        "select",
 				"label":       "App Language",
@@ -1149,6 +1149,36 @@ func (h *AdminUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) {
 	var userOverrides map[string]bool
 	if h.userSettingsService != nil {
 		userOverrides = h.userSettingsService.GetUsersWithOverrides()
+	}
+
+	// Inject local library shelves into the settings view so they appear in the
+	// Home Shelves section. These are not persisted to settings.json unless the
+	// admin explicitly saves them; existing entries are preserved as-is.
+	if h.localMediaService != nil {
+		if libs, err := h.localMediaService.ListLibraries(r.Context()); err == nil {
+			existing := make(map[string]bool, len(settings.HomeShelves.Shelves))
+			maxOrder := -1
+			for _, s := range settings.HomeShelves.Shelves {
+				existing[s.ID] = true
+				if s.Order > maxOrder {
+					maxOrder = s.Order
+				}
+			}
+			injected := 0
+			for _, lib := range libs {
+				id := "local-library-" + lib.ID
+				if !existing[id] {
+					settings.HomeShelves.Shelves = append(settings.HomeShelves.Shelves, config.ShelfConfig{
+						ID:      id,
+						Name:    lib.Name,
+						Enabled: true,
+						Order:   maxOrder + 1 + injected,
+						Type:    "local-library",
+					})
+					injected++
+				}
+			}
+		}
 	}
 
 	data := AdminPageData{
@@ -1771,6 +1801,13 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		maxStreams = 0
 	}
 
+	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
+	if h.localMediaService != nil {
+		if libs, err := h.localMediaService.ListLibraries(r.Context()); err == nil {
+			shelves = injectLocalLibraryShelves(shelves, libs)
+		}
+	}
+
 	defaults := models.UserSettings{
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:           globalSettings.Playback.PreferredPlayer,
@@ -1783,7 +1820,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
+			Shelves: shelves,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -1923,6 +1960,12 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 				newSettings = *existingSettings
 			} else {
 				// Start with defaults
+				propagateShelves := convertShelves(globalSettings.HomeShelves.Shelves)
+				if h.localMediaService != nil {
+					if libs, err := h.localMediaService.ListLibraries(r.Context()); err == nil {
+						propagateShelves = injectLocalLibraryShelves(propagateShelves, libs)
+					}
+				}
 				newSettings = models.UserSettings{
 					Playback: models.PlaybackSettings{
 						PreferredPlayer:           globalSettings.Playback.PreferredPlayer,
@@ -1936,7 +1979,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
 					},
 					HomeShelves: models.HomeShelvesSettings{
-						Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
+						Shelves: propagateShelves,
 					},
 				}
 			}
@@ -5703,12 +5746,13 @@ func (h *AdminUIHandler) ListLocalMediaItems(w http.ResponseWriter, r *http.Requ
 	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 	offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
 	items, err := h.localMediaService.ListItems(r.Context(), id, models.LocalMediaItemListQuery{
-		Filter: r.URL.Query().Get("filter"),
-		Sort:   r.URL.Query().Get("sort"),
-		Dir:    r.URL.Query().Get("dir"),
-		Query:  r.URL.Query().Get("query"),
-		Limit:  limit,
-		Offset: offset,
+		Filter:         r.URL.Query().Get("filter"),
+		Sort:           r.URL.Query().Get("sort"),
+		Dir:            r.URL.Query().Get("dir"),
+		Query:          r.URL.Query().Get("query"),
+		Limit:          limit,
+		Offset:         offset,
+		IncludeMissing: true,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -5729,12 +5773,13 @@ func (h *AdminUIHandler) ListLocalMediaGroups(w http.ResponseWriter, r *http.Req
 	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 	offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
 	groups, err := h.localMediaService.ListGroups(r.Context(), id, models.LocalMediaItemListQuery{
-		Filter: r.URL.Query().Get("filter"),
-		Sort:   r.URL.Query().Get("sort"),
-		Dir:    r.URL.Query().Get("dir"),
-		Query:  r.URL.Query().Get("query"),
-		Limit:  limit,
-		Offset: offset,
+		Filter:         r.URL.Query().Get("filter"),
+		Sort:           r.URL.Query().Get("sort"),
+		Dir:            r.URL.Query().Get("dir"),
+		Query:          r.URL.Query().Get("query"),
+		Limit:          limit,
+		Offset:         offset,
+		IncludeMissing: true,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

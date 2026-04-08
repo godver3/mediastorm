@@ -117,6 +117,86 @@ func (s *Service) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary
 	return s.repo.ListLibraries(ctx)
 }
 
+func (s *Service) FindMatches(ctx context.Context, query models.LocalMediaMatchQuery) ([]models.LocalMediaMatchedGroup, error) {
+	libraries, err := s.repo.ListLibraries(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	targetLibraryType := normalizeLookupLibraryType(query.MediaType)
+	matches := make([]models.LocalMediaMatchedGroup, 0)
+
+	for i := range libraries {
+		library := libraries[i]
+		if targetLibraryType != "" && library.Type != targetLibraryType {
+			continue
+		}
+
+		items, err := s.repo.ListAllItemsByLibrary(ctx, library.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		result := &models.LocalMediaItemListResult{Items: items}
+		hydrateLocalMediaItemResultExternalIDs(result)
+
+		matchGroupKeys := make(map[string]struct{})
+		filteredItems := make([]models.LocalMediaItem, 0, len(result.Items))
+		for _, item := range result.Items {
+			if item.IsMissing {
+				continue
+			}
+			groupKey, _ := localMediaGroupKey(item)
+			if localMediaItemMatchesLookup(item, query) {
+				matchGroupKeys[groupKey] = struct{}{}
+			}
+			filteredItems = append(filteredItems, item)
+		}
+		if len(matchGroupKeys) == 0 {
+			continue
+		}
+
+		groupItems := make([]models.LocalMediaItem, 0, len(filteredItems))
+		for _, item := range filteredItems {
+			groupKey, _ := localMediaGroupKey(item)
+			if _, ok := matchGroupKeys[groupKey]; ok {
+				groupItems = append(groupItems, item)
+			}
+		}
+
+		groups := buildLocalMediaGroups(groupItems)
+		enrichedItems := collectItemsFromGroups(groups)
+		s.enrichEpisodeMetadata(ctx, enrichedItems)
+		groups = buildLocalMediaGroups(enrichedItems)
+
+		for _, group := range groups {
+			if _, ok := matchGroupKeys[group.ID]; !ok {
+				continue
+			}
+			matches = append(matches, models.LocalMediaMatchedGroup{
+				LibraryID:   library.ID,
+				LibraryName: library.Name,
+				LibraryType: library.Type,
+				Group:       group,
+			})
+		}
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		a := matches[i]
+		b := matches[j]
+		if a.LibraryName != b.LibraryName {
+			return strings.ToLower(a.LibraryName) < strings.ToLower(b.LibraryName)
+		}
+		if a.Group.Title != b.Group.Title {
+			return strings.ToLower(a.Group.Title) < strings.ToLower(b.Group.Title)
+		}
+		return a.Group.ID < b.Group.ID
+	})
+
+	return matches, nil
+}
+
 func (s *Service) CreateLibrary(ctx context.Context, input models.LocalMediaLibraryCreateInput) (*models.LocalMediaLibrary, error) {
 	name, rootPath, filterOutTerms, minFileSizeBytes, err := validateLocalMediaLibraryInput(input)
 	if err != nil {
@@ -254,7 +334,7 @@ func (s *Service) ListItems(ctx context.Context, libraryID string, query models.
 
 	query.Sort = strings.TrimSpace(query.Sort)
 	switch query.Sort {
-	case "", "updated", "name", "confidence", "year", "size", "modified", "status":
+	case "", "created", "updated", "name", "confidence", "year", "size", "modified", "status":
 	default:
 		query.Sort = "updated"
 	}
@@ -275,6 +355,18 @@ func (s *Service) ListItems(ctx context.Context, libraryID string, query models.
 	if err != nil {
 		return nil, err
 	}
+	if !query.IncludeMissing && result != nil {
+		filtered := result.Items[:0]
+		for _, item := range result.Items {
+			if item.IsMissing {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		result.Items = filtered
+		result.Total = len(filtered)
+		result.Offset = min(result.Offset, result.Total)
+	}
 	hydrateLocalMediaItemResultExternalIDs(result)
 	s.enrichEpisodeMetadata(ctx, result.Items)
 	return result, nil
@@ -290,7 +382,7 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 
 	query.Sort = strings.TrimSpace(query.Sort)
 	switch query.Sort {
-	case "", "updated", "name", "confidence", "year", "size", "modified", "status":
+	case "", "created", "updated", "name", "confidence", "year", "size", "modified", "status":
 	default:
 		query.Sort = "updated"
 	}
@@ -313,10 +405,12 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 	}
 	result := &models.LocalMediaItemListResult{Items: items}
 	hydrateLocalMediaItemResultExternalIDs(result)
-	s.enrichEpisodeMetadata(ctx, result.Items)
 
 	filtered := make([]models.LocalMediaItem, 0, len(result.Items))
 	for _, item := range result.Items {
+		if !query.IncludeMissing && item.IsMissing {
+			continue
+		}
 		if localMediaItemMatchesQuery(item, query.Filter, query.Query) {
 			filtered = append(filtered, item)
 		}
@@ -328,14 +422,21 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 	total := len(groups)
 	start := min(query.Offset, total)
 	end := min(start+query.Limit, total)
+	var pageGroups []models.LocalMediaItemGroup
 	if start < end {
-		groups = groups[start:end]
+		pageGroups = groups[start:end]
 	} else {
-		groups = []models.LocalMediaItemGroup{}
+		pageGroups = []models.LocalMediaItemGroup{}
 	}
 
+	// Enrich only items in the current page so we don't make TMDB/TVDB calls
+	// for the entire library on every request.
+	pageItems := collectItemsFromGroups(pageGroups)
+	s.enrichEpisodeMetadata(ctx, pageItems)
+	pageGroups = buildLocalMediaGroups(pageItems)
+
 	return &models.LocalMediaGroupListResult{
-		Groups: groups,
+		Groups: pageGroups,
 		Total:  total,
 		Limit:  query.Limit,
 		Offset: query.Offset,
@@ -381,6 +482,63 @@ func localMediaItemMatchesQuery(item models.LocalMediaItem, filter, rawQuery str
 		}
 	}
 	return false
+}
+
+func localMediaItemMatchesLookup(item models.LocalMediaItem, query models.LocalMediaMatchQuery) bool {
+	if item.MatchStatus == models.LocalMediaMatchStatusUnmatched {
+		return false
+	}
+
+	queryTitleID := strings.TrimSpace(query.TitleID)
+	if queryTitleID != "" && strings.EqualFold(localMediaResolvedTitleID(item), queryTitleID) {
+		return true
+	}
+
+	queryIMDB := strings.ToLower(strings.TrimSpace(query.IMDBID))
+	queryTMDB := strings.TrimSpace(query.TMDBID)
+	queryTVDB := strings.TrimSpace(query.TVDBID)
+	if item.ExternalIDs != nil {
+		if queryIMDB != "" && strings.EqualFold(strings.TrimSpace(item.ExternalIDs.IMDB), queryIMDB) {
+			return true
+		}
+		if queryTMDB != "" && strings.TrimSpace(item.ExternalIDs.TMDB) == queryTMDB {
+			return true
+		}
+		if queryTVDB != "" && strings.TrimSpace(item.ExternalIDs.TVDB) == queryTVDB {
+			return true
+		}
+	}
+
+	if queryTitleID != "" || queryIMDB != "" || queryTMDB != "" || queryTVDB != "" {
+		return false
+	}
+
+	queryTitle := normalizeLocalMediaGroupText(query.Title)
+	if queryTitle == "" {
+		return false
+	}
+	itemTitle := normalizeLocalMediaGroupText(localMediaResolvedTitle(item))
+	if itemTitle != queryTitle {
+		return false
+	}
+
+	if query.Year > 0 {
+		itemYear := localMediaResolvedYear(item)
+		return itemYear == 0 || itemYear == query.Year
+	}
+
+	return true
+}
+
+func normalizeLookupLibraryType(mediaType string) models.LocalMediaLibraryType {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "movie":
+		return models.LocalMediaLibraryTypeMovie
+	case "series", "show", "tv":
+		return models.LocalMediaLibraryTypeShow
+	default:
+		return ""
+	}
 }
 
 func buildLocalMediaGroups(items []models.LocalMediaItem) []models.LocalMediaItemGroup {
@@ -483,18 +641,35 @@ func buildLocalMediaGroups(items []models.LocalMediaItem) []models.LocalMediaIte
 	return groups
 }
 
+// collectItemsFromGroups flattens all items out of a slice of built groups.
+func collectItemsFromGroups(groups []models.LocalMediaItemGroup) []models.LocalMediaItem {
+	var items []models.LocalMediaItem
+	for _, group := range groups {
+		if group.LibraryType == models.LocalMediaLibraryTypeShow {
+			for _, season := range group.Seasons {
+				for _, episode := range season.Episodes {
+					items = append(items, episode.Items...)
+				}
+			}
+		} else {
+			items = append(items, group.Items...)
+		}
+	}
+	return items
+}
+
 func localMediaGroupKey(item models.LocalMediaItem) (string, string) {
 	switch item.LibraryType {
 	case models.LocalMediaLibraryTypeShow:
 		if id := localMediaResolvedTitleID(item); id != "" {
-			return "series:" + id, "series"
+			return "series:" + id, "show"
 		}
-		return fmt.Sprintf("series:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "series"
+		return fmt.Sprintf("series:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "show"
 	case models.LocalMediaLibraryTypeMovie:
 		if id := localMediaResolvedTitleID(item); id != "" {
-			return "movie:" + id, "movie_versions"
+			return "movie:" + id, "title"
 		}
-		return fmt.Sprintf("movie:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "movie_versions"
+		return fmt.Sprintf("movie:%s:%d", normalizeLocalMediaGroupText(localMediaResolvedTitle(item)), localMediaResolvedYear(item)), "title"
 	default:
 		return "file:" + item.ID, "file"
 	}
@@ -531,6 +706,7 @@ func updateLocalMediaGroupSummary(group *models.LocalMediaItemGroup, item models
 	}
 	group.LatestModifiedAt = latestTimePtr(group.LatestModifiedAt, item.ModifiedAt)
 	group.LatestUpdatedAt = latestTimePtr(group.LatestUpdatedAt, &item.UpdatedAt)
+	group.LatestCreatedAt = latestTimePtr(group.LatestCreatedAt, &item.CreatedAt)
 }
 
 func updateLocalMediaSeasonSummary(season *models.LocalMediaSeasonGroup, item models.LocalMediaItem) {
@@ -611,8 +787,10 @@ func compareLocalMediaGroups(a, b models.LocalMediaItemGroup, sortBy string) int
 		return compareTimePtr(a.LatestModifiedAt, b.LatestModifiedAt)
 	case "status":
 		return compareInt(localMediaMatchStatusRank(a.MatchStatus), localMediaMatchStatusRank(b.MatchStatus))
-	default:
+	case "updated":
 		return compareTimePtr(a.LatestUpdatedAt, b.LatestUpdatedAt)
+	default: // "created" and unknown values
+		return compareTimePtr(a.LatestCreatedAt, b.LatestCreatedAt)
 	}
 }
 
@@ -877,6 +1055,9 @@ func (s *Service) GetItem(ctx context.Context, itemID string) (*models.LocalMedi
 		return nil, err
 	}
 	if item == nil {
+		return nil, ErrItemNotFound
+	}
+	if item.IsMissing {
 		return nil, ErrItemNotFound
 	}
 

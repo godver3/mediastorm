@@ -240,7 +240,7 @@ type ShelfConfig struct {
 	Name           string `json:"name"`                     // Display name
 	Enabled        bool   `json:"enabled"`                  // Whether the shelf is visible
 	Order          int    `json:"order"`                    // Sort order (lower numbers appear first)
-	Type           string `json:"type,omitempty"`           // "builtin" (default) or "mdblist" for custom lists
+	Type           string `json:"type,omitempty"`           // "builtin" (default), "mdblist" for custom lists, or "local-library" for local media libraries
 	ListURL        string `json:"listUrl,omitempty"`        // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
 	Limit          int    `json:"limit,omitempty"`          // Optional limit on number of items returned (0 = no limit)
 	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content

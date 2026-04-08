@@ -161,6 +161,9 @@ func (r *pgLocalMediaRepo) ListItemsByLibrary(ctx context.Context, libraryID str
 
 	args := []interface{}{libraryID}
 	whereParts := []string{"library_id = $1"}
+	if !query.IncludeMissing {
+		whereParts = append(whereParts, "is_missing = FALSE")
+	}
 	if filter != "" && filter != "all" {
 		args = append(args, filter)
 		whereParts = append(whereParts, fmt.Sprintf("match_status = $%d", len(args)))

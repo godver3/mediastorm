@@ -1,10 +1,26 @@
 package debrid
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
+	"novastream/config"
 	"novastream/models"
 )
+
+type stubScraper struct {
+	name    string
+	results []ScrapeResult
+}
+
+func (s stubScraper) Name() string {
+	return s.name
+}
+
+func (s stubScraper) Search(_ context.Context, _ SearchRequest) ([]ScrapeResult, error) {
+	return s.results, nil
+}
 
 func TestNormalizeScrapeResult(t *testing.T) {
 	input := ScrapeResult{
@@ -52,4 +68,61 @@ func TestSearchAlwaysWaitsForAllScrapers(t *testing.T) {
 	// This test documents that behavior — there is no early-return path.
 	t.Logf("Debrid search always waits for all scrapers to complete.")
 	t.Logf("Both search and prequeue use the same combined Search() flow.")
+}
+
+func TestSearchAllowsDirectStreamScrapersWithoutDebridProviders(t *testing.T) {
+	t.Helper()
+
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	cfgManager := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	for i := range settings.Streaming.DebridProviders {
+		settings.Streaming.DebridProviders[i].Enabled = false
+		settings.Streaming.DebridProviders[i].APIKey = ""
+	}
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{
+			Name:    "AIOStreams",
+			Type:    "aiostreams",
+			URL:     "https://example.test/manifest.json",
+			Enabled: true,
+		},
+	}
+	settings.Display.BypassFilteringForAIOStreamsOnly = true
+
+	if err := cfgManager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewSearchService(cfgManager, stubScraper{
+		name: "AIOStreams",
+		results: []ScrapeResult{
+			{
+				Title:      "Moana.2016.1080p.WEB-DL",
+				Indexer:    "AIOStreams",
+				TorrentURL: "https://example.test/playback/moana",
+				SizeBytes:  1024,
+				Attributes: map[string]string{
+					"preresolved": "true",
+					"stream_url":  "https://example.test/playback/moana",
+				},
+			},
+		},
+	})
+
+	results, err := svc.Search(t.Context(), SearchOptions{
+		Query:     "Moana 2016",
+		MediaType: "movie",
+		Year:      2016,
+	})
+	if err != nil {
+		t.Fatalf("search returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if got := results[0].Attributes["stream_url"]; got != "https://example.test/playback/moana" {
+		t.Fatalf("expected pre-resolved stream URL to survive normalization, got %q", got)
+	}
 }

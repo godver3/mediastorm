@@ -2,7 +2,9 @@ package localmedia
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -304,6 +306,43 @@ func TestStartScanMarksMissingItemsInsteadOfDeleting(t *testing.T) {
 	}
 }
 
+func TestGetItemReturnsNotFoundForMissingItem(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:        "lib1",
+			Name:      "Movies",
+			Type:      models.LocalMediaLibraryTypeMovie,
+			RootPath:  root,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"Movie.Title.2024.mkv": {
+				ID:           "item1",
+				LibraryID:    "lib1",
+				FilePath:     filepath.Join(root, "Movie.Title.2024.mkv"),
+				FileName:     "Movie.Title.2024.mkv",
+				RelativePath: "Movie.Title.2024.mkv",
+				IsMissing:    true,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+		},
+	}
+	service := &Service{repo: repo}
+
+	item, err := service.GetItem(context.Background(), "item1")
+	if err == nil || !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("GetItem() err = %v, want %v", err, ErrItemNotFound)
+	}
+	if item != nil {
+		t.Fatalf("GetItem() item = %+v, want nil", item)
+	}
+}
+
 func TestUpdateLibraryPersistsFilterSettings(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now().UTC()
@@ -465,6 +504,113 @@ func TestDeleteItemDeletesMissingItem(t *testing.T) {
 	}
 	if repo.library.LastScanLowConf != 0 {
 		t.Fatalf("LastScanLowConf = %d, want 0", repo.library.LastScanLowConf)
+	}
+}
+
+func TestListItemsExcludesMissingByDefault(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:        "lib1",
+			Name:      "Movies",
+			Type:      models.LocalMediaLibraryTypeMovie,
+			RootPath:  t.TempDir(),
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"available.mkv": {
+				ID:           "item1",
+				LibraryID:    "lib1",
+				RelativePath: "available.mkv",
+				FileName:     "available.mkv",
+				UpdatedAt:    now,
+				CreatedAt:    now,
+			},
+			"missing.mkv": {
+				ID:           "item2",
+				LibraryID:    "lib1",
+				RelativePath: "missing.mkv",
+				FileName:     "missing.mkv",
+				IsMissing:    true,
+				UpdatedAt:    now,
+				CreatedAt:    now,
+			},
+		},
+	}
+	service := &Service{repo: repo}
+
+	result, err := service.ListItems(context.Background(), "lib1", models.LocalMediaItemListQuery{})
+	if err != nil {
+		t.Fatalf("ListItems error: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("result.Total = %d, want 1", result.Total)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("len(result.Items) = %d, want 1", len(result.Items))
+	}
+	if result.Items[0].ID != "item1" {
+		t.Fatalf("result.Items[0].ID = %q, want %q", result.Items[0].ID, "item1")
+	}
+}
+
+func TestListGroupsExcludesMissingByDefault(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:        "lib1",
+			Name:      "Movies",
+			Type:      models.LocalMediaLibraryTypeMovie,
+			RootPath:  t.TempDir(),
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"available.mkv": {
+				ID:             "item1",
+				LibraryID:      "lib1",
+				RelativePath:   "available.mkv",
+				FileName:       "available.mkv",
+				MatchedTitleID: "tmdb:movie:123",
+				MatchedName:    "Example Movie",
+				MatchedYear:    2024,
+				LibraryType:    models.LocalMediaLibraryTypeMovie,
+				UpdatedAt:      now,
+				CreatedAt:      now,
+			},
+			"missing.mkv": {
+				ID:             "item2",
+				LibraryID:      "lib1",
+				RelativePath:   "missing.mkv",
+				FileName:       "missing.mkv",
+				MatchedTitleID: "tmdb:movie:123",
+				MatchedName:    "Example Movie",
+				MatchedYear:    2024,
+				LibraryType:    models.LocalMediaLibraryTypeMovie,
+				IsMissing:      true,
+				UpdatedAt:      now,
+				CreatedAt:      now,
+			},
+		},
+	}
+	service := &Service{repo: repo}
+
+	result, err := service.ListGroups(context.Background(), "lib1", models.LocalMediaItemListQuery{})
+	if err != nil {
+		t.Fatalf("ListGroups error: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("result.Total = %d, want 1", result.Total)
+	}
+	if len(result.Groups) != 1 {
+		t.Fatalf("len(result.Groups) = %d, want 1", len(result.Groups))
+	}
+	if result.Groups[0].ItemCount != 1 {
+		t.Fatalf("result.Groups[0].ItemCount = %d, want 1", result.Groups[0].ItemCount)
+	}
+	if result.Groups[0].MissingCount != 0 {
+		t.Fatalf("result.Groups[0].MissingCount = %d, want 0", result.Groups[0].MissingCount)
 	}
 }
 

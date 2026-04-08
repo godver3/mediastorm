@@ -101,12 +101,13 @@ type LocalMediaItem struct {
 }
 
 type LocalMediaItemListQuery struct {
-	Filter string `json:"filter"`
-	Sort   string `json:"sort"`
-	Dir    string `json:"dir"`
-	Query  string `json:"query"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
+	Filter         string `json:"filter"`
+	Sort           string `json:"sort"`
+	Dir            string `json:"dir"`
+	Query          string `json:"query"`
+	Limit          int    `json:"limit"`
+	Offset         int    `json:"offset"`
+	IncludeMissing bool   `json:"includeMissing"`
 }
 
 type LocalMediaItemListResult struct {
@@ -164,6 +165,7 @@ type LocalMediaItemGroup struct {
 	TotalSizeBytes   int64                   `json:"totalSizeBytes"`
 	LatestModifiedAt *time.Time              `json:"latestModifiedAt,omitempty"`
 	LatestUpdatedAt  *time.Time              `json:"latestUpdatedAt,omitempty"`
+	LatestCreatedAt  *time.Time              `json:"latestCreatedAt,omitempty"`
 	Items            []LocalMediaItem        `json:"items,omitempty"`
 	Seasons          []LocalMediaSeasonGroup `json:"seasons,omitempty"`
 }
@@ -173,6 +175,23 @@ type LocalMediaGroupListResult struct {
 	Total  int                   `json:"total"`
 	Limit  int                   `json:"limit"`
 	Offset int                   `json:"offset"`
+}
+
+type LocalMediaMatchQuery struct {
+	MediaType string `json:"mediaType"`
+	TitleID   string `json:"titleId,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Year      int    `json:"year,omitempty"`
+	IMDBID    string `json:"imdbId,omitempty"`
+	TMDBID    string `json:"tmdbId,omitempty"`
+	TVDBID    string `json:"tvdbId,omitempty"`
+}
+
+type LocalMediaMatchedGroup struct {
+	LibraryID   string                `json:"libraryId"`
+	LibraryName string                `json:"libraryName"`
+	LibraryType LocalMediaLibraryType `json:"libraryType"`
+	Group       LocalMediaItemGroup   `json:"group"`
 }
 
 type LocalMediaScanSummary struct {

@@ -356,6 +356,94 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 	}
 }
 
+func TestGetWithDefaults_InjectsNewLocalLibraryShelf(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	// User saved settings that include only a movies library shelf
+	if err := svc.Update("user-lib", models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 1},
+				{ID: "local-library-movies-id", Name: "My Movies", Enabled: true, Order: 2, Type: "local-library"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Defaults now include both movies and shows libraries
+	defaults := models.DefaultUserSettings()
+	defaults.HomeShelves.Shelves = append(defaults.HomeShelves.Shelves,
+		models.ShelfConfig{ID: "local-library-movies-id", Name: "My Movies", Enabled: true, Order: 10, Type: "local-library"},
+		models.ShelfConfig{ID: "local-library-shows-id", Name: "My Shows", Enabled: true, Order: 11, Type: "local-library"},
+	)
+
+	got, err := svc.GetWithDefaults("user-lib", defaults)
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+
+	// Should have injected the new shows library shelf
+	found := false
+	for _, sh := range got.HomeShelves.Shelves {
+		if sh.ID == "local-library-shows-id" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected new local-library-shows-id shelf to be injected")
+	}
+
+	// Should NOT have duplicated the existing movies library shelf
+	count := 0
+	for _, sh := range got.HomeShelves.Shelves {
+		if sh.ID == "local-library-movies-id" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 movies shelf, got %d", count)
+	}
+}
+
+func TestGetWithDefaults_DoesNotReaddRemovedBuiltinShelf(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	// User saved settings without trending-tv (they removed it intentionally)
+	if err := svc.Update("user-notrending", models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 1},
+				{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 2},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := svc.GetWithDefaults("user-notrending", models.DefaultUserSettings())
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+
+	for _, sh := range got.HomeShelves.Shelves {
+		if sh.ID == "trending-tv" {
+			t.Fatal("trending-tv should not be re-injected for a user who removed it")
+		}
+	}
+}
+
 func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	dir := t.TempDir()
 	raw := `{

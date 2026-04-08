@@ -45,6 +45,7 @@ type StartupHandler struct {
 	users         userService
 	usersProvider usersServiceInterface // for kids profile filtering
 	calendar      startupCalendarService
+	localMedia    localLibraryLister
 }
 
 // NewStartupHandler constructs a StartupHandler.
@@ -338,6 +339,11 @@ func (h *StartupHandler) SetUsersProvider(provider usersServiceInterface) {
 	h.usersProvider = provider
 }
 
+// SetLocalMedia injects the local media service for home shelf defaults.
+func (h *StartupHandler) SetLocalMedia(lm localLibraryLister) {
+	h.localMedia = lm
+}
+
 // Options handles CORS preflight for the startup endpoint.
 func (h *StartupHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
@@ -483,6 +489,13 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 		maxStreams = 0
 	}
 
+	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
+	if h.localMedia != nil {
+		if libs, err := h.localMedia.ListLibraries(context.Background()); err == nil {
+			shelves = injectLocalLibraryShelves(shelves, libs)
+		}
+	}
+
 	return models.UserSettings{
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:           globalSettings.Playback.PreferredPlayer,
@@ -494,7 +507,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			SubtitleSize:              globalSettings.Playback.SubtitleSize,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: convertShelves(globalSettings.HomeShelves.Shelves),
+			Shelves: shelves,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),

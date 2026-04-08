@@ -15,12 +15,27 @@ import (
 )
 
 type fakeLocalMediaPlaybackService struct {
-	item *models.LocalMediaItem
-	err  error
+	item      *models.LocalMediaItem
+	libraries []models.LocalMediaLibrary
+	groups    *models.LocalMediaGroupListResult
+	matches   []models.LocalMediaMatchedGroup
+	err       error
 }
 
 func (f *fakeLocalMediaPlaybackService) GetItem(ctx context.Context, itemID string) (*models.LocalMediaItem, error) {
 	return f.item, f.err
+}
+
+func (f *fakeLocalMediaPlaybackService) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error) {
+	return f.libraries, f.err
+}
+
+func (f *fakeLocalMediaPlaybackService) ListGroups(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaGroupListResult, error) {
+	return f.groups, f.err
+}
+
+func (f *fakeLocalMediaPlaybackService) FindMatches(ctx context.Context, query models.LocalMediaMatchQuery) ([]models.LocalMediaMatchedGroup, error) {
+	return f.matches, f.err
 }
 
 type fakeLocalMediaUsersProvider struct {
@@ -67,6 +82,9 @@ func TestLocalMediaHandlerGetPlayback(t *testing.T) {
 	if !strings.Contains(resp.StreamURL, "path=localmedia%3Aitem1%2FMovie.Title.2024.mkv") {
 		t.Fatalf("StreamURL = %q", resp.StreamURL)
 	}
+	if !strings.Contains(resp.StreamURL, "transmux=0") {
+		t.Fatalf("StreamURL = %q", resp.StreamURL)
+	}
 	if !strings.Contains(resp.StreamURL, "profileId=user1") {
 		t.Fatalf("StreamURL = %q", resp.StreamURL)
 	}
@@ -90,5 +108,108 @@ func TestLocalMediaHandlerGetPlaybackRejectsForeignProfile(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestLocalMediaHandlerListLibraries(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		libraries: []models.LocalMediaLibrary{
+			{ID: "lib1", Name: "My Movies", Type: models.LocalMediaLibraryTypeMovie, LastScanStatus: models.LocalMediaScanStatusComplete},
+		},
+	}, fakeLocalMediaUsersProvider{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries", nil)
+	rec := httptest.NewRecorder()
+	handler.ListLibraries(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var libraries []models.LocalMediaLibrary
+	if err := json.NewDecoder(rec.Body).Decode(&libraries); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(libraries) != 1 || libraries[0].ID != "lib1" {
+		t.Fatalf("unexpected libraries: %+v", libraries)
+	}
+}
+
+func TestLocalMediaHandlerListLibrariesEmpty(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		libraries: nil,
+	}, fakeLocalMediaUsersProvider{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries", nil)
+	rec := httptest.NewRecorder()
+	handler.ListLibraries(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var libraries []models.LocalMediaLibrary
+	if err := json.NewDecoder(rec.Body).Decode(&libraries); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if libraries == nil {
+		t.Fatal("expected empty slice, got nil")
+	}
+}
+
+func TestLocalMediaHandlerListGroups(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		groups: &models.LocalMediaGroupListResult{
+			Groups: []models.LocalMediaItemGroup{
+				{ID: "g1", Title: "Inception", LibraryType: models.LocalMediaLibraryTypeMovie, ItemCount: 1},
+			},
+			Total: 1,
+			Limit: 50,
+		},
+	}, fakeLocalMediaUsersProvider{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries/lib1/groups", nil)
+	req = mux.SetURLVars(req, map[string]string{"libraryID": "lib1"})
+	rec := httptest.NewRecorder()
+	handler.ListGroups(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var result models.LocalMediaGroupListResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(result.Groups) != 1 || result.Groups[0].ID != "g1" {
+		t.Fatalf("unexpected groups: %+v", result)
+	}
+}
+
+func TestLocalMediaHandlerFindMatches(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		matches: []models.LocalMediaMatchedGroup{
+			{
+				LibraryID:   "lib1",
+				LibraryName: "Movies",
+				LibraryType: models.LocalMediaLibraryTypeMovie,
+				Group: models.LocalMediaItemGroup{
+					ID:    "movie:tmdb:movie:123",
+					Title: "Inception",
+				},
+			},
+		},
+	}, fakeLocalMediaUsersProvider{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/matches?mediaType=movie&tmdbId=123&title=Inception&year=2010", nil)
+	rec := httptest.NewRecorder()
+	handler.FindMatches(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var matches []models.LocalMediaMatchedGroup
+	if err := json.NewDecoder(rec.Body).Decode(&matches); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(matches) != 1 || matches[0].LibraryID != "lib1" || matches[0].Group.ID != "movie:tmdb:movie:123" {
+		t.Fatalf("unexpected matches: %+v", matches)
 	}
 }

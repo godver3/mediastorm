@@ -308,7 +308,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// Get effective filtering settings (cascade: global -> profile -> client)
 	filterSettings, bypassForAIO := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 
-	if !hasActiveDebridProviders(settings.Streaming.DebridProviders) {
+	if !hasActiveDebridProviders(settings.Streaming.DebridProviders) && !hasActiveDirectStreamScrapers(settings.TorrentScrapers) {
 		return []models.NZBResult{}, nil
 	}
 
@@ -486,6 +486,19 @@ func hasActiveDebridProviders(providers []config.DebridProviderSettings) bool {
 			continue
 		}
 		return true
+	}
+	return false
+}
+
+func hasActiveDirectStreamScrapers(scrapers []config.TorrentScraperConfig) bool {
+	for _, scraper := range scrapers {
+		if !scraper.Enabled {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(scraper.Type)) {
+		case "aiostreams", "comet", "mediafusion":
+			return true
+		}
 	}
 	return false
 }
