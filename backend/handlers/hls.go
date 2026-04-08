@@ -3441,9 +3441,13 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	log.Printf("[hls] segment served: session=%s segment=%s size=%d bytes serve_time=%v total_time=%v",
 		sessionID, segmentName, segmentSize, serveDuration, totalDuration)
 
-	// Clean up old segments to save disk space
-	// The playlist is filtered at serve time to exclude deleted segments
-	go m.deleteOldSegments(session, segmentName)
+	// Clean up old segments to save disk space.
+	// Live sessions use FFmpeg's delete_segments flag which handles cleanup automatically.
+	// Running deleteOldSegments for live sessions would cause an O(n) syscall loop
+	// growing with session duration (checking every segment ever generated).
+	if !session.IsLive {
+		go m.deleteOldSegments(session, segmentName)
+	}
 }
 
 // ServeSubtitles serves the sidecar VTT file for fMP4/HDR sessions
