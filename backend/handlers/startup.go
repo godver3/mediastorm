@@ -23,9 +23,9 @@ const startupShelfLimit = 20
 
 // startupTrendingTimeout limits how long the startup handler waits for trending
 // data. On cold start, Trending() can take 20-30s enriching metadata from TMDB.
-// Rather than blocking the entire startup response, we return partial data and
-// let the frontend fetch trending independently.
-const startupTrendingTimeout = 10 * time.Second
+// The startup bundle gates several frontend providers, so keep this short and
+// fail open with partial data instead of stalling the whole home screen.
+const startupTrendingTimeout = 1500 * time.Millisecond
 
 // startupCalendarService is the subset of the calendar service used by the
 // startup handler. It reads only from the pre-built cache (non-blocking).

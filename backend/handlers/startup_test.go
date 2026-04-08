@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"novastream/config"
 	"novastream/handlers"
@@ -119,6 +120,8 @@ type mockMetadataServiceStartup struct {
 	seriesItems []models.TrendingItem
 	movieErr    error
 	seriesErr   error
+	movieDelay  time.Duration
+	seriesDelay time.Duration
 	mu          sync.Mutex
 	calls       []string
 }
@@ -127,6 +130,21 @@ func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType str
 	m.mu.Lock()
 	m.calls = append(m.calls, mediaType)
 	m.mu.Unlock()
+	var delay time.Duration
+	if mediaType == "movie" {
+		delay = m.movieDelay
+	} else {
+		delay = m.seriesDelay
+	}
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	if mediaType == "movie" {
 		return m.movieItems, m.movieErr
 	}
@@ -459,5 +477,61 @@ func TestStartupHandler_CanSkipTrendingSections(t *testing.T) {
 	}
 	if resp.TrendingSeries != nil {
 		t.Fatalf("expected trendingSeries to be nil when excluded")
+	}
+}
+
+func TestStartupHandler_TimesOutSlowTrendingAndReturnsPartialResponse(t *testing.T) {
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{},
+		&mockWatchlistService{
+			items: []models.WatchlistItem{
+				{ID: "m1", MediaType: "movie", Name: "Test Movie"},
+			},
+		},
+		&mockHistoryService{
+			continueWatching: []models.SeriesWatchState{
+				{SeriesID: "s1", SeriesTitle: "Test Series"},
+			},
+		},
+		&mockMetadataServiceStartup{
+			movieDelay:  3 * time.Second,
+			seriesDelay: 3 * time.Second,
+		},
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/startup", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+	h.GetStartup(rec, req)
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if elapsed >= 2500*time.Millisecond {
+		t.Fatalf("expected startup response to fail open before slow trending completed, took %v", elapsed)
+	}
+
+	var resp handlers.StartupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.TrendingMovies != nil {
+		t.Fatalf("expected trendingMovies to be nil after timeout, got %+v", resp.TrendingMovies)
+	}
+	if resp.TrendingSeries != nil {
+		t.Fatalf("expected trendingSeries to be nil after timeout, got %+v", resp.TrendingSeries)
+	}
+	if len(resp.Watchlist) != 1 || resp.Watchlist[0].Name != "Test Movie" {
+		t.Fatalf("expected watchlist data to still be returned, got %+v", resp.Watchlist)
+	}
+	if len(resp.ContinueWatching) != 1 || resp.ContinueWatching[0].SeriesTitle != "Test Series" {
+		t.Fatalf("expected continue watching data to still be returned, got %+v", resp.ContinueWatching)
 	}
 }
