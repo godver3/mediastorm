@@ -2685,7 +2685,7 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
-            const isCustom = !!s.listUrl || (s.type === 'mdblist') || (s.id && s.id.startsWith('mdblist-'));
+            const isCustom = !!s.listUrl || (s.type === 'mdblist') || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-')));
             const typeLabel = isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '';
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
 
@@ -2760,17 +2760,38 @@
             '<div class="form-row">'+
                 '<div class="form-group">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Type</label>'+
-                    '<select id="newShelfType">'+
+                    '<select id="newShelfType" onchange="onShelfTypeChange()">'+
                         '<option value="mdblist">MDBList</option>'+
+                        '<option value="streaming-service">Streaming Service</option>'+
                     '</select>'+
+                '</div>'+
+                // Streaming service fields (shown when type=streaming-service)
+                '<div class="form-group" id="streamingServiceGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Service</label>'+
+                    '<select id="newShelfService" onchange="onStreamingServiceChange()">'+
+                        '<option value="netflix">Netflix</option>'+
+                        '<option value="disney">Disney+</option>'+
+                        '<option value="amazon">Amazon Prime</option>'+
+                        '<option value="appletv">Apple TV+</option>'+
+                        '<option value="hulu">Hulu</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group" id="streamingMediaTypeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Content</label>'+
+                    '<select id="newShelfMediaType" onchange="onStreamingServiceChange()">'+
+                        '<option value="movies">Movies</option>'+
+                        '<option value="shows">Shows</option>'+
+                        '<option value="both">Both</option>'+
+                    '</select>'+
+                '</div>'+
+                // MDBList URL field (shown when type=mdblist)
+                '<div class="form-group" id="mdblistUrlGroup" style="flex:2;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">URL</label>'+
+                    '<input type="text" id="newShelfUrl" placeholder="https://mdblist.com/lists/username/list-name/json">'+
                 '</div>'+
                 '<div class="form-group">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Name</label>'+
                     '<input type="text" id="newShelfName" placeholder="My Custom List">'+
-                '</div>'+
-                '<div class="form-group" style="flex:2;">'+
-                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">URL</label>'+
-                    '<input type="text" id="newShelfUrl" placeholder="https://mdblist.com/lists/username/list-name/json">'+
                 '</div>'+
                 '<div class="form-group" style="flex:0 0 80px;">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Limit</label>'+
@@ -2782,7 +2803,7 @@
                 '</div>'+
                 '<button onclick="addCustomShelf()" style="align-self:center;height:38px;margin-top:18px;">Add</button>'+
             '</div>'+
-            '<p class="form-hint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json<br><span style="color:#9b9b9b;">Hide Unreleased: Only show movies available for home viewing (streaming/digital/physical) and exclude upcoming series.</span></p>'+
+            '<p class="form-hint" id="shelfFormHint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json<br><span style="color:#9b9b9b;">Hide Unreleased: Only show movies available for home viewing (streaming/digital/physical) and exclude upcoming series.</span></p>'+
         '</div>';
 
         // Add inherited class to wrapper when inheriting from global
@@ -2881,8 +2902,46 @@
     function getShelfTypeLabel(type) {
         switch (type) {
             case 'mdblist': return 'MDBList';
-            default: return type;
+            default: return type || 'MDBList';
         }
+    }
+
+    // Streaming service URL data (mirrors lists.tsx STREAMING_SERVICES)
+    const STREAMING_SERVICES = {
+        netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/garycrawfordgc/netflix-movies',       shows: 'https://mdblist.com/lists/garycrawfordgc/netflix-shows' },
+        disney:   { name: 'Disney+',       movies: 'https://mdblist.com/lists/garycrawfordgc/disney-movies',        shows: 'https://mdblist.com/lists/garycrawfordgc/disney-shows' },
+        amazon:   { name: 'Amazon Prime',  movies: 'https://mdblist.com/lists/garycrawfordgc/amazon-prime-movies',  shows: 'https://mdblist.com/lists/garycrawfordgc/amazon-prime-shows' },
+        appletv:  { name: 'Apple TV+',     movies: 'https://mdblist.com/lists/slimshizn/apple-tv-movies',           shows: 'https://mdblist.com/lists/hdlists/apple-tv-shows-series-2021-2025' },
+        hulu:     { name: 'Hulu',          movies: 'https://mdblist.com/lists/garycrawfordgc/hulu-movies',          shows: 'https://mdblist.com/lists/garycrawfordgc/hulu-shows' },
+    };
+
+    // Update form fields when shelf type changes
+    function onShelfTypeChange() {
+        const type = document.getElementById('newShelfType')?.value;
+        const isStreaming = type === 'streaming-service';
+        document.getElementById('streamingServiceGroup').style.display = isStreaming ? '' : 'none';
+        document.getElementById('streamingMediaTypeGroup').style.display = isStreaming ? '' : 'none';
+        document.getElementById('mdblistUrlGroup').style.display = isStreaming ? 'none' : '';
+        const hint = document.getElementById('shelfFormHint');
+        if (hint) {
+            hint.style.display = isStreaming ? 'none' : '';
+        }
+        if (isStreaming) onStreamingServiceChange();
+        else {
+            document.getElementById('newShelfName').value = '';
+        }
+    }
+
+    // Auto-fill name when streaming service/media type changes
+    function onStreamingServiceChange() {
+        const serviceId = document.getElementById('newShelfService')?.value;
+        const mediaType = document.getElementById('newShelfMediaType')?.value;
+        const service = STREAMING_SERVICES[serviceId];
+        if (!service) return;
+        let name = service.name;
+        if (mediaType === 'movies') name += ' Movies';
+        else if (mediaType === 'shows') name += ' Shows';
+        document.getElementById('newShelfName').value = name;
     }
 
     // Add custom shelf
@@ -2893,28 +2952,12 @@
         const limitInput = document.getElementById('newShelfLimit');
         const hideUnreleasedInput = document.getElementById('newShelfHideUnreleased');
         const shelfType = typeSelect?.value || 'mdblist';
-        const name = nameInput?.value?.trim();
-        let url = urlInput?.value?.trim();
         const limit = parseInt(limitInput?.value || '0', 10) || 0;
         const hideUnreleased = hideUnreleasedInput?.checked || false;
-
-        if (!name || !url) {
-            alert('Please enter both a name and URL');
-            return;
-        }
-
-        // Validate URL based on type
-        if (!validateShelfUrl(shelfType, url)) {
-            return;
-        }
-
-        // Auto-fix URL based on type
-        url = fixShelfUrl(shelfType, url);
 
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
-            // Ensure profile has its own shelves before adding
             ensureProfileShelves();
             shelves = userSettings.homeShelves.shelves;
         } else {
@@ -2923,30 +2966,77 @@
             shelves = currentSettings.homeShelves.shelves;
         }
 
-        // Generate unique ID from URL
-        const urlParts = url.split('/');
-        const listName = urlParts[urlParts.length - 2] || 'custom';
-        const id = shelfType + '-' + listName + '-' + Date.now();
+        if (shelfType === 'streaming-service') {
+            // Handle streaming service — may add one or two shelves
+            const serviceId = document.getElementById('newShelfService')?.value;
+            const mediaType = document.getElementById('newShelfMediaType')?.value;
+            const service = STREAMING_SERVICES[serviceId];
+            if (!service) { alert('Please select a streaming service'); return; }
 
-        // Add new shelf at the end
-        const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
-        shelves.push({
-            id: id,
-            name: name,
-            enabled: true,
-            order: maxOrder + 1,
-            type: shelfType,
-            listUrl: url,
-            limit: limit,
-            hideUnreleased: hideUnreleased
-        });
+            const customName = nameInput?.value?.trim();
+            let maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
 
-        // Clear inputs
-        if (typeSelect) typeSelect.value = 'mdblist';
-        nameInput.value = '';
-        urlInput.value = '';
-        if (limitInput) limitInput.value = '0';
-        if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            const addStreamingShelf = (mType, suffix) => {
+                const shelfName = customName && mediaType !== 'both'
+                    ? customName
+                    : service.name + ' ' + suffix;
+                const url = service[mType];
+                const id = 'streaming-service-' + serviceId + '-' + mType + '-' + Date.now();
+                shelves.push({
+                    id: id,
+                    name: shelfName,
+                    enabled: true,
+                    order: ++maxOrder,
+                    type: 'mdblist',
+                    listUrl: url,
+                    limit: limit,
+                    hideUnreleased: hideUnreleased
+                });
+            };
+
+            if (mediaType === 'movies' || mediaType === 'both') addStreamingShelf('movies', 'Movies');
+            if (mediaType === 'shows' || mediaType === 'both') addStreamingShelf('shows', 'Shows');
+
+            // Reset form
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
+        } else {
+            // MDBList shelf
+            const name = nameInput?.value?.trim();
+            let url = urlInput?.value?.trim();
+
+            if (!name || !url) {
+                alert('Please enter both a name and URL');
+                return;
+            }
+            if (!validateShelfUrl(shelfType, url)) return;
+            url = fixShelfUrl(shelfType, url);
+
+            const urlParts = url.split('/');
+            const listName = urlParts[urlParts.length - 2] || 'custom';
+            const id = shelfType + '-' + listName + '-' + Date.now();
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id: id,
+                name: name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: shelfType,
+                listUrl: url,
+                limit: limit,
+                hideUnreleased: hideUnreleased
+            });
+
+            // Reset form
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            urlInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+        }
 
         renderSettings();
     }
