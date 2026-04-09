@@ -1322,6 +1322,56 @@ func TestUpdatePlaybackProgress_DedupesCrossProviderEpisodeProgress(t *testing.T
 	}
 }
 
+func TestUpdatePlaybackProgress_DedupesCrossProviderMovieProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-movie-progress-dedupe"
+	externalIDs := map[string]string{
+		"tvdb": "77",
+		"tmdb": "269149",
+		"imdb": "tt2948356",
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         "tmdb:movie:269149",
+		MovieName:      "Zootopia",
+		Position:       1200,
+		Duration:       4000,
+		ExternalIDs:    externalIDs,
+		PercentWatched: 30,
+	}); err != nil {
+		t.Fatalf("first UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         "tvdb:movie:77",
+		MovieName:      "Zootopia",
+		Position:       2200,
+		Duration:       4000,
+		ExternalIDs:    externalIDs,
+		PercentWatched: 55,
+	}); err != nil {
+		t.Fatalf("second UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 deduped movie progress item, got %d: %+v", len(progressItems), progressItems)
+	}
+	if progressItems[0].ItemID != "tvdb:movie:77" {
+		t.Fatalf("expected latest movie progress key to win, got %q", progressItems[0].ItemID)
+	}
+}
+
 func TestImportWatchHistory_Dedup(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -2848,6 +2898,72 @@ func TestImportWatchHistory_CrossProviderMovieDedup(t *testing.T) {
 	}
 	if movieCount != 1 {
 		t.Fatalf("expected 1 movie entry after cross-provider dedup, got %d", movieCount)
+	}
+}
+
+func TestContinueWatching_DedupesCrossProviderMovieEntries(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	svc.SetMetadataService(&mockMetadataService{
+		movieDetails: &models.Title{
+			ID:       "tmdb:movie:269149",
+			Name:     "Zootopia",
+			Overview: "Determined to prove herself, Officer Judy Hopps cracks her first case.",
+			Year:     2016,
+			IMDBID:   "tt2948356",
+			TMDBID:   269149,
+			TVDBID:   77,
+		},
+	})
+
+	userID := "user-cw-movie-dedupe"
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:269149",
+		MovieName:   "Zootopia",
+		Position:    1000,
+		Duration:    4000,
+		Timestamp:   time.Date(2026, 2, 28, 4, 36, 13, 0, time.UTC),
+		ExternalIDs: map[string]string{"imdb": "tt2948356", "tmdb": "269149", "trakt": "167397"},
+	}); err != nil {
+		t.Fatalf("first UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Simulate an older sparse legacy row that lacked canonical IDs.
+	svc.mu.Lock()
+	perUser := svc.ensurePlaybackProgressUserLocked(userID)
+	perUser[makeWatchKey("movie", "tvdb:movie:77")] = models.PlaybackProgress{
+		ID:             makeWatchKey("movie", "tvdb:movie:77"),
+		MediaType:      "movie",
+		ItemID:         "tvdb:movie:77",
+		MovieName:      "Zootopia",
+		Position:       900,
+		Duration:       3427,
+		PercentWatched: 26.26304612245699,
+		UpdatedAt:      time.Date(2026, 3, 22, 17, 49, 38, 0, time.UTC),
+		ExternalIDs:    map[string]string{"titleId": "tvdb:movie:77"},
+	}
+	svc.mu.Unlock()
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 deduped continue-watching movie entry, got %d: %+v", len(items), items)
+	}
+	if items[0].SeriesTitle != "Zootopia" {
+		t.Fatalf("expected Zootopia, got %q", items[0].SeriesTitle)
+	}
+	if items[0].SeriesID != "tvdb:movie:77" {
+		t.Fatalf("expected newer sparse row to win after dedupe, got %q", items[0].SeriesID)
+	}
+	if items[0].ExternalIDs["imdb"] != "tt2948356" {
+		t.Fatalf("expected metadata-enriched imdb id to survive dedupe, got %+v", items[0].ExternalIDs)
 	}
 }
 

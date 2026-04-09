@@ -1039,6 +1039,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// Wait for all metadata lookups to complete
 	wg.Wait()
 
+	continueWatching = dedupeContinueWatchingMovieEntries(continueWatching)
+
 	// Sort by most recently updated (in-progress items will naturally sort first if more recent)
 	sort.Slice(continueWatching, func(i, j int) bool {
 		if continueWatching[i].UpdatedAt.Equal(continueWatching[j].UpdatedAt) {
@@ -2842,6 +2844,9 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
 		s.clearOtherEpisodeProgressByExternalIDMatchLocked(perUser, key, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
 	}
+	if progress.MediaType == "movie" {
+		s.clearOtherMovieProgressByExternalIDMatchLocked(perUser, key, progress.ExternalIDs)
+	}
 
 	perUser[key] = progress
 
@@ -3658,6 +3663,35 @@ func (s *Service) clearMovieProgressByExternalIDMatchLocked(userID string, exter
 	return anyCleared
 }
 
+// clearOtherMovieProgressByExternalIDMatchLocked removes duplicate in-progress rows
+// for the same movie stored under alternate ID formats, preserving keepKey.
+// Callers must hold s.mu before invoking this helper.
+func (s *Service) clearOtherMovieProgressByExternalIDMatchLocked(perUser map[string]models.PlaybackProgress, keepKey string, externalIDs map[string]string) bool {
+	if len(externalIDs) == 0 {
+		return false
+	}
+
+	anyCleared := false
+	for key, progress := range perUser {
+		if key == keepKey {
+			continue
+		}
+		if progress.MediaType != "movie" {
+			continue
+		}
+		if !hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+			continue
+		}
+		delete(perUser, key)
+		if progress.HiddenFromContinueWatching {
+			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+		}
+		anyCleared = true
+	}
+
+	return anyCleared
+}
+
 // clearOtherEpisodeProgressByExternalIDMatchLocked removes duplicate in-progress rows
 // for the same episode stored under alternate ID formats, preserving the entry whose
 // key matches keepKey. Callers must hold s.mu before invoking this helper.
@@ -3752,6 +3786,83 @@ func isSeriesLevelPlaybackMarker(progress models.PlaybackProgress) bool {
 		progress.ItemID == progress.SeriesID &&
 		progress.SeasonNumber == 0 &&
 		progress.EpisodeNumber == 0
+}
+
+func dedupeContinueWatchingMovieEntries(items []models.SeriesWatchState) []models.SeriesWatchState {
+	if len(items) < 2 {
+		return items
+	}
+
+	deduped := make([]models.SeriesWatchState, 0, len(items))
+	movieIndexBySignature := make(map[string]int)
+
+	for _, item := range items {
+		if item.NextEpisode != nil {
+			deduped = append(deduped, item)
+			continue
+		}
+
+		signature := continueWatchingMovieSignature(item)
+		if signature == "" {
+			deduped = append(deduped, item)
+			continue
+		}
+
+		if existingIndex, ok := movieIndexBySignature[signature]; ok {
+			if preferContinueWatchingMovie(item, deduped[existingIndex]) {
+				deduped[existingIndex] = item
+			}
+			continue
+		}
+
+		movieIndexBySignature[signature] = len(deduped)
+		deduped = append(deduped, item)
+	}
+
+	return deduped
+}
+
+func continueWatchingMovieSignature(item models.SeriesWatchState) string {
+	if item.NextEpisode != nil {
+		return ""
+	}
+
+	if item.ExternalIDs != nil {
+		if imdbID := strings.TrimSpace(item.ExternalIDs["imdb"]); imdbID != "" {
+			return "imdb:" + strings.ToLower(imdbID)
+		}
+		if tmdbID := strings.TrimSpace(item.ExternalIDs["tmdb"]); tmdbID != "" {
+			return "tmdb:" + tmdbID
+		}
+		if tvdbID := strings.TrimSpace(item.ExternalIDs["tvdb"]); tvdbID != "" {
+			return "tvdb:" + tvdbID
+		}
+	}
+
+	title := strings.ToLower(strings.TrimSpace(item.SeriesTitle))
+	if title == "" {
+		return ""
+	}
+	if item.Year > 0 {
+		return fmt.Sprintf("title:%s:%d", title, item.Year)
+	}
+	return "title:" + title
+}
+
+func preferContinueWatchingMovie(candidate, existing models.SeriesWatchState) bool {
+	if candidate.UpdatedAt.After(existing.UpdatedAt) {
+		return true
+	}
+	if existing.UpdatedAt.After(candidate.UpdatedAt) {
+		return false
+	}
+	if len(candidate.ExternalIDs) > len(existing.ExternalIDs) {
+		return true
+	}
+	if len(existing.ExternalIDs) > len(candidate.ExternalIDs) {
+		return false
+	}
+	return candidate.PercentWatched > existing.PercentWatched
 }
 
 func (s *Service) hasHighInProgressPlaybackLocked(userID string, update models.WatchHistoryUpdate) bool {
