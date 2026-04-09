@@ -15,6 +15,7 @@ import (
 type historyService interface {
 	RecordEpisode(userID string, payload models.EpisodeWatchPayload) (models.SeriesWatchState, error)
 	ListContinueWatching(userID string) ([]models.SeriesWatchState, error)
+	GetContinueWatchingRevision(userID string) (string, error)
 	ListSeriesStates(userID string) ([]models.SeriesWatchState, error)
 	GetSeriesWatchState(userID, seriesID string) (*models.SeriesWatchState, error)
 	HideFromContinueWatching(userID, seriesID string) error
@@ -47,6 +48,10 @@ type hideContinueWatchingRequest struct {
 	SeriesID string `json:"seriesId"`
 }
 
+type continueWatchingRevisionResponse struct {
+	Revision string `json:"revision"`
+}
+
 func NewHistoryHandler(service historyService, users userService, demoMode bool) *HistoryHandler {
 	return &HistoryHandler{Service: service, Users: users, DemoMode: demoMode}
 }
@@ -69,6 +74,26 @@ func (h *HistoryHandler) ListContinueWatching(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+func (h *HistoryHandler) GetContinueWatchingRevision(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	revision, err := h.Service.GetContinueWatchingRevision(userID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, history.ErrUserIDRequired) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(continueWatchingRevisionResponse{Revision: revision})
 }
 
 func (h *HistoryHandler) GetSeriesWatchState(w http.ResponseWriter, r *http.Request) {

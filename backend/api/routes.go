@@ -551,6 +551,8 @@ func Register(
 
 	profileProtected.HandleFunc("/{userID}/history/continue", historyHandler.ListContinueWatching).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/history/continue", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/continue/revision", historyHandler.GetContinueWatchingRevision).Methods(http.MethodGet)
+	profileProtected.HandleFunc("/{userID}/history/continue/revision", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/continue/hide", historyHandler.HideFromContinueWatchingByBody).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/history/continue/hide", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/continue/{seriesID}/hide", historyHandler.HideFromContinueWatching).Methods(http.MethodPost)

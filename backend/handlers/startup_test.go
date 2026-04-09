@@ -63,6 +63,7 @@ type mockHistoryService struct {
 	continueWatching []models.SeriesWatchState
 	playbackProgress []models.PlaybackProgress
 	watchHistory     []models.WatchHistoryItem
+	revision         string
 	cwErr            error
 	ppErr            error
 	whErr            error
@@ -73,6 +74,9 @@ func (m *mockHistoryService) RecordEpisode(userID string, payload models.Episode
 }
 func (m *mockHistoryService) ListContinueWatching(userID string) ([]models.SeriesWatchState, error) {
 	return m.continueWatching, m.cwErr
+}
+func (m *mockHistoryService) GetContinueWatchingRevision(userID string) (string, error) {
+	return m.revision, nil
 }
 func (m *mockHistoryService) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
 	return m.continueWatching, m.cwErr
@@ -267,6 +271,7 @@ func TestStartupHandler_Success(t *testing.T) {
 			},
 		},
 		&mockHistoryService{
+			revision: "wh:1:123|pp:1:0:456",
 			continueWatching: []models.SeriesWatchState{
 				{SeriesID: "s1", SeriesTitle: "Test Series"},
 			},
@@ -307,7 +312,7 @@ func TestStartupHandler_Success(t *testing.T) {
 	// Check all fields are present
 	expectedFields := []string{
 		"userSettings", "watchlist", "watchlistTotal", "continueWatching",
-		"continueWatchingTotal", "watchHistory", "trendingMovies", "trendingSeries",
+		"continueWatchingTotal", "continueWatchingRevision", "watchHistory", "trendingMovies", "trendingSeries",
 	}
 	for _, field := range expectedFields {
 		if _, ok := resp[field]; !ok {
@@ -338,6 +343,13 @@ func TestStartupHandler_Success(t *testing.T) {
 	}
 	if cwTotal != 1 {
 		t.Errorf("expected continueWatchingTotal=1, got %d", cwTotal)
+	}
+	var cwRevision string
+	if err := json.Unmarshal(resp["continueWatchingRevision"], &cwRevision); err != nil {
+		t.Fatalf("failed to decode continueWatchingRevision: %v", err)
+	}
+	if cwRevision != "wh:1:123|pp:1:0:456" {
+		t.Errorf("expected continueWatchingRevision to round-trip, got %q", cwRevision)
 	}
 }
 

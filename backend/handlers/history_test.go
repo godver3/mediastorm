@@ -17,6 +17,7 @@ import (
 type fakeHistoryService struct {
 	state        models.SeriesWatchState
 	items        []models.SeriesWatchState
+	revision     string
 	err          error
 	hideUserID   string
 	hideSeriesID string
@@ -28,6 +29,10 @@ func (f *fakeHistoryService) RecordEpisode(userID string, payload models.Episode
 
 func (f *fakeHistoryService) ListContinueWatching(userID string) ([]models.SeriesWatchState, error) {
 	return f.items, f.err
+}
+
+func (f *fakeHistoryService) GetContinueWatchingRevision(userID string) (string, error) {
+	return f.revision, f.err
 }
 
 func (f *fakeHistoryService) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
@@ -154,6 +159,31 @@ func TestHistoryHandler_ListContinueWatching(t *testing.T) {
 	}
 	if len(response) != 1 || response[0].SeriesID != "s1" {
 		t.Fatalf("unexpected response %+v", response)
+	}
+}
+
+func TestHistoryHandler_GetContinueWatchingRevision(t *testing.T) {
+	svc := &fakeHistoryService{revision: "wh:2:123|pp:3:1:456"}
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/users/user/history/continue/revision", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user"})
+	rec := httptest.NewRecorder()
+
+	handler.GetContinueWatchingRevision(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d", rec.Code)
+	}
+
+	var response struct {
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if response.Revision != "wh:2:123|pp:3:1:456" {
+		t.Fatalf("unexpected revision %q", response.Revision)
 	}
 }
 

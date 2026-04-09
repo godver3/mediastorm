@@ -160,6 +160,9 @@ func (m *mockHistoryServiceDetailsBundle) RecordEpisode(_ string, _ models.Episo
 func (m *mockHistoryServiceDetailsBundle) ListContinueWatching(_ string) ([]models.SeriesWatchState, error) {
 	return nil, nil
 }
+func (m *mockHistoryServiceDetailsBundle) GetContinueWatchingRevision(_ string) (string, error) {
+	return "", nil
+}
 func (m *mockHistoryServiceDetailsBundle) ListSeriesStates(_ string) ([]models.SeriesWatchState, error) {
 	return nil, nil
 }

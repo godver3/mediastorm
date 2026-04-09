@@ -75,14 +75,15 @@ func (h *StartupHandler) SetCalendar(cal startupCalendarService) {
 
 // StartupResponse is the combined payload returned by GET /api/users/{userID}/startup.
 type StartupResponse struct {
-	UserSettings          *models.UserSettings      `json:"userSettings"`
-	Watchlist             []models.WatchlistItem    `json:"watchlist"`
-	WatchlistTotal        int                       `json:"watchlistTotal"`
-	ContinueWatching      []models.SeriesWatchState `json:"continueWatching"`
-	ContinueWatchingTotal int                       `json:"continueWatchingTotal"`
-	WatchHistory          []models.WatchHistoryItem `json:"watchHistory"`
-	TrendingMovies        *DiscoverNewResponse      `json:"trendingMovies"`
-	TrendingSeries        *DiscoverNewResponse      `json:"trendingSeries"`
+	UserSettings             *models.UserSettings      `json:"userSettings"`
+	Watchlist                []models.WatchlistItem    `json:"watchlist"`
+	WatchlistTotal           int                       `json:"watchlistTotal"`
+	ContinueWatching         []models.SeriesWatchState `json:"continueWatching"`
+	ContinueWatchingTotal    int                       `json:"continueWatchingTotal"`
+	ContinueWatchingRevision string                    `json:"continueWatchingRevision"`
+	WatchHistory             []models.WatchHistoryItem `json:"watchHistory"`
+	TrendingMovies           *DiscoverNewResponse      `json:"trendingMovies"`
+	TrendingSeries           *DiscoverNewResponse      `json:"trendingSeries"`
 	// CalendarItems contains the home-shelf calendar window (yesterday + next 2 days).
 	// Populated from the pre-built calendar cache; empty if the cache is not ready yet.
 	CalendarItems []models.CalendarItem `json:"calendarItems,omitempty"`
@@ -146,6 +147,13 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		revision, err := h.history.GetContinueWatchingRevision(userID)
+		if err != nil {
+			log.Printf("[startup] continue watching revision error for %s: %v", userID, err)
+		} else {
+			resp.ContinueWatchingRevision = revision
+		}
+
 		items, err := h.history.ListContinueWatching(userID)
 		if err != nil {
 			log.Printf("[startup] continue watching error for %s: %v", userID, err)

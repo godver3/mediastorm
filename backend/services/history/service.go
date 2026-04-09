@@ -102,6 +102,14 @@ type Service struct {
 	continueWatchingTTL   time.Duration
 }
 
+type continueWatchingRevisionStats struct {
+	watchHistoryCount     int
+	watchHistoryUpdated   time.Time
+	playbackProgressCount int
+	hiddenCount           int
+	playbackUpdated       time.Time
+}
+
 // useDB returns true when the service is backed by PostgreSQL.
 func (s *Service) useDB() bool { return s.store != nil }
 
@@ -420,6 +428,46 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 	s.mu.Unlock()
 
 	return items, nil
+}
+
+func (s *Service) GetContinueWatchingRevision(userID string) (string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", ErrUserIDRequired
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stats := continueWatchingRevisionStats{}
+	if perUser := s.watchHistory[userID]; perUser != nil {
+		stats.watchHistoryCount = len(perUser)
+		for _, item := range perUser {
+			if item.UpdatedAt.After(stats.watchHistoryUpdated) {
+				stats.watchHistoryUpdated = item.UpdatedAt
+			}
+		}
+	}
+	if perUser := s.playbackProgress[userID]; perUser != nil {
+		stats.playbackProgressCount = len(perUser)
+		for _, item := range perUser {
+			if item.HiddenFromContinueWatching {
+				stats.hiddenCount++
+			}
+			if item.UpdatedAt.After(stats.playbackUpdated) {
+				stats.playbackUpdated = item.UpdatedAt
+			}
+		}
+	}
+
+	return fmt.Sprintf(
+		"wh:%d:%d|pp:%d:%d:%d",
+		stats.watchHistoryCount,
+		stats.watchHistoryUpdated.UTC().UnixNano(),
+		stats.playbackProgressCount,
+		stats.hiddenCount,
+		stats.playbackUpdated.UTC().UnixNano(),
+	), nil
 }
 
 // ListSeriesStates returns the watch state for ALL series the user has watched,
