@@ -882,6 +882,8 @@ type MetadataService interface {
 	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
 	GetCacheManagerStatus() metadata.CacheManagerStatus
 	RefreshTrendingCache()
+	GetTopTenWorkerStatus() metadata.TopTenWorkerStatus
+	TriggerTopTenRefresh()
 }
 
 // SetMetadataService sets the metadata service for cache clearing and overview fetching
@@ -4565,6 +4567,29 @@ func (h *AdminUIHandler) RefreshTrendingCache(w http.ResponseWriter, r *http.Req
 		return
 	}
 	h.metadataService.RefreshTrendingCache()
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Refresh started"})
+}
+
+// GetTopTenWorkerStatus returns the current status of the background API top ten worker.
+func (h *AdminUIHandler) GetTopTenWorkerStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	json.NewEncoder(w).Encode(h.metadataService.GetTopTenWorkerStatus())
+}
+
+// RefreshTopTenWorker triggers an immediate refresh of the cached API top ten data.
+func (h *AdminUIHandler) RefreshTopTenWorker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.metadataService == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "metadata service not available"})
+		return
+	}
+	h.metadataService.TriggerTopTenRefresh()
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Refresh started"})
 }
 

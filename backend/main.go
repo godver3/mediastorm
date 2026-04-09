@@ -842,6 +842,8 @@ func main() {
 	r.HandleFunc("/admin/api/cache/clear", adminUIHandler.RequireAuth(adminUIHandler.ClearMetadataCache)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/cache/manager/status", adminUIHandler.RequireAuth(adminUIHandler.GetCacheManagerStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/cache/manager/refresh", adminUIHandler.RequireAuth(adminUIHandler.RefreshTrendingCache)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/topten/worker/status", adminUIHandler.RequireAuth(adminUIHandler.GetTopTenWorkerStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/topten/worker/refresh", adminUIHandler.RequireAuth(adminUIHandler.RefreshTopTenWorker)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/calendar/worker/status", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarWorkerStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/calendar/worker/refresh", adminUIHandler.RequireAuth(adminUIHandler.RefreshCalendar)).Methods(http.MethodPost)
 
@@ -1244,6 +1246,7 @@ func main() {
 		return items
 	})
 	metadataService.StartBackgroundCacheManager(2 * time.Hour)
+	metadataService.StartBackgroundTopTenWorker(12 * time.Hour)
 	calendarService.StartBackgroundRefresh(4 * time.Hour)
 
 	// Start periodic runtime stats logger for memory/crash correlation
@@ -1296,6 +1299,7 @@ func main() {
 
 	// Stop background cache manager
 	metadataService.StopBackgroundCacheManager()
+	metadataService.StopBackgroundTopTenWorker()
 
 	// Stop scheduler service
 	log.Println("🧹 Stopping scheduler service...")

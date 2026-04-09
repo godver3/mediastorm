@@ -4793,13 +4793,15 @@
 
     async function loadWorkers() {
         try {
-            const [cmRes, calRes] = await Promise.all([
+            const [cmRes, ttRes, calRes] = await Promise.all([
                 fetch(basePath + '/api/cache/manager/status'),
+                fetch(basePath + '/api/topten/worker/status'),
                 fetch(basePath + '/api/calendar/worker/status'),
             ]);
             const cm = cmRes.ok ? await cmRes.json() : null;
+            const tt = ttRes.ok ? await ttRes.json() : null;
             const cal = calRes.ok ? await calRes.json() : null;
-            renderWorkers(cm, cal);
+            renderWorkers(cm, tt, cal);
         } catch (err) {
             const el = document.getElementById('workersList');
             if (el) el.innerHTML = '<p class="text-muted">Could not load worker status.</p>';
@@ -4817,7 +4819,7 @@
         return { statusClass, label };
     }
 
-    function renderWorkers(cm, cal) {
+    function renderWorkers(cm, tt, cal) {
         const el = document.getElementById('workersList');
         if (!el) return;
 
@@ -4875,6 +4877,64 @@
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                             </svg>
                             ${cm.status === 'warming' || cm.status === 'refreshing' ? 'Working...' : 'Refresh Now'}
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        // API Top Ten Worker
+        if (tt) {
+            workerCount++;
+            const { statusClass, label: statusLabel } = workerStatusBadge(tt.status, tt.running);
+            const lastRefresh = tt.lastRefreshAt && tt.lastRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(tt.lastRefreshAt) : 'Never';
+            const duration = tt.lastRefreshMs > 0 ? (tt.lastRefreshMs / 1000).toFixed(1) + 's' : '';
+            const nextRefresh = tt.nextRefreshAt && tt.nextRefreshAt !== '0001-01-01T00:00:00Z'
+                ? formatRelativeTime(tt.nextRefreshAt) : '';
+
+            html += `
+            <div class="import-card" style="margin-bottom: 0.75rem;">
+                <div class="import-card-header">
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; flex: 1;">
+                        <h3 style="margin: 0;">API Top Ten Worker</h3>
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                            <span class="type-badge" style="background: rgba(249, 115, 22, 0.18); color: #fb923c; font-size: 0.7rem;">Top Ten</span>
+                            <span class="type-badge" style="background: rgba(249, 115, 22, 0.1); color: #fb923c; font-size: 0.65rem;">API Cache</span>
+                        </div>
+                    </div>
+                    <span class="status-badge ${statusClass}" style="font-size: 0.75rem; margin-left: auto;">${tt.running ? 'Active' : 'Inactive'}</span>
+                </div>
+                <div class="import-card-body" style="padding: 0.75rem 1rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.75rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.6;">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            <span>Every ${tt.refreshInterval || '12h'}</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-muted);">
+                            <span>All: <strong>${tt.allCached || 0}</strong></span>
+                            <span>|</span>
+                            <span>Movies: <strong>${tt.moviesCached || 0}</strong></span>
+                            <span>|</span>
+                            <span>TV: <strong>${tt.tvCached || 0}</strong></span>
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+                        <span class="status-badge ${statusClass}" style="font-size: 0.75rem;">${statusLabel}</span>
+                        <span class="text-muted" style="font-size: 0.8125rem;">Last: ${lastRefresh}${duration ? ' (' + duration + ')' : ''}</span>
+                        ${nextRefresh ? `<span class="text-muted" style="font-size: 0.8125rem;">Next: ${nextRefresh}</span>` : ''}
+                        ${tt.lastError ? `<span style="color: var(--danger); font-size: 0.8125rem;">${escapeHtml(tt.lastError)}</span>` : ''}
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <button class="btn btn-sm btn-secondary" onclick="refreshTopTenWorker()" ${tt.status === 'warming' || tt.status === 'refreshing' ? 'disabled' : ''}>
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.25rem;">
+                                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            ${tt.status === 'warming' || tt.status === 'refreshing' ? 'Refreshing...' : 'Refresh Now'}
                         </button>
                     </div>
                 </div>
@@ -4948,6 +5008,17 @@
             const res = await fetch(basePath + '/api/cache/manager/refresh', { method: 'POST' });
             if (!res.ok) throw new Error('Failed to trigger refresh');
             showToast('Cache refresh started', 'success');
+            setTimeout(loadWorkers, 1000);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function refreshTopTenWorker() {
+        try {
+            const res = await fetch(basePath + '/api/topten/worker/refresh', { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to trigger top ten refresh');
+            showToast('Top ten refresh started', 'success');
             setTimeout(loadWorkers, 1000);
         } catch (err) {
             showToast(err.message, 'error');

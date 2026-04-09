@@ -56,6 +56,11 @@ type Service struct {
 	cacheStopCh      chan struct{}
 	cacheStatusMu    sync.RWMutex
 	cacheStatus      CacheManagerStatus
+	topTenStopCh     chan struct{}
+	topTenStatusMu   sync.RWMutex
+	topTenStatus     TopTenWorkerStatus
+	topTenInterval   time.Duration
+	topTenRefreshMu  sync.Mutex
 	customListInfoFn func() []CustomListInfo // returns configured custom MDBList URLs with display names
 	ratingItemsFn    func() []RatingItem     // returns all items that need ratings (watchlist, continue watching, user lists)
 
@@ -80,6 +85,19 @@ type CacheManagerStatus struct {
 	SeriesCached      int       `json:"seriesCached"`
 	CustomListsCached int       `json:"customListsCached"`
 	LastError         string    `json:"lastError,omitempty"`
+}
+
+type TopTenWorkerStatus struct {
+	Running         bool      `json:"running"`
+	Status          string    `json:"status"`
+	LastRefreshAt   time.Time `json:"lastRefreshAt"`
+	LastRefreshMs   int64     `json:"lastRefreshMs"`
+	NextRefreshAt   time.Time `json:"nextRefreshAt"`
+	RefreshInterval string    `json:"refreshInterval"`
+	AllCached       int       `json:"allCached"`
+	MoviesCached    int       `json:"moviesCached"`
+	TVCached        int       `json:"tvCached"`
+	LastError       string    `json:"lastError,omitempty"`
 }
 
 // formatInterval formats a duration as a human-friendly string like "2h" or "30m".
@@ -408,6 +426,161 @@ func (s *Service) RefreshTrendingCache() {
 		s.cacheStatus.LastRefreshMs = elapsed.Milliseconds()
 		s.cacheStatusMu.Unlock()
 	}()
+}
+
+// StartBackgroundTopTenWorker warms the API top ten cache on startup and refreshes it periodically.
+func (s *Service) StartBackgroundTopTenWorker(refreshInterval time.Duration) {
+	if s.demo {
+		return
+	}
+	s.topTenStopCh = make(chan struct{})
+	s.topTenInterval = refreshInterval
+
+	s.topTenStatusMu.Lock()
+	s.topTenStatus = TopTenWorkerStatus{
+		Running:         true,
+		Status:          "warming",
+		RefreshInterval: formatInterval(refreshInterval),
+	}
+	s.topTenStatusMu.Unlock()
+
+	go func() {
+		start := time.Now()
+		err := s.runTopTenRefresh()
+		s.finishTopTenRefresh(start, err)
+
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				start := time.Now()
+				err := s.runTopTenRefresh()
+				s.finishTopTenRefresh(start, err)
+			case <-s.topTenStopCh:
+				s.topTenStatusMu.Lock()
+				s.topTenStatus.Running = false
+				s.topTenStatus.Status = "stopped"
+				s.topTenStatusMu.Unlock()
+				return
+			}
+		}
+	}()
+}
+
+func (s *Service) StopBackgroundTopTenWorker() {
+	if s.topTenStopCh != nil {
+		close(s.topTenStopCh)
+	}
+}
+
+func (s *Service) runTopTenRefresh() error {
+	s.topTenRefreshMu.Lock()
+	defer s.topTenRefreshMu.Unlock()
+
+	s.topTenStatusMu.Lock()
+	s.topTenStatus.Status = "refreshing"
+	s.topTenStatusMu.Unlock()
+
+	return s.RefreshTopTenCache(context.Background())
+}
+
+func (s *Service) finishTopTenRefresh(start time.Time, err error) {
+	elapsed := time.Since(start)
+	status := "idle"
+	lastErr := ""
+	if err != nil {
+		status = "error"
+		lastErr = err.Error()
+		log.Printf("[topten] background refresh error: %v", err)
+	} else {
+		log.Printf("[topten] background refresh complete (%s)", elapsed.Round(time.Millisecond))
+	}
+
+	s.topTenStatusMu.Lock()
+	s.topTenStatus.Status = status
+	s.topTenStatus.LastRefreshAt = time.Now()
+	s.topTenStatus.LastRefreshMs = elapsed.Milliseconds()
+	s.topTenStatus.NextRefreshAt = time.Now().Add(s.topTenInterval)
+	s.topTenStatus.LastError = lastErr
+	s.topTenStatusMu.Unlock()
+}
+
+func (s *Service) GetTopTenWorkerStatus() TopTenWorkerStatus {
+	s.topTenStatusMu.RLock()
+	status := s.topTenStatus
+	s.topTenStatusMu.RUnlock()
+
+	var allItems, movieItems, tvItems []models.TrendingItem
+	if ok, _ := s.cache.get(topTenCacheKey("all", nil, s.client.language), &allItems); ok {
+		status.AllCached = len(allItems)
+	}
+	if ok, _ := s.cache.get(topTenCacheKey("movie", nil, s.client.language), &movieItems); ok {
+		status.MoviesCached = len(movieItems)
+	}
+	if ok, _ := s.cache.get(topTenCacheKey("tv", nil, s.client.language), &tvItems); ok {
+		status.TVCached = len(tvItems)
+	}
+
+	return status
+}
+
+func (s *Service) TriggerTopTenRefresh() {
+	go func() {
+		start := time.Now()
+		err := s.runTopTenRefresh()
+		s.finishTopTenRefresh(start, err)
+	}()
+}
+
+func topTenCacheKey(mediaType string, customListURLs []string, language string) string {
+	normalized := strings.ToLower(strings.TrimSpace(mediaType))
+	switch normalized {
+	case "movie", "movies":
+		normalized = "movie"
+	case "tv", "series", "show", "shows":
+		normalized = "tv"
+	default:
+		normalized = "all"
+	}
+
+	trimmed := make([]string, 0, len(customListURLs))
+	for _, u := range customListURLs {
+		u = strings.TrimSpace(u)
+		if u != "" {
+			trimmed = append(trimmed, u)
+		}
+	}
+	sort.Strings(trimmed)
+
+	parts := []string{"topten", "v1", normalized, language}
+	parts = append(parts, trimmed...)
+	return cacheKey(parts...)
+}
+
+// RefreshTopTenCache warms the cached API top ten payloads for the built-in
+// variants served by /api/discover/top-ten.
+func (s *Service) RefreshTopTenCache(ctx context.Context) error {
+	for _, mediaType := range []string{"all", "movie", "tv"} {
+		if _, _, err := s.refreshTopTenCache(ctx, mediaType, nil); err != nil {
+			return fmt.Errorf("refresh %s top ten: %w", mediaType, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) refreshTopTenCache(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
+	items, debug, err := s.getTopTenUncached(ctx, mediaType, customListURLs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(items) > 0 {
+		if err := s.cache.set(topTenCacheKey(mediaType, customListURLs, s.client.language), items); err != nil {
+			log.Printf("[topten] failed to cache results mediaType=%s: %v", mediaType, err)
+		}
+	}
+	return items, debug, nil
 }
 
 // warmTrendingCache pre-fetches and enriches trending data and custom MDBList lists.
@@ -6735,15 +6908,21 @@ type TopTenDebugEntry struct {
 // mediaType: "all" (default), "movie", or "tv"
 // customListURLs: optional additional MDBList /json URLs (e.g. from user settings)
 func (s *Service) GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error) {
-	items, _, err := s.getTopTen(ctx, mediaType, customListURLs)
+	var cached []models.TrendingItem
+	cacheID := topTenCacheKey(mediaType, customListURLs, s.client.language)
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		return cached, nil
+	}
+
+	items, _, err := s.refreshTopTenCache(ctx, mediaType, customListURLs)
 	return items, err
 }
 
 func (s *Service) GetTopTenDebug(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
-	return s.getTopTen(ctx, mediaType, customListURLs)
+	return s.getTopTenUncached(ctx, mediaType, customListURLs)
 }
 
-func (s *Service) getTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
+func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
 	normalized := strings.ToLower(strings.TrimSpace(mediaType))
 	switch normalized {
 	case "movie", "movies":

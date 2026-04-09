@@ -46,6 +46,13 @@ func (m *mockMetadataService) GetCacheManagerStatus() metadata.CacheManagerStatu
 func (m *mockMetadataService) RefreshTrendingCache() {
 }
 
+func (m *mockMetadataService) GetTopTenWorkerStatus() metadata.TopTenWorkerStatus {
+	return metadata.TopTenWorkerStatus{}
+}
+
+func (m *mockMetadataService) TriggerTopTenRefresh() {
+}
+
 // setupAdminUIHandler creates an AdminUIHandler with all required dependencies for testing
 func setupAdminUIHandler(t *testing.T) (*handlers.AdminUIHandler, string) {
 	t.Helper()
