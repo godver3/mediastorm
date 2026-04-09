@@ -318,11 +318,12 @@ type HomeShelvesSettings struct {
 // DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
 func DefaultHomeShelfConfigs() []ShelfConfig {
 	return []ShelfConfig{
-		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
-		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 1},
-		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 2},
-		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 3},
-		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 4},
+		{ID: "top-ten", Name: "Top 10 Today", Enabled: true, Order: 0},
+		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 1},
+		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 2},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 3},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 4},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 5},
 	}
 }
 
@@ -364,6 +365,21 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 			Name:    "Coming Up",
 			Enabled: true,
 			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	if !hasShelf("top-ten") {
+		// Insert at the very top (order 0), shifting everything else down
+		for i := range nextShelves {
+			nextShelves[i].Order++
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "top-ten",
+			Name:    "Top 10 Today",
+			Enabled: true,
+			Order:   0,
 		})
 		changed = true
 	}

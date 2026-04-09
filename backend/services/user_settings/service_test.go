@@ -331,8 +331,8 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 		t.Fatalf("GetWithDefaults: %v", err)
 	}
 
-	if len(got.HomeShelves.Shelves) != 4 {
-		t.Fatalf("expected 4 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 5 {
+		t.Fatalf("expected 5 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
 	}
 
 	var calendar *models.ShelfConfig
@@ -348,8 +348,8 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 	if calendar.Name != "Coming Up" {
 		t.Fatalf("expected calendar shelf name Coming Up, got %q", calendar.Name)
 	}
-	if calendar.Order != 1 {
-		t.Fatalf("expected calendar shelf order 1, got %d", calendar.Order)
+	if calendar.Order != 2 {
+		t.Fatalf("expected calendar shelf order 2, got %d", calendar.Order)
 	}
 	if !calendar.Enabled {
 		t.Fatal("expected calendar shelf to be enabled by default")
@@ -474,8 +474,8 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected migrated settings")
 	}
-	if len(got.HomeShelves.Shelves) != 5 {
-		t.Fatalf("expected 5 shelves after migration, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 6 {
+		t.Fatalf("expected 6 shelves after migration, got %d", len(got.HomeShelves.Shelves))
 	}
 
 	var calendar *models.ShelfConfig
@@ -488,8 +488,8 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if calendar == nil {
 		t.Fatal("expected calendar shelf to be migrated in")
 	}
-	if calendar.Order != 1 {
-		t.Fatalf("expected calendar shelf order 1, got %d", calendar.Order)
+	if calendar.Order != 2 {
+		t.Fatalf("expected calendar shelf order 2, got %d", calendar.Order)
 	}
 
 	var watchlist *models.ShelfConfig
@@ -502,7 +502,7 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if watchlist == nil {
 		t.Fatal("expected watchlist shelf to remain after migration")
 	}
-	if watchlist.Order != 2 {
-		t.Fatalf("expected watchlist to shift to order 2, got %d", watchlist.Order)
+	if watchlist.Order != 3 {
+		t.Fatalf("expected watchlist to shift to order 3, got %d", watchlist.Order)
 	}
 }
