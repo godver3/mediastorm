@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -24,6 +27,10 @@ type DetailsBundleHandler struct {
 	users        userService
 }
 
+type seriesDetailsLiteProvider interface {
+	SeriesDetailsLite(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+}
+
 // NewDetailsBundleHandler constructs a DetailsBundleHandler.
 func NewDetailsBundleHandler(
 	metadata metadataService,
@@ -42,40 +49,175 @@ func NewDetailsBundleHandler(
 // DetailsBundleResponse is the combined payload returned by
 // GET /api/users/{userID}/details-bundle.
 type DetailsBundleResponse struct {
-	SeriesDetails     *models.SeriesDetails    `json:"seriesDetails"`
-	MovieDetails      *models.Title            `json:"movieDetails"`
-	Similar           []models.Title           `json:"similar"`
+	SeriesDetails     *models.SeriesDetails     `json:"seriesDetails"`
+	MovieDetails      *models.Title             `json:"movieDetails"`
+	Similar           []models.Title            `json:"similar"`
 	Trailers          *models.TrailerResponse   `json:"trailers"`
 	ContentPreference *models.ContentPreference `json:"contentPreference"`
 	WatchState        *models.SeriesWatchState  `json:"watchState"`
 	PlaybackProgress  []models.PlaybackProgress `json:"playbackProgress"`
 }
 
-// GetDetailsBundle returns all details-page data in a single response.
-func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.Request) {
+// DetailsShellResponse is a lightweight early payload returned by
+// GET /api/users/{userID}/details-shell so the frontend can start artwork and
+// title rendering while the heavier details bundle is still loading.
+type DetailsShellResponse struct {
+	SeriesDetails *models.SeriesDetails `json:"seriesDetails"`
+	MovieDetails  *models.Title         `json:"movieDetails"`
+}
+
+func validateDetailsUser(r *http.Request, users userService) (string, bool) {
 	vars := mux.Vars(r)
 	userID := strings.TrimSpace(vars["userID"])
 	if userID == "" {
-		http.Error(w, "user id is required", http.StatusBadRequest)
+		return "", false
+	}
+	if users != nil && !users.Exists(userID) {
+		return userID, false
+	}
+	return userID, true
+}
+
+func writeCompressedJSON(w http.ResponseWriter, r *http.Request, payload any, logPrefix string) {
+	payloadStart := time.Now()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 		return
 	}
 
-	if h.users != nil && !h.users.Exists(userID) {
-		http.Error(w, "user not found", http.StatusNotFound)
-		return
+	rawSize := len(body)
+	encoding := "identity"
+	w.Header().Set("Content-Type", "application/json")
+
+	if rawSize >= 8*1024 && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		var compressed bytes.Buffer
+		gz := gzip.NewWriter(&compressed)
+		if _, err := gz.Write(body); err == nil && gz.Close() == nil {
+			encoding = "gzip"
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			log.Printf(
+				"[%s timing] payload: raw=%dB gzip=%dB marshal=%dms encoding=%s",
+				logPrefix,
+				rawSize,
+				compressed.Len(),
+				time.Since(payloadStart).Milliseconds(),
+				encoding,
+			)
+			_, _ = w.Write(compressed.Bytes())
+			return
+		}
 	}
 
+	log.Printf(
+		"[%s timing] payload: raw=%dB marshal=%dms encoding=%s",
+		logPrefix,
+		rawSize,
+		time.Since(payloadStart).Milliseconds(),
+		encoding,
+	)
+
+	_, _ = w.Write(body)
+}
+
+func parseDetailsRequest(r *http.Request) (contentType, titleID, name, imdbID string, year, season int, tvdbID, tmdbID int64) {
 	query := r.URL.Query()
+	contentType = strings.ToLower(strings.TrimSpace(query.Get("type")))
+	titleID = strings.TrimSpace(query.Get("titleId"))
+	name = strings.TrimSpace(query.Get("name"))
+	imdbID = strings.TrimSpace(query.Get("imdbId"))
+	year = trimAndParseInt(query.Get("year"))
+	season = trimAndParseInt(query.Get("season"))
+	tvdbID = trimAndParseInt64(query.Get("tvdbId"))
+	tmdbID = trimAndParseInt64(query.Get("tmdbId"))
+	return
+}
 
-	contentType := strings.ToLower(strings.TrimSpace(query.Get("type")))
-	titleID := strings.TrimSpace(query.Get("titleId"))
-	name := strings.TrimSpace(query.Get("name"))
-	imdbID := strings.TrimSpace(query.Get("imdbId"))
+// GetDetailsShell returns lightweight title metadata so the client can begin
+// artwork/logo work before the full details bundle completes.
+func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Request) {
+	userID, ok := validateDetailsUser(r, h.users)
+	if !ok {
+		if userID == "" {
+			http.Error(w, "user id is required", http.StatusBadRequest)
+		} else {
+			http.Error(w, "user not found", http.StatusNotFound)
+		}
+		return
+	}
 
-	year := trimAndParseInt(query.Get("year"))
-	season := trimAndParseInt(query.Get("season"))
-	tvdbID := trimAndParseInt64(query.Get("tvdbId"))
-	tmdbID := trimAndParseInt64(query.Get("tmdbId"))
+	contentType, titleID, name, imdbID, year, _, tvdbID, tmdbID := parseDetailsRequest(r)
+	shellStart := time.Now()
+	resp := DetailsShellResponse{}
+
+	switch contentType {
+	case "series":
+		query := models.SeriesDetailsQuery{
+			TitleID: titleID,
+			Name:    name,
+			Year:    year,
+			TVDBID:  tvdbID,
+			TMDBID:  tmdbID,
+		}
+
+		start := time.Now()
+		if liteProvider, ok := h.metadata.(seriesDetailsLiteProvider); ok {
+			details, err := liteProvider.SeriesDetailsLite(r.Context(), query)
+			log.Printf("[details-shell timing] series lite: %dms (err=%v)", time.Since(start).Milliseconds(), err)
+			if err == nil {
+				resp.SeriesDetails = details
+				break
+			}
+			log.Printf("[details-shell] series lite error, falling back to full details: %v", err)
+		}
+
+		start = time.Now()
+		details, err := h.metadata.SeriesDetails(r.Context(), query)
+		log.Printf("[details-shell timing] series details fallback: %dms (err=%v)", time.Since(start).Milliseconds(), err)
+		if err != nil {
+			log.Printf("[details-shell] series shell error: %v", err)
+		} else {
+			resp.SeriesDetails = details
+		}
+	case "movie":
+		start := time.Now()
+		details, err := h.metadata.MovieDetails(r.Context(), models.MovieDetailsQuery{
+			TitleID: titleID,
+			Name:    name,
+			Year:    year,
+			IMDBID:  imdbID,
+			TMDBID:  tmdbID,
+			TVDBID:  tvdbID,
+		})
+		log.Printf("[details-shell timing] movie details: %dms (err=%v)", time.Since(start).Milliseconds(), err)
+		if err != nil {
+			log.Printf("[details-shell] movie shell error: %v", err)
+		} else {
+			resp.MovieDetails = details
+		}
+	default:
+		http.Error(w, "type must be series or movie", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[details-shell timing] TOTAL: %dms (type=%s, titleId=%s)", time.Since(shellStart).Milliseconds(), contentType, titleID)
+	writeCompressedJSON(w, r, resp, "details-shell")
+}
+
+// GetDetailsBundle returns all details-page data in a single response.
+func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.Request) {
+	userID, ok := validateDetailsUser(r, h.users)
+	if !ok {
+		if userID == "" {
+			http.Error(w, "user id is required", http.StatusBadRequest)
+		} else {
+			http.Error(w, "user not found", http.StatusNotFound)
+		}
+		return
+	}
+
+	contentType, titleID, name, imdbID, year, season, tvdbID, tmdbID := parseDetailsRequest(r)
 
 	bundleStart := time.Now()
 	resp := DetailsBundleResponse{}
@@ -257,8 +399,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		resp.Trailers.Trailers = []models.Trailer{}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeCompressedJSON(w, r, resp, "details-bundle")
 }
 
 // Options handles CORS preflight for the details-bundle endpoint.

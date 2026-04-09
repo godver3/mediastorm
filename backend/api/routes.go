@@ -209,6 +209,8 @@ func Register(
 	protected.HandleFunc("/lists/curated", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/discover/genre", metadataHandler.DiscoverByGenre).Methods(http.MethodGet)
 	protected.HandleFunc("/discover/genre", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/discover/top-ten", metadataHandler.TopTen).Methods(http.MethodGet)
+	protected.HandleFunc("/discover/top-ten", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations", metadataHandler.GetAIRecommendations).Methods(http.MethodGet)
 	protected.HandleFunc("/recommendations", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations/similar", metadataHandler.GetAISimilar).Methods(http.MethodGet)
@@ -598,6 +600,8 @@ func Register(
 	if detailsBundleHandler != nil {
 		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.GetDetailsBundle).Methods(http.MethodGet)
 		profileProtected.HandleFunc("/{userID}/details-bundle", detailsBundleHandler.Options).Methods(http.MethodOptions)
+		profileProtected.HandleFunc("/{userID}/details-shell", detailsBundleHandler.GetDetailsShell).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/details-shell", detailsBundleHandler.Options).Methods(http.MethodOptions)
 	}
 
 	// Calendar endpoint (upcoming content from watchlist, history, and MDBList)

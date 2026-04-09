@@ -1,12 +1,14 @@
 package handlers_test
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"novastream/handlers"
@@ -20,11 +22,13 @@ import (
 
 type mockMetadataServiceDetailsBundle struct {
 	seriesDetails *models.SeriesDetails
+	seriesLite    *models.SeriesDetails
 	movieDetails  *models.Title
 	similar       []models.Title
 	trailers      *models.TrailerResponse
 
 	seriesDetailsErr error
+	seriesLiteErr    error
 	movieDetailsErr  error
 	similarErr       error
 	trailersErr      error
@@ -35,6 +39,9 @@ type mockMetadataServiceDetailsBundle struct {
 
 func (m *mockMetadataServiceDetailsBundle) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	return m.seriesDetails, m.seriesDetailsErr
+}
+func (m *mockMetadataServiceDetailsBundle) SeriesDetailsLite(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return m.seriesLite, m.seriesLiteErr
 }
 func (m *mockMetadataServiceDetailsBundle) MovieDetails(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
 	return m.movieDetails, m.movieDetailsErr
@@ -125,6 +132,10 @@ func (m *mockMetadataServiceDetailsBundle) GetMDBListAllRatingsCached(_ string, 
 }
 func (m *mockMetadataServiceDetailsBundle) GetTextPosterURL(_ string, _ int64, _ int64) string {
 	return ""
+}
+
+func (m *mockMetadataServiceDetailsBundle) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
+	return nil, nil
 }
 
 type mockHistoryServiceDetailsBundle struct {
@@ -342,6 +353,154 @@ func TestDetailsBundleHandler_Movie(t *testing.T) {
 
 	if len(resp.PlaybackProgress) != 1 {
 		t.Errorf("expected 1 playback progress, got %d", len(resp.PlaybackProgress))
+	}
+}
+
+func TestDetailsShellHandler_SeriesPrefersLite(t *testing.T) {
+	h := handlers.NewDetailsBundleHandler(
+		&mockMetadataServiceDetailsBundle{
+			seriesLite: &models.SeriesDetails{
+				Title: models.Title{
+					Name:     "Lite Series",
+					ID:       "tvdb:series:123",
+					Backdrop: &models.Image{URL: "https://example.com/backdrop.jpg", Type: "backdrop"},
+				},
+			},
+			seriesDetails: &models.SeriesDetails{
+				Title: models.Title{Name: "Full Series", ID: "tvdb:series:123"},
+			},
+		},
+		&mockHistoryServiceDetailsBundle{},
+		&mockContentPrefsServiceDetailsBundle{},
+		&mockUserServiceDetailsBundle{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/users/user1/details-shell?type=series&titleId=tvdb:series:123&name=Lite+Series",
+		nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetDetailsShell(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp handlers.DetailsShellResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.SeriesDetails == nil {
+		t.Fatal("expected seriesDetails in shell response")
+	}
+	if resp.SeriesDetails.Title.Name != "Lite Series" {
+		t.Fatalf("expected lite details, got %q", resp.SeriesDetails.Title.Name)
+	}
+}
+
+func TestDetailsShellHandler_SeriesFallsBackToFull(t *testing.T) {
+	h := handlers.NewDetailsBundleHandler(
+		&mockMetadataServiceDetailsBundle{
+			seriesLiteErr: errors.New("lite failed"),
+			seriesDetails: &models.SeriesDetails{
+				Title: models.Title{Name: "Full Series", ID: "tvdb:series:321"},
+			},
+		},
+		&mockHistoryServiceDetailsBundle{},
+		&mockContentPrefsServiceDetailsBundle{},
+		&mockUserServiceDetailsBundle{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/users/user1/details-shell?type=series&titleId=tvdb:series:321&name=Full+Series",
+		nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetDetailsShell(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp handlers.DetailsShellResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.SeriesDetails == nil || resp.SeriesDetails.Title.Name != "Full Series" {
+		t.Fatalf("expected full fallback details, got %+v", resp.SeriesDetails)
+	}
+}
+
+func TestDetailsBundleHandler_GzipResponse(t *testing.T) {
+	longOverview := strings.Repeat("One Piece overview. ", 800)
+	episodes := make([]models.SeriesEpisode, 0, 80)
+	for seasonNum := 1; seasonNum <= 4; seasonNum++ {
+		for episodeNum := 1; episodeNum <= 20; episodeNum++ {
+			episodes = append(episodes, models.SeriesEpisode{
+				ID:            "ep",
+				Name:          "Episode",
+				Overview:      longOverview,
+				SeasonNumber:  seasonNum,
+				EpisodeNumber: episodeNum,
+			})
+		}
+	}
+
+	h := handlers.NewDetailsBundleHandler(
+		&mockMetadataServiceDetailsBundle{
+			seriesDetails: &models.SeriesDetails{
+				Title: models.Title{Name: "Big Series", ID: "tvdb:series:999"},
+				Seasons: []models.SeriesSeason{
+					{
+						ID:           "season-1",
+						Name:         "Season 1",
+						Number:       1,
+						EpisodeCount: len(episodes),
+						Episodes:     episodes,
+					},
+				},
+			},
+		},
+		&mockHistoryServiceDetailsBundle{},
+		&mockContentPrefsServiceDetailsBundle{},
+		&mockUserServiceDetailsBundle{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/users/user1/details-bundle?type=series&titleId=tvdb:series:999&name=Big+Series",
+		nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetDetailsBundle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("expected gzip content encoding, got %q", got)
+	}
+
+	gz, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gz.Close()
+
+	payload, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("failed to read gzipped payload: %v", err)
+	}
+
+	var resp handlers.DetailsBundleResponse
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		t.Fatalf("failed to decode gzipped response: %v", err)
+	}
+	if resp.SeriesDetails == nil || resp.SeriesDetails.Title.Name != "Big Series" {
+		t.Fatalf("unexpected gzipped response body: %+v", resp.SeriesDetails)
 	}
 }
 
