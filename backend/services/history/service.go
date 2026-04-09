@@ -26,6 +26,11 @@ var (
 	ErrSeriesIDRequired   = errors.New("series id is required")
 )
 
+const (
+	continueWatchingCompletionThreshold = 90.0
+	traktStopWatchThreshold             = 80.0
+)
+
 // MetadataService provides series and movie metadata for continue watching generation.
 type MetadataService interface {
 	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
@@ -552,6 +557,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 		// Skip hidden items
 		if prog.HiddenFromContinueWatching {
+			continue
+		}
+		if isSeriesLevelPlaybackMarker(*prog) {
 			continue
 		}
 
@@ -1598,6 +1606,9 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 		}
 	}
 	for _, prog := range progressItems {
+		if isSeriesLevelPlaybackMarker(prog) {
+			continue
+		}
 		if (prog.MediaType == "episode" || prog.SeasonNumber > 0) && prog.SeriesID != "" {
 			recordIDs(prog.SeriesID, prog.ExternalIDs)
 		}
@@ -2008,6 +2019,11 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 
 	// Clear playback progress when toggling watched status (both marking as watched and unwatched)
 	progressCleared := s.clearPlaybackProgressEntryLocked(userID, item.MediaType, item.ItemID)
+	if item.MediaType == "movie" {
+		if s.clearMovieProgressByExternalIDMatchLocked(userID, item.ExternalIDs) {
+			progressCleared = true
+		}
+	}
 
 	// If marking an episode as watched, also clear progress for earlier episodes
 	if item.Watched && item.MediaType == "episode" && item.SeriesID != "" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
@@ -2100,9 +2116,13 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		item.UpdatedAt = stateUpdatedAt
 		// Clear playback progress when watched status changes (both marking as watched and unwatched)
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
-		// For episodes, also clear any matching progress stored under a different ID format.
+		// For episodes/movies, also clear any matching progress stored under a different ID format.
 		if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+				progressCleared = true
+			}
+		} else if update.MediaType == "movie" {
+			if s.clearMovieProgressByExternalIDMatchLocked(userID, update.ExternalIDs) {
 				progressCleared = true
 			}
 		}
@@ -2236,9 +2256,13 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
 			}
-			// For episodes, also clear any matching progress stored under a different ID format.
+			// For episodes/movies, also clear any matching progress stored under a different ID format.
 			if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 				if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+					progressCleared = true
+				}
+			} else if update.MediaType == "movie" {
+				if s.clearMovieProgressByExternalIDMatchLocked(userID, update.ExternalIDs) {
 					progressCleared = true
 				}
 			}
@@ -2455,6 +2479,18 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				update.MediaType, update.Name, update.WatchedAt.Format(time.RFC3339), update.SeriesID)
 		}
 
+		if update.Watched != nil && *update.Watched && s.hasHighInProgressPlaybackLocked(userID, update) {
+			log.Printf("[history] import: SKIP (preserve local in-progress) %s %q watchedAt=%s seriesID=%s",
+				update.MediaType, update.Name, update.WatchedAt.Format(time.RFC3339), update.SeriesID)
+			if crossProviderRekeyed {
+				existing.ID = key
+				existing.ItemID = normalizedItemID
+				perUser[key] = existing
+				imported++
+			}
+			continue
+		}
+
 		item := existing
 		if !exists {
 			item = models.WatchHistoryItem{
@@ -2488,6 +2524,11 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			item.UpdatedAt = stateUpdatedAt
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
+			}
+			if update.MediaType == "movie" {
+				if s.clearMovieProgressByExternalIDMatchLocked(userID, update.ExternalIDs) {
+					progressCleared = true
+				}
 			}
 		}
 		if update.ExternalIDs != nil {
@@ -2750,6 +2791,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	defer s.mu.Unlock()
 
 	perUser := s.ensurePlaybackProgressUserLocked(userID)
+	staleWatchedEpisodeUpdate := s.isWatchedEpisodeProgressUpdateLocked(userID, update)
 	// Normalize itemID to lowercase for consistent key matching
 	normalizedItemID := strings.ToLower(update.ItemID)
 	key := makeWatchKey(update.MediaType, normalizedItemID)
@@ -2848,6 +2890,16 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 				}
 			}
 			if match {
+				if staleWatchedEpisodeUpdate &&
+					existingProg.SeasonNumber == 0 &&
+					existingProg.EpisodeNumber == 0 &&
+					existingProg.ItemID == existingProg.SeriesID {
+					continue
+				}
+				if isSeriesLevelPlaybackMarker(existingProg) {
+					delete(perUser, existingKey)
+					continue
+				}
 				existingProg.HiddenFromContinueWatching = false
 				perUser[existingKey] = existingProg
 			}
@@ -2884,6 +2936,74 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	}
 
 	return progress, nil
+}
+
+func (s *Service) isWatchedEpisodeProgressUpdateLocked(userID string, update models.PlaybackProgressUpdate) bool {
+	if strings.ToLower(strings.TrimSpace(update.MediaType)) != "episode" {
+		return false
+	}
+	if update.SeasonNumber <= 0 || update.EpisodeNumber <= 0 {
+		return false
+	}
+
+	perUserHistory, ok := s.watchHistory[userID]
+	if !ok || len(perUserHistory) == 0 {
+		return false
+	}
+
+	updateSeriesID := strings.TrimSpace(update.SeriesID)
+	var updateProvider, updateNumericID string
+	if updateSeriesID != "" {
+		parts := strings.Split(updateSeriesID, ":")
+		if len(parts) >= 2 {
+			updateProvider = strings.ToLower(parts[0])
+			updateNumericID = parts[len(parts)-1]
+		}
+	}
+
+	for _, item := range perUserHistory {
+		if item.MediaType != "episode" || !item.Watched {
+			continue
+		}
+		if item.SeasonNumber != update.SeasonNumber || item.EpisodeNumber != update.EpisodeNumber {
+			continue
+		}
+		if updateSeriesID != "" && item.SeriesID == updateSeriesID {
+			return true
+		}
+		if updateProvider != "" && updateNumericID != "" {
+			if extVal, ok := item.ExternalIDs[updateProvider]; ok && extVal == updateNumericID {
+				return true
+			}
+		}
+		if len(update.ExternalIDs) > 0 && len(item.ExternalIDs) > 0 {
+			for k, v := range update.ExternalIDs {
+				if v == "" || k == "titleId" {
+					continue
+				}
+				if iv, ok := item.ExternalIDs[k]; ok && iv == v {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// IsWatchedEpisodeProgressUpdate reports whether the supplied progress update
+// refers to an episode that is already marked watched in local history. Matching
+// is tolerant of provider-ID differences and shared external IDs.
+func (s *Service) IsWatchedEpisodeProgressUpdate(userID string, update models.PlaybackProgressUpdate) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.isWatchedEpisodeProgressUpdateLocked(userID, update)
 }
 
 // markAsWatchedFromProgress marks an item as watched based on progress threshold.
@@ -3299,6 +3419,7 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 	// Find any progress entries for this series (both movies and episodes)
 	found := false
 	markedCount := 0
+	hiddenAt := time.Now().UTC()
 	for key, progress := range perUser {
 		// For movies, the itemID matches seriesID directly
 		// For episodes, the seriesID field matches
@@ -3311,6 +3432,7 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 		}
 		if match {
 			progress.HiddenFromContinueWatching = true
+			progress.UpdatedAt = hiddenAt
 			perUser[key] = progress
 			found = true
 			markedCount++
@@ -3503,6 +3625,39 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 	return anyCleared
 }
 
+// clearMovieProgressByExternalIDMatchLocked removes playback progress entries for a movie
+// when the stored row shares any canonical external ID with the incoming watched update.
+// This handles cross-provider mismatches like a watched TMDB import that should clear a
+// stale TVDB resume row for the same movie.
+// Callers must hold s.mu before invoking this helper.
+func (s *Service) clearMovieProgressByExternalIDMatchLocked(userID string, externalIDs map[string]string) bool {
+	if len(externalIDs) == 0 {
+		return false
+	}
+
+	perUser, ok := s.playbackProgress[userID]
+	if !ok {
+		return false
+	}
+
+	anyCleared := false
+	for key, progress := range perUser {
+		if progress.MediaType != "movie" {
+			continue
+		}
+		if !hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+			continue
+		}
+		delete(perUser, key)
+		if progress.HiddenFromContinueWatching {
+			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+		}
+		anyCleared = true
+	}
+
+	return anyCleared
+}
+
 // clearOtherEpisodeProgressByExternalIDMatchLocked removes duplicate in-progress rows
 // for the same episode stored under alternate ID formats, preserving the entry whose
 // key matches keepKey. Callers must hold s.mu before invoking this helper.
@@ -3588,5 +3743,57 @@ func hasMatchingExternalID(a, b map[string]string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func isSeriesLevelPlaybackMarker(progress models.PlaybackProgress) bool {
+	return strings.EqualFold(strings.TrimSpace(progress.MediaType), "episode") &&
+		progress.ItemID != "" &&
+		progress.ItemID == progress.SeriesID &&
+		progress.SeasonNumber == 0 &&
+		progress.EpisodeNumber == 0
+}
+
+func (s *Service) hasHighInProgressPlaybackLocked(userID string, update models.WatchHistoryUpdate) bool {
+	perUser, ok := s.playbackProgress[userID]
+	if !ok {
+		return false
+	}
+
+	for _, progress := range perUser {
+		if !isMatchingPlaybackForWatchUpdate(progress, update) {
+			continue
+		}
+		if progress.PercentWatched >= traktStopWatchThreshold && progress.PercentWatched < continueWatchingCompletionThreshold {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isMatchingPlaybackForWatchUpdate(progress models.PlaybackProgress, update models.WatchHistoryUpdate) bool {
+	if strings.ToLower(progress.MediaType) != strings.ToLower(update.MediaType) {
+		return false
+	}
+
+	if progress.ItemID == update.ItemID {
+		return true
+	}
+
+	if update.MediaType == "movie" {
+		return hasMatchingExternalID(progress.ExternalIDs, update.ExternalIDs)
+	}
+
+	if update.MediaType == "episode" {
+		if progress.SeasonNumber != update.SeasonNumber || progress.EpisodeNumber != update.EpisodeNumber {
+			return false
+		}
+		if progress.SeriesID != "" && update.SeriesID != "" && progress.SeriesID == update.SeriesID {
+			return true
+		}
+		return hasMatchingExternalID(progress.ExternalIDs, update.ExternalIDs)
+	}
+
 	return false
 }

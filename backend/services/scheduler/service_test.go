@@ -230,6 +230,273 @@ func TestLatestWatchStateForItem_PrefersNewestStateAcrossIDVariants(t *testing.T
 	}
 }
 
+func TestSyncPlaybackFromTrakt_SkipsAlreadyWatchedEpisodeAcrossProviderIDs(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	watchedAt := time.Date(2026, 4, 9, 4, 0, 0, 0, time.UTC)
+
+	if _, err := historySvc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:114868:s01e01",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeriesID:      "tmdb:tv:114868",
+		SeriesName:    "Record of Ragnarok",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		ExternalIDs:   map[string]string{"imdb": "tt13676344", "tmdb": "114868", "tvdb": "393810"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch req.URL.Path {
+			case "/sync/playback/movies":
+				body = `[]`
+			case "/sync/playback/episodes":
+				body = `[{"id":99,"progress":18.3,"paused_at":"` + watchedAt.Add(10*time.Minute).Format(time.RFC3339) + `","type":"episode","show":{"title":"Record of Ragnarok","ids":{"tvdb":393810,"tmdb":114868,"imdb":"tt13676344"}},"episode":{"season":1,"number":1,"title":"Thor's Hammer"}}]`
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	if err := svc.syncPlaybackFromTrakt(&config.TraktAccount{AccessToken: "token"}, userID, nil); err != nil {
+		t.Fatalf("syncPlaybackFromTrakt() error = %v", err)
+	}
+
+	progress, err := historySvc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 0 {
+		t.Fatalf("expected stale Trakt playback import to be skipped, got %d progress rows", len(progress))
+	}
+}
+
+func TestSyncPlaybackFromTrakt_HiddenProgressSameResumePointStaysHidden(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:75545"
+	pausedAt := time.Date(2026, 3, 20, 14, 50, 20, 0, time.UTC)
+
+	if _, err := historySvc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         seriesID + ":s01e12",
+		PercentWatched: 8.062,
+		Timestamp:      pausedAt,
+		IsPaused:       true,
+		SeriesID:       seriesID,
+		SeriesName:     "Invader ZIM",
+		SeasonNumber:   1,
+		EpisodeNumber:  12,
+		ExternalIDs:    map[string]string{"imdb": "tt0235923", "tmdb": "3793", "tvdb": "75545"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+	if err := historySvc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch req.URL.Path {
+			case "/sync/playback/movies":
+				body = `[]`
+			case "/sync/playback/episodes":
+				body = `[{"id":99,"progress":8.1,"paused_at":"2026-04-09T11:44:11Z","type":"episode","show":{"title":"Invader ZIM","ids":{"tvdb":75545,"tmdb":3793,"imdb":"tt0235923"}},"episode":{"season":1,"number":12,"title":"A Room with a Moose"}}]`
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	if err := svc.syncPlaybackFromTrakt(&config.TraktAccount{AccessToken: "token"}, userID, nil); err != nil {
+		t.Fatalf("syncPlaybackFromTrakt() error = %v", err)
+	}
+
+	progress, err := historySvc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 1 {
+		t.Fatalf("expected 1 progress row, got %d", len(progress))
+	}
+	if !progress[0].HiddenFromContinueWatching {
+		t.Fatal("expected hidden progress row to stay hidden when Trakt resume point is unchanged")
+	}
+}
+
+func TestSyncPlaybackFromTrakt_HiddenMarkerBlocksOlderResumeImport(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:81189"
+	if err := historySvc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch req.URL.Path {
+			case "/sync/playback/movies":
+				body = `[]`
+			case "/sync/playback/episodes":
+				body = `[{"id":99,"progress":45.0,"paused_at":"2026-02-28T18:15:47Z","type":"episode","show":{"title":"Breaking Bad","ids":{"tvdb":81189,"tmdb":1396,"imdb":"tt0903747"}},"episode":{"season":1,"number":1,"title":"Pilot"}}]`
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	if err := svc.syncPlaybackFromTrakt(&config.TraktAccount{AccessToken: "token"}, userID, nil); err != nil {
+		t.Fatalf("syncPlaybackFromTrakt() error = %v", err)
+	}
+
+	progress, err := historySvc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 1 {
+		t.Fatalf("expected hidden marker to remain as the only row, got %d rows", len(progress))
+	}
+	if progress[0].ItemID != seriesID || !progress[0].HiddenFromContinueWatching {
+		t.Fatalf("expected hidden marker for %s to remain, got %+v", seriesID, progress[0])
+	}
+}
+
+func TestSyncLocalHistoryToTrakt_SkipsCrossProviderMovieAlreadyOnTrakt(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	watchedAt := time.Date(2026, 4, 9, 11, 44, 0, 0, time.UTC)
+
+	if _, err := historySvc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      "tvdb:movie:370",
+		Name:        "Ponyo",
+		Watched:     &watched,
+		WatchedAt:   watchedAt,
+		ExternalIDs: map[string]string{"tvdb": "370", "imdb": "tt0876563"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	addToHistoryCalled := false
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/users/me/history" {
+				if req.Method != http.MethodGet {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				resp := jsonResponse(http.StatusOK, `[{"id":1,"watched_at":"2026-04-09T11:44:00Z","type":"movie","movie":{"title":"Ponyo","year":2008,"ids":{"trakt":7217,"tmdb":12429,"imdb":"tt0876563"}}}]`)
+				resp.Header.Set("X-Pagination-Item-Count", "1")
+				return resp, nil
+			}
+			if req.URL.Path != "/sync/history" {
+				t.Fatalf("unexpected path %s", req.URL.Path)
+				return nil, nil
+			}
+			if req.Method == http.MethodPost {
+				addToHistoryCalled = true
+				return jsonResponse(http.StatusOK, `{"added":{"movies":0,"episodes":0}}`), nil
+			}
+			t.Fatalf("unexpected method %s", req.Method)
+			return nil, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	result, err := svc.syncLocalHistoryToTrakt(config.ScheduledTask{}, &config.TraktAccount{AccessToken: "token"}, userID, false)
+	if err != nil {
+		t.Fatalf("syncLocalHistoryToTrakt() error = %v", err)
+	}
+
+	if result.Count != 0 {
+		t.Fatalf("expected no export for cross-provider duplicate movie, got Count=%d", result.Count)
+	}
+	if addToHistoryCalled {
+		t.Fatal("expected AddToHistory to be skipped when Trakt already has the same movie under another provider ID")
+	}
+}
+
 func TestExecuteLocalMediaScan_AllLibraries(t *testing.T) {
 	scanner := &fakeLocalMediaScanner{
 		libraries: []models.LocalMediaLibrary{

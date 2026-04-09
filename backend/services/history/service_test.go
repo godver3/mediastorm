@@ -1583,6 +1583,225 @@ func TestHideFromContinueWatching_CanonicalIDMismatch(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaybackProgress_StaleWatchedEpisodeKeepsHiddenMarker(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:393810"
+	watched := true
+
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e01",
+			Name:          "Thor's Hammer",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "Record of Ragnarok",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"imdb": "tt13676344", "tvdb": "393810", "tmdb": "114868"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         seriesID + ":s01e01",
+		PercentWatched: 18.3,
+		Timestamp:      time.Now().UTC(),
+		IsPaused:       true,
+		SeriesID:       seriesID,
+		SeriesName:     "Record of Ragnarok",
+		SeasonNumber:   1,
+		EpisodeNumber:  1,
+		ExternalIDs:    map[string]string{"imdb": "tt13676344", "tvdb": "393810", "tmdb": "114868"},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+
+	hiddenMarkerFound := false
+	for _, p := range progress {
+		if p.ItemID == seriesID && p.SeriesID == seriesID && p.HiddenFromContinueWatching {
+			hiddenMarkerFound = true
+		}
+	}
+	if !hiddenMarkerFound {
+		t.Fatal("expected hidden series marker to remain hidden after stale watched-episode progress update")
+	}
+}
+
+func TestUpdatePlaybackProgress_NewEpisodeClearsHiddenMarker(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:393810"
+	watched := true
+
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e01",
+			Name:          "Thor's Hammer",
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "Record of Ragnarok",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"imdb": "tt13676344", "tvdb": "393810", "tmdb": "114868"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         seriesID + ":s01e02",
+		PercentWatched: 18.3,
+		Timestamp:      time.Now().UTC(),
+		IsPaused:       true,
+		SeriesID:       seriesID,
+		SeriesName:     "Record of Ragnarok",
+		SeasonNumber:   1,
+		EpisodeNumber:  2,
+		ExternalIDs:    map[string]string{"imdb": "tt13676344", "tvdb": "393810", "tmdb": "114868"},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+
+	for _, p := range progress {
+		if p.ItemID == seriesID && p.SeriesID == seriesID {
+			t.Fatal("expected hidden series marker to be removed when a genuinely new episode gets progress")
+		}
+	}
+}
+
+func TestContinueWatching_IgnoresVisibleSeriesMarkerRows(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     "tvdb:series:75545",
+				Name:   "Invader ZIM",
+				Year:   2001,
+				TVDBID: 75545,
+			},
+			Seasons: []models.SeriesSeason{
+				{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "ep-11", SeasonNumber: 1, EpisodeNumber: 11, Name: "Bestest Friend"},
+						{ID: "ep-12", SeasonNumber: 1, EpisodeNumber: 12, Name: "Bad, Bad Rubber Piggy"},
+					},
+				},
+			},
+		},
+	})
+
+	userID := "user-1"
+	seriesID := "tvdb:series:75545"
+	watched := true
+	watchedAt := time.Date(2026, 3, 19, 13, 54, 16, 0, time.UTC)
+
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        seriesID + ":s01e11",
+			Name:          "Bestest Friend",
+			Watched:       &watched,
+			WatchedAt:     watchedAt,
+			SeriesID:      seriesID,
+			SeriesName:    "Invader ZIM",
+			SeasonNumber:  1,
+			EpisodeNumber: 11,
+			ExternalIDs:   map[string]string{"imdb": "tt0235923", "tmdb": "3793", "tvdb": "75545"},
+		},
+	}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	progressTS := watchedAt.Add(2 * time.Minute)
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         seriesID + ":s01e12",
+		PercentWatched: 8.1,
+		Timestamp:      progressTS,
+		IsPaused:       true,
+		SeriesID:       seriesID,
+		SeriesName:     "Invader ZIM",
+		SeasonNumber:   1,
+		EpisodeNumber:  12,
+		ExternalIDs:    map[string]string{"imdb": "tt0235923", "tmdb": "3793", "tvdb": "75545"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	svc.mu.Lock()
+	perUser := svc.ensurePlaybackProgressUserLocked(userID)
+	perUser[makeWatchKey("episode", seriesID)] = models.PlaybackProgress{
+		ID:             makeWatchKey("episode", seriesID),
+		MediaType:      "episode",
+		ItemID:         seriesID,
+		SeriesID:       seriesID,
+		UpdatedAt:      progressTS,
+		ExternalIDs:    map[string]string{"imdb": "tt0235923", "tmdb": "3793", "tvdb": "75545"},
+		PercentWatched: 0,
+	}
+	svc.mu.Unlock()
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 continue watching item, got %d", len(items))
+	}
+	if items[0].SeriesTitle != "Invader ZIM" {
+		t.Fatalf("expected series title to come from the real episode progress, got %q", items[0].SeriesTitle)
+	}
+	if items[0].LastWatched.SeasonNumber != 1 || items[0].LastWatched.EpisodeNumber != 12 {
+		t.Fatalf("expected visible marker row to be ignored, got lastWatched S%02dE%02d", items[0].LastWatched.SeasonNumber, items[0].LastWatched.EpisodeNumber)
+	}
+}
+
 // =============================================================================
 // Episode state invariant tests
 //
@@ -2629,6 +2848,112 @@ func TestImportWatchHistory_CrossProviderMovieDedup(t *testing.T) {
 	}
 	if movieCount != 1 {
 		t.Fatalf("expected 1 movie entry after cross-provider dedup, got %d", movieCount)
+	}
+}
+
+func TestImportWatchHistory_CrossProviderMovieClearsPlaybackProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         "tvdb:movie:370",
+		MovieName:      "Ponyo",
+		PercentWatched: 42.5,
+		Position:       2592.93,
+		Duration:       6101.02,
+		IsPaused:       true,
+		ExternalIDs:    map[string]string{"tvdb": "370", "imdb": "tt0876563"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:   "movie",
+			ItemID:      "tmdb:movie:12429",
+			Name:        "Ponyo",
+			Watched:     &watched,
+			WatchedAt:   time.Date(2026, 4, 9, 11, 44, 0, 0, time.UTC),
+			ExternalIDs: map[string]string{"tmdb": "12429", "imdb": "tt0876563"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 0 {
+		t.Fatalf("expected cross-provider watched movie import to clear playback progress, got %d rows", len(progress))
+	}
+}
+
+func TestImportWatchHistory_HighProgressMovieStaysInProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+	progressTS := time.Date(2026, 4, 9, 11, 40, 0, 0, time.UTC)
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         "tvdb:movie:370",
+		MovieName:      "Ponyo",
+		PercentWatched: 85.0,
+		Position:       5185.0,
+		Duration:       6100.0,
+		IsPaused:       true,
+		Timestamp:      progressTS,
+		ExternalIDs:    map[string]string{"tvdb": "370", "imdb": "tt0876563"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	imported, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:12429",
+		Name:        "Ponyo",
+		Watched:     &watched,
+		WatchedAt:   progressTS.Add(6 * time.Minute),
+		ExternalIDs: map[string]string{"tmdb": "12429", "imdb": "tt0876563"},
+	}})
+	if err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("expected watched import to be skipped for high-progress movie, got imported=%d", imported)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 1 {
+		t.Fatalf("expected playback progress to remain, got %d rows", len(progress))
+	}
+	if progress[0].PercentWatched != 85.0 {
+		t.Fatalf("expected progress to remain at 85%%, got %.2f", progress[0].PercentWatched)
+	}
+
+	items, err := svc.ListWatchHistory(userID)
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no watched history entry to be created, got %d entries", len(items))
 	}
 }
 

@@ -2078,14 +2078,17 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		return result, fmt.Errorf("fetch trakt history for dedup: %w", err)
 	}
 
-	// Build a set of items already on Trakt, keyed by mediaType:itemID
+	// Build a set of items already on Trakt, including alternate provider IDs,
+	// so local export does not re-scrobble the same movie/show under a different key.
 	watched := true
 	alreadyOnTrakt := make(map[string]bool)
 	for _, ti := range traktItems {
 		update := s.traktHistoryItemToUpdate(ti, &watched)
 		if update != nil {
-			key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(update.ItemID)
-			alreadyOnTrakt[key] = true
+			for _, id := range alternateItemIDs(update.MediaType, update.ItemID, update.ExternalIDs) {
+				key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(id)
+				alreadyOnTrakt[key] = true
+			}
 		}
 	}
 	log.Printf("[scheduler] Found %d unique items already on Trakt history", len(alreadyOnTrakt))
@@ -2111,8 +2114,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		}
 
 		// Skip items already on Trakt to avoid duplicate watch events
-		localKey := strings.ToLower(item.MediaType) + ":" + strings.ToLower(item.ItemID)
-		if alreadyOnTrakt[localKey] {
+		if itemAlreadyOnTrakt(item, alreadyOnTrakt) {
 			skipped++
 			continue
 		}
@@ -2246,6 +2248,16 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	return result, nil
 }
 
+func itemAlreadyOnTrakt(item models.WatchHistoryItem, alreadyOnTrakt map[string]bool) bool {
+	for _, id := range alternateItemIDs(item.MediaType, item.ItemID, item.ExternalIDs) {
+		key := strings.ToLower(item.MediaType) + ":" + strings.ToLower(id)
+		if alreadyOnTrakt[key] {
+			return true
+		}
+	}
+	return false
+}
+
 // syncHistoryBidirectional syncs watch history in both directions
 func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccount *config.TraktAccount, profileID string, dryRun bool) (SyncResult, error) {
 	// Run Trakt → Local first
@@ -2311,6 +2323,10 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 	showIDsToHistory := make(map[playbackShowKey]trakt.SyncIDs)
 
 	for _, item := range items {
+		if item.HiddenFromContinueWatching {
+			continue
+		}
+
 		if item.PercentWatched <= 1 {
 			continue
 		}
@@ -2517,6 +2533,10 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				continue
 			}
 
+			if s.historyService.IsWatchedEpisodeProgressUpdate(profileID, *update) {
+				continue
+			}
+
 			// Check if local progress exists under any provider ID variant.
 			// If found under a different ID, use that ID so we update the existing
 			// entry instead of creating a duplicate.
@@ -2531,8 +2551,16 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 					break
 				}
 			}
+			hiddenMarker := s.findHiddenPlaybackMarker(profileID, *update)
+
+			if localProgress == nil && hiddenMarker != nil && !traktItem.PausedAt.After(hiddenMarker.UpdatedAt) {
+				continue
+			}
 
 			if localProgress != nil {
+				if localProgress.HiddenFromContinueWatching && playbackImportPercentDelta(localProgress, traktItem.Progress) < 2.0 {
+					continue
+				}
 				// If local progress is newer (or same), skip
 				if !localProgress.UpdatedAt.Before(traktItem.PausedAt) {
 					continue
@@ -2608,6 +2636,79 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 		log.Printf("[scheduler] Imported %d Trakt playback items as watched history", watchedImported)
 	}
 	return nil
+}
+
+func playbackImportPercentDelta(localProgress *models.PlaybackProgress, traktPercent float64) float64 {
+	if localProgress == nil {
+		return 100
+	}
+	if localProgress.Duration > 0 {
+		traktPosition := (traktPercent / 100) * localProgress.Duration
+		positionDelta := traktPosition - localProgress.Position
+		if positionDelta < 0 {
+			positionDelta = -positionDelta
+		}
+		if localProgress.Duration <= 0 {
+			return 100
+		}
+		return (positionDelta / localProgress.Duration) * 100
+	}
+
+	percentDelta := traktPercent - localProgress.PercentWatched
+	if percentDelta < 0 {
+		percentDelta = -percentDelta
+	}
+	return percentDelta
+}
+
+func (s *Service) findHiddenPlaybackMarker(profileID string, update models.PlaybackProgressUpdate) *models.PlaybackProgress {
+	if s.historyService == nil || update.MediaType != "episode" {
+		return nil
+	}
+
+	seriesIDs := alternateSeriesIDs(update.SeriesID, update.ExternalIDs)
+	for _, seriesID := range seriesIDs {
+		marker, err := s.historyService.GetPlaybackProgress(profileID, "episode", seriesID)
+		if err != nil || marker == nil {
+			continue
+		}
+		if marker.HiddenFromContinueWatching &&
+			marker.ItemID == marker.SeriesID &&
+			marker.SeasonNumber == 0 &&
+			marker.EpisodeNumber == 0 {
+			return marker
+		}
+	}
+
+	return nil
+}
+
+func alternateSeriesIDs(primarySeriesID string, externalIDs map[string]string) []string {
+	if primarySeriesID == "" {
+		return nil
+	}
+
+	ids := []string{primarySeriesID}
+	seen := map[string]bool{strings.ToLower(primarySeriesID): true}
+	add := func(id string) {
+		lower := strings.ToLower(id)
+		if id != "" && !seen[lower] {
+			seen[lower] = true
+			ids = append(ids, id)
+		}
+	}
+
+	if v, ok := externalIDs["tvdb"]; ok && v != "" {
+		add(fmt.Sprintf("tvdb:series:%s", v))
+	}
+	if v, ok := externalIDs["tmdb"]; ok && v != "" {
+		add(fmt.Sprintf("tmdb:tv:%s", v))
+	}
+	if v, ok := externalIDs["imdb"]; ok && v != "" {
+		add(fmt.Sprintf("imdb:%s", v))
+	}
+
+	return ids
 }
 
 func (s *Service) latestWatchStateForItem(profileID, mediaType string, itemIDs []string) (*models.WatchHistoryItem, error) {
