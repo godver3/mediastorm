@@ -580,3 +580,76 @@ func TestExtractTitleFields(t *testing.T) {
 		})
 	}
 }
+
+func TestBatchMovieReleasesUsesV2ReleaseCache(t *testing.T) {
+	tempDir := t.TempDir()
+	svc := &Service{
+		cache: newFileCache(tempDir, 24),
+	}
+
+	tmdbID := int64(12345)
+	cacheID := cacheKey("tmdb", "movie", "releases", "v2", "12345")
+	cached := cachedReleasesWithCert{
+		Releases: []models.Release{
+			{Type: "theatrical", Date: "2026-01-10", Country: "US", Released: true},
+			{Type: "digital", Date: "2026-02-01", Country: "US", Released: true},
+		},
+		Certification: "PG-13",
+	}
+	if err := svc.cache.set(cacheID, cached); err != nil {
+		t.Fatalf("set cache: %v", err)
+	}
+
+	results := svc.BatchMovieReleases(context.Background(), []models.BatchMovieReleasesQuery{{TMDBID: tmdbID}})
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Error != "" {
+		t.Fatalf("unexpected error: %s", results[0].Error)
+	}
+	if results[0].Theatrical == nil || results[0].Theatrical.Date != "2026-01-10" {
+		t.Fatalf("expected theatrical release from cache, got %#v", results[0].Theatrical)
+	}
+	if results[0].HomeRelease == nil || results[0].HomeRelease.Date != "2026-02-01" {
+		t.Fatalf("expected home release from cache, got %#v", results[0].HomeRelease)
+	}
+}
+
+func TestClearCacheClearsAllMetadataCaches(t *testing.T) {
+	tempDir := t.TempDir()
+	svc := &Service{
+		cache:        newFileCache(tempDir, 24),
+		idCache:      newFileCache(tempDir+"/ids", 24),
+		ratingsCache: newFileCache(tempDir+"/ratings", 24),
+	}
+
+	if err := svc.cache.set("metadata-key", map[string]string{"ok": "1"}); err != nil {
+		t.Fatalf("set metadata cache: %v", err)
+	}
+	if err := svc.idCache.set("id-key", "tt1234567"); err != nil {
+		t.Fatalf("set id cache: %v", err)
+	}
+	if err := svc.ratingsCache.set("ratings-key", []models.Rating{{Source: "imdb", Value: 7.5, Max: 10}}); err != nil {
+		t.Fatalf("set ratings cache: %v", err)
+	}
+
+	if err := svc.ClearCache(); err != nil {
+		t.Fatalf("ClearCache: %v", err)
+	}
+
+	var metadataValue map[string]string
+	if ok, _ := svc.cache.get("metadata-key", &metadataValue); ok {
+		t.Fatal("expected metadata cache entry to be cleared")
+	}
+	var idValue string
+	if ok, _ := svc.idCache.get("id-key", &idValue); ok {
+		t.Fatal("expected id cache entry to be cleared")
+	}
+	var ratingsValue []models.Rating
+	if ok, _ := svc.ratingsCache.get("ratings-key", &ratingsValue); ok {
+		t.Fatal("expected ratings cache entry to be cleared")
+	}
+}
+
+func TestGetCacheManagerStatusCountsV5CustomListCache(t *testing.T) {
+	tempDir := t.TempDir()

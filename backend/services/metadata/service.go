@@ -367,7 +367,7 @@ func (s *Service) GetCacheManagerStatus() CacheManagerStatus {
 		infos := s.customListInfoFn()
 		cached := 0
 		for _, info := range infos {
-			k := cacheKey("mdblist", "custom", "v4", info.URL)
+			k := cacheKey("mdblist", "custom", "v5", info.URL, lang)
 			var items []models.TrendingItem
 			if ok, _ := s.cache.get(k, &items); ok && len(items) > 0 {
 				cached++
@@ -720,9 +720,22 @@ func (s *Service) GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64)
 	return ""
 }
 
-// ClearCache removes all cached metadata files
+// ClearCache removes all persisted metadata caches, including ID and ratings caches.
 func (s *Service) ClearCache() error {
-	return s.cache.clear()
+	if err := s.cache.clear(); err != nil {
+		return err
+	}
+	if s.idCache != nil {
+		if err := s.idCache.clear(); err != nil {
+			return err
+		}
+	}
+	if s.ratingsCache != nil {
+		if err := s.ratingsCache.clear(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // getIMDBIDForTMDB returns the IMDB ID for a TMDB ID, using cache when available.
@@ -3799,12 +3812,15 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 			continue
 		}
 
-		// Check cache
-		cacheID := cacheKey("tmdb", "movie", "releases", "v1", strconv.FormatInt(tmdbID, 10))
-		var cached []models.Release
-		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+		// Check the same cache written by enrichMovieReleases.
+		cacheID := cacheKey("tmdb", "movie", "releases", "v2", strconv.FormatInt(tmdbID, 10))
+		var cached cachedReleasesWithCert
+		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Releases) > 0 {
 			// Build a temporary title to use ensureMovieReleasePointers
-			tempTitle := &models.Title{Releases: cached}
+			tempTitle := &models.Title{
+				Releases:      append([]models.Release(nil), cached.Releases...),
+				Certification: cached.Certification,
+			}
 			s.ensureMovieReleasePointers(tempTitle)
 			results[i].Theatrical = tempTitle.Theatrical
 			results[i].HomeRelease = tempTitle.HomeRelease
