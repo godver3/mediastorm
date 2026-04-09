@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"novastream/models"
 )
@@ -581,6 +583,249 @@ func TestExtractTitleFields(t *testing.T) {
 	}
 }
 
+func TestAggregateTopTen_Deduplication(t *testing.T) {
+	// Two sources both contain the same movie (by IMDB ID).
+	// The item should appear once with a higher score than items unique to one source.
+	movieA := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Inception", MediaType: "movie", IMDBID: "tt1375666",
+	}}
+	movieB := models.TrendingItem{Rank: 2, Title: models.Title{
+		Name: "The Dark Knight", MediaType: "movie", IMDBID: "tt0468569",
+	}}
+	movieC := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Inception", MediaType: "movie", IMDBID: "tt1375666",
+	}}
+
+	sources := []topTenSource{
+		{name: "trending-movies", weight: 3.0, items: []models.TrendingItem{movieA, movieB}},
+		{name: "genre-action", weight: 1.0, items: []models.TrendingItem{movieC}},
+	}
+
+	results := aggregateTopTen(sources, 10)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 unique items, got %d", len(results))
+	}
+	// Inception should rank first: appears on 2 lists with cross-list bonus.
+	if results[0].Title.IMDBID != "tt1375666" {
+		t.Errorf("expected Inception (tt1375666) first, got %s", results[0].Title.IMDBID)
+	}
+	// Re-ranked starting from 1
+	if results[0].Rank != 1 {
+		t.Errorf("expected rank 1, got %d", results[0].Rank)
+	}
+}
+
+func TestAggregateTopTen_Limit(t *testing.T) {
+	items := make([]models.TrendingItem, 20)
+	for i := range items {
+		items[i] = models.TrendingItem{
+			Rank: i + 1,
+			Title: models.Title{
+				Name:      fmt.Sprintf("Movie %d", i+1),
+				MediaType: "movie",
+				IMDBID:    fmt.Sprintf("tt%07d", i+1),
+			},
+		}
+	}
+
+	sources := []topTenSource{
+		{name: "trending", weight: 3.0, items: items},
+	}
+
+	results := aggregateTopTen(sources, 10)
+	if len(results) != 10 {
+		t.Errorf("expected 10 results (limit enforced), got %d", len(results))
+	}
+}
+
+func TestAggregateTopTen_RecencyBonus(t *testing.T) {
+	currentYear := time.Now().Year()
+	// Same rank on the same list — newer item should outscore older item.
+	newItem := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "New Movie", MediaType: "movie", IMDBID: "tt1111111", Year: currentYear,
+	}}
+	oldItem := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Old Movie", MediaType: "movie", IMDBID: "tt2222222", Year: currentYear - 10,
+	}}
+
+	sources := []topTenSource{
+		{name: "list-a", weight: 1.0, items: []models.TrendingItem{newItem}},
+		{name: "list-b", weight: 1.0, items: []models.TrendingItem{oldItem}},
+	}
+
+	results := aggregateTopTen(sources, 10)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(results))
+	}
+	if results[0].Title.IMDBID != "tt1111111" {
+		t.Errorf("expected new item first (recency boost), got %s", results[0].Title.IMDBID)
+	}
+}
+
+func TestAggregateTopTen_CrossListBonus(t *testing.T) {
+	// Item on 2 lists should outscore an item with a better rank on only 1 list.
+	popular := models.TrendingItem{Rank: 5, Title: models.Title{
+		Name: "Popular", MediaType: "movie", IMDBID: "tt0000001",
+	}}
+	topRanked := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Top Ranked", MediaType: "movie", IMDBID: "tt0000002",
+	}}
+
+	sources := []topTenSource{
+		{name: "list-a", weight: 1.0, items: []models.TrendingItem{topRanked, popular}},
+		{name: "list-b", weight: 1.0, items: []models.TrendingItem{popular}},
+	}
+
+	results := aggregateTopTen(sources, 10)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(results))
+	}
+
+	// "popular" base score: list-a rank 2 = 1.0*(100/2) = 50, list-b rank 1 = 1.0*100 = 100
+	// total = 150, bonus = 1 + 0.3*1 = 1.3 => 195
+	// "topRanked" base score: list-a rank 1 = 100, bonus = 1.0 => 100
+	if results[0].Title.IMDBID != "tt0000001" {
+		t.Errorf("expected tt0000001 (cross-list item) first, got %s", results[0].Title.IMDBID)
+	}
+}
+
+func TestTopTenTVEpisodeRecencyMultiplier_RecentEpisodeWins(t *testing.T) {
+	now := time.Now()
+	details := models.SeriesDetails{
+		Title: models.Title{
+			Name:      "Weekly Hit",
+			MediaType: "series",
+			Status:    "Continuing",
+		},
+		Seasons: []models.SeriesSeason{
+			{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{SeasonNumber: 1, EpisodeNumber: 8, AiredDateTimeUTC: now.Add(-48 * time.Hour).UTC().Format(time.RFC3339)},
+					{SeasonNumber: 1, EpisodeNumber: 9, AiredDateTimeUTC: now.Add(5 * 24 * time.Hour).UTC().Format(time.RFC3339)},
+				},
+			},
+		},
+	}
+
+	multiplier := topTenTVEpisodeRecencyMultiplier(details, now)
+	if multiplier <= 1.5 {
+		t.Fatalf("expected strong recency multiplier for fresh weekly episode, got %.2f", multiplier)
+	}
+}
+
+func TestTopTenTVEpisodeRecencyMultiplier_StaleShowBarelyMoves(t *testing.T) {
+	now := time.Now()
+	details := models.SeriesDetails{
+		Title: models.Title{
+			Name:      "Archive Show",
+			MediaType: "series",
+			Status:    "Ended",
+		},
+		Seasons: []models.SeriesSeason{
+			{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{SeasonNumber: 1, EpisodeNumber: 1, AiredDate: now.Add(-120 * 24 * time.Hour).Format("2006-01-02")},
+				},
+			},
+		},
+	}
+
+	multiplier := topTenTVEpisodeRecencyMultiplier(details, now)
+	if multiplier != 1.0 {
+		t.Fatalf("expected no recency multiplier for stale show, got %.2f", multiplier)
+	}
+}
+
+func TestTopTenMovieReleaseMultiplier_RecentStreamingRelease(t *testing.T) {
+	now := time.Now()
+	title := models.Title{
+		Name:      "Fresh Streamer",
+		MediaType: "movie",
+		HomeRelease: &models.Release{
+			Type: "digital",
+			Date: now.Add(-10 * 24 * time.Hour).Format("2006-01-02"),
+		},
+	}
+
+	multiplier := topTenMovieReleaseMultiplier(title, now)
+	if multiplier <= 1.2 {
+		t.Fatalf("expected recent movie release boost, got %.2f", multiplier)
+	}
+}
+
+func TestAggregateTopTen_SourceDiversitySuppressesOldOneListTV(t *testing.T) {
+	currentYear := time.Now().Year()
+	oldCatalogTV := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Long Running Catalog Hit", MediaType: "series", IMDBID: "tt3333333", Year: currentYear - 12,
+	}}
+	freshCrossListTV := models.TrendingItem{Rank: 4, Title: models.Title{
+		Name: "Fresh Cross List Show", MediaType: "series", IMDBID: "tt4444444", Year: currentYear,
+	}}
+
+	sources := []topTenSource{
+		{name: "provider-a", weight: 5.0, items: []models.TrendingItem{oldCatalogTV, freshCrossListTV}},
+		{name: "provider-b", weight: 5.0, items: []models.TrendingItem{freshCrossListTV}},
+		{name: "provider-c", weight: 5.0, items: []models.TrendingItem{freshCrossListTV}},
+	}
+
+	results := aggregateTopTen(sources, 10)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(results))
+	}
+	if results[0].Title.IMDBID != "tt4444444" {
+		t.Fatalf("expected cross-list show to beat old one-list catalog title, got %s", results[0].Title.IMDBID)
+	}
+}
+
+func TestApplyTopTenTVProviderGate_PenalizesTrendingOnlyCatalogTV(t *testing.T) {
+	items := []models.TrendingItem{
+		{Rank: 1, Title: models.Title{Name: "Catalog TV", MediaType: "series", IMDBID: "tt1000001", Year: 2005, Popularity: 1000}},
+		{Rank: 2, Title: models.Title{Name: "Provider TV", MediaType: "series", IMDBID: "tt1000002", Year: 2025, Popularity: 900}},
+	}
+	debugEntries := map[string]topTenDebugEntry{
+		"imdb:tt1000001": {
+			Name:              "Catalog TV",
+			MediaType:         "series",
+			Year:              2005,
+			ListCount:         3,
+			ProviderListCount: 2,
+			SourceNames:       []string{"disney-shows", "hulu-shows", "trending-tv"},
+		},
+		"imdb:tt1000002": {
+			Name:              "Provider TV",
+			MediaType:         "series",
+			Year:              2025,
+			ListCount:         2,
+			ProviderListCount: 1,
+			SourceNames:       []string{"hbo-shows", "trending-tv"},
+		},
+	}
+
+	applyTopTenTVProviderGate(items, debugEntries)
+	if items[0].Title.IMDBID != "tt1000002" {
+		t.Fatalf("expected provider-backed current show to outrank old catalog title after gate, got %s", items[0].Title.IMDBID)
+	}
+}
+
+func TestApplyTopTenCrossMediaBalance_BoostsTVInOverallList(t *testing.T) {
+	items := []models.TrendingItem{
+		{Rank: 1, Title: models.Title{Name: "Movie Leader", MediaType: "movie", IMDBID: "tt2000001", Popularity: 1000}},
+		{Rank: 2, Title: models.Title{Name: "TV Challenger", MediaType: "series", IMDBID: "tt2000002", Popularity: 900}},
+	}
+	debugEntries := map[string]topTenDebugEntry{
+		"imdb:tt2000001": {Name: "Movie Leader", MediaType: "movie", FinalScore: 1000},
+		"imdb:tt2000002": {Name: "TV Challenger", MediaType: "series", FinalScore: 900},
+	}
+
+	applyTopTenCrossMediaBalance(items, debugEntries)
+	if items[0].Title.IMDBID != "tt2000002" {
+		t.Fatalf("expected tv title to overtake movie after overall balance boost, got %s", items[0].Title.IMDBID)
+	}
+}
+
 func TestBatchMovieReleasesUsesV2ReleaseCache(t *testing.T) {
 	tempDir := t.TempDir()
 	svc := &Service{
@@ -600,7 +845,9 @@ func TestBatchMovieReleasesUsesV2ReleaseCache(t *testing.T) {
 		t.Fatalf("set cache: %v", err)
 	}
 
-	results := svc.BatchMovieReleases(context.Background(), []models.BatchMovieReleasesQuery{{TMDBID: tmdbID}})
+	results := svc.BatchMovieReleases(context.Background(), []models.BatchMovieReleasesQuery{
+		{TMDBID: tmdbID},
+	})
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
@@ -653,3 +900,21 @@ func TestClearCacheClearsAllMetadataCaches(t *testing.T) {
 
 func TestGetCacheManagerStatusCountsV5CustomListCache(t *testing.T) {
 	tempDir := t.TempDir()
+	svc := &Service{
+		cache:  newFileCache(tempDir, 24),
+		client: &tvdbClient{language: "eng"},
+	}
+	svc.customListInfoFn = func() []CustomListInfo {
+		return []CustomListInfo{{URL: "https://mdblist.com/lists/test/list/json", Name: "Test List"}}
+	}
+
+	cacheID := cacheKey("mdblist", "custom", "v5", "https://mdblist.com/lists/test/list/json", "eng")
+	if err := svc.cache.set(cacheID, []models.TrendingItem{{Rank: 1, Title: models.Title{Name: "Cached"}}}); err != nil {
+		t.Fatalf("set custom list cache: %v", err)
+	}
+
+	status := svc.GetCacheManagerStatus()
+	if status.CustomListsCached != 1 {
+		t.Fatalf("expected 1 cached custom list, got %d", status.CustomListsCached)
+	}
+}

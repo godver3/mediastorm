@@ -4138,6 +4138,7 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 
 // DiscoverByGenre returns TMDB discover results for a specific genre.
 func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID int64, limit, offset int) ([]models.TrendingItem, int, error) {
+	start := time.Now()
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, 0, fmt.Errorf("tmdb client not configured")
 	}
@@ -4176,13 +4177,32 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 		if limit > 0 && limit < len(items) {
 			items = items[:limit]
 		}
+		log.Printf(
+			"[metadata] discover genre complete type=%s genreId=%d page=%d source=cache count=%d total=%d duration=%s",
+			normalizedType,
+			genreID,
+			page,
+			len(items),
+			cached.Total,
+			time.Since(start).Round(time.Millisecond),
+		)
 		return items, cached.Total, nil
 	}
 
+	tmdbStart := time.Now()
 	titles, total, err := s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
 	if err != nil {
 		return nil, 0, err
 	}
+	log.Printf(
+		"[metadata] discover genre tmdb fetch type=%s genreId=%d page=%d count=%d total=%d duration=%s",
+		normalizedType,
+		genreID,
+		page,
+		len(titles),
+		total,
+		time.Since(tmdbStart).Round(time.Millisecond),
+	)
 
 	// Cache the raw page
 	if err := s.cache.set(cacheID, discoverCache{Items: titles, Total: total}); err != nil {
@@ -4204,6 +4224,15 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 	}
 
 	log.Printf("[metadata] discover genre success type=%s genreId=%d page=%d count=%d total=%d", normalizedType, genreID, page, len(items), total)
+	log.Printf(
+		"[metadata] discover genre complete type=%s genreId=%d page=%d source=tmdb count=%d total=%d duration=%s",
+		normalizedType,
+		genreID,
+		page,
+		len(items),
+		total,
+		time.Since(start).Round(time.Millisecond),
+	)
 	return items, total, nil
 }
 
@@ -6634,4 +6663,721 @@ func (s *Service) ServePrequeuedTrailer(id string, w http.ResponseWriter, r *htt
 		return fmt.Errorf("trailer prequeue manager not initialized")
 	}
 	return s.trailerPrequeue.ServeTrailer(id, w, r)
+}
+
+// topTenMovieGenres are the TMDB movie genre IDs sampled for cross-list scoring.
+var topTenMovieGenres = []int64{28, 18, 35, 53, 878} // Action, Drama, Comedy, Thriller, Sci-Fi
+
+// topTenTVGenres are the TMDB TV genre IDs sampled for cross-list scoring.
+var topTenTVGenres = []int64{18, 35, 80, 10759, 10765} // Drama, Comedy, Crime, Action&Adventure, Sci-Fi&Fantasy
+
+// topTenNetworkLists are the MDBList URLs for streaming network top-10 lists.
+// These mirror the hardcoded network sources shown on the frontend lists page.
+var topTenNetworkLists = []struct {
+	name string
+	url  string
+}{
+	{"netflix-movies", "https://mdblist.com/lists/snoak/netflix-top-10-movies/json"},
+	{"netflix-shows", "https://mdblist.com/lists/snoak/netflix-top-10-shows/json"},
+	{"disney-movies", "https://mdblist.com/lists/snoak/disney-plus-top-10-movies/json"},
+	{"disney-shows", "https://mdblist.com/lists/snoak/disney-plus-top-10-tv-shows/json"},
+	{"amazon-movies", "https://mdblist.com/lists/snoak/amazon-prime-top-10-movies/json"},
+	{"amazon-shows", "https://mdblist.com/lists/snoak/amazon-prime-top-10-tv-shows/json"},
+	{"appletv-movies", "https://mdblist.com/lists/snoak/apple-tv-top-10-movies/json"},
+	{"appletv-shows", "https://mdblist.com/lists/snoak/apple-tv-top-10-tv-shows/json"},
+	{"paramount-movies", "https://mdblist.com/lists/snoak/paramount-plus-top-10-movies/json"},
+	{"paramount-shows", "https://mdblist.com/lists/snoak/paramount-plus-top-10-tv-shows/json"},
+	{"hbo-movies", "https://mdblist.com/lists/snoak/hbo-top-10-movies-2/json"},
+	{"hbo-shows", "https://mdblist.com/lists/snoak/hbo-top-10-tv-shows/json"},
+	{"hulu-movies", "https://mdblist.com/lists/snoak/top-hulu-movies/json"},
+	{"hulu-shows", "https://mdblist.com/lists/snoak/top-tv-shows-hulu/json"},
+}
+
+// topTenSource groups a fetched item list with its source weight.
+type topTenSource struct {
+	name   string
+	items  []models.TrendingItem
+	weight float64
+}
+
+type topTenDebugEntry struct {
+	Name                string
+	MediaType           string
+	Year                int
+	ListCount           int
+	SourceNames         []string
+	ProviderListCount   int
+	BaseScore           float64
+	YearMultiplier      float64
+	DiversityMultiplier float64
+	TodayMultiplier     float64
+	FinalScore          float64
+}
+
+type TopTenDebugEntry struct {
+	Name                string   `json:"name"`
+	MediaType           string   `json:"mediaType"`
+	Year                int      `json:"year"`
+	ListCount           int      `json:"listCount"`
+	SourceNames         []string `json:"sourceNames"`
+	ProviderListCount   int      `json:"providerListCount"`
+	BaseScore           float64  `json:"baseScore"`
+	YearMultiplier      float64  `json:"yearMultiplier"`
+	DiversityMultiplier float64  `json:"diversityMultiplier"`
+	TodayMultiplier     float64  `json:"todayMultiplier"`
+	FinalScore          float64  `json:"finalScore"`
+}
+
+// GetTopTen aggregates content from trending lists, all streaming network lists,
+// and TMDB genre discovery, then scores each unique item by cross-list frequency,
+// rank, and "today" recency signals. It returns the top 10 results.
+//
+// mediaType: "all" (default), "movie", or "tv"
+// customListURLs: optional additional MDBList /json URLs (e.g. from user settings)
+func (s *Service) GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error) {
+	items, _, err := s.getTopTen(ctx, mediaType, customListURLs)
+	return items, err
+}
+
+func (s *Service) GetTopTenDebug(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
+	return s.getTopTen(ctx, mediaType, customListURLs)
+}
+
+func (s *Service) getTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
+	normalized := strings.ToLower(strings.TrimSpace(mediaType))
+	switch normalized {
+	case "movie", "movies":
+		normalized = "movie"
+	case "tv", "series", "show", "shows":
+		normalized = "tv"
+	default:
+		normalized = "all"
+	}
+
+	var (
+		mu      sync.Mutex
+		sources []topTenSource
+		wg      sync.WaitGroup
+	)
+
+	const (
+		topTenLimit               = 10
+		topTenPreliminaryLimit    = 40
+		topTenTrendingWeight      = 0.75
+		topTenNetworkWeight       = 5.0
+		topTenCustomWeight        = 4.0
+		topTenGenreDiscoverWeight = 1.5
+	)
+
+	add := func(name string, weight float64, fn func() ([]models.TrendingItem, error)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			items, err := fn()
+			if err != nil {
+				log.Printf("[topten] source %q skipped: %v", name, err)
+				return
+			}
+			if len(items) == 0 {
+				return
+			}
+			mu.Lock()
+			sources = append(sources, topTenSource{name: name, items: items, weight: weight})
+			mu.Unlock()
+		}()
+	}
+
+	// Trending is only a fallback signal here. Daily provider charts should dominate
+	// the ranking so the result feels distinct from generic "trending".
+	if normalized == "all" || normalized == "movie" {
+		add("trending-movies", topTenTrendingWeight, func() ([]models.TrendingItem, error) {
+			return s.Trending(ctx, "movie")
+		})
+	}
+	if normalized == "all" || normalized == "tv" {
+		add("trending-tv", topTenTrendingWeight, func() ([]models.TrendingItem, error) {
+			return s.Trending(ctx, "tv")
+		})
+	}
+
+	// Streaming network top-10 lists are the most direct "today" signal.
+	for _, nl := range topTenNetworkLists {
+		nl := nl
+		isTV := strings.HasSuffix(nl.name, "-shows")
+		isMovie := strings.HasSuffix(nl.name, "-movies")
+		if (normalized == "tv" && isMovie) || (normalized == "movie" && isTV) {
+			continue
+		}
+		add(nl.name, topTenNetworkWeight, func() ([]models.TrendingItem, error) {
+			items, _, _, err := s.GetCustomList(ctx, nl.url, CustomListOptions{Limit: 10})
+			return items, err
+		})
+	}
+
+	// Additional caller-provided MDBList URLs carry similar "what's hot now" value.
+	for _, u := range customListURLs {
+		u := u
+		add("mdblist:"+u, topTenCustomWeight, func() ([]models.TrendingItem, error) {
+			items, _, _, err := s.GetCustomList(ctx, u, CustomListOptions{Limit: 10})
+			return items, err
+		})
+	}
+
+	// Genre discovery is a low-weight recall source. It broadens the candidate pool
+	// so fresh releases that have not yet saturated cross-list charts still have a path in.
+	if normalized == "all" || normalized == "movie" {
+		for _, genreID := range topTenMovieGenres {
+			genreID := genreID
+			add(fmt.Sprintf("genre-movie-%d", genreID), topTenGenreDiscoverWeight, func() ([]models.TrendingItem, error) {
+				items, _, err := s.DiscoverByGenre(ctx, "movie", genreID, 20, 0)
+				return items, err
+			})
+		}
+	}
+	if normalized == "all" || normalized == "tv" {
+		for _, genreID := range topTenTVGenres {
+			genreID := genreID
+			add(fmt.Sprintf("genre-tv-%d", genreID), topTenGenreDiscoverWeight, func() ([]models.TrendingItem, error) {
+				items, _, err := s.DiscoverByGenre(ctx, "tv", genreID, 20, 0)
+				return items, err
+			})
+		}
+	}
+
+	wg.Wait()
+
+	log.Printf("[topten] aggregating from %d sources (mediaType=%s)", len(sources), normalized)
+	results, debugEntries := aggregateTopTenWithDebug(sources, topTenPreliminaryLimit)
+	todayMultipliers := s.applyTopTenTodayBoosts(ctx, results, normalized)
+	if normalized == "tv" || normalized == "all" {
+		applyTopTenTVProviderGate(results, debugEntries)
+	}
+	if normalized == "all" {
+		applyTopTenCrossMediaBalance(results, debugEntries)
+	}
+	s.logTopTenDebug(results, debugEntries, todayMultipliers)
+	debugList := make([]TopTenDebugEntry, 0, len(results))
+	for _, item := range results {
+		key := topTenCandidateKey(item.Title)
+		entry, ok := debugEntries[key]
+		if !ok {
+			continue
+		}
+		if multiplier, ok := todayMultipliers[key]; ok && multiplier > 0 {
+			entry.TodayMultiplier = multiplier
+		}
+		entry.FinalScore = item.Title.Popularity
+		debugList = append(debugList, TopTenDebugEntry{
+			Name:                entry.Name,
+			MediaType:           entry.MediaType,
+			Year:                entry.Year,
+			ListCount:           entry.ListCount,
+			SourceNames:         append([]string(nil), entry.SourceNames...),
+			ProviderListCount:   entry.ProviderListCount,
+			BaseScore:           entry.BaseScore,
+			YearMultiplier:      entry.YearMultiplier,
+			DiversityMultiplier: entry.DiversityMultiplier,
+			TodayMultiplier:     entry.TodayMultiplier,
+			FinalScore:          entry.FinalScore,
+		})
+	}
+	if len(results) > topTenLimit {
+		results = results[:topTenLimit]
+		debugList = debugList[:topTenLimit]
+	}
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	log.Printf("[topten] returning %d items", len(results))
+	return results, debugList, nil
+}
+
+// aggregateTopTen scores and deduplicates items across all sources, returning
+// the top `limit` items by cross-list frequency and weighted rank score.
+func aggregateTopTen(sources []topTenSource, limit int) []models.TrendingItem {
+	results, _ := aggregateTopTenWithDebug(sources, limit)
+	return results
+}
+
+func aggregateTopTenWithDebug(sources []topTenSource, limit int) ([]models.TrendingItem, map[string]topTenDebugEntry) {
+	type candidate struct {
+		best      models.TrendingItem
+		score     float64
+		listCount int
+		sourceSet map[string]struct{}
+	}
+
+	candidates := make(map[string]*candidate)
+
+	// Prefer the item with more metadata fields populated.
+	richer := func(a, b models.TrendingItem) models.TrendingItem {
+		score := func(t models.Title) int {
+			n := 0
+			if t.IMDBID != "" {
+				n++
+			}
+			if t.TMDBID > 0 {
+				n++
+			}
+			if t.TVDBID > 0 {
+				n++
+			}
+			if t.Poster != nil {
+				n++
+			}
+			if t.Backdrop != nil {
+				n++
+			}
+			if t.Overview != "" {
+				n++
+			}
+			return n
+		}
+		if score(b.Title) > score(a.Title) {
+			return b
+		}
+		return a
+	}
+
+	for _, src := range sources {
+		for i, item := range src.items {
+			rank := i + 1
+			// Log2-based scoring compresses rank differences so lower-ranked items
+			// on authoritative lists aren't brutally penalised vs rank-1 items on
+			// smaller lists. rank 1 = 100, rank 2 = 63, rank 10 = 29, rank 50 = 17.
+			rankScore := src.weight * (100.0 / math.Log2(float64(rank)+1))
+			key := topTenCandidateKey(item.Title)
+			if c, ok := candidates[key]; ok {
+				c.score += rankScore
+				c.listCount++
+				c.sourceSet[src.name] = struct{}{}
+				c.best = richer(c.best, item)
+			} else {
+				candidates[key] = &candidate{
+					best:      item,
+					score:     rankScore,
+					listCount: 1,
+					sourceSet: map[string]struct{}{src.name: {}},
+				}
+			}
+		}
+	}
+
+	// Apply cross-list bonus: each additional list adds +30% to total score.
+	// Apply a light year-based recency multiplier. Stronger "today" recency is
+	// layered in a second pass with actual episode/release timing data.
+	currentYear := time.Now().Year()
+	results := make([]models.TrendingItem, 0, len(candidates))
+	debugEntries := make(map[string]topTenDebugEntry, len(candidates))
+	for _, c := range candidates {
+		bonus := 1.0 + 0.3*float64(c.listCount-1)
+		item := c.best
+		score := c.score * bonus
+		// Recency boost: newer releases score higher to surface fresh content.
+		yearDiff := currentYear - item.Title.Year
+		yearMultiplier := 1.0
+		switch {
+		case yearDiff <= 0: // current year
+			yearMultiplier = 1.5
+		case yearDiff == 1: // last year
+			yearMultiplier = 1.25
+		case yearDiff == 2: // two years ago
+			yearMultiplier = 1.1
+		}
+		score *= yearMultiplier
+		diversityMultiplier := topTenSourceDiversityMultiplier(item.Title, c.listCount)
+		score *= diversityMultiplier
+		item.Title.Popularity = score
+		results = append(results, item)
+		sourceNames := make([]string, 0, len(c.sourceSet))
+		providerListCount := 0
+		for name := range c.sourceSet {
+			sourceNames = append(sourceNames, name)
+			if isTopTenProviderSource(name) {
+				providerListCount++
+			}
+		}
+		sort.Strings(sourceNames)
+		key := topTenCandidateKey(item.Title)
+		debugEntries[key] = topTenDebugEntry{
+			Name:                item.Title.Name,
+			MediaType:           item.Title.MediaType,
+			Year:                item.Title.Year,
+			ListCount:           c.listCount,
+			SourceNames:         sourceNames,
+			ProviderListCount:   providerListCount,
+			BaseScore:           score,
+			YearMultiplier:      yearMultiplier,
+			DiversityMultiplier: diversityMultiplier,
+			TodayMultiplier:     1.0,
+			FinalScore:          score,
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Title.Popularity > results[j].Title.Popularity
+	})
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	for i := range results {
+		results[i].Rank = i + 1
+	}
+	return results, debugEntries
+}
+
+func (s *Service) applyTopTenTodayBoosts(ctx context.Context, items []models.TrendingItem, normalized string) map[string]float64 {
+	now := time.Now()
+	todayMultipliers := make(map[string]float64, len(items))
+	for i := range items {
+		multiplier := topTenMovieReleaseMultiplier(items[i].Title, now)
+		items[i].Title.Popularity *= multiplier
+		todayMultipliers[topTenCandidateKey(items[i].Title)] = multiplier
+	}
+
+	if normalized == "movie" {
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Title.Popularity > items[j].Title.Popularity
+		})
+		return todayMultipliers
+	}
+
+	type tvBoost struct {
+		index      int
+		multiplier float64
+	}
+
+	tvIndexes := make([]int, 0, len(items))
+	for i := range items {
+		if isTopTenTVTitle(items[i].Title) {
+			tvIndexes = append(tvIndexes, i)
+		}
+	}
+	if len(tvIndexes) == 0 {
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Title.Popularity > items[j].Title.Popularity
+		})
+		return todayMultipliers
+	}
+
+	boostCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	const maxConcurrent = 4
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	boosts := make(chan tvBoost, len(tvIndexes))
+
+	for _, idx := range tvIndexes {
+		idx := idx
+		title := items[idx].Title
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			details, err := s.SeriesDetailsLite(boostCtx, models.SeriesDetailsQuery{
+				Name:   title.Name,
+				Year:   title.Year,
+				TVDBID: title.TVDBID,
+				TMDBID: title.TMDBID,
+				IMDBID: title.IMDBID,
+			})
+			if err != nil || details == nil {
+				return
+			}
+			boosts <- tvBoost{index: idx, multiplier: topTenTVEpisodeRecencyMultiplier(*details, now)}
+		}()
+	}
+
+	wg.Wait()
+	close(boosts)
+
+	for boost := range boosts {
+		if boost.multiplier > 1.0 {
+			items[boost.index].Title.Popularity *= boost.multiplier
+			key := topTenCandidateKey(items[boost.index].Title)
+			todayMultipliers[key] *= boost.multiplier
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Title.Popularity > items[j].Title.Popularity
+	})
+	return todayMultipliers
+}
+
+func (s *Service) logTopTenDebug(items []models.TrendingItem, debugEntries map[string]topTenDebugEntry, todayMultipliers map[string]float64) {
+	limit := len(items)
+	if limit > 15 {
+		limit = 15
+	}
+	for i := 0; i < limit; i++ {
+		item := items[i]
+		key := topTenCandidateKey(item.Title)
+		entry, ok := debugEntries[key]
+		if !ok {
+			log.Printf("[topten] rank=%d name=%q final=%.2f sources=unknown", i+1, item.Title.Name, item.Title.Popularity)
+			continue
+		}
+		if multiplier, ok := todayMultipliers[key]; ok && multiplier > 0 {
+			entry.TodayMultiplier = multiplier
+		}
+		entry.FinalScore = item.Title.Popularity
+		log.Printf(
+			"[topten] rank=%d name=%q type=%s year=%d lists=%d providerLists=%d base=%.2f yearMult=%.2f diversityMult=%.2f todayMult=%.2f final=%.2f sources=%s",
+			i+1,
+			entry.Name,
+			entry.MediaType,
+			entry.Year,
+			entry.ListCount,
+			entry.ProviderListCount,
+			entry.BaseScore,
+			entry.YearMultiplier,
+			entry.DiversityMultiplier,
+			entry.TodayMultiplier,
+			entry.FinalScore,
+			strings.Join(entry.SourceNames, ","),
+		)
+	}
+}
+
+func applyTopTenTVProviderGate(items []models.TrendingItem, debugEntries map[string]topTenDebugEntry) {
+	for i := range items {
+		entry := items[i]
+		if !isTopTenTVTitle(entry.Title) {
+			continue
+		}
+		debugEntry, ok := debugEntries[topTenCandidateKey(entry.Title)]
+		if !ok {
+			continue
+		}
+		providerCount := debugEntry.ProviderListCount
+		hasTrendingOnly := debugEntry.ListCount > providerCount
+		if providerCount == 0 {
+			items[i].Title.Popularity *= 0.35
+			continue
+		}
+		if providerCount == 1 && hasTrendingOnly {
+			items[i].Title.Popularity *= 0.9
+		}
+		if providerCount >= 2 && hasTrendingOnly && debugEntry.Year <= time.Now().Year()-10 {
+			items[i].Title.Popularity *= 0.6
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Title.Popularity > items[j].Title.Popularity
+	})
+}
+
+func applyTopTenCrossMediaBalance(items []models.TrendingItem, debugEntries map[string]topTenDebugEntry) {
+	const tvOverallMultiplier = 1.18
+	for i := range items {
+		if !isTopTenTVTitle(items[i].Title) {
+			continue
+		}
+		items[i].Title.Popularity *= tvOverallMultiplier
+		if entry, ok := debugEntries[topTenCandidateKey(items[i].Title)]; ok {
+			entry.FinalScore = items[i].Title.Popularity
+			debugEntries[topTenCandidateKey(items[i].Title)] = entry
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Title.Popularity > items[j].Title.Popularity
+	})
+}
+
+func topTenCandidateKey(t models.Title) string {
+	if t.IMDBID != "" {
+		return "imdb:" + t.IMDBID
+	}
+	if t.TMDBID > 0 {
+		return fmt.Sprintf("tmdb:%s:%d", t.MediaType, t.TMDBID)
+	}
+	return fmt.Sprintf("name:%s:%d:%s", strings.ToLower(strings.TrimSpace(t.Name)), t.Year, t.MediaType)
+}
+
+func isTopTenProviderSource(name string) bool {
+	return strings.HasSuffix(name, "-shows") || strings.HasSuffix(name, "-movies") || strings.HasPrefix(name, "mdblist:")
+}
+
+func isTopTenTVTitle(title models.Title) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(title.MediaType))
+	return mediaType == "series" || mediaType == "tv" || mediaType == "show" || mediaType == "shows"
+}
+
+func topTenMovieReleaseMultiplier(title models.Title, now time.Time) float64 {
+	if !strings.EqualFold(strings.TrimSpace(title.MediaType), "movie") {
+		return 1.0
+	}
+
+	candidates := make([]time.Time, 0, 4)
+	if title.HomeRelease != nil {
+		if d := parseTopTenDate(title.HomeRelease.Date); !d.IsZero() && !d.After(now) {
+			candidates = append(candidates, d)
+		}
+	}
+	if title.Theatrical != nil {
+		if d := parseTopTenDate(title.Theatrical.Date); !d.IsZero() && !d.After(now) {
+			candidates = append(candidates, d)
+		}
+	}
+	for _, release := range title.Releases {
+		if d := parseTopTenDate(release.Date); !d.IsZero() && !d.After(now) {
+			candidates = append(candidates, d)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return 1.0
+	}
+
+	latest := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.After(latest) {
+			latest = candidate
+		}
+	}
+
+	days := now.Sub(latest).Hours() / 24
+	switch {
+	case days <= 14:
+		return 1.3
+	case days <= 30:
+		return 1.18
+	case days <= 60:
+		return 1.08
+	default:
+		return 1.0
+	}
+}
+
+func topTenSourceDiversityMultiplier(title models.Title, listCount int) float64 {
+	if listCount >= 3 {
+		return 1.0
+	}
+
+	year := title.Year
+	if year <= 0 {
+		return 1.0
+	}
+
+	ageYears := time.Now().Year() - year
+	if ageYears <= 2 {
+		return 1.0
+	}
+
+	if isTopTenTVTitle(title) {
+		switch listCount {
+		case 1:
+			if ageYears >= 8 {
+				return 0.72
+			}
+			if ageYears >= 5 {
+				return 0.82
+			}
+		case 2:
+			if ageYears >= 8 {
+				return 0.88
+			}
+		}
+		return 1.0
+	}
+
+	if strings.EqualFold(strings.TrimSpace(title.MediaType), "movie") && listCount == 1 && ageYears >= 5 {
+		return 0.85
+	}
+
+	return 1.0
+}
+
+func topTenTVEpisodeRecencyMultiplier(details models.SeriesDetails, now time.Time) float64 {
+	latestPast, nearestFuture := topTenEpisodeWindows(details, now)
+	multiplier := 1.0
+
+	if !latestPast.IsZero() {
+		days := now.Sub(latestPast).Hours() / 24
+		switch {
+		case days <= 3:
+			multiplier *= 1.55
+		case days <= 7:
+			multiplier *= 1.4
+		case days <= 14:
+			multiplier *= 1.25
+		case days <= 30:
+			multiplier *= 1.12
+		}
+	}
+
+	if !nearestFuture.IsZero() {
+		days := nearestFuture.Sub(now).Hours() / 24
+		switch {
+		case days <= 3:
+			multiplier *= 1.08
+		case days <= 7:
+			multiplier *= 1.04
+		}
+	}
+
+	if multiplier == 1.0 && strings.EqualFold(strings.TrimSpace(details.Title.Status), "Continuing") {
+		multiplier = 1.03
+	}
+
+	return multiplier
+}
+
+func topTenEpisodeWindows(details models.SeriesDetails, now time.Time) (time.Time, time.Time) {
+	var latestPast time.Time
+	var nearestFuture time.Time
+
+	for _, season := range details.Seasons {
+		for _, episode := range season.Episodes {
+			airTime := parseTopTenEpisodeTime(episode)
+			if airTime.IsZero() {
+				continue
+			}
+			if airTime.After(now) {
+				if nearestFuture.IsZero() || airTime.Before(nearestFuture) {
+					nearestFuture = airTime
+				}
+				continue
+			}
+			if latestPast.IsZero() || airTime.After(latestPast) {
+				latestPast = airTime
+			}
+		}
+	}
+
+	return latestPast, nearestFuture
+}
+
+func parseTopTenEpisodeTime(episode models.SeriesEpisode) time.Time {
+	if ts := strings.TrimSpace(episode.AiredDateTimeUTC); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			return parsed
+		}
+	}
+	return parseTopTenDate(strings.TrimSpace(episode.AiredDate))
+}
+
+func parseTopTenDate(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }

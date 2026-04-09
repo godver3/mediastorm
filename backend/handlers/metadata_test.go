@@ -230,6 +230,10 @@ func (f *fakeMetadataService) GetTextPosterURL(_ string, _ int64, _ int64) strin
 	return ""
 }
 
+func (f *fakeMetadataService) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
+	return f.trendingResp, f.trendingErr
+}
+
 // fakeUsersServiceForSearch implements usersServiceInterface for search handler tests.
 type fakeUsersServiceForSearch struct {
 	users map[string]models.User
@@ -924,5 +928,56 @@ func TestMetadataHandler_BatchSeriesDetails_EmptyFields(t *testing.T) {
 	}
 	if len(result.Details.Seasons) != 1 {
 		t.Errorf("expected 1 season, got %d", len(result.Details.Seasons))
+	}
+}
+
+func TestMetadataHandler_TopTen(t *testing.T) {
+	items := []models.TrendingItem{
+		{Rank: 1, Title: models.Title{Name: "Inception", MediaType: "movie", IMDBID: "tt1375666", Popularity: 90}},
+		{Rank: 2, Title: models.Title{Name: "Breaking Bad", MediaType: "series", IMDBID: "tt0903747", Popularity: 85}},
+	}
+	fake := &fakeMetadataService{trendingResp: items}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/top-ten", nil)
+	rec := httptest.NewRecorder()
+
+	handler.TopTen(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp DiscoverNewResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Items))
+	}
+	if resp.Total != 2 {
+		t.Errorf("expected Total=2, got %d", resp.Total)
+	}
+}
+
+func TestMetadataHandler_TopTen_EmptyResult(t *testing.T) {
+	fake := &fakeMetadataService{trendingResp: nil}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/top-ten?type=movie", nil)
+	rec := httptest.NewRecorder()
+
+	handler.TopTen(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp DiscoverNewResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Items) != 0 {
+		t.Errorf("expected 0 items, got %d", len(resp.Items))
 	}
 }

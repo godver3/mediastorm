@@ -2341,6 +2341,7 @@ func (c *tmdbClient) searchByTitle(ctx context.Context, title string, year int, 
 
 // discoverByGenre fetches movies or TV shows for a given genre from TMDB discover API
 func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genreID int64, page int) ([]models.Title, int, error) {
+	start := time.Now()
 	if !c.isConfigured() {
 		return nil, 0, errors.New("tmdb api key not configured")
 	}
@@ -2377,6 +2378,15 @@ func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genr
 	if err := c.doGET(ctx, endpoint, &payload); err != nil {
 		return nil, 0, fmt.Errorf("tmdb discover genre for %s/%d failed: %w", apiMediaType, genreID, err)
 	}
+	log.Printf(
+		"[tmdb] discover genre fetched mediaType=%s genreId=%d page=%d results=%d total=%d duration=%s",
+		apiMediaType,
+		genreID,
+		page,
+		len(payload.Results),
+		payload.TotalResults,
+		time.Since(start).Round(time.Millisecond),
+	)
 
 	titles := make([]models.Title, 0, len(payload.Results))
 	for _, r := range payload.Results {

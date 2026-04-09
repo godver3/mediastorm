@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"novastream/config"
 	"novastream/models"
@@ -54,6 +55,12 @@ type metadataService interface {
 	GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating
 	// Poster helpers
 	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
+	// Top Ten aggregated ranking
+	GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error)
+}
+
+type topTenDebugService interface {
+	GetTopTenDebug(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []metadatapkg.TopTenDebugEntry, error)
 }
 
 var _ metadataService = (*metadatapkg.Service)(nil)
@@ -134,6 +141,12 @@ type DiscoverNewResponse struct {
 	Items           []models.TrendingItem `json:"items"`
 	Total           int                   `json:"total"`
 	UnfilteredTotal int                   `json:"unfilteredTotal,omitempty"` // Pre-filter total (only set when hideUnreleased is used)
+}
+
+type TopTenResponse struct {
+	Items []models.TrendingItem          `json:"items"`
+	Total int                            `json:"total"`
+	Debug []metadatapkg.TopTenDebugEntry `json:"debug,omitempty"`
 }
 
 func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
@@ -1343,6 +1356,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 
 // DiscoverByGenre returns TMDB discover results for a specific genre
 func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	genreIDStr := strings.TrimSpace(r.URL.Query().Get("genreId"))
 
@@ -1389,6 +1403,16 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 
 	// Enrich with MDBList ratings for sort-by-rating support
 	enrichTrendingRatings(items, h.Service)
+	log.Printf(
+		"[metadata] discover genre handler complete type=%s genreId=%d limit=%d offset=%d count=%d total=%d duration=%s",
+		mediaType,
+		genreID,
+		limit,
+		offset,
+		len(items),
+		total,
+		time.Since(start).Round(time.Millisecond),
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
@@ -1554,6 +1578,50 @@ func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(item)
+}
+
+// TopTen handles GET /api/discover/top-ten
+// Aggregates trending movies/TV, all enabled MDBList shelves, and TMDB genre
+// discovery to produce a cross-list scored top-10 ranking for today.
+//
+// Query params:
+//
+//	type: "all" (default), "movie", or "tv"
+func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
+	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	if mediaType == "" {
+		mediaType = "all"
+	}
+	debugMode := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("debug")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("debug")), "true")
+
+	w.Header().Set("X-TopTen-Handler", "metadata-handler-v1")
+	log.Printf("[topten] starting (mediaType=%s)", mediaType)
+	var (
+		items []models.TrendingItem
+		debug []metadatapkg.TopTenDebugEntry
+		err   error
+	)
+	if debugMode {
+		if svc, ok := h.Service.(topTenDebugService); ok {
+			items, debug, err = svc.GetTopTenDebug(r.Context(), mediaType, nil)
+		} else {
+			items, err = h.Service.GetTopTen(r.Context(), mediaType, nil)
+		}
+	} else {
+		items, err = h.Service.GetTopTen(r.Context(), mediaType, nil)
+	}
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	enrichTrendingRatings(items, h.Service)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(TopTenResponse{Items: items, Total: len(items), Debug: debug})
 }
 
 // GetProgress returns a snapshot of active metadata enrichment progress.
