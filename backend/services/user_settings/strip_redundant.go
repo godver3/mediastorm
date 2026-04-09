@@ -141,6 +141,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 		},
 		Display: models.DisplaySettings{
 			BadgeVisibility:                  g.Display.BadgeVisibility,
+			NavigationTabVisibility:          g.Display.NavigationTabVisibility,
 			WatchStateIconStyle:              g.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly),
 		},
@@ -245,6 +246,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	// Display
 	if eff.Display.BadgeVisibility == nil {
 		eff.Display.BadgeVisibility = g.Display.BadgeVisibility
+	}
+	if eff.Display.NavigationTabVisibility == nil {
+		eff.Display.NavigationTabVisibility = g.Display.NavigationTabVisibility
 	}
 	if eff.Display.WatchStateIconStyle == "" {
 		eff.Display.WatchStateIconStyle = g.Display.WatchStateIconStyle
@@ -383,6 +387,10 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 		d.BadgeVisibility = nil
 		changed = true
 	}
+	if d.NavigationTabVisibility != nil && stringSliceEqualUnordered(d.NavigationTabVisibility, g.NavigationTabVisibility) {
+		d.NavigationTabVisibility = nil
+		changed = true
+	}
 	if d.WatchStateIconStyle != "" && d.WatchStateIconStyle == g.WatchStateIconStyle {
 		d.WatchStateIconStyle = ""
 		changed = true
@@ -481,6 +489,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.BypassFilteringForAIOStreamsOnly != nil && eff.Display.BypassFilteringForAIOStreamsOnly != nil && *cs.BypassFilteringForAIOStreamsOnly == *eff.Display.BypassFilteringForAIOStreamsOnly {
 		cs.BypassFilteringForAIOStreamsOnly = nil
+		changed = true
+	}
+	if cs.NavigationTabVisibility != nil && stringSliceEqualUnordered(*cs.NavigationTabVisibility, eff.Display.NavigationTabVisibility) {
+		cs.NavigationTabVisibility = nil
 		changed = true
 	}
 

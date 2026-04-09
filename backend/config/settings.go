@@ -414,6 +414,9 @@ type DisplaySettings struct {
 	// BadgeVisibility controls which badges appear on media cards.
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
+	// NavigationTabVisibility controls which app navigation tabs are shown.
+	// Valid values: "home", "search", "lists", "live", "profiles", "downloads"
+	NavigationTabVisibility []string `json:"navigationTabVisibility,omitempty"`
 	// WatchStateIconStyle controls the color of watch state icons.
 	// "colored" (default) = green/yellow circles, "white" = all white circles
 	WatchStateIconStyle string `json:"watchStateIconStyle"`
@@ -815,6 +818,7 @@ func DefaultSettings() Settings {
 		},
 		Display: DisplaySettings{
 			BadgeVisibility:           []string{"watchProgress"},
+			NavigationTabVisibility:   []string{"home", "search", "lists", "live", "profiles", "downloads"},
 			WatchStateIconStyle:       "colored",
 			AlwaysShowProfileSelector: true,
 		},
@@ -1246,6 +1250,9 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill Display settings
 	if len(s.Display.BadgeVisibility) == 0 {
 		s.Display.BadgeVisibility = []string{"watchProgress"}
+	}
+	if len(s.Display.NavigationTabVisibility) == 0 {
+		s.Display.NavigationTabVisibility = []string{"home", "search", "lists", "live", "profiles", "downloads"}
 	}
 	if s.Display.WatchStateIconStyle == "" {
 		s.Display.WatchStateIconStyle = "colored"

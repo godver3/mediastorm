@@ -153,6 +153,9 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			DownloadPreferredTerms: globalSettings.Filtering.DownloadPreferredTerms,
 		},
 		Display: models.DisplaySettings{
+			BadgeVisibility:                  globalSettings.Display.BadgeVisibility,
+			NavigationTabVisibility:          globalSettings.Display.NavigationTabVisibility,
+			WatchStateIconStyle:              globalSettings.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
 			AppLanguage:                      globalSettings.Display.AppLanguage,
 		},

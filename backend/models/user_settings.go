@@ -80,6 +80,9 @@ type DisplaySettings struct {
 	// BadgeVisibility controls which badges appear on media cards.
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
+	// NavigationTabVisibility controls which navigation tabs are shown in the client UI.
+	// Valid values: "home", "search", "lists", "live", "profiles", "downloads"
+	NavigationTabVisibility []string `json:"navigationTabVisibility,omitempty"`
 	// WatchStateIconStyle controls the color of watch state icons.
 	// "colored" (default) = green/yellow circles, "white" = all white circles
 	WatchStateIconStyle string `json:"watchStateIconStyle,omitempty"`
@@ -365,8 +368,9 @@ func DefaultUserSettings() UserSettings {
 			SelectedCategories: []string{},
 		},
 		Display: DisplaySettings{
-			BadgeVisibility:     []string{"watchProgress"},
-			WatchStateIconStyle: "colored",
+			BadgeVisibility:         []string{"watchProgress"},
+			NavigationTabVisibility: []string{"home", "search", "lists", "live", "profiles", "downloads"},
+			WatchStateIconStyle:     "colored",
 		},
 		Network: NetworkSettings{
 			HomeWifiSSID:     "",

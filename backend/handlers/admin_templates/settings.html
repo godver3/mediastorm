@@ -1303,7 +1303,7 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
-    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly'];
+    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility'];
     const clientPlaybackFields = ['maxResultsPerResolution'];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
     // Map network field paths to client settings keys
@@ -4098,6 +4098,8 @@
                 if (fieldDef.hidden) return '';
                 // Skip global-only fields (like file uploads) when viewing profile/client settings
                 if (fieldDef.globalOnly && (selectedUserId || selectedClientId)) return '';
+                // When editing device settings, only show fields that support client overrides.
+                if (selectedClientId && !getClientSettingsKey(sectionKey + '.' + fieldKey)) return '';
                 // Filter by search: if we have a field filter Set, only show matching fields
                 // (null means section-level match, so show all fields)
                 if (filteredFields && sectionFieldFilter !== null && !sectionFieldFilter.has(fieldKey)) {
@@ -5025,7 +5027,7 @@
         let html = bannerHtml;
 
         // Sections that can be configured per-client (subset of perUserSections)
-        const clientSections = ['filtering', 'animeFiltering', 'network'];
+        const clientSections = ['filtering', 'animeFiltering', 'network', 'display'];
 
         let totalMatchingSections = 0;
 

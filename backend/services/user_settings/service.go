@@ -180,6 +180,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.BadgeVisibility == nil {
 			settings.Display.BadgeVisibility = defaults.Display.BadgeVisibility
 		}
+		if settings.Display.NavigationTabVisibility == nil {
+			settings.Display.NavigationTabVisibility = defaults.Display.NavigationTabVisibility
+		}
 		if settings.Display.WatchStateIconStyle == "" {
 			settings.Display.WatchStateIconStyle = defaults.Display.WatchStateIconStyle
 		}
@@ -312,6 +315,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 
 	// Check Display
 	if len(s.Display.BadgeVisibility) > 0 ||
+		len(s.Display.NavigationTabVisibility) > 0 ||
 		s.Display.WatchStateIconStyle != "" ||
 		s.Display.BypassFilteringForAIOStreamsOnly != nil ||
 		s.Display.AppLanguage != "" {
