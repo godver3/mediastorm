@@ -3428,9 +3428,8 @@ func populateAiredDateTimeUTC(details *models.SeriesDetails) {
 // continue-watching and other contexts that only need poster, backdrop, overview,
 // IDs, year and a basic episode list (season/episode numbers + air dates).
 // It skips: getTVDBSeriesDetails, season translations, localized episode names,
-// MDBList ratings, and all TMDB enrichment (credits, images, genres, content rating).
-// The result is written to the same file cache key as SeriesDetails so a subsequent
-// full-detail call for the same series will get a cache hit.
+// MDBList ratings, and non-artwork TMDB enrichment (credits, genres, content rating).
+// It uses a dedicated lite cache key so it can't overwrite the richer full-details cache.
 func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("tvdb client not configured")
@@ -3447,8 +3446,14 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	// Check the same file cache used by SeriesDetails
-	cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+	fullCacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+	var fullCached models.SeriesDetails
+	if ok, _ := s.cache.get(fullCacheID, &fullCached); ok && len(fullCached.Seasons) > 0 {
+		log.Printf("[metadata] series details lite full-cache hit tvdbId=%d seasons=%d", tvdbID, len(fullCached.Seasons))
+		return &fullCached, nil
+	}
+
+	cacheID := cacheKey("tvdb", "series", "details", "v7-lite", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details lite cache hit tvdbId=%d seasons=%d", tvdbID, len(cached.Seasons))
@@ -3731,6 +3736,42 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			details.Seasons = []models.SeriesSeason{*season1}
 		} else if len(details.Seasons) > 1 {
 			details.Seasons = details.Seasons[:1]
+		}
+	}
+
+	// Apply the same TMDB artwork enrichment used by the full details path so the
+	// shell can render clean hero art without waiting for the bundle request.
+	tmdbIDForEnrichment := seriesTitle.TMDBID
+	if tmdbIDForEnrichment == 0 && req.TMDBID > 0 {
+		tmdbIDForEnrichment = req.TMDBID
+		seriesTitle.TMDBID = req.TMDBID
+	}
+	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if images, err := s.cachedFetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
+			if images.Logo != nil {
+				seriesTitle.Logo = images.Logo
+			}
+			if images.TextPoster != nil {
+				seriesTitle.TextPoster = images.TextPoster
+			}
+			if images.TextlessPoster != nil {
+				if seriesTitle.TextPoster == nil {
+					seriesTitle.TextPoster = seriesTitle.Poster
+				}
+				seriesTitle.Poster = images.TextlessPoster
+			}
+			if images.TextBackdrop != nil {
+				seriesTitle.TextBackdrop = images.TextBackdrop
+			}
+			if images.TextlessBackdrop != nil {
+				if seriesTitle.TextBackdrop == nil {
+					seriesTitle.TextBackdrop = seriesTitle.Backdrop
+				}
+				seriesTitle.Backdrop = images.TextlessBackdrop
+			}
+			details.Title = seriesTitle
+		} else if err != nil {
+			log.Printf("[metadata] lite: failed to fetch images for series tmdbId=%d: %v", tmdbIDForEnrichment, err)
 		}
 	}
 
