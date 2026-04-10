@@ -75,9 +75,8 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/mediastorm .
 
-# Copy version file and stamp build ID with current date
+# Copy version file
 COPY backend/version.txt /app/version.txt
-RUN head -1 /app/version.txt > /tmp/ver && echo "$(date +%Y%m%d)" >> /tmp/ver && mv /tmp/ver /app/version.txt
 
 # Copy Python scripts to root (title parsing, subtitle search, credits detection)
 COPY backend/parse_title.py backend/parse_title_batch.py backend/search_subtitles.py backend/download_subtitle.py backend/detect_credits.py /
