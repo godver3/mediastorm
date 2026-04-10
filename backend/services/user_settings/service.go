@@ -287,10 +287,11 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Filtering.MaxSizeEpisodeGB != nil ||
 		s.Filtering.MaxResolution != "" ||
 		s.Filtering.HDRDVPolicy != "" ||
-		len(s.Filtering.FilterOutTerms) > 0 ||
-		len(s.Filtering.PreferredTerms) > 0 ||
-		len(s.Filtering.NonPreferredTerms) > 0 ||
-		len(s.Filtering.DownloadPreferredTerms) > 0 {
+		s.Filtering.RequiredTerms != nil ||
+		s.Filtering.FilterOutTerms != nil ||
+		s.Filtering.PreferredTerms != nil ||
+		s.Filtering.NonPreferredTerms != nil ||
+		s.Filtering.DownloadPreferredTerms != nil {
 		return false
 	}
 

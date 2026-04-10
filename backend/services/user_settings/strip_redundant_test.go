@@ -188,6 +188,49 @@ func TestStripProfilePointerFieldDiffers(t *testing.T) {
 	}
 }
 
+func TestStripProfileExplicitEmptyRequiredTermsOverridePreserved(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.Filtering.RequiredTerms = []string{"Multi"}
+
+	us := models.UserSettings{
+		Filtering: models.FilterSettings{
+			RequiredTerms: []string{},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	got, ok := svc.settings["user1"]
+	if !ok {
+		t.Fatal("expected explicit empty RequiredTerms override to be preserved")
+	}
+	if got.Filtering.RequiredTerms == nil {
+		t.Fatal("RequiredTerms should remain a non-nil empty slice")
+	}
+	if len(got.Filtering.RequiredTerms) != 0 {
+		t.Fatalf("RequiredTerms = %v, want empty slice", got.Filtering.RequiredTerms)
+	}
+}
+
+func TestStripProfileRequiredTermsMatchingGlobalStripped(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.Filtering.RequiredTerms = []string{"Multi", "French"}
+
+	us := models.UserSettings{
+		Filtering: models.FilterSettings{
+			RequiredTerms: []string{"French", "Multi"},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	if _, ok := svc.settings["user1"]; ok {
+		t.Fatal("expected matching RequiredTerms override to be stripped and entry removed")
+	}
+}
+
 func TestStripProfileUnorderedSliceSameItems(t *testing.T) {
 	svc := tempService(t)
 	g := globalDefaults()
@@ -585,7 +628,7 @@ func TestStripClientAnimeFiltering(t *testing.T) {
 	clientsSvc := &mockClientSettingsBatch{
 		settings: map[string]models.ClientFilterSettings{
 			"client1": {
-				AnimeLanguageEnabled:   models.BoolPtr(true),  // Matches global
+				AnimeLanguageEnabled:   models.BoolPtr(true),    // Matches global
 				AnimePreferredLanguage: models.StringPtr("jpn"), // Matches global
 			},
 		},

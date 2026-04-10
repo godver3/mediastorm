@@ -1386,8 +1386,8 @@
             const globalVal = getGlobalValue(path);
 
             // If value matches global (after normalization), delete instead of set
-            const normValue = normalizeForComparison(value);
-            const normGlobal = normalizeForComparison(globalVal);
+            const normValue = normalizeForComparisonForField(topKey, keys[keys.length - 1], value);
+            const normGlobal = normalizeForComparisonForField(topKey, keys[keys.length - 1], globalVal);
             if (deepEqual(normValue, normGlobal)) {
                 // Value matches global - remove from userSettings to inherit
                 let obj = userSettings;
@@ -1483,12 +1483,28 @@
         return true;
     }
 
-    // Normalize empty values for comparison (treat undefined, null, [], "" as equivalent "empty")
-    function normalizeForComparison(val) {
+    function isExplicitEmptyArrayOverride(section, key) {
+        return section === 'filtering' && [
+            'requiredTerms',
+            'filterOutTerms',
+            'preferredTerms',
+            'nonPreferredTerms',
+            'downloadPreferredTerms',
+        ].includes(key);
+    }
+
+    function normalizeForComparisonForField(section, key, val) {
         if (val === undefined || val === null) return null;
-        if (Array.isArray(val) && val.length === 0) return null;
+        if (Array.isArray(val) && val.length === 0) {
+            return isExplicitEmptyArrayOverride(section, key) ? [] : null;
+        }
         if (typeof val === 'string' && val.trim() === '') return null;
         return val;
+    }
+
+    // Normalize empty values for comparison (treat undefined, null, [], "" as equivalent "empty")
+    function normalizeForComparison(val) {
+        return normalizeForComparisonForField('', '', val);
     }
 
     // Check if profile value is different from global (actual override)
@@ -1508,10 +1524,10 @@
         const globalVal = getGlobalValue(path);
 
         // Normalize and compare - treat empty arrays/strings/null/undefined as equivalent
-        const normProfile = normalizeForComparison(profileVal);
+        const normProfile = normalizeForComparisonForField(keys[0], keys[keys.length - 1], profileVal);
         // If profile value is null (empty/inherit), it's not an override
         if (normProfile === null) return false;
-        const normGlobal = normalizeForComparison(globalVal);
+        const normGlobal = normalizeForComparisonForField(keys[0], keys[keys.length - 1], globalVal);
 
         return !deepEqual(normProfile, normGlobal);
     }
@@ -2366,8 +2382,8 @@
             for (const [key, value] of Object.entries(userSettings[section])) {
                 const globalValue = globalSection[key];
                 // Normalize before comparing - treat empty strings/arrays as "inherit from global"
-                const normValue = normalizeForComparison(value);
-                const normGlobal = normalizeForComparison(globalValue);
+                const normValue = normalizeForComparisonForField(section, key, value);
+                const normGlobal = normalizeForComparisonForField(section, key, globalValue);
                 // If profile value normalizes to null, it means "inherit" - don't store it
                 if (normValue === null) {
                     console.log('stripInheritedValues: skipping null value', section, key, value);

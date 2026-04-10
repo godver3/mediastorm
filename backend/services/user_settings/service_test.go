@@ -231,6 +231,70 @@ func TestIsSettingsEmpty_WithDisplayAppLanguage(t *testing.T) {
 	}
 }
 
+func TestIsSettingsEmpty_WithExplicitEmptyRequiredTerms(t *testing.T) {
+	s := models.UserSettings{
+		Filtering: models.FilterSettings{
+			RequiredTerms: []string{},
+		},
+	}
+	if isSettingsEmpty(s) {
+		t.Error("settings with explicit empty RequiredTerms should NOT be empty")
+	}
+}
+
+func TestUpdate_PreservesExplicitEmptyRequiredTermsOverride(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	settings := models.UserSettings{
+		Filtering: models.FilterSettings{
+			RequiredTerms: []string{},
+		},
+	}
+
+	if err := svc.Update("profile-1", settings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	reloaded, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService reload: %v", err)
+	}
+
+	got, err := reloaded.Get("profile-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected saved settings, got nil")
+	}
+	if got.Filtering.RequiredTerms == nil {
+		t.Fatal("RequiredTerms should remain a non-nil empty slice")
+	}
+	if len(got.Filtering.RequiredTerms) != 0 {
+		t.Fatalf("RequiredTerms = %v, want empty slice", got.Filtering.RequiredTerms)
+	}
+
+	defaults := models.UserSettings{
+		Filtering: models.FilterSettings{
+			RequiredTerms: []string{"Multi"},
+		},
+	}
+	merged, err := reloaded.GetWithDefaults("profile-1", defaults)
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+	if merged.Filtering.RequiredTerms == nil {
+		t.Fatal("merged RequiredTerms should remain a non-nil empty slice")
+	}
+	if len(merged.Filtering.RequiredTerms) != 0 {
+		t.Fatalf("merged RequiredTerms = %v, want explicit empty override", merged.Filtering.RequiredTerms)
+	}
+}
+
 func TestUpdate_PreservesIPTVFields(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

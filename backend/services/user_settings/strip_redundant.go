@@ -130,6 +130,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			MaxSizeEpisodeGB:       models.FloatPtr(g.Filtering.MaxSizeEpisodeGB),
 			MaxResolution:          g.Filtering.MaxResolution,
 			HDRDVPolicy:            models.HDRDVPolicy(g.Filtering.HDRDVPolicy),
+			RequiredTerms:          g.Filtering.RequiredTerms,
 			FilterOutTerms:         g.Filtering.FilterOutTerms,
 			PreferredTerms:         g.Filtering.PreferredTerms,
 			NonPreferredTerms:      g.Filtering.NonPreferredTerms,
@@ -218,6 +219,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Filtering.HDRDVPolicy == "" {
 		eff.Filtering.HDRDVPolicy = models.HDRDVPolicy(g.Filtering.HDRDVPolicy)
+	}
+	if eff.Filtering.RequiredTerms == nil {
+		eff.Filtering.RequiredTerms = g.Filtering.RequiredTerms
 	}
 	if eff.Filtering.FilterOutTerms == nil {
 		eff.Filtering.FilterOutTerms = g.Filtering.FilterOutTerms
@@ -351,6 +355,10 @@ func stripFiltering(f *models.FilterSettings, g config.FilterSettings) bool {
 		f.HDRDVPolicy = ""
 		changed = true
 	}
+	if f.RequiredTerms != nil && stringSliceEqualUnordered(f.RequiredTerms, g.RequiredTerms) {
+		f.RequiredTerms = nil
+		changed = true
+	}
 	if f.FilterOutTerms != nil && stringSliceEqualUnordered(f.FilterOutTerms, g.FilterOutTerms) {
 		f.FilterOutTerms = nil
 		changed = true
@@ -469,6 +477,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.HDRDVPolicy != nil && string(*cs.HDRDVPolicy) == string(eff.Filtering.HDRDVPolicy) {
 		cs.HDRDVPolicy = nil
+		changed = true
+	}
+	if cs.RequiredTerms != nil && stringSliceEqualUnordered(*cs.RequiredTerms, eff.Filtering.RequiredTerms) {
+		cs.RequiredTerms = nil
 		changed = true
 	}
 	if cs.FilterOutTerms != nil && stringSliceEqualUnordered(*cs.FilterOutTerms, eff.Filtering.FilterOutTerms) {
