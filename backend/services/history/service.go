@@ -1455,6 +1455,7 @@ func (s *Service) findNextUnwatchedEpisode(
 				Overview:       ep.details.Overview,
 				RuntimeMinutes: ep.details.Runtime,
 				AirDate:        ep.details.AiredDate,
+				Image:          ep.details.Image,
 			}
 			if ep.details.AiredDate != "" {
 				utc := calendar.ParseAirDateTime(ep.details.AiredDate, seriesDetails.Title.AirsTime, seriesDetails.Title.AirsTimezone)
@@ -1522,6 +1523,9 @@ func (s *Service) enrichEpisodeFromMetadata(episodeRef *models.EpisodeReference,
 					episodeRef.Overview = episode.Overview
 					episodeRef.AirDate = episode.AiredDate
 					episodeRef.RuntimeMinutes = episode.Runtime
+					if episodeRef.Image == nil && episode.Image != nil {
+						episodeRef.Image = episode.Image
+					}
 					if episode.TVDBID > 0 {
 						episodeRef.TvdbID = fmt.Sprintf("%d", episode.TVDBID)
 					}
@@ -1756,6 +1760,9 @@ func enrichEpisodeFromMetadata(ref *models.EpisodeReference, details *models.Ser
 				}
 				if ref.AirDate == "" {
 					ref.AirDate = ep.AiredDate
+				}
+				if ref.Image == nil && ep.Image != nil {
+					ref.Image = ep.Image
 				}
 				if ref.EpisodeID == "" {
 					ref.EpisodeID = ep.ID
