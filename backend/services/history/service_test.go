@@ -2552,6 +2552,140 @@ func TestEpisodeState_UnreleasedEpisodeFallback(t *testing.T) {
 	t.Fatal("Future Show not found in continue watching — unreleased fallback should prevent exclusion")
 }
 
+func TestEpisodeState_FarFutureEpisodeExcludedFromContinueWatching(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:77778"
+	userID := "user-far-future"
+
+	futureDate := time.Now().AddDate(0, 5, 0).Format("2006-01-02")
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "Far Future Show",
+				TVDBID: 77778,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2025-01-01"},
+					{ID: "ep-2", Name: "Ep 2", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: futureDate},
+				},
+			}},
+		},
+	})
+
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s01e01",
+		Name:          "Ep 1",
+		Watched:       &watched,
+		WatchedAt:     time.Now().UTC(),
+		SeriesID:      seriesID,
+		SeriesName:    "Far Future Show",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "Far Future Show" {
+			t.Fatalf("expected Far Future Show to be excluded from continue watching, got %+v", item.NextEpisode)
+		}
+	}
+}
+
+func TestEpisodeState_UndatedPlaceholderSeasonExcludedFromContinueWatching(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:415089"
+	userID := "user-placeholder-season"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "The Ark",
+				TVDBID: 415089,
+			},
+			Seasons: []models.SeriesSeason{
+				{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "s1e1", Name: "Ep 1", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2023-01-01"},
+					},
+				},
+				{
+					Number: 2,
+					Episodes: []models.SeriesEpisode{
+						{ID: "s2e1", Name: "Ep 1", SeasonNumber: 2, EpisodeNumber: 1, AiredDate: "2024-01-01"},
+						{ID: "s2e2", Name: "Ep 2", SeasonNumber: 2, EpisodeNumber: 2, AiredDate: "2024-01-08"},
+					},
+				},
+				{
+					Number: 3,
+					Episodes: []models.SeriesEpisode{
+						{ID: "s3e1", Name: "It All Happened So Fast", SeasonNumber: 3, EpisodeNumber: 1},
+						{ID: "s3e2", Name: "The Lucky Ones", SeasonNumber: 3, EpisodeNumber: 2},
+					},
+				},
+			},
+		},
+	})
+
+	watched := true
+	for _, ep := range []struct {
+		season int
+		number int
+		name   string
+	}{
+		{1, 1, "Ep 1"},
+		{2, 1, "Ep 1"},
+		{2, 2, "Ep 2"},
+	} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        fmt.Sprintf("%s:s%02de%02d", seriesID, ep.season, ep.number),
+			Name:          ep.name,
+			Watched:       &watched,
+			WatchedAt:     time.Now().UTC(),
+			SeriesID:      seriesID,
+			SeriesName:    "The Ark",
+			SeasonNumber:  ep.season,
+			EpisodeNumber: ep.number,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+
+	for _, item := range items {
+		if item.SeriesTitle == "The Ark" {
+			t.Fatalf("expected The Ark placeholder season to be excluded, got %+v", item.NextEpisode)
+		}
+	}
+}
+
 func TestContinueWatching_RecentlyReleasedNextEpisodePromotesItem(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

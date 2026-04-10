@@ -29,6 +29,7 @@ var (
 const (
 	continueWatchingCompletionThreshold = 90.0
 	traktStopWatchThreshold             = 80.0
+	continueWatchingComingSoonWindow    = 7 * 24 * time.Hour
 )
 
 // MetadataService provides series and movie metadata for continue watching generation.
@@ -1087,6 +1088,39 @@ func continueWatchingRecentReleaseTime(nextEpisode *models.EpisodeReference) (ti
 	return releaseTime, true
 }
 
+func continueWatchingComingSoonTime(nextEpisode *models.EpisodeReference) (time.Time, bool) {
+	if nextEpisode == nil {
+		return time.Time{}, false
+	}
+
+	var releaseTime time.Time
+	switch {
+	case strings.TrimSpace(nextEpisode.AirDateTimeUTC) != "":
+		parsed, err := time.Parse(time.RFC3339, nextEpisode.AirDateTimeUTC)
+		if err != nil {
+			return time.Time{}, false
+		}
+		releaseTime = parsed.UTC()
+	case strings.TrimSpace(nextEpisode.AirDate) != "":
+		parsed, err := time.Parse("2006-01-02", nextEpisode.AirDate)
+		if err != nil {
+			return time.Time{}, false
+		}
+		releaseTime = parsed.UTC()
+	default:
+		return time.Time{}, false
+	}
+
+	now := time.Now().UTC()
+	if !releaseTime.After(now) {
+		return time.Time{}, false
+	}
+	if releaseTime.Sub(now) > continueWatchingComingSoonWindow {
+		return time.Time{}, false
+	}
+	return releaseTime, true
+}
+
 // getMovieMetadataWithCache retrieves movie metadata with caching.
 func (s *Service) getMovieMetadataWithCache(ctx context.Context, movieID, movieName string, year int, externalIDs map[string]string) (*models.Title, error) {
 	s.mu.RLock()
@@ -1378,6 +1412,8 @@ func (s *Service) findNextUnwatchedEpisode(
 		return allEpisodes[i].episode < allEpisodes[j].episode
 	})
 
+	latestReleasedSeason, latestReleasedEpisode := latestReleasedEpisodeOrder(seriesDetails)
+
 	// Find the last watched episode in the list, then scan forward for next unwatched.
 	// Track the first unreleased episode as a fallback so the frontend can show
 	// "coming soon" instead of hiding the series entirely.
@@ -1400,6 +1436,13 @@ func (s *Service) findNextUnwatchedEpisode(
 			if ep.details.AiredDate != "" {
 				airDateTime := calendar.ParseAirDateTime(ep.details.AiredDate, seriesDetails.Title.AirsTime, seriesDetails.Title.AirsTimezone)
 				if !airDateTime.IsZero() && airDateTime.After(time.Now()) {
+					isUnreleased = true
+				}
+			} else if latestReleasedSeason > 0 || latestReleasedEpisode > 0 {
+				// TVDB often creates placeholder episodes for future seasons before
+				// they have an air date. If an undated episode is ordered after the
+				// latest known released episode, treat it as unreleased.
+				if compareEpisodeOrder(ep.season, ep.episode, latestReleasedSeason, latestReleasedEpisode) > 0 {
 					isUnreleased = true
 				}
 			}
@@ -1433,9 +1476,14 @@ func (s *Service) findNextUnwatchedEpisode(
 		}
 	}
 
-	// No released unwatched episode found — return the first upcoming one
-	// so the frontend can show it as "coming soon"
-	return firstUnreleased
+	// No released unwatched episode found. Only surface an upcoming episode when
+	// it is close enough to be considered "coming soon"; otherwise omit the item
+	// from continue watching until a nearer follow-up exists.
+	if releaseTime, ok := continueWatchingComingSoonTime(firstUnreleased); ok {
+		firstUnreleased.AirDateTimeUTC = releaseTime.Format(time.RFC3339)
+		return firstUnreleased
+	}
+	return nil
 }
 
 // convertToEpisodeRef converts a WatchHistoryItem to an EpisodeReference.
@@ -1724,6 +1772,7 @@ func countTotalEpisodes(seriesDetails *models.SeriesDetails) int {
 	}
 	total := 0
 	now := time.Now()
+	latestReleasedSeason, latestReleasedEpisode := latestReleasedEpisodeOrder(seriesDetails)
 	for _, season := range seriesDetails.Seasons {
 		// Skip specials (season 0)
 		if season.Number == 0 {
@@ -1740,14 +1789,48 @@ func countTotalEpisodes(seriesDetails *models.SeriesDetails) int {
 					// If we can't parse the date, assume it's released
 					total++
 				}
-			} else {
-				// No air date means it might not be released yet, but if it has an ID it's likely out
-				// Use episodeCount from season as fallback indication
+			} else if latestReleasedSeason == 0 && latestReleasedEpisode == 0 ||
+				compareEpisodeOrder(ep.SeasonNumber, ep.EpisodeNumber, latestReleasedSeason, latestReleasedEpisode) <= 0 {
+				// Older catalog entries occasionally lack dates; keep counting those.
+				// But do not count undated placeholder episodes that appear after the
+				// latest known released episode.
 				total++
 			}
 		}
 	}
 	return total
+}
+
+func latestReleasedEpisodeOrder(seriesDetails *models.SeriesDetails) (int, int) {
+	if seriesDetails == nil {
+		return 0, 0
+	}
+
+	now := time.Now()
+	latestSeason := 0
+	latestEpisode := 0
+	for _, season := range seriesDetails.Seasons {
+		if season.Number == 0 {
+			continue
+		}
+		for _, ep := range season.Episodes {
+			if strings.TrimSpace(ep.AiredDate) == "" {
+				continue
+			}
+			airDate, err := time.Parse("2006-01-02", ep.AiredDate)
+			if err != nil {
+				continue
+			}
+			if airDate.After(now) {
+				continue
+			}
+			if compareEpisodeOrder(ep.SeasonNumber, ep.EpisodeNumber, latestSeason, latestEpisode) > 0 {
+				latestSeason = ep.SeasonNumber
+				latestEpisode = ep.EpisodeNumber
+			}
+		}
+	}
+	return latestSeason, latestEpisode
 }
 
 // countWatchedEpisodes counts how many non-special episodes have been watched.
