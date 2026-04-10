@@ -140,6 +140,7 @@ func (h *LocalMediaHandler) GetPlayback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
+	profileName := strings.TrimSpace(r.URL.Query().Get("profileName"))
 	if profileID != "" && !auth.IsMaster(r) {
 		accountID := auth.GetAccountID(r)
 		if accountID == "" || h.usersSvc == nil || !h.usersSvc.BelongsToAccount(profileID, accountID) {
@@ -166,6 +167,9 @@ func (h *LocalMediaHandler) GetPlayback(w http.ResponseWriter, r *http.Request) 
 	if profileID != "" {
 		query.Set("profileId", profileID)
 	}
+	if profileName != "" {
+		query.Set("profileName", profileName)
+	}
 
 	displayName := strings.TrimSpace(item.MatchedName)
 	if displayName == "" {
@@ -181,10 +185,129 @@ func (h *LocalMediaHandler) GetPlayback(w http.ResponseWriter, r *http.Request) 
 		query.Set("displayName", displayName)
 	}
 
+	titleID := strings.TrimSpace(item.MatchedTitleID)
+	title := displayName
+	seriesTitle := ""
+	year := item.MatchedYear
+	posterURL := ""
+	backdropURL := ""
+	episodeImageURL := ""
+	externalIDs := make(map[string]string)
+
+	if item.Metadata != nil {
+		if strings.TrimSpace(item.Metadata.ID) != "" {
+			titleID = strings.TrimSpace(item.Metadata.ID)
+		}
+		if strings.TrimSpace(item.Metadata.Name) != "" {
+			title = strings.TrimSpace(item.Metadata.Name)
+		}
+		if item.Metadata.Year > 0 {
+			year = item.Metadata.Year
+		}
+		if item.Metadata.Poster != nil {
+			posterURL = item.Metadata.Poster.URL
+		}
+		if item.Metadata.Backdrop != nil {
+			backdropURL = item.Metadata.Backdrop.URL
+		}
+		if item.Metadata.IMDBID != "" {
+			externalIDs["imdb"] = item.Metadata.IMDBID
+		}
+		if item.Metadata.TMDBID > 0 {
+			externalIDs["tmdb"] = strconv.FormatInt(item.Metadata.TMDBID, 10)
+		}
+		if item.Metadata.TVDBID > 0 {
+			externalIDs["tvdb"] = strconv.FormatInt(item.Metadata.TVDBID, 10)
+		}
+	}
+
+	if item.ExternalIDs != nil {
+		if item.ExternalIDs.IMDB != "" && externalIDs["imdb"] == "" {
+			externalIDs["imdb"] = item.ExternalIDs.IMDB
+		}
+		if item.ExternalIDs.TMDB != "" && externalIDs["tmdb"] == "" {
+			externalIDs["tmdb"] = item.ExternalIDs.TMDB
+		}
+		if item.ExternalIDs.TVDB != "" && externalIDs["tvdb"] == "" {
+			externalIDs["tvdb"] = item.ExternalIDs.TVDB
+		}
+	}
+
+	if item.LibraryType == models.LocalMediaLibraryTypeShow || item.SeasonNumber > 0 || item.EpisodeNumber > 0 {
+		seriesTitle = title
+	}
+	if item.EpisodeImage != nil {
+		episodeImageURL = item.EpisodeImage.URL
+	}
+	if title == "" {
+		title = displayName
+	}
+
+	mediaType := strings.TrimSpace(item.MatchedMediaType)
+	if mediaType == "" {
+		switch item.LibraryType {
+		case models.LocalMediaLibraryTypeShow:
+			mediaType = "episode"
+		case models.LocalMediaLibraryTypeMovie:
+			mediaType = "movie"
+		}
+	}
+	if mediaType != "" {
+		query.Set("mediaType", mediaType)
+	}
+
+	streamItemID := strings.TrimSpace(titleID)
+	if streamItemID == "" {
+		streamItemID = strings.TrimSpace(item.ID)
+	}
+	if streamItemID != "" {
+		query.Set("itemId", streamItemID)
+	}
+	if title != "" {
+		query.Set("title", title)
+	}
+	if year > 0 {
+		query.Set("year", strconv.Itoa(year))
+	}
+	if season := item.SeasonNumber; season > 0 {
+		query.Set("seasonNumber", strconv.Itoa(season))
+	}
+	if episode := item.EpisodeNumber; episode > 0 {
+		query.Set("episodeNumber", strconv.Itoa(episode))
+	}
+	if mediaType == "episode" {
+		if seriesTitle != "" {
+			query.Set("seriesName", seriesTitle)
+			query.Set("title", seriesTitle)
+		}
+		if titleID != "" {
+			query.Set("seriesId", titleID)
+		}
+		if item.EpisodeTitle != "" {
+			query.Set("episodeName", item.EpisodeTitle)
+		}
+	} else if mediaType == "movie" && title != "" {
+		query.Set("movieName", title)
+	}
+	for key, value := range externalIDs {
+		if strings.TrimSpace(value) != "" {
+			query.Set(key, value)
+		}
+	}
+
 	resp := models.LocalMediaPlaybackResponse{
 		ItemID:       item.ID,
 		FileName:     item.FileName,
 		DisplayName:  displayName,
+		TitleID:      titleID,
+		Title:        title,
+		SeriesTitle:  seriesTitle,
+		EpisodeTitle: item.EpisodeTitle,
+		Year:         year,
+		PosterURL:    posterURL,
+		BackdropURL:  backdropURL,
+		EpisodeImage: episodeImageURL,
+		ExternalIDs:  externalIDs,
 		StreamPath:   streamPath,
 		StreamURL:    "/api/video/stream?" + query.Encode(),
 		DirectStream: true,

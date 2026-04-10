@@ -231,12 +231,21 @@ type LocalMediaDirectoryListing struct {
 }
 
 type LocalMediaPlaybackResponse struct {
-	ItemID       string `json:"itemId"`
-	FileName     string `json:"fileName"`
-	DisplayName  string `json:"displayName"`
-	StreamPath   string `json:"streamPath"`
-	StreamURL    string `json:"streamUrl"`
-	HLSStartURL  string `json:"hlsStartUrl,omitempty"`
-	DirectStream bool   `json:"directStream"`
-	HLSAvailable bool   `json:"hlsAvailable"`
+	ItemID       string            `json:"itemId"`
+	FileName     string            `json:"fileName"`
+	DisplayName  string            `json:"displayName"`
+	TitleID      string            `json:"titleId,omitempty"`
+	Title        string            `json:"title,omitempty"`
+	SeriesTitle  string            `json:"seriesTitle,omitempty"`
+	EpisodeTitle string            `json:"episodeTitle,omitempty"`
+	Year         int               `json:"year,omitempty"`
+	PosterURL    string            `json:"posterUrl,omitempty"`
+	BackdropURL  string            `json:"backdropUrl,omitempty"`
+	EpisodeImage string            `json:"episodeImageUrl,omitempty"`
+	ExternalIDs  map[string]string `json:"externalIds,omitempty"`
+	StreamPath   string            `json:"streamPath"`
+	StreamURL    string            `json:"streamUrl"`
+	HLSStartURL  string            `json:"hlsStartUrl,omitempty"`
+	DirectStream bool              `json:"directStream"`
+	HLSAvailable bool              `json:"hlsAvailable"`
 }
