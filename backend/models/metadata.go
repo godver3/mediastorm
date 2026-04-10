@@ -14,6 +14,7 @@ type Image struct {
 	Width              int    `json:"width"`
 	Height             int    `json:"height"`
 	IsDark             bool   `json:"is_dark,omitempty"`
+	IsTextless         bool   `json:"is_textless,omitempty"`
 	Language           string `json:"language,omitempty"`
 	IsFallbackLanguage bool   `json:"is_fallback_language,omitempty"`
 }
@@ -54,7 +55,8 @@ type Title struct {
 	Poster          *Image      `json:"poster,omitempty"`
 	TextPoster      *Image      `json:"textPoster,omitempty"` // Original poster with text (preserved when Poster is overridden with textless)
 	Backdrop        *Image      `json:"backdrop,omitempty"`
-	Backdrops       []Image     `json:"backdrops,omitempty"` // Additional backdrop options beyond the primary
+	TextBackdrop    *Image      `json:"textBackdrop,omitempty"` // Original backdrop with text (preserved when Backdrop is overridden with textless)
+	Backdrops       []Image     `json:"backdrops,omitempty"`    // Additional backdrop options beyond the primary
 	Logo            *Image      `json:"logo,omitempty"`
 	MediaType       string      `json:"mediaType"` // series | movie
 	TVDBID          int64       `json:"tvdbId,omitempty"`

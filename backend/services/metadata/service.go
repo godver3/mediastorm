@@ -3316,7 +3316,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		}
 	}
 
-	// Fetch logo and textless poster from TMDB if configured
+	// Fetch logo and clean artwork variants from TMDB if configured
 	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 		if images, err := s.cachedFetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
 			if images.Logo != nil {
@@ -3332,6 +3332,16 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 				}
 				seriesTitle.Poster = images.TextlessPoster
 				log.Printf("[metadata] textless poster applied to series tmdbId=%d", seriesTitle.TMDBID)
+			}
+			if images.TextBackdrop != nil {
+				seriesTitle.TextBackdrop = images.TextBackdrop
+			}
+			if images.TextlessBackdrop != nil {
+				if seriesTitle.TextBackdrop == nil {
+					seriesTitle.TextBackdrop = seriesTitle.Backdrop // Fallback: preserve original
+				}
+				seriesTitle.Backdrop = images.TextlessBackdrop
+				log.Printf("[metadata] textless backdrop applied to series tmdbId=%d", seriesTitle.TMDBID)
 			}
 			details.Title = seriesTitle // Update the details with images
 		} else if err != nil {
@@ -5042,7 +5052,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}()
 	}
 
-	// 4. Logo and textless poster (TMDB)
+	// 4. Logo and clean artwork variants (TMDB)
 	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 		enrichWg.Add(1)
 		go func() {
@@ -5061,6 +5071,16 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 					}
 					movieTitle.Poster = images.TextlessPoster
 					log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForEnrichment)
+				}
+				if images.TextBackdrop != nil {
+					movieTitle.TextBackdrop = images.TextBackdrop
+				}
+				if images.TextlessBackdrop != nil {
+					if movieTitle.TextBackdrop == nil {
+						movieTitle.TextBackdrop = movieTitle.Backdrop // Fallback: preserve original
+					}
+					movieTitle.Backdrop = images.TextlessBackdrop
+					log.Printf("[metadata] textless backdrop applied to movie tmdbId=%d", tmdbIDForEnrichment)
 				}
 			} else if err != nil {
 				log.Printf("[metadata] failed to fetch images for movie tmdbId=%d: %v", tmdbIDForEnrichment, err)
@@ -5954,13 +5974,13 @@ func (s *Service) cachedFetchCredits(ctx context.Context, mediaType string, tmdb
 	return result, nil
 }
 
-// cachedFetchImages fetches TMDB logo and poster images with file caching.
+// cachedFetchImages fetches TMDB logo and artwork images with file caching.
 // The cached result includes the IsDark flag computed at fetch time.
 func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbID int64) (*tmdbImagesResult, error) {
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "images", "v1", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "images", "v2", mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached tmdbImagesResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil

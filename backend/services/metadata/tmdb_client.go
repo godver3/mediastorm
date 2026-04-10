@@ -298,15 +298,18 @@ type tmdbImageItem struct {
 
 // tmdbImagesResponse represents the response from TMDB's /images endpoint
 type tmdbImagesResponse struct {
-	Logos   []tmdbImageItem `json:"logos"`
-	Posters []tmdbImageItem `json:"posters"`
+	Backdrops []tmdbImageItem `json:"backdrops"`
+	Logos     []tmdbImageItem `json:"logos"`
+	Posters   []tmdbImageItem `json:"posters"`
 }
 
-// tmdbImagesResult contains logo, textless poster, and text poster from a single /images API call
+// tmdbImagesResult contains logo plus clean/text variants for posters and backdrops.
 type tmdbImagesResult struct {
-	Logo           *models.Image
-	TextlessPoster *models.Image
-	TextPoster     *models.Image // Best poster with title text (has language tag)
+	Logo             *models.Image
+	TextlessPoster   *models.Image
+	TextPoster       *models.Image // Best poster with title text (has language tag)
+	TextlessBackdrop *models.Image
+	TextBackdrop     *models.Image // Best backdrop with language tag when available
 }
 
 // fetchImages retrieves logo and textless poster for a movie or TV show from TMDB
@@ -382,6 +385,49 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 		}
 	}
 
+	if len(payload.Backdrops) > 0 {
+		var textless []tmdbImageItem
+		var withText []tmdbImageItem
+		for _, b := range payload.Backdrops {
+			if b.ISO6391 == "" {
+				textless = append(textless, b)
+			} else if b.ISO6391 == preferredLang || b.ISO6391 == "en" {
+				withText = append(withText, b)
+			}
+		}
+		if len(textless) > 0 {
+			sort.Slice(textless, func(i, j int) bool {
+				return textless[i].VoteAverage > textless[j].VoteAverage
+			})
+			result.TextlessBackdrop = buildTMDBImage(textless[0].FilePath, tmdbBackdropSize, "backdrop")
+			if result.TextlessBackdrop != nil {
+				result.TextlessBackdrop.IsTextless = true
+			}
+		}
+		if len(withText) > 0 {
+			sort.Slice(withText, func(i, j int) bool {
+				if preferredLang != "" && preferredLang != "en" {
+					iPref := withText[i].ISO6391 == preferredLang
+					jPref := withText[j].ISO6391 == preferredLang
+					if iPref != jPref {
+						return iPref
+					}
+				}
+				iEng := withText[i].ISO6391 == "en"
+				jEng := withText[j].ISO6391 == "en"
+				if iEng != jEng {
+					return iEng
+				}
+				return withText[i].VoteAverage > withText[j].VoteAverage
+			})
+			result.TextBackdrop = buildTMDBImage(withText[0].FilePath, tmdbBackdropSize, "backdrop")
+			if result.TextBackdrop != nil {
+				result.TextBackdrop.Language = withText[0].ISO6391
+				result.TextBackdrop.IsFallbackLanguage = withText[0].ISO6391 != preferredLang
+			}
+		}
+	}
+
 	// Find best textless poster (no language = textless) and best text poster (has language tag)
 	if len(payload.Posters) > 0 {
 		var textless []tmdbImageItem
@@ -399,6 +445,9 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 				return textless[i].VoteAverage > textless[j].VoteAverage
 			})
 			result.TextlessPoster = buildTMDBImage(textless[0].FilePath, tmdbPosterSize, "poster")
+			if result.TextlessPoster != nil {
+				result.TextlessPoster.IsTextless = true
+			}
 		}
 		if len(withText) > 0 {
 			// Prefer user's language, then English, then highest vote average
@@ -418,6 +467,10 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 				return withText[i].VoteAverage > withText[j].VoteAverage
 			})
 			result.TextPoster = buildTMDBImage(withText[0].FilePath, tmdbPosterSize, "poster")
+			if result.TextPoster != nil {
+				result.TextPoster.Language = withText[0].ISO6391
+				result.TextPoster.IsFallbackLanguage = withText[0].ISO6391 != preferredLang
+			}
 		}
 	}
 
