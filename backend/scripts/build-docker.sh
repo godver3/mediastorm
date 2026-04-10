@@ -29,6 +29,7 @@ BUILDER_NAME=""
 for arg in "$@"; do
     case "$arg" in
         --no-push) PUSH=false ;;
+        --push) ;;  # default behaviour, accepted for compatibility with build.sh
         --amd64) PLATFORMS="linux/amd64" ;;
         --arm64) PLATFORMS="linux/arm64" ;;
         --keep-builder) KEEP_BUILDER=true ;;
