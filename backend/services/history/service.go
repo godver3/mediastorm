@@ -1040,7 +1040,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// Wait for all metadata lookups to complete
 	wg.Wait()
 
-	continueWatching = dedupeContinueWatchingMovieEntries(continueWatching)
+	continueWatching = dedupeContinueWatchingEntries(continueWatching)
 
 	// Sort by most recently updated (in-progress items will naturally sort first if more recent)
 	sort.Slice(continueWatching, func(i, j int) bool {
@@ -3878,16 +3878,37 @@ func isSeriesLevelPlaybackMarker(progress models.PlaybackProgress) bool {
 		progress.EpisodeNumber == 0
 }
 
-func dedupeContinueWatchingMovieEntries(items []models.SeriesWatchState) []models.SeriesWatchState {
+func dedupeContinueWatchingEntries(items []models.SeriesWatchState) []models.SeriesWatchState {
 	if len(items) < 2 {
 		return items
 	}
 
 	deduped := make([]models.SeriesWatchState, 0, len(items))
+	seriesIndexByID := make(map[string]int)
+	seriesIndexBySignature := make(map[string]int)
 	movieIndexBySignature := make(map[string]int)
 
 	for _, item := range items {
 		if item.NextEpisode != nil {
+			if existingIndex, ok := seriesIndexByID[item.SeriesID]; ok {
+				if preferContinueWatchingEntry(item, deduped[existingIndex]) {
+					deduped[existingIndex] = item
+				}
+				continue
+			}
+
+			signature := continueWatchingSeriesSignature(item)
+			if signature != "" {
+				if existingIndex, ok := seriesIndexBySignature[signature]; ok {
+					if preferContinueWatchingEntry(item, deduped[existingIndex]) {
+						deduped[existingIndex] = item
+					}
+					continue
+				}
+				seriesIndexBySignature[signature] = len(deduped)
+			}
+
+			seriesIndexByID[item.SeriesID] = len(deduped)
 			deduped = append(deduped, item)
 			continue
 		}
@@ -3899,7 +3920,7 @@ func dedupeContinueWatchingMovieEntries(items []models.SeriesWatchState) []model
 		}
 
 		if existingIndex, ok := movieIndexBySignature[signature]; ok {
-			if preferContinueWatchingMovie(item, deduped[existingIndex]) {
+			if preferContinueWatchingEntry(item, deduped[existingIndex]) {
 				deduped[existingIndex] = item
 			}
 			continue
@@ -3910,6 +3931,39 @@ func dedupeContinueWatchingMovieEntries(items []models.SeriesWatchState) []model
 	}
 
 	return deduped
+}
+
+func continueWatchingSeriesSignature(item models.SeriesWatchState) string {
+	if item.NextEpisode == nil {
+		return ""
+	}
+
+	if item.ExternalIDs != nil {
+		if imdbID := strings.TrimSpace(item.ExternalIDs["imdb"]); imdbID != "" {
+			return "imdb:" + strings.ToLower(imdbID)
+		}
+		if tmdbID := strings.TrimSpace(item.ExternalIDs["tmdb"]); tmdbID != "" {
+			return "tmdb:" + tmdbID
+		}
+		if tvdbID := strings.TrimSpace(item.ExternalIDs["tvdb"]); tvdbID != "" {
+			return "tvdb:" + tvdbID
+		}
+	}
+
+	title := strings.ToLower(strings.TrimSpace(item.SeriesTitle))
+	if title == "" {
+		return ""
+	}
+
+	episodeRef := item.LastWatched
+	if item.NextEpisode != nil {
+		episodeRef = *item.NextEpisode
+	}
+
+	if item.Year > 0 {
+		return fmt.Sprintf("title:%s:%d:s%02de%02d", title, item.Year, episodeRef.SeasonNumber, episodeRef.EpisodeNumber)
+	}
+	return fmt.Sprintf("title:%s:s%02de%02d", title, episodeRef.SeasonNumber, episodeRef.EpisodeNumber)
 }
 
 func continueWatchingMovieSignature(item models.SeriesWatchState) string {
@@ -3939,7 +3993,7 @@ func continueWatchingMovieSignature(item models.SeriesWatchState) string {
 	return "title:" + title
 }
 
-func preferContinueWatchingMovie(candidate, existing models.SeriesWatchState) bool {
+func preferContinueWatchingEntry(candidate, existing models.SeriesWatchState) bool {
 	if candidate.UpdatedAt.After(existing.UpdatedAt) {
 		return true
 	}
@@ -3951,6 +4005,11 @@ func preferContinueWatchingMovie(candidate, existing models.SeriesWatchState) bo
 	}
 	if len(existing.ExternalIDs) > len(candidate.ExternalIDs) {
 		return false
+	}
+	candidateHasArtwork := candidate.PosterURL != "" || candidate.BackdropURL != ""
+	existingHasArtwork := existing.PosterURL != "" || existing.BackdropURL != ""
+	if candidateHasArtwork != existingHasArtwork {
+		return candidateHasArtwork
 	}
 	return candidate.PercentWatched > existing.PercentWatched
 }

@@ -2972,6 +2972,82 @@ func TestBuildCanonicalSeriesIDMap_TMDBMerge(t *testing.T) {
 	}
 }
 
+func TestContinueWatching_DedupesSameEpisodeAcrossSeriesIDsWithoutExternalIDs(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "cw-user"
+	watched := true
+	now := time.Now().UTC()
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tmdb:tv:1001": {
+				Title: models.Title{
+					ID:   "tmdb:tv:1001",
+					Name: "Psych",
+					Year: 2006,
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "psych-tmdb-1", Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2006-07-07"},
+						{ID: "psych-tmdb-2", Name: "Spellingg Bee", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2006-07-14"},
+					},
+				}},
+			},
+			"tvdb:series:2002": {
+				Title: models.Title{
+					ID:   "tvdb:series:2002",
+					Name: "Psych",
+					Year: 2006,
+				},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "psych-tvdb-1", Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2006-07-07"},
+						{ID: "psych-tvdb-2", Name: "Spellingg Bee", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2006-07-14"},
+					},
+				}},
+			},
+		},
+	})
+
+	for i, seriesID := range []string{"tmdb:tv:1001", "tvdb:series:2002"} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        fmt.Sprintf("%s:s01e01", seriesID),
+			Name:          "Pilot",
+			Watched:       &watched,
+			WatchedAt:     now.Add(time.Duration(i) * time.Minute),
+			SeriesID:      seriesID,
+			SeriesName:    "Psych",
+			Year:          2006,
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+		}); err != nil {
+			t.Fatalf("UpdateWatchHistory(%s) error = %v", seriesID, err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 continue watching item after fallback dedupe, got %d", len(items))
+	}
+	if items[0].SeriesTitle != "Psych" {
+		t.Fatalf("expected Psych, got %q", items[0].SeriesTitle)
+	}
+	if items[0].NextEpisode == nil || items[0].NextEpisode.SeasonNumber != 1 || items[0].NextEpisode.EpisodeNumber != 2 {
+		t.Fatalf("expected next episode S01E02, got %+v", items[0].NextEpisode)
+	}
+}
+
 func TestImportWatchHistory_CrossProviderMovieDedup(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
