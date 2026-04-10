@@ -1462,6 +1462,10 @@
         border-radius: var(--radius);
         overflow: hidden;
     }
+    .client-card.client-card-warning {
+        border-color: rgba(245, 158, 11, 0.45);
+        box-shadow: inset 3px 0 0 rgba(245, 158, 11, 0.9);
+    }
     .client-card-header {
         display: flex;
         justify-content: space-between;
@@ -1479,6 +1483,12 @@
         font-weight: 500;
         font-size: 0.9375rem;
         word-break: break-word;
+    }
+    .client-name-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
     }
     .client-meta {
         font-size: 0.75rem;
@@ -1498,6 +1508,23 @@
         padding: 0.25rem 0.5rem;
         background: var(--bg-tertiary);
         border-radius: 4px;
+    }
+    .client-version-warning {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.2rem 0.45rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        line-height: 1;
+        background: rgba(245, 158, 11, 0.14);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        white-space: nowrap;
+    }
+    .client-version-warning svg {
+        flex: 0 0 auto;
     }
     .client-card-body {
         padding: 0.875rem 1rem;
@@ -1620,6 +1647,7 @@
     // ========== Client Management State ==========
     let allClients = [];
     let filteredClients = [];
+    let backendVersionInfo = null;
 
     // ========== Scheduled Tasks State ==========
     let scheduledTasks = [];
@@ -1629,7 +1657,7 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadBackendVersionInfo(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     async function loadLocalMediaLibraries() {
@@ -3290,6 +3318,23 @@
         }
     }
 
+    async function loadBackendVersionInfo() {
+        try {
+            const response = await fetch(basePath + '/api/version', { credentials: 'same-origin' });
+            if (!response.ok) throw new Error('Failed to load backend version');
+            backendVersionInfo = await response.json();
+            if (allClients.length > 0) {
+                renderClientsList();
+            }
+        } catch (err) {
+            console.error('Failed to load backend version info:', err);
+            backendVersionInfo = null;
+            if (allClients.length > 0) {
+                renderClientsList();
+            }
+        }
+    }
+
     function updateClientCountBadge() {
         const badge = document.getElementById('clientCountBadge');
         if (allClients.length > 0) {
@@ -3350,6 +3395,69 @@
         return 'v' + ver + ' (' + build + ')';
     }
 
+    function getClientDatestampStatus(client) {
+        const backendBuild = backendVersionInfo && typeof backendVersionInfo.buildId === 'string'
+            ? backendVersionInfo.buildId.trim()
+            : '';
+        const appVersion = typeof client.appVersion === 'string' ? client.appVersion.trim() : '';
+
+        if (!appVersion) {
+            return {
+                level: 'warning',
+                label: 'No datestamp',
+                detail: 'Client did not report an app version datestamp.',
+            };
+        }
+
+        const plus = appVersion.indexOf('+');
+        if (plus === -1) {
+            return {
+                level: 'warning',
+                label: 'No datestamp',
+                detail: 'Client app version is missing the build datestamp.',
+            };
+        }
+
+        const clientBuild = appVersion.substring(plus + 1).trim();
+        if (!/^\d{8}$/.test(clientBuild)) {
+            return {
+                level: 'warning',
+                label: 'No datestamp',
+                detail: `Client build datestamp is invalid (${clientBuild || 'missing'}).`,
+            };
+        }
+
+        if (!backendBuild || !/^\d{8}$/.test(backendBuild)) {
+            return null;
+        }
+
+        if (clientBuild !== backendBuild) {
+            return {
+                level: 'warning',
+                label: 'Datestamp mismatch',
+                detail: `Client ${clientBuild} does not match backend ${backendBuild}.`,
+            };
+        }
+
+        return null;
+    }
+
+    function renderClientDatestampWarning(client) {
+        const status = getClientDatestampStatus(client);
+        if (!status) return '';
+
+        return `
+            <span class="client-version-warning" title="${escapeHtml(status.detail)}">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M12 9v4"/>
+                    <path d="M12 17h.01"/>
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                </svg>
+                ${escapeHtml(status.label)}
+            </span>
+        `;
+    }
+
     function renderClientsList() {
         const container = document.getElementById('clientsList');
         const emptyState = document.getElementById('clientsEmptyState');
@@ -3366,10 +3474,13 @@
         container.innerHTML = `
             <div class="client-cards">
                 ${filteredClients.map(client => `
-                    <div class="client-card" data-client-id="${client.id}">
+                    <div class="client-card ${getClientDatestampStatus(client) ? 'client-card-warning' : ''}" data-client-id="${client.id}">
                         <div class="client-card-header">
                             <div class="client-info">
-                                <div class="client-name">${escapeHtml(client.name || 'Unknown Device')}</div>
+                                <div class="client-name-row">
+                                    <div class="client-name">${escapeHtml(client.name || 'Unknown Device')}</div>
+                                    ${renderClientDatestampWarning(client)}
+                                </div>
                                 <div class="client-meta">
                                     ${client.deviceName && client.deviceName !== client.deviceType ? escapeHtml(client.deviceName) + ' • ' : ''}${escapeHtml(client.deviceType || '')}${client.os ? ' • ' + escapeHtml(client.os) : ''}${client.appVersion ? ' • ' + escapeHtml(formatClientVersion(client.appVersion)) : ''}
                                 </div>
