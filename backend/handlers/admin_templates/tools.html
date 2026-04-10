@@ -3332,6 +3332,24 @@
         return date.toLocaleDateString();
     }
 
+    function formatClientVersion(appVersion) {
+        if (!appVersion) return '';
+        const plus = appVersion.indexOf('+');
+        if (plus === -1) return 'v' + appVersion;
+        const ver = appVersion.substring(0, plus);
+        const build = appVersion.substring(plus + 1);
+        // build is YYYYMMDD
+        if (/^\d{8}$/.test(build)) {
+            const y = build.substring(0, 4);
+            const m = build.substring(4, 6);
+            const d = build.substring(6, 8);
+            const date = new Date(y + '-' + m + '-' + d);
+            const formatted = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            return 'v' + ver + ' (' + formatted + ')';
+        }
+        return 'v' + ver + ' (' + build + ')';
+    }
+
     function renderClientsList() {
         const container = document.getElementById('clientsList');
         const emptyState = document.getElementById('clientsEmptyState');
@@ -3353,7 +3371,7 @@
                             <div class="client-info">
                                 <div class="client-name">${escapeHtml(client.name || 'Unknown Device')}</div>
                                 <div class="client-meta">
-                                    ${escapeHtml(client.deviceType || '')}${client.os ? ' • ' + escapeHtml(client.os) : ''}${client.appVersion ? ' • v' + escapeHtml(client.appVersion) : ''}
+                                    ${client.deviceName && client.deviceName !== client.deviceType ? escapeHtml(client.deviceName) + ' • ' : ''}${escapeHtml(client.deviceType || '')}${client.os ? ' • ' + escapeHtml(client.os) : ''}${client.appVersion ? ' • ' + escapeHtml(formatClientVersion(client.appVersion)) : ''}
                                 </div>
                                 <div class="client-id">ID: ${escapeHtml(client.id.substring(0, 8))}...</div>
                             </div>

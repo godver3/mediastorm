@@ -72,7 +72,7 @@ func NewService(storageDir string) (*Service, error) {
 // Register registers or updates a client device.
 // If the client already exists, it updates LastSeenAt and device info.
 // If new, it creates the client with auto-generated name.
-func (s *Service) Register(id, userID, deviceType, os, appVersion string) (models.Client, error) {
+func (s *Service) Register(id, userID, deviceType, os, appVersion, deviceName string) (models.Client, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return models.Client{}, ErrClientIDRequired
@@ -103,6 +103,7 @@ func (s *Service) Register(id, userID, deviceType, os, appVersion string) (model
 		if userID != "" {
 			existing.UserID = userID
 		}
+		existing.DeviceName = deviceName
 		existing.DeviceType = deviceType
 		existing.OS = os
 		existing.AppVersion = appVersion
@@ -125,6 +126,7 @@ func (s *Service) Register(id, userID, deviceType, os, appVersion string) (model
 		ID:            id,
 		UserID:        userID,
 		Name:          generateClientName(deviceType, os),
+		DeviceName:    deviceName,
 		DeviceType:    deviceType,
 		OS:            os,
 		AppVersion:    appVersion,

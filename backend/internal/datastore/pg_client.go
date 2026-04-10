@@ -14,7 +14,7 @@ type pgClientRepo struct {
 	pool DB
 }
 
-const clientCols = `id, user_id, name, device_type, os, app_version, last_seen_at, first_seen_at, filter_enabled`
+const clientCols = `id, user_id, name, device_name, device_type, os, app_version, last_seen_at, first_seen_at, filter_enabled`
 
 func (r *pgClientRepo) Get(ctx context.Context, id string) (*models.Client, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+clientCols+` FROM clients WHERE id = $1`, id)
@@ -42,8 +42,8 @@ func (r *pgClientRepo) List(ctx context.Context) ([]models.Client, error) {
 func (r *pgClientRepo) Create(ctx context.Context, c *models.Client) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO clients (`+clientCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		c.ID, c.UserID, c.Name, c.DeviceType, c.OS, c.AppVersion, c.LastSeenAt, c.FirstSeenAt, c.FilterEnabled)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		c.ID, c.UserID, c.Name, c.DeviceName, c.DeviceType, c.OS, c.AppVersion, c.LastSeenAt, c.FirstSeenAt, c.FilterEnabled)
 	if err != nil {
 		return fmt.Errorf("create client: %w", err)
 	}
@@ -52,10 +52,10 @@ func (r *pgClientRepo) Create(ctx context.Context, c *models.Client) error {
 
 func (r *pgClientRepo) Update(ctx context.Context, c *models.Client) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE clients SET user_id=$2, name=$3, device_type=$4, os=$5, app_version=$6,
-		last_seen_at=$7, first_seen_at=$8, filter_enabled=$9
+		UPDATE clients SET user_id=$2, name=$3, device_name=$4, device_type=$5, os=$6, app_version=$7,
+		last_seen_at=$8, first_seen_at=$9, filter_enabled=$10
 		WHERE id=$1`,
-		c.ID, c.UserID, c.Name, c.DeviceType, c.OS, c.AppVersion, c.LastSeenAt, c.FirstSeenAt, c.FilterEnabled)
+		c.ID, c.UserID, c.Name, c.DeviceName, c.DeviceType, c.OS, c.AppVersion, c.LastSeenAt, c.FirstSeenAt, c.FilterEnabled)
 	if err != nil {
 		return fmt.Errorf("update client: %w", err)
 	}
@@ -75,7 +75,7 @@ func (r *pgClientRepo) Count(ctx context.Context) (int64, error) {
 
 func scanClient(row pgx.Row) (*models.Client, error) {
 	var c models.Client
-	err := row.Scan(&c.ID, &c.UserID, &c.Name, &c.DeviceType, &c.OS, &c.AppVersion, &c.LastSeenAt, &c.FirstSeenAt, &c.FilterEnabled)
+	err := row.Scan(&c.ID, &c.UserID, &c.Name, &c.DeviceName, &c.DeviceType, &c.OS, &c.AppVersion, &c.LastSeenAt, &c.FirstSeenAt, &c.FilterEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -89,7 +89,7 @@ func collectClients(rows pgx.Rows) ([]models.Client, error) {
 	var result []models.Client
 	for rows.Next() {
 		var c models.Client
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.DeviceType, &c.OS, &c.AppVersion,
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.DeviceName, &c.DeviceType, &c.OS, &c.AppVersion,
 			&c.LastSeenAt, &c.FirstSeenAt, &c.FilterEnabled); err != nil {
 			return nil, fmt.Errorf("scan client: %w", err)
 		}

@@ -16,7 +16,7 @@ import (
 )
 
 type clientsService interface {
-	Register(id, userID, deviceType, os, appVersion string) (models.Client, error)
+	Register(id, userID, deviceType, os, appVersion, deviceName string) (models.Client, error)
 	Get(id string) (*models.Client, error)
 	List() []models.Client
 	ListByUser(userID string) []models.Client
@@ -62,6 +62,7 @@ func NewClientsHandler(clientsSvc clientsService, settingsSvc clientSettingsServ
 type ClientRegistrationRequest struct {
 	ID         string `json:"id"`
 	UserID     string `json:"userId"`
+	DeviceName string `json:"deviceName"`
 	DeviceType string `json:"deviceType"`
 	OS         string `json:"os"`
 	AppVersion string `json:"appVersion"`
@@ -81,7 +82,7 @@ func (h *ClientsHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.clients.Register(req.ID, req.UserID, req.DeviceType, req.OS, req.AppVersion)
+	client, err := h.clients.Register(req.ID, req.UserID, req.DeviceType, req.OS, req.AppVersion, req.DeviceName)
 	if err != nil {
 		if errors.Is(err, clients.ErrUserNotFound) {
 			writeJSONError(w, "user not found: "+req.UserID, http.StatusBadRequest)
