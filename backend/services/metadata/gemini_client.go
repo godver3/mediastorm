@@ -43,8 +43,9 @@ func (c *geminiClient) isConfigured() bool {
 
 // geminiRequest is the request body for the Gemini generateContent API.
 type geminiRequest struct {
-	Contents         []geminiContent        `json:"contents"`
-	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
+	SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
+	Contents          []geminiContent        `json:"contents"`
+	GenerationConfig  *geminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 type geminiContent struct {
@@ -53,6 +54,15 @@ type geminiContent struct {
 
 type geminiPart struct {
 	Text string `json:"text"`
+}
+
+// noThinkSystem is the system instruction that suppresses Gemma 4 thinking tokens.
+var noThinkSystem = &geminiContent{Parts: []geminiPart{{Text: "You are a helpful assistant. no thought tokens. Respond directly without reasoning."}}}
+
+// noThinkPrompt wraps a prompt with the <thought off> prefix that, combined with
+// noThinkSystem, reliably suppresses the Gemma 4 thinking chain (~14s vs ~36s).
+func noThinkPrompt(prompt string) string {
+	return "<thought off> " + prompt
 }
 
 type geminiGenerationConfig struct {
@@ -66,7 +76,8 @@ type geminiResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				Thought bool   `json:"thought"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -74,6 +85,25 @@ type geminiResponse struct {
 		Message string `json:"message"`
 		Code    int    `json:"code"`
 	} `json:"error,omitempty"`
+}
+
+// geminiResponseText returns the first non-thought part text from a response.
+// Gemma 4 thinking models split output into a thought part (reasoning chain)
+// and an answer part — we always want the answer.
+func geminiResponseText(resp geminiResponse) (string, error) {
+	if len(resp.Candidates) == 0 {
+		return "", errors.New("gemini returned empty response")
+	}
+	parts := resp.Candidates[0].Content.Parts
+	for _, p := range parts {
+		if !p.Thought {
+			return p.Text, nil
+		}
+	}
+	if len(parts) > 0 {
+		return parts[len(parts)-1].Text, nil
+	}
+	return "", errors.New("gemini returned empty response")
 }
 
 // GeminiRecommendation is a single recommendation returned by Gemini.
@@ -151,12 +181,13 @@ Example format:
 		time.Sleep(wait)
 	}
 
-	// Build request - use gemma-3n-e4b-it (free tier, fast, good at structured output)
-	endpoint := fmt.Sprintf("%s/models/gemma-3n-e4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
+	// Build request - use gemma-4-26b-a4b-it (free tier, MoE, fast structured output)
+	endpoint := fmt.Sprintf("%s/models/gemma-4-26b-a4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
 
 	reqBody := geminiRequest{
+		SystemInstruction: noThinkSystem,
 		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
+			{Parts: []geminiPart{{Text: noThinkPrompt(prompt)}}},
 		},
 		GenerationConfig: &geminiGenerationConfig{
 			Temperature:     0.9,
@@ -218,12 +249,10 @@ Example format:
 			return nil, fmt.Errorf("gemini API error: %s", geminiResp.Error.Message)
 		}
 
-		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-			return nil, errors.New("gemini returned empty response")
+		responseText, err := geminiResponseText(geminiResp)
+		if err != nil {
+			return nil, err
 		}
-
-		// Parse the JSON response
-		responseText := geminiResp.Candidates[0].Content.Parts[0].Text
 
 		var recommendations []GeminiRecommendation
 		if err := json.Unmarshal([]byte(responseText), &recommendations); err != nil {
@@ -280,11 +309,12 @@ Example format:
 		time.Sleep(wait)
 	}
 
-	endpoint := fmt.Sprintf("%s/models/gemma-3n-e4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
+	endpoint := fmt.Sprintf("%s/models/gemma-4-26b-a4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
 
 	reqBody := geminiRequest{
+		SystemInstruction: noThinkSystem,
 		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
+			{Parts: []geminiPart{{Text: noThinkPrompt(prompt)}}},
 		},
 		GenerationConfig: &geminiGenerationConfig{
 			Temperature:     0.7,
@@ -343,11 +373,10 @@ Example format:
 			return nil, fmt.Errorf("gemini API error: %s", geminiResp.Error.Message)
 		}
 
-		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-			return nil, errors.New("gemini returned empty response")
+		responseText, err := geminiResponseText(geminiResp)
+		if err != nil {
+			return nil, err
 		}
-
-		responseText := geminiResp.Candidates[0].Content.Parts[0].Text
 		var recommendations []GeminiRecommendation
 		if err := json.Unmarshal([]byte(responseText), &recommendations); err != nil {
 			cleaned := strings.TrimSpace(responseText)
@@ -400,11 +429,12 @@ Example format:
 		time.Sleep(wait)
 	}
 
-	endpoint := fmt.Sprintf("%s/models/gemma-3n-e4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
+	endpoint := fmt.Sprintf("%s/models/gemma-4-26b-a4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
 
 	reqBody := geminiRequest{
+		SystemInstruction: noThinkSystem,
 		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
+			{Parts: []geminiPart{{Text: noThinkPrompt(prompt)}}},
 		},
 		GenerationConfig: &geminiGenerationConfig{
 			Temperature:     0.8,
@@ -463,11 +493,10 @@ Example format:
 			return nil, fmt.Errorf("gemini API error: %s", geminiResp.Error.Message)
 		}
 
-		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-			return nil, errors.New("gemini returned empty response")
+		responseText, err := geminiResponseText(geminiResp)
+		if err != nil {
+			return nil, err
 		}
-
-		responseText := geminiResp.Candidates[0].Content.Parts[0].Text
 		var recommendations []GeminiRecommendation
 		if err := json.Unmarshal([]byte(responseText), &recommendations); err != nil {
 			cleaned := strings.TrimSpace(responseText)
@@ -552,11 +581,12 @@ Respond with ONLY a JSON array containing exactly 1 object, no other text:
 		time.Sleep(wait)
 	}
 
-	endpoint := fmt.Sprintf("%s/models/gemma-3n-e4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
+	endpoint := fmt.Sprintf("%s/models/gemma-4-26b-a4b-it:generateContent?key=%s", geminiBaseURL, c.apiKey)
 
 	reqBody := geminiRequest{
+		SystemInstruction: noThinkSystem,
 		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
+			{Parts: []geminiPart{{Text: noThinkPrompt(prompt)}}},
 		},
 		GenerationConfig: &geminiGenerationConfig{
 			Temperature:     1.5,
@@ -615,11 +645,10 @@ Respond with ONLY a JSON array containing exactly 1 object, no other text:
 			return nil, fmt.Errorf("gemini API error: %s", geminiResp.Error.Message)
 		}
 
-		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-			return nil, errors.New("gemini returned empty response")
+		responseText, err := geminiResponseText(geminiResp)
+		if err != nil {
+			return nil, err
 		}
-
-		responseText := geminiResp.Candidates[0].Content.Parts[0].Text
 		var recommendations []GeminiRecommendation
 		if err := json.Unmarshal([]byte(responseText), &recommendations); err != nil {
 			cleaned := strings.TrimSpace(responseText)

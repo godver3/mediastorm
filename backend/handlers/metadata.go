@@ -1517,7 +1517,13 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 		mediaType = "movie"
 	}
 
-	items, err := h.Service.GetAISimilar(r.Context(), seedTitle, mediaType)
+	// Detach from the request context — the model takes ~35s and the client
+	// will cancel the HTTP connection before it finishes. Use a background
+	// context with a generous timeout so the result is always cached even
+	// if the client navigates away.
+	aiCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	items, err := h.Service.GetAISimilar(aiCtx, seedTitle, mediaType)
 	if err != nil {
 		log.Printf("[metadata] ai similar error seed=%q: %v", seedTitle, err)
 		w.Header().Set("Content-Type", "application/json")
