@@ -48,6 +48,7 @@ type SearchOptions struct {
 	IsDaily               bool                        // True for daily shows (talk shows, news) - enables date-based matching
 	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
 	EpisodeAirYear        int                         // Year the target episode aired (for year filter tolerance)
+	SkipFilter            bool                        // When true, skip result filtering (used by SearchTest)
 }
 
 // SearchService coordinates queries against configured debrid providers.
@@ -443,7 +444,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	}
 
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)
-	if !bypassFiltering && ShouldFilter(parsed) {
+	if !bypassFiltering && !opts.SkipFilter && ShouldFilter(parsed) {
 		hasResolver := opts.EpisodeResolver != nil
 		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s, hasEpisodeResolver=%v, targetS%02dE%02d, absoluteEp=%d",
 			parsed.Title, parsed.Year, parsed.MediaType, hasResolver, parsed.Season, parsed.Episode, opts.AbsoluteEpisodeNumber)

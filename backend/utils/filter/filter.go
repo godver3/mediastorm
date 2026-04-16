@@ -915,7 +915,7 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 				return true, fmt.Sprintf("anime episode %v does not match target absolute episode %d", parsed.Episodes, opts.TargetAbsoluteEpisode)
 			}
 		} else if !isAnimeAbsoluteFormat && hasSeason && opts.TargetSeason > 0 {
-			// Standard seasonal release - check if target season is in the release
+			// Standard seasonal release - check season then episode
 			seasonMatch := false
 			for _, s := range parsed.Seasons {
 				if s == opts.TargetSeason {
@@ -925,6 +925,33 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 			}
 			if !seasonMatch {
 				return true, fmt.Sprintf("episode is from season(s) %v but target is S%02d", parsed.Seasons, opts.TargetSeason)
+			}
+			// Also reject if the result has a specific episode that doesn't match the target.
+			// Skip when parsett has double-parsed the season number as an episode
+			// (e.g. "[SubsPlease] One Piece - Season 22 [1080p]" → Seasons=[22], Episodes=[22]).
+			if opts.TargetEpisode > 0 {
+				episodeIsSeason := len(parsed.Episodes) == 1 && len(parsed.Seasons) == 1 && parsed.Episodes[0] == parsed.Seasons[0]
+				if !episodeIsSeason && !episodeMatchesTarget(parsed.Episodes, opts.TargetEpisode) {
+					return true, fmt.Sprintf("episode %v does not match target S%02dE%02d", parsed.Episodes, opts.TargetSeason, opts.TargetEpisode)
+				}
+			}
+		} else if isAnimeAbsoluteFormat && opts.TargetAbsoluteEpisode == 0 && opts.TargetEpisode > 0 && hasSeason {
+			// High episode number on S01 but not an anime title (TargetAbsoluteEpisode not set).
+			// e.g. Antigang S01E112 when we want S01E111 — still need season+episode checks.
+			if opts.TargetSeason > 0 {
+				seasonMatch := false
+				for _, s := range parsed.Seasons {
+					if s == opts.TargetSeason {
+						seasonMatch = true
+						break
+					}
+				}
+				if !seasonMatch {
+					return true, fmt.Sprintf("episode is from season(s) %v but target is S%02d", parsed.Seasons, opts.TargetSeason)
+				}
+			}
+			if !episodeMatchesTarget(parsed.Episodes, opts.TargetEpisode) {
+				return true, fmt.Sprintf("episode %v does not match target S%02dE%02d", parsed.Episodes, opts.TargetSeason, opts.TargetEpisode)
 			}
 		}
 	}
@@ -947,6 +974,31 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 	}
 
 	return false, ""
+}
+
+// episodeMatchesTarget checks whether the target episode is present in episodes
+// (exact match) or falls within the range when there are multiple episodes (multi-ep file).
+func episodeMatchesTarget(episodes []int, target int) bool {
+	for _, ep := range episodes {
+		if ep == target {
+			return true
+		}
+	}
+	if len(episodes) > 1 {
+		minEp, maxEp := episodes[0], episodes[0]
+		for _, ep := range episodes {
+			if ep < minEp {
+				minEp = ep
+			}
+			if ep > maxEp {
+				maxEp = ep
+			}
+		}
+		if target >= minEp && target <= maxEp {
+			return true
+		}
+	}
+	return false
 }
 
 // getAbsoluteEpisodeRange calculates the absolute episode range for given seasons.

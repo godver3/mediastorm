@@ -683,6 +683,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				IsDaily:               opts.IsDaily,
 				TargetAirDate:         opts.TargetAirDate,
 				EpisodeAirYear:        opts.EpisodeAirYear,
+				SkipFilter:            opts.SkipFilter,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			log.Printf("[indexer] TIMING: debrid search complete (took: %v, results: %d)", time.Since(debridStart), len(debridResults))
@@ -1058,6 +1059,7 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 				IsDaily:               opts.IsDaily,
 				TargetAirDate:         opts.TargetAirDate,
 				EpisodeAirYear:        opts.EpisodeAirYear,
+				SkipFilter:            opts.SkipFilter,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			if err != nil {
@@ -1079,12 +1081,13 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 	}()
 
 	var aggregated []models.NZBResult
-	var lastErr error
+	var errCount, srcCount int
 
 	for sr := range resultsChan {
+		srcCount++
 		if sr.err != nil {
 			log.Printf("[indexer] %s search failed: %v", sr.source, sr.err)
-			lastErr = sr.err
+			errCount++
 			continue
 		}
 		if len(sr.results) > 0 {
@@ -1092,8 +1095,12 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 		}
 	}
 
-	if len(aggregated) == 0 && lastErr != nil {
-		return nil, lastErr
+	// Only return an error when EVERY source failed — a partial scraper failure
+	// (e.g. Comet timeout, Nyaa 429) with 0 results should just return empty,
+	// not a 504, so the caller can handle "no results" gracefully.
+	if srcCount > 0 && errCount == srcCount {
+		log.Printf("[indexer] searchRawResults: all %d sources failed, returning error", srcCount)
+		return nil, fmt.Errorf("all search sources failed")
 	}
 
 	return aggregated, nil
@@ -1192,20 +1199,23 @@ func (s *Service) buildFilterOptions(opts SearchOptions, filterSettings models.F
 	alternateTitles := s.resolveAlternateTitles(context.Background(), opts, "", 0)
 
 	return filter.Options{
-		ExpectedTitle:    expectedTitle,
-		ExpectedYear:     expectedYear,
-		EpisodeAirYear:   opts.EpisodeAirYear,
-		IsMovie:          isMovie,
-		MaxSizeMovieGB:   models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
-		MaxSizeEpisodeGB: models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
-		MaxResolution:    filterSettings.MaxResolution,
-		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-		AlternateTitles:  alternateTitles,
-		RequiredTerms:    filterSettings.RequiredTerms,
-		FilterOutTerms:   filterSettings.FilterOutTerms,
-		EpisodeResolver:  opts.EpisodeResolver,
-		IsDaily:          opts.IsDaily,
-		TargetAirDate:    opts.TargetAirDate,
+		ExpectedTitle:         expectedTitle,
+		ExpectedYear:          expectedYear,
+		EpisodeAirYear:        opts.EpisodeAirYear,
+		IsMovie:               isMovie,
+		MaxSizeMovieGB:        models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
+		MaxSizeEpisodeGB:      models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
+		MaxResolution:         filterSettings.MaxResolution,
+		HDRDVPolicy:           filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
+		AlternateTitles:       alternateTitles,
+		RequiredTerms:         filterSettings.RequiredTerms,
+		FilterOutTerms:        filterSettings.FilterOutTerms,
+		EpisodeResolver:       opts.EpisodeResolver,
+		IsDaily:               opts.IsDaily,
+		TargetAirDate:         opts.TargetAirDate,
+		TargetSeason:          parsedQuery.Season,
+		TargetEpisode:         parsedQuery.Episode,
+		TargetAbsoluteEpisode: opts.AbsoluteEpisodeNumber,
 	}
 }
 

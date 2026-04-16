@@ -1277,3 +1277,43 @@ func TestResultsWithDetails_ConsistentWithResults(t *testing.T) {
 		}
 	}
 }
+
+// TestTargetEpisodeFiltering verifies that results for the wrong episode are rejected
+// even when the season matches, including for episode numbers > 100.
+func TestTargetEpisodeFiltering(t *testing.T) {
+	tests := []struct {
+		name          string
+		title         string
+		targetSeason  int
+		targetEpisode int
+		wantPass      bool
+	}{
+		// Standard case: wrong episode should be rejected
+		{"wrong episode same season", "Show S01E56 1080p WEB", 1, 111, false},
+		{"correct episode", "Show S01E111 1080p WEB", 1, 111, true},
+		// Episode > 100 (the specific regression case — e.g. Antigang S01E111)
+		{"wrong high episode", "Show S01E112 1080p", 1, 111, false},
+		{"correct high episode", "Show S01E111 1080p", 1, 111, true},
+		// Season packs should still pass (no episode specified in pack)
+		{"season pack matching season", "Show S01 Complete 1080p", 1, 111, true},
+		// Multi-episode files that span the target should pass
+		{"multi-ep range covering target", "Show S01E110E115 1080p", 1, 111, true},
+		{"multi-ep range not covering target", "Show S01E56E60 1080p", 1, 111, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results := []models.NZBResult{{Title: tc.title}}
+			opts := Options{
+				ExpectedTitle: "Show",
+				TargetSeason:  tc.targetSeason,
+				TargetEpisode: tc.targetEpisode,
+			}
+			passed := Results(results, opts)
+			got := len(passed) > 0
+			if got != tc.wantPass {
+				t.Errorf("title=%q targetS%02dE%02d: got pass=%v, want pass=%v", tc.title, tc.targetSeason, tc.targetEpisode, got, tc.wantPass)
+			}
+		})
+	}
+}
