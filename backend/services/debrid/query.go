@@ -16,9 +16,9 @@ const (
 )
 
 var (
-	reSeasonEpisode      = regexp.MustCompile(`(?i)\bS?(\d{1,2})[xE](\d{1,2})\b`)
+	reSeasonEpisode      = regexp.MustCompile(`(?i)\bS?(\d{1,2})[xE](\d{1,3})\b`)
 	reSeasonOnly         = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
-	reSeasonEpisodeWords = regexp.MustCompile(`(?i)\bseason\s+(\d{1,2})\s*(?:episode|ep)\s*(\d{1,2})\b`)
+	reSeasonEpisodeWords = regexp.MustCompile(`(?i)\bseason\s+(\d{1,2})\s*(?:episode|ep)\s*(\d{1,3})\b`)
 	reYear               = regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	stopTokens           = map[string]struct{}{
 		"1080p":  {},

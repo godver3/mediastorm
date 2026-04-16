@@ -57,6 +57,24 @@ func TestParseQuery(t *testing.T) {
 			wantEpisode: 0,
 			wantType:    MediaTypeUnknown,
 		},
+		{
+			name:        "3-digit episode number",
+			query:       "Antigang S01E111",
+			wantTitle:   "Antigang",
+			wantYear:    0,
+			wantSeason:  1,
+			wantEpisode: 111,
+			wantType:    MediaTypeSeries,
+		},
+		{
+			name:        "3-digit episode with quality tags",
+			query:       "Show S02E123 1080p WEB",
+			wantTitle:   "Show",
+			wantYear:    0,
+			wantSeason:  2,
+			wantEpisode: 123,
+			wantType:    MediaTypeSeries,
+		},
 	}
 
 	for _, tt := range tests {
