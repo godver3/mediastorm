@@ -390,6 +390,73 @@ func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
 	}
 }
 
+func TestPreferTMDBEpisodeImagesOverridesTVDBStills(t *testing.T) {
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/3/tv/42/season/1" {
+				body := bytes.NewBufferString(`{"id":1001,"name":"Season 1","season_number":1,"episodes":[
+					{"id":5001,"name":"Pilot","season_number":1,"episode_number":1,"still_path":"/tmdb-pilot.jpg"},
+					{"id":5002,"name":"Second","season_number":1,"episode_number":2}
+				]}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+			t.Fatalf("unhandled request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}),
+	}
+
+	service := &Service{
+		tmdb: newTMDBClient("tmdb-key", "eng", httpc, newFileCache(t.TempDir(), 24)),
+	}
+	service.tmdb.minInterval = 0
+
+	details := models.SeriesDetails{
+		Title: models.Title{TMDBID: 42, MediaType: "series"},
+		Seasons: []models.SeriesSeason{
+			{
+				Number:       1,
+				Name:         "Season 1",
+				EpisodeCount: 2,
+				Episodes: []models.SeriesEpisode{
+					{
+						ID:            "tvdb:episode:1",
+						SeasonNumber:  1,
+						EpisodeNumber: 1,
+						Image:         &models.Image{URL: "https://artworks.thetvdb.com/banners/tvdb-pilot.jpg", Type: "still"},
+					},
+					{
+						ID:            "tvdb:episode:2",
+						SeasonNumber:  1,
+						EpisodeNumber: 2,
+						Image:         &models.Image{URL: "https://artworks.thetvdb.com/banners/tvdb-second.jpg", Type: "still"},
+					},
+				},
+			},
+		},
+	}
+
+	if !service.preferTMDBEpisodeImages(context.Background(), &details, 42) {
+		t.Fatal("expected TMDB episode image enrichment to change the details")
+	}
+
+	gotPilotImage := details.Seasons[0].Episodes[0].Image
+	if gotPilotImage == nil {
+		t.Fatal("expected first episode image")
+	}
+	wantPilotURL := "https://image.tmdb.org/t/p/w300/tmdb-pilot.jpg"
+	if gotPilotImage.URL != wantPilotURL {
+		t.Fatalf("expected TMDB pilot image %q, got %q", wantPilotURL, gotPilotImage.URL)
+	}
+	if gotPilotImage.Type != "still" {
+		t.Fatalf("expected TMDB pilot image type still, got %q", gotPilotImage.Type)
+	}
+
+	gotSecondImage := details.Seasons[0].Episodes[1].Image
+	if gotSecondImage == nil || gotSecondImage.URL != "https://artworks.thetvdb.com/banners/tvdb-second.jpg" {
+		t.Fatalf("expected second episode to keep TVDB image when TMDB still is missing, got %#v", gotSecondImage)
+	}
+}
+
 // TestGetCustomListNoTranslationWhenUnavailable verifies that when translation is not available,
 // the original content is preserved.
 func TestGetCustomListNoTranslationWhenUnavailable(t *testing.T) {

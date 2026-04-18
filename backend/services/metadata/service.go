@@ -884,7 +884,7 @@ func (s *Service) GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64)
 			}
 		}
 	} else if tvdbID > 0 {
-		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && cached.Title.TextPoster != nil {
 			return cached.Title.TextPoster.URL
@@ -2850,7 +2850,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
@@ -3093,7 +3093,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if strings.Contains(err.Error(), "404 Not Found") {
 			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
-				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+				cacheID = cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 				base, err = s.getTVDBSeriesDetails(tvdbID)
 			}
 		}
@@ -3460,6 +3460,10 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		tmdbIDForEnrichment = req.TMDBID
 		seriesTitle.TMDBID = req.TMDBID
 		log.Printf("[metadata] using request TMDB ID for series enrichment tvdbId=%d tmdbId=%d", tvdbID, req.TMDBID)
+		details.Title = seriesTitle
+	}
+	if tmdbIDForEnrichment > 0 && s.preferTMDBEpisodeImages(ctx, &details, tmdbIDForEnrichment) {
+		log.Printf("[metadata] applied TMDB episode stills tvdbId=%d tmdbId=%d", tvdbID, tmdbIDForEnrichment)
 	}
 
 	// Fetch ratings from MDBList if enabled and IMDB ID is available
@@ -3574,6 +3578,107 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	return &details, nil
 }
 
+func (s *Service) preferTMDBEpisodeImages(ctx context.Context, details *models.SeriesDetails, tmdbID int64) bool {
+	if details == nil || tmdbID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() || len(details.Seasons) == 0 {
+		return false
+	}
+
+	type seasonImageResult struct {
+		seasonNumber int
+		images       map[int]models.Image
+		err          error
+	}
+
+	seasonCount := 0
+	results := make(chan seasonImageResult, len(details.Seasons))
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+
+	for _, season := range details.Seasons {
+		if season.Number < 0 || len(season.Episodes) == 0 {
+			continue
+		}
+		seasonNumber := season.Number
+		seasonName := season.Name
+		episodeCount := season.EpisodeCount
+		seasonCount++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			tmdbSeason, err := s.tmdb.seriesSeasonDetails(ctx, tmdbID, tmdbSeasonSummary{
+				Number:       seasonNumber,
+				Name:         seasonName,
+				EpisodeCount: episodeCount,
+			})
+			if err != nil {
+				results <- seasonImageResult{seasonNumber: seasonNumber, err: err}
+				return
+			}
+
+			images := make(map[int]models.Image)
+			for _, episode := range tmdbSeason.Episodes {
+				if episode.EpisodeNumber <= 0 || episode.Image == nil || strings.TrimSpace(episode.Image.URL) == "" {
+					continue
+				}
+				images[episode.EpisodeNumber] = *episode.Image
+			}
+			results <- seasonImageResult{seasonNumber: seasonNumber, images: images}
+		}()
+	}
+
+	if seasonCount == 0 {
+		return false
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	imagesBySeason := make(map[int]map[int]models.Image)
+	for result := range results {
+		if result.err != nil {
+			log.Printf("[metadata] TMDB episode image fetch failed tmdbId=%d season=%d err=%v", tmdbID, result.seasonNumber, result.err)
+			continue
+		}
+		if len(result.images) > 0 {
+			imagesBySeason[result.seasonNumber] = result.images
+		}
+	}
+	if len(imagesBySeason) == 0 {
+		return false
+	}
+
+	changed := 0
+	for i := range details.Seasons {
+		seasonImages := imagesBySeason[details.Seasons[i].Number]
+		if len(seasonImages) == 0 {
+			continue
+		}
+		for j := range details.Seasons[i].Episodes {
+			episode := &details.Seasons[i].Episodes[j]
+			tmdbImage, ok := seasonImages[episode.EpisodeNumber]
+			if !ok || strings.TrimSpace(tmdbImage.URL) == "" {
+				continue
+			}
+			if episode.Image != nil && episode.Image.URL == tmdbImage.URL {
+				continue
+			}
+			image := tmdbImage
+			episode.Image = &image
+			changed++
+		}
+	}
+
+	if changed > 0 {
+		log.Printf("[metadata] preferred TMDB episode stills tmdbId=%d changed=%d", tmdbID, changed)
+	}
+	return changed > 0
+}
+
 // populateAiredDateTimeUTC sets AiredDateTimeUTC on every episode using the
 // series' air time and timezone so the frontend can do precise UTC comparisons.
 func populateAiredDateTimeUTC(details *models.SeriesDetails) {
@@ -3615,14 +3720,14 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
-	fullCacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+	fullCacheID := cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var fullCached models.SeriesDetails
 	if ok, _ := s.cache.get(fullCacheID, &fullCached); ok && len(fullCached.Seasons) > 0 {
 		log.Printf("[metadata] series details lite full-cache hit tvdbId=%d seasons=%d", tvdbID, len(fullCached.Seasons))
 		return &fullCached, nil
 	}
 
-	cacheID := cacheKey("tvdb", "series", "details", "v7-lite", s.client.language, strconv.FormatInt(tvdbID, 10))
+	cacheID := cacheKey("tvdb", "series", "details", "v8-lite", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details lite cache hit tvdbId=%d seasons=%d", tvdbID, len(cached.Seasons))
@@ -3667,7 +3772,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		if strings.Contains(extResult.err.Error(), "404 Not Found") {
 			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
-				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+				cacheID = cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 				// Drain the translation channel from the failed ID
 				<-transChan
 				// Re-fetch with the correct ID
@@ -3914,6 +4019,10 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	if tmdbIDForEnrichment == 0 && req.TMDBID > 0 {
 		tmdbIDForEnrichment = req.TMDBID
 		seriesTitle.TMDBID = req.TMDBID
+		details.Title = seriesTitle
+	}
+	if tmdbIDForEnrichment > 0 && s.preferTMDBEpisodeImages(ctx, &details, tmdbIDForEnrichment) {
+		log.Printf("[metadata] lite: applied TMDB episode stills tvdbId=%d tmdbId=%d", tvdbID, tmdbIDForEnrichment)
 	}
 	if tmdbIDForEnrichment > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 		if images, err := s.cachedFetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
@@ -3984,7 +4093,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 			continue
 		}
 
-		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 			log.Printf("[metadata] batch series cache hit index=%d tvdbId=%d name=%q", i, tvdbID, query.Name)
@@ -4107,7 +4216,7 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 		}
 
 		// Check the full SeriesDetails cache
-		cacheID := cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
+		cacheID := cacheKey("tvdb", "series", "details", "v8", s.client.language, strconv.FormatInt(tvdbID, 10))
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok {
 			extracted := extractTitleFields(&cached.Title, fields)

@@ -851,7 +851,7 @@ func (c *tmdbClient) seriesSeasonDetails(ctx context.Context, tmdbID int64, summ
 		if episode.Name == "" && episodeNumber > 0 {
 			episode.Name = fmt.Sprintf("Episode %d", episodeNumber)
 		}
-		if still := buildTMDBImage(ep.StillPath, tmdbStillSize, "backdrop"); still != nil {
+		if still := buildTMDBImage(ep.StillPath, tmdbStillSize, "still"); still != nil {
 			episode.Image = still
 		}
 		episodes = append(episodes, episode)
