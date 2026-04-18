@@ -32,6 +32,7 @@ const (
 	tmdbBackdropSize = "w1280"
 	tmdbProfileSize  = "w185"
 	tmdbLogoSize     = "w500"
+	tmdbStillSize    = "w300"
 )
 
 // TMDB genre ID → name maps (standard IDs that rarely change)
@@ -171,6 +172,7 @@ func (c *tmdbClient) isConfigured() bool {
 
 type tmdbExternalIDsResponse struct {
 	IMDBID      string `json:"imdb_id"`
+	TVDBID      int64  `json:"tvdb_id"`
 	FacebookID  string `json:"facebook_id"`
 	InstagramID string `json:"instagram_id"`
 	TwitterID   string `json:"twitter_id"`
@@ -272,6 +274,13 @@ func parseTMDBYear(movieDate, seriesDate string) int {
 		}
 	}
 	return 0
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func buildTMDBImage(imagePath, size, imageType string) *models.Image {
@@ -590,6 +599,376 @@ func (c *tmdbClient) fetchSeriesGenres(ctx context.Context, tmdbID int64) ([]str
 		}
 	}
 	return genres, nil
+}
+
+func (c *tmdbClient) seriesDetails(ctx context.Context, tmdbID int64) (*models.Title, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+	if tmdbID <= 0 {
+		return nil, errors.New("tmdb id required")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID))
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey + "&append_to_response=external_ids"
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		ID               int64   `json:"id"`
+		Name             string  `json:"name"`
+		OriginalName     string  `json:"original_name"`
+		Overview         string  `json:"overview"`
+		OriginalLanguage string  `json:"original_language"`
+		FirstAirDate     string  `json:"first_air_date"`
+		PosterPath       string  `json:"poster_path"`
+		BackdropPath     string  `json:"backdrop_path"`
+		Status           string  `json:"status"`
+		Popularity       float64 `json:"popularity"`
+		VoteAverage      float64 `json:"vote_average"`
+		Genres           []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"genres"`
+		Networks []struct {
+			Name string `json:"name"`
+		} `json:"networks"`
+		ExternalIDs tmdbExternalIDsResponse `json:"external_ids"`
+	}
+
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb tv/%d failed: %w", tmdbID, err)
+	}
+
+	title := &models.Title{
+		ID:           fmt.Sprintf("tmdb:tv:%d", tmdbID),
+		Name:         strings.TrimSpace(payload.Name),
+		OriginalName: strings.TrimSpace(payload.OriginalName),
+		Overview:     strings.TrimSpace(payload.Overview),
+		Language:     strings.TrimSpace(payload.OriginalLanguage),
+		MediaType:    "series",
+		TMDBID:       tmdbID,
+		IMDBID:       strings.TrimSpace(payload.ExternalIDs.IMDBID),
+		TVDBID:       payload.ExternalIDs.TVDBID,
+		Status:       strings.TrimSpace(payload.Status),
+		Popularity:   scoreFallback(payload.Popularity, payload.VoteAverage),
+	}
+	if title.Name == "" {
+		title.Name = title.OriginalName
+	}
+	if year := parseTMDBYear("", payload.FirstAirDate); year != 0 {
+		title.Year = year
+	}
+	if poster := buildTMDBImage(payload.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+		title.Poster = poster
+	}
+	if backdrop := buildTMDBImage(payload.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+		title.Backdrop = backdrop
+	}
+	for _, genre := range payload.Genres {
+		if name := strings.TrimSpace(genre.Name); name != "" {
+			title.Genres = append(title.Genres, name)
+		}
+	}
+	if len(payload.Networks) > 0 {
+		title.Network = strings.TrimSpace(payload.Networks[0].Name)
+	}
+	return title, nil
+}
+
+func (c *tmdbClient) seriesDetailsWithSeasons(ctx context.Context, tmdbID int64) (*models.SeriesDetails, error) {
+	title, err := c.seriesDetails(ctx, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	if title == nil {
+		return nil, errors.New("tmdb returned nil series")
+	}
+
+	summaries, err := c.seriesSeasonSummaries(ctx, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+
+	seasons := make([]models.SeriesSeason, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.Number < 0 {
+			continue
+		}
+		season, err := c.seriesSeasonDetails(ctx, tmdbID, summary)
+		if err != nil {
+			log.Printf("[tmdb] season details failed tv/%d season/%d: %v", tmdbID, summary.Number, err)
+			seasons = append(seasons, summary.toModel(tmdbID))
+			continue
+		}
+		seasons = append(seasons, season)
+	}
+
+	sort.Slice(seasons, func(i, j int) bool {
+		return seasons[i].Number < seasons[j].Number
+	})
+
+	return &models.SeriesDetails{
+		Title:   *title,
+		Seasons: seasons,
+	}, nil
+}
+
+type tmdbSeasonSummary struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Overview     string `json:"overview"`
+	Number       int    `json:"season_number"`
+	EpisodeCount int    `json:"episode_count"`
+	AirDate      string `json:"air_date"`
+	PosterPath   string `json:"poster_path"`
+}
+
+func (s tmdbSeasonSummary) toModel(tmdbID int64) models.SeriesSeason {
+	season := models.SeriesSeason{
+		ID:           fmt.Sprintf("tmdb:tv:%d:season:%d", tmdbID, s.Number),
+		Name:         strings.TrimSpace(s.Name),
+		Number:       s.Number,
+		Overview:     strings.TrimSpace(s.Overview),
+		EpisodeCount: s.EpisodeCount,
+		Episodes:     []models.SeriesEpisode{},
+	}
+	if season.Name == "" {
+		if s.Number == 0 {
+			season.Name = "Specials"
+		} else {
+			season.Name = fmt.Sprintf("Season %d", s.Number)
+		}
+	}
+	if poster := buildTMDBImage(s.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+		season.Image = poster
+	}
+	return season
+}
+
+func (c *tmdbClient) seriesSeasonSummaries(ctx context.Context, tmdbID int64) ([]tmdbSeasonSummary, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID))
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Seasons []tmdbSeasonSummary `json:"seasons"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb tv/%d seasons failed: %w", tmdbID, err)
+	}
+	return payload.Seasons, nil
+}
+
+func (c *tmdbClient) seriesSeasonDetails(ctx context.Context, tmdbID int64, summary tmdbSeasonSummary) (models.SeriesSeason, error) {
+	if !c.isConfigured() {
+		return models.SeriesSeason{}, errors.New("tmdb api key not configured")
+	}
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID), "season", fmt.Sprintf("%d", summary.Number))
+	if err != nil {
+		return models.SeriesSeason{}, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		ID         int64  `json:"id"`
+		Name       string `json:"name"`
+		Overview   string `json:"overview"`
+		Number     int    `json:"season_number"`
+		AirDate    string `json:"air_date"`
+		PosterPath string `json:"poster_path"`
+		Episodes   []struct {
+			ID            int64  `json:"id"`
+			Name          string `json:"name"`
+			Overview      string `json:"overview"`
+			SeasonNumber  int    `json:"season_number"`
+			EpisodeNumber int    `json:"episode_number"`
+			AirDate       string `json:"air_date"`
+			Runtime       int    `json:"runtime"`
+			StillPath     string `json:"still_path"`
+		} `json:"episodes"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return models.SeriesSeason{}, fmt.Errorf("tmdb tv/%d season/%d failed: %w", tmdbID, summary.Number, err)
+	}
+
+	season := summary.toModel(tmdbID)
+	seasonID := payload.ID
+	if seasonID == 0 {
+		seasonID = summary.ID
+	}
+	if seasonID > 0 {
+		season.ID = fmt.Sprintf("tmdb:season:%d", seasonID)
+	}
+	if name := strings.TrimSpace(payload.Name); name != "" {
+		season.Name = name
+	}
+	if overview := strings.TrimSpace(payload.Overview); overview != "" {
+		season.Overview = overview
+	}
+	if payload.Number >= 0 {
+		season.Number = payload.Number
+	}
+	if poster := buildTMDBImage(payload.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+		season.Image = poster
+	}
+
+	episodes := make([]models.SeriesEpisode, 0, len(payload.Episodes))
+	for _, ep := range payload.Episodes {
+		seasonNumber := ep.SeasonNumber
+		if seasonNumber == 0 && season.Number != 0 {
+			seasonNumber = season.Number
+		}
+		episodeNumber := ep.EpisodeNumber
+		episodeID := fmt.Sprintf("tmdb:episode:%d", ep.ID)
+		if ep.ID == 0 {
+			episodeID = fmt.Sprintf("tmdb:tv:%d:s%02de%02d", tmdbID, seasonNumber, episodeNumber)
+		}
+		episode := models.SeriesEpisode{
+			ID:            episodeID,
+			Name:          strings.TrimSpace(ep.Name),
+			Overview:      strings.TrimSpace(ep.Overview),
+			SeasonNumber:  seasonNumber,
+			EpisodeNumber: episodeNumber,
+			AiredDate:     strings.TrimSpace(ep.AirDate),
+			Runtime:       ep.Runtime,
+		}
+		if episode.Name == "" && episodeNumber > 0 {
+			episode.Name = fmt.Sprintf("Episode %d", episodeNumber)
+		}
+		if still := buildTMDBImage(ep.StillPath, tmdbStillSize, "backdrop"); still != nil {
+			episode.Image = still
+		}
+		episodes = append(episodes, episode)
+	}
+	sort.Slice(episodes, func(i, j int) bool {
+		if episodes[i].SeasonNumber != episodes[j].SeasonNumber {
+			return episodes[i].SeasonNumber < episodes[j].SeasonNumber
+		}
+		return episodes[i].EpisodeNumber < episodes[j].EpisodeNumber
+	})
+	season.Episodes = episodes
+	if len(episodes) > season.EpisodeCount {
+		season.EpisodeCount = len(episodes)
+	}
+	return season, nil
+}
+
+func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, limit int) ([]models.SearchResult, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []models.SearchResult{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType == "series" {
+		apiMediaType = "tv"
+	}
+	if apiMediaType != "movie" && apiMediaType != "tv" {
+		apiMediaType = "multi"
+	}
+
+	endpoint := fmt.Sprintf("%s/search/%s?api_key=%s&query=%s&include_adult=false",
+		tmdbBaseURL, apiMediaType, c.apiKey, url.QueryEscape(query))
+	if lang := strings.TrimSpace(c.language); lang != "" {
+		endpoint += "&language=" + normalizeLanguage(lang)
+	}
+
+	var payload struct {
+		Results []struct {
+			ID               int64   `json:"id"`
+			Name             string  `json:"name"`
+			Title            string  `json:"title"`
+			OriginalName     string  `json:"original_name"`
+			OriginalTitle    string  `json:"original_title"`
+			MediaType        string  `json:"media_type"`
+			Overview         string  `json:"overview"`
+			OriginalLanguage string  `json:"original_language"`
+			PosterPath       string  `json:"poster_path"`
+			BackdropPath     string  `json:"backdrop_path"`
+			ReleaseDate      string  `json:"release_date"`
+			FirstAirDate     string  `json:"first_air_date"`
+			Popularity       float64 `json:"popularity"`
+			VoteAverage      float64 `json:"vote_average"`
+		} `json:"results"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb search for %q failed: %w", query, err)
+	}
+
+	results := make([]models.SearchResult, 0, minInt(limit, len(payload.Results)))
+	for _, r := range payload.Results {
+		if len(results) >= limit {
+			break
+		}
+		resultMediaType := "movie"
+		resultAPIType := apiMediaType
+		if resultAPIType == "multi" {
+			resultAPIType = strings.ToLower(strings.TrimSpace(r.MediaType))
+		}
+		switch resultAPIType {
+		case "tv":
+			resultMediaType = "series"
+		case "movie":
+			resultMediaType = "movie"
+		default:
+			continue
+		}
+
+		title := models.Title{
+			ID:           fmt.Sprintf("tmdb:%s:%d", resultAPIType, r.ID),
+			Name:         pickTMDBName(resultAPIType, r.Name, r.Title),
+			OriginalName: strings.TrimSpace(firstNonEmpty(r.OriginalName, r.OriginalTitle)),
+			Overview:     strings.TrimSpace(r.Overview),
+			Language:     strings.TrimSpace(r.OriginalLanguage),
+			MediaType:    resultMediaType,
+			TMDBID:       r.ID,
+			Popularity:   scoreFallback(r.Popularity, r.VoteAverage),
+		}
+		if title.Name == "" {
+			title.Name = title.OriginalName
+		}
+		if title.Name == "" {
+			continue
+		}
+		if year := parseTMDBYear(r.ReleaseDate, r.FirstAirDate); year != 0 {
+			title.Year = year
+		}
+		if poster := buildTMDBImage(r.PosterPath, tmdbPosterSize, "poster"); poster != nil {
+			title.Poster = poster
+		}
+		if backdrop := buildTMDBImage(r.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
+			title.Backdrop = backdrop
+		}
+
+		score := int(math.Round(title.Popularity))
+		if score <= 0 {
+			score = len(payload.Results) - len(results)
+		}
+		results = append(results, models.SearchResult{Title: title, Score: score})
+	}
+	return results, nil
 }
 
 // logoLanguage returns the 2-letter ISO 639-1 language code for logo filtering.

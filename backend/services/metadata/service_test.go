@@ -252,6 +252,11 @@ func TestSeriesDetailsUpgradesCachedLiteSeasonNames(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
 			}
 
+			if path == "/v4/series/12345" {
+				body := bytes.NewBufferString(`{"data":{"id":12345,"name":"Test Series","overview":"Series overview","year":"2024"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			}
+
 			if path == "/v4/series/12345/extended" {
 				if query.Get("meta") == "artworks" {
 					body := bytes.NewBufferString(`{"data":{"id":12345,"artworks":[]}}`)
@@ -343,6 +348,45 @@ func TestSeriesDetailsUpgradesCachedLiteSeasonNames(t *testing.T) {
 	}
 	if seasonTranslationHit == 0 {
 		t.Fatal("expected full SeriesDetails to fetch season translations for cached lite data")
+	}
+}
+
+func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
+	results := mergeSearchResults([]models.SearchResult{
+		{
+			Title: models.Title{
+				ID:        "tmdb:tv:123",
+				Name:      "Test Show",
+				MediaType: "series",
+				TMDBID:    123,
+				Poster:    &models.Image{URL: "https://image.tmdb.org/t/p/w780/poster.jpg", Type: "poster"},
+			},
+			Score: 80,
+		},
+		{
+			Title: models.Title{
+				ID:        "tvdb:series:456",
+				Name:      "Test Show",
+				MediaType: "series",
+				TVDBID:    456,
+				TMDBID:    123,
+			},
+			Score: 40,
+		},
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("expected one merged result, got %d", len(results))
+	}
+	title := results[0].Title
+	if title.ID != "tvdb:series:456" {
+		t.Fatalf("expected TVDB result to win, got %q", title.ID)
+	}
+	if title.TMDBID != 123 || title.TVDBID != 456 {
+		t.Fatalf("expected merged TMDB/TVDB IDs, got tmdb=%d tvdb=%d", title.TMDBID, title.TVDBID)
+	}
+	if title.Poster == nil {
+		t.Fatal("expected poster to be preserved from TMDB result")
 	}
 }
 

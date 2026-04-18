@@ -2044,7 +2044,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 		return s.searchDemo(ctx, q, mediaType), nil
 	}
 
-	key := cacheKey("tvdb", "search", mediaType, q, s.client.language)
+	key := cacheKey("metadata", "search", "v2", mediaType, q, s.client.language)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -2092,156 +2092,255 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 		mediaType = "series"
 	}
 	params := url.Values{"query": []string{q}, "type": []string{t}, "limit": []string{"20"}}
-	if err := s.client.doGET("https://api4.thetvdb.com/v4/search", params, &resp); err != nil {
-		return nil, err
+	tvdbErr := s.client.doGET("https://api4.thetvdb.com/v4/search", params, &resp)
+	if tvdbErr != nil {
+		log.Printf("[metadata] TVDB search failed query=%q type=%s err=%v", q, mediaType, tvdbErr)
 	}
+
 	results := make([]models.SearchResult, 0, len(resp.Data))
-	for _, d := range resp.Data {
-		entryType := strings.ToLower(strings.TrimSpace(d.Type))
-		entryMediaType := mediaType
-		switch entryType {
-		case "movie", "movies", "film", "films":
-			entryMediaType = "movie"
-		case "series", "show", "shows", "tv":
-			entryMediaType = "series"
-		}
-		originalName := strings.TrimSpace(d.Name)
-		name := originalName
-		// Check for translated name in the requested language or English
-		if len(d.Translations) > 0 {
-			if v := strings.TrimSpace(d.Translations[s.client.language]); v != "" {
-				name = v
-			} else if v := strings.TrimSpace(d.Translations["eng"]); v != "" {
-				name = v
+	if tvdbErr == nil {
+		for _, d := range resp.Data {
+			entryType := strings.ToLower(strings.TrimSpace(d.Type))
+			entryMediaType := mediaType
+			switch entryType {
+			case "movie", "movies", "film", "films":
+				entryMediaType = "movie"
+			case "series", "show", "shows", "tv":
+				entryMediaType = "series"
 			}
-		}
-		if name == "" {
-			continue
-		}
-		overview := strings.TrimSpace(d.Overview)
-		if len(d.Overviews) > 0 {
-			if v := strings.TrimSpace(d.Overviews[s.client.language]); v != "" {
-				overview = v
-			} else if v := strings.TrimSpace(d.Overviews["eng"]); v != "" {
-				overview = v
+			originalName := strings.TrimSpace(d.Name)
+			name := originalName
+			// Check for translated name in the requested language or English
+			if len(d.Translations) > 0 {
+				if v := strings.TrimSpace(d.Translations[s.client.language]); v != "" {
+					name = v
+				} else if v := strings.TrimSpace(d.Translations["eng"]); v != "" {
+					name = v
+				}
 			}
-		}
-		year := 0
-		if ys := strings.TrimSpace(d.Year); ys != "" {
-			if parsedYear := extractYearCandidate(ys); parsedYear > 0 {
-				year = parsedYear
+			if name == "" {
+				continue
 			}
-		}
-		if year == 0 {
-			if fas := strings.TrimSpace(d.FirstAirTime); fas != "" {
-				if parsedYear := extractYearCandidate(fas); parsedYear > 0 {
+			overview := strings.TrimSpace(d.Overview)
+			if len(d.Overviews) > 0 {
+				if v := strings.TrimSpace(d.Overviews[s.client.language]); v != "" {
+					overview = v
+				} else if v := strings.TrimSpace(d.Overviews["eng"]); v != "" {
+					overview = v
+				}
+			}
+			year := 0
+			if ys := strings.TrimSpace(d.Year); ys != "" {
+				if parsedYear := extractYearCandidate(ys); parsedYear > 0 {
 					year = parsedYear
 				}
 			}
-		}
-		language := strings.TrimSpace(d.PrimaryLanguage)
-		if language == "" {
-			language = s.client.language
-		}
-		var tvdbID int64
-		if idStr := strings.TrimSpace(d.TVDBID); idStr != "" {
-			if parsed, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				tvdbID = parsed
+			if year == 0 {
+				if fas := strings.TrimSpace(d.FirstAirTime); fas != "" {
+					if parsedYear := extractYearCandidate(fas); parsedYear > 0 {
+						year = parsedYear
+					}
+				}
 			}
-		}
-		title := models.Title{
-			Name:      name,
-			Overview:  overview,
-			Year:      year,
-			Language:  language,
-			MediaType: entryMediaType,
-			TVDBID:    tvdbID,
-			Network:   strings.TrimSpace(d.Network),
-		}
-		if originalName != "" && !strings.EqualFold(originalName, name) {
-			title.OriginalName = originalName
-		}
-		aliasSet := make(map[string]struct{})
-		var alternateTitles []string
-		addAlias := func(candidate string) {
-			trimmed := strings.TrimSpace(candidate)
-			if trimmed == "" {
-				return
+			language := strings.TrimSpace(d.PrimaryLanguage)
+			if language == "" {
+				language = s.client.language
 			}
-			if strings.EqualFold(trimmed, name) {
-				return
+			var tvdbID int64
+			if idStr := strings.TrimSpace(d.TVDBID); idStr != "" {
+				if parsed, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+					tvdbID = parsed
+				}
 			}
-			lowered := strings.ToLower(trimmed)
-			if _, exists := aliasSet[lowered]; exists {
-				return
+			title := models.Title{
+				Name:      name,
+				Overview:  overview,
+				Year:      year,
+				Language:  language,
+				MediaType: entryMediaType,
+				TVDBID:    tvdbID,
+				Network:   strings.TrimSpace(d.Network),
 			}
-			aliasSet[lowered] = struct{}{}
-			alternateTitles = append(alternateTitles, trimmed)
-		}
-		addAlias(originalName)
-		if len(d.Translations) > 0 {
-			langs := make([]string, 0, len(d.Translations))
-			for lang := range d.Translations {
-				langs = append(langs, lang)
-			}
-			sort.Strings(langs)
-			for _, lang := range langs {
-				addAlias(d.Translations[lang])
-			}
-		}
-		// Note: Skip fetching aliases here for faster search response.
-		// Aliases are already included from translations above.
-		// Full alias fetch happens during playback resolution when needed.
-		if len(alternateTitles) > 0 {
-			title.AlternateTitles = alternateTitles
-		}
-		if tvdbID > 0 {
-			title.ID = fmt.Sprintf("tvdb:%s:%d", entryMediaType, tvdbID)
-		}
-		if title.ID == "" {
-			if slug := strings.TrimSpace(d.Slug); slug != "" {
-				title.ID = fmt.Sprintf("tvdb:%s:%s", entryMediaType, slug)
-			} else if objectID := strings.TrimSpace(d.ObjectID); objectID != "" {
-				title.ID = fmt.Sprintf("tvdb:%s:%s", entryMediaType, objectID)
-			}
-		}
-		if imgURL := normalizeTVDBImageURL(d.ImageURL); imgURL != "" {
-			title.Poster = &models.Image{URL: imgURL, Type: "poster"}
-		}
-		if thumbURL := normalizeTVDBImageURL(d.Thumbnail); thumbURL != "" {
-			if title.Poster == nil {
-				title.Poster = &models.Image{URL: thumbURL, Type: "poster"}
-			}
-			title.Backdrop = &models.Image{URL: thumbURL, Type: "backdrop"}
-		}
-		for _, remote := range d.RemoteIDs {
-			id := strings.TrimSpace(remote.ID)
-			if id == "" {
-				continue
-			}
-			lower := strings.ToLower(remote.SourceName)
-			switch {
-			case strings.Contains(lower, "imdb"):
-				title.IMDBID = id
-			case strings.Contains(lower, "themoviedb") || strings.Contains(lower, "tmdb"):
-				if tmdbID, err := strconv.ParseInt(id, 10, 64); err == nil {
+			if tmdbIDStr := strings.TrimSpace(d.TMDBID); tmdbIDStr != "" {
+				if tmdbID, err := strconv.ParseInt(tmdbIDStr, 10, 64); err == nil {
 					title.TMDBID = tmdbID
 				}
 			}
+			if originalName != "" && !strings.EqualFold(originalName, name) {
+				title.OriginalName = originalName
+			}
+			aliasSet := make(map[string]struct{})
+			var alternateTitles []string
+			addAlias := func(candidate string) {
+				trimmed := strings.TrimSpace(candidate)
+				if trimmed == "" {
+					return
+				}
+				if strings.EqualFold(trimmed, name) {
+					return
+				}
+				lowered := strings.ToLower(trimmed)
+				if _, exists := aliasSet[lowered]; exists {
+					return
+				}
+				aliasSet[lowered] = struct{}{}
+				alternateTitles = append(alternateTitles, trimmed)
+			}
+			addAlias(originalName)
+			if len(d.Translations) > 0 {
+				langs := make([]string, 0, len(d.Translations))
+				for lang := range d.Translations {
+					langs = append(langs, lang)
+				}
+				sort.Strings(langs)
+				for _, lang := range langs {
+					addAlias(d.Translations[lang])
+				}
+			}
+			// Note: Skip fetching aliases here for faster search response.
+			// Aliases are already included from translations above.
+			// Full alias fetch happens during playback resolution when needed.
+			if len(alternateTitles) > 0 {
+				title.AlternateTitles = alternateTitles
+			}
+			if tvdbID > 0 {
+				title.ID = fmt.Sprintf("tvdb:%s:%d", entryMediaType, tvdbID)
+			}
+			if title.ID == "" {
+				if slug := strings.TrimSpace(d.Slug); slug != "" {
+					title.ID = fmt.Sprintf("tvdb:%s:%s", entryMediaType, slug)
+				} else if objectID := strings.TrimSpace(d.ObjectID); objectID != "" {
+					title.ID = fmt.Sprintf("tvdb:%s:%s", entryMediaType, objectID)
+				}
+			}
+			if imgURL := normalizeTVDBImageURL(d.ImageURL); imgURL != "" {
+				title.Poster = &models.Image{URL: imgURL, Type: "poster"}
+			}
+			if thumbURL := normalizeTVDBImageURL(d.Thumbnail); thumbURL != "" {
+				if title.Poster == nil {
+					title.Poster = &models.Image{URL: thumbURL, Type: "poster"}
+				}
+				title.Backdrop = &models.Image{URL: thumbURL, Type: "backdrop"}
+			}
+			for _, remote := range d.RemoteIDs {
+				id := strings.TrimSpace(remote.ID)
+				if id == "" {
+					continue
+				}
+				lower := strings.ToLower(remote.SourceName)
+				switch {
+				case strings.Contains(lower, "imdb"):
+					title.IMDBID = id
+				case strings.Contains(lower, "themoviedb") || strings.Contains(lower, "tmdb"):
+					if tmdbID, err := strconv.ParseInt(id, 10, 64); err == nil {
+						title.TMDBID = tmdbID
+					}
+				}
+			}
+			if title.ID == "" {
+				// Ensure a stable ID even if TVDB slug is missing
+				fallbackID := fmt.Sprintf("tvdb:%s:%s", entryMediaType, strings.ReplaceAll(strings.ToLower(name), " ", "-"))
+				title.ID = fallbackID
+			}
+			score := int(d.Score)
+			if d.Score > 0 && score == 0 {
+				score = int(d.Score + 0.5)
+			}
+			results = append(results, models.SearchResult{Title: title, Score: score})
 		}
-		if title.ID == "" {
-			// Ensure a stable ID even if TVDB slug is missing
-			fallbackID := fmt.Sprintf("tvdb:%s:%s", entryMediaType, strings.ReplaceAll(strings.ToLower(name), " ", "-"))
-			title.ID = fallbackID
+	}
+
+	if s.tmdb != nil && s.tmdb.isConfigured() {
+		if tmdbResults, err := s.tmdb.searchTitles(ctx, q, mediaType, 20); err == nil {
+			results = append(results, tmdbResults...)
+		} else {
+			log.Printf("[metadata] TMDB search failed query=%q type=%s err=%v", q, mediaType, err)
 		}
-		score := int(d.Score)
-		if d.Score > 0 && score == 0 {
-			score = int(d.Score + 0.5)
-		}
-		results = append(results, models.SearchResult{Title: title, Score: score})
+	}
+
+	results = mergeSearchResults(results)
+	if len(results) == 0 && tvdbErr != nil {
+		return nil, tvdbErr
 	}
 	_ = s.cache.set(key, results)
 	return results, nil
+}
+
+func mergeSearchResults(results []models.SearchResult) []models.SearchResult {
+	if len(results) <= 1 {
+		return results
+	}
+	merged := make([]models.SearchResult, 0, len(results))
+	seen := make(map[string]int)
+	for _, result := range results {
+		key := searchResultIdentity(result.Title)
+		if key == "" {
+			merged = append(merged, result)
+			continue
+		}
+		if idx, ok := seen[key]; ok {
+			existing := &merged[idx]
+			if shouldReplaceSearchResult(*existing, result) {
+				replacement := result
+				mergeSearchTitleIDs(&replacement.Title, existing.Title)
+				*existing = replacement
+			} else {
+				mergeSearchTitleIDs(&existing.Title, result.Title)
+			}
+			continue
+		}
+		seen[key] = len(merged)
+		merged = append(merged, result)
+	}
+	return merged
+}
+
+func searchResultIdentity(title models.Title) string {
+	if title.TMDBID > 0 {
+		return fmt.Sprintf("%s:tmdb:%d", title.MediaType, title.TMDBID)
+	}
+	if title.TVDBID > 0 {
+		return fmt.Sprintf("%s:tvdb:%d", title.MediaType, title.TVDBID)
+	}
+	if imdbID := strings.TrimSpace(title.IMDBID); imdbID != "" {
+		return fmt.Sprintf("%s:imdb:%s", title.MediaType, strings.ToLower(imdbID))
+	}
+	name := strings.ToLower(strings.TrimSpace(title.Name))
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:name:%s:%d", title.MediaType, name, title.Year)
+}
+
+func shouldReplaceSearchResult(existing, candidate models.SearchResult) bool {
+	if strings.HasPrefix(existing.Title.ID, "tmdb:") && strings.HasPrefix(candidate.Title.ID, "tvdb:") {
+		return true
+	}
+	if existing.Title.Poster == nil && candidate.Title.Poster != nil {
+		return true
+	}
+	if candidate.Score > existing.Score && existing.Title.Poster == nil {
+		return true
+	}
+	return false
+}
+
+func mergeSearchTitleIDs(dst *models.Title, src models.Title) {
+	if dst.TMDBID == 0 {
+		dst.TMDBID = src.TMDBID
+	}
+	if dst.TVDBID == 0 {
+		dst.TVDBID = src.TVDBID
+	}
+	if strings.TrimSpace(dst.IMDBID) == "" {
+		dst.IMDBID = src.IMDBID
+	}
+	if dst.Poster == nil {
+		dst.Poster = src.Poster
+	}
+	if dst.Backdrop == nil {
+		dst.Backdrop = src.Backdrop
+	}
 }
 
 // FetchAliases returns all known alternate names for a title from TVDB.
@@ -2337,7 +2436,7 @@ func (s *Service) fetchTVDBAliases(mediaType string, tvdbID int64) []string {
 	return names
 }
 
-func (s *Service) resolveSeriesTVDBID(req models.SeriesDetailsQuery) (int64, error) {
+func (s *Service) resolveSeriesTVDBID(ctx context.Context, req models.SeriesDetailsQuery) (int64, error) {
 	// Fast path: if we already have the TVDB ID, return it
 	if req.TVDBID > 0 {
 		return req.TVDBID, nil
@@ -2348,7 +2447,7 @@ func (s *Service) resolveSeriesTVDBID(req models.SeriesDetailsQuery) (int64, err
 	}
 
 	name := strings.TrimSpace(req.Name)
-	if name == "" {
+	if name == "" && req.TMDBID <= 0 {
 		return 0, fmt.Errorf("series name required to resolve tvdb id")
 	}
 
@@ -2371,7 +2470,7 @@ func (s *Service) resolveSeriesTVDBID(req models.SeriesDetailsQuery) (int64, err
 	s.inflightMu.Unlock()
 
 	// Perform the actual resolution
-	id, err := s.resolveSeriesTVDBIDActual(req)
+	id, err := s.resolveSeriesTVDBIDActual(ctx, req)
 
 	// Store the result and signal completion
 	inflight.result = id
@@ -2389,7 +2488,7 @@ func (s *Service) resolveSeriesTVDBID(req models.SeriesDetailsQuery) (int64, err
 // tryFallbackSeriesTVDBID is called when a TVDB series fetch returns 404 (stub entry).
 // It searches by name without the year constraint to find a parent series
 // (e.g. "Company Retreat" → "Jury Duty" S2). Returns 0 if no fallback found.
-func (s *Service) tryFallbackSeriesTVDBID(req models.SeriesDetailsQuery, failedID int64) int64 {
+func (s *Service) tryFallbackSeriesTVDBID(ctx context.Context, req models.SeriesDetailsQuery, failedID int64) int64 {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return 0
@@ -2409,7 +2508,7 @@ func (s *Service) tryFallbackSeriesTVDBID(req models.SeriesDetailsQuery, failedI
 	fallbackReq := req
 	fallbackReq.TVDBID = 0
 	fallbackReq.Year = 0
-	altID, altErr := s.resolveSeriesTVDBIDActual(fallbackReq)
+	altID, altErr := s.resolveSeriesTVDBIDActual(ctx, fallbackReq)
 	if altErr == nil && altID > 0 && altID != failedID {
 		log.Printf("[metadata] tvdb 404 fallback: resolved %q to tvdbId=%d (was %d)", name, altID, failedID)
 		_ = s.cache.set(fallbackKey, altID)
@@ -2421,7 +2520,7 @@ func (s *Service) tryFallbackSeriesTVDBID(req models.SeriesDetailsQuery, failedI
 	return 0
 }
 
-func (s *Service) resolveSeriesTVDBIDActual(req models.SeriesDetailsQuery) (int64, error) {
+func (s *Service) resolveSeriesTVDBIDActual(ctx context.Context, req models.SeriesDetailsQuery) (int64, error) {
 	name := strings.TrimSpace(req.Name)
 
 	// Check if we have a cached TMDB→TVDB ID mapping
@@ -2432,6 +2531,18 @@ func (s *Service) resolveSeriesTVDBIDActual(req models.SeriesDetailsQuery) (int6
 			log.Printf("[metadata] tmdb→tvdb resolution cache hit tmdbId=%d → tvdbId=%d for series %q", req.TMDBID, cachedTVDBID, name)
 			return cachedTVDBID, nil
 		}
+		if s.tmdb != nil && s.tmdb.isConfigured() {
+			if title, err := s.tmdb.seriesDetails(ctx, req.TMDBID); err == nil && title != nil && title.TVDBID > 0 {
+				log.Printf("[metadata] resolved tvdb id %d via TMDB external_ids tmdbId=%d for series %q", title.TVDBID, req.TMDBID, name)
+				_ = s.cache.set(cacheID, title.TVDBID)
+				return title.TVDBID, nil
+			} else if err != nil {
+				log.Printf("[metadata] TMDB external id lookup failed tmdbId=%d err=%v", req.TMDBID, err)
+			}
+		}
+	}
+	if name == "" {
+		return 0, fmt.Errorf("series name required to resolve tvdb id")
 	}
 
 	results, err := s.searchTVDBSeries(name, req.Year, "")
@@ -2665,6 +2776,43 @@ func newTVDBImage(urlValue, imageType string, width, height int) *models.Image {
 	return &models.Image{URL: normalized, Type: imageType, Width: width, Height: height}
 }
 
+func (s *Service) tmdbSeriesDetailsFallback(ctx context.Context, req models.SeriesDetailsQuery, cause error) (*models.SeriesDetails, error) {
+	if req.TMDBID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return nil, cause
+	}
+	cacheID := cacheKey("tmdb", "series", "details-fallback", "v1", s.client.language, strconv.FormatInt(req.TMDBID, 10))
+	var cached models.SeriesDetails
+	if ok, _ := s.cache.get(cacheID, &cached); ok && strings.TrimSpace(cached.Title.Name) != "" {
+		return &cached, nil
+	}
+
+	details, err := s.tmdb.seriesDetailsWithSeasons(ctx, req.TMDBID)
+	if err != nil {
+		return nil, err
+	}
+	if details == nil {
+		return nil, cause
+	}
+	if details.Title.Year == 0 && req.Year > 0 {
+		details.Title.Year = req.Year
+	}
+	if strings.TrimSpace(details.Title.Name) == "" && strings.TrimSpace(req.Name) != "" {
+		details.Title.Name = strings.TrimSpace(req.Name)
+	}
+	if strings.TrimSpace(details.Title.Name) == "" {
+		return nil, cause
+	}
+	if details.Title.TVDBID > 0 {
+		_ = s.cache.set(cacheKey("tvdb", "resolve", "tmdb", fmt.Sprintf("%d", req.TMDBID)), details.Title.TVDBID)
+	}
+	if details.Seasons == nil {
+		details.Seasons = []models.SeriesSeason{}
+	}
+	log.Printf("[metadata] using TMDB series details fallback tmdbId=%d name=%q seasons=%d cause=%v", req.TMDBID, details.Title.Name, len(details.Seasons), cause)
+	_ = s.cache.set(cacheID, *details)
+	return details, nil
+}
+
 func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("tvdb client not configured")
@@ -2680,12 +2828,15 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		originalTVDBID = parseTVDBIDFromTitleID(req.TitleID)
 	}
 
-	tvdbID, err := s.resolveSeriesTVDBID(req)
+	tvdbID, err := s.resolveSeriesTVDBID(ctx, req)
 	if err != nil {
 
 		log.Printf("[metadata] series details resolve error titleId=%q name=%q year=%d err=%v",
 
 			strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, err)
+		if fallback, fallbackErr := s.tmdbSeriesDetailsFallback(ctx, req, err); fallbackErr == nil && fallback != nil {
+			return fallback, nil
+		}
 		return nil, err
 	}
 	if tvdbID <= 0 {
@@ -2693,6 +2844,9 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		log.Printf("[metadata] series details resolve missing tvdbId titleId=%q name=%q year=%d",
 
 			strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year)
+		if fallback, fallbackErr := s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("unable to resolve tvdb id for series")); fallbackErr == nil && fallback != nil {
+			return fallback, nil
+		}
 		return nil, fmt.Errorf("unable to resolve tvdb id for series")
 	}
 
@@ -2701,6 +2855,14 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
 			tvdbID, s.client.language, len(cached.Seasons), cached.Title.Poster != nil, cached.Title.Backdrop != nil)
+
+		if req.TMDBID > 0 && cached.Title.TMDBID > 0 && cached.Title.TMDBID != req.TMDBID {
+			log.Printf("[metadata] cached TVDB series tmdb mismatch tvdbId=%d cachedTmdbId=%d requestedTmdbId=%d; using TMDB fallback",
+				tvdbID, cached.Title.TMDBID, req.TMDBID)
+			if fallback, fallbackErr := s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("tvdb tmdb mismatch")); fallbackErr == nil && fallback != nil {
+				return fallback, nil
+			}
+		}
 
 		// If cached data doesn't have backdrop, enrich with artworks
 		if cached.Title.Backdrop == nil {
@@ -2929,7 +3091,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 		// If this is a 404 (stub entry), try fallback to a parent series
 		if strings.Contains(err.Error(), "404 Not Found") {
-			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
 				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 				base, err = s.getTVDBSeriesDetails(tvdbID)
@@ -3068,6 +3230,13 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			if tmdbID, err := strconv.ParseInt(id, 10, 64); err == nil {
 				seriesTitle.TMDBID = tmdbID
 			}
+		}
+	}
+	if req.TMDBID > 0 && seriesTitle.TMDBID > 0 && seriesTitle.TMDBID != req.TMDBID {
+		log.Printf("[metadata] TVDB series tmdb mismatch tvdbId=%d resolvedTmdbId=%d requestedTmdbId=%d; using TMDB fallback",
+			tvdbID, seriesTitle.TMDBID, req.TMDBID)
+		if fallback, fallbackErr := s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("tvdb tmdb mismatch")); fallbackErr == nil && fallback != nil {
+			return fallback, nil
 		}
 	}
 
@@ -3438,7 +3607,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	log.Printf("[metadata] series details lite request titleId=%q name=%q year=%d tvdbId=%d",
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID)
 
-	tvdbID, err := s.resolveSeriesTVDBID(req)
+	tvdbID, err := s.resolveSeriesTVDBID(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -3496,7 +3665,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 	if extResult.err != nil {
 		// If 404 (stub entry), try fallback to a parent series and re-fetch
 		if strings.Contains(extResult.err.Error(), "404 Not Found") {
-			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
 				cacheID = cacheKey("tvdb", "series", "details", "v7", s.client.language, strconv.FormatInt(tvdbID, 10))
 				// Drain the translation channel from the failed ID
@@ -3805,7 +3974,7 @@ func (s *Service) BatchSeriesDetails(ctx context.Context, queries []models.Serie
 		results[i].Query = query
 
 		// Try to get from cache using the same logic as SeriesDetails
-		tvdbID, err := s.resolveSeriesTVDBID(query)
+		tvdbID, err := s.resolveSeriesTVDBID(ctx, query)
 		if err != nil {
 			results[i].Error = err.Error()
 			continue
@@ -3927,7 +4096,7 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 	for i, query := range queries {
 		results[i].Query = query
 
-		tvdbID, err := s.resolveSeriesTVDBID(query)
+		tvdbID, err := s.resolveSeriesTVDBID(ctx, query)
 		if err != nil {
 			results[i].Error = err.Error()
 			continue
@@ -4103,7 +4272,7 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	log.Printf("[metadata] series info request (lightweight) titleId=%q name=%q year=%d tvdbId=%d",
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID)
 
-	tvdbID, err := s.resolveSeriesTVDBID(req)
+	tvdbID, err := s.resolveSeriesTVDBID(ctx, req)
 	if err != nil {
 		log.Printf("[metadata] series info resolve error titleId=%q name=%q year=%d err=%v",
 			strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, err)
@@ -4133,7 +4302,7 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 
 		// If 404 (stub entry), try fallback to a parent series
 		if strings.Contains(err.Error(), "404 Not Found") {
-			if altID := s.tryFallbackSeriesTVDBID(req, tvdbID); altID > 0 {
+			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
 				cacheID = cacheKey("tvdb", "series", "info", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
 				base, err = s.getTVDBSeriesDetails(tvdbID)
