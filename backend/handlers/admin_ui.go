@@ -213,11 +213,10 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"network": map[string]interface{}{
-		"label":  "Network URL Switching",
-		"icon":   "wifi",
-		"group":  "server",
-		"order":  1,
-		"hidden": true,
+		"label": "Network URL Switching",
+		"icon":  "wifi",
+		"group": "server",
+		"order": 1,
 		"fields": map[string]interface{}{
 			"homeWifiSSID": map[string]interface{}{
 				"type":        "text",
