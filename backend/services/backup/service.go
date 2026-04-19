@@ -672,12 +672,15 @@ func (s *Service) ImportDatabaseJSON(data []byte) error {
 
 // --- PostgreSQL database export/import ---
 
+// rawUser aliases models.User to bypass MarshalJSON so PinHash is preserved in exports.
+type rawUser models.User
+
 // databaseExport is the JSON structure for database backups.
 type databaseExport struct {
 	Version            string                                 `json:"version"`
 	ExportedAt         time.Time                              `json:"exportedAt"`
 	Accounts           []models.AccountStorage                `json:"accounts"`
-	Users              []models.User                          `json:"users"`
+	Users              []rawUser                              `json:"users"`
 	Sessions           []models.Session                       `json:"sessions"`
 	Invitations        []models.Invitation                    `json:"invitations"`
 	Clients            []models.Client                        `json:"clients"`
@@ -716,7 +719,10 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("export users: %w", err)
 	}
-	export.Users = users
+	export.Users = make([]rawUser, len(users))
+	for i, u := range users {
+		export.Users[i] = rawUser(u)
+	}
 
 	sessions, err := s.store.Sessions().List(ctx)
 	if err != nil {
@@ -835,8 +841,9 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 			}
 		}
 		for i := range export.Users {
-			if err := tx.Users().Create(ctx, &export.Users[i]); err != nil {
-				return fmt.Errorf("restore user %s: %w", export.Users[i].ID, err)
+			u := models.User(export.Users[i])
+			if err := tx.Users().Create(ctx, &u); err != nil {
+				return fmt.Errorf("restore user %s: %w", u.ID, err)
 			}
 		}
 		for i := range export.Sessions {
