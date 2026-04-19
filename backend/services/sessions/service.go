@@ -129,6 +129,16 @@ func (s *Service) CreateWithDuration(accountID string, isMaster bool, userAgent,
 	}
 
 	s.mu.Lock()
+	if s.useDB() {
+		if err := s.store.Sessions().Create(context.Background(), &session); err != nil {
+			s.mu.Unlock()
+			return models.Session{}, err
+		}
+		s.sessions[token] = session
+		s.mu.Unlock()
+		return session, nil
+	}
+
 	s.sessions[token] = session
 	if err := s.saveLocked(); err != nil {
 		delete(s.sessions, token)
@@ -175,6 +185,9 @@ func (s *Service) Revoke(token string) error {
 	}
 
 	delete(s.sessions, token)
+	if s.useDB() {
+		return s.store.Sessions().Delete(context.Background(), token)
+	}
 	return s.saveLocked()
 }
 
@@ -191,6 +204,10 @@ func (s *Service) RevokeAllForAccount(accountID string) int {
 		}
 	}
 	if count > 0 {
+		if s.useDB() {
+			_ = s.store.Sessions().DeleteByAccount(context.Background(), accountID)
+			return count
+		}
 		_ = s.saveLocked()
 	}
 	return count
@@ -222,13 +239,21 @@ func (s *Service) Refresh(token string) (models.Session, error) {
 
 	if session.IsExpired() {
 		delete(s.sessions, token)
-		_ = s.saveLocked()
+		if s.useDB() {
+			_ = s.store.Sessions().Delete(context.Background(), token)
+		} else {
+			_ = s.saveLocked()
+		}
 		return models.Session{}, ErrSessionExpired
 	}
 
 	session.ExpiresAt = time.Now().UTC().Add(s.sessionDuration)
 	s.sessions[token] = session
-	_ = s.saveLocked()
+	if s.useDB() {
+		_ = s.store.Sessions().Update(context.Background(), &session)
+	} else {
+		_ = s.saveLocked()
+	}
 
 	return session, nil
 }
@@ -247,7 +272,11 @@ func (s *Service) Cleanup() int {
 		}
 	}
 	if count > 0 {
-		_ = s.saveLocked()
+		if s.useDB() {
+			_, _ = s.store.Sessions().DeleteExpired(context.Background())
+		} else {
+			_ = s.saveLocked()
+		}
 	}
 	return count
 }

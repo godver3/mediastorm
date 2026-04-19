@@ -34,6 +34,7 @@ type SessionRepository interface {
 	List(ctx context.Context) ([]models.Session, error)
 	ListByAccount(ctx context.Context, accountID string) ([]models.Session, error)
 	Create(ctx context.Context, sess *models.Session) error
+	Update(ctx context.Context, sess *models.Session) error
 	Delete(ctx context.Context, token string) error
 	DeleteByAccount(ctx context.Context, accountID string) error
 	DeleteExpired(ctx context.Context) (int64, error)

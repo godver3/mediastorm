@@ -81,6 +81,17 @@ func (r *pgSessionRepo) Create(ctx context.Context, sess *models.Session) error 
 	return nil
 }
 
+func (r *pgSessionRepo) Update(ctx context.Context, sess *models.Session) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE sessions SET account_id=$2, is_master=$3, expires_at=$4, created_at=$5, user_agent=$6, ip_address=$7
+		WHERE token=$1`,
+		sess.Token, sess.AccountID, sess.IsMaster, sess.ExpiresAt, sess.CreatedAt, sess.UserAgent, sess.IPAddress)
+	if err != nil {
+		return fmt.Errorf("update session: %w", err)
+	}
+	return nil
+}
+
 func (r *pgSessionRepo) Delete(ctx context.Context, token string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, token)
 	if err != nil {
