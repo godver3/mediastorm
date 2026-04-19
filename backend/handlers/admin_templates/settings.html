@@ -196,7 +196,7 @@
     let filteredFields = null; // null = no filter, Map of sectionKey -> Set of matching field keys
 
     // Sections that are per-user (when a user is selected, only show these)
-    // Per-user sections: liveTV IPTV source overrides are configured here, favorites/hidden channels are managed in-app
+    // Per-user sections: liveTV IPTV source overrides are configured here; channel preferences use a custom manager.
     const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
@@ -2284,6 +2284,478 @@
         return div.innerHTML;
     }
 
+    let hiddenChannelsManager = {
+        userId: '',
+        userName: '',
+        settings: null,
+        channels: [],
+        loading: false,
+        error: '',
+        search: '',
+        hiddenDraft: [],
+    };
+    let hiddenChannelsScopeManager = {
+        loading: false,
+        error: '',
+        profiles: [],
+    };
+
+    function getLiveTVSettings(settings) {
+        const target = settings || userSettings;
+        if (!target) return null;
+        if (!target.liveTV) target.liveTV = {};
+        if (!Array.isArray(target.liveTV.hiddenChannels)) {
+            target.liveTV.hiddenChannels = [];
+        }
+        if (!Array.isArray(target.liveTV.favoriteChannels)) {
+            target.liveTV.favoriteChannels = [];
+        }
+        if (!Array.isArray(target.liveTV.selectedCategories)) {
+            target.liveTV.selectedCategories = [];
+        }
+        return target.liveTV;
+    }
+
+    function uniqueStrings(items) {
+        return Array.from(new Set((items || []).filter(item => typeof item === 'string' && item.trim() !== '')));
+    }
+
+    function escapeJsSingleQuotedAttr(value) {
+        const jsEscaped = String(value ?? '')
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n')
+            .replace(/</g, '\\x3c');
+        return escapeHtml(jsEscaped).replace(/"/g, '&quot;');
+    }
+
+    function getHiddenChannelCount() {
+        return uniqueStrings(userSettings?.liveTV?.hiddenChannels || []).length;
+    }
+
+    function getScopedProfilesFromSelector() {
+        const selector = document.getElementById('userSelector');
+        if (!selector) return [];
+        return Array.from(selector.options)
+            .filter(option => option.value)
+            .map(option => ({ id: option.value, name: option.textContent || option.value }));
+    }
+
+    function renderLiveTVChannelManager() {
+        if (!selectedUserId || selectedClientId) return '';
+        const count = getHiddenChannelCount();
+        return `
+            <div class="form-group" style="grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem;">
+                <label class="form-label">Channel Visibility</label>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                    <p class="form-hint" style="margin: 0;">${count} hidden channel${count === 1 ? '' : 's'} for this profile.</p>
+                    <button type="button" class="btn btn-secondary" onclick="openHiddenChannelsManager(event)">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 3l18 18"/><path d="M10.58 10.58A2 2 0 0 0 13.42 13.42"/>
+                            <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                            <path d="M6.61 6.61C3.98 8.38 2 12 2 12s3 8 10 8a10.9 10.9 0 0 0 5.39-1.39"/>
+                        </svg>
+                        Manage Hidden Channels
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderLiveTVScopeChannelManager() {
+        if (selectedUserId || selectedClientId) return '';
+        const profiles = getScopedProfilesFromSelector();
+        if (profiles.length === 0) return '';
+        return `
+            <div class="form-group" style="grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.5rem;">
+                <label class="form-label">Profile Channel Visibility</label>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                    <p class="form-hint" style="margin: 0;">Manage hidden Live TV channels for ${profiles.length} profile${profiles.length === 1 ? '' : 's'} in this view.</p>
+                    <button type="button" class="btn btn-secondary" onclick="openHiddenChannelsScopeManager(event)">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                        </svg>
+                        Manage Profiles
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function ensureHiddenChannelsModal() {
+        if (document.getElementById('hiddenChannelsModal')) return;
+        const modalHtml = `
+            <div id="hiddenChannelsModal" class="test-modal" onclick="closeHiddenChannelsManager(event)">
+                <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 920px; max-height: 88vh;">
+                    <div class="test-modal-header">
+                        <h3>
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 3l18 18"/><path d="M10.58 10.58A2 2 0 0 0 13.42 13.42"/>
+                                <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                                <path d="M6.61 6.61C3.98 8.38 2 12 2 12s3 8 10 8a10.9 10.9 0 0 0 5.39-1.39"/>
+                            </svg>
+                            <span>Manage Hidden Live TV Channels</span>
+                        </h3>
+                        <button class="test-modal-close" onclick="closeHiddenChannelsManager()">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="test-modal-body" id="hiddenChannelsModalBody" style="overflow-y: auto;"></div>
+                    <div class="test-modal-footer" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                        <button class="btn btn-secondary" onclick="closeHiddenChannelsManager()">Cancel</button>
+                        <button id="hiddenChannelsSaveBtn" class="btn btn-primary" onclick="saveHiddenChannelsManager()">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                                <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                            </svg>
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    function ensureHiddenChannelsScopeModal() {
+        if (document.getElementById('hiddenChannelsScopeModal')) return;
+        const modalHtml = `
+            <div id="hiddenChannelsScopeModal" class="test-modal" onclick="closeHiddenChannelsScopeManager(event)">
+                <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 720px; max-height: 84vh;">
+                    <div class="test-modal-header">
+                        <h3>
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                            <span>Manage Profile Channel Visibility</span>
+                        </h3>
+                        <button class="test-modal-close" onclick="closeHiddenChannelsScopeManager()">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="test-modal-body" id="hiddenChannelsScopeModalBody" style="overflow-y: auto;"></div>
+                    <div class="test-modal-footer" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                        <button class="btn btn-secondary" onclick="closeHiddenChannelsScopeManager()">Close</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+    }
+
+    function openHiddenChannelsManager(event) {
+        if (event) event.stopPropagation();
+        if (!selectedUserId || !userSettings) {
+            showToast('Select a profile before managing hidden channels', 'error');
+            return;
+        }
+        openHiddenChannelsManagerForProfile(selectedUserId, userSettings, getSelectedUserName());
+    }
+
+    function getSelectedUserName() {
+        const selector = document.getElementById('userSelector');
+        const selected = selector ? Array.from(selector.options).find(option => option.value === selectedUserId) : null;
+        return selected?.textContent || selectedUserId;
+    }
+
+    function openHiddenChannelsManagerForProfile(profileId, settings, profileName) {
+        if (!profileId || !settings) {
+            showToast('Unable to load profile settings', 'error');
+            return;
+        }
+        const liveTV = getLiveTVSettings(settings);
+        hiddenChannelsManager = {
+            userId: profileId,
+            userName: profileName || profileId,
+            settings,
+            channels: [],
+            loading: true,
+            error: '',
+            search: '',
+            hiddenDraft: uniqueStrings(liveTV.hiddenChannels),
+        };
+        ensureHiddenChannelsModal();
+        const modal = document.getElementById('hiddenChannelsModal');
+        document.body.appendChild(modal);
+        modal.classList.add('visible');
+        renderHiddenChannelsManager();
+        loadHiddenChannelsManagerChannels();
+    }
+
+    async function openHiddenChannelsScopeManager(event) {
+        if (event) event.stopPropagation();
+        const profiles = getScopedProfilesFromSelector();
+        if (profiles.length === 0) {
+            showToast('No profiles available in this view', 'error');
+            return;
+        }
+        hiddenChannelsScopeManager = {
+            loading: true,
+            error: '',
+            profiles: profiles.map(profile => ({ ...profile, settings: null, hiddenCount: null, error: '' })),
+        };
+        ensureHiddenChannelsScopeModal();
+        const modal = document.getElementById('hiddenChannelsScopeModal');
+        document.body.appendChild(modal);
+        modal.classList.add('visible');
+        renderHiddenChannelsScopeManager();
+
+        await Promise.all(hiddenChannelsScopeManager.profiles.map(async (profile) => {
+            try {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(profile.id), {
+                    credentials: 'same-origin'
+                });
+                if (!response.ok) throw new Error(await response.text() || 'Failed to load profile settings');
+                const settings = await response.json();
+                profile.settings = settings;
+                profile.hiddenCount = uniqueStrings(settings?.liveTV?.hiddenChannels || []).length;
+            } catch (e) {
+                profile.error = e?.message || 'Failed to load profile settings';
+                profile.hiddenCount = 0;
+            }
+        }));
+        hiddenChannelsScopeManager.loading = false;
+        renderHiddenChannelsScopeManager();
+    }
+
+    function renderHiddenChannelsScopeManager() {
+        const body = document.getElementById('hiddenChannelsScopeModalBody');
+        if (!body) return;
+        const rows = hiddenChannelsScopeManager.profiles.map(profile => {
+            const countText = profile.hiddenCount === null ? 'Loading...' : `${profile.hiddenCount} hidden channel${profile.hiddenCount === 1 ? '' : 's'}`;
+            const manageDisabled = profile.settings ? '' : 'disabled';
+            const errorHtml = profile.error ? `<div style="font-size: 0.8rem; color: var(--danger, #ef4444); margin-top: 0.25rem;">${escapeHtml(profile.error)}</div>` : '';
+            return `
+                <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.85rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); max-width: 100%; overflow: hidden;">
+                    <div style="min-width: 0;">
+                        <div style="font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(profile.name)}</div>
+                        <div style="font-size: 0.82rem; color: var(--text-muted);">${escapeHtml(countText)}</div>
+                        ${errorHtml}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-secondary" style="white-space: nowrap;" ${manageDisabled} onclick="openHiddenChannelsFromScope('${escapeJsSingleQuotedAttr(profile.id)}')">Manage</button>
+                </div>
+            `;
+        }).join('');
+        body.innerHTML = `
+            <p style="margin: 0 0 1rem; color: var(--text-secondary);">
+                These are the profiles available to the current settings view. Choose a profile to hide or unhide its Live TV channels.
+            </p>
+            ${hiddenChannelsScopeManager.loading ? '<div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;"><span class="spinner-small"></span><span>Loading profile settings...</span></div>' : ''}
+            ${hiddenChannelsScopeManager.error ? '<div style="margin-bottom: 1rem; color: var(--danger, #ef4444);">' + escapeHtml(hiddenChannelsScopeManager.error) + '</div>' : ''}
+            <div style="display: grid; gap: 0.5rem;">${rows}</div>
+        `;
+    }
+
+    function openHiddenChannelsFromScope(profileId) {
+        const profile = hiddenChannelsScopeManager.profiles.find(item => item.id === profileId);
+        if (!profile || !profile.settings) {
+            showToast('Profile settings are not loaded yet', 'error');
+            return;
+        }
+        openHiddenChannelsManagerForProfile(profile.id, profile.settings, profile.name);
+    }
+
+    function closeHiddenChannelsScopeManager(event) {
+        if (event && event.target !== event.currentTarget) return;
+        const modal = document.getElementById('hiddenChannelsScopeModal');
+        if (modal) modal.classList.remove('visible');
+    }
+
+    async function loadHiddenChannelsManagerChannels() {
+        try {
+            const response = await fetch(basePath + '/api/live/channels?profileId=' + encodeURIComponent(hiddenChannelsManager.userId), {
+                credentials: 'same-origin'
+            });
+            if (!response.ok) throw new Error(await response.text() || 'Failed to load Live TV channels');
+            const data = await response.json();
+            hiddenChannelsManager.channels = Array.isArray(data.channels) ? data.channels : [];
+        } catch (e) {
+            console.warn('Failed to load Live TV channels for hidden channel manager:', e);
+            hiddenChannelsManager.error = e?.message || 'Failed to load Live TV channels';
+        } finally {
+            hiddenChannelsManager.loading = false;
+            renderHiddenChannelsManager();
+        }
+    }
+
+    function getChannelByIdMap() {
+        const map = new Map();
+        for (const channel of hiddenChannelsManager.channels || []) {
+            if (channel && channel.id) map.set(channel.id, channel);
+        }
+        return map;
+    }
+
+    function setHiddenChannelsSearch(value) {
+        hiddenChannelsManager.search = value || '';
+        renderHiddenChannelsManager();
+        const input = document.getElementById('hiddenChannelsSearchInput');
+        if (input) {
+            input.focus();
+            const len = input.value.length;
+            input.setSelectionRange?.(len, len);
+        }
+    }
+
+    function addHiddenChannel(channelId) {
+        hiddenChannelsManager.hiddenDraft = uniqueStrings([...hiddenChannelsManager.hiddenDraft, channelId]);
+        renderHiddenChannelsManager();
+    }
+
+    function removeHiddenChannel(channelId) {
+        hiddenChannelsManager.hiddenDraft = hiddenChannelsManager.hiddenDraft.filter(id => id !== channelId);
+        renderHiddenChannelsManager();
+    }
+
+    function clearHiddenChannels() {
+        hiddenChannelsManager.hiddenDraft = [];
+        renderHiddenChannelsManager();
+    }
+
+    function renderHiddenChannelRow(channelId, channelMap) {
+        const channel = channelMap.get(channelId);
+        const name = channel?.name || 'Unknown channel';
+        const group = channel?.group || channelId;
+        return `
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); max-width: 100%; overflow: hidden;">
+                <div style="min-width: 0;">
+                    <div style="font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(group)}</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" style="white-space: nowrap;" onclick="removeHiddenChannel('${escapeJsSingleQuotedAttr(channelId)}')">Unhide</button>
+            </div>
+        `;
+    }
+
+    function renderAvailableChannelRow(channel) {
+        const safeId = escapeJsSingleQuotedAttr(channel.id || '');
+        return `
+            <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; max-width: 100%; overflow: hidden;">
+                <div style="min-width: 0;">
+                    <div style="font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(channel.name || channel.id || 'Unnamed channel')}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(channel.group || channel.id || '')}</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" style="white-space: nowrap;" onclick="addHiddenChannel('${safeId}')">Hide</button>
+            </div>
+        `;
+    }
+
+    function renderHiddenChannelsManager() {
+        const body = document.getElementById('hiddenChannelsModalBody');
+        if (!body) return;
+
+        const hiddenSet = new Set(hiddenChannelsManager.hiddenDraft);
+        const channelMap = getChannelByIdMap();
+        const search = hiddenChannelsManager.search.trim().toLowerCase();
+        const hiddenRows = hiddenChannelsManager.hiddenDraft.map(id => renderHiddenChannelRow(id, channelMap)).join('');
+        const available = (hiddenChannelsManager.channels || [])
+            .filter(channel => channel?.id && !hiddenSet.has(channel.id))
+            .filter(channel => {
+                if (!search) return true;
+                return String(channel.name || '').toLowerCase().includes(search) ||
+                    String(channel.group || '').toLowerCase().includes(search) ||
+                    String(channel.id || '').toLowerCase().includes(search);
+            });
+        const availableRows = available.slice(0, 100).map(renderAvailableChannelRow).join('');
+        const moreCount = Math.max(0, available.length - 100);
+
+        body.innerHTML = `
+            <p style="margin: 0 0 1rem; color: var(--text-secondary);">
+                Editing hidden channels for <strong>${escapeHtml(hiddenChannelsManager.userName || hiddenChannelsManager.userId)}</strong>. Hidden channels are stored in backend profile settings and apply to that profile in the app.
+            </p>
+            ${hiddenChannelsManager.error ? '<div style="margin-bottom: 1rem; color: var(--danger);">' + escapeHtml(hiddenChannelsManager.error) + '</div>' : ''}
+            <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+                <input id="hiddenChannelsSearchInput" class="form-input" type="text" placeholder="Search channels..." value="${escapeHtml(hiddenChannelsManager.search).replace(/"/g, '&quot;')}" oninput="setHiddenChannelsSearch(this.value)" style="flex: 1; min-width: 240px;">
+                <button type="button" class="btn btn-secondary" onclick="clearHiddenChannels()" ${hiddenChannelsManager.hiddenDraft.length === 0 ? 'disabled' : ''}>Unhide All</button>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1rem; align-items: start; max-width: 100%;">
+                <div>
+                    <h4 style="margin: 0 0 0.75rem;">Hidden (${hiddenChannelsManager.hiddenDraft.length})</h4>
+                    <div style="display: grid; gap: 0.5rem;">
+                        ${hiddenRows || '<p style="color: var(--text-muted); margin: 0;">No hidden channels.</p>'}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin: 0 0 0.75rem;">Available Channels</h4>
+                    ${hiddenChannelsManager.loading ? '<div style="display: flex; align-items: center; gap: 0.5rem;"><span class="spinner-small"></span><span>Loading channels...</span></div>' : `
+                        <div style="display: grid; gap: 0.5rem;">
+                            ${availableRows || '<p style="color: var(--text-muted); margin: 0;">No matching channels.</p>'}
+                        </div>
+                        ${moreCount > 0 ? '<p class="form-hint" style="margin-top: 0.75rem;">Showing first 100 matches. Narrow the search to find more.</p>' : ''}
+                    `}
+                </div>
+            </div>
+        `;
+    }
+
+    function closeHiddenChannelsManager(event) {
+        if (event && event.target !== event.currentTarget) return;
+        const modal = document.getElementById('hiddenChannelsModal');
+        if (modal) modal.classList.remove('visible');
+    }
+
+    async function saveHiddenChannelsManager() {
+        if (!hiddenChannelsManager.userId || !hiddenChannelsManager.settings) return;
+        const btn = document.getElementById('hiddenChannelsSaveBtn');
+        const originalHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-small"></span>';
+        }
+
+        try {
+            const liveTV = getLiveTVSettings(hiddenChannelsManager.settings);
+            liveTV.hiddenChannels = uniqueStrings(hiddenChannelsManager.hiddenDraft);
+            const strippedSettings = stripInheritedValues(hiddenChannelsManager.settings, currentSettings);
+            const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(hiddenChannelsManager.userId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(strippedSettings)
+            });
+            if (!response.ok) throw new Error(await response.text() || 'Failed to save hidden channels');
+
+            const savedUserId = hiddenChannelsManager.userId;
+            const savedHiddenCount = uniqueStrings(strippedSettings?.liveTV?.hiddenChannels || []).length;
+            hiddenChannelsManager.settings = strippedSettings;
+            if (selectedUserId === savedUserId) {
+                userSettings = strippedSettings;
+                originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
+            }
+            const scopedProfile = hiddenChannelsScopeManager.profiles.find(profile => profile.id === savedUserId);
+            if (scopedProfile) {
+                scopedProfile.settings = strippedSettings;
+                scopedProfile.hiddenCount = savedHiddenCount;
+                scopedProfile.error = '';
+            }
+            showToast('Hidden channels saved successfully');
+            closeHiddenChannelsManager();
+            recalculateUserOverrides(savedUserId);
+            updateUserDropdownIndicators();
+            updateClientDropdownIndicators();
+            updateRevertButtonVisibility();
+            renderSettings();
+            renderHiddenChannelsScopeManager();
+        } catch (e) {
+            showToast(e?.message || 'Failed to save hidden channels', 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+    }
+
     // Testable sections
     const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders'];
 
@@ -4296,6 +4768,14 @@
         // Add preset dropdown before filtering section content
         if (sectionKey === 'filtering' && !selectedClientId) {
             contentHtml = renderPresetDropdown() + contentHtml;
+        }
+
+        if (sectionKey === 'liveTV' && selectedUserId && !selectedClientId) {
+            contentHtml += renderLiveTVChannelManager();
+        }
+
+        if (sectionKey === 'live' && !selectedUserId && !selectedClientId) {
+            contentHtml += renderLiveTVScopeChannelManager();
         }
 
         // Add clear cache button for cache section

@@ -806,6 +806,7 @@ func main() {
 
 	// Live TV endpoints for admin panel
 	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.GetCategories)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/channels", adminUIHandler.RequireAuth(liveHandler.GetChannels)).Methods(http.MethodGet)
 
 	// User account management endpoints (master account only)
 	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetUserAccounts)).Methods(http.MethodGet)
