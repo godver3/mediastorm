@@ -35,9 +35,10 @@ const (
 // CDN in the background, so subsequent requests at nearby positions are served
 // instantly from the buffer.
 type streamPool struct {
-	mu    sync.RWMutex
-	files map[string][]*poolSlot
-	done  chan struct{}
+	mu       sync.RWMutex
+	files    map[string][]*poolSlot
+	done     chan struct{}
+	failures *streamFailureRegistry
 }
 
 type poolSlot struct {
@@ -49,10 +50,11 @@ type poolSlot struct {
 	data      []byte // sliding window buffer (grows, trimmed at poolSlotBufferMax)
 
 	// CDN connection state
-	cdnDone bool  // background reader finished (EOF or error)
-	cdnErr  error // terminal error from CDN
-	ctx     context.Context
-	cancel  context.CancelFunc
+	cdnDone  bool  // background reader finished (EOF or error)
+	cdnErr   error // terminal error from CDN
+	ctx      context.Context
+	cancel   context.CancelFunc
+	failures *streamFailureRegistry
 
 	// Metadata from CDN response
 	totalSize   int64  // total file size (from Content-Range header)
@@ -72,10 +74,11 @@ type poolSlot struct {
 	signal chan struct{}
 }
 
-func newStreamPool() *streamPool {
+func newStreamPool(failures *streamFailureRegistry) *streamPool {
 	p := &streamPool{
-		files: make(map[string][]*poolSlot),
-		done:  make(chan struct{}),
+		files:    make(map[string][]*poolSlot),
+		done:     make(chan struct{}),
+		failures: failures,
 	}
 	go p.reaper()
 	return p
@@ -494,6 +497,7 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 		data:          make([]byte, 0, 1024*1024), // start 1MB, grows as needed
 		ctx:           ctx,
 		cancel:        cancel,
+		failures:      p.failures,
 		totalSize:     totalSize,
 		filename:      resp.Filename,
 		respStatus:    resp.Status,
@@ -628,6 +632,9 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 				s.cdnErr = err
 				s.mu.Unlock()
 				log.Printf("[stream-pool] CDN read error: path=%q err=%v", s.path, err)
+				if s.failures != nil && s.failures.recordIfMissingArticles(s.path, err) {
+					log.Printf("[stream-migration] confirmed missing-article stream failure in stream pool path=%q err=%v", s.path, err)
+				}
 			}
 			return
 		}

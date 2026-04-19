@@ -57,6 +57,7 @@ type PrequeueHandler struct {
 	movieMetadataSvc      MovieDetailsProvider  // For movie anime detection
 	subtitleExtractor     SubtitlePreExtractor  // For pre-extracting subtitles
 	prewarmSvc            PrewarmService        // For checking pre-warmed entries
+	failures              *streamFailureRegistry
 	demoMode              bool
 }
 
@@ -175,6 +176,7 @@ func NewPrequeueHandler(
 		historySvc:  historySvc,
 		videoProber: videoProber,
 		hlsCreator:  hlsCreator,
+		failures:    defaultStreamFailureRegistry,
 		demoMode:    demoMode,
 	}
 }
@@ -1103,6 +1105,31 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 
 	log.Printf("[stream-migration] Starting migration (title=%q, mediaType=%q, S%02dE%02d, failed=%q, position=%.1fs)",
 		req.TitleName, req.MediaType, req.SeasonNumber, req.EpisodeNumber, req.FailedStreamPath, req.LastPosition)
+
+	failedPath := strings.TrimSpace(req.FailedStreamPath)
+	if failedPath == "" {
+		http.Error(w, "failedStreamPath is required", http.StatusBadRequest)
+		return
+	}
+
+	failures := h.failures
+	if failures == nil {
+		failures = defaultStreamFailureRegistry
+	}
+	failure, confirmed := failures.confirmedRecent(failedPath, streamFailureConfirmationTTL)
+	if !confirmed {
+		log.Printf("[stream-migration] Refusing migration without recent missing-article confirmation (failed=%q, position=%.1fs)",
+			failedPath, req.LastPosition)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"code":  "STREAM_FAILURE_NOT_CONFIRMED",
+			"error": "stream failure was not confirmed by the server",
+		})
+		return
+	}
+	log.Printf("[stream-migration] Confirmed recent missing-article failure for %q: reason=%s age=%s",
+		failedPath, failure.Reason, time.Since(failure.RecordedAt).Round(time.Millisecond))
 
 	ctx := r.Context()
 

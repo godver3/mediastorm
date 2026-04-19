@@ -73,6 +73,7 @@ type VideoHandler struct {
 	ffprobePath string
 	streamer    streaming.Provider
 	hlsManager  *HLSManager
+	failures    *streamFailureRegistry
 
 	// Subtitle extraction for non-HLS streams
 	subtitleExtractManager *SubtitleExtractManager
@@ -308,10 +309,11 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		ffprobePath:            resolvedFFprobe,
 		streamer:               provider,
 		hlsManager:             hlsMgr,
+		failures:               defaultStreamFailureRegistry,
 		subtitleExtractManager: subtitleMgr,
 		metadataCache:          make(map[string]*cachedMetadataEntry),
 		cropDetectCache:        make(map[string]*cropDetectCacheEntry),
-		streamPool:             newStreamPool(),
+		streamPool:             newStreamPool(defaultStreamFailureRegistry),
 	}
 
 	// Start background cleanup for metadata cache
@@ -795,6 +797,9 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	})
 	if err != nil {
 		log.Printf("[video] provider stream failed path=%q range=%q err=%v", cleanPath, rangeHeader, err)
+		if h.failures != nil && h.failures.recordIfMissingArticles(cleanPath, err) {
+			log.Printf("[stream-migration] confirmed missing-article stream failure during open path=%q range=%q err=%v", cleanPath, rangeHeader, err)
+		}
 		if errors.Is(err, streaming.ErrNotFound) {
 			return false, nil
 		}
@@ -974,6 +979,9 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 			if readErr != nil {
 				if readErr != io.EOF {
 					log.Printf("[video] SEEK ERROR: provider read error path=%q total=%d range=%q err=%v", cleanPath, total, rangeHeader, readErr)
+					if h.failures != nil && h.failures.recordIfMissingArticles(cleanPath, readErr) {
+						log.Printf("[stream-migration] confirmed missing-article stream failure during read path=%q range=%q total=%d err=%v", cleanPath, rangeHeader, total, readErr)
+					}
 					return true, readErr
 				}
 				// Final flush on EOF

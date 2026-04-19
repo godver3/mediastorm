@@ -137,7 +137,7 @@ func TestParseTotalSizeFromContentRange(t *testing.T) {
 }
 
 func TestStreamPoolNewSlotCreation(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -162,7 +162,7 @@ func TestStreamPoolNewSlotCreation(t *testing.T) {
 }
 
 func TestStreamPoolSlotReuse(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -209,7 +209,7 @@ func TestStreamPoolSlotReuse(t *testing.T) {
 }
 
 func TestStreamPoolDifferentPositions(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -246,7 +246,7 @@ func TestStreamPoolDifferentPositions(t *testing.T) {
 }
 
 func TestStreamPoolServe(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -281,7 +281,7 @@ func TestStreamPoolServe(t *testing.T) {
 }
 
 func TestStreamPoolClientDisconnectKeepsSlot(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -324,7 +324,7 @@ func TestStreamPoolClientDisconnectKeepsSlot(t *testing.T) {
 }
 
 func TestStreamPoolEviction(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -357,7 +357,7 @@ func TestStreamPoolEviction(t *testing.T) {
 }
 
 func TestStreamPoolMaxSlots(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -399,7 +399,7 @@ func TestAbs64(t *testing.T) {
 }
 
 func TestStreamPoolFindSlotDataAvailable(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
@@ -447,7 +447,7 @@ func TestStreamPoolFindSlotDataAvailable(t *testing.T) {
 }
 
 func TestStreamPoolServeHead(t *testing.T) {
-	pool := newStreamPool()
+	pool := newStreamPool(nil)
 	defer pool.close()
 
 	provider := newMockStreamProvider(100*1024*1024, nil)
