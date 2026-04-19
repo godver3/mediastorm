@@ -26,8 +26,8 @@ import (
 type BackupType string
 
 const (
-	BackupTypeManual    BackupType = "manual"
-	BackupTypeScheduled BackupType = "scheduled"
+	BackupTypeManual     BackupType = "manual"
+	BackupTypeScheduled  BackupType = "scheduled"
 	BackupTypePreRestore BackupType = "pre_restore"
 )
 
@@ -445,8 +445,41 @@ func (s *Service) RestoreBackup(filename string) error {
 	}
 	defer reader.Close()
 
+	// In DB mode, restore database.json before mutating file-based settings.
+	// This avoids reporting a failed restore after settings have already changed.
+	databaseRestored := false
+	if s.useDB() {
+		for _, file := range reader.File {
+			if file.Name != "database.json" {
+				continue
+			}
+			expectedChecksum, ok := manifest.Files[file.Name]
+			if !ok {
+				return fmt.Errorf("database.json missing from manifest")
+			}
+			checksum, err := s.importDatabaseFromZip(file)
+			if err != nil {
+				return fmt.Errorf("restore database: %w", err)
+			}
+			if checksum != expectedChecksum {
+				return fmt.Errorf("checksum mismatch for database.json")
+			}
+			databaseRestored = true
+			log.Printf("[backup] Restored database.json (PostgreSQL import)")
+			break
+		}
+		if !databaseRestored {
+			if _, ok := manifest.Files["database.json"]; ok {
+				return fmt.Errorf("database.json missing from backup")
+			}
+		}
+	}
+
 	// Extract files
 	restoredCount := 0
+	if databaseRestored {
+		restoredCount++
+	}
 	for _, file := range reader.File {
 		// Skip manifest
 		if file.Name == "manifest.json" {
@@ -462,15 +495,9 @@ func (s *Service) RestoreBackup(filename string) error {
 
 		// Handle database.json restore into PostgreSQL
 		if file.Name == "database.json" && s.useDB() {
-			checksum, err := s.importDatabaseFromZip(file)
-			if err != nil {
-				return fmt.Errorf("restore database: %w", err)
+			if !databaseRestored {
+				return fmt.Errorf("database.json was not restored")
 			}
-			if checksum != expectedChecksum {
-				return fmt.Errorf("checksum mismatch for database.json")
-			}
-			restoredCount++
-			log.Printf("[backup] Restored database.json (PostgreSQL import)")
 			continue
 		}
 
@@ -647,19 +674,25 @@ func (s *Service) ImportDatabaseJSON(data []byte) error {
 
 // databaseExport is the JSON structure for database backups.
 type databaseExport struct {
-	Version            string                              `json:"version"`
-	ExportedAt         time.Time                           `json:"exportedAt"`
-	Accounts           []models.AccountStorage             `json:"accounts"`
-	Users              []models.User                       `json:"users"`
-	Sessions           []models.Session                    `json:"sessions"`
-	Invitations        []models.Invitation                 `json:"invitations"`
-	Clients            []models.Client                     `json:"clients"`
+	Version            string                                 `json:"version"`
+	ExportedAt         time.Time                              `json:"exportedAt"`
+	Accounts           []models.AccountStorage                `json:"accounts"`
+	Users              []models.User                          `json:"users"`
+	Sessions           []models.Session                       `json:"sessions"`
+	Invitations        []models.Invitation                    `json:"invitations"`
+	Clients            []models.Client                        `json:"clients"`
 	ClientSettings     map[string]models.ClientFilterSettings `json:"clientSettings"`
-	UserSettings       map[string]models.UserSettings      `json:"userSettings"`
-	Watchlist          map[string][]models.WatchlistItem   `json:"watchlist"`
-	WatchHistory       map[string][]models.WatchHistoryItem `json:"watchHistory"`
-	PlaybackProgress   map[string][]models.PlaybackProgress `json:"playbackProgress"`
-	ContentPreferences map[string][]models.ContentPreference `json:"contentPreferences"`
+	UserSettings       map[string]models.UserSettings         `json:"userSettings"`
+	Watchlist          map[string][]models.WatchlistItem      `json:"watchlist"`
+	WatchHistory       map[string][]models.WatchHistoryItem   `json:"watchHistory"`
+	PlaybackProgress   map[string][]models.PlaybackProgress   `json:"playbackProgress"`
+	ContentPreferences map[string][]models.ContentPreference  `json:"contentPreferences"`
+	CustomLists        map[string][]customListExport          `json:"customLists"`
+}
+
+type customListExport struct {
+	List  models.CustomList      `json:"list"`
+	Items []models.WatchlistItem `json:"items"`
 }
 
 // exportDatabaseBytes queries all tables and returns the export as JSON bytes.
@@ -734,6 +767,7 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 	export.PlaybackProgress = playbackProgress
 
 	export.ContentPreferences = make(map[string][]models.ContentPreference)
+	export.CustomLists = make(map[string][]customListExport)
 	for _, u := range users {
 		prefs, err := s.store.ContentPreferences().ListByUser(ctx, u.ID)
 		if err != nil {
@@ -741,6 +775,21 @@ func (s *Service) exportDatabaseBytes() ([]byte, error) {
 		}
 		if len(prefs) > 0 {
 			export.ContentPreferences[u.ID] = prefs
+		}
+
+		lists, err := s.store.CustomLists().ListByUser(ctx, u.ID)
+		if err != nil {
+			return nil, fmt.Errorf("export custom lists for %s: %w", u.ID, err)
+		}
+		for _, list := range lists {
+			items, err := s.store.CustomLists().GetItems(ctx, list.ID)
+			if err != nil {
+				return nil, fmt.Errorf("export custom list %s items: %w", list.ID, err)
+			}
+			export.CustomLists[u.ID] = append(export.CustomLists[u.ID], customListExport{
+				List:  list,
+				Items: items,
+			})
 		}
 	}
 
@@ -756,7 +805,18 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 
 	ctx := context.Background()
 	err := s.store.WithTx(ctx, func(tx *datastore.Tx) error {
-		// Delete all existing data (cascade from accounts)
+		// Delete all existing account/profile data. Profiles no longer cascade
+		// from accounts, so remove them explicitly before inserting the backup.
+		existingUsers, err := tx.Users().List(ctx)
+		if err != nil {
+			return fmt.Errorf("list existing users: %w", err)
+		}
+		for _, u := range existingUsers {
+			if err := tx.Users().Delete(ctx, u.ID); err != nil {
+				return fmt.Errorf("delete user %s: %w", u.ID, err)
+			}
+		}
+
 		existingAccounts, err := tx.Accounts().List(ctx)
 		if err != nil {
 			return fmt.Errorf("list existing accounts: %w", err)
@@ -792,6 +852,20 @@ func (s *Service) importDatabaseBytes(data []byte) error {
 		for i := range export.Clients {
 			if err := tx.Clients().Create(ctx, &export.Clients[i]); err != nil {
 				return fmt.Errorf("restore client %s: %w", export.Clients[i].ID, err)
+			}
+		}
+		for userID, lists := range export.CustomLists {
+			for _, entry := range lists {
+				list := entry.List
+				if err := tx.CustomLists().CreateList(ctx, userID, &list); err != nil {
+					return fmt.Errorf("restore custom list %s: %w", list.ID, err)
+				}
+				for _, item := range entry.Items {
+					it := item
+					if err := tx.CustomLists().UpsertItem(ctx, list.ID, &it); err != nil {
+						return fmt.Errorf("restore custom list %s item %s: %w", list.ID, it.Key(), err)
+					}
+				}
 			}
 		}
 		for clientID, settings := range export.ClientSettings {
