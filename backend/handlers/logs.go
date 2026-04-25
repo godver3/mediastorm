@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -20,7 +21,46 @@ import (
 const (
 	maxLogLines   = 1000
 	maxUploadSize = 10 << 20 // 10 MB limit for frontend logs
+	logRedacted   = "<redacted>"
 )
+
+var logRedactionPatterns = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{
+		pattern:     regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)[^\s"',;]+`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)(\b(?:x-pin|x-api-key|api-key|x-plex-token|plex-token)\s*[:=]\s*)[^\s"',;]+`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)([?&](?:token|api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|pass|pin)=)[^&\s"'<>]+`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|geminiApiKey|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*["'])([^"']+)(["'])`),
+		replacement: `${1}` + logRedacted + `${3}`,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|geminiApiKey|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*)[^\s"',;}]+`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
+		pattern:     regexp.MustCompile(`([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@/\s]+@`),
+		replacement: `${1}` + logRedacted + `@`,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?i)\bhttps?://[^\s"'<>]+`),
+		replacement: "<redacted-url>",
+	},
+	{
+		pattern:     regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`),
+		replacement: logRedacted,
+	},
+}
 
 // pasteService defines a paste service configuration
 type pasteService struct {
@@ -272,6 +312,7 @@ func (h *LogsHandler) GetFrontendLogSnapshot(clientID string) (*frontendLogSnaps
 
 func (h *LogsHandler) SubmitLogsPackage(frontendLogs string, snapshot *frontendLogSnapshot) (string, error) {
 	pasteContent := h.buildCombinedLogPackage(frontendLogs, snapshot)
+	pasteContent = redactLogUploadContent(pasteContent)
 	return h.submitToPaste(pasteContent)
 }
 
@@ -281,6 +322,7 @@ func (h *LogsHandler) SubmitStoredLogsPackage(clientID string) (string, error) {
 		return "", err
 	}
 	pasteContent := h.buildCombinedStoredLogsPackage(frontendLogs, summaries)
+	pasteContent = redactLogUploadContent(pasteContent)
 	return h.submitToPaste(pasteContent)
 }
 
@@ -503,6 +545,46 @@ func countLogLines(logs string) int {
 func urlSafeFileName(value string) string {
 	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "..", "_")
 	return replacer.Replace(strings.TrimSpace(value))
+}
+
+func redactLogUploadContent(content string) string {
+	for _, redaction := range logRedactionPatterns {
+		content = redaction.pattern.ReplaceAllString(content, redaction.replacement)
+	}
+	return redactLikelySecretTokens(content)
+}
+
+var likelySecretTokenPattern = regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}\b`)
+
+func redactLikelySecretTokens(content string) string {
+	return likelySecretTokenPattern.ReplaceAllStringFunc(content, func(token string) string {
+		if isLikelySecretToken(token) {
+			return logRedacted
+		}
+		return token
+	})
+}
+
+func isLikelySecretToken(token string) bool {
+	if len(token) < 32 {
+		return false
+	}
+
+	var hasLetter, hasDigit bool
+	unique := make(map[rune]struct{}, len(token))
+	for _, r := range token {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			hasLetter = true
+		case r >= 'a' && r <= 'z':
+			hasLetter = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		}
+		unique[r] = struct{}{}
+	}
+
+	return hasLetter && hasDigit && len(unique) >= 12
 }
 
 func (h *LogsHandler) readBackendLogEntries(limit int) ([]logEntry, error) {

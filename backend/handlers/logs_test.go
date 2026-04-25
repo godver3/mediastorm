@@ -450,6 +450,86 @@ func TestLogsHandler_SubmitStoredLogsPackage_UsesStoredFrontendLogs(t *testing.T
 	}
 }
 
+func TestLogsHandler_SubmitStoredLogsPackage_RedactsSecretsBeforeUpload(t *testing.T) {
+	var uploadedContent string
+	pasteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		uploadedContent = string(body)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "https://paste.test.com/redacted123")
+	}))
+	defer pasteServer.Close()
+
+	originalServices := pasteServices
+	pasteServices = []pasteService{{
+		name: "test-paste",
+		url:  pasteServer.URL,
+		headers: map[string]string{
+			"Content-Type": "text/plain",
+		},
+	}}
+	defer func() { pasteServices = originalServices }()
+
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	backendLog := strings.Join([]string{
+		`2026/03/22 10:00:00 Authorization: Bearer backend-secret-token`,
+		`2026/03/22 10:00:01 databaseUrl="postgres://dbuser:db-password@localhost:5432/mediastorm"`,
+		`2026/03/22 10:00:02 /api/settings?token=query-secret&pin=1234`,
+		`2026/03/22 10:00:03 url=https://private.example.test/video.mkv`,
+		`2026/03/22 10:00:04 key=abcDEF1234567890ghiJKL1234567890mnopQR`,
+	}, "\n")
+	if err := os.WriteFile(logFile, []byte(backendLog), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+
+	frontendLog := `{"apiKey":"frontend-api-secret","accessToken":"frontend-access-secret","url":"https://user:webdav-secret@example.com/movie.mkv?token=frontend-query-secret"}`
+	uploadBody, err := json.Marshal(map[string]string{"frontendLogs": frontendLog})
+	if err != nil {
+		t.Fatalf("failed to marshal upload body: %v", err)
+	}
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", bytes.NewReader(uploadBody))
+	uploadReq.Header.Set("Content-Type", "application/json")
+	uploadReq.Header.Set("X-Client-ID", "client-secret")
+	uploadRec := httptest.NewRecorder()
+	h.UploadFrontendLogs(uploadRec, uploadReq)
+	if uploadRec.Code != http.StatusOK {
+		t.Fatalf("expected upload status %d, got %d", http.StatusOK, uploadRec.Code)
+	}
+
+	url, err := h.SubmitStoredLogsPackage("client-secret")
+	if err != nil {
+		t.Fatalf("unexpected error submitting stored package: %v", err)
+	}
+	if url != "https://paste.test.com/redacted123" {
+		t.Fatalf("expected paste url https://paste.test.com/redacted123, got %s", url)
+	}
+
+	for _, secret := range []string{
+		"backend-secret-token",
+		"db-password",
+		"query-secret",
+		"frontend-api-secret",
+		"frontend-access-secret",
+		"webdav-secret",
+		"frontend-query-secret",
+		"https://private.example.test/video.mkv",
+		"abcDEF1234567890ghiJKL1234567890mnopQR",
+	} {
+		if strings.Contains(uploadedContent, secret) {
+			t.Fatalf("uploaded log package leaked %q in:\n%s", secret, uploadedContent)
+		}
+	}
+	if !strings.Contains(uploadedContent, logRedacted) {
+		t.Fatalf("expected uploaded log package to contain redaction marker, got:\n%s", uploadedContent)
+	}
+}
+
 func TestLogsHandler_ReadCombinedLogEntries_AllOrigins(t *testing.T) {
 	tempDir := t.TempDir()
 	logFile := filepath.Join(tempDir, "backend.log")
