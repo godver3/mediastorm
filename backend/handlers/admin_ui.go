@@ -480,7 +480,7 @@ var SettingsSchema = map[string]interface{}{
 			"rewindOnResumeFromPause": map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
 			"rewindOnPlaybackStart":   map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
 			"disablePrequeue":         map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
-			"creditsDetection":        map[string]interface{}{"type": "boolean", "label": "Credits Detection (Experimental)", "description": "Detect where credits begin during playback using on-device Vision OCR. Shows a 'Next Episode' card when credits are detected. iOS and tvOS only.", "order": 102},
+			"creditsAutoSkip":         map[string]interface{}{"type": "boolean", "label": "Auto-Skip Credits (Highly Beta)", "description": "Automatically start the next episode when credits are detected. Credits detection is always enabled; this highly beta option may false-positive and skip before the episode is actually over. iOS and tvOS only.", "order": 102},
 			"maxResultsPerResolution": map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)", "order": 103},
 			"ytdlpCookies":            map[string]interface{}{"type": "file_upload", "label": "YouTube Cookies (Experimental)", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 104, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true},
 		},
@@ -1845,6 +1845,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			UseLoadingScreen:          globalSettings.Playback.UseLoadingScreen,
 			RewindOnResumeFromPause:   globalSettings.Playback.RewindOnResumeFromPause,
 			RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
+			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves: shelves,
@@ -2005,6 +2006,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						SubtitleSize:              globalSettings.Playback.SubtitleSize,
 						RewindOnResumeFromPause:   globalSettings.Playback.RewindOnResumeFromPause,
 						RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
+						CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 					},
 					HomeShelves: models.HomeShelvesSettings{
 						Shelves: propagateShelves,

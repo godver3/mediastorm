@@ -137,6 +137,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			SubtitleSize:              globalSettings.Playback.SubtitleSize,
 			RewindOnResumeFromPause:   globalSettings.Playback.RewindOnResumeFromPause,
 			RewindOnPlaybackStart:     globalSettings.Playback.RewindOnPlaybackStart,
+			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves: shelves,

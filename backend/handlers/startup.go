@@ -513,6 +513,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			PauseWhenAppInactive:      globalSettings.Playback.PauseWhenAppInactive,
 			UseLoadingScreen:          globalSettings.Playback.UseLoadingScreen,
 			SubtitleSize:              globalSettings.Playback.SubtitleSize,
+			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves: shelves,

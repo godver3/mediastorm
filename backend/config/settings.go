@@ -227,7 +227,8 @@ type PlaybackSettings struct {
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause"`      // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart"`        // Seconds to rewind when resuming from saved progress (default 0)
 	DisablePrequeue           bool    `json:"disablePrequeue"`              // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
-	CreditsDetection          bool    `json:"creditsDetection"`             // Show a marker on the seek bar where credits begin
+	CreditsAutoSkip           bool    `json:"creditsAutoSkip"`              // Automatically play the next episode when credits are detected
+	CreditsDetection          bool    `json:"creditsDetection"`             // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams      int     `json:"maxConcurrentStreams"`         // Global max concurrent VOD streams across all accounts (0 = unlimited)
 	MaxResultsPerResolution   int     `json:"maxResultsPerResolution"`      // Maximum number of results per resolution tier (0 = no limit)
 }
@@ -1072,6 +1073,17 @@ func (m *Manager) Load() (Settings, error) {
 		}
 	} else {
 		raw["subtitles"] = map[string]interface{}{"enableTranslatedSubs": true}
+	}
+
+	// Rename playback.creditsDetection to playback.creditsAutoSkip. The client now
+	// uses credits detection only for automatic next-episode playback.
+	if playbackRaw, ok := raw["playback"].(map[string]interface{}); ok {
+		if _, hasAutoSkip := playbackRaw["creditsAutoSkip"]; !hasAutoSkip {
+			if legacyCreditsDetection, hasLegacy := playbackRaw["creditsDetection"]; hasLegacy {
+				playbackRaw["creditsAutoSkip"] = legacyCreditsDetection
+			}
+		}
+		delete(playbackRaw, "creditsDetection")
 	}
 
 	// Re-encode and decode into Settings struct

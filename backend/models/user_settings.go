@@ -233,6 +233,8 @@ type PlaybackSettings struct {
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`            // Scaling factor for subtitle size (1.0 = default)
 	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause,omitempty"` // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart,omitempty"`   // Seconds to rewind when resuming from saved progress (default 0)
+	CreditsAutoSkip           bool    `json:"creditsAutoSkip,omitempty"`         // Automatically play the next episode when credits are detected
+	CreditsDetection          bool    `json:"creditsDetection,omitempty"`        // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams      *int    `json:"maxConcurrentStreams,omitempty"`    // Per-profile concurrent stream limit (nil = use account limit)
 	MaxResultsPerResolution   *int    `json:"maxResultsPerResolution,omitempty"` // Maximum number of results per resolution tier (0 = no limit)
 }

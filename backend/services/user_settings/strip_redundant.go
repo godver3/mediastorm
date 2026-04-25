@@ -124,6 +124,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			SubtitleSize:              g.Playback.SubtitleSize,
 			RewindOnResumeFromPause:   g.Playback.RewindOnResumeFromPause,
 			RewindOnPlaybackStart:     g.Playback.RewindOnPlaybackStart,
+			CreditsAutoSkip:           g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(g.Filtering.MaxSizeMovieGB),
@@ -205,6 +206,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.RewindOnPlaybackStart == 0 {
 		eff.Playback.RewindOnPlaybackStart = g.Playback.RewindOnPlaybackStart
+	}
+	if !eff.Playback.CreditsAutoSkip {
+		eff.Playback.CreditsAutoSkip = g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection
 	}
 
 	// Filtering: nil pointers inherit global
@@ -332,6 +336,11 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.RewindOnPlaybackStart != 0 && p.RewindOnPlaybackStart == g.RewindOnPlaybackStart {
 		p.RewindOnPlaybackStart = 0
+		changed = true
+	}
+	globalCreditsAutoSkip := g.CreditsAutoSkip || g.CreditsDetection
+	if p.CreditsAutoSkip && p.CreditsAutoSkip == globalCreditsAutoSkip {
+		p.CreditsAutoSkip = false
 		changed = true
 	}
 	return changed

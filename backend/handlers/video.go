@@ -352,18 +352,6 @@ func (h *VideoHandler) SetCreditsDetector(d *credits.Detector) {
 	h.creditsDetector = d
 }
 
-// isCreditsDetectionEnabled checks if credits detection is enabled in settings.
-func (h *VideoHandler) isCreditsDetectionEnabled() bool {
-	if h.configManager == nil {
-		return false
-	}
-	cfg, err := h.configManager.Load()
-	if err != nil {
-		return false
-	}
-	return cfg.Playback.CreditsDetection
-}
-
 // DetectCredits triggers async credits detection for a video path.
 func (h *VideoHandler) DetectCredits(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
@@ -371,7 +359,7 @@ func (h *VideoHandler) DetectCredits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.creditsDetector == nil || !h.isCreditsDetectionEnabled() {
+	if h.creditsDetector == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "disabled"})
 		return
@@ -422,7 +410,7 @@ func (h *VideoHandler) GetCreditsStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if h.creditsDetector == nil || !h.isCreditsDetectionEnabled() {
+	if h.creditsDetector == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "disabled"})
 		return
