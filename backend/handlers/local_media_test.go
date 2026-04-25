@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -90,6 +91,58 @@ func TestLocalMediaHandlerGetPlayback(t *testing.T) {
 	}
 	if resp.HLSStartURL == "" || !resp.HLSAvailable {
 		t.Fatalf("expected HLS response, got %+v", resp)
+	}
+}
+
+func TestLocalMediaHandlerGetPlaybackEpisodeUsesEpisodeItemID(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		item: &models.LocalMediaItem{
+			ID:               "item1",
+			FileName:         "Show.S01E02.mkv",
+			FilePath:         "/srv/media/Show.S01E02.mkv",
+			LibraryType:      models.LocalMediaLibraryTypeShow,
+			MatchedTitleID:   "tvdb:12345",
+			MatchedMediaType: "series",
+			MatchedName:      "Example Show",
+			SeasonNumber:     1,
+			EpisodeNumber:    2,
+			EpisodeTitle:     "Second Episode",
+		},
+	}, fakeLocalMediaUsersProvider{allowed: true}, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/items/item1/playback?profileId=user1", nil)
+	req = mux.SetURLVars(req, map[string]string{"itemID": "item1"})
+	ctx := context.WithValue(req.Context(), auth.ContextKeyAccountID, "acct1")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	handler.GetPlayback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp models.LocalMediaPlaybackResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	parsed, err := url.Parse(resp.StreamURL)
+	if err != nil {
+		t.Fatalf("parse StreamURL %q: %v", resp.StreamURL, err)
+	}
+	query := parsed.Query()
+	if got, want := query.Get("itemId"), "tvdb:12345:s01e02"; got != want {
+		t.Fatalf("StreamURL itemId = %q, want %q", got, want)
+	}
+	if got := query.Get("mediaType"); got != "episode" {
+		t.Fatalf("StreamURL mediaType = %q, want episode", got)
+	}
+	if got := query.Get("seriesName"); got != "Example Show" {
+		t.Fatalf("StreamURL seriesName = %q, want Example Show", got)
+	}
+	if got := query.Get("episodeName"); got != "Second Episode" {
+		t.Fatalf("StreamURL episodeName = %q, want Second Episode", got)
 	}
 }
 

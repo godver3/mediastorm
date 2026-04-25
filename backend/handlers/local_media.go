@@ -252,11 +252,17 @@ func (h *LocalMediaHandler) GetPlayback(w http.ResponseWriter, r *http.Request) 
 			mediaType = "movie"
 		}
 	}
+	if mediaType == "series" && (item.LibraryType == models.LocalMediaLibraryTypeShow || item.SeasonNumber > 0 || item.EpisodeNumber > 0) {
+		mediaType = "episode"
+	}
 	if mediaType != "" {
 		query.Set("mediaType", mediaType)
 	}
 
 	streamItemID := strings.TrimSpace(titleID)
+	if mediaType == "episode" && streamItemID != "" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
+		streamItemID = streamItemID + ":" + formatSeasonEpisode(item.SeasonNumber, item.EpisodeNumber)
+	}
 	if streamItemID == "" {
 		streamItemID = strings.TrimSpace(item.ID)
 	}

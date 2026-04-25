@@ -45,17 +45,17 @@ type HomepageAccount struct {
 
 // HomepageStream represents an active stream for Homepage
 type HomepageStream struct {
-	ID              string            `json:"id"`
-	Type            string            `json:"type"` // "hls"
-	Filename        string            `json:"filename"`
-	ProfileName     string            `json:"profileName,omitempty"`
-	ClientIP        string            `json:"clientIp,omitempty"`
-	CreatedAt       time.Time         `json:"createdAt"`
-	Duration        float64           `json:"duration,omitempty"`
-	CurrentPosition float64           `json:"currentPosition,omitempty"`
-	PercentWatched  float64           `json:"percentWatched,omitempty"`
-	HasDV           bool              `json:"hasDv"`
-	HasHDR          bool              `json:"hasHdr"`
+	ID              string    `json:"id"`
+	Type            string    `json:"type"` // "hls"
+	Filename        string    `json:"filename"`
+	ProfileName     string    `json:"profileName,omitempty"`
+	ClientIP        string    `json:"clientIp,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	Duration        float64   `json:"duration,omitempty"`
+	CurrentPosition float64   `json:"currentPosition,omitempty"`
+	PercentWatched  float64   `json:"percentWatched,omitempty"`
+	HasDV           bool      `json:"hasDv"`
+	HasHDR          bool      `json:"hasHdr"`
 	// Media identification
 	MediaType     string            `json:"mediaType,omitempty"` // "movie" or "episode"
 	Title         string            `json:"title,omitempty"`
@@ -213,10 +213,23 @@ func (h *HomepageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 				PercentWatched:  percentWatched,
 				HasDV:           session.HasDV,
 				HasHDR:          session.HasHDR,
+				MediaType:       session.MediaMetadata.MediaType,
+				Title:           session.MediaMetadata.Title,
+				Year:            session.MediaMetadata.Year,
+				SeasonNumber:    session.MediaMetadata.SeasonNumber,
+				EpisodeNumber:   session.MediaMetadata.EpisodeNumber,
+				EpisodeName:     session.MediaMetadata.EpisodeName,
+				ExternalIDs:     session.MediaMetadata.ExternalIDs,
 			}
 
-			// Try to match to playback progress for media info
+			// Try to match to playback progress for current position. Prefer the
+			// canonical stream metadata; filename matching is only a fallback for
+			// older sessions without media metadata.
 			cleanedFilename := cleanFilenameForMatch(filename)
+			var matchedProgress *models.PlaybackProgress
+			if match := findProgressByMediaMetadata(allProgress, session.ProfileID, profileName, session.MediaMetadata, nameToUserID); match != nil {
+				matchedProgress = match
+			}
 
 			// Determine which user IDs to try for progress lookup
 			userIDsToTry := []string{}
@@ -229,33 +242,58 @@ func (h *HomepageHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Try each user ID to find matching progress
-			for _, userID := range userIDsToTry {
-				if userProgress, ok := allProgress[userID]; ok {
-					if match := findMatchingProgress(userProgress, cleanedFilename, filename); match != nil {
-						stream.CurrentPosition = match.Position
-						stream.PercentWatched = match.PercentWatched
-						if match.Duration > 0 {
-							stream.Duration = match.Duration
+			if matchedProgress == nil {
+				// Try each user ID to find matching progress
+				for _, userID := range userIDsToTry {
+					if userProgress, ok := allProgress[userID]; ok {
+						if match := findMatchingProgress(userProgress, cleanedFilename, filename); match != nil {
+							matchedProgress = match
+							break
 						}
-						stream.MediaType = match.MediaType
-						stream.ExternalIDs = match.ExternalIDs
-						if match.MediaType == "episode" {
-							stream.Title = match.SeriesName
-							stream.SeasonNumber = match.SeasonNumber
-							stream.EpisodeNumber = match.EpisodeNumber
-							stream.EpisodeName = match.EpisodeName
-						} else {
-							stream.Title = match.MovieName
-							stream.Year = match.Year
-						}
-						// Fetch poster URL from metadata service
-						if h.metadataService != nil {
-							stream.PosterURL = h.fetchPosterURL(r.Context(), match)
-						}
-						break
 					}
 				}
+			}
+
+			if matchedProgress != nil {
+				stream.CurrentPosition = matchedProgress.Position
+				stream.PercentWatched = matchedProgress.PercentWatched
+				if matchedProgress.Duration > 0 {
+					stream.Duration = matchedProgress.Duration
+				}
+				stream.MediaType = matchedProgress.MediaType
+				stream.ExternalIDs = matchedProgress.ExternalIDs
+				if matchedProgress.MediaType == "episode" {
+					stream.Title = matchedProgress.SeriesName
+					stream.SeasonNumber = matchedProgress.SeasonNumber
+					stream.EpisodeNumber = matchedProgress.EpisodeNumber
+					stream.EpisodeName = matchedProgress.EpisodeName
+				} else {
+					stream.Title = matchedProgress.MovieName
+					stream.Year = matchedProgress.Year
+				}
+				// Fetch poster URL from metadata service
+				if h.metadataService != nil {
+					stream.PosterURL = h.fetchPosterURL(r.Context(), matchedProgress)
+				}
+			} else if h.metadataService != nil && stream.PosterURL == "" && stream.MediaType != "" && stream.Title != "" {
+				progressLike := &models.PlaybackProgress{
+					MediaType:     stream.MediaType,
+					ExternalIDs:   stream.ExternalIDs,
+					SeasonNumber:  stream.SeasonNumber,
+					EpisodeNumber: stream.EpisodeNumber,
+					EpisodeName:   stream.EpisodeName,
+					MovieName:     stream.Title,
+					SeriesName:    stream.Title,
+					Year:          stream.Year,
+				}
+				if stream.MediaType == "episode" {
+					progressLike.SeriesName = stream.Title
+					progressLike.MovieName = ""
+				} else {
+					progressLike.MovieName = stream.Title
+					progressLike.SeriesName = ""
+				}
+				stream.PosterURL = h.fetchPosterURL(r.Context(), progressLike)
 			}
 
 			session.mu.RUnlock()
