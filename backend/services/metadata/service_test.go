@@ -443,7 +443,7 @@ func TestPreferTMDBEpisodeImagesOverridesTVDBStills(t *testing.T) {
 	if gotPilotImage == nil {
 		t.Fatal("expected first episode image")
 	}
-	wantPilotURL := "https://image.tmdb.org/t/p/w300/tmdb-pilot.jpg"
+	wantPilotURL := "https://image.tmdb.org/t/p/original/tmdb-pilot.jpg"
 	if gotPilotImage.URL != wantPilotURL {
 		t.Fatalf("expected TMDB pilot image %q, got %q", wantPilotURL, gotPilotImage.URL)
 	}

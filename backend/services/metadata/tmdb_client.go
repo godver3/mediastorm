@@ -24,15 +24,16 @@ import (
 const (
 	tmdbBaseURL      = "https://api.themoviedb.org/3"
 	tmdbImageBaseURL = "https://image.tmdb.org/t/p"
-	// Use optimized image sizes instead of "original" to reduce memory usage
-	// Posters: w500 = 500px wide (plenty for TV cards ~200-300px)
-	// Backdrops: w1280 = 1280px wide (good for 1080p backgrounds)
+	// Use optimized image sizes where practical, but keep TV hero/backdrop art sharp.
+	// Posters: w780 = 780px wide (enough for portrait cards and detail posters)
+	// Backdrops: original (needed for large TV hero/background art)
+	// Episode stills: original (used for landscape Continue Watching cards and TV focus art)
 	// Profiles: w185 = 185px wide (good for cast member photos)
 	tmdbPosterSize   = "w780"
-	tmdbBackdropSize = "w1280"
+	tmdbBackdropSize = "original"
 	tmdbProfileSize  = "w185"
 	tmdbLogoSize     = "w500"
-	tmdbStillSize    = "w300"
+	tmdbStillSize    = "original"
 )
 
 // TMDB genre ID → name maps (standard IDs that rarely change)
