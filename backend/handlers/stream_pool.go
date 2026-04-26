@@ -465,8 +465,12 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 		return slot, nil
 	}
 
-	// Create a new slot — start a fresh CDN connection at reqPos
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Create a new slot — start a fresh CDN connection at reqPos.
+	// The slot lifetime is controlled by the client/reaper paths. Do not put a
+	// fixed timeout on this context: long-running playback can legitimately keep
+	// a slot alive past 30 minutes, and a context deadline here forces a CDN
+	// reconnect that surfaces to the player as buffering.
+	ctx, cancel := context.WithCancel(context.Background())
 	rangeHeader := fmt.Sprintf("bytes=%d-", reqPos)
 
 	resp, err := streamer.Stream(ctx, streaming.Request{
