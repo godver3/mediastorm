@@ -175,6 +175,33 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.SubtitleSize == 0 {
 			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
 		}
+		if settings.Playback.SubtitleColor == "" {
+			settings.Playback.SubtitleColor = defaults.Playback.SubtitleColor
+		}
+		if settings.Playback.SubtitleOpacity == nil {
+			settings.Playback.SubtitleOpacity = defaults.Playback.SubtitleOpacity
+		}
+		if settings.Playback.SubtitleFont == "" {
+			settings.Playback.SubtitleFont = defaults.Playback.SubtitleFont
+		}
+		if settings.Playback.SubtitleOutlineEnabled == nil {
+			settings.Playback.SubtitleOutlineEnabled = defaults.Playback.SubtitleOutlineEnabled
+		}
+		if settings.Playback.SubtitleOutlineColor == "" {
+			settings.Playback.SubtitleOutlineColor = defaults.Playback.SubtitleOutlineColor
+		}
+		if settings.Playback.SubtitleOutlineWeight == nil {
+			settings.Playback.SubtitleOutlineWeight = defaults.Playback.SubtitleOutlineWeight
+		}
+		if settings.Playback.SubtitleBackgroundEnabled == nil {
+			settings.Playback.SubtitleBackgroundEnabled = defaults.Playback.SubtitleBackgroundEnabled
+		}
+		if settings.Playback.SubtitleBackgroundColor == "" {
+			settings.Playback.SubtitleBackgroundColor = defaults.Playback.SubtitleBackgroundColor
+		}
+		if settings.Playback.SubtitleBackgroundOpacity == nil {
+			settings.Playback.SubtitleBackgroundOpacity = defaults.Playback.SubtitleBackgroundOpacity
+		}
 
 		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
 		if settings.Display.BadgeVisibility == nil {
@@ -273,7 +300,16 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.PreferredSubtitleMode != "" ||
 		s.Playback.PauseWhenAppInactive ||
 		s.Playback.UseLoadingScreen ||
-		s.Playback.SubtitleSize != 0 {
+		s.Playback.SubtitleSize != 0 ||
+		s.Playback.SubtitleColor != "" ||
+		s.Playback.SubtitleOpacity != nil ||
+		s.Playback.SubtitleFont != "" ||
+		s.Playback.SubtitleOutlineEnabled != nil ||
+		s.Playback.SubtitleOutlineColor != "" ||
+		s.Playback.SubtitleOutlineWeight != nil ||
+		s.Playback.SubtitleBackgroundEnabled != nil ||
+		s.Playback.SubtitleBackgroundColor != "" ||
+		s.Playback.SubtitleBackgroundOpacity != nil {
 		return false
 	}
 

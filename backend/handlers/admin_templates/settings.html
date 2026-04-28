@@ -2,6 +2,57 @@
 
 {{define "title"}}Settings - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
 
+{{define "styles"}}
+<style>
+.color-input {
+    width: 44px !important;
+    min-width: 44px !important;
+    max-width: 44px !important;
+    height: 36px;
+    flex: 0 0 44px;
+    padding: 2px;
+    border-radius: 6px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+}
+
+.field-subgroup {
+    grid-column: 1 / -1;
+    margin: 0.5rem 0 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.field-subgroup-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.field-subgroup-description {
+    margin: 0 0 1rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.field-subgroup-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+@media (max-width: 900px) {
+    .field-subgroup-fields {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{{end}}
+
 {{define "content"}}
 {{if .NoProfiles}}
 <div class="page-header">
@@ -1685,6 +1736,9 @@
             case 'number':
                 const numberValue = (value === undefined || value === null) ? '' : value;
                 return '<input type="number" class="form-input'+invalidClass+'" id="'+id+'" value="'+numberValue+'" '+isReadonly+' onchange="handleNumberFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
+            case 'color':
+                const colorValue = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#ffffff';
+                return '<input type="color" class="color-input'+invalidClass+'" id="'+id+'" value="'+colorValue+'" '+isReadonly+' style="width:44px;height:36px;min-width:44px;padding:2px;border-radius:6px;cursor:pointer;" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'password':
                 return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'tags':
@@ -4579,7 +4633,7 @@
         // Get field filter for this section (if searching)
         const sectionFieldFilter = filteredFields ? filteredFields.get(sectionKey) : null;
 
-        const fieldsHtml = Object.entries(sectionDef.fields)
+        const fieldEntries = Object.entries(sectionDef.fields)
             .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
             .map(([fieldKey, fieldDef]) => {
                 // Skip hidden fields
@@ -4627,8 +4681,47 @@
                 const inheritanceClass = (selectedUserId || selectedClientId)
                     ? (inheritanceInfo.isOverridden ? ' field-overridden' : ' field-inherited')
                     : '';
-                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+errorHtml+'</div>';
-            }).join('');
+                return {
+                    group: fieldDef.group || '',
+                    groupLabel: fieldDef.groupLabel || '',
+                    groupDescription: fieldDef.groupDescription || '',
+                    html: '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+errorHtml+'</div>',
+                };
+            })
+            .filter(Boolean);
+
+        const fieldHtmlParts = [];
+        let currentGroup = '';
+        let groupedFields = [];
+        let currentGroupLabel = '';
+        let currentGroupDescription = '';
+        const flushGroup = () => {
+            if (groupedFields.length === 0) return;
+            if (currentGroup) {
+                fieldHtmlParts.push(
+                    '<div class="field-subgroup">' +
+                        '<h3 class="field-subgroup-title">' + currentGroupLabel + '</h3>' +
+                        (currentGroupDescription ? '<p class="field-subgroup-description">' + currentGroupDescription + '</p>' : '') +
+                        '<div class="field-subgroup-fields">' + groupedFields.join('') + '</div>' +
+                    '</div>'
+                );
+            } else {
+                fieldHtmlParts.push(...groupedFields);
+            }
+            groupedFields = [];
+        };
+
+        for (const entry of fieldEntries) {
+            if (entry.group !== currentGroup) {
+                flushGroup();
+                currentGroup = entry.group;
+                currentGroupLabel = entry.groupLabel;
+                currentGroupDescription = entry.groupDescription;
+            }
+            groupedFields.push(entry.html);
+        }
+        flushGroup();
+        const fieldsHtml = fieldHtmlParts.join('');
 
         // Add provider priority UI for streaming section
         let customHtml = '';

@@ -220,6 +220,15 @@ type PlaybackSettings struct {
 	PauseWhenAppInactive      bool    `json:"pauseWhenAppInactive"` // Pause playback when the app becomes inactive or backgrounded
 	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
 	SubtitleSize              float64 `json:"subtitleSize,omitempty"`       // Scaling factor for subtitle size (1.0 = default)
+	SubtitleColor             string  `json:"subtitleColor,omitempty"`      // Text color as #RRGGBB
+	SubtitleOpacity           float64 `json:"subtitleOpacity,omitempty"`    // Text opacity (0.0-1.0)
+	SubtitleFont              string  `json:"subtitleFont,omitempty"`       // SRT/VTT subtitle font family
+	SubtitleOutlineEnabled    bool    `json:"subtitleOutlineEnabled"`       // Show text outline around subtitles
+	SubtitleOutlineColor      string  `json:"subtitleOutlineColor"`         // Outline color as #RRGGBB
+	SubtitleOutlineWeight     float64 `json:"subtitleOutlineWeight"`        // Outline weight (0.0-1.0)
+	SubtitleBackgroundEnabled bool    `json:"subtitleBackgroundEnabled"`    // Show subtitle background box
+	SubtitleBackgroundColor   string  `json:"subtitleBackgroundColor"`      // Background color as #RRGGBB
+	SubtitleBackgroundOpacity float64 `json:"subtitleBackgroundOpacity"`    // Background opacity (0.0-1.0)
 	SeekForwardSeconds        int     `json:"seekForwardSeconds"`           // Seconds to skip forward (default 30)
 	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`          // Seconds to skip backward (default 10)
 	ForceAACTranscoding       bool    `json:"forceAacTranscoding"`          // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
@@ -818,7 +827,7 @@ func DefaultSettings() Settings {
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
+		Playback:  PlaybackSettings{PreferredPlayer: "native", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: DefaultHomeShelfConfigs(),
@@ -1077,11 +1086,38 @@ func (m *Manager) Load() (Settings, error) {
 
 	// Rename playback.creditsDetection to playback.creditsAutoSkip. The client now
 	// uses credits detection only for automatic next-episode playback.
+	if _, ok := raw["playback"].(map[string]interface{}); !ok {
+		raw["playback"] = map[string]interface{}{}
+	}
 	if playbackRaw, ok := raw["playback"].(map[string]interface{}); ok {
 		if _, hasAutoSkip := playbackRaw["creditsAutoSkip"]; !hasAutoSkip {
 			if legacyCreditsDetection, hasLegacy := playbackRaw["creditsDetection"]; hasLegacy {
 				playbackRaw["creditsAutoSkip"] = legacyCreditsDetection
 			}
+		}
+		if _, exists := playbackRaw["subtitleColor"]; !exists {
+			playbackRaw["subtitleColor"] = "#FFFFFF"
+		}
+		if _, exists := playbackRaw["subtitleOpacity"]; !exists {
+			playbackRaw["subtitleOpacity"] = 1.0
+		}
+		if _, exists := playbackRaw["subtitleOutlineEnabled"]; !exists {
+			playbackRaw["subtitleOutlineEnabled"] = false
+		}
+		if _, exists := playbackRaw["subtitleOutlineColor"]; !exists {
+			playbackRaw["subtitleOutlineColor"] = "#000000"
+		}
+		if _, exists := playbackRaw["subtitleOutlineWeight"]; !exists {
+			playbackRaw["subtitleOutlineWeight"] = 0.35
+		}
+		if _, exists := playbackRaw["subtitleBackgroundEnabled"]; !exists {
+			playbackRaw["subtitleBackgroundEnabled"] = true
+		}
+		if _, exists := playbackRaw["subtitleBackgroundColor"]; !exists {
+			playbackRaw["subtitleBackgroundColor"] = "#000000"
+		}
+		if _, exists := playbackRaw["subtitleBackgroundOpacity"]; !exists {
+			playbackRaw["subtitleBackgroundOpacity"] = 0.6
 		}
 		delete(playbackRaw, "creditsDetection")
 	}
@@ -1119,6 +1155,15 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill SubtitleSize if not set (0 means unset since it's omitempty)
 	if s.Playback.SubtitleSize == 0 {
 		s.Playback.SubtitleSize = 1.0
+	}
+	if strings.TrimSpace(s.Playback.SubtitleColor) == "" {
+		s.Playback.SubtitleColor = "#FFFFFF"
+	}
+	if strings.TrimSpace(s.Playback.SubtitleOutlineColor) == "" {
+		s.Playback.SubtitleOutlineColor = "#000000"
+	}
+	if strings.TrimSpace(s.Playback.SubtitleBackgroundColor) == "" {
+		s.Playback.SubtitleBackgroundColor = "#000000"
 	}
 
 	// Backfill seek times if not set (0 means unset)

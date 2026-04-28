@@ -196,12 +196,12 @@ func (h *AccountUIHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Account":              account,
-		"Profiles":             profiles,
-		"ProfileStreamLimits":  profileStreamLimits,
-		"ActivePage":           "profiles",
-		"BasePath":             h.serverBasePath + "/account",
-		"ServerBasePath":       h.serverBasePath,
+		"Account":             account,
+		"Profiles":            profiles,
+		"ProfileStreamLimits": profileStreamLimits,
+		"ActivePage":          "profiles",
+		"BasePath":            h.serverBasePath + "/account",
+		"ServerBasePath":      h.serverBasePath,
 	}
 
 	h.dashboardTemplate.ExecuteTemplate(w, "dashboard", data)
@@ -224,11 +224,11 @@ func (h *AccountUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage":      "status",
-		"BasePath":        h.serverBasePath + "/account",
-		"ServerBasePath":  h.serverBasePath,
+		"Account":        account,
+		"Profiles":       profiles,
+		"ActivePage":     "status",
+		"BasePath":       h.serverBasePath + "/account",
+		"ServerBasePath": h.serverBasePath,
 	}
 
 	h.statusTemplate.ExecuteTemplate(w, "status", data)
@@ -347,11 +347,11 @@ func (h *AccountUIHandler) SettingsPage(w http.ResponseWriter, r *http.Request) 
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage":      "settings",
-		"BasePath":        h.serverBasePath + "/account",
-		"ServerBasePath":  h.serverBasePath,
+		"Account":        account,
+		"Profiles":       profiles,
+		"ActivePage":     "settings",
+		"BasePath":       h.serverBasePath + "/account",
+		"ServerBasePath": h.serverBasePath,
 	}
 
 	h.settingsTemplate.ExecuteTemplate(w, "settings", data)
@@ -399,6 +399,23 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 			if globalSettings.Playback.SubtitleSize != 0 {
 				defaults.Playback.SubtitleSize = globalSettings.Playback.SubtitleSize
 			}
+			if globalSettings.Playback.SubtitleColor != "" {
+				defaults.Playback.SubtitleColor = globalSettings.Playback.SubtitleColor
+			}
+			defaults.Playback.SubtitleOpacity = models.FloatPtr(globalSettings.Playback.SubtitleOpacity)
+			if globalSettings.Playback.SubtitleFont != "" {
+				defaults.Playback.SubtitleFont = globalSettings.Playback.SubtitleFont
+			}
+			defaults.Playback.SubtitleOutlineEnabled = models.BoolPtr(globalSettings.Playback.SubtitleOutlineEnabled)
+			if globalSettings.Playback.SubtitleOutlineColor != "" {
+				defaults.Playback.SubtitleOutlineColor = globalSettings.Playback.SubtitleOutlineColor
+			}
+			defaults.Playback.SubtitleOutlineWeight = models.FloatPtr(globalSettings.Playback.SubtitleOutlineWeight)
+			defaults.Playback.SubtitleBackgroundEnabled = models.BoolPtr(globalSettings.Playback.SubtitleBackgroundEnabled)
+			if globalSettings.Playback.SubtitleBackgroundColor != "" {
+				defaults.Playback.SubtitleBackgroundColor = globalSettings.Playback.SubtitleBackgroundColor
+			}
+			defaults.Playback.SubtitleBackgroundOpacity = models.FloatPtr(globalSettings.Playback.SubtitleBackgroundOpacity)
 			maxStreams := globalSettings.Live.MaxStreams
 			if maxStreams < 0 {
 				maxStreams = 0
@@ -582,11 +599,11 @@ func (h *AccountUIHandler) HistoryPage(w http.ResponseWriter, r *http.Request) {
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage":      "history",
-		"BasePath":        h.serverBasePath + "/account",
-		"ServerBasePath":  h.serverBasePath,
+		"Account":        account,
+		"Profiles":       profiles,
+		"ActivePage":     "history",
+		"BasePath":       h.serverBasePath + "/account",
+		"ServerBasePath": h.serverBasePath,
 	}
 
 	h.historyTemplate.ExecuteTemplate(w, "history", data)
@@ -609,11 +626,11 @@ func (h *AccountUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage":      "search",
-		"BasePath":        h.serverBasePath + "/account",
-		"ServerBasePath":  h.serverBasePath,
+		"Account":        account,
+		"Profiles":       profiles,
+		"ActivePage":     "search",
+		"BasePath":       h.serverBasePath + "/account",
+		"ServerBasePath": h.serverBasePath,
 	}
 
 	h.searchTemplate.ExecuteTemplate(w, "search", data)
@@ -636,11 +653,11 @@ func (h *AccountUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 	profiles := h.usersService.ListForAccount(session.AccountID)
 
 	data := map[string]interface{}{
-		"Account":    account,
-		"Profiles":   profiles,
-		"ActivePage":      "tools",
-		"BasePath":        h.serverBasePath + "/account",
-		"ServerBasePath":  h.serverBasePath,
+		"Account":        account,
+		"Profiles":       profiles,
+		"ActivePage":     "tools",
+		"BasePath":       h.serverBasePath + "/account",
+		"ServerBasePath": h.serverBasePath,
 	}
 
 	h.toolsTemplate.ExecuteTemplate(w, "tools", data)

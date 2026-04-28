@@ -224,19 +224,28 @@ func ResolveLiveSource(profile *LiveTVSettings, global *ResolvedLiveSource) Reso
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
-	PreferredPlayer           string  `json:"preferredPlayer"`
-	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
-	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
-	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
-	PauseWhenAppInactive      bool    `json:"pauseWhenAppInactive,omitempty"`
-	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
-	SubtitleSize              float64 `json:"subtitleSize,omitempty"`            // Scaling factor for subtitle size (1.0 = default)
-	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause,omitempty"` // Seconds to rewind when unpausing (default 0)
-	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart,omitempty"`   // Seconds to rewind when resuming from saved progress (default 0)
-	CreditsAutoSkip           bool    `json:"creditsAutoSkip,omitempty"`         // Automatically play the next episode when credits are detected
-	CreditsDetection          bool    `json:"creditsDetection,omitempty"`        // Legacy name for creditsAutoSkip
-	MaxConcurrentStreams      *int    `json:"maxConcurrentStreams,omitempty"`    // Per-profile concurrent stream limit (nil = use account limit)
-	MaxResultsPerResolution   *int    `json:"maxResultsPerResolution,omitempty"` // Maximum number of results per resolution tier (0 = no limit)
+	PreferredPlayer           string   `json:"preferredPlayer"`
+	PreferredAudioLanguage    string   `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage string   `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode     string   `json:"preferredSubtitleMode,omitempty"`
+	PauseWhenAppInactive      bool     `json:"pauseWhenAppInactive,omitempty"`
+	UseLoadingScreen          bool     `json:"useLoadingScreen,omitempty"`
+	SubtitleSize              float64  `json:"subtitleSize,omitempty"`              // Scaling factor for subtitle size (1.0 = default)
+	SubtitleColor             string   `json:"subtitleColor,omitempty"`             // Text color as #RRGGBB
+	SubtitleOpacity           *float64 `json:"subtitleOpacity,omitempty"`           // Text opacity (0.0-1.0)
+	SubtitleFont              string   `json:"subtitleFont,omitempty"`              // SRT/VTT subtitle font family
+	SubtitleOutlineEnabled    *bool    `json:"subtitleOutlineEnabled,omitempty"`    // Show text outline around subtitles
+	SubtitleOutlineColor      string   `json:"subtitleOutlineColor,omitempty"`      // Outline color as #RRGGBB
+	SubtitleOutlineWeight     *float64 `json:"subtitleOutlineWeight,omitempty"`     // Outline weight (0.0-1.0)
+	SubtitleBackgroundEnabled *bool    `json:"subtitleBackgroundEnabled,omitempty"` // Show subtitle background box
+	SubtitleBackgroundColor   string   `json:"subtitleBackgroundColor,omitempty"`   // Background color as #RRGGBB
+	SubtitleBackgroundOpacity *float64 `json:"subtitleBackgroundOpacity,omitempty"` // Background opacity (0.0-1.0)
+	RewindOnResumeFromPause   int      `json:"rewindOnResumeFromPause,omitempty"`   // Seconds to rewind when unpausing (default 0)
+	RewindOnPlaybackStart     int      `json:"rewindOnPlaybackStart,omitempty"`     // Seconds to rewind when resuming from saved progress (default 0)
+	CreditsAutoSkip           bool     `json:"creditsAutoSkip,omitempty"`           // Automatically play the next episode when credits are detected
+	CreditsDetection          bool     `json:"creditsDetection,omitempty"`          // Legacy name for creditsAutoSkip
+	MaxConcurrentStreams      *int     `json:"maxConcurrentStreams,omitempty"`      // Per-profile concurrent stream limit (nil = use account limit)
+	MaxResultsPerResolution   *int     `json:"maxResultsPerResolution,omitempty"`   // Maximum number of results per resolution tier (0 = no limit)
 }
 
 // ShelfConfig represents a configurable home screen shelf.
@@ -367,10 +376,18 @@ type AnimeFilteringSettings struct {
 func DefaultUserSettings() UserSettings {
 	return UserSettings{
 		Playback: PlaybackSettings{
-			PreferredPlayer:      "native",
-			PauseWhenAppInactive: false,
-			UseLoadingScreen:     false,
-			SubtitleSize:         1.0,
+			PreferredPlayer:           "native",
+			PauseWhenAppInactive:      false,
+			UseLoadingScreen:          false,
+			SubtitleSize:              1.0,
+			SubtitleColor:             "#FFFFFF",
+			SubtitleOpacity:           FloatPtr(1.0),
+			SubtitleOutlineEnabled:    BoolPtr(false),
+			SubtitleOutlineColor:      "#000000",
+			SubtitleOutlineWeight:     FloatPtr(0.35),
+			SubtitleBackgroundEnabled: BoolPtr(true),
+			SubtitleBackgroundColor:   "#000000",
+			SubtitleBackgroundOpacity: FloatPtr(0.6),
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: DefaultHomeShelfConfigs(),

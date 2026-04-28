@@ -146,6 +146,33 @@
     border-bottom: none;
 }
 
+.settings-subgroup {
+    margin: 1rem 0 0.5rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.settings-subgroup-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-bottom: 0.25rem;
+}
+
+.settings-subgroup-title h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.settings-subgroup-title p {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
 .setting-label {
     flex: 1;
 }
@@ -381,49 +408,108 @@ function renderSettings() {
                         </select>
                     </div>
                 </div>
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <h4>Subtitle Language</h4>
-                        <p>Preferred language for subtitles</p>
+                <div class="settings-subgroup">
+                    <div class="settings-subgroup-title">
+                        <h3>Subtitle Appearance</h3>
+                        <p>Language, mode, typography, outline, and background for text subtitles.</p>
                     </div>
-                    <div class="setting-control">
-                        <select id="subtitleLanguage" onchange="markChanged()">
-                            <option value="" ${!s.playback.preferredSubtitleLanguage ? 'selected' : ''}>None</option>
-                            <option value="en" ${s.playback.preferredSubtitleLanguage === 'en' ? 'selected' : ''}>English</option>
-                            <option value="es" ${s.playback.preferredSubtitleLanguage === 'es' ? 'selected' : ''}>Spanish</option>
-                            <option value="fr" ${s.playback.preferredSubtitleLanguage === 'fr' ? 'selected' : ''}>French</option>
-                            <option value="de" ${s.playback.preferredSubtitleLanguage === 'de' ? 'selected' : ''}>German</option>
-                            <option value="it" ${s.playback.preferredSubtitleLanguage === 'it' ? 'selected' : ''}>Italian</option>
-                            <option value="pt" ${s.playback.preferredSubtitleLanguage === 'pt' ? 'selected' : ''}>Portuguese</option>
-                            <option value="nl" ${s.playback.preferredSubtitleLanguage === 'nl' ? 'selected' : ''}>Dutch</option>
-                            <option value="pl" ${s.playback.preferredSubtitleLanguage === 'pl' ? 'selected' : ''}>Polish</option>
-                            <option value="ru" ${s.playback.preferredSubtitleLanguage === 'ru' ? 'selected' : ''}>Russian</option>
-                            <option value="ja" ${s.playback.preferredSubtitleLanguage === 'ja' ? 'selected' : ''}>Japanese</option>
-                            <option value="ko" ${s.playback.preferredSubtitleLanguage === 'ko' ? 'selected' : ''}>Korean</option>
-                            <option value="zh" ${s.playback.preferredSubtitleLanguage === 'zh' ? 'selected' : ''}>Chinese</option>
-                        </select>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Language</h4>
+                            <p>Preferred language for subtitles</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="subtitleLanguage" onchange="markChanged()">
+                                <option value="" ${!s.playback.preferredSubtitleLanguage ? 'selected' : ''}>None</option>
+                                <option value="en" ${s.playback.preferredSubtitleLanguage === 'en' ? 'selected' : ''}>English</option>
+                                <option value="es" ${s.playback.preferredSubtitleLanguage === 'es' ? 'selected' : ''}>Spanish</option>
+                                <option value="fr" ${s.playback.preferredSubtitleLanguage === 'fr' ? 'selected' : ''}>French</option>
+                                <option value="de" ${s.playback.preferredSubtitleLanguage === 'de' ? 'selected' : ''}>German</option>
+                                <option value="it" ${s.playback.preferredSubtitleLanguage === 'it' ? 'selected' : ''}>Italian</option>
+                                <option value="pt" ${s.playback.preferredSubtitleLanguage === 'pt' ? 'selected' : ''}>Portuguese</option>
+                                <option value="nl" ${s.playback.preferredSubtitleLanguage === 'nl' ? 'selected' : ''}>Dutch</option>
+                                <option value="pl" ${s.playback.preferredSubtitleLanguage === 'pl' ? 'selected' : ''}>Polish</option>
+                                <option value="ru" ${s.playback.preferredSubtitleLanguage === 'ru' ? 'selected' : ''}>Russian</option>
+                                <option value="ja" ${s.playback.preferredSubtitleLanguage === 'ja' ? 'selected' : ''}>Japanese</option>
+                                <option value="ko" ${s.playback.preferredSubtitleLanguage === 'ko' ? 'selected' : ''}>Korean</option>
+                                <option value="zh" ${s.playback.preferredSubtitleLanguage === 'zh' ? 'selected' : ''}>Chinese</option>
+                            </select>
+                        </div>
                     </div>
-                </div>
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <h4>Subtitle Mode</h4>
-                        <p>When to show subtitles</p>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Mode</h4>
+                            <p>When to show subtitles</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="subtitleMode" onchange="markChanged()">
+                                <option value="off" ${!s.playback.preferredSubtitleMode || s.playback.preferredSubtitleMode === 'off' ? 'selected' : ''}>Off</option>
+                                <option value="forced-only" ${s.playback.preferredSubtitleMode === 'forced-only' ? 'selected' : ''}>Auto (Forced Only)</option>
+                                <option value="on" ${s.playback.preferredSubtitleMode === 'on' ? 'selected' : ''}>Always On</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="setting-control">
-                        <select id="subtitleMode" onchange="markChanged()">
-                            <option value="off" ${!s.playback.preferredSubtitleMode || s.playback.preferredSubtitleMode === 'off' ? 'selected' : ''}>Off</option>
-                            <option value="forced-only" ${s.playback.preferredSubtitleMode === 'forced-only' ? 'selected' : ''}>Auto (Forced Only)</option>
-                            <option value="on" ${s.playback.preferredSubtitleMode === 'on' ? 'selected' : ''}>Always On</option>
-                        </select>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Size</h4>
+                            <p>Scale factor for subtitle text (1.0 = default)</p>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="subtitleSize" value="${s.playback.subtitleSize || 1.0}" min="0.5" max="3" step="0.1" onchange="markChanged()">
+                        </div>
                     </div>
-                </div>
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <h4>Subtitle Size</h4>
-                        <p>Scale factor for subtitle text (1.0 = default)</p>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Color</h4>
+                            <p>Text color and transparency</p>
+                        </div>
+                        <div class="setting-control">
+                            <input type="color" id="subtitleColor" value="${s.playback.subtitleColor || '#FFFFFF'}" onchange="markChanged()">
+                            <input type="number" id="subtitleOpacity" value="${s.playback.subtitleOpacity ?? 1.0}" min="0" max="1" step="0.05" onchange="markChanged()">
+                        </div>
                     </div>
-                    <div class="setting-control">
-                        <input type="number" id="subtitleSize" value="${s.playback.subtitleSize || 1.0}" min="0.5" max="3" step="0.1" onchange="markChanged()">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Font</h4>
+                            <p>Font family for SRT/VTT subtitles</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="subtitleFont" onchange="markChanged()">
+                                <option value="" ${!s.playback.subtitleFont ? 'selected' : ''}>Player Default</option>
+                                <option value="sans" ${s.playback.subtitleFont === 'sans' ? 'selected' : ''}>Sans Serif</option>
+                                <option value="serif" ${s.playback.subtitleFont === 'serif' ? 'selected' : ''}>Serif</option>
+                                <option value="mono" ${s.playback.subtitleFont === 'mono' ? 'selected' : ''}>Monospace</option>
+                                <option value="rounded" ${s.playback.subtitleFont === 'rounded' ? 'selected' : ''}>Rounded</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Outline</h4>
+                            <p>Optional outline color and weight for text subtitles</p>
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="subtitleOutlineEnabled" ${(s.playback.subtitleOutlineEnabled ?? false) ? 'checked' : ''} onchange="markChanged()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <input type="color" id="subtitleOutlineColor" value="${s.playback.subtitleOutlineColor || '#000000'}" onchange="markChanged()">
+                            <input type="number" id="subtitleOutlineWeight" value="${s.playback.subtitleOutlineWeight ?? 0.35}" min="0" max="1" step="0.05" onchange="markChanged()">
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <h4>Subtitle Background</h4>
+                            <p>Background box color and transparency</p>
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="subtitleBackgroundEnabled" ${(s.playback.subtitleBackgroundEnabled ?? true) ? 'checked' : ''} onchange="markChanged()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <input type="color" id="subtitleBackgroundColor" value="${s.playback.subtitleBackgroundColor || '#000000'}" onchange="markChanged()">
+                            <input type="number" id="subtitleBackgroundOpacity" value="${s.playback.subtitleBackgroundOpacity ?? 0.6}" min="0" max="1" step="0.05" onchange="markChanged()">
+                        </div>
                     </div>
                 </div>
                 <div class="setting-row">
@@ -573,12 +659,24 @@ function removeTag(term) {
 }
 
 function collectSettings() {
+    const subtitleOpacity = parseFloat(document.getElementById('subtitleOpacity').value);
+    const subtitleOutlineWeight = parseFloat(document.getElementById('subtitleOutlineWeight').value);
+    const subtitleBackgroundOpacity = parseFloat(document.getElementById('subtitleBackgroundOpacity').value);
     return {
         playback: {
             preferredPlayer: document.getElementById('preferredPlayer').value,
             preferredSubtitleLanguage: document.getElementById('subtitleLanguage').value,
             preferredSubtitleMode: document.getElementById('subtitleMode').value,
             subtitleSize: parseFloat(document.getElementById('subtitleSize').value) || 1.0,
+            subtitleColor: document.getElementById('subtitleColor').value || '#FFFFFF',
+            subtitleOpacity: Number.isFinite(subtitleOpacity) ? subtitleOpacity : 1.0,
+            subtitleFont: document.getElementById('subtitleFont').value,
+            subtitleOutlineEnabled: document.getElementById('subtitleOutlineEnabled').checked,
+            subtitleOutlineColor: document.getElementById('subtitleOutlineColor').value || '#000000',
+            subtitleOutlineWeight: Number.isFinite(subtitleOutlineWeight) ? subtitleOutlineWeight : 0.35,
+            subtitleBackgroundEnabled: document.getElementById('subtitleBackgroundEnabled').checked,
+            subtitleBackgroundColor: document.getElementById('subtitleBackgroundColor').value || '#000000',
+            subtitleBackgroundOpacity: Number.isFinite(subtitleBackgroundOpacity) ? subtitleBackgroundOpacity : 0.6,
             pauseWhenAppInactive: document.getElementById('pauseWhenAppInactive').checked,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },

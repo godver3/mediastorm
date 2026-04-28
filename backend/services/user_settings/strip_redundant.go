@@ -122,6 +122,15 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			PauseWhenAppInactive:      g.Playback.PauseWhenAppInactive,
 			UseLoadingScreen:          g.Playback.UseLoadingScreen,
 			SubtitleSize:              g.Playback.SubtitleSize,
+			SubtitleColor:             g.Playback.SubtitleColor,
+			SubtitleOpacity:           models.FloatPtr(g.Playback.SubtitleOpacity),
+			SubtitleFont:              g.Playback.SubtitleFont,
+			SubtitleOutlineEnabled:    models.BoolPtr(g.Playback.SubtitleOutlineEnabled),
+			SubtitleOutlineColor:      g.Playback.SubtitleOutlineColor,
+			SubtitleOutlineWeight:     models.FloatPtr(g.Playback.SubtitleOutlineWeight),
+			SubtitleBackgroundEnabled: models.BoolPtr(g.Playback.SubtitleBackgroundEnabled),
+			SubtitleBackgroundColor:   g.Playback.SubtitleBackgroundColor,
+			SubtitleBackgroundOpacity: models.FloatPtr(g.Playback.SubtitleBackgroundOpacity),
 			RewindOnResumeFromPause:   g.Playback.RewindOnResumeFromPause,
 			RewindOnPlaybackStart:     g.Playback.RewindOnPlaybackStart,
 			CreditsAutoSkip:           g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
@@ -197,6 +206,33 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.SubtitleSize == 0 {
 		eff.Playback.SubtitleSize = g.Playback.SubtitleSize
+	}
+	if eff.Playback.SubtitleColor == "" {
+		eff.Playback.SubtitleColor = g.Playback.SubtitleColor
+	}
+	if eff.Playback.SubtitleOpacity == nil {
+		eff.Playback.SubtitleOpacity = models.FloatPtr(g.Playback.SubtitleOpacity)
+	}
+	if eff.Playback.SubtitleFont == "" {
+		eff.Playback.SubtitleFont = g.Playback.SubtitleFont
+	}
+	if eff.Playback.SubtitleOutlineEnabled == nil {
+		eff.Playback.SubtitleOutlineEnabled = models.BoolPtr(g.Playback.SubtitleOutlineEnabled)
+	}
+	if eff.Playback.SubtitleOutlineColor == "" {
+		eff.Playback.SubtitleOutlineColor = g.Playback.SubtitleOutlineColor
+	}
+	if eff.Playback.SubtitleOutlineWeight == nil {
+		eff.Playback.SubtitleOutlineWeight = models.FloatPtr(g.Playback.SubtitleOutlineWeight)
+	}
+	if eff.Playback.SubtitleBackgroundEnabled == nil {
+		eff.Playback.SubtitleBackgroundEnabled = models.BoolPtr(g.Playback.SubtitleBackgroundEnabled)
+	}
+	if eff.Playback.SubtitleBackgroundColor == "" {
+		eff.Playback.SubtitleBackgroundColor = g.Playback.SubtitleBackgroundColor
+	}
+	if eff.Playback.SubtitleBackgroundOpacity == nil {
+		eff.Playback.SubtitleBackgroundOpacity = models.FloatPtr(g.Playback.SubtitleBackgroundOpacity)
 	}
 	if !eff.Playback.UseLoadingScreen {
 		eff.Playback.UseLoadingScreen = g.Playback.UseLoadingScreen
@@ -324,6 +360,42 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.SubtitleSize != 0 && p.SubtitleSize == g.SubtitleSize {
 		p.SubtitleSize = 0
+		changed = true
+	}
+	if p.SubtitleColor != "" && p.SubtitleColor == g.SubtitleColor {
+		p.SubtitleColor = ""
+		changed = true
+	}
+	if p.SubtitleOpacity != nil && *p.SubtitleOpacity == g.SubtitleOpacity {
+		p.SubtitleOpacity = nil
+		changed = true
+	}
+	if p.SubtitleFont != "" && p.SubtitleFont == g.SubtitleFont {
+		p.SubtitleFont = ""
+		changed = true
+	}
+	if p.SubtitleOutlineEnabled != nil && *p.SubtitleOutlineEnabled == g.SubtitleOutlineEnabled {
+		p.SubtitleOutlineEnabled = nil
+		changed = true
+	}
+	if p.SubtitleOutlineColor != "" && p.SubtitleOutlineColor == g.SubtitleOutlineColor {
+		p.SubtitleOutlineColor = ""
+		changed = true
+	}
+	if p.SubtitleOutlineWeight != nil && *p.SubtitleOutlineWeight == g.SubtitleOutlineWeight {
+		p.SubtitleOutlineWeight = nil
+		changed = true
+	}
+	if p.SubtitleBackgroundEnabled != nil && *p.SubtitleBackgroundEnabled == g.SubtitleBackgroundEnabled {
+		p.SubtitleBackgroundEnabled = nil
+		changed = true
+	}
+	if p.SubtitleBackgroundColor != "" && p.SubtitleBackgroundColor == g.SubtitleBackgroundColor {
+		p.SubtitleBackgroundColor = ""
+		changed = true
+	}
+	if p.SubtitleBackgroundOpacity != nil && *p.SubtitleBackgroundOpacity == g.SubtitleBackgroundOpacity {
+		p.SubtitleBackgroundOpacity = nil
 		changed = true
 	}
 	if p.UseLoadingScreen && p.UseLoadingScreen == g.UseLoadingScreen {
