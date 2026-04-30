@@ -1000,6 +1000,7 @@ func collectMovieReleases(title *models.Title, source string, windowStart, cutof
 	if title.Poster != nil {
 		posterURL = title.Poster.URL
 	}
+	backdropURL := calendarBackdropURL(title)
 	extIDs := buildExternalIDs(title.IMDBID, title.TMDBID, title.TVDBID)
 
 	// Collect all candidate releases: curated pointers + full list.
@@ -1045,7 +1046,7 @@ func collectMovieReleases(title *models.Title, source string, windowStart, cutof
 
 	var items []models.CalendarItem
 	for _, rel := range earliestByType {
-		if item, ok := makeMovieReleaseItem(title, rel, posterURL, extIDs, source, windowStart, cutoff, state); ok {
+		if item, ok := makeMovieReleaseItem(title, rel, posterURL, backdropURL, extIDs, source, windowStart, cutoff, state); ok {
 			items = append(items, item)
 		}
 	}
@@ -1053,8 +1054,26 @@ func collectMovieReleases(title *models.Title, source string, windowStart, cutof
 	return items
 }
 
+func calendarBackdropURL(title *models.Title) string {
+	if title == nil {
+		return ""
+	}
+	if title.TextBackdrop != nil && title.TextBackdrop.URL != "" {
+		return title.TextBackdrop.URL
+	}
+	if title.Backdrop != nil && title.Backdrop.URL != "" {
+		return title.Backdrop.URL
+	}
+	for _, backdrop := range title.Backdrops {
+		if backdrop.URL != "" {
+			return backdrop.URL
+		}
+	}
+	return ""
+}
+
 // makeMovieReleaseItem creates a CalendarItem from a movie release, if it's in the date window.
-func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL string, extIDs map[string]string, source string, windowStart, cutoff time.Time, state *buildState) (models.CalendarItem, bool) {
+func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, backdropURL string, extIDs map[string]string, source string, windowStart, cutoff time.Time, state *buildState) (models.CalendarItem, bool) {
 	releaseDate, err := parseDate(rel.Date)
 	if err != nil || releaseDate.Before(windowStart) || releaseDate.After(cutoff) {
 		return models.CalendarItem{}, false
@@ -1070,6 +1089,7 @@ func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL st
 		AirDate:     releaseDate.Format("2006-01-02"),
 		ReleaseType: rel.Type,
 		PosterURL:   posterURL,
+		BackdropURL: backdropURL,
 		Year:        title.Year,
 		ExternalIDs: extIDs,
 		Source:      source,
@@ -1102,6 +1122,7 @@ func (s *Service) fetchUpcomingEpisodes(
 	if posterURL == "" && details.Title.Poster != nil {
 		posterURL = details.Title.Poster.URL
 	}
+	backdropURL := calendarBackdropURL(&details.Title)
 
 	extIDs := buildExternalIDs(details.Title.IMDBID, details.Title.TMDBID, details.Title.TVDBID)
 
@@ -1143,6 +1164,7 @@ func (s *Service) fetchUpcomingEpisodes(
 				AirTimezone:     airsTimezone,
 				Network:         details.Title.Network,
 				PosterURL:       posterURL,
+				BackdropURL:     backdropURL,
 				Year:            details.Title.Year,
 				ExternalIDs:     extIDs,
 				Source:          source,

@@ -14,6 +14,7 @@ type CalendarItem struct {
 	Network         string            `json:"network,omitempty"`     // Network name (e.g. "HBO")
 	ReleaseType     string            `json:"releaseType,omitempty"` // For movies: "theatrical", "digital", "physical", etc.
 	PosterURL       string            `json:"posterUrl,omitempty"`
+	BackdropURL     string            `json:"backdropUrl,omitempty"`
 	Year            int               `json:"year,omitempty"`
 	ExternalIDs     map[string]string `json:"externalIds,omitempty"` // imdb, tvdb, tmdb
 	Source          string            `json:"source"`                // "watchlist" | "history" | "trending" | "top-trending" | "mdblist"
