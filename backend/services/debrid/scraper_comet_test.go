@@ -617,3 +617,15 @@ func TestCometSearchMaxResults(t *testing.T) {
 		t.Errorf("expected 3 results (max), got %d", len(results))
 	}
 }
+
+func TestDetectResolutionIgnoresEmbedded4KInReleaseGroup(t *testing.T) {
+	got := detectResolution("", "The.Office.UK.s02e01.DVDRip.To4kaTV.avi")
+	if got != "" {
+		t.Fatalf("expected no resolution from To4kaTV, got %q", got)
+	}
+
+	got = detectResolution("", "Movie.Name.4K.WEB-DL.mkv")
+	if got != "2160p" {
+		t.Fatalf("expected explicit 4K token to map to 2160p, got %q", got)
+	}
+}

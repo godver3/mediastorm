@@ -853,3 +853,27 @@ func TestSanitizeNewznabQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractResolutionFromResultIgnoresEmbedded4KInReleaseGroup(t *testing.T) {
+	got := extractResolutionFromResult(models.NZBResult{
+		Title: "The.Office.UK.s02e01.DVDRip.To4kaTV.avi",
+	})
+	if got != 0 {
+		t.Fatalf("expected no resolution from To4kaTV, got %d", got)
+	}
+
+	got = extractResolutionFromResult(models.NZBResult{
+		Title: "Movie.Name.4K.WEB-DL.mkv",
+	})
+	if got != 2160 {
+		t.Fatalf("expected explicit 4K token to map to 2160, got %d", got)
+	}
+
+	got = extractResolutionFromResult(models.NZBResult{
+		Title:      "Movie.Name.mkv",
+		Attributes: map[string]string{"resolution": "Comet\n4K"},
+	})
+	if got != 2160 {
+		t.Fatalf("expected explicit 4K attribute token to map to 2160, got %d", got)
+	}
+}

@@ -37,6 +37,14 @@ var newznabQuerySanitizer = regexp.MustCompile(`[!?:&,;"()[\]{}]+`)
 // xmlEntityPattern matches valid XML entity references: &name; &#NNN; &#xHHH;
 var xmlEntityPattern = regexp.MustCompile(`^([a-zA-Z]+;|#[0-9]+;|#x[0-9a-fA-F]+;)`)
 
+var (
+	resolution2160Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
+	resolution1080Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
+	resolution720Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
+	resolution576Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
+	resolution480Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+)
+
 // sanitizeXMLAmpersands escapes unescaped ampersands in XML that aren't part of valid entity references.
 // This fixes malformed XML from indexers that don't properly escape titles like "Tom & Jerry".
 func sanitizeXMLAmpersands(data []byte) ([]byte, int) {
@@ -2179,17 +2187,16 @@ func extractResolutionFromResult(result models.NZBResult) int {
 
 // parseResolutionString converts a resolution string like "2160p", "1080p", "4K" to a numeric value.
 func parseResolutionString(res string) int {
-	res = strings.ToLower(strings.TrimSpace(res))
 	switch {
-	case strings.Contains(res, "2160") || strings.Contains(res, "4k") || strings.Contains(res, "uhd"):
+	case resolution2160Pattern.MatchString(res):
 		return 2160
-	case strings.Contains(res, "1080"):
+	case resolution1080Pattern.MatchString(res):
 		return 1080
-	case strings.Contains(res, "720"):
+	case resolution720Pattern.MatchString(res):
 		return 720
-	case strings.Contains(res, "576"):
+	case resolution576Pattern.MatchString(res):
 		return 576
-	case strings.Contains(res, "480"):
+	case resolution480Pattern.MatchString(res):
 		return 480
 	default:
 		return 0
@@ -2200,26 +2207,24 @@ func parseResolutionString(res string) int {
 // Returns a numeric value representing resolution priority (higher is better).
 // Common resolutions: 2160p/4K (2160), 1080p (1080), 720p (720), 480p (480), etc.
 func extractResolution(title string) int {
-	title = strings.ToLower(title)
-
 	// Check for 4K/UHD (highest priority)
-	if strings.Contains(title, "2160p") || strings.Contains(title, "4k") || strings.Contains(title, "uhd") {
+	if resolution2160Pattern.MatchString(title) {
 		return 2160
 	}
 	// Check for 1080p
-	if strings.Contains(title, "1080p") || strings.Contains(title, "1080i") {
+	if resolution1080Pattern.MatchString(title) {
 		return 1080
 	}
 	// Check for 720p
-	if strings.Contains(title, "720p") || strings.Contains(title, "720i") {
+	if resolution720Pattern.MatchString(title) {
 		return 720
 	}
 	// Check for 576p (PAL)
-	if strings.Contains(title, "576p") || strings.Contains(title, "576i") {
+	if resolution576Pattern.MatchString(title) {
 		return 576
 	}
 	// Check for 480p (NTSC)
-	if strings.Contains(title, "480p") || strings.Contains(title, "480i") {
+	if resolution480Pattern.MatchString(title) {
 		return 480
 	}
 

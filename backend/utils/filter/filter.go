@@ -25,6 +25,14 @@ const (
 	MaxYearDifference = 1
 )
 
+var (
+	resolution2160Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
+	resolution1080Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
+	resolution720Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
+	resolution576Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
+	resolution480Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+)
+
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
 type HDRDVPolicy string
 
@@ -154,26 +162,24 @@ func resolutionToString(res int) string {
 // extractResolutionFromTitle extracts resolution from the title using simple string matching.
 // This is a fallback for when parsett doesn't detect resolution (e.g., underscore-separated titles).
 func extractResolutionFromTitle(title string) int {
-	title = strings.ToLower(title)
-
 	// Check for 4K/UHD (highest priority)
-	if strings.Contains(title, "2160p") || strings.Contains(title, "4k") || strings.Contains(title, "uhd") {
+	if resolution2160Pattern.MatchString(title) {
 		return 2160
 	}
 	// Check for 1080p
-	if strings.Contains(title, "1080p") || strings.Contains(title, "1080i") {
+	if resolution1080Pattern.MatchString(title) {
 		return 1080
 	}
 	// Check for 720p
-	if strings.Contains(title, "720p") || strings.Contains(title, "720i") {
+	if resolution720Pattern.MatchString(title) {
 		return 720
 	}
 	// Check for 576p (PAL)
-	if strings.Contains(title, "576p") || strings.Contains(title, "576i") {
+	if resolution576Pattern.MatchString(title) {
 		return 576
 	}
 	// Check for 480p (NTSC)
-	if strings.Contains(title, "480p") || strings.Contains(title, "480i") {
+	if resolution480Pattern.MatchString(title) {
 		return 480
 	}
 

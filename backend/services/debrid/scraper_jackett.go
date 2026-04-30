@@ -58,13 +58,13 @@ type torznabChannel struct {
 }
 
 type torznabItem struct {
-	Title     string          `xml:"title"`
-	GUID      string          `xml:"guid"`
-	Link      string          `xml:"link"`
-	Size      int64           `xml:"size"`
-	PubDate   string          `xml:"pubDate"`
+	Title     string           `xml:"title"`
+	GUID      string           `xml:"guid"`
+	Link      string           `xml:"link"`
+	Size      int64            `xml:"size"`
+	PubDate   string           `xml:"pubDate"`
 	Enclosure torznabEnclosure `xml:"enclosure"`
-	Attrs     []torznabAttr   `xml:"attr"`
+	Attrs     []torznabAttr    `xml:"attr"`
 }
 
 type torznabEnclosure struct {
@@ -363,16 +363,14 @@ func buildMagnetFromHash(hash, title string) string {
 
 // extractResolution parses resolution from a release title.
 func extractResolution(title string) string {
-	title = strings.ToLower(title)
-
 	switch {
-	case strings.Contains(title, "2160p") || strings.Contains(title, "4k") || strings.Contains(title, "uhd"):
+	case resolution2160Pattern.MatchString(title):
 		return "4K"
-	case strings.Contains(title, "1080p") || strings.Contains(title, "1080i"):
+	case resolution1080Pattern.MatchString(title):
 		return "1080p"
-	case strings.Contains(title, "720p"):
+	case resolution720Pattern.MatchString(title):
 		return "720p"
-	case strings.Contains(title, "480p") || strings.Contains(title, "sd"):
+	case resolution480Pattern.MatchString(title) || resolutionSDPattern.MatchString(title):
 		return "480p"
 	default:
 		return ""

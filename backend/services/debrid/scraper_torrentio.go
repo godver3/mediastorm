@@ -684,16 +684,24 @@ func parseLanguages(raw string) []string {
 	return norm
 }
 
+var (
+	resolution2160Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
+	resolution1080Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
+	resolution720Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
+	resolution480Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+	resolutionSDPattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])sd([^a-z0-9]|$)`)
+)
+
 func detectResolution(name, raw string) string {
-	release := strings.ToLower(name + " " + raw)
+	release := name + " " + raw
 	switch {
-	case strings.Contains(release, "2160p") || strings.Contains(release, "4k"):
+	case resolution2160Pattern.MatchString(release):
 		return "2160p"
-	case strings.Contains(release, "1080p"):
+	case resolution1080Pattern.MatchString(release):
 		return "1080p"
-	case strings.Contains(release, "720p"):
+	case resolution720Pattern.MatchString(release):
 		return "720p"
-	case strings.Contains(release, "480p"):
+	case resolution480Pattern.MatchString(release):
 		return "480p"
 	default:
 		return ""
