@@ -157,6 +157,8 @@ type LocalMediaItemGroup struct {
 	Year             int                     `json:"year,omitempty"`
 	Poster           *Image                  `json:"poster,omitempty"`
 	TextPoster       *Image                  `json:"textPoster,omitempty"`
+	Backdrop         *Image                  `json:"backdrop,omitempty"`
+	TextBackdrop     *Image                  `json:"textBackdrop,omitempty"`
 	ItemCount        int                     `json:"itemCount"`
 	MissingCount     int                     `json:"missingCount"`
 	MatchStatus      LocalMediaMatchStatus   `json:"matchStatus"`

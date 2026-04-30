@@ -58,6 +58,7 @@ type PrequeueHandler struct {
 	subtitleExtractor     SubtitlePreExtractor  // For pre-extracting subtitles
 	prewarmSvc            PrewarmService        // For checking pre-warmed entries
 	failures              *streamFailureRegistry
+	externalURLValidator  func(context.Context, string) error
 	demoMode              bool
 }
 
@@ -66,6 +67,57 @@ func hasTrackMetadata(entry *playback.PrequeueEntry) bool {
 		return false
 	}
 	return len(entry.AudioTracks) > 0 || len(entry.SubtitleTracks) > 0
+}
+
+func isExternalStreamPath(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
+}
+
+func shouldForceReresolveForStatus(status int) bool {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusGone:
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultExternalURLValidator(ctx context.Context, streamURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, streamURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil
+	}
+	if shouldForceReresolveForStatus(resp.StatusCode) {
+		return fmt.Errorf("external stream validation returned %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (h *PrequeueHandler) validateReadyEntryForReuse(ctx context.Context, entry *playback.PrequeueEntry) error {
+	if entry == nil || !isExternalStreamPath(entry.StreamPath) {
+		return nil
+	}
+
+	validator := h.externalURLValidator
+	if validator == nil {
+		validator = defaultExternalURLValidator
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return validator(checkCtx, entry.StreamPath)
 }
 
 // ClientSettingsProvider interface for accessing per-client filter settings
@@ -362,30 +414,36 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	if h.prewarmSvc != nil {
 		if warm := h.prewarmSvc.GetWarm(req.TitleID, req.UserID); warm != nil && warm.PrequeueID != "" {
 			if warmEntry, ok := h.store.Get(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(warmEntry) {
-				// Verify the target episode matches (for series)
-				episodeMatch := true
-				if targetEpisode != nil && warmEntry.TargetEpisode != nil {
-					if targetEpisode.SeasonNumber != warmEntry.TargetEpisode.SeasonNumber ||
-						targetEpisode.EpisodeNumber != warmEntry.TargetEpisode.EpisodeNumber {
+				if err := h.validateReadyEntryForReuse(r.Context(), warmEntry); err != nil {
+					log.Printf("[prequeue] Ignoring pre-warmed entry %s: stale external stream (%v), resolving fresh",
+						warm.PrequeueID, err)
+					h.store.Delete(warm.PrequeueID)
+				} else {
+					// Verify the target episode matches (for series)
+					episodeMatch := true
+					if targetEpisode != nil && warmEntry.TargetEpisode != nil {
+						if targetEpisode.SeasonNumber != warmEntry.TargetEpisode.SeasonNumber ||
+							targetEpisode.EpisodeNumber != warmEntry.TargetEpisode.EpisodeNumber {
+							episodeMatch = false
+						}
+					} else if (targetEpisode == nil) != (warmEntry.TargetEpisode == nil) {
 						episodeMatch = false
 					}
-				} else if (targetEpisode == nil) != (warmEntry.TargetEpisode == nil) {
-					episodeMatch = false
-				}
 
-				if episodeMatch {
-					log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
-					resp := playback.PrequeueResponse{
-						PrequeueID:    warm.PrequeueID,
-						TargetEpisode: warmEntry.TargetEpisode,
-						Status:        playback.PrequeueStatusReady,
+					if episodeMatch {
+						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
+						resp := playback.PrequeueResponse{
+							PrequeueID:    warm.PrequeueID,
+							TargetEpisode: warmEntry.TargetEpisode,
+							Status:        playback.PrequeueStatusReady,
+						}
+						w.Header().Set("Content-Type", "application/json")
+						json.NewEncoder(w).Encode(resp)
+						return
 					}
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(resp)
-					return
+					log.Printf("[prequeue] Pre-warmed entry %s episode mismatch (warm=%v, requested=%v), resolving fresh",
+						warm.PrequeueID, warmEntry.TargetEpisode, targetEpisode)
 				}
-				log.Printf("[prequeue] Pre-warmed entry %s episode mismatch (warm=%v, requested=%v), resolving fresh",
-					warm.PrequeueID, warmEntry.TargetEpisode, targetEpisode)
 			} else {
 				if _, storeOK := h.store.Get(warm.PrequeueID); !storeOK {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: no longer in store (replaced by newer prequeue), resolving fresh",
@@ -400,28 +458,34 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 
 	// Check for existing ready entry in the store (covers both prewarm and regular prequeues)
 	if existing, ok := h.store.GetByTitleUser(req.TitleID, req.UserID); ok && existing.Status == playback.PrequeueStatusReady && existing.StreamPath != "" && hasTrackMetadata(existing) {
-		episodeMatch := true
-		if targetEpisode != nil && existing.TargetEpisode != nil {
-			if targetEpisode.SeasonNumber != existing.TargetEpisode.SeasonNumber ||
-				targetEpisode.EpisodeNumber != existing.TargetEpisode.EpisodeNumber {
+		if err := h.validateReadyEntryForReuse(r.Context(), existing); err != nil {
+			log.Printf("[prequeue] Discarding ready entry %s: stale external stream (%v), resolving fresh",
+				existing.ID, err)
+			h.store.Delete(existing.ID)
+		} else {
+			episodeMatch := true
+			if targetEpisode != nil && existing.TargetEpisode != nil {
+				if targetEpisode.SeasonNumber != existing.TargetEpisode.SeasonNumber ||
+					targetEpisode.EpisodeNumber != existing.TargetEpisode.EpisodeNumber {
+					episodeMatch = false
+				}
+			} else if (targetEpisode == nil) != (existing.TargetEpisode == nil) {
 				episodeMatch = false
 			}
-		} else if (targetEpisode == nil) != (existing.TargetEpisode == nil) {
-			episodeMatch = false
-		}
-		if episodeMatch {
-			log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
-			resp := playback.PrequeueResponse{
-				PrequeueID:    existing.ID,
-				TargetEpisode: existing.TargetEpisode,
-				Status:        playback.PrequeueStatusReady,
+			if episodeMatch {
+				log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
+				resp := playback.PrequeueResponse{
+					PrequeueID:    existing.ID,
+					TargetEpisode: existing.TargetEpisode,
+					Status:        playback.PrequeueStatusReady,
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(resp)
+				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
-			return
+			log.Printf("[prequeue] Existing ready entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
+				existing.ID, existing.TargetEpisode, targetEpisode)
 		}
-		log.Printf("[prequeue] Existing ready entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
-			existing.ID, existing.TargetEpisode, targetEpisode)
 	} else if ok {
 		log.Printf("[prequeue] Existing ready entry %s missing track metadata, resolving fresh", existing.ID)
 	}

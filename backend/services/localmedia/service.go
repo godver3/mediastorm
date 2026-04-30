@@ -691,6 +691,12 @@ func updateLocalMediaGroupSummary(group *models.LocalMediaItemGroup, item models
 	if group.TextPoster == nil && item.Metadata != nil && item.Metadata.TextPoster != nil {
 		group.TextPoster = item.Metadata.TextPoster
 	}
+	if group.Backdrop == nil && item.Metadata != nil && item.Metadata.Backdrop != nil {
+		group.Backdrop = item.Metadata.Backdrop
+	}
+	if group.TextBackdrop == nil && item.Metadata != nil && item.Metadata.TextBackdrop != nil {
+		group.TextBackdrop = item.Metadata.TextBackdrop
+	}
 	if group.MatchStatus == "" || localMediaMatchStatusRank(item.MatchStatus) > localMediaMatchStatusRank(group.MatchStatus) {
 		group.MatchStatus = item.MatchStatus
 	}

@@ -2,10 +2,20 @@ package handlers
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"novastream/models"
+	"novastream/services/playback"
 )
+
+type prequeueRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f prequeueRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 // mockMovieDetailsProvider implements MovieDetailsProvider for testing
 type mockMovieDetailsProvider struct {
@@ -151,4 +161,109 @@ func TestPrequeueMovieAnimeDetection_SeriesSkipped(t *testing.T) {
 	if isAnime {
 		t.Error("isAnime should be false for series media type")
 	}
+}
+
+func TestShouldForceReresolveForStatus(t *testing.T) {
+	tests := []struct {
+		status int
+		want   bool
+	}{
+		{status: http.StatusUnauthorized, want: true},
+		{status: http.StatusForbidden, want: true},
+		{status: http.StatusNotFound, want: true},
+		{status: http.StatusGone, want: true},
+		{status: http.StatusMethodNotAllowed, want: false},
+		{status: http.StatusTooManyRequests, want: false},
+		{status: http.StatusInternalServerError, want: false},
+		{status: http.StatusOK, want: false},
+	}
+
+	for _, tt := range tests {
+		if got := shouldForceReresolveForStatus(tt.status); got != tt.want {
+			t.Fatalf("status %d: got %v want %v", tt.status, got, tt.want)
+		}
+	}
+}
+
+func TestDefaultExternalURLValidator(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	t.Run("allows head 200", func(t *testing.T) {
+		http.DefaultTransport = prequeueRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodHead {
+				t.Fatalf("expected HEAD request, got %s", r.Method)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+
+		if err := defaultExternalURLValidator(context.Background(), "https://example.com/stream"); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	})
+
+	t.Run("forces reresolve on 403", func(t *testing.T) {
+		http.DefaultTransport = prequeueRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+
+		if err := defaultExternalURLValidator(context.Background(), "https://example.com/stream"); err == nil {
+			t.Fatal("expected validation error for 403")
+		}
+	})
+
+	t.Run("allows head 405 fallback", func(t *testing.T) {
+		http.DefaultTransport = prequeueRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusMethodNotAllowed,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+
+		if err := defaultExternalURLValidator(context.Background(), "https://example.com/stream"); err != nil {
+			t.Fatalf("expected nil error for 405, got %v", err)
+		}
+	})
+}
+
+func TestValidateReadyEntryForReuse(t *testing.T) {
+	handler := &PrequeueHandler{}
+
+	t.Run("skips non external paths", func(t *testing.T) {
+		entry := &playback.PrequeueEntry{StreamPath: "/debrid/realdebrid/file.mkv"}
+		if err := handler.validateReadyEntryForReuse(context.Background(), entry); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	})
+
+	t.Run("uses injected validator for external paths", func(t *testing.T) {
+		called := false
+		handler.externalURLValidator = func(_ context.Context, streamURL string) error {
+			called = true
+			if streamURL != "https://example.com/stream" {
+				t.Fatalf("unexpected stream URL %q", streamURL)
+			}
+			return nil
+		}
+
+		entry := &playback.PrequeueEntry{StreamPath: "https://example.com/stream"}
+		if err := handler.validateReadyEntryForReuse(context.Background(), entry); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+		if !called {
+			t.Fatal("expected validator to be called")
+		}
+	})
 }
