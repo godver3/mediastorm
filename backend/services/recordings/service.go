@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"novastream/internal/datastore"
+	"novastream/internal/liveusage"
 	"novastream/models"
 )
 
@@ -360,10 +361,12 @@ func (s *Service) startRecording(recording models.Recording) {
 	s.mu.Lock()
 	s.active[recording.ID] = cancel
 	s.mu.Unlock()
+	liveusage.GetTracker().StartRecording(recording.ID, recording.UserID)
 	defer func() {
 		s.mu.Lock()
 		delete(s.active, recording.ID)
 		s.mu.Unlock()
+		liveusage.GetTracker().EndRecording(recording.ID)
 		cancel()
 	}()
 

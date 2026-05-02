@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"novastream/config"
+	"novastream/internal/liveusage"
 	"novastream/models"
 )
 
@@ -95,6 +96,28 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 			}
 		}
 		h.hlsManager.mu.RUnlock()
+	}
+
+	for _, recording := range liveusage.GetTracker().ListRecordings() {
+		profileID := strings.TrimSpace(recording.ProfileID)
+		if profileID == "" {
+			continue
+		}
+		if !isAdmin && !allowedProfileIDs[profileID] {
+			continue
+		}
+
+		target, ok := targetByProfile[profileID]
+		if !ok {
+			continue
+		}
+		bucketID := strings.TrimSpace(target.BucketKey)
+		if bucketID == "" {
+			bucketID = normalizeLiveProvider(target.Provider) + ":default"
+		}
+		bucketCurrent[bucketID]++
+		bucketProvider[bucketID] = normalizeLiveProvider(target.Provider)
+		bucketLabel[bucketID] = target.BucketName
 	}
 
 	byUser := make([]liveUsageByUserRow, 0, len(scopedUsers))

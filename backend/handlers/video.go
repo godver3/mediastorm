@@ -27,6 +27,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/integration"
+	"novastream/internal/liveusage"
 	"novastream/models"
 	"novastream/services/credits"
 	"novastream/services/streaming"
@@ -2977,7 +2978,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	target := h.resolveLiveStreamTarget(profileID)
 
 	if target.MaxStreams > 0 {
-		usage := h.hlsManager.GetLiveUsage(target.Provider, target.BucketKey, target.MaxStreams)
+		usage := h.buildLiveUsageSummary(target)
 		if usage.AtLimit {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -3059,23 +3060,7 @@ func (h *VideoHandler) GetLiveUsage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
 	target := h.resolveLiveStreamTarget(profileID)
-
-	if h.hlsManager == nil {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"provider":         target.Provider,
-			"bucket":           target.BucketName,
-			"currentStreams":   0,
-			"maxStreams":       target.MaxStreams,
-			"availableStreams": 0,
-			"atLimit":          false,
-			"providers": []map[string]interface{}{
-				{"provider": target.Provider, "current": 0, "max": target.MaxStreams, "available": 0, "atLimit": false},
-			},
-		})
-		return
-	}
-
-	usage := h.hlsManager.GetLiveUsage(target.Provider, target.BucketKey, target.MaxStreams)
+	usage := h.buildLiveUsageSummary(target)
 	_ = json.NewEncoder(w).Encode(usage)
 }
 
@@ -3381,6 +3366,75 @@ func (h *VideoHandler) resolveLiveStreamTarget(profileID string) liveStreamTarge
 		}
 	}
 	return resolveLiveStreamTarget(global, userSettings)
+}
+
+func (h *VideoHandler) buildLiveUsageSummary(target liveStreamTarget) LiveUsageSummary {
+	usage := LiveUsageSummary{
+		Provider:         normalizeLiveProvider(target.Provider),
+		CurrentStreams:   0,
+		MaxStreams:       target.MaxStreams,
+		AvailableStreams: 0,
+		AtLimit:          false,
+		Providers: []LiveProviderUsageEntry{
+			{
+				Provider:  normalizeLiveProvider(target.Provider),
+				Current:   0,
+				Max:       target.MaxStreams,
+				Available: 0,
+				AtLimit:   false,
+			},
+		},
+	}
+	if h != nil && h.hlsManager != nil {
+		usage = h.hlsManager.GetLiveUsage(target.Provider, target.BucketKey, target.MaxStreams)
+	}
+
+	usage.Provider = normalizeLiveProvider(target.Provider)
+	usage.MaxStreams = target.MaxStreams
+	usage.CurrentStreams += h.countActiveRecordingLiveUsage(target)
+
+	available := 0
+	atLimit := false
+	if target.MaxStreams > 0 {
+		available = target.MaxStreams - usage.CurrentStreams
+		if available < 0 {
+			available = 0
+		}
+		atLimit = usage.CurrentStreams >= target.MaxStreams
+	}
+
+	usage.AvailableStreams = available
+	usage.AtLimit = atLimit
+	if len(usage.Providers) == 0 {
+		usage.Providers = []LiveProviderUsageEntry{{Provider: usage.Provider}}
+	}
+	usage.Providers[0].Provider = usage.Provider
+	usage.Providers[0].Current = usage.CurrentStreams
+	usage.Providers[0].Max = target.MaxStreams
+	usage.Providers[0].Available = available
+	usage.Providers[0].AtLimit = atLimit
+	return usage
+}
+
+func (h *VideoHandler) countActiveRecordingLiveUsage(target liveStreamTarget) int {
+	if h == nil {
+		return 0
+	}
+
+	targetProvider := normalizeLiveProvider(target.Provider)
+	targetBucket := strings.TrimSpace(target.BucketKey)
+	count := 0
+	for _, recording := range liveusage.GetTracker().ListRecordings() {
+		recordingTarget := h.resolveLiveStreamTarget(recording.ProfileID)
+		if normalizeLiveProvider(recordingTarget.Provider) != targetProvider {
+			continue
+		}
+		if targetBucket != "" && strings.TrimSpace(recordingTarget.BucketKey) != targetBucket {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 // GetSubtitleExtractManager returns the subtitle extract manager for pre-extraction.
