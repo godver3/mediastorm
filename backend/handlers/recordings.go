@@ -245,21 +245,34 @@ func (h *RecordingsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var trackedWriter http.ResponseWriter = w
+	if r.Method == http.MethodGet {
+		tracker := GetStreamTracker()
+		accountID := h.accountIDForProfile(recording.UserID)
+		streamID, bytesCounter, activityCounter := tracker.StartStreamWithAccount(r, outputPath, info.Size(), 0, 0, accountID)
+		defer tracker.EndStream(streamID)
+		trackedWriter = &trackingWriter{
+			ResponseWriter:  w,
+			counter:         bytesCounter,
+			activityCounter: activityCounter,
+		}
+	}
+
 	filename := filepath.Base(outputPath)
 	if strings.EqualFold(filepath.Ext(filename), ".ts") {
-		w.Header().Set("Content-Type", "video/mp2t")
+		trackedWriter.Header().Set("Content-Type", "video/mp2t")
 	}
-	w.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
+	trackedWriter.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
 	if recording.Status == models.RecordingStatusRunning {
 		rangeHeader := strings.TrimSpace(r.Header.Get("Range"))
 		log.Printf("[recordings] streaming running recording id=%s mode=growing range=%q path=%s", recordingID, rangeHeader, outputPath)
-		if err := h.streamGrowingRecording(w, r, recordingID, outputPath); err != nil && !errors.Is(err, r.Context().Err()) {
-			http.Error(w, "failed to stream recording", http.StatusInternalServerError)
+		if err := h.streamGrowingRecording(trackedWriter, r, recordingID, outputPath); err != nil && !errors.Is(err, r.Context().Err()) {
+			http.Error(trackedWriter, "failed to stream recording", http.StatusInternalServerError)
 		}
 		return
 	}
 	log.Printf("[recordings] streaming recording id=%s mode=file status=%s path=%s", recordingID, recording.Status, outputPath)
-	http.ServeFile(w, r, outputPath)
+	http.ServeFile(trackedWriter, r, outputPath)
 }
 
 func (h *RecordingsHandler) streamGrowingRecording(w http.ResponseWriter, r *http.Request, recordingID, outputPath string) error {
@@ -315,6 +328,18 @@ func (h *RecordingsHandler) streamGrowingRecording(w http.ResponseWriter, r *htt
 			}
 		}
 	}
+}
+
+func (h *RecordingsHandler) accountIDForProfile(profileID string) string {
+	if h.users == nil || profileID == "" {
+		return ""
+	}
+	for _, user := range h.users.ListAll() {
+		if user.ID == profileID {
+			return user.AccountID
+		}
+	}
+	return ""
 }
 
 func (h *RecordingsHandler) Options(w http.ResponseWriter, r *http.Request) {
