@@ -35,6 +35,11 @@ var (
 
 const pollInterval = 15 * time.Second
 
+var (
+	recordingRetryDelay = 2 * time.Second
+	execCommandContext  = exec.CommandContext
+)
+
 type Service struct {
 	repo       datastore.RecordingRepository
 	ffmpegPath string
@@ -343,48 +348,65 @@ func (s *Service) startRecording(recording models.Recording) {
 	}
 
 	ctx, cancel := context.WithCancel(s.ctx)
-	durationSec := int(stopAt.Sub(now).Seconds())
-	args := []string{
-		"-nostdin",
-		"-y",
-		"-loglevel", "warning",
-		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
-		"-reconnect", "1",
-		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "3",
-		"-i", recording.SourceURL,
-		"-c", "copy",
-		"-t", fmt.Sprintf("%d", durationSec),
-		"-f", "mpegts",
-		recording.OutputPath,
-	}
-	cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		s.finalizeFailure(recording, now, fmt.Sprintf("start ffmpeg: %v", err))
-		return
-	}
-
 	recording.Status = models.RecordingStatusRunning
 	recording.ActualStartAt = &now
 	recording.UpdatedAt = now
 	if err := s.repo.Update(context.Background(), &recording); err != nil {
+		cancel()
 		log.Printf("[recordings] update running status failed: %v", err)
+		return
 	}
 
 	s.mu.Lock()
 	s.active[recording.ID] = cancel
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.active, recording.ID)
+		s.mu.Unlock()
+		cancel()
+	}()
 
-	waitErr := cmd.Wait()
+	attempt := 0
+	lastErrMsg := ""
+	for {
+		attempt++
+		remaining := time.Until(stopAt)
+		if remaining <= 0 {
+			break
+		}
 
-	s.mu.Lock()
-	delete(s.active, recording.ID)
-	s.mu.Unlock()
-	cancel()
+		waitErr, errMsg := s.runRecordingAttempt(ctx, recording, remaining, attempt == 1)
+		finishedAt := time.Now().UTC()
+		if ctx.Err() != nil {
+			s.handleInterruptedRecording(recording.ID, finishedAt)
+			return
+		}
+		if errMsg != "" {
+			lastErrMsg = errMsg
+		}
+
+		remaining = time.Until(stopAt)
+		if remaining <= 0 {
+			if waitErr == nil {
+				lastErrMsg = ""
+			}
+			break
+		}
+
+		if waitErr == nil {
+			lastErrMsg = "source stream ended before scheduled stop time"
+		}
+
+		timer := time.NewTimer(recordingRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			s.handleInterruptedRecording(recording.ID, time.Now().UTC())
+			return
+		case <-timer.C:
+		}
+	}
 
 	latest, err := s.Get(recording.ID)
 	if err != nil {
@@ -404,33 +426,101 @@ func (s *Service) startRecording(recording models.Recording) {
 	}
 	latest.ActualEndAt = &finishedAt
 	latest.UpdatedAt = finishedAt
-	if waitErr != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg == "" {
-			errMsg = waitErr.Error()
-		}
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
-		}
-		latest.Status = models.RecordingStatusFailed
-		latest.Error = errMsg
-	} else {
+	if latest.OutputSizeBytes > 0 && lastErrMsg == "" {
 		latest.Status = models.RecordingStatusCompleted
 		latest.Error = ""
+	} else {
+		if lastErrMsg == "" {
+			lastErrMsg = "recording ended without writing media data"
+		}
+		latest.Status = models.RecordingStatusFailed
+		latest.Error = truncateRecordingError(lastErrMsg)
 	}
 	if err := s.repo.Update(context.Background(), latest); err != nil {
 		log.Printf("[recordings] finalize recording update failed: %v", err)
 	}
 }
 
+func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, remaining time.Duration, truncate bool) (error, string) {
+	durationSec := int(remaining.Seconds())
+	if durationSec < 1 {
+		durationSec = 1
+	}
+
+	flags := os.O_CREATE | os.O_WRONLY
+	if truncate {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_APPEND
+	}
+	outputFile, err := os.OpenFile(recording.OutputPath, flags, 0o644)
+	if err != nil {
+		return err, fmt.Sprintf("open output file: %v", err)
+	}
+	defer outputFile.Close()
+
+	args := []string{
+		"-nostdin",
+		"-loglevel", "warning",
+		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "3",
+		"-i", recording.SourceURL,
+		"-map", "0",
+		"-c", "copy",
+		"-t", fmt.Sprintf("%d", durationSec),
+		"-mpegts_flags", "+resend_headers",
+		"-f", "mpegts",
+		"pipe:1",
+	}
+	cmd := execCommandContext(ctx, s.ffmpegPath, args...)
+	cmd.Stdout = outputFile
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return err, fmt.Sprintf("start ffmpeg: %v", err)
+	}
+	waitErr := cmd.Wait()
+	errMsg := strings.TrimSpace(stderr.String())
+	if waitErr != nil && errMsg == "" {
+		errMsg = waitErr.Error()
+	}
+	return waitErr, truncateRecordingError(errMsg)
+}
+
+func (s *Service) handleInterruptedRecording(id string, ts time.Time) {
+	latest, err := s.Get(id)
+	if err != nil {
+		log.Printf("[recordings] reload interrupted recording failed: %v", err)
+		return
+	}
+	if latest.Status == models.RecordingStatusCancelled {
+		if err := os.Remove(latest.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("[recordings] cleanup cancelled file failed: %v", err)
+		}
+		return
+	}
+	s.finalizeFailure(*latest, ts, "recording interrupted before scheduled stop time")
+}
+
 func (s *Service) finalizeFailure(recording models.Recording, ts time.Time, msg string) {
 	recording.Status = models.RecordingStatusFailed
-	recording.Error = msg
+	recording.Error = truncateRecordingError(msg)
 	recording.ActualEndAt = &ts
 	recording.UpdatedAt = ts
 	if err := s.repo.Update(context.Background(), &recording); err != nil {
 		log.Printf("[recordings] finalize failure update failed: %v", err)
 	}
+}
+
+func truncateRecordingError(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+	return msg
 }
 
 var invalidFilenameChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]+`)
