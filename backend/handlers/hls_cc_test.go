@@ -42,6 +42,11 @@ func TestConvertSRTToWebVTT(t *testing.T) {
 			input: "1\r\n00:00:06,000 --> 00:00:08,000\r\nHello!\r\n\r\n2\r\n00:00:09,000 --> 00:00:11,000\r\nWorld!",
 			expected: "1\n00:00:06,000 --> 00:00:08,000\nHello!\n\n2\n00:00:09,000 --> 00:00:11,000\nWorld!\n\n",
 		},
+		{
+			name: "strips lingering h escape markers",
+			input: "1\n00:00:05,000 --> 00:00:07,000\nHELLO\\hWORLD",
+			expected: "1\n00:00:05,000 --> 00:00:07,000\nHELLO WORLD\n\n",
+		},
 	}
 
 	for _, tt := range tests {

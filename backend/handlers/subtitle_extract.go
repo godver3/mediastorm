@@ -1053,6 +1053,15 @@ func mergeKaraokeCues(content string) string {
 	return result.String()
 }
 
+func stripLingeringSubtitleEscapes(content string, format string, sessionID string) string {
+	if !strings.Contains(content, "\\h") {
+		return content
+	}
+
+	log.Printf("[subtitle-extract] serve %s: stripping lingering \\h markers from %s subtitles", sessionID[:8], format)
+	return strings.ReplaceAll(content, "\\h", " ")
+}
+
 // ServeSubtitles serves the extracted subtitle file for a session.
 func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, session *SubtitleExtractSession) {
 	session.mu.Lock()
@@ -1106,12 +1115,12 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 		status = "done"
 	}
 
-	processedContent := contentStr
+	processedContent := stripLingeringSubtitleEscapes(contentStr, outputFormat, sessionID)
 	if outputFormat == "vtt" {
-		cueCount, firstCueStart, lastCueEnd := parseVTTCueStats(contentStr)
-		trimmedContent := strings.TrimSpace(contentStr)
+		cueCount, firstCueStart, lastCueEnd := parseVTTCueStats(processedContent)
+		trimmedContent := strings.TrimSpace(processedContent)
 		isHeaderOnly := trimmedContent == "WEBVTT" || trimmedContent == "WEBVTT\n"
-		hasTimestamps := strings.Contains(contentStr, "-->")
+		hasTimestamps := strings.Contains(processedContent, "-->")
 
 		if isHeaderOnly {
 			log.Printf("[subtitle-extract] serve %s: WARNING - VTT is header-only (%d bytes), extraction may not have started or no cues yet",
@@ -1119,7 +1128,7 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 		} else if !hasTimestamps && contentLen > 10 {
 			log.Printf("[subtitle-extract] serve %s: WARNING - VTT has %d bytes but NO timestamps, possibly truncated/corrupted",
 				sessionID[:8], contentLen)
-			preview := contentStr
+			preview := processedContent
 			if len(preview) > 200 {
 				preview = preview[:200]
 			}
@@ -1132,7 +1141,7 @@ func (m *SubtitleExtractManager) ServeSubtitles(w http.ResponseWriter, r *http.R
 		log.Printf("[subtitle-extract] serve %s: format=%s %d bytes, %d cues, range: %.2f-%.2fs, startOffset: %.1f, status: %s",
 			sessionID[:8], outputFormat, stat.Size(), cueCount, firstCueStart, lastCueEnd, startOffset, status)
 
-		processedContent = mergeKaraokeCues(contentStr)
+		processedContent = mergeKaraokeCues(processedContent)
 	} else {
 		log.Printf("[subtitle-extract] serve %s: format=%s %d bytes, startOffset: %.1f, status: %s",
 			sessionID[:8], outputFormat, stat.Size(), startOffset, status)

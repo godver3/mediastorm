@@ -343,6 +343,11 @@ func cleanSRT(srtContent string) string {
 	srtContent = strings.ReplaceAll(srtContent, "\r\n", "\n")
 	srtContent = strings.ReplaceAll(srtContent, "\r", "\n")
 
+	if strings.Contains(srtContent, "\\h") {
+		log.Printf("[hls-cc] cleanSRT stripping lingering \\h markers from served captions")
+		srtContent = strings.ReplaceAll(srtContent, "\\h", " ")
+	}
+
 	type cue struct {
 		startMs int
 		endMs   int
