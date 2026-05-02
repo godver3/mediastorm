@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -21,18 +22,31 @@ type PrequeueClearer interface {
 	DeleteAll()
 }
 
+func shouldClearPrequeueForGlobalSettingsChange(oldSettings, newSettings config.Settings) bool {
+	if oldSettings.Display.ShowParsedBadges != newSettings.Display.ShowParsedBadges {
+		return true
+	}
+	if !reflect.DeepEqual(oldSettings.Filtering, newSettings.Filtering) {
+		return true
+	}
+	if !reflect.DeepEqual(oldSettings.Ranking, newSettings.Ranking) {
+		return true
+	}
+	return false
+}
+
 type SettingsHandler struct {
-	Manager              *config.Manager
-	DemoMode             bool
-	PoolManager          pool.Manager
-	MetadataService      *metadata.Service
-	DebridSearchService  *debrid.SearchService
-	ImageHandler         *ImageHandler
-	EPGService           *epg.Service
-	UserSettingsService  *user_settings.Service
-	ClientsLister        user_settings.ClientsLister
-	ClientSettingsBatch  user_settings.ClientSettingsBatch
-	PrequeueStore        PrequeueClearer
+	Manager             *config.Manager
+	DemoMode            bool
+	PoolManager         pool.Manager
+	MetadataService     *metadata.Service
+	DebridSearchService *debrid.SearchService
+	ImageHandler        *ImageHandler
+	EPGService          *epg.Service
+	UserSettingsService *user_settings.Service
+	ClientsLister       user_settings.ClientsLister
+	ClientSettingsBatch user_settings.ClientSettingsBatch
+	PrequeueStore       PrequeueClearer
 }
 
 func NewSettingsHandler(m *config.Manager) *SettingsHandler {
@@ -335,9 +349,9 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear prequeue cache when ShowParsedBadges changes (affects badge display in cached entries)
-	if h.PrequeueStore != nil && oldSettings.Display.ShowParsedBadges != s.Display.ShowParsedBadges {
-		log.Printf("[settings] ShowParsedBadges changed from %v to %v, clearing prequeue cache", oldSettings.Display.ShowParsedBadges, s.Display.ShowParsedBadges)
+	// Clear prequeue cache when ranking/filtering-affecting settings change.
+	if h.PrequeueStore != nil && shouldClearPrequeueForGlobalSettingsChange(oldSettings, s) {
+		log.Printf("[settings] ranking/filtering-related settings changed, clearing prequeue cache")
 		h.PrequeueStore.DeleteAll()
 	}
 
@@ -542,7 +556,7 @@ func (h *SettingsHandler) triggerEPGRefreshIfNewSources(oldSettings config.Setti
 	hasEPGConfig := len(newSettings.Live.EPG.Sources) > 0 || newSettings.Live.EPG.XmltvUrl != "" ||
 		(newSettings.Live.Mode == "xtream" && newSettings.Live.XtreamHost != "")
 
-	if (hasNewSources || (epgJustEnabled && hasEPGConfig)) {
+	if hasNewSources || (epgJustEnabled && hasEPGConfig) {
 		log.Printf("[settings] triggering immediate EPG refresh due to new configuration")
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

@@ -144,7 +144,7 @@ type PrequeueEntry struct {
 
 	Status       PrequeueStatus `json:"status"`
 	StreamPath   string         `json:"streamPath,omitempty"`
-	MagnetLink   string         `json:"magnetLink,omitempty"`   // Original magnet link for re-adding expired torrents
+	MagnetLink   string         `json:"magnetLink,omitempty"` // Original magnet link for re-adding expired torrents
 	FileSize     int64          `json:"fileSize,omitempty"`
 	HealthStatus string         `json:"healthStatus,omitempty"`
 
@@ -499,7 +499,7 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 		Status:                PrequeueStatusQueued,
 		SelectedAudioTrack:    -1, // Default: use all/default
 		SelectedSubtitleTrack: -1, // Default: none
-		CreatedAt: time.Now(),
+		CreatedAt:             time.Now(),
 	}
 	// Use dynamic TTL based on air date; fall back to store default
 	dynTTL := entry.DynamicTTL()
@@ -641,6 +641,47 @@ func (s *PrequeueStore) DeleteAll() {
 	s.byTitleUser = make(map[string]string)
 	s.saveToDisk()
 	log.Printf("[prequeue] Cleared all prequeue entries")
+}
+
+// DeleteByUser removes all prequeue entries for a specific user.
+func (s *PrequeueStore) DeleteByUser(userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(userID) == "" {
+		return
+	}
+
+	removed := 0
+	for id, entry := range s.entries {
+		if entry.UserID != userID {
+			continue
+		}
+		if entry.cancelFunc != nil {
+			entry.cancelFunc()
+		}
+
+		key := titleUserKey(entry.TitleID, entry.UserID)
+		if s.byTitleUser[key] == id {
+			delete(s.byTitleUser, key)
+		}
+
+		delete(s.entries, id)
+
+		if s.useDB() {
+			if err := s.store.Prequeue().Delete(context.Background(), id); err != nil {
+				log.Printf("[prequeue] Warning: failed to delete user entry %s from DB: %v", id, err)
+			}
+		}
+		removed++
+	}
+
+	if removed == 0 {
+		return
+	}
+
+	s.saveToDisk()
+	log.Printf("[prequeue] Cleared %d prequeue entries for user=%s", removed, userID)
 }
 
 // cleanupLoop periodically removes expired entries

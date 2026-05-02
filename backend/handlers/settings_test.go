@@ -299,11 +299,11 @@ func TestSettingsHandler_ShowParsedBadges_ClearsPrequeue(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr := config.NewManager(filepath.Join(tmpDir, "settings.json"))
 
-	// Save initial settings with ShowParsedBadges = false
-	initial := config.Settings{
-		Server:  config.ServerSettings{Host: "127.0.0.1", Port: 7777},
-		Display: config.DisplaySettings{ShowParsedBadges: false},
-	}
+	// Save initial settings with ShowParsedBadges = false using a full payload so
+	// unrelated defaults don't look like changes on subsequent saves.
+	initial := config.DefaultSettings()
+	initial.Server = config.ServerSettings{Host: "127.0.0.1", Port: 7777}
+	initial.Display.ShowParsedBadges = false
 	if err := mgr.Save(initial); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}
@@ -360,10 +360,9 @@ func TestSettingsHandler_ShowParsedBadges_NoPrequeueStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr := config.NewManager(filepath.Join(tmpDir, "settings.json"))
 
-	initial := config.Settings{
-		Server:  config.ServerSettings{Host: "127.0.0.1", Port: 7777},
-		Display: config.DisplaySettings{ShowParsedBadges: false},
-	}
+	initial := config.DefaultSettings()
+	initial.Server = config.ServerSettings{Host: "127.0.0.1", Port: 7777}
+	initial.Display.ShowParsedBadges = false
 	if err := mgr.Save(initial); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"novastream/config"
@@ -21,6 +22,10 @@ type userSettingsService interface {
 	Delete(userID string) error
 }
 
+type userPrequeueClearer interface {
+	DeleteByUser(userID string)
+}
+
 var _ userSettingsService = (*user_settings.Service)(nil)
 
 // localLibraryLister is the minimal interface needed to fetch local media libraries.
@@ -33,6 +38,7 @@ type UserSettingsHandler struct {
 	Users         userService
 	ConfigManager *config.Manager
 	LocalMedia    localLibraryLister
+	PrequeueStore userPrequeueClearer
 }
 
 func NewUserSettingsHandler(service userSettingsService, users userService, configManager *config.Manager) *UserSettingsHandler {
@@ -41,6 +47,10 @@ func NewUserSettingsHandler(service userSettingsService, users userService, conf
 		Users:         users,
 		ConfigManager: configManager,
 	}
+}
+
+func (h *UserSettingsHandler) SetPrequeueStore(ps userPrequeueClearer) {
+	h.PrequeueStore = ps
 }
 
 // GetSettings returns the user's settings merged with global defaults.
@@ -70,6 +80,8 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	oldSettings, _ := h.Service.Get(userID)
+
 	var settings models.UserSettings
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&settings); err != nil {
@@ -80,6 +92,17 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 	if err := h.Service.Update(userID, settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if h.PrequeueStore != nil {
+		var previous models.UserSettings
+		if oldSettings != nil {
+			previous = *oldSettings
+		}
+		if !reflect.DeepEqual(previous.Filtering, settings.Filtering) || !reflect.DeepEqual(previous.Ranking, settings.Ranking) {
+			log.Printf("[user-settings] ranking/filtering changed for user=%s, clearing prequeue cache", userID)
+			h.PrequeueStore.DeleteByUser(userID)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

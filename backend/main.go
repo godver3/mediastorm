@@ -638,6 +638,7 @@ func main() {
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager, userSettingsService)
 	localMediaHandler := handlers.NewLocalMediaHandler(localMediaService, userService, settings.Transmux.Enabled)
 	userSettingsHandler.LocalMedia = localMediaService
+	userSettingsHandler.SetPrequeueStore(prequeueHandler.GetStore())
 
 	// Create EPG service and handler for Electronic Program Guide
 	epgService := epg.NewService(settings.Cache.Directory, cfgManager)
