@@ -30,6 +30,7 @@ const (
 	continueWatchingCompletionThreshold = 90.0
 	traktStopWatchThreshold             = 80.0
 	continueWatchingComingSoonWindow    = 7 * 24 * time.Hour
+	liveTVRecordingPathSegment          = "/live/recordings/"
 )
 
 // MetadataService provides series and movie metadata for continue watching generation.
@@ -408,13 +409,15 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 		return nil, ErrUserIDRequired
 	}
 
+	recordingTitleSet := s.recordingTitleSetForUser(userID)
+
 	// Check cache first
 	s.mu.RLock()
 	cached, exists := s.continueWatchingCache[userID]
 	s.mu.RUnlock()
 
 	if exists && time.Now().Before(cached.expiresAt) {
-		return cached.items, nil
+		return filterRecordingContinueWatchingItems(cached.items, recordingTitleSet), nil
 	}
 
 	// Cache miss or expired - rebuild (only in-progress items for continue watching)
@@ -423,6 +426,7 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 	if err != nil {
 		return nil, err
 	}
+	items = filterRecordingContinueWatchingItems(items, recordingTitleSet)
 
 	// Cache the result
 	s.mu.Lock()
@@ -434,6 +438,94 @@ func (s *Service) ListContinueWatching(userID string) ([]models.SeriesWatchState
 	s.mu.Unlock()
 
 	return items, nil
+}
+
+func isLiveTVRecordingProgress(progress models.PlaybackProgress) bool {
+	itemID := strings.ToLower(strings.TrimSpace(progress.ItemID))
+	id := strings.ToLower(strings.TrimSpace(progress.ID))
+	return strings.Contains(itemID, liveTVRecordingPathSegment) || strings.Contains(id, liveTVRecordingPathSegment)
+}
+
+func isLegacyRecordingTitleProgress(progress models.PlaybackProgress, recordingTitleSet map[string]struct{}) bool {
+	if len(recordingTitleSet) == 0 || progress.MediaType != "movie" || len(progress.ExternalIDs) > 0 {
+		return false
+	}
+	itemID := normaliseRecordingTitleKey(progress.ItemID)
+	movieName := normaliseRecordingTitleKey(progress.MovieName)
+	if itemID == "" || movieName == "" || itemID != movieName {
+		return false
+	}
+	_, ok := recordingTitleSet[itemID]
+	return ok
+}
+
+func isUnresolvedTitleOnlyMovieProgress(progress models.PlaybackProgress, movieDetails *models.Title) bool {
+	if movieDetails != nil || progress.MediaType != "movie" || len(progress.ExternalIDs) > 0 || progress.Year > 0 {
+		return false
+	}
+	itemID := normaliseRecordingTitleKey(progress.ItemID)
+	movieName := normaliseRecordingTitleKey(progress.MovieName)
+	return itemID != "" && movieName != "" && itemID == movieName
+}
+
+func isLiveTVRecordingContinueWatchingItem(item models.SeriesWatchState, recordingTitleSet map[string]struct{}) bool {
+	seriesID := strings.ToLower(strings.TrimSpace(item.SeriesID))
+	if strings.Contains(seriesID, liveTVRecordingPathSegment) {
+		return true
+	}
+	if len(recordingTitleSet) == 0 || item.NextEpisode != nil || len(item.ExternalIDs) > 0 {
+		return false
+	}
+	titleKey := normaliseRecordingTitleKey(item.SeriesID)
+	if titleKey == "" || titleKey != normaliseRecordingTitleKey(item.SeriesTitle) {
+		return false
+	}
+	_, ok := recordingTitleSet[titleKey]
+	return ok
+}
+
+func filterRecordingContinueWatchingItems(items []models.SeriesWatchState, recordingTitleSet map[string]struct{}) []models.SeriesWatchState {
+	if len(items) == 0 {
+		return items
+	}
+
+	filtered := make([]models.SeriesWatchState, 0, len(items))
+	for _, item := range items {
+		if isLiveTVRecordingContinueWatchingItem(item, recordingTitleSet) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func normaliseRecordingTitleKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func (s *Service) recordingTitleSetForUser(userID string) map[string]struct{} {
+	if s.store == nil {
+		return nil
+	}
+
+	recordings, err := s.store.Recordings().List(context.Background(), models.RecordingListFilter{
+		UserID:     userID,
+		IncludeAll: true,
+	})
+	if err != nil || len(recordings) == 0 {
+		return nil
+	}
+
+	titles := make(map[string]struct{}, len(recordings))
+	for _, recording := range recordings {
+		if title := normaliseRecordingTitleKey(recording.Title); title != "" {
+			titles[title] = struct{}{}
+		}
+	}
+	if len(titles) == 0 {
+		return nil
+	}
+	return titles
 }
 
 func (s *Service) GetContinueWatchingRevision(userID string) (string, error) {
@@ -636,6 +728,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		}
 	}
 
+	recordingTitleSet := s.recordingTitleSetForUser(userID)
+
 	// Collect movies that need processing (filter out <5% watched and hidden)
 	var moviesToProcess []*models.PlaybackProgress
 	for i := range progressItems {
@@ -643,6 +737,12 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 		// Skip hidden movies
 		if prog.HiddenFromContinueWatching {
+			continue
+		}
+		if isLiveTVRecordingProgress(*prog) {
+			continue
+		}
+		if isLegacyRecordingTitleProgress(*prog, recordingTitleSet) {
 			continue
 		}
 
@@ -967,6 +1067,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			var movieDetails *models.Title
 			if details, err := s.getMovieMetadataWithCache(ctx, p.ItemID, p.MovieName, p.Year, p.ExternalIDs); err == nil && details != nil {
 				movieDetails = details
+			}
+			if isUnresolvedTitleOnlyMovieProgress(*p, movieDetails) {
+				return
 			}
 
 			// Build the movie state with metadata

@@ -3223,6 +3223,140 @@ func TestImportWatchHistory_CrossProviderMovieClearsPlaybackProgress(t *testing.
 	}
 }
 
+func TestListContinueWatching_ExcludesLiveTVRecordingMovies(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "recording-user"
+	recordingURL := "http://localhost:7860/api/live/recordings/rec-123/stream?token=abc"
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         recordingURL,
+		MovieName:      "Evening News Recording",
+		Position:       600,
+		Duration:       3600,
+		PercentWatched: 16.6,
+		IsPaused:       true,
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected live TV recording to be excluded from continue watching, got %+v", items)
+	}
+}
+
+func TestListContinueWatching_FiltersCachedLiveTVRecordingItems(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "cached-recording-user"
+	svc.mu.Lock()
+	svc.continueWatchingCache[userID] = &cachedContinueWatching{
+		items: []models.SeriesWatchState{
+			{
+				SeriesID:    "http://localhost:7860/api/live/recordings/rec-123/stream?token=abc",
+				SeriesTitle: "Cached Recording",
+				UpdatedAt:   time.Now().UTC(),
+				LastWatched: models.EpisodeReference{Title: "Cached Recording"},
+			},
+		},
+		cachedAt:  time.Now().UTC(),
+		expiresAt: time.Now().Add(10 * time.Minute),
+	}
+	svc.mu.Unlock()
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected cached live TV recording to be filtered, got %+v", items)
+	}
+}
+
+func TestIsLegacyRecordingTitleProgress(t *testing.T) {
+	recordingTitles := map[string]struct{}{
+		"paid programming": {},
+	}
+
+	if !isLegacyRecordingTitleProgress(models.PlaybackProgress{
+		MediaType:      "movie",
+		ItemID:         "paid programming",
+		MovieName:      "Paid Programming",
+		PercentWatched: 50,
+	}, recordingTitles) {
+		t.Fatal("expected title-keyed recording progress to be detected")
+	}
+
+	if isLegacyRecordingTitleProgress(models.PlaybackProgress{
+		MediaType:   "movie",
+		ItemID:      "paid programming",
+		MovieName:   "Paid Programming",
+		ExternalIDs: map[string]string{"tmdb": "12"},
+	}, recordingTitles) {
+		t.Fatal("expected metadata-backed movie progress not to be treated as a recording")
+	}
+}
+
+func TestFilterRecordingContinueWatchingItems_FiltersLegacyTitleMatches(t *testing.T) {
+	recordingTitles := map[string]struct{}{
+		"paid programming": {},
+	}
+
+	items := filterRecordingContinueWatchingItems([]models.SeriesWatchState{
+		{
+			SeriesID:    "paid programming",
+			SeriesTitle: "Paid Programming",
+			UpdatedAt:   time.Now().UTC(),
+			LastWatched: models.EpisodeReference{Title: "Paid Programming"},
+		},
+		{
+			SeriesID:    "tvdb:movie:256",
+			SeriesTitle: "Finding Nemo",
+			UpdatedAt:   time.Now().UTC(),
+			LastWatched: models.EpisodeReference{Title: "Finding Nemo"},
+			ExternalIDs: map[string]string{"tmdb": "12"},
+		},
+	}, recordingTitles)
+
+	if len(items) != 1 {
+		t.Fatalf("expected only non-recording items to remain, got %+v", items)
+	}
+	if items[0].SeriesTitle != "Finding Nemo" {
+		t.Fatalf("expected Finding Nemo to remain, got %+v", items[0])
+	}
+}
+
+func TestIsUnresolvedTitleOnlyMovieProgress(t *testing.T) {
+	if !isUnresolvedTitleOnlyMovieProgress(models.PlaybackProgress{
+		MediaType: "movie",
+		ItemID:    "paid programming",
+		MovieName: "Paid Programming",
+	}, nil) {
+		t.Fatal("expected unresolved title-only movie progress to be detected")
+	}
+
+	if isUnresolvedTitleOnlyMovieProgress(models.PlaybackProgress{
+		MediaType:   "movie",
+		ItemID:      "paid programming",
+		MovieName:   "Paid Programming",
+		ExternalIDs: map[string]string{"tmdb": "12"},
+	}, nil) {
+		t.Fatal("expected metadata-backed movie progress not to be treated as unresolved title-only progress")
+	}
+}
+
 func TestImportWatchHistory_HighProgressMovieStaysInProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
