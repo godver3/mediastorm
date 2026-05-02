@@ -46,6 +46,7 @@ import (
 	"novastream/services/playback"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
+	"novastream/services/recordings"
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
 	"novastream/services/trakt"
@@ -654,6 +655,12 @@ func main() {
 	settingsHandler.SetImageHandler(imageHandler)                // Enable clearing image cache
 	settingsHandler.SetPrequeueStore(prequeueHandler.GetStore()) // Clear prequeue when ShowParsedBadges changes
 
+	var recordingsService *recordings.Service
+	if store != nil {
+		recordingsService = recordings.NewService(store.Recordings(), settings.Transmux.FFmpegPath, filepath.Join(settings.Cache.Directory, "recordings"))
+	}
+	recordingsHandler := handlers.NewRecordingsHandler(recordingsService, userService)
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -671,6 +678,7 @@ func main() {
 		debugHandler,
 		logsHandler,
 		liveHandler,
+		recordingsHandler,
 		localMediaHandler,
 		epgHandler,
 		userSettingsHandler,
@@ -737,6 +745,7 @@ func main() {
 	r.HandleFunc("/admin/status", adminUIHandler.RequireAuth(adminUIHandler.StatusPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/recordings", adminUIHandler.RequireAuth(adminUIHandler.RecordingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/prequeue", adminUIHandler.RequireAuth(adminUIHandler.PrequeuePage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/search", adminUIHandler.RequireAuth(adminUIHandler.SearchPage)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet)
@@ -807,6 +816,16 @@ func main() {
 	// Live TV endpoints for admin panel
 	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.GetCategories)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/channels", adminUIHandler.RequireAuth(liveHandler.GetChannels)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/epg/now", adminUIHandler.RequireAuth(epgHandler.GetNowPlaying)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/epg/schedule", adminUIHandler.RequireAuth(epgHandler.GetSchedule)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/epg/schedule/batch", adminUIHandler.RequireAuth(epgHandler.GetScheduleMultiple)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/recordings", adminUIHandler.RequireAuth(recordingsHandler.List)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/recordings/epg", adminUIHandler.RequireAuth(recordingsHandler.CreateEPG)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/live/recordings/time-block", adminUIHandler.RequireAuth(recordingsHandler.CreateTimeBlock)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/live/recordings/{recordingID}", adminUIHandler.RequireAuth(recordingsHandler.Get)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/recordings/{recordingID}", adminUIHandler.RequireAuth(recordingsHandler.Delete)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/live/recordings/{recordingID}/stream", adminUIHandler.RequireAuth(recordingsHandler.Stream)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/recordings/{recordingID}/cancel", adminUIHandler.RequireAuth(recordingsHandler.Cancel)).Methods(http.MethodPost)
 
 	// User account management endpoints (master account only)
 	r.HandleFunc("/admin/api/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetUserAccounts)).Methods(http.MethodGet)
@@ -1017,6 +1036,7 @@ func main() {
 	r.HandleFunc("/account/settings", adminUIHandler.RequireAuth(adminUIHandler.SettingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/history", adminUIHandler.RequireAuth(adminUIHandler.HistoryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/tools", adminUIHandler.RequireAuth(adminUIHandler.ToolsPage)).Methods(http.MethodGet)
+	r.HandleFunc("/account/recordings", adminUIHandler.RequireAuth(adminUIHandler.RecordingsPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/library", adminUIHandler.RequireAuth(adminUIHandler.LibraryPage)).Methods(http.MethodGet)
 	r.HandleFunc("/account/accounts", adminUIHandler.RequireAuth(adminUIHandler.AccountsPage)).Methods(http.MethodGet) // Shows as "Profiles" for non-admin
 	r.HandleFunc("/account/kids-settings", adminUIHandler.RequireAuth(adminUIHandler.KidsSettingsPage)).Methods(http.MethodGet)
@@ -1029,6 +1049,16 @@ func main() {
 	r.HandleFunc("/account/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/streams/sse", adminUIHandler.RequireAuth(adminUIHandler.GetStreamsSSE)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/epg/now", adminUIHandler.RequireAuth(epgHandler.GetNowPlaying)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/epg/schedule", adminUIHandler.RequireAuth(epgHandler.GetSchedule)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/epg/schedule/batch", adminUIHandler.RequireAuth(epgHandler.GetScheduleMultiple)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/recordings", adminUIHandler.RequireAuth(recordingsHandler.List)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/recordings/epg", adminUIHandler.RequireAuth(recordingsHandler.CreateEPG)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/live/recordings/time-block", adminUIHandler.RequireAuth(recordingsHandler.CreateTimeBlock)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/live/recordings/{recordingID}", adminUIHandler.RequireAuth(recordingsHandler.Get)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/recordings/{recordingID}", adminUIHandler.RequireAuth(recordingsHandler.Delete)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/live/recordings/{recordingID}/stream", adminUIHandler.RequireAuth(recordingsHandler.Stream)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/live/recordings/{recordingID}/cancel", adminUIHandler.RequireAuth(recordingsHandler.Cancel)).Methods(http.MethodPost)
 
 	// Protected account routes - Profile APIs
 	r.HandleFunc("/account/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)
@@ -1161,6 +1191,11 @@ func main() {
 	// Start scheduler service for background tasks
 	if err := schedulerService.Start(context.Background()); err != nil {
 		log.Printf("Warning: failed to start scheduler service: %v", err)
+	}
+	if recordingsService != nil {
+		if err := recordingsService.Start(context.Background()); err != nil {
+			log.Printf("Warning: failed to start recordings service: %v", err)
+		}
 	}
 
 	// Start prewarm background URL refresh
@@ -1306,6 +1341,12 @@ func main() {
 	log.Println("🧹 Stopping scheduler service...")
 	if err := schedulerService.Stop(shutdownCtx); err != nil {
 		log.Printf("Scheduler shutdown error: %v", err)
+	}
+	if recordingsService != nil {
+		log.Println("🧹 Stopping recordings service...")
+		if err := recordingsService.Stop(shutdownCtx); err != nil {
+			log.Printf("Recordings shutdown error: %v", err)
+		}
 	}
 
 	// Stop calendar service background refresh

@@ -1,0 +1,386 @@
+{{template "base" .}}
+
+{{define "title"}}Recordings - {{if .IsAdmin}}mediastorm Admin{{else}}mediastorm account{{end}}{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Recordings</h1>
+    <p>Schedule and manage Live TV recordings</p>
+</div>
+
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <h2>Schedule Recording</h2>
+    </div>
+    <div class="card-body">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+                <label class="form-label">Profile</label>
+                <select id="recordingProfile" class="form-input"></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Channel</label>
+                <select id="recordingChannel" class="form-input"></select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Title</label>
+                <input id="recordingTitle" class="form-input" placeholder="Program title or note">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Start</label>
+                <input id="recordingStart" type="datetime-local" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">End</label>
+                <input id="recordingEnd" type="datetime-local" class="form-input">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Padding Before (sec)</label>
+                <input id="recordingPadBefore" type="number" class="form-input" value="0" min="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Padding After (sec)</label>
+                <input id="recordingPadAfter" type="number" class="form-input" value="0" min="0">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <textarea id="recordingDescription" class="form-input" rows="3" placeholder="Optional details"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Upcoming EPG Programs</label>
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                <select id="recordingEPGSlot" class="form-input" style="min-width: 320px; flex: 1;">
+                    <option value="">Load EPG to choose a slot</option>
+                </select>
+                <button class="btn btn-secondary" onclick="loadEPGPrograms()">Load EPG</button>
+            </div>
+        </div>
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            <button class="btn btn-secondary" onclick="loadCurrentProgram()">Use Current EPG Program</button>
+            <button class="btn btn-primary" onclick="scheduleManualRecording()">Schedule Manual Block</button>
+            <button class="btn btn-primary" onclick="scheduleEPGRecording()">Schedule From EPG</button>
+        </div>
+        <p id="scheduleMessage" class="text-muted" style="margin-top: 0.75rem;"></p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>Existing Recordings</h2>
+        <button class="btn btn-secondary" onclick="loadRecordings()">Refresh</button>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div id="recordingsList" style="padding: 1rem; color: var(--text-muted);">Loading...</div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const profiles = {{json .Users}};
+let channels = [];
+let currentEPGProgram = null;
+let epgPrograms = [];
+let serverTimeOffsetMs = 0;
+
+function pageApiBase() {
+    return basePath + '/api/live/recordings';
+}
+
+function formatDateForInput(date) {
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getApproxServerNow() {
+    return new Date(Date.now() + serverTimeOffsetMs);
+}
+
+function updateServerTimeOffset(response) {
+    const serverDateHeader = response.headers.get('Date');
+    if (!serverDateHeader) return;
+    const serverDate = new Date(serverDateHeader);
+    if (Number.isNaN(serverDate.getTime())) return;
+    serverTimeOffsetMs = serverDate.getTime() - Date.now();
+}
+
+function resetManualTimeDefaults() {
+    const now = getApproxServerNow();
+    const inOneHour = new Date(now.getTime() + 60 * 60 * 1000);
+    document.getElementById('recordingStart').value = formatDateForInput(now);
+    document.getElementById('recordingEnd').value = formatDateForInput(inOneHour);
+}
+
+function initProfiles() {
+    const select = document.getElementById('recordingProfile');
+    select.innerHTML = profiles.map((profile) =>
+        `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`
+    ).join('');
+    if (profiles.length > 0) {
+        select.value = profiles[0].id;
+    }
+}
+
+async function loadChannels() {
+    const profileId = document.getElementById('recordingProfile').value;
+    const response = await fetch(`${basePath}/api/live/channels?profileId=${encodeURIComponent(profileId)}`);
+    if (!response.ok) throw new Error('Failed to load channels');
+    updateServerTimeOffset(response);
+    const data = await response.json();
+    channels = data.channels || [];
+    const channelSelect = document.getElementById('recordingChannel');
+    channelSelect.innerHTML = channels.map((channel) =>
+        `<option value="${escapeHtml(channel.id)}">${escapeHtml(channel.name)}</option>`
+    ).join('');
+    resetManualTimeDefaults();
+}
+
+function getSelectedChannel() {
+    const channelID = document.getElementById('recordingChannel').value;
+    return channels.find((channel) => channel.id === channelID);
+}
+
+function renderEPGPrograms() {
+    const select = document.getElementById('recordingEPGSlot');
+    if (!epgPrograms.length) {
+        select.innerHTML = '<option value="">No EPG programs available</option>';
+        return;
+    }
+    select.innerHTML = '<option value="">Choose a program slot</option>' + epgPrograms.map((program, index) => {
+        const start = new Date(program.start).toLocaleString();
+        const end = new Date(program.stop).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        return `<option value="${index}">${escapeHtml(program.title || 'Untitled')} · ${escapeHtml(start)} - ${escapeHtml(end)}</option>`;
+    }).join('');
+}
+
+function applyProgramToForm(program, message) {
+    currentEPGProgram = program;
+    document.getElementById('recordingTitle').value = program.title || getSelectedChannel()?.name || '';
+    document.getElementById('recordingDescription').value = program.description || '';
+    document.getElementById('recordingStart').value = formatDateForInput(new Date(program.start));
+    document.getElementById('recordingEnd').value = formatDateForInput(new Date(program.stop));
+    setScheduleMessage(message, false);
+}
+
+async function loadCurrentProgram() {
+    try {
+        currentEPGProgram = null;
+        const channel = getSelectedChannel();
+        const profileId = document.getElementById('recordingProfile').value;
+        if (!channel || !channel.tvgId) {
+            setScheduleMessage('Selected channel does not have EPG data.', true);
+            return;
+        }
+        const response = await fetch(`${basePath}/api/live/epg/now?profileId=${encodeURIComponent(profileId)}&channels=${encodeURIComponent(channel.tvgId)}`);
+        if (!response.ok) throw new Error('Failed to load EPG');
+        const data = await response.json();
+        const match = Array.isArray(data) ? data[0] : null;
+        if (!match || !match.current) {
+            setScheduleMessage('No current EPG program found for this channel.', true);
+            return;
+        }
+        applyProgramToForm(match.current, 'Loaded current EPG program.');
+    } catch (err) {
+        setScheduleMessage(err.message || 'Failed to load EPG', true);
+    }
+}
+
+async function loadEPGPrograms() {
+    try {
+        const channel = getSelectedChannel();
+        const profileId = document.getElementById('recordingProfile').value;
+        if (!channel || !channel.tvgId) {
+            epgPrograms = [];
+            renderEPGPrograms();
+            setScheduleMessage('Selected channel does not have EPG data.', true);
+            return;
+        }
+        const response = await fetch(`${basePath}/api/live/epg/schedule?profileId=${encodeURIComponent(profileId)}&channel=${encodeURIComponent(channel.tvgId)}&days=1`);
+        if (!response.ok) throw new Error('Failed to load EPG schedule');
+        const data = await response.json();
+        epgPrograms = Array.isArray(data?.programs) ? data.programs.filter((program) => new Date(program.stop) > getApproxServerNow()) : [];
+        renderEPGPrograms();
+        if (!epgPrograms.length) {
+            setScheduleMessage('No upcoming EPG programs found for this channel.', true);
+            return;
+        }
+        setScheduleMessage(`Loaded ${epgPrograms.length} upcoming EPG programs.`, false);
+    } catch (err) {
+        epgPrograms = [];
+        renderEPGPrograms();
+        setScheduleMessage(err.message || 'Failed to load EPG schedule', true);
+    }
+}
+
+function useSelectedEPGProgram() {
+    const selectedIndex = document.getElementById('recordingEPGSlot').value;
+    if (selectedIndex === '') {
+        throw new Error('Choose an EPG program first');
+    }
+    const program = epgPrograms[Number(selectedIndex)];
+    if (!program) {
+        throw new Error('Selected EPG program is no longer available');
+    }
+    applyProgramToForm(program, 'Loaded selected EPG program.');
+    return program;
+}
+
+function buildPayload() {
+    const channel = getSelectedChannel();
+    if (!channel) throw new Error('No channel selected');
+    const start = document.getElementById('recordingStart').value;
+    const end = document.getElementById('recordingEnd').value;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        throw new Error('Start and end times are required');
+    }
+    return {
+        profileId: document.getElementById('recordingProfile').value,
+        channelId: channel.id,
+        tvgId: channel.tvgId || '',
+        channelName: channel.name,
+        title: document.getElementById('recordingTitle').value.trim(),
+        description: document.getElementById('recordingDescription').value.trim(),
+        sourceUrl: channel.url,
+        start: startDate.toISOString(),
+        stop: endDate.toISOString(),
+        paddingBeforeSeconds: Number(document.getElementById('recordingPadBefore').value || '0'),
+        paddingAfterSeconds: Number(document.getElementById('recordingPadAfter').value || '0'),
+    };
+}
+
+async function scheduleManualRecording() {
+    try {
+        const payload = buildPayload();
+        const response = await fetch(`${pageApiBase()}/time-block`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.error || data?.message || 'Failed to schedule recording');
+        setScheduleMessage('Manual recording scheduled.', false);
+        currentEPGProgram = null;
+        resetManualTimeDefaults();
+        await loadRecordings();
+    } catch (err) {
+        setScheduleMessage(err.message || 'Failed to schedule recording', true);
+    }
+}
+
+async function scheduleEPGRecording() {
+    try {
+        const selectedProgram = document.getElementById('recordingEPGSlot').value !== ''
+            ? useSelectedEPGProgram()
+            : currentEPGProgram || (await loadCurrentProgram(), currentEPGProgram);
+        if (!selectedProgram) throw new Error('No EPG program loaded');
+        const payload = buildPayload();
+        payload.title = selectedProgram.title || payload.title;
+        payload.description = selectedProgram.description || payload.description;
+        payload.start = selectedProgram.start;
+        payload.stop = selectedProgram.stop;
+        const response = await fetch(`${pageApiBase()}/epg`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.error || data?.message || 'Failed to schedule recording');
+        setScheduleMessage('EPG recording scheduled.', false);
+        await loadRecordings();
+    } catch (err) {
+        setScheduleMessage(err.message || 'Failed to schedule recording', true);
+    }
+}
+
+function setScheduleMessage(message, isError) {
+    const el = document.getElementById('scheduleMessage');
+    el.textContent = message || '';
+    el.style.color = isError ? 'var(--danger)' : 'var(--text-muted)';
+}
+
+async function cancelRecording(id) {
+    const response = await fetch(`${pageApiBase()}/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+    if (!response.ok) throw new Error('Failed to cancel recording');
+    await loadRecordings();
+}
+
+async function deleteRecording(id) {
+    const response = await fetch(`${pageApiBase()}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete recording');
+    await loadRecordings();
+}
+
+function streamRecordingURL(id) {
+    return `${pageApiBase()}/${encodeURIComponent(id)}/stream`;
+}
+
+async function loadRecordings() {
+    const profileId = document.getElementById('recordingProfile').value;
+    const response = await fetch(`${pageApiBase()}?profileId=${encodeURIComponent(profileId)}`);
+    if (!response.ok) throw new Error('Failed to load recordings');
+    const data = await response.json();
+    renderRecordings(data.recordings || []);
+}
+
+function renderRecordings(recordings) {
+    const container = document.getElementById('recordingsList');
+    if (!recordings.length) {
+        container.innerHTML = '<div style="padding: 1rem; color: var(--text-muted);">No recordings scheduled.</div>';
+        return;
+    }
+    container.innerHTML = recordings.map((recording) => {
+        const canCancel = ['pending', 'starting', 'running'].includes(recording.status);
+        const canDelete = !['starting', 'running'].includes(recording.status);
+        const canPlay = ['completed', 'running', 'cancelled', 'failed'].includes(recording.status) && !!recording.outputPath;
+        const playLabel = recording.status === 'running' ? 'Play In Progress' : 'Play';
+        return `
+            <div style="padding: 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 1rem; align-items: center;">
+                <div style="min-width: 0;">
+                    <div style="font-weight: 600;">${escapeHtml(recording.title || recording.channelName || 'Recording')}</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        ${escapeHtml(recording.channelName || '')} · ${escapeHtml(recording.status)} · ${new Date(recording.startAt).toLocaleString()}
+                    </div>
+                    ${recording.error ? `<div style="font-size: 0.8rem; color: var(--danger); margin-top: 0.25rem;">${escapeHtml(recording.error)}</div>` : ''}
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    ${canPlay ? `<a class="btn btn-primary btn-sm" href="${streamRecordingURL(recording.id)}" target="_blank" rel="noreferrer">${playLabel}</a>` : ''}
+                    ${canCancel ? `<button class="btn btn-secondary btn-sm" onclick="cancelRecording('${escapeHtml(recording.id)}')">Cancel</button>` : ''}
+                    ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteRecording('${escapeHtml(recording.id)}')">Delete</button>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+document.getElementById('recordingProfile').addEventListener('change', async () => {
+    await loadChannels();
+    epgPrograms = [];
+    renderEPGPrograms();
+    await loadRecordings();
+});
+
+document.getElementById('recordingChannel').addEventListener('change', () => {
+    currentEPGProgram = null;
+    epgPrograms = [];
+    renderEPGPrograms();
+});
+
+initProfiles();
+loadChannels().then(loadRecordings).catch((err) => {
+    document.getElementById('recordingsList').textContent = err.message || 'Failed to load recordings';
+    setScheduleMessage(err.message || 'Failed to load recordings', true);
+});
+
+resetManualTimeDefaults();
+</script>
+{{end}}

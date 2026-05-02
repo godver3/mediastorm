@@ -875,6 +875,7 @@ type AdminUIHandler struct {
 	logsTemplate          *template.Template
 	connectionsTemplate   *template.Template
 	prequeueTemplate      *template.Template
+	recordingsTemplate    *template.Template
 	settingsPath          string
 	logFile               string
 	hlsManager            *HLSManager
@@ -1113,6 +1114,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		logsTemplate:         createPageTemplate("logs.html"),
 		connectionsTemplate:  createPageTemplate("connections.html"),
 		prequeueTemplate:     createPageTemplate("prequeue.html"),
+		recordingsTemplate:   createPageTemplate("recordings.html"),
 		settingsPath:         settingsPath,
 		logFile:              logFile,
 		hlsManager:           hlsManager,
@@ -5606,6 +5608,34 @@ func (h *AdminUIHandler) PrequeuePage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.prequeueTemplate.ExecuteTemplate(w, "base", data); err != nil {
 		fmt.Printf("Prequeue template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// RecordingsPage serves the recordings management page.
+func (h *AdminUIHandler) RecordingsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	usersList := h.getScopedUsers(isAdmin, accountID)
+
+	data := AdminPageData{
+		CurrentPath:    basePath + "/recordings",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
+		AccountID:      accountID,
+		Username:       username,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.recordingsTemplate == nil {
+		http.Error(w, "Recordings template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.recordingsTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Recordings template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }

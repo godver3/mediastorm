@@ -1748,7 +1748,7 @@
                 </a>
                 <!-- Media dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library")}}has-active{{end}}">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library") (hasSuffix .CurrentPath "/recordings")}}has-active{{end}}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="23 7 16 12 23 17 23 7"/>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -1782,6 +1782,14 @@
                             </svg>
                             Search
                         </a>
+                        <a href="{{.BasePath}}/recordings" class="nav-link {{if hasSuffix .CurrentPath "/recordings"}}active{{end}}">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 7l-7 5 7 5V7z"/>
+                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                                <circle cx="8" cy="12" r="2"/>
+                            </svg>
+                            Recordings
+                        </a>
                         {{if .IsAdmin}}
                         <a href="{{.BasePath}}/library" class="nav-link {{if hasSuffix .CurrentPath "/library"}}active{{end}}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1811,6 +1819,14 @@
                         <line x1="3" y1="10" x2="21" y2="10"/>
                     </svg>
                     Schedule
+                </a>
+                <a href="{{.BasePath}}/recordings" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/recordings"}}active{{end}}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 7l-7 5 7 5V7z"/>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                        <circle cx="8" cy="12" r="2"/>
+                    </svg>
+                    Recordings
                 </a>
                 {{if .IsAdmin}}
                 <a href="{{.BasePath}}/library" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/library"}}active{{end}}">

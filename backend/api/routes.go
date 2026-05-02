@@ -106,6 +106,7 @@ func Register(
 	debugHandler *handlers.DebugHandler,
 	logsHandler *handlers.LogsHandler,
 	liveHandler *handlers.LiveHandler,
+	recordingsHandler *handlers.RecordingsHandler,
 	localMediaHandler *handlers.LocalMediaHandler,
 	epgHandler *handlers.EPGHandler,
 	userSettingsHandler *handlers.UserSettingsHandler,
@@ -307,6 +308,21 @@ func Register(
 	protected.HandleFunc("/live/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/live/usage", videoHandler.GetLiveUsage).Methods(http.MethodGet)
 	protected.HandleFunc("/live/usage", handleOptions).Methods(http.MethodOptions)
+	if recordingsHandler != nil {
+		protected.HandleFunc("/live/recordings", recordingsHandler.List).Methods(http.MethodGet)
+		protected.HandleFunc("/live/recordings", recordingsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/recordings/epg", recordingsHandler.CreateEPG).Methods(http.MethodPost)
+		protected.HandleFunc("/live/recordings/epg", recordingsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/recordings/time-block", recordingsHandler.CreateTimeBlock).Methods(http.MethodPost)
+		protected.HandleFunc("/live/recordings/time-block", recordingsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/recordings/{recordingID}", recordingsHandler.Get).Methods(http.MethodGet)
+		protected.HandleFunc("/live/recordings/{recordingID}", recordingsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/recordings/{recordingID}", recordingsHandler.Delete).Methods(http.MethodDelete)
+		protected.HandleFunc("/live/recordings/{recordingID}/stream", recordingsHandler.Stream).Methods(http.MethodGet)
+		protected.HandleFunc("/live/recordings/{recordingID}/stream", recordingsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/live/recordings/{recordingID}/cancel", recordingsHandler.Cancel).Methods(http.MethodPost)
+		protected.HandleFunc("/live/recordings/{recordingID}/cancel", recordingsHandler.Options).Methods(http.MethodOptions)
+	}
 
 	// EPG (Electronic Program Guide) endpoints
 	if epgHandler != nil {

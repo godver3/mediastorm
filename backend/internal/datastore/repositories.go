@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"context"
+	"time"
 
 	"novastream/models"
 )
@@ -194,4 +195,14 @@ type LocalMediaRepository interface {
 	GetItem(ctx context.Context, id string) (*models.LocalMediaItem, error)
 	MarkItemsMissingNotSeenInScan(ctx context.Context, libraryID, scanID string, missingSince interface{}) error
 	DeleteItem(ctx context.Context, id string) error
+}
+
+type RecordingRepository interface {
+	Get(ctx context.Context, id string) (*models.Recording, error)
+	List(ctx context.Context, filter models.RecordingListFilter) ([]models.Recording, error)
+	Create(ctx context.Context, recording *models.Recording) error
+	Update(ctx context.Context, recording *models.Recording) error
+	Delete(ctx context.Context, id string) error
+	Count(ctx context.Context) (int64, error)
+	MarkStaleActiveAsFailed(ctx context.Context, now time.Time) (int64, error)
 }
