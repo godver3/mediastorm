@@ -91,7 +91,7 @@ printf 'chunk-%s\n' "$count"
 if [ "$count" -eq 1 ]; then
   exit 1
 fi
-sleep 0.35
+sleep 1.65
 exit 0
 `)
 
@@ -99,7 +99,7 @@ exit 0
 	recordingRetryDelay = 10 * time.Millisecond
 	defer func() { recordingRetryDelay = originalDelay }()
 
-	recording := newTestRecording(time.Now().UTC().Add(250 * time.Millisecond))
+	recording := newTestRecording(time.Now().UTC().Add(1500 * time.Millisecond))
 	repo := newFakeRecordingRepo(recording)
 	svc := newTestService(repo, script, t.TempDir())
 
