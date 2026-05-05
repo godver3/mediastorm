@@ -747,10 +747,12 @@ func titleContainmentScore(parsedTitle, candidate string) float64 {
 		return 0
 	}
 
-	// Case 1: candidate (expected) is longer or equal and contains the parsed title
-	// This means the result is a subset of the expected title — always valid
+	// Case 1: candidate (expected) is longer or equal and contains the parsed title.
+	// This means the result is a subset of the expected title. Only treat it as a
+	// high-confidence match when the subset is substantial; otherwise a generic
+	// trailing word can match a different show (e.g. "Ragnarok" vs "Record of Ragnarok").
 	if len(candidate) >= len(parsedTitle) && strings.Contains(candidate, parsedTitle) {
-		return containmentScoreWithBoundaryCheck(candidate, parsedTitle)
+		return candidateContainsParsedScore(candidate, parsedTitle)
 	}
 
 	// Case 2: parsed title (result) is longer and contains the candidate
@@ -770,6 +772,37 @@ func titleContainmentScore(parsedTitle, candidate string) float64 {
 	}
 
 	return 0
+}
+
+func candidateContainsParsedScore(candidate, parsedTitle string) float64 {
+	score := containmentScoreWithBoundaryCheck(candidate, parsedTitle)
+	if score == 0 {
+		return 0
+	}
+	if isSubstantialTitleSubset(candidate, parsedTitle) {
+		return score
+	}
+	return 0
+}
+
+func isSubstantialTitleSubset(candidate, parsedTitle string) bool {
+	if candidate == parsedTitle {
+		return true
+	}
+
+	candidateWords := strings.Fields(candidate)
+	parsedWords := strings.Fields(parsedTitle)
+	if len(candidateWords) == 0 || len(parsedWords) == 0 {
+		return false
+	}
+
+	// A single word that is only part of a longer expected title is too ambiguous.
+	if len(parsedWords) == 1 && len(candidateWords) > 1 {
+		return false
+	}
+
+	ratio := float64(len(parsedTitle)) / float64(len(candidate))
+	return ratio >= 0.60
 }
 
 // containmentScoreWithBoundaryCheck checks word boundaries and returns a containment score.

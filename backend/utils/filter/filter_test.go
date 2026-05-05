@@ -728,10 +728,16 @@ func TestTitleContainmentScore(t *testing.T) {
 			wantHigh:    true,
 		},
 		{
-			name:        "candidate contains parsed - Matrix in The Matrix Reloaded",
+			name:        "generic trailing word subset rejected - Ragnarok vs Record of Ragnarok",
+			parsedTitle: "ragnarok",
+			candidate:   "record of ragnarok",
+			wantHigh:    false,
+		},
+		{
+			name:        "single word subset rejected - Matrix in The Matrix Reloaded",
 			parsedTitle: "matrix",
 			candidate:   "the matrix reloaded",
-			wantHigh:    true,
+			wantHigh:    false,
 		},
 		{
 			name:        "exact match",
@@ -953,6 +959,64 @@ func TestResults_TitleContainment(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("release missing leading article still matches", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Matrix.Reloaded.2003.1080p.BluRay.x264"},     // Should match - substantial subset
+			{Title: "Matrix.2003.1080p.BluRay.x264"},              // Should NOT match - single-word subset
+			{Title: "The.Matrix.Reloaded.2003.1080p.BluRay.x264"}, // Should match - exact
+		}
+
+		opts := Options{
+			ExpectedTitle: "The Matrix Reloaded",
+			ExpectedYear:  2003,
+			IsMovie:       true,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 2 {
+			t.Errorf("Expected 2 Matrix Reloaded results, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		for _, r := range filtered {
+			if r.Title == "Matrix.2003.1080p.BluRay.x264" {
+				t.Error("Single-word subset should have been filtered")
+			}
+		}
+	})
+}
+
+func TestResults_RecordOfRagnarokRejectsRagnarok(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "Record.of.Ragnarok.S03E06.2021.1080p.NF.WEB-DL.AAC2.0.H264-ColorTV.mkv"},
+		{Title: "Ragnarok S03E06 1080p WEB h264-EDITH"},
+		{Title: "Record.of.Ragnarok.S03E06.Return.of.the.King.1080p.NF.WEB-DL.AAC2.0.H.264.DUAL-OLYMPUS.mkv"},
+	}
+
+	opts := Options{
+		ExpectedTitle: "Record of Ragnarok",
+		ExpectedYear:  2021,
+		IsMovie:       false,
+		TargetSeason:  3,
+		TargetEpisode: 6,
+	}
+
+	filtered := Results(results, opts)
+	if len(filtered) != 2 {
+		t.Errorf("Expected 2 Record of Ragnarok results, got %d", len(filtered))
+		for i, r := range filtered {
+			t.Logf("  Result[%d]: %s", i, r.Title)
+		}
+	}
+
+	for _, r := range filtered {
+		if r.Title == "Ragnarok S03E06 1080p WEB h264-EDITH" {
+			t.Error("Different show Ragnarok should have been filtered")
+		}
+	}
 }
 
 func TestResults_SpinoffTitleRejection(t *testing.T) {
