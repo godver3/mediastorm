@@ -355,7 +355,10 @@ func Register(
 
 	// HLS streaming endpoints for Dolby Vision
 	protected.HandleFunc("/video/hls/start", RateLimitHandlerFunc(hlsStartLimiter, videoHandler.StartHLSSession)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/master.m3u8", videoHandler.ServeHLSMasterPlaylist).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/stream.m3u8", videoHandler.ServeHLSPlaylist).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/subtitle-{track}.m3u8", videoHandler.ServeHLSSubtitlePlaylist).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/hls/{sessionID}/subtitles-{track}.vtt", videoHandler.ServeHLSSubtitleTrack).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/subtitles.vtt", videoHandler.ServeHLSSubtitles).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/captions.srt", videoHandler.ServeHLSLiveCaptions).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/hls/{sessionID}/cc-status", videoHandler.GetHLSLiveCCStatus).Methods(http.MethodGet, http.MethodOptions)

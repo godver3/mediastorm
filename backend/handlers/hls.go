@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"errors"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -329,9 +329,9 @@ type HLSSession struct {
 	ActualStartOffset   float64 // Actual start time from fMP4 tfdt box (keyframe-aligned, for subtitle sync)
 
 	// Profile tracking
-	ProfileID   string
-	ProfileName string
-	ClientIP    string
+	ProfileID     string
+	ProfileName   string
+	ClientIP      string
 	MediaMetadata StreamMediaMetadata
 
 	// Track selection (-1 means use default)
@@ -378,18 +378,19 @@ type HLSSession struct {
 	BitstreamErrors      int // Count of bitstream filter errors (to detect persistent issues)
 
 	// Live TV session fields
-	IsLive       bool   // True for live TV streams (no duration, no seeking)
-	LiveProvider string // Live TV provider identifier ("m3u" or "xtream")
-	LiveBucket   string // Shared stream bucket identifier for limit accounting
+	IsLive       bool               // True for live TV streams (no duration, no seeking)
+	LiveProvider string             // Live TV provider identifier ("m3u" or "xtream")
+	LiveBucket   string             // Shared stream bucket identifier for limit accounting
 	LiveTuning   LiveTuningSettings // FFmpeg tuning settings for live sessions
 
 	// Closed caption support (live TV EIA-608)
-	HasClosedCaptions bool          // True if EIA-608 CC detected in stream
-	CCDetectionDone   bool          // True once CC detection has completed (regardless of result)
-	ccExtractor       *ccExtractor  // Running ccextractor process for this session (nil if not started)
+	HasClosedCaptions bool         // True if EIA-608 CC detected in stream
+	CCDetectionDone   bool         // True once CC detection has completed (regardless of result)
+	ccExtractor       *ccExtractor // Running ccextractor process for this session (nil if not started)
 
 	// Prequeue tracking
 	PrequeueType string // "", "details" (details page), or "next_episode" (auto-play next)
+	CastMode     bool   // True when the session is being prepared for Chromecast-style HLS playback
 }
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
@@ -452,6 +453,162 @@ const (
 	// Resume when buffer drops to this level
 	hlsBufferResumeThreshold = 20 // ~80 seconds of buffer ahead
 )
+
+func isTextSubtitleCodec(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "subrip", "srt", "ass", "ssa",
+		"webvtt", "vtt", "mov_text", "text",
+		"ttml", "sami", "microdvd", "jacosub",
+		"mpl2", "pjs", "realtext", "stl",
+		"subviewer", "subviewer1", "vplayer":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeHLSLanguage(language string) string {
+	trimmed := strings.TrimSpace(language)
+	if trimmed == "" {
+		return "und"
+	}
+	return trimmed
+}
+
+func sanitizeHLSName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "Subtitles"
+	}
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return replacer.Replace(trimmed)
+}
+
+func (m *HLSManager) getSessionSubtitleStreams(session *HLSSession) []subtitleStreamInfo {
+	if session == nil || session.ProbeData == nil || len(session.ProbeData.SubtitleStreams) == 0 {
+		return nil
+	}
+
+	streams := make([]subtitleStreamInfo, 0, len(session.ProbeData.SubtitleStreams))
+	for _, stream := range session.ProbeData.SubtitleStreams {
+		if !isTextSubtitleCodec(stream.Codec) {
+			continue
+		}
+		streams = append(streams, stream)
+	}
+
+	return streams
+}
+
+func (m *HLSManager) shouldServeMasterPlaylist(session *HLSSession) bool {
+	if session == nil || session.IsLive || !session.CastMode {
+		return false
+	}
+	return len(m.getSessionSubtitleStreams(session)) > 0
+}
+
+func (m *HLSManager) buildSessionPlaylistURL(session *HLSSession) string {
+	if m.shouldServeMasterPlaylist(session) {
+		return fmt.Sprintf("/video/hls/%s/master.m3u8", session.ID)
+	}
+	return fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID)
+}
+
+func appendAuthTokenToPlaylist(content string, authToken string) string {
+	if authToken == "" {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isHLSMediaURI(trimmed) {
+			lines[i] = line + tokenSeparator(line) + "token=" + authToken
+		} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
+			lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?token=`+authToken+`"`, 1)
+		} else if strings.Contains(line, "URI=") &&
+			(strings.Contains(line, ".vtt") || strings.Contains(line, ".webvtt") || strings.Contains(line, ".m3u8")) {
+			lines[i] = appendAuthTokenToQuotedURIs(line, authToken)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func isHLSMediaURI(line string) bool {
+	if line == "" || strings.HasPrefix(line, "#") {
+		return false
+	}
+	path := line
+	if idx := strings.IndexAny(path, "?#"); idx >= 0 {
+		path = path[:idx]
+	}
+	return strings.HasSuffix(path, ".ts") ||
+		strings.HasSuffix(path, ".m4s") ||
+		strings.HasSuffix(path, ".vtt") ||
+		strings.HasSuffix(path, ".webvtt") ||
+		strings.HasSuffix(path, ".m3u8")
+}
+
+func tokenSeparator(uri string) string {
+	if strings.Contains(uri, "?") {
+		return "&"
+	}
+	return "?"
+}
+
+func appendAuthTokenToQuotedURIs(line string, authToken string) string {
+	for _, ext := range []string{".vtt", ".webvtt", ".m3u8"} {
+		searchStart := 0
+		for {
+			if searchStart >= len(line) {
+				break
+			}
+			idx := strings.Index(line[searchStart:], ext)
+			if idx < 0 {
+				break
+			}
+			idx += searchStart
+			uriEnd := strings.Index(line[idx:], `"`)
+			if uriEnd < 0 {
+				break
+			}
+			uriEnd += idx
+			if strings.Contains(line[idx:uriEnd], "token=") {
+				searchStart = uriEnd + 1
+				continue
+			}
+			separator := tokenSeparator(line[idx:uriEnd])
+			line = line[:uriEnd] + separator + "token=" + authToken + line[uriEnd:]
+			searchStart = uriEnd + len(separator) + len("token=") + len(authToken) + 1
+		}
+	}
+	return line
+}
+
+func waitForSubtitleFile(vttPath string, requireCue bool, maxWait time.Duration) (os.FileInfo, []byte, error) {
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		stat, err := os.Stat(vttPath)
+		if err == nil {
+			content, readErr := os.ReadFile(vttPath)
+			if readErr == nil {
+				if !requireCue || strings.Contains(string(content), "-->") {
+					return stat, content, nil
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, nil, err
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return nil, nil, os.ErrNotExist
+}
 
 // HLSManager manages HLS transcoding sessions
 type HLSManager struct {
@@ -741,7 +898,7 @@ func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
 }
 
 // CreateSession starts a new HLS transcoding session
-func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string, prequeueType string) (*HLSSession, error) {
+func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string, castMode bool, prequeueType string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -838,14 +995,15 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		AudioTrackIndex:         audioTrackIndex,
 		SubtitleTrackIndex:      subtitleTrackIndex,
 		StreamStartTime:         now,
-		LastSegmentRequest:      now,          // Initialize to now to avoid immediate timeout
-		MinSegmentRequested:     -1,           // Initialize to -1 (no segments requested yet)
-		MaxSegmentRequested:     -1,           // Initialize to -1 (no segments requested yet)
-		LastPlaybackSegment:     -1,           // Initialize to -1 (no keepalive time reported yet)
-		LastSegmentServed:       -1,           // Initialize to -1 (no segments served yet)
-		EarliestBufferedSegment: -1,           // Initialize to -1 (no buffer info reported yet)
-		FinalSegmentCount:       -1,           // Initialize to -1 (transcoding still running)
-		ProbeData:               probeData,    // Cache unified probe results for startTranscoding
+		LastSegmentRequest:      now,       // Initialize to now to avoid immediate timeout
+		MinSegmentRequested:     -1,        // Initialize to -1 (no segments requested yet)
+		MaxSegmentRequested:     -1,        // Initialize to -1 (no segments requested yet)
+		LastPlaybackSegment:     -1,        // Initialize to -1 (no keepalive time reported yet)
+		LastSegmentServed:       -1,        // Initialize to -1 (no segments served yet)
+		EarliestBufferedSegment: -1,        // Initialize to -1 (no buffer info reported yet)
+		FinalSegmentCount:       -1,        // Initialize to -1 (transcoding still running)
+		ProbeData:               probeData, // Cache unified probe results for startTranscoding
+		CastMode:                castMode,
 		PrequeueType:            prequeueType, // "", "details", or "next_episode"
 	}
 
@@ -1773,21 +1931,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// All subtitles are served via sidecar VTT files (on-demand extraction).
 	// For fMP4, we also do upfront extraction as additional ffmpeg outputs.
 	// For MPEG-TS, we skip embedding entirely and rely on sidecar extraction.
-	// Text-based subtitle codecs that can be converted to WebVTT
-	// Using a whitelist approach to avoid unknown bitmap codecs slipping through
-	textSubtitleCodecs := map[string]bool{
-		"subrip": true, "srt": true, "ass": true, "ssa": true,
-		"webvtt": true, "vtt": true, "mov_text": true, "text": true,
-		"ttml": true, "sami": true, "microdvd": true, "jacosub": true,
-		"mpl2": true, "pjs": true, "realtext": true, "stl": true,
-		"subviewer": true, "subviewer1": true, "vplayer": true,
-	}
-
 	// Extract ALL text-based subtitle tracks to sidecar VTT files during streaming
 	// This allows track switching without re-downloading the source file
 	// Works for both fMP4 and MPEG-TS - progressive extraction with flush_packets
 	for _, stream := range subtitleStreams {
-		if !textSubtitleCodecs[stream.Codec] {
+		if !isTextSubtitleCodec(stream.Codec) {
 			log.Printf("[hls] session %s: skipping non-text subtitle stream %d (codec=%q) for sidecar extraction",
 				session.ID, stream.Index, stream.Codec)
 			continue
@@ -3001,7 +3149,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	}
 
 	// Build playlist URL (without /api/ prefix - frontend adds it)
-	playlistURL := fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID)
+	playlistURL := m.buildSessionPlaylistURL(session)
 
 	// NOTE: We skip keyframe probing for faster seeks. Since we use -start_at_zero,
 	// the fMP4 tfdt box contains 0 (not the actual keyframe position), so parsing it
@@ -3270,28 +3418,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		playlistContent = strings.TrimRight(playlistContent, "\n") + "\n#EXT-X-ENDLIST\n"
 	}
 
-	if authToken != "" {
-		lines := strings.Split(playlistContent, "\n")
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			// If line is a segment file (ends with .ts, .m4s, .vtt, or .webvtt)
-			if strings.HasSuffix(trimmed, ".ts") || strings.HasSuffix(trimmed, ".m4s") ||
-				strings.HasSuffix(trimmed, ".vtt") || strings.HasSuffix(trimmed, ".webvtt") {
-				// Append auth token as query parameter
-				lines[i] = line + "?token=" + authToken
-			} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
-				// Rewrite init segment URL in EXT-X-MAP tag
-				// Format: #EXT-X-MAP:URI="init.mp4"
-				lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?token=`+authToken+`"`, 1)
-			} else if strings.Contains(line, "URI=") && (strings.Contains(line, ".vtt") || strings.Contains(line, ".webvtt")) {
-				// Rewrite subtitle URLs in #EXT-X-MEDIA tags
-				// Format: #EXT-X-MEDIA:TYPE=SUBTITLES,...,URI="subtitle.webvtt"
-				lines[i] = strings.ReplaceAll(line, ".vtt\"", ".vtt?token="+authToken+"\"")
-				lines[i] = strings.ReplaceAll(lines[i], ".webvtt\"", ".webvtt?token="+authToken+"\"")
-			}
-		}
-		playlistContent = strings.Join(lines, "\n")
-	}
+	playlistContent = appendAuthTokenToPlaylist(playlistContent, authToken)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -3305,6 +3432,148 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		videoRange = "PQ"
 	}
 	log.Printf("[hls] served playlist for session %s, VIDEO-RANGE=%s, auth token=%v", sessionID, videoRange, authToken != "")
+}
+
+func (m *HLSManager) ServeMasterPlaylist(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, exists := m.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	session.mu.Lock()
+	session.LastSegmentRequest = time.Now()
+	session.mu.Unlock()
+
+	if !m.shouldServeMasterPlaylist(session) {
+		http.Redirect(w, r, fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID), http.StatusTemporaryRedirect)
+		return
+	}
+
+	subtitleStreams := m.getSessionSubtitleStreams(session)
+	authToken := r.URL.Query().Get("token")
+	if authToken == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			authToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	var builder strings.Builder
+	builder.WriteString("#EXTM3U\n")
+	builder.WriteString("#EXT-X-VERSION:3\n")
+
+	groupID := "subs"
+	defaultTrackName := ""
+	defaultTrackLanguage := ""
+	defaultTrackIndex := -1
+	for _, stream := range subtitleStreams {
+		selected := session.SubtitleTrackIndex >= 0 && stream.Index == session.SubtitleTrackIndex
+		defaultAttr := "NO"
+		autoSelectAttr := "NO"
+		if selected {
+			defaultAttr = "YES"
+			autoSelectAttr = "YES"
+			defaultTrackIndex = stream.Index
+		}
+
+		name := strings.TrimSpace(stream.Title)
+		if name == "" {
+			name = sanitizeHLSLanguage(stream.Language)
+		}
+		if selected {
+			defaultTrackName = name
+			defaultTrackLanguage = sanitizeHLSLanguage(stream.Language)
+		}
+
+		builder.WriteString(fmt.Sprintf(
+			"#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"%s\",NAME=\"%s\",LANGUAGE=\"%s\",AUTOSELECT=%s,DEFAULT=%s,FORCED=%s,URI=\"subtitle-%d.m3u8\"\n",
+			groupID,
+			sanitizeHLSName(name),
+			sanitizeHLSLanguage(stream.Language),
+			autoSelectAttr,
+			defaultAttr,
+			map[bool]string{true: "YES", false: "NO"}[stream.IsForced],
+			stream.Index,
+		))
+	}
+
+	builder.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%d,CLOSED-CAPTIONS=NONE,SUBTITLES=\"%s\"\n", 8000000, groupID))
+	builder.WriteString("stream.m3u8\n")
+
+	log.Printf("[hls] session %s: master playlist subtitle selection requested=%d defaultIndex=%d defaultName=%q defaultLanguage=%q totalTextTracks=%d",
+		sessionID, session.SubtitleTrackIndex, defaultTrackIndex, defaultTrackName, defaultTrackLanguage, len(subtitleStreams))
+
+	playlistContent := appendAuthTokenToPlaylist(builder.String(), authToken)
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type")
+	_, _ = w.Write([]byte(playlistContent))
+}
+
+func (m *HLSManager) ServeSubtitlePlaylist(w http.ResponseWriter, r *http.Request, sessionID string, subtitleTrack int) {
+	session, exists := m.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	session.mu.Lock()
+	session.LastSegmentRequest = time.Now()
+	session.mu.Unlock()
+
+	subtitleStreams := m.getSessionSubtitleStreams(session)
+	var selectedStream *subtitleStreamInfo
+	for i := range subtitleStreams {
+		if subtitleStreams[i].Index == subtitleTrack {
+			selectedStream = &subtitleStreams[i]
+			break
+		}
+	}
+	if selectedStream == nil {
+		http.Error(w, "subtitle track not found", http.StatusNotFound)
+		return
+	}
+
+	duration := session.Duration - session.TranscodingOffset
+	if duration <= 0 {
+		duration = session.Duration
+	}
+	if duration <= 0 {
+		duration = hlsSegmentDuration
+	}
+
+	authToken := r.URL.Query().Get("token")
+	if authToken == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			authToken = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	targetDuration := int(math.Ceil(duration))
+	if targetDuration < 1 {
+		targetDuration = 1
+	}
+
+	playlistContent := fmt.Sprintf(
+		"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:%.3f,\nsubtitles-%d.vtt?reload=%d\n",
+		targetDuration,
+		duration,
+		subtitleTrack,
+		time.Now().UnixNano(),
+	)
+	playlistContent = appendAuthTokenToPlaylist(playlistContent, authToken)
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range, Content-Type")
+	_, _ = w.Write([]byte(playlistContent))
 }
 
 // ServeSegment serves an HLS segment file
@@ -3411,7 +3680,11 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	}
 
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	if strings.HasSuffix(segmentName, ".vtt") || strings.HasSuffix(segmentName, ".webvtt") {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Accept-Ranges", "bytes")
 
@@ -3470,6 +3743,17 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 		}
 	}
 
+	waitForCue := r.URL.Query().Get("wait") == "1"
+	m.ServeSubtitleTrack(w, r, sessionID, requestedTrack, waitForCue)
+}
+
+func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, sessionID string, requestedTrack int, waitForCue bool) {
+	session, exists := m.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
 	// All subtitle tracks are now extracted upfront to subtitles_<streamIndex>.vtt
 	// This naming is consistent for both initially selected and switched tracks
 	vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
@@ -3518,7 +3802,16 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	// Check if file exists (might not be ready yet or no subtitles selected)
-	stat, err := os.Stat(vttPath)
+	var (
+		stat    os.FileInfo
+		content []byte
+		err     error
+	)
+	if waitForCue {
+		stat, content, err = waitForSubtitleFile(vttPath, true, 10*time.Second)
+	} else {
+		stat, err = os.Stat(vttPath)
+	}
 	if os.IsNotExist(err) {
 		// Return empty VTT header if file doesn't exist yet
 		// This allows the frontend to poll without errors
@@ -3534,10 +3827,12 @@ func (m *HLSManager) ServeSubtitles(w http.ResponseWriter, r *http.Request, sess
 
 	// Read the current contents of the VTT file
 	// Note: FFmpeg writes progressively, so the file may still be growing
-	content, err := os.ReadFile(vttPath)
-	if err != nil {
-		http.Error(w, "failed to read subtitle file", http.StatusInternalServerError)
-		return
+	if content == nil {
+		content, err = os.ReadFile(vttPath)
+		if err != nil {
+			http.Error(w, "failed to read subtitle file", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// If we read 0 bytes immediately after extraction, retry once

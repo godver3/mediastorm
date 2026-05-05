@@ -2794,6 +2794,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	dvProfile := r.URL.Query().Get("dvProfile")
 	hasHDR := r.URL.Query().Get("hdr") == "true"
 	forceAAC := r.URL.Query().Get("forceAAC") == "true"
+	castMode := r.URL.Query().Get("cast") == "true"
 	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
 	if !forceAAC && h.configManager != nil {
 		if settings, err := h.configManager.Load(); err == nil {
@@ -2904,7 +2905,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs transcodingOffset=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex)
 
-	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), "")
+	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), castMode, "")
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
 		if errors.Is(err, streaming.ErrStaleTorrent) {
@@ -2928,7 +2929,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"sessionId":         session.ID,
-		"playlistUrl":       fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID),
+		"playlistUrl":       h.hlsManager.buildSessionPlaylistURL(session),
 		"startOffset":       session.StartOffset,
 		"actualStartOffset": actualStartOffset,
 		"keyframeDelta":     keyframeDelta,
@@ -3132,6 +3133,24 @@ func (h *VideoHandler) ServeHLSPlaylist(w http.ResponseWriter, r *http.Request) 
 	h.hlsManager.ServePlaylist(w, r, sessionID)
 }
 
+// ServeHLSMasterPlaylist serves the cast-oriented HLS master playlist for a session.
+func (h *VideoHandler) ServeHLSMasterPlaylist(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["sessionID"]
+
+	if sessionID == "" {
+		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+
+	h.hlsManager.ServeMasterPlaylist(w, r, sessionID)
+}
+
 // ServeHLSSegment serves an HLS segment for a session
 func (h *VideoHandler) ServeHLSSegment(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {
@@ -3167,6 +3186,56 @@ func (h *VideoHandler) ServeHLSSubtitles(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.hlsManager.ServeSubtitles(w, r, sessionID)
+}
+
+// ServeHLSSubtitlePlaylist serves the subtitle rendition playlist for a session.
+func (h *VideoHandler) ServeHLSSubtitlePlaylist(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["sessionID"]
+	trackStr := vars["track"]
+
+	if sessionID == "" || trackStr == "" {
+		http.Error(w, "missing session ID or subtitle track", http.StatusBadRequest)
+		return
+	}
+
+	track, err := strconv.Atoi(trackStr)
+	if err != nil || track < 0 {
+		http.Error(w, "invalid subtitle track", http.StatusBadRequest)
+		return
+	}
+
+	h.hlsManager.ServeSubtitlePlaylist(w, r, sessionID, track)
+}
+
+// ServeHLSSubtitleTrack serves a specific HLS subtitle sidecar track.
+func (h *VideoHandler) ServeHLSSubtitleTrack(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["sessionID"]
+	trackStr := vars["track"]
+
+	if sessionID == "" || trackStr == "" {
+		http.Error(w, "missing session ID or subtitle track", http.StatusBadRequest)
+		return
+	}
+
+	track, err := strconv.Atoi(trackStr)
+	if err != nil || track < 0 {
+		http.Error(w, "invalid subtitle track", http.StatusBadRequest)
+		return
+	}
+
+	h.hlsManager.ServeSubtitleTrack(w, r, sessionID, track, true)
 }
 
 // ServeHLSLiveCaptions serves the WebVTT captions extracted from EIA-608 CC for a live session
@@ -3477,7 +3546,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		}
 	}
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "", prequeueType)
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "", false, prequeueType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}

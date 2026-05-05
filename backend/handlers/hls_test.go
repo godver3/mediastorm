@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -475,6 +476,116 @@ func TestHLSManager_ServeSubtitles_NotFound(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
+func TestHLSManager_ServeMasterPlaylist(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := NewHLSManager(tmpDir, "", "", nil)
+	defer manager.Shutdown()
+
+	sessionID := "master-test-session"
+	outputDir := filepath.Join(tmpDir, sessionID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &HLSSession{
+		ID:                 sessionID,
+		OutputDir:          outputDir,
+		CreatedAt:          time.Now(),
+		LastAccess:         time.Now(),
+		CastMode:           true,
+		SubtitleTrackIndex: 11,
+		ProbeData: &UnifiedProbeResult{
+			SubtitleStreams: []subtitleStreamInfo{
+				{Index: 11, Codec: "subrip", Language: "eng", Title: "English", IsForced: false},
+				{Index: 12, Codec: "ass", Language: "spa", Title: "Spanish", IsForced: true},
+				{Index: 13, Codec: "hdmv_pgs_subtitle", Language: "jpn", Title: "PGS", IsForced: false},
+			},
+		},
+	}
+
+	manager.mu.Lock()
+	manager.sessions[sessionID] = session
+	manager.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/video/hls/%s/master.m3u8?token=test-token", sessionID), nil)
+	rr := httptest.NewRecorder()
+
+	manager.ServeMasterPlaylist(rr, req, sessionID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, "#EXT-X-MEDIA:TYPE=SUBTITLES") {
+		t.Fatalf("master playlist missing subtitle rendition: %s", body)
+	}
+	if !strings.Contains(body, `URI="subtitle-11.m3u8?token=test-token"`) {
+		t.Fatalf("expected selected subtitle URI with token rewrite, got: %s", body)
+	}
+	if !strings.Contains(body, `DEFAULT=YES`) {
+		t.Fatalf("expected selected subtitle to be default, got: %s", body)
+	}
+	if !strings.Contains(body, `FORCED=YES`) {
+		t.Fatalf("expected forced subtitle metadata, got: %s", body)
+	}
+	if strings.Contains(body, "subtitle-13") {
+		t.Fatalf("bitmap subtitle should not be advertised in master playlist: %s", body)
+	}
+	if !strings.Contains(body, "stream.m3u8?token=test-token") {
+		t.Fatalf("expected stream playlist token rewrite, got: %s", body)
+	}
+}
+
+func TestHLSManager_ServeSubtitlePlaylist(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := NewHLSManager(tmpDir, "", "", nil)
+	defer manager.Shutdown()
+
+	sessionID := "subtitle-playlist-test"
+	outputDir := filepath.Join(tmpDir, sessionID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &HLSSession{
+		ID:         sessionID,
+		OutputDir:  outputDir,
+		CreatedAt:  time.Now(),
+		LastAccess: time.Now(),
+		Duration:   120,
+		ProbeData: &UnifiedProbeResult{
+			SubtitleStreams: []subtitleStreamInfo{
+				{Index: 11, Codec: "subrip", Language: "eng", Title: "English"},
+			},
+		},
+	}
+
+	manager.mu.Lock()
+	manager.sessions[sessionID] = session
+	manager.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/video/hls/%s/subtitle-11.m3u8?token=test-token", sessionID), nil)
+	rr := httptest.NewRecorder()
+
+	manager.ServeSubtitlePlaylist(rr, req, sessionID, 11)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	body := rr.Body.String()
+	if strings.Contains(body, "#EXT-X-ENDLIST") {
+		t.Fatalf("subtitle playlist should stay refreshable while VTT is growing, got: %s", body)
+	}
+	if !strings.Contains(body, "subtitles-11.vtt?reload=") || !strings.Contains(body, "&token=test-token") {
+		t.Fatalf("expected subtitle segment token rewrite, got: %s", body)
+	}
+	if !strings.Contains(body, "#EXTINF:120.000,") {
+		t.Fatalf("expected full-duration subtitle segment, got: %s", body)
 	}
 }
 
