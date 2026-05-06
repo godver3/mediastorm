@@ -639,17 +639,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// Use the same search path as the regular search UI: wait for all sources
 	// (debrid + usenet), combine, rank, and return a single ordered list.
 	searchOpts := indexer.SearchOptions{
-		Query:           query,
-		MaxResults:      50,
-		MediaType:       mediaType,
-		IMDBID:          imdbID,
-		Year:            year,
-		UserID:          userID,
-		ClientID:        clientID,
-		EpisodeResolver: episodeResolver,
-		IsDaily:         isDaily,
-		IsAnime:         isAnime,
-		TargetAirDate:   targetAirDate,
+		Query:              query,
+		MaxResults:         50,
+		MediaType:          mediaType,
+		IMDBID:             imdbID,
+		Year:               year,
+		UserID:             userID,
+		ClientID:           clientID,
+		EpisodeResolver:    episodeResolver,
+		IsDaily:            isDaily,
+		IsAnime:            isAnime,
+		TargetAirDate:      targetAirDate,
+		UseDownloadRanking: true,
 	}
 	// Pass absolute episode number for anime matching (if available)
 	if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {

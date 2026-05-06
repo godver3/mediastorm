@@ -3,6 +3,7 @@ package debrid
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"novastream/config"
@@ -20,6 +21,22 @@ func (s stubScraper) Name() string {
 
 func (s stubScraper) Search(_ context.Context, _ SearchRequest) ([]ScrapeResult, error) {
 	return s.results, nil
+}
+
+type stubUserSettings struct {
+	settings *models.UserSettings
+}
+
+func (s stubUserSettings) Get(_ string) (*models.UserSettings, error) {
+	return s.settings, nil
+}
+
+type stubClientSettings struct {
+	settings *models.ClientFilterSettings
+}
+
+func (s stubClientSettings) Get(_ string) (*models.ClientFilterSettings, error) {
+	return s.settings, nil
 }
 
 func TestNormalizeScrapeResult(t *testing.T) {
@@ -124,5 +141,121 @@ func TestSearchAllowsDirectStreamScrapersWithoutDebridProviders(t *testing.T) {
 	}
 	if got := results[0].Attributes["stream_url"]; got != "https://example.test/playback/moana" {
 		t.Fatalf("expected pre-resolved stream URL to survive normalization, got %q", got)
+	}
+}
+
+func TestSearchAppliesRequiredTerms(t *testing.T) {
+	tests := []struct {
+		name          string
+		globalTerms   []string
+		userTerms     []string
+		clientTerms   []string
+		userID        string
+		clientID      string
+		wantTitlePart string
+	}{
+		{
+			name:          "global",
+			globalTerms:   []string{"MULTI"},
+			wantTitlePart: "MULTI",
+		},
+		{
+			name:          "profile override",
+			globalTerms:   []string{"MULTI"},
+			userTerms:     []string{"REMUX"},
+			userID:        "profile-1",
+			wantTitlePart: "REMUX",
+		},
+		{
+			name:          "client override",
+			globalTerms:   []string{"MULTI"},
+			userTerms:     []string{"REMUX"},
+			clientTerms:   []string{"DV"},
+			userID:        "profile-1",
+			clientID:      "client-1",
+			wantTitlePart: "DV",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "settings.json")
+			cfgManager := config.NewManager(cfgPath)
+
+			settings := config.DefaultSettings()
+			for i := range settings.Streaming.DebridProviders {
+				settings.Streaming.DebridProviders[i].Enabled = false
+				settings.Streaming.DebridProviders[i].APIKey = ""
+			}
+			settings.TorrentScrapers = []config.TorrentScraperConfig{
+				{
+					Name:    "AIOStreams",
+					Type:    "aiostreams",
+					URL:     "https://example.test/manifest.json",
+					Enabled: true,
+				},
+			}
+			settings.Display.BypassFilteringForAIOStreamsOnly = false
+			settings.Filtering.RequiredTerms = tt.globalTerms
+
+			if err := cfgManager.Save(settings); err != nil {
+				t.Fatalf("save settings: %v", err)
+			}
+
+			svc := NewSearchService(cfgManager, stubScraper{
+				name: "AIOStreams",
+				results: []ScrapeResult{
+					{
+						Title:      "Moana.2016.1080p.WEB-DL",
+						Indexer:    "AIOStreams",
+						TorrentURL: "https://example.test/playback/moana-en",
+					},
+					{
+						Title:      "Moana.2016.MULTI.1080p.WEB-DL",
+						Indexer:    "AIOStreams",
+						TorrentURL: "https://example.test/playback/moana-multi",
+					},
+					{
+						Title:      "Moana.2016.REMUX.1080p.WEB-DL",
+						Indexer:    "AIOStreams",
+						TorrentURL: "https://example.test/playback/moana-remux",
+					},
+					{
+						Title:      "Moana.2016.DV.1080p.WEB-DL",
+						Indexer:    "AIOStreams",
+						TorrentURL: "https://example.test/playback/moana-dv",
+					},
+				},
+			})
+			if tt.userTerms != nil {
+				svc.SetUserSettingsProvider(stubUserSettings{
+					settings: &models.UserSettings{
+						Filtering: models.FilterSettings{RequiredTerms: tt.userTerms},
+					},
+				})
+			}
+			if tt.clientTerms != nil {
+				svc.SetClientSettingsProvider(stubClientSettings{
+					settings: &models.ClientFilterSettings{RequiredTerms: &tt.clientTerms},
+				})
+			}
+
+			results, err := svc.Search(t.Context(), SearchOptions{
+				Query:     "Moana 2016",
+				MediaType: "movie",
+				Year:      2016,
+				UserID:    tt.userID,
+				ClientID:  tt.clientID,
+			})
+			if err != nil {
+				t.Fatalf("search returned error: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result after required-term filtering, got %d", len(results))
+			}
+			if got := results[0].Title; !strings.Contains(got, tt.wantTitlePart) {
+				t.Fatalf("expected %q result to pass, got %q", tt.wantTitlePart, got)
+			}
+		})
 	}
 }

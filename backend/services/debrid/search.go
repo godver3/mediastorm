@@ -218,6 +218,7 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 		MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
 		MaxResolution:     globalSettings.Filtering.MaxResolution,
 		HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		RequiredTerms:     globalSettings.Filtering.RequiredTerms,
 		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
 		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
 		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
@@ -242,6 +243,9 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			}
 			if profileFiltering.HDRDVPolicy != "" {
 				filterSettings.HDRDVPolicy = profileFiltering.HDRDVPolicy
+			}
+			if profileFiltering.RequiredTerms != nil {
+				filterSettings.RequiredTerms = profileFiltering.RequiredTerms
 			}
 			if profileFiltering.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = profileFiltering.FilterOutTerms
@@ -276,6 +280,9 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			}
 			if clientSettings.HDRDVPolicy != nil {
 				filterSettings.HDRDVPolicy = *clientSettings.HDRDVPolicy
+			}
+			if clientSettings.RequiredTerms != nil {
+				filterSettings.RequiredTerms = *clientSettings.RequiredTerms
 			}
 			if clientSettings.FilterOutTerms != nil {
 				filterSettings.FilterOutTerms = *clientSettings.FilterOutTerms
@@ -458,6 +465,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			MaxResolution:         filterSettings.MaxResolution,
 			HDRDVPolicy:           filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
 			AlternateTitles:       opts.AlternateTitles,
+			RequiredTerms:         filterSettings.RequiredTerms,
 			FilterOutTerms:        filterSettings.FilterOutTerms,
 			TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
 			EpisodeResolver:       opts.EpisodeResolver,

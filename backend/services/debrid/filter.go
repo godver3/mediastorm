@@ -16,6 +16,7 @@ type FilterOptions struct {
 	MaxResolution       string             // Maximum resolution (e.g., "720p", "1080p", "2160p", empty = no limit)
 	HDRDVPolicy         filter.HDRDVPolicy // HDR/DV inclusion policy
 	AlternateTitles     []string
+	RequiredTerms       []string                    // Terms where at least one must match for a result to be kept
 	FilterOutTerms      []string                    // Terms to filter out from results (case-insensitive match in title)
 	TotalSeriesEpisodes int                         // Deprecated: use EpisodeResolver instead
 	EpisodeResolver     filter.EpisodeCountResolver // Resolver for accurate episode counts from metadata
@@ -40,6 +41,7 @@ func FilterResults(results []models.NZBResult, opts FilterOptions) []models.NZBR
 		MaxResolution:         opts.MaxResolution,
 		HDRDVPolicy:           opts.HDRDVPolicy,
 		AlternateTitles:       opts.AlternateTitles,
+		RequiredTerms:         opts.RequiredTerms,
 		FilterOutTerms:        opts.FilterOutTerms,
 		TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
 		EpisodeResolver:       opts.EpisodeResolver,
