@@ -446,6 +446,12 @@ func isLiveTVRecordingProgress(progress models.PlaybackProgress) bool {
 	return strings.Contains(itemID, liveTVRecordingPathSegment) || strings.Contains(id, liveTVRecordingPathSegment)
 }
 
+func isLiveTVRecordingProgressUpdate(update models.PlaybackProgressUpdate) bool {
+	itemID := strings.ToLower(strings.TrimSpace(update.ItemID))
+	seriesID := strings.ToLower(strings.TrimSpace(update.SeriesID))
+	return strings.Contains(itemID, liveTVRecordingPathSegment) || strings.Contains(seriesID, liveTVRecordingPathSegment)
+}
+
 func isLegacyRecordingTitleProgress(progress models.PlaybackProgress, recordingTitleSet map[string]struct{}) bool {
 	if len(recordingTitleSet) == 0 || progress.MediaType != "movie" || len(progress.ExternalIDs) > 0 {
 		return false
@@ -3113,11 +3119,12 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 
 	// Grab real-time scrobbler reference while holding the lock
 	rtScrobbler := s.traktRTScrobbler
+	allowRealtimeScrobble := !isLiveTVRecordingProgressUpdate(update)
 
 	// Auto-mark as watched if >= 90% complete
 	if percentWatched >= 90 {
 		// Send scrobble/stop before marking as watched
-		if rtScrobbler != nil {
+		if rtScrobbler != nil && allowRealtimeScrobble {
 			go rtScrobbler.StopSession(userID, update, percentWatched)
 		}
 
@@ -3128,7 +3135,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 			// Log but don't fail the progress update
 			fmt.Printf("Warning: failed to auto-mark as watched: %v\n", err)
 		}
-	} else if rtScrobbler != nil {
+	} else if rtScrobbler != nil && allowRealtimeScrobble {
 		// Below 90%: report real-time progress (start/pause/refresh)
 		go rtScrobbler.HandleProgressUpdate(userID, update, percentWatched)
 	}

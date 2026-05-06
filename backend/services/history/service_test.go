@@ -20,6 +20,26 @@ type mockMetadataService struct {
 	err           error
 }
 
+type captureRealTimeScrobbler struct {
+	handleCalls chan models.PlaybackProgressUpdate
+	stopCalls   chan models.PlaybackProgressUpdate
+}
+
+func newCaptureRealTimeScrobbler() *captureRealTimeScrobbler {
+	return &captureRealTimeScrobbler{
+		handleCalls: make(chan models.PlaybackProgressUpdate, 1),
+		stopCalls:   make(chan models.PlaybackProgressUpdate, 1),
+	}
+}
+
+func (c *captureRealTimeScrobbler) HandleProgressUpdate(_ string, update models.PlaybackProgressUpdate, _ float64) {
+	c.handleCalls <- update
+}
+
+func (c *captureRealTimeScrobbler) StopSession(_ string, update models.PlaybackProgressUpdate, _ float64) {
+	c.stopCalls <- update
+}
+
 func (m *mockMetadataService) SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -3250,6 +3270,67 @@ func TestListContinueWatching_ExcludesLiveTVRecordingMovies(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("expected live TV recording to be excluded from continue watching, got %+v", items)
+	}
+}
+
+func TestUpdatePlaybackProgress_SkipsRealtimeScrobbleForLiveTVRecording(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	scrobbler := newCaptureRealTimeScrobbler()
+	svc.SetTraktRealTimeScrobbler(scrobbler)
+
+	recordingURL := "http://localhost:7860/api/live/recordings/rec-123/stream?token=abc"
+	if _, err := svc.UpdatePlaybackProgress("recording-user", models.PlaybackProgressUpdate{
+		MediaType: "movie",
+		ItemID:    recordingURL,
+		MovieName: "Sand Dollar Cove",
+		Position:  600,
+		Duration:  3600,
+		IsPaused:  false,
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	select {
+	case update := <-scrobbler.handleCalls:
+		t.Fatalf("expected no real-time scrobble for recording progress, got itemID %q", update.ItemID)
+	case update := <-scrobbler.stopCalls:
+		t.Fatalf("expected no real-time stop scrobble for recording progress, got itemID %q", update.ItemID)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestUpdatePlaybackProgress_RealtimeScrobblesNormalMovie(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	scrobbler := newCaptureRealTimeScrobbler()
+	svc.SetTraktRealTimeScrobbler(scrobbler)
+
+	if _, err := svc.UpdatePlaybackProgress("movie-user", models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:809137",
+		MovieName:   "Sand Dollar Cove",
+		Position:    600,
+		Duration:    3600,
+		IsPaused:    false,
+		ExternalIDs: map[string]string{"imdb": "tt14549712"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	select {
+	case update := <-scrobbler.handleCalls:
+		if update.ItemID != "tmdb:movie:809137" {
+			t.Fatalf("real-time scrobble itemID = %q, want tmdb:movie:809137", update.ItemID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected normal movie progress to trigger real-time scrobble")
 	}
 }
 
