@@ -739,18 +739,25 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		isOnlyAIOStreamsEnabled(settings.TorrentScrapers) &&
 		!includeUsenet
 
+	var scoringCtx *ScoringContext
 	if bypassRanking {
 		log.Printf("[indexer] Bypassing mediastorm ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	} else {
-		scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings)
+		ctx := s.buildScoringContext(opts, settings, filterSettings, animeSettings)
+		scoringCtx = &ctx
 		log.Printf("[indexer] Sorting %d results with %d ranking criteria, ServicePriority=%q, downloadRanking=%v", len(aggregated), len(scoringCtx.RankingCriteria), settings.Filtering.ServicePriority, opts.UseDownloadRanking)
-		s.sortResultsByScore(aggregated, scoringCtx)
+		s.sortResultsByScore(aggregated, *scoringCtx)
 	}
 
 	// Debug: log all results after sorting
 	for idx := 0; idx < len(aggregated); idx++ {
 		res := extractResolutionFromResult(aggregated[idx])
-		log.Printf("[indexer] Result #%d: ServiceType=%q Resolution=%d Size=%d Title=%q", idx, aggregated[idx].ServiceType, res, aggregated[idx].SizeBytes, aggregated[idx].Title)
+		if scoringCtx != nil {
+			score, _ := ScoreResult(aggregated[idx], *scoringCtx)
+			log.Printf("[indexer] Result #%d: Score=%d ServiceType=%q Resolution=%d Size=%d Title=%q", idx, score, aggregated[idx].ServiceType, res, aggregated[idx].SizeBytes, aggregated[idx].Title)
+		} else {
+			log.Printf("[indexer] Result #%d: Score=n/a ServiceType=%q Resolution=%d Size=%d Title=%q", idx, aggregated[idx].ServiceType, res, aggregated[idx].SizeBytes, aggregated[idx].Title)
+		}
 	}
 
 	// Apply per-resolution limit before global MaxResults truncation
@@ -830,16 +837,20 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	filterSettings, _, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 	filterOpts := s.buildFilterOptions(rawOpts, filterSettings)
 
 	detailed := filter.ResultsWithDetails(rawResults, filterOpts)
+	scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings)
 
 	// Separate passed and filtered
 	var passed, filtered []models.ScoredNZBResult
 	for _, fr := range detailed {
+		score, breakdown := ScoreResult(fr.Result, scoringCtx)
 		sr := models.ScoredNZBResult{
-			NZBResult: fr.Result,
+			NZBResult:      fr.Result,
+			TotalScore:     score,
+			ScoreBreakdown: breakdown,
 		}
 		if fr.Passed {
 			sr.FilterStatus = "passed"
@@ -851,16 +862,11 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		}
 	}
 
-	// Sort passed results using standard ranking
+	// Sort passed results by the same score used by standard ranking.
 	if len(passed) > 0 {
-		passedNZB := make([]models.NZBResult, len(passed))
-		for i, p := range passed {
-			passedNZB[i] = p.NZBResult
-		}
-		s.sortResults(passedNZB, opts, settings, filterSettings)
-		for i, r := range passedNZB {
-			passed[i].NZBResult = r
-		}
+		sort.SliceStable(passed, func(i, j int) bool {
+			return passed[i].TotalScore > passed[j].TotalScore
+		})
 
 		// Apply per-resolution limit to passed results (same as Search path)
 		maxPerRes := models.IntVal(filterOverrides.MaxResultsPerResolution, 0)

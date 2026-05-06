@@ -313,3 +313,31 @@ func TestScoreResult_DownloadPreferredTerms(t *testing.T) {
 		t.Fatal("expected download preferred terms breakdown item")
 	}
 }
+
+func TestSortResultsByScore_NegativeScoresLast(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingNonPreferredTerms, Name: "Non-Preferred Terms", Enabled: true, Order: 0},
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 1},
+		},
+		NonPreferredTerms: filter.CompileTerms([]string{"french=2"}),
+	}
+
+	results := []models.NZBResult{
+		{Title: "Wayward.Pines.S01E03.FRENCH.1080p.WEB-DL"},
+		{Title: "Wayward.Pines.S01E03.DVDRip"},
+		{Title: "Wayward.Pines.S01E03.1080p.WEB-DL"},
+	}
+
+	(&Service{}).sortResultsByScore(results, ctx)
+
+	if results[0].Title != "Wayward.Pines.S01E03.1080p.WEB-DL" {
+		t.Fatalf("expected positive-scored result first, got %q", results[0].Title)
+	}
+	if results[1].Title != "Wayward.Pines.S01E03.DVDRip" {
+		t.Fatalf("expected neutral-scored result second, got %q", results[1].Title)
+	}
+	if results[2].Title != "Wayward.Pines.S01E03.FRENCH.1080p.WEB-DL" {
+		t.Fatalf("expected negative-scored result last, got %q", results[2].Title)
+	}
+}
