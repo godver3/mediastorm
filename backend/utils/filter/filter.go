@@ -344,7 +344,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 		// Target episode filtering for TV shows
 		// This rejects season packs and episodes that obviously can't contain the target episode
 		// Skip this check for daily shows with matching dates - they use date-based matching instead
-		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetAbsoluteEpisode > 0) && !hasDailyDate {
+		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetEpisode > 0 || opts.TargetAbsoluteEpisode > 0) && !hasDailyDate {
 			if rejected, reason := shouldRejectByTargetEpisode(parsed, opts); rejected {
 				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
 				reject(result, reason)
@@ -884,12 +884,13 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 	if parsed == nil {
 		return false, ""
 	}
+	hasTargetSeason := opts.TargetSeason > 0 || (opts.TargetSeason == 0 && opts.TargetEpisode > 0)
 
 	// Case 1: Season pack(s) - reject if none of the seasons match the target
 	// A season pack has seasons but no specific episodes
 	isSeasonPack := len(parsed.Seasons) > 0 && len(parsed.Episodes) == 0
 
-	if isSeasonPack && opts.TargetSeason > 0 {
+	if isSeasonPack && hasTargetSeason {
 		// Check if target season is in the pack's seasons
 		targetInPack := false
 		for _, s := range parsed.Seasons {
@@ -953,7 +954,7 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 			if !hasMatchingEpisode {
 				return true, fmt.Sprintf("anime episode %v does not match target absolute episode %d", parsed.Episodes, opts.TargetAbsoluteEpisode)
 			}
-		} else if !isAnimeAbsoluteFormat && hasSeason && opts.TargetSeason > 0 {
+		} else if !isAnimeAbsoluteFormat && hasSeason && hasTargetSeason {
 			// Standard seasonal release - check season then episode
 			seasonMatch := false
 			for _, s := range parsed.Seasons {

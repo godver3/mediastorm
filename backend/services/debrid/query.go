@@ -90,7 +90,7 @@ func ParseQuery(raw string) ParsedQuery {
 		if episode, err := strconv.Atoi(match[2]); err == nil {
 			parsed.Episode = episode
 		}
-		if parsed.Season > 0 && parsed.Episode > 0 {
+		if parsed.Season >= 0 && parsed.Episode > 0 {
 			parsed.MediaType = MediaTypeSeries
 			parsed.HasSeasonMatch = true
 			candidate = removeSubstring(candidate, match[0])
@@ -102,7 +102,7 @@ func ParseQuery(raw string) ParsedQuery {
 		if episode, err := strconv.Atoi(match[2]); err == nil {
 			parsed.Episode = episode
 		}
-		if parsed.Season > 0 && parsed.Episode > 0 {
+		if parsed.Season >= 0 && parsed.Episode > 0 {
 			parsed.MediaType = MediaTypeSeries
 			parsed.HasSeasonMatch = true
 			candidate = removeSubstring(candidate, match[0])

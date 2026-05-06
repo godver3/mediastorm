@@ -74,6 +74,29 @@ func TestResults_TVShowFiltering(t *testing.T) {
 	}
 }
 
+func TestResults_TVSpecialEpisodeFiltering(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "The.Bear.S00E01.Gary.2160p.DSNP.WEB-DL.H.265-FLUX"}, // Target special
+		{Title: "The.Bear.S01E01.System.2160p.DSNP.WEB-DL.H.265-FLUX"},
+		{Title: "Little.Bear.S00E01.The.Little.Bear.Movie.480p.WEB-DL"},
+	}
+
+	opts := Options{
+		ExpectedTitle: "The Bear",
+		IsMovie:       false,
+		TargetSeason:  0,
+		TargetEpisode: 1,
+	}
+
+	filtered := Results(results, opts)
+	if len(filtered) != 1 {
+		t.Fatalf("expected only the matching special to pass, got %d", len(filtered))
+	}
+	if filtered[0].Title != results[0].Title {
+		t.Fatalf("filtered title = %q, want %q", filtered[0].Title, results[0].Title)
+	}
+}
+
 func TestResults_NoFiltering(t *testing.T) {
 	results := []models.NZBResult{
 		{Title: "Some.Random.Release.1080p.BluRay.x264"},

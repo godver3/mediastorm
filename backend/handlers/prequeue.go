@@ -367,7 +367,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	var targetEpisode *models.EpisodeReference
 	if mediaType == "series" || mediaType == "tv" || mediaType == "show" {
 		// If episode was explicitly provided, use it
-		if req.SeasonNumber > 0 && req.EpisodeNumber > 0 {
+		if req.SeasonNumber >= 0 && req.EpisodeNumber > 0 {
 			targetEpisode = &models.EpisodeReference{
 				SeasonNumber:          req.SeasonNumber,
 				EpisodeNumber:         req.EpisodeNumber,
@@ -550,7 +550,7 @@ func buildDisplayName(titleName string, year int, episode *models.EpisodeReferen
 	}
 
 	// For series with episode info
-	if episode != nil && episode.SeasonNumber > 0 && episode.EpisodeNumber > 0 {
+	if episode != nil && episode.SeasonNumber >= 0 && episode.EpisodeNumber > 0 {
 		return fmt.Sprintf("%s S%02dE%02d", titleName, episode.SeasonNumber, episode.EpisodeNumber)
 	}
 
@@ -1199,7 +1199,7 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 
 	// Build target episode for series (mediaType may be "series" or "episode")
 	var targetEpisode *models.EpisodeReference
-	if req.SeasonNumber > 0 && req.EpisodeNumber > 0 {
+	if req.SeasonNumber >= 0 && req.EpisodeNumber > 0 {
 		targetEpisode = &models.EpisodeReference{
 			SeasonNumber:  req.SeasonNumber,
 			EpisodeNumber: req.EpisodeNumber,
@@ -1403,7 +1403,7 @@ func (h *PrequeueHandler) buildSearchQuery(titleName, mediaType string, targetEp
 	}
 
 	// For series, append episode code (matching frontend buildEpisodeQuery format)
-	if targetEpisode != nil && targetEpisode.SeasonNumber > 0 && targetEpisode.EpisodeNumber > 0 {
+	if targetEpisode != nil && targetEpisode.SeasonNumber >= 0 && targetEpisode.EpisodeNumber > 0 {
 		return fmt.Sprintf("%s S%sE%s", titleName, padNumber(targetEpisode.SeasonNumber), padNumber(targetEpisode.EpisodeNumber))
 	}
 

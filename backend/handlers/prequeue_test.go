@@ -185,6 +185,19 @@ func TestShouldForceReresolveForStatus(t *testing.T) {
 	}
 }
 
+func TestPrequeueEpisodeHelpers_AllowSpecials(t *testing.T) {
+	handler := &PrequeueHandler{}
+	episode := &models.EpisodeReference{SeasonNumber: 0, EpisodeNumber: 1}
+
+	if got, want := buildDisplayName("The Bear", 2022, episode), "The Bear S00E01"; got != want {
+		t.Fatalf("buildDisplayName = %q, want %q", got, want)
+	}
+
+	if got, want := handler.buildSearchQuery("The Bear", "series", episode), "The Bear S00E01"; got != want {
+		t.Fatalf("buildSearchQuery = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultExternalURLValidator(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	defer func() { http.DefaultTransport = originalTransport }()
