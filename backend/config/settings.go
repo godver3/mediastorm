@@ -248,6 +248,62 @@ type LiveTVFilterSettings struct {
 	MaxChannels       int      `json:"maxChannels"`       // Overall channel limit (0 = no limit)
 }
 
+func (f *LiveTVFilterSettings) UnmarshalJSON(data []byte) error {
+	type alias LiveTVFilterSettings
+	var raw struct {
+		EnabledCategories interface{} `json:"enabledCategories"`
+		MaxChannels       int         `json:"maxChannels"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	f.MaxChannels = raw.MaxChannels
+	switch v := raw.EnabledCategories.(type) {
+	case nil:
+		f.EnabledCategories = nil
+	case []interface{}:
+		f.EnabledCategories = make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				f.EnabledCategories = append(f.EnabledCategories, s)
+			}
+		}
+	case string:
+		if strings.TrimSpace(v) == "" {
+			f.EnabledCategories = nil
+		} else {
+			f.EnabledCategories = []string{v}
+		}
+	default:
+		var decoded alias
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return err
+		}
+		*f = LiveTVFilterSettings(decoded)
+	}
+	return nil
+}
+
+// LivePlaylistSource represents a named M3U playlist source.
+type LivePlaylistSource struct {
+	ID                    string               `json:"id"`
+	Name                  string               `json:"name"`
+	Mode                  string               `json:"mode,omitempty"`
+	PlaylistURL           string               `json:"playlistUrl"`
+	XtreamHost            string               `json:"xtreamHost,omitempty"`
+	XtreamUsername        string               `json:"xtreamUsername,omitempty"`
+	XtreamPassword        string               `json:"xtreamPassword,omitempty"`
+	MaxStreams            int                  `json:"maxStreams,omitempty"`
+	PlaylistCacheTTLHours int                  `json:"playlistCacheTtlHours,omitempty"`
+	ProbeSizeMB           int                  `json:"probeSizeMb,omitempty"`
+	AnalyzeDurationSec    int                  `json:"analyzeDurationSec,omitempty"`
+	LowLatency            bool                 `json:"lowLatency,omitempty"`
+	StreamFormat          string               `json:"streamFormat,omitempty"`
+	Filtering             LiveTVFilterSettings `json:"filtering,omitempty"`
+	EPG                   EPGSettings          `json:"epg,omitempty"`
+	Enabled               *bool                `json:"enabled,omitempty"`
+}
+
 // EPGSource represents a single EPG data source.
 type EPGSource struct {
 	ID       string `json:"id"`
@@ -270,8 +326,10 @@ type EPGSettings struct {
 
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
-	Mode                  string               `json:"mode"`           // "m3u" or "xtream" - how to source the playlist
-	PlaylistURL           string               `json:"playlistUrl"`    // M3U playlist URL (used when mode is "m3u")
+	Mode                  string               `json:"mode"`        // "m3u" or "xtream" - how to source the playlist
+	PlaylistURL           string               `json:"playlistUrl"` // M3U playlist URL (used when mode is "m3u")
+	Sources               []LivePlaylistSource `json:"sources,omitempty"`
+	PlaylistSources       []LivePlaylistSource `json:"playlistSources,omitempty"`
 	XtreamHost            string               `json:"xtreamHost"`     // Xtream Codes server URL (e.g., "http://example.com:8080")
 	XtreamUsername        string               `json:"xtreamUsername"` // Xtream Codes username
 	XtreamPassword        string               `json:"xtreamPassword"` // Xtream Codes password
@@ -1006,6 +1064,8 @@ func (m *Manager) Load() (Settings, error) {
 		raw["ui"] = map[string]interface{}{"loadingAnimationEnabled": true}
 	}
 
+	migrateLiveSourcesRaw(raw)
+
 	// Apply versioned migrations (settings field relocations)
 	MigrateRawSettings(raw)
 
@@ -1412,6 +1472,107 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	return s, nil
+}
+
+func migrateLiveSourcesRaw(raw map[string]interface{}) {
+	liveRaw, ok := raw["live"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	sources, hasSources := liveRaw["sources"].([]interface{})
+	if !hasSources || len(sources) == 0 {
+		if legacySources, ok := liveRaw["playlistSources"].([]interface{}); ok && len(legacySources) > 0 {
+			sources = legacySources
+		} else if liveHasLegacySourceConfig(liveRaw) {
+			sources = []interface{}{map[string]interface{}{}}
+		}
+		if len(sources) > 0 {
+			liveRaw["sources"] = sources
+		}
+	}
+	if len(sources) == 0 {
+		return
+	}
+
+	first, ok := sources[0].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if _, ok := first["name"]; !ok {
+		first["name"] = "Default"
+	}
+	if _, ok := first["enabled"]; !ok {
+		first["enabled"] = true
+	}
+
+	copyIfMissing := func(key string) {
+		if _, exists := first[key]; exists {
+			return
+		}
+		if value, exists := liveRaw[key]; exists {
+			first[key] = value
+		}
+	}
+
+	for _, key := range []string{
+		"mode",
+		"playlistUrl",
+		"xtreamHost",
+		"xtreamUsername",
+		"xtreamPassword",
+		"maxStreams",
+		"playlistCacheTtlHours",
+		"probeSizeMb",
+		"analyzeDurationSec",
+		"lowLatency",
+		"streamFormat",
+		"filtering",
+		"epg",
+	} {
+		copyIfMissing(key)
+	}
+}
+
+func liveHasLegacySourceConfig(liveRaw map[string]interface{}) bool {
+	for _, key := range []string{
+		"playlistUrl",
+		"xtreamHost",
+		"xtreamUsername",
+		"xtreamPassword",
+		"maxStreams",
+		"playlistCacheTtlHours",
+		"probeSizeMb",
+		"analyzeDurationSec",
+		"lowLatency",
+		"streamFormat",
+		"filtering",
+		"epg",
+	} {
+		if value, exists := liveRaw[key]; exists && !isZeroRawValue(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isZeroRawValue(value interface{}) bool {
+	switch v := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(v) == ""
+	case float64:
+		return v == 0
+	case bool:
+		return !v
+	case []interface{}:
+		return len(v) == 0
+	case map[string]interface{}:
+		return len(v) == 0
+	default:
+		return false
+	}
 }
 
 // Save writes the provided settings to disk atomically.

@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"novastream/config"
@@ -213,6 +215,109 @@ http://stream2.example.com`,
 				}
 			}
 		})
+	}
+}
+
+func TestResolvedM3USourcesFallbackAndFiltering(t *testing.T) {
+	enabled := true
+	disabled := false
+	src := models.ResolvedLiveSource{
+		PlaylistURL: "http://legacy.example/live.m3u",
+		PlaylistSources: []models.LivePlaylistSource{
+			{ID: "news", Name: "News", PlaylistURL: "http://example.com/news.m3u", Enabled: &enabled},
+			{ID: "off", Name: "Off", PlaylistURL: "http://example.com/off.m3u", Enabled: &disabled},
+			{Name: "Sports", PlaylistURL: "http://example.com/sports.m3u"},
+		},
+	}
+
+	got := resolvedM3USources(src)
+	if len(got) != 2 {
+		t.Fatalf("resolvedM3USources length = %d, want 2", len(got))
+	}
+	if got[0].ID != "news" || got[0].Name != "News" {
+		t.Fatalf("first source = %+v, want news source", got[0])
+	}
+	if got[1].Name != "Sports" || got[1].ID == "" {
+		t.Fatalf("second source = %+v, want generated sports source", got[1])
+	}
+
+	fallback := resolvedM3USources(models.ResolvedLiveSource{PlaylistURL: "http://legacy.example/live.m3u"})
+	if len(fallback) != 1 || fallback[0].ID != "default" || fallback[0].Name != "Default" {
+		t.Fatalf("fallback source = %+v, want default legacy source", fallback)
+	}
+}
+
+func TestTagChannelsWithSourcePrefixesIDs(t *testing.T) {
+	channels := []LiveChannel{{ID: "same", Name: "Channel", URL: "http://stream.example/live"}}
+	source := resolvedM3USource{ID: "sports", Name: "Sports", PlaylistURL: "http://example.com/sports.m3u"}
+
+	got := tagChannelsWithSource(channels, source, true)
+	if len(got) != 1 {
+		t.Fatalf("tagged length = %d, want 1", len(got))
+	}
+	if got[0].ID != "sports:same" {
+		t.Errorf("ID = %q, want sports:same", got[0].ID)
+	}
+	if got[0].SourceID != "sports" || got[0].SourceName != "Sports" {
+		t.Errorf("source metadata = %q/%q, want sports/Sports", got[0].SourceID, got[0].SourceName)
+	}
+}
+
+func TestGetChannelsFiltersBySourceID(t *testing.T) {
+	playlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/news.m3u":
+			_, _ = w.Write([]byte(`#EXTM3U
+#EXTINF:-1 tvg-id="news" tvg-name="News",News
+http://stream.example/news`))
+		case "/sports.m3u":
+			_, _ = w.Write([]byte(`#EXTM3U
+#EXTINF:-1 tvg-id="sports" tvg-name="Sports",Sports
+http://stream.example/sports`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer playlistServer.Close()
+
+	enabled := true
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(config.Settings{
+		Live: config.LiveSettings{
+			Mode:           "xtream",
+			XtreamHost:     playlistServer.URL,
+			XtreamUsername: "legacy-user",
+			XtreamPassword: "legacy-pass",
+			Sources: []config.LivePlaylistSource{
+				{ID: "news-src", Name: "News Source", Mode: "m3u", PlaylistURL: playlistServer.URL + "/news.m3u", Enabled: &enabled},
+				{ID: "sports-src", Name: "Sports Source", Mode: "m3u", PlaylistURL: playlistServer.URL + "/sports.m3u", Enabled: &enabled},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := NewLiveHandler(playlistServer.Client(), false, "", 24, 0, 0, false, mgr, nil)
+	req := httptest.NewRequest(http.MethodGet, "/live/channels?sourceId=sports-src", nil)
+	rec := httptest.NewRecorder()
+	h.GetChannels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp LiveChannelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Channels) != 1 {
+		t.Fatalf("channels length = %d, want 1: %+v", len(resp.Channels), resp.Channels)
+	}
+	if resp.Channels[0].Name != "Sports" || resp.Channels[0].SourceID != "sports-src" {
+		t.Fatalf("channel = %+v, want sports source only", resp.Channels[0])
+	}
+	if len(resp.Sources) != 2 {
+		t.Fatalf("sources length = %d, want 2", len(resp.Sources))
 	}
 }
 

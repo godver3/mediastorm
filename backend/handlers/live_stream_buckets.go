@@ -30,6 +30,8 @@ func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
 	return models.ResolvedLiveSource{
 		Mode:                    settings.Live.Mode,
 		PlaylistURL:             settings.Live.PlaylistURL,
+		Sources:                 configPlaylistSourcesToModel(settings.Live.Sources),
+		PlaylistSources:         configPlaylistSourcesToModel(settings.Live.PlaylistSources),
 		XtreamHost:              settings.Live.XtreamHost,
 		XtreamUsername:          settings.Live.XtreamUsername,
 		XtreamPassword:          settings.Live.XtreamPassword,
@@ -46,6 +48,38 @@ func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
 		EPGRefreshIntervalHours: settings.Live.EPG.RefreshIntervalHours,
 		EPGRetentionDays:        settings.Live.EPG.RetentionDays,
 	}
+}
+
+func configPlaylistSourcesToModel(sources []config.LivePlaylistSource) []models.LivePlaylistSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	result := make([]models.LivePlaylistSource, 0, len(sources))
+	for _, src := range sources {
+		result = append(result, models.LivePlaylistSource{
+			ID:                    src.ID,
+			Name:                  src.Name,
+			Mode:                  src.Mode,
+			PlaylistURL:           src.PlaylistURL,
+			XtreamHost:            src.XtreamHost,
+			XtreamUsername:        src.XtreamUsername,
+			XtreamPassword:        src.XtreamPassword,
+			MaxStreams:            src.MaxStreams,
+			PlaylistCacheTTLHours: src.PlaylistCacheTTLHours,
+			ProbeSizeMB:           src.ProbeSizeMB,
+			AnalyzeDurationSec:    src.AnalyzeDurationSec,
+			StreamFormat:          src.StreamFormat,
+			EnabledCategories:     src.Filtering.EnabledCategories,
+			Enabled:               src.Enabled,
+		})
+		if src.LowLatency {
+			result[len(result)-1].LowLatency = &src.LowLatency
+		}
+		if src.Filtering.MaxChannels != 0 {
+			result[len(result)-1].MaxChannels = &src.Filtering.MaxChannels
+		}
+	}
+	return result
 }
 
 func resolveLiveStreamTarget(global models.ResolvedLiveSource, profile *models.UserSettings) liveStreamTarget {
@@ -91,6 +125,9 @@ func deriveLiveBucket(provider string, src models.ResolvedLiveSource) (string, s
 		}
 	} else {
 		playlist := strings.TrimSpace(src.PlaylistURL)
+		if playlist == "" && len(src.PlaylistSources) > 0 {
+			playlist = strings.TrimSpace(src.PlaylistSources[0].PlaylistURL)
+		}
 		host := normalizeHost(playlist)
 		identity = "m3u|" + strings.ToLower(playlist)
 		if host == "" {

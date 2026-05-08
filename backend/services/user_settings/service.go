@@ -337,6 +337,8 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		len(s.LiveTV.SelectedCategories) > 0 ||
 		s.LiveTV.Mode != nil ||
 		s.LiveTV.PlaylistURL != nil ||
+		len(s.LiveTV.Sources) > 0 ||
+		len(s.LiveTV.PlaylistSources) > 0 ||
 		s.LiveTV.XtreamHost != nil ||
 		s.LiveTV.XtreamUsername != nil ||
 		s.LiveTV.XtreamPassword != nil ||

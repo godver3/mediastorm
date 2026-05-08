@@ -78,6 +78,31 @@ func TestResolveLiveSource_OverrideFields(t *testing.T) {
 	}
 }
 
+func TestResolveLiveSource_ProfilePlaylistSourcesOverrideGlobal(t *testing.T) {
+	enabled := true
+	profile := &LiveTVSettings{
+		PlaylistSources: []LivePlaylistSource{
+			{ID: "sports", Name: "Sports", PlaylistURL: "http://profile.example/sports.m3u", Enabled: &enabled},
+		},
+	}
+
+	g := newGlobal()
+	g.PlaylistSources = []LivePlaylistSource{
+		{ID: "global", Name: "Global", PlaylistURL: "http://global.example/live.m3u", Enabled: &enabled},
+	}
+
+	r := ResolveLiveSource(profile, g)
+	if len(r.PlaylistSources) != 1 {
+		t.Fatalf("PlaylistSources length = %d, want 1", len(r.PlaylistSources))
+	}
+	if r.PlaylistSources[0].ID != "sports" {
+		t.Errorf("PlaylistSources[0].ID = %q, want sports", r.PlaylistSources[0].ID)
+	}
+	if r.PlaylistURL != "http://global.m3u" {
+		t.Errorf("legacy PlaylistURL fallback = %q, want global legacy URL", r.PlaylistURL)
+	}
+}
+
 func TestResolveLiveSource_PartialOverride(t *testing.T) {
 	profile := &LiveTVSettings{
 		XtreamUsername: StringPtr("override-user"),

@@ -98,12 +98,14 @@ type LiveTVSettings struct {
 	FavoriteChannels   []string `json:"favoriteChannels"`   // Channel IDs that are favorited
 	SelectedCategories []string `json:"selectedCategories"` // Selected category filters
 	// Per-profile IPTV source override (nil = use global)
-	Mode           *string `json:"mode,omitempty"`
-	PlaylistURL    *string `json:"playlistUrl,omitempty"`
-	XtreamHost     *string `json:"xtreamHost,omitempty"`
-	XtreamUsername *string `json:"xtreamUsername,omitempty"`
-	XtreamPassword *string `json:"xtreamPassword,omitempty"`
-	MaxStreams     *int    `json:"maxStreams,omitempty"`
+	Mode            *string              `json:"mode,omitempty"`
+	PlaylistURL     *string              `json:"playlistUrl,omitempty"`
+	Sources         []LivePlaylistSource `json:"sources,omitempty"`
+	PlaylistSources []LivePlaylistSource `json:"playlistSources,omitempty"`
+	XtreamHost      *string              `json:"xtreamHost,omitempty"`
+	XtreamUsername  *string              `json:"xtreamUsername,omitempty"`
+	XtreamPassword  *string              `json:"xtreamPassword,omitempty"`
+	MaxStreams      *int                 `json:"maxStreams,omitempty"`
 	// Per-profile tuning overrides (nil = use global)
 	PlaylistCacheTTLHours *int    `json:"playlistCacheTtlHours,omitempty"`
 	ProbeSizeMB           *int    `json:"probeSizeMb,omitempty"`
@@ -114,6 +116,37 @@ type LiveTVSettings struct {
 	Filtering *LiveTVFilterOverrides `json:"filtering,omitempty"`
 	// Per-profile EPG overrides (nil = use global)
 	EPG *EPGOverrides `json:"epg,omitempty"`
+}
+
+// LivePlaylistSource represents a named M3U playlist source.
+type LivePlaylistSource struct {
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"`
+	Mode                  string                 `json:"mode,omitempty"`
+	PlaylistURL           string                 `json:"playlistUrl"`
+	XtreamHost            string                 `json:"xtreamHost,omitempty"`
+	XtreamUsername        string                 `json:"xtreamUsername,omitempty"`
+	XtreamPassword        string                 `json:"xtreamPassword,omitempty"`
+	MaxStreams            int                    `json:"maxStreams,omitempty"`
+	PlaylistCacheTTLHours int                    `json:"playlistCacheTtlHours,omitempty"`
+	ProbeSizeMB           int                    `json:"probeSizeMb,omitempty"`
+	AnalyzeDurationSec    int                    `json:"analyzeDurationSec,omitempty"`
+	LowLatency            *bool                  `json:"lowLatency,omitempty"`
+	StreamFormat          string                 `json:"streamFormat,omitempty"`
+	Filtering             *LiveTVFilterOverrides `json:"filtering,omitempty"`
+	EnabledCategories     []string               `json:"enabledCategories,omitempty"`
+	MaxChannels           *int                   `json:"maxChannels,omitempty"`
+	EPG                   *LivePlaylistEPGSource `json:"epg,omitempty"`
+	Enabled               *bool                  `json:"enabled,omitempty"`
+}
+
+// LivePlaylistEPGSource contains per-source EPG overrides.
+type LivePlaylistEPGSource struct {
+	Enabled              *bool   `json:"enabled,omitempty"`
+	XmltvUrl             *string `json:"xmltvUrl,omitempty"`
+	RefreshIntervalHours *int    `json:"refreshIntervalHours,omitempty"`
+	RetentionDays        *int    `json:"retentionDays,omitempty"`
+	TimeOffsetMinutes    *int    `json:"timeOffsetMinutes,omitempty"`
 }
 
 // LiveTVFilterOverrides contains per-profile channel filtering overrides.
@@ -136,6 +169,8 @@ type EPGOverrides struct {
 type ResolvedLiveSource struct {
 	Mode                    string
 	PlaylistURL             string
+	Sources                 []LivePlaylistSource
+	PlaylistSources         []LivePlaylistSource
 	XtreamHost              string
 	XtreamUsername          string
 	XtreamPassword          string
@@ -166,6 +201,12 @@ func ResolveLiveSource(profile *LiveTVSettings, global *ResolvedLiveSource) Reso
 	}
 	if profile.PlaylistURL != nil {
 		r.PlaylistURL = *profile.PlaylistURL
+	}
+	if len(profile.Sources) > 0 {
+		r.Sources = append([]LivePlaylistSource(nil), profile.Sources...)
+	}
+	if len(profile.PlaylistSources) > 0 {
+		r.PlaylistSources = append([]LivePlaylistSource(nil), profile.PlaylistSources...)
 	}
 	if profile.XtreamHost != nil {
 		r.XtreamHost = *profile.XtreamHost

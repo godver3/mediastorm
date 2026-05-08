@@ -225,6 +225,12 @@ func redactSettings(s *config.Settings) {
 
 	// Live (Xtream)
 	mask(&s.Live.XtreamPassword)
+	for i := range s.Live.Sources {
+		mask(&s.Live.Sources[i].XtreamPassword)
+	}
+	for i := range s.Live.PlaylistSources {
+		mask(&s.Live.PlaylistSources[i].XtreamPassword)
+	}
 
 	// Database URL (may contain credentials in the connection string)
 	mask(&s.Database.URL)
@@ -319,6 +325,16 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 
 	// Live (Xtream)
 	restore(&incoming.Live.XtreamPassword, existing.Live.XtreamPassword)
+	for i := range incoming.Live.Sources {
+		if i < len(existing.Live.Sources) {
+			restore(&incoming.Live.Sources[i].XtreamPassword, existing.Live.Sources[i].XtreamPassword)
+		}
+	}
+	for i := range incoming.Live.PlaylistSources {
+		if i < len(existing.Live.PlaylistSources) {
+			restore(&incoming.Live.PlaylistSources[i].XtreamPassword, existing.Live.PlaylistSources[i].XtreamPassword)
+		}
+	}
 
 	// Database URL
 	restore(&incoming.Database.URL, existing.Database.URL)
@@ -685,6 +701,21 @@ func (h *SettingsHandler) ensurePlaylistTaskIfConfigured(s *config.Settings) {
 	switch s.Live.Mode {
 	case "m3u":
 		liveTVConfigured = strings.TrimSpace(s.Live.PlaylistURL) != ""
+		if !liveTVConfigured {
+			for _, src := range append(s.Live.Sources, s.Live.PlaylistSources...) {
+				if src.Enabled != nil && !*src.Enabled {
+					continue
+				}
+				mode := strings.TrimSpace(strings.ToLower(src.Mode))
+				if mode != "" && mode != "m3u" {
+					continue
+				}
+				if strings.TrimSpace(src.PlaylistURL) != "" {
+					liveTVConfigured = true
+					break
+				}
+			}
+		}
 	case "xtream":
 		liveTVConfigured = strings.TrimSpace(s.Live.XtreamHost) != "" &&
 			strings.TrimSpace(s.Live.XtreamUsername) != "" &&

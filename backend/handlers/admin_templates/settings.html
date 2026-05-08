@@ -248,7 +248,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Per-user sections: liveTV IPTV source overrides are configured here; channel preferences use a custom manager.
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'display', 'network', 'ranking', 'ranking.criteria'];
+    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'liveTV.sources', 'liveTV.playlistSources', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -2182,14 +2182,32 @@
         }
         const newItem = {};
         for (const [fieldKey, fieldDef] of Object.entries(sectionDef.fields)) {
+            let defaultValue;
             switch (fieldDef.type) {
-                case 'boolean': newItem[fieldKey] = false; break;
-                case 'number': newItem[fieldKey] = 0; break;
+                case 'boolean': defaultValue = (sectionKey.endsWith('sources') || sectionKey.endsWith('playlistSources')) && fieldKey === 'enabled'; break;
+                case 'number': defaultValue = 0; break;
+                case 'multiselect':
+                case 'checkboxes':
+                case 'tags':
+                case 'weighted-tags':
+                    defaultValue = [];
+                    break;
                 case 'select':
                     const firstOpt = fieldDef.options?.[0];
-                    newItem[fieldKey] = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
+                    defaultValue = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
                     break;
-                default: newItem[fieldKey] = '';
+                default: defaultValue = '';
+            }
+            if (fieldKey.includes('.')) {
+                const parts = fieldKey.split('.');
+                let target = newItem;
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (!target[parts[i]]) target[parts[i]] = {};
+                    target = target[parts[i]];
+                }
+                target[parts[parts.length - 1]] = defaultValue;
+            } else {
+                newItem[fieldKey] = defaultValue;
             }
         }
         arr.push(newItem);
@@ -3104,15 +3122,16 @@
                 .map(([fieldKey, fieldDef]) => {
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
+                    const getItemValue = (path) => path.split('.').reduce((obj, key) => obj?.[key], item);
                     let shouldShow = false;
                     if (typeof showWhen === 'string' && showWhen.includes('=')) {
                         // Simple string format: "field=value"
                         const [field, value] = showWhen.split('=');
-                        shouldShow = item[field] === value;
+                        shouldShow = getItemValue(field) === value;
                     } else if (showWhen.operator === 'or' && Array.isArray(showWhen.conditions)) {
-                        shouldShow = showWhen.conditions.some(cond => item[cond.field] === cond.value);
+                        shouldShow = showWhen.conditions.some(cond => getItemValue(cond.field) === cond.value);
                     } else if (showWhen.field) {
-                        shouldShow = item[showWhen.field] === showWhen.value;
+                        shouldShow = getItemValue(showWhen.field) === showWhen.value;
                     }
                     if (!shouldShow) return '';
                 }

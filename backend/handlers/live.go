@@ -43,14 +43,23 @@ type LiveChannel struct {
 	TvgID       string `json:"tvgId,omitempty"`
 	TvgName     string `json:"tvgName,omitempty"`
 	TvgLanguage string `json:"tvgLanguage,omitempty"`
+	SourceID    string `json:"sourceId,omitempty"`
+	SourceName  string `json:"sourceName,omitempty"`
 	StreamURL   string `json:"streamUrl,omitempty"` // Backend-proxied stream URL
+}
+
+// LiveSourceOption represents a selectable M3U source exposed to clients.
+type LiveSourceOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // LiveChannelsResponse is the response for the GetChannels endpoint.
 type LiveChannelsResponse struct {
-	Channels            []LiveChannel `json:"channels"`
-	TotalBeforeFilter   int           `json:"totalBeforeFilter"`
-	AvailableCategories []string      `json:"availableCategories"`
+	Channels            []LiveChannel      `json:"channels"`
+	TotalBeforeFilter   int                `json:"totalBeforeFilter"`
+	AvailableCategories []string           `json:"availableCategories"`
+	Sources             []LiveSourceOption `json:"sources,omitempty"`
 }
 
 // CategoryInfo represents category metadata.
@@ -616,6 +625,171 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 	return channels
 }
 
+type resolvedM3USource struct {
+	ID             string
+	Name           string
+	Mode           string
+	PlaylistURL    string
+	XtreamHost     string
+	XtreamUsername string
+	XtreamPassword string
+}
+
+func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
+	var sources []resolvedM3USource
+	usedIDs := make(map[string]bool)
+	candidates := src.Sources
+	if len(candidates) == 0 {
+		candidates = src.PlaylistSources
+	}
+	for i, candidate := range candidates {
+		mode := strings.TrimSpace(strings.ToLower(candidate.Mode))
+		if mode == "" {
+			mode = "m3u"
+		}
+		if mode == "m3u" && strings.TrimSpace(candidate.PlaylistURL) == "" {
+			continue
+		}
+		if mode == "xtream" && (strings.TrimSpace(candidate.XtreamHost) == "" || strings.TrimSpace(candidate.XtreamUsername) == "" || strings.TrimSpace(candidate.XtreamPassword) == "") {
+			continue
+		}
+		if candidate.Enabled != nil && !*candidate.Enabled {
+			continue
+		}
+		id := strings.TrimSpace(candidate.ID)
+		if id == "" {
+			id = stableLiveSourceID(candidate.Name, liveSourceIdentity(candidate), i)
+		}
+		id = uniqueLiveSourceID(id, usedIDs)
+		name := strings.TrimSpace(candidate.Name)
+		if name == "" {
+			name = fmt.Sprintf("Source %d", len(sources)+1)
+		}
+		sources = append(sources, resolvedM3USource{
+			ID:             id,
+			Name:           name,
+			Mode:           mode,
+			PlaylistURL:    strings.TrimSpace(candidate.PlaylistURL),
+			XtreamHost:     strings.TrimSpace(candidate.XtreamHost),
+			XtreamUsername: strings.TrimSpace(candidate.XtreamUsername),
+			XtreamPassword: strings.TrimSpace(candidate.XtreamPassword),
+		})
+		if candidate.Filtering != nil {
+			candidate.EnabledCategories = candidate.Filtering.EnabledCategories
+			if candidate.Filtering.MaxChannels != nil {
+				candidate.MaxChannels = candidate.Filtering.MaxChannels
+			}
+		}
+	}
+	if len(sources) == 0 && strings.TrimSpace(src.PlaylistURL) != "" {
+		sources = append(sources, resolvedM3USource{
+			ID:          "default",
+			Name:        "Default",
+			Mode:        "m3u",
+			PlaylistURL: strings.TrimSpace(src.PlaylistURL),
+		})
+	}
+	if len(sources) == 0 &&
+		strings.EqualFold(strings.TrimSpace(src.Mode), "xtream") &&
+		strings.TrimSpace(src.XtreamHost) != "" &&
+		strings.TrimSpace(src.XtreamUsername) != "" &&
+		strings.TrimSpace(src.XtreamPassword) != "" {
+		sources = append(sources, resolvedM3USource{
+			ID:             "default",
+			Name:           "Default",
+			Mode:           "xtream",
+			XtreamHost:     strings.TrimSpace(src.XtreamHost),
+			XtreamUsername: strings.TrimSpace(src.XtreamUsername),
+			XtreamPassword: strings.TrimSpace(src.XtreamPassword),
+		})
+	}
+	return sources
+}
+
+func resolvedM3USources(src models.ResolvedLiveSource) []resolvedM3USource {
+	var m3uSources []resolvedM3USource
+	for _, source := range resolvedLiveSources(src) {
+		if source.Mode == "" || source.Mode == "m3u" {
+			m3uSources = append(m3uSources, source)
+		}
+	}
+	return m3uSources
+}
+
+func liveSourceIdentity(source models.LivePlaylistSource) string {
+	if strings.EqualFold(strings.TrimSpace(source.Mode), "xtream") {
+		return strings.TrimSpace(source.XtreamHost) + "|" + strings.TrimSpace(source.XtreamUsername)
+	}
+	return strings.TrimSpace(source.PlaylistURL)
+}
+
+func uniqueLiveSourceID(id string, used map[string]bool) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = "source"
+	}
+	if !used[id] {
+		used[id] = true
+		return id
+	}
+	suffix := 1
+	candidate := fmt.Sprintf("%s-%d", id, suffix)
+	for used[candidate] {
+		suffix++
+		candidate = fmt.Sprintf("%s-%d", id, suffix)
+	}
+	used[candidate] = true
+	return candidate
+}
+
+func stableLiveSourceID(name, playlistURL string, index int) string {
+	base := strings.ToLower(strings.TrimSpace(name))
+	base = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(base, "-")
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = fmt.Sprintf("source-%d", index+1)
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(playlistURL)))
+	return fmt.Sprintf("%s-%s", base, hex.EncodeToString(sum[:4]))
+}
+
+func liveSourceOptions(sources []resolvedM3USource) []LiveSourceOption {
+	options := make([]LiveSourceOption, 0, len(sources))
+	for _, src := range sources {
+		options = append(options, LiveSourceOption{ID: src.ID, Name: src.Name})
+	}
+	return options
+}
+
+func tagChannelsWithSource(channels []LiveChannel, source resolvedM3USource, includeSourceInID bool) []LiveChannel {
+	if len(channels) == 0 {
+		return channels
+	}
+	tagged := make([]LiveChannel, len(channels))
+	for i, ch := range channels {
+		ch.SourceID = source.ID
+		ch.SourceName = source.Name
+		if includeSourceInID && source.ID != "" {
+			ch.ID = source.ID + ":" + ch.ID
+		}
+		tagged[i] = ch
+	}
+	return tagged
+}
+
+func selectM3USources(sources []resolvedM3USource, sourceID string) []resolvedM3USource {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" || sourceID == "all" {
+		return sources
+	}
+	for _, src := range sources {
+		if src.ID == sourceID {
+			return []resolvedM3USource{src}
+		}
+	}
+	return nil
+}
+
 // extractCategories extracts unique categories with their channel counts from a list of channels.
 func extractCategories(channels []LiveChannel) []CategoryInfo {
 	categoryMap := make(map[string]int)
@@ -840,6 +1014,8 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 	global := models.ResolvedLiveSource{
 		Mode:                    globalSettings.Live.Mode,
 		PlaylistURL:             globalSettings.Live.PlaylistURL,
+		Sources:                 configPlaylistSourcesToModel(globalSettings.Live.Sources),
+		PlaylistSources:         configPlaylistSourcesToModel(globalSettings.Live.PlaylistSources),
 		XtreamHost:              globalSettings.Live.XtreamHost,
 		XtreamUsername:          globalSettings.Live.XtreamUsername,
 		XtreamPassword:          globalSettings.Live.XtreamPassword,
@@ -888,33 +1064,36 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		MaxChannels:       src.MaxChannels,
 	}
 
-	// Check if we're in Xtream mode
-	if src.Mode == "xtream" &&
-		src.XtreamHost != "" &&
-		src.XtreamUsername != "" &&
-		src.XtreamPassword != "" {
-		// Use Xtream API
-		allChannels, err = h.fetchXtreamChannels(r.Context(), src.XtreamHost, src.XtreamUsername, src.XtreamPassword)
-		if err != nil {
-			log.Printf("[live] GetChannels Xtream error: %v", err)
-			http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
-			return
+	sources := resolvedLiveSources(src)
+	if len(sources) == 0 {
+		log.Printf("[live] GetChannels error: no playlist URL configured")
+		http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
+		return
+	}
+	selectedSources := selectM3USources(sources, r.URL.Query().Get("sourceId"))
+	if len(selectedSources) == 0 {
+		http.Error(w, `{"error":"unknown source"}`, http.StatusBadRequest)
+		return
+	}
+	includeSourceInID := len(sources) > 1
+	for _, liveSource := range selectedSources {
+		if liveSource.Mode == "xtream" {
+			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword)
+			if err != nil {
+				log.Printf("[live] GetChannels Xtream error for source %q: %v", liveSource.ID, err)
+				http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
+				return
+			}
+			allChannels = append(allChannels, tagChannelsWithSource(channels, liveSource, includeSourceInID)...)
+			continue
 		}
-	} else {
-		// Use M3U playlist — compute effective URL for m3u mode
-		playlistURL := src.PlaylistURL
-		if src.Mode == "xtream" && src.XtreamHost != "" && src.XtreamUsername != "" && src.XtreamPassword != "" {
-			host := strings.TrimRight(src.XtreamHost, "/")
-			playlistURL = fmt.Sprintf("%s/get.php?username=%s&password=%s&type=m3u&output=ts",
-				host, url.QueryEscape(src.XtreamUsername), url.QueryEscape(src.XtreamPassword))
-		}
-		contents, err := h.fetchPlaylistContents(r.Context(), playlistURL)
+		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL)
 		if err != nil {
-			log.Printf("[live] GetChannels error: %v", err)
+			log.Printf("[live] GetChannels error for source %q: %v", liveSource.ID, err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
 			return
 		}
-		allChannels = parseM3UPlaylist(contents)
+		allChannels = append(allChannels, tagChannelsWithSource(parseM3UPlaylist(contents), liveSource, includeSourceInID)...)
 	}
 
 	totalBeforeFilter := len(allChannels)
@@ -934,6 +1113,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		Channels:            filteredChannels,
 		TotalBeforeFilter:   totalBeforeFilter,
 		AvailableCategories: availableCategories,
+		Sources:             liveSourceOptions(resolvedLiveSources(src)),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -955,28 +1135,36 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 
 	src := h.resolveProfileLiveSource(r, settings)
 
-	// Check if we're in Xtream mode
-	if src.Mode == "xtream" &&
-		src.XtreamHost != "" &&
-		src.XtreamUsername != "" &&
-		src.XtreamPassword != "" {
-		// Use Xtream API
-		allChannels, err = h.fetchXtreamChannels(r.Context(), src.XtreamHost, src.XtreamUsername, src.XtreamPassword)
-		if err != nil {
-			log.Printf("[live] GetCategories Xtream error: %v", err)
-			http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
-			return
+	sources := resolvedLiveSources(src)
+	if len(sources) == 0 {
+		log.Printf("[live] GetCategories error: no playlist URL configured")
+		http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
+		return
+	}
+	selectedSources := selectM3USources(sources, r.URL.Query().Get("sourceId"))
+	if len(selectedSources) == 0 {
+		http.Error(w, `{"error":"unknown source"}`, http.StatusBadRequest)
+		return
+	}
+	includeSourceInID := len(sources) > 1
+	for _, liveSource := range selectedSources {
+		if liveSource.Mode == "xtream" {
+			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword)
+			if err != nil {
+				log.Printf("[live] GetCategories Xtream error for source %q: %v", liveSource.ID, err)
+				http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
+				return
+			}
+			allChannels = append(allChannels, tagChannelsWithSource(channels, liveSource, includeSourceInID)...)
+			continue
 		}
-	} else {
-		// Use M3U playlist
-		playlistURL := src.PlaylistURL
-		contents, err := h.fetchPlaylistContents(r.Context(), playlistURL)
+		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL)
 		if err != nil {
-			log.Printf("[live] GetCategories error: %v", err)
+			log.Printf("[live] GetCategories error for source %q: %v", liveSource.ID, err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
 			return
 		}
-		allChannels = parseM3UPlaylist(contents)
+		allChannels = append(allChannels, tagChannelsWithSource(parseM3UPlaylist(contents), liveSource, includeSourceInID)...)
 	}
 
 	categories := extractCategories(allChannels)
