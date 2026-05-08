@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -26,11 +27,13 @@ const (
 )
 
 var (
-	resolution2160Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
-	resolution1080Pattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
-	resolution720Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
-	resolution576Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
-	resolution480Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+	resolution2160Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
+	resolution1080Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
+	resolution720Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
+	resolution576Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
+	resolution480Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+	formulaOneRoundPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})(?:x\d+)*(?:[^a-z0-9]+|x)(?:r|round)[.\s_-]*(\d{1,2})(?:[^a-z0-9]|$)`)
+	formulaOneXPattern     = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})x(\d{1,3})(?:[^a-z0-9]|$)`)
 )
 
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
@@ -252,6 +255,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 	detailed := make([]FilteredResult, 0, len(results))
 	compiledRequiredTerms := CompileTerms(opts.RequiredTerms)
 	compiledFilterOutTerms := CompileTerms(opts.FilterOutTerms)
+	expectedFormulaOneTerms := formulaOneEventTerms(opts.ExpectedTitle)
 
 	reject := func(result models.NZBResult, reason string) {
 		detailed = append(detailed, FilteredResult{Result: result, Passed: false, RejectReason: reason})
@@ -314,6 +318,12 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			reject(result, reason)
 			continue
 		}
+		if len(expectedFormulaOneTerms) > 0 && !formulaOneEventTermsMatch(result.Title, expectedFormulaOneTerms) {
+			reason := fmt.Sprintf("missing Formula 1 event terms %v", expectedFormulaOneTerms)
+			log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+			reject(result, reason)
+			continue
+		}
 
 		// Filter by media type using season/episode/volume detection
 		// TV shows have seasons/episodes/volumes or are marked as complete packs, movies don't
@@ -333,7 +343,17 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 		// For daily shows, date-based results are valid even without S##E## pattern
 		hasDailyDate := opts.IsDaily && opts.TargetAirDate != "" && mediaresolve.CandidateMatchesDailyDate(result.Title, opts.TargetAirDate, 0)
 
-		if !opts.IsMovie && !hasTVPattern && !isCompletePack && !hasEpisodeResolver && !hasDailyDate {
+		formulaOneEventYear, formulaOneEventNumbers, hasFormulaOneEventInfo := parseFormulaOneEvents(result.Title)
+		hasFormulaOneEvent := !opts.IsMovie && hasFormulaOneEventInfo && formulaOneEventYear == opts.TargetSeason && intSliceContains(formulaOneEventNumbers, opts.TargetEpisode)
+
+		if !opts.IsMovie && hasFormulaOneEventInfo && formulaOneEventYear == opts.TargetSeason && opts.TargetEpisode > 0 && !intSliceContains(formulaOneEventNumbers, opts.TargetEpisode) {
+			reason := fmt.Sprintf("Formula 1 event %v does not match target S%04dE%02d", formulaOneEventNumbers, opts.TargetSeason, opts.TargetEpisode)
+			log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+			reject(result, reason)
+			continue
+		}
+
+		if !opts.IsMovie && !hasTVPattern && !isCompletePack && !hasEpisodeResolver && !hasDailyDate && !hasFormulaOneEvent {
 			reason := "no season/episode info for TV show"
 			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
 				result.Title)
@@ -344,7 +364,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 		// Target episode filtering for TV shows
 		// This rejects season packs and episodes that obviously can't contain the target episode
 		// Skip this check for daily shows with matching dates - they use date-based matching instead
-		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetEpisode > 0 || opts.TargetAbsoluteEpisode > 0) && !hasDailyDate {
+		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetEpisode > 0 || opts.TargetAbsoluteEpisode > 0) && !hasDailyDate && !hasFormulaOneEvent {
 			if rejected, reason := shouldRejectByTargetEpisode(parsed, opts); rejected {
 				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
 				reject(result, reason)
@@ -359,7 +379,8 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 				// Also accept if the parsed year matches the episode's air year (±1)
 				// This handles shows where S02 airs years after the series premiere
 				episodeYearMatch := opts.EpisodeAirYear > 0 && abs(opts.EpisodeAirYear-parsed.Year) <= MaxYearDifference
-				if yearDiff > MaxYearDifference && !episodeYearMatch {
+				formulaOneSeasonYearMatch := hasFormulaOneEvent && opts.TargetSeason > 1900 && parsed.Year == opts.TargetSeason
+				if yearDiff > MaxYearDifference && !episodeYearMatch && !formulaOneSeasonYearMatch {
 					reason := fmt.Sprintf("year difference %d > %d (expected: %d, got: %d)", yearDiff, MaxYearDifference, opts.ExpectedYear, parsed.Year)
 					log.Printf("[filter] Rejecting %q: %s, episodeAirYear: %d",
 						result.Title, reason, opts.EpisodeAirYear)
@@ -637,9 +658,29 @@ func normalizeCandidateTitles(primary string, alternates []string) []string {
 			add(romanized)
 		}
 	}
+	addFormulaOneAlias := func(value string) {
+		normalized := normalizeFormulaOneTitle(value)
+		switch normalized {
+		case "formula 1":
+			add("F1")
+			add("Formula")
+			add("Formula1")
+		case "f1":
+			add("Formula 1")
+			add("Formula1")
+		}
+		if normalized != "formula 1" && normalized != "f1" && len(formulaOneEventTerms(value)) > 0 {
+			add("Formula 1")
+			add("Formula1")
+			add("F1")
+			add("Formula")
+		}
+	}
 	addWithRomanization(primary)
+	addFormulaOneAlias(primary)
 	for _, alt := range alternates {
 		addWithRomanization(alt)
+		addFormulaOneAlias(alt)
 	}
 	return titles
 }
@@ -680,27 +721,182 @@ func bestTitleSimilarity(candidates []string, parsedTitle string) (float64, stri
 		bestCandidate string
 	)
 
-	// Normalize parsed title for containment checks
-	normalizedParsed := normalizeForContainment(parsedTitle)
+	parsedTitles := parsedTitleVariants(parsedTitle)
 
 	for _, candidate := range candidates {
-		score := similarity.Similarity(candidate, parsedTitle)
-
-		// Also check containment: if one title contains the other as a whole word/phrase,
-		// consider it a high-confidence match. This handles cases like:
-		// - "F1 The Movie" contains "F1" (TMDB original title)
-		// - "The Matrix Reloaded" contains "Matrix Reloaded"
 		normalizedCandidate := normalizeForContainment(candidate)
-		if containmentScore := titleContainmentScore(normalizedParsed, normalizedCandidate); containmentScore > score {
-			score = containmentScore
-		}
+		for _, parsedVariant := range parsedTitles {
+			score := similarity.Similarity(candidate, parsedVariant)
 
-		if score > bestScore {
-			bestScore = score
-			bestCandidate = candidate
+			// Also check containment: if one title contains the other as a whole word/phrase,
+			// consider it a high-confidence match. This handles cases like:
+			// - "F1 The Movie" contains "F1" (TMDB original title)
+			// - "The Matrix Reloaded" contains "Matrix Reloaded"
+			normalizedParsed := normalizeForContainment(parsedVariant)
+			if containmentScore := titleContainmentScore(normalizedParsed, normalizedCandidate); containmentScore > score {
+				score = containmentScore
+			}
+
+			if score > bestScore {
+				bestScore = score
+				bestCandidate = candidate
+			}
 		}
 	}
 	return bestScore, bestCandidate
+}
+
+func parsedTitleVariants(title string) []string {
+	seen := make(map[string]struct{})
+	var variants []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		variants = append(variants, value)
+	}
+
+	add(title)
+	normalized := normalizeFormulaOneTitle(title)
+	switch normalized {
+	case "formula 1":
+		add("F1")
+		add("Formula")
+	case "f1":
+		add("Formula 1")
+		add("F1")
+	}
+	return variants
+}
+
+func formulaOneEventMatchesTarget(title string, targetSeason, targetEpisode int) bool {
+	if targetSeason <= 0 || targetEpisode <= 0 {
+		return false
+	}
+	year, eventNumbers, ok := parseFormulaOneEvents(title)
+	return ok && year == targetSeason && intSliceContains(eventNumbers, targetEpisode)
+}
+
+func parseFormulaOneEvents(title string) (int, []int, bool) {
+	xYear, xNumber, xRaw, hasX := parseFormulaOneEventPattern(formulaOneXPattern, title)
+	roundYear, roundNumber, _, hasRound := parseFormulaOneEventPattern(formulaOneRoundPattern, title)
+
+	if hasX {
+		// Torrentio uses both "2026x14 R01" (TVDB episode 14, round 1)
+		// and "2026x004 R01" (release sequence 004, round 1). Treat
+		// three-digit x values as sequence numbers when a round is present.
+		if len(xRaw) <= 2 || !hasRound || roundYear != xYear {
+			return xYear, []int{xNumber}, true
+		}
+		return roundYear, []int{roundNumber}, true
+	}
+
+	if hasRound {
+		return roundYear, []int{roundNumber}, true
+	}
+
+	return 0, nil, false
+}
+
+func parseFormulaOneEventPattern(pattern *regexp.Regexp, title string) (int, int, string, bool) {
+	matches := pattern.FindStringSubmatch(title)
+	if len(matches) != 3 {
+		return 0, 0, "", false
+	}
+	year, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, 0, "", false
+	}
+	eventNumber, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return 0, 0, "", false
+	}
+	return year, eventNumber, matches[2], true
+}
+
+func intSliceContains(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeFormulaOneTitle(title string) string {
+	normalized := normalizeForContainment(title)
+	fields := strings.Fields(normalized)
+	for len(fields) > 0 {
+		if _, err := strconv.Atoi(fields[0]); err == nil {
+			fields = fields[1:]
+			continue
+		}
+		break
+	}
+	if len(fields) == 1 && fields[0] == "f1" {
+		return "f1"
+	}
+	if len(fields) == 1 && fields[0] == "formula1" {
+		return "formula 1"
+	}
+	if len(fields) == 2 && fields[0] == "formula" && fields[1] == "1" {
+		return "formula 1"
+	}
+	return normalized
+}
+
+func formulaOneTitleIdentity(normalizedTitle string) string {
+	fields := strings.Fields(normalizedTitle)
+	for i, field := range fields {
+		if field == "f1" {
+			return "f1"
+		}
+		if field == "formula1" {
+			return "formula 1"
+		}
+		if field == "formula" && i+1 < len(fields) && fields[i+1] == "1" {
+			return "formula 1"
+		}
+	}
+	return ""
+}
+
+func formulaOneEventTerms(title string) []string {
+	normalized := normalizeForContainment(title)
+	if formulaOneTitleIdentity(normalized) == "" {
+		return nil
+	}
+	terms := []string{}
+	add := func(term string) {
+		if strings.Contains(normalized, term) {
+			terms = append(terms, term)
+		}
+	}
+	add("bahrain")
+	add("barcelona")
+	add("pre season")
+	add("testing")
+	add("shakedown")
+	add("qualifying")
+	add("sprint")
+	add("race")
+	return terms
+}
+
+func formulaOneEventTermsMatch(title string, expectedTerms []string) bool {
+	normalized := normalizeForContainment(title)
+	for _, term := range expectedTerms {
+		if !strings.Contains(normalized, term) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeForContainment normalizes a title for containment comparison.

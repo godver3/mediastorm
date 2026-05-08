@@ -1404,3 +1404,88 @@ func TestTargetEpisodeFiltering(t *testing.T) {
 		})
 	}
 }
+
+func TestFormulaOneRoundFiltering(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "04.F1.2026.R01.Australian.Grand.Prix.Qualifying.F1TV.UHD.2160p.Multi.mkv"},
+		{Title: "Formula.1.2026x004.R01.AustralianGP.Qualifying.F1TV.1080p.SS.mkv"},
+		{Title: "Formula.1.2026x01.Pre.Season.Testing.1.F1TV.1080p.SS"},
+		{Title: "Formula.1.2026x02.Pre.Season.Testing.2.F1TV.1080p.SS"},
+		{Title: "Formula 1 2026x14 R01 AustralianGP Race F1TV 1080p SS"},
+		{Title: "Formula1.S2026E14.Australia.Race.720p.ANTP.WEB-DL.AAC2.0.H.264-playWEB"},
+		{Title: "04.Formula3.2026.R01.Australian.Race.Two.Sky.Sports.F1.UHD.2160p.mkv"},
+	}
+
+	passed := Results(results, Options{
+		ExpectedTitle: "Formula 1",
+		TargetSeason:  2026,
+		TargetEpisode: 1,
+	})
+
+	if len(passed) != 3 {
+		t.Fatalf("expected 3 Formula 1 event 1 results, got %d: %#v", len(passed), passed)
+	}
+	if passed[0].Title != results[0].Title {
+		t.Fatalf("expected %q to pass, got %q", results[0].Title, passed[0].Title)
+	}
+	if passed[1].Title != results[1].Title {
+		t.Fatalf("expected %q to pass, got %q", results[1].Title, passed[1].Title)
+	}
+	if passed[2].Title != results[2].Title {
+		t.Fatalf("expected %q to pass, got %q", results[2].Title, passed[2].Title)
+	}
+
+	roundRaceResults := Results(results, Options{
+		ExpectedTitle: "Formula 1",
+		ExpectedYear:  1950,
+		TargetSeason:  2026,
+		TargetEpisode: 14,
+	})
+
+	if len(roundRaceResults) != 2 {
+		t.Fatalf("expected 2 Formula 1 S2026E14 results, got %d: %#v", len(roundRaceResults), roundRaceResults)
+	}
+	if roundRaceResults[0].Title != results[4].Title {
+		t.Fatalf("expected %q to pass, got %q", results[4].Title, roundRaceResults[0].Title)
+	}
+	if roundRaceResults[1].Title != results[5].Title {
+		t.Fatalf("expected %q to pass, got %q", results[5].Title, roundRaceResults[1].Title)
+	}
+}
+
+func TestFormulaOnePreSeasonEventTitleFiltering(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "Formula1.2026.Bahrain.Pre.Season.Testing.Two.Day.One.Session.One.1080p.WEB.h264-VERUM"},
+		{Title: "formula1.2026.bahrain.pre.season.testing.two.day.one.session.one.720p.WEB.H264-JFF"},
+		{Title: "Formula 1 Pre Season Testing Day 1"},
+		{Title: "Formula.1.2026x01.Australia.Qualifying.SkyF1UHD.4K-HLG"},
+		{Title: "Formula.1.2026x01.Pre.Season.Testing.1.F1TV.1080p.SS"},
+	}
+
+	passed := Results(results, Options{
+		ExpectedTitle:   "Formula 1 2026 Bahrain Pre Season Testing Day 1",
+		IsMovie:         false,
+		EpisodeResolver: NewSeriesEpisodeResolver(map[int]int{2026: 24}),
+	})
+
+	if len(passed) != 2 {
+		t.Fatalf("expected 2 Bahrain pre-season testing results, got %d: %#v", len(passed), passed)
+	}
+	for i := 0; i < 2; i++ {
+		if passed[i].Title != results[i].Title {
+			t.Fatalf("passed[%d] = %q, want %q", i, passed[i].Title, results[i].Title)
+		}
+	}
+
+	tvdbStylePassed := Results(results, Options{
+		ExpectedTitle:   "Formula 1 Bahrain Pre-Season Testing Day 1",
+		IsMovie:         false,
+		TargetSeason:    2026,
+		TargetEpisode:   1,
+		EpisodeResolver: NewSeriesEpisodeResolver(map[int]int{2026: 24}),
+	})
+
+	if len(tvdbStylePassed) != 2 {
+		t.Fatalf("expected 2 target-episode Bahrain pre-season testing results, got %d: %#v", len(tvdbStylePassed), tvdbStylePassed)
+	}
+}

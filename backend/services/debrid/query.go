@@ -16,6 +16,7 @@ const (
 )
 
 var (
+	reYearSeasonEpisode  = regexp.MustCompile(`(?i)\bS((?:19|20)\d{2})E(\d{1,3})\b`)
 	reSeasonEpisode      = regexp.MustCompile(`(?i)\bS?(\d{1,2})[xE](\d{1,3})\b`)
 	reSeasonOnly         = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonEpisodeWords = regexp.MustCompile(`(?i)\bseason\s+(\d{1,2})\s*(?:episode|ep)\s*(\d{1,3})\b`)
@@ -83,7 +84,19 @@ func ParseQuery(raw string) ParsedQuery {
 
 	lower := strings.ToLower(candidate)
 
-	if match := reSeasonEpisode.FindStringSubmatch(lower); len(match) == 3 {
+	if match := reYearSeasonEpisode.FindStringSubmatch(lower); len(match) == 3 {
+		if season, err := strconv.Atoi(match[1]); err == nil {
+			parsed.Season = season
+		}
+		if episode, err := strconv.Atoi(match[2]); err == nil {
+			parsed.Episode = episode
+		}
+		if parsed.Season > 0 && parsed.Episode > 0 {
+			parsed.MediaType = MediaTypeSeries
+			parsed.HasSeasonMatch = true
+			candidate = removeSubstring(candidate, match[0])
+		}
+	} else if match := reSeasonEpisode.FindStringSubmatch(lower); len(match) == 3 {
 		if season, err := strconv.Atoi(match[1]); err == nil {
 			parsed.Season = season
 		}

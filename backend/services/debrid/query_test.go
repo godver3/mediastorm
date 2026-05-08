@@ -93,6 +93,15 @@ func TestParseQuery(t *testing.T) {
 			wantEpisode: 123,
 			wantType:    MediaTypeSeries,
 		},
+		{
+			name:        "year as season episode code",
+			query:       "Formula 1 S2026E01",
+			wantTitle:   "Formula 1",
+			wantYear:    0,
+			wantSeason:  2026,
+			wantEpisode: 1,
+			wantType:    MediaTypeSeries,
+		},
 	}
 
 	for _, tt := range tests {
