@@ -290,7 +290,7 @@ async function runAllTests() {
             });
         } else if (card.key && card.key.startsWith('indexer:')) {
             const item = card.payload;
-            if (item) p = testPost(basePath + '/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name });
+            if (item) p = testPost(basePath + '/api/test/indexer', { url: item.url, apiKey: item.apiKey, name: item.name, type: item.type });
         } else if (card.key && card.key.startsWith('scraper:')) {
             const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/scraper', { name: item.name, type: item.type, url: item.url, apiKey: item.apiKey, options: item.options });

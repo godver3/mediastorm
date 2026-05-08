@@ -111,6 +111,13 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 			}
 			log.Printf("[debrid] Initializing Jackett scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
 			scrapers = append(scrapers, NewJackettScraper(scraperCfg.URL, scraperCfg.APIKey, scraperCfg.Name, httpClient))
+		case "prowlarr":
+			if scraperCfg.URL == "" || scraperCfg.APIKey == "" {
+				log.Printf("[debrid] Skipping Prowlarr scraper %s: missing Torznab URL or API key", scraperCfg.Name)
+				continue
+			}
+			log.Printf("[debrid] Initializing Prowlarr scraper: %s at %s", scraperCfg.Name, scraperCfg.URL)
+			scrapers = append(scrapers, NewProwlarrScraper(scraperCfg.URL, scraperCfg.APIKey, scraperCfg.Name, httpClient))
 		case "zilean":
 			if scraperCfg.URL == "" {
 				log.Printf("[debrid] Skipping Zilean scraper %s: missing URL", scraperCfg.Name)

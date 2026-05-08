@@ -242,6 +242,70 @@ func TestJackettSearchMovie(t *testing.T) {
 	}
 }
 
+func TestProwlarrSearchUsesProvidedTorznabEndpoint(t *testing.T) {
+	var gotPath string
+	var gotAPIKey string
+	var gotType string
+	var gotQuery string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.URL.Query().Get("apikey")
+		gotType = r.URL.Query().Get("t")
+		gotQuery = r.URL.Query().Get("q")
+
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <item>
+      <title>The.Matrix.1999.1080p.BluRay</title>
+      <guid>magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678</guid>
+      <size>1000000000</size>
+      <torznab:attr name="infohash" value="1234567890abcdef1234567890abcdef12345678"/>
+    </item>
+  </channel>
+</rss>`))
+	}))
+	defer server.Close()
+
+	endpoint := server.URL + "/7"
+	scraper := NewProwlarrScraper(endpoint, "prowlarr-key", "Prowlarr Test", server.Client())
+	results, err := scraper.Search(context.Background(), SearchRequest{
+		Query: "The Matrix 1999",
+		Parsed: ParsedQuery{
+			Title:     "The Matrix",
+			Year:      1999,
+			MediaType: MediaTypeMovie,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if gotPath != "/7/api" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotAPIKey != "prowlarr-key" {
+		t.Fatalf("apikey = %q", gotAPIKey)
+	}
+	if gotType != "movie" {
+		t.Fatalf("t = %q", gotType)
+	}
+	if gotQuery != "The Matrix 1999" {
+		t.Fatalf("q = %q", gotQuery)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Indexer != "Prowlarr Test" {
+		t.Fatalf("indexer = %q", results[0].Indexer)
+	}
+	if results[0].Source != "Prowlarr Test" {
+		t.Fatalf("source = %q", results[0].Source)
+	}
+}
+
 func TestJackettSearchTV(t *testing.T) {
 	// Create a test server that returns mock Jackett response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

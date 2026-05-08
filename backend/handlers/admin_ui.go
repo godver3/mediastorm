@@ -433,9 +433,9 @@ var SettingsSchema = map[string]interface{}{
 		"is_array": true,
 		"fields": map[string]interface{}{
 			"name":       map[string]interface{}{"type": "text", "label": "Name", "description": "Indexer name", "order": 0},
-			"url":        map[string]interface{}{"type": "text", "label": "URL", "description": "Indexer API URL", "order": 1},
+			"url":        map[string]interface{}{"type": "text", "label": "URL", "description": "Indexer API URL. For Prowlarr, use the Prowlarr base URL and the backend will add each enabled usenet indexer on save.", "placeholder": "http://prowlarr:9696", "order": 1},
 			"apiKey":     map[string]interface{}{"type": "password", "label": "API Key", "description": "Indexer API key", "order": 2},
-			"type":       map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab"}, "description": "Indexer type", "order": 3},
+			"type":       map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab", "prowlarr"}, "description": "Indexer type. Choose Prowlarr to discover enabled usenet indexers from a base Prowlarr URL.", "order": 3},
 			"categories": map[string]interface{}{"type": "text", "label": "Categories", "description": "Comma-separated newznab category IDs to filter results (e.g., 2000,2010,2020 for movies, 5000,5010,5020 for TV). Leave empty to search all categories.", "placeholder": "2000,5000", "order": 4},
 			"enabled":    map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this indexer", "order": 5},
 		},
@@ -449,10 +449,10 @@ var SettingsSchema = map[string]interface{}{
 		"is_array":    true,
 		"fields": map[string]interface{}{
 			"name":                     map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"}, "description": "Source/addon type", "order": 1},
+			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "prowlarr", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"}, "description": "Source/addon type", "order": 1},
 			"options":                  map[string]interface{}{"type": "text", "label": "Options", "description": "URL options (e.g., sort=qualitysize|qualityfilter=480p,scr,cam)", "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
-			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL (for AIOStreams/Comet/MediaFusion: full Stremio addon URL; for Torrentio: custom base URL replacing https://torrentio.strem.fun — use for self-hosted instances or pre-configured Torrentio URLs, leave blank for default)", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "mediafusion"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "https://torrentio.strem.fun"},
-			"apiKey":                   map[string]interface{}{"type": "password", "label": "API Key", "description": "Jackett API key", "showWhen": map[string]interface{}{"field": "type", "value": "jackett"}, "order": 4},
+			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL. For Prowlarr, use the Prowlarr base URL and the backend will add each enabled torrent indexer on save. For AIOStreams/Comet/MediaFusion, use the full Stremio addon URL. For Torrentio, this can replace https://torrentio.strem.fun.", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "prowlarr"}, {"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "mediafusion"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "http://prowlarr:9696"},
+			"apiKey":                   map[string]interface{}{"type": "password", "label": "API Key", "description": "Prowlarr or Jackett API key", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "prowlarr"}, {"field": "type", "value": "jackett"}}}, "order": 4},
 			"config.passthroughFormat": map[string]interface{}{"type": "boolean", "label": "Passthrough Format", "description": "Show raw AIOStreams format in manual selection (emoji-formatted details)", "showWhen": map[string]interface{}{"field": "type", "value": "aiostreams"}, "order": 5},
 			"config.category":          map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
 			"config.filter":            map[string]interface{}{"type": "select", "label": "Filter", "options": []string{"0", "1", "2"}, "description": "Nyaa filter (0=All, 1=No remakes, 2=Trusted only)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 7},
@@ -2420,6 +2420,7 @@ type TestIndexerRequest struct {
 	URL    string `json:"url"`
 	APIKey string `json:"apiKey"`
 	Name   string `json:"name"`
+	Type   string `json:"type"`
 }
 
 // TestIndexer tests an indexer by running a search
@@ -2432,6 +2433,33 @@ func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 
 	if req.URL == "" {
 		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+
+	if strings.EqualFold(strings.TrimSpace(req.Type), "prowlarr") && !isProwlarrPerIndexerURL(req.URL) {
+		indexers, err := fetchProwlarrIndexers(r.Context(), req.URL, req.APIKey)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Prowlarr discovery failed: %v", err),
+			})
+			return
+		}
+		count := countProwlarrIndexers(indexers, "usenet")
+		if count == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Prowlarr is reachable, but no enabled usenet indexers with search support were found",
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Prowlarr is reachable and %d usenet indexer(s) can be added on save", count),
+		})
 		return
 	}
 
@@ -2505,6 +2533,8 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 	switch strings.ToLower(req.Type) {
 	case "jackett":
 		h.testJackettScraper(w, req)
+	case "prowlarr":
+		h.testProwlarrTorrentSource(w, req)
 	case "zilean":
 		h.testZileanScraper(w, req)
 	case "aiostreams":
@@ -2669,6 +2699,64 @@ func (h *AdminUIHandler) testJackettScraper(w http.ResponseWriter, req TestScrap
 		"success": true,
 		"message": "Jackett is working",
 	})
+}
+
+func (h *AdminUIHandler) testProwlarrTorrentSource(w http.ResponseWriter, req TestScraperRequest) {
+	if strings.TrimSpace(req.URL) == "" || strings.TrimSpace(req.APIKey) == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Prowlarr URL and API key are required",
+		})
+		return
+	}
+
+	if !isProwlarrPerIndexerURL(req.URL) {
+		indexers, err := fetchProwlarrIndexers(context.Background(), req.URL, req.APIKey)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Prowlarr discovery failed: %v", err),
+			})
+			return
+		}
+		count := countProwlarrIndexers(indexers, "torrent")
+		if count == 0 {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Prowlarr is reachable, but no enabled torrent indexers with search support were found",
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Prowlarr is reachable and %d torrent indexer(s) can be added on save", count),
+		})
+		return
+	}
+
+	scraper := debrid.NewProwlarrScraper(req.URL, req.APIKey, req.Name, &http.Client{Timeout: 15 * time.Second})
+	if err := scraper.TestConnection(context.Background()); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Prowlarr connection failed: %v", err),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Prowlarr torrent source is working",
+	})
+}
+
+func countProwlarrIndexers(indexers []prowlarrIndexerInfo, protocol string) int {
+	count := 0
+	for _, idx := range indexers {
+		if shouldUseProwlarrIndexer(idx, protocol) {
+			count++
+		}
+	}
+	return count
 }
 
 // testZileanScraper tests a Zilean instance by querying its DMM filtered API

@@ -20,8 +20,10 @@ import (
 type JackettScraper struct {
 	name       string // User-configured name for display
 	baseURL    string
+	apiURL     string
 	apiKey     string
 	httpClient *http.Client
+	source     string
 }
 
 // NewJackettScraper constructs a Jackett scraper with the given URL and API key.
@@ -37,12 +39,35 @@ func NewJackettScraper(baseURL, apiKey, name string, client *http.Client) *Jacke
 		baseURL:    baseURL,
 		apiKey:     apiKey,
 		httpClient: client,
+		source:     "Jackett",
+	}
+}
+
+// NewProwlarrScraper constructs a scraper for a single Prowlarr Torznab endpoint.
+// baseURL should be the per-indexer Torznab URL copied from Prowlarr, usually /{id}/api.
+func NewProwlarrScraper(baseURL, apiKey, name string, client *http.Client) *JackettScraper {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	apiURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if apiURL != "" && !strings.HasSuffix(strings.ToLower(apiURL), "/api") {
+		apiURL += "/api"
+	}
+	return &JackettScraper{
+		name:       strings.TrimSpace(name),
+		apiURL:     apiURL,
+		apiKey:     apiKey,
+		httpClient: client,
+		source:     "Prowlarr",
 	}
 }
 
 func (j *JackettScraper) Name() string {
 	if j.name != "" {
 		return j.name
+	}
+	if j.source != "" {
+		return j.source
 	}
 	return "Jackett"
 }
@@ -84,8 +109,8 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 		return nil, nil
 	}
 
-	log.Printf("[jackett] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IsDaily=%v, TargetAirDate=%q",
-		req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType, req.IsDaily, req.TargetAirDate)
+	log.Printf("[%s] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IsDaily=%v, TargetAirDate=%q",
+		strings.ToLower(j.Name()), req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType, req.IsDaily, req.TargetAirDate)
 
 	var results []ScrapeResult
 	var err error
@@ -119,7 +144,7 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 		results = results[:maxResults]
 	}
 
-	log.Printf("[jackett] Returning %d results for %q", len(results), cleanTitle)
+	log.Printf("[%s] Returning %d results for %q", strings.ToLower(j.Name()), len(results), cleanTitle)
 	return results, nil
 }
 
@@ -193,8 +218,7 @@ func (j *JackettScraper) searchGeneric(ctx context.Context, query string) ([]Scr
 
 // fetchResults makes the API request and parses the Torznab XML response.
 func (j *JackettScraper) fetchResults(ctx context.Context, params url.Values) ([]ScrapeResult, error) {
-	// Use the "all" indexer to query all configured indexers
-	apiURL := fmt.Sprintf("%s/api/v2.0/indexers/all/results/torznab/api?%s", j.baseURL, params.Encode())
+	apiURL := j.buildAPIURL(params)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -218,6 +242,20 @@ func (j *JackettScraper) fetchResults(ctx context.Context, params url.Values) ([
 	}
 
 	return j.parseResponse(body)
+}
+
+func (j *JackettScraper) buildAPIURL(params url.Values) string {
+	endpoint := strings.TrimRight(strings.TrimSpace(j.apiURL), "/")
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("%s/api/v2.0/indexers/all/results/torznab/api", strings.TrimRight(j.baseURL, "/"))
+	}
+	if params == nil {
+		return endpoint
+	}
+	if strings.Contains(endpoint, "?") {
+		return endpoint + "&" + params.Encode()
+	}
+	return endpoint + "?" + params.Encode()
 }
 
 // parseResponse parses the Torznab XML response into ScrapeResults.
@@ -383,7 +421,7 @@ func (j *JackettScraper) TestConnection(ctx context.Context) error {
 	params.Set("apikey", j.apiKey)
 	params.Set("t", "caps")
 
-	apiURL := fmt.Sprintf("%s/api/v2.0/indexers/all/results/torznab/api?%s", j.baseURL, params.Encode())
+	apiURL := j.buildAPIURL(params)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
