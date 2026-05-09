@@ -197,14 +197,13 @@ func (m *TrailerPrequeueManager) downloadTrailer(id, videoURL string) {
 	// Output path
 	outputPath := filepath.Join(m.tempDir, id+".mp4")
 
-	// Use yt-dlp with format selection and ffmpeg merge
-	// Format 137 = 1080p video, 140 = audio
-	// Fallback to best available if 1080p not available
+	// Prefer tvOS/iOS compatible H.264 + AAC MP4 streams. Some YouTube
+	// fallbacks are VP9/Opus inside MP4, which can play audio with no video.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	args := []string{
-		"-f", "137+140/bestvideo[height<=1080]+bestaudio/best",
+		"-f", "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/best[ext=mp4][vcodec^=avc1][acodec^=mp4a][height<=1080]/22/18/best[height<=720]",
 		"--merge-output-format", "mp4",
 		"--no-warnings",
 		"--no-playlist",
@@ -233,6 +232,12 @@ func (m *TrailerPrequeueManager) downloadTrailer(id, videoURL string) {
 		return
 	}
 
+	if err := ensureCompatibleTrailer(outputPath); err != nil {
+		log.Printf("[trailer-prequeue] compatibility conversion failed for %s: %v", id, err)
+		m.setFailed(id, fmt.Sprintf("compatibility conversion failed: %v", err))
+		return
+	}
+
 	// Verify file exists and get size
 	stat, err := os.Stat(outputPath)
 	if err != nil {
@@ -253,6 +258,101 @@ func (m *TrailerPrequeueManager) downloadTrailer(id, videoURL string) {
 	m.mu.Unlock()
 
 	log.Printf("[trailer-prequeue] download complete: %s (size: %d bytes)", id, stat.Size())
+}
+
+func ensureCompatibleTrailer(path string) error {
+	videoCodec, audioCodec, err := probeTrailerCodecs(path)
+	if err != nil {
+		return err
+	}
+
+	if strings.EqualFold(videoCodec, "h264") && (audioCodec == "" || strings.EqualFold(audioCodec, "aac")) {
+		return nil
+	}
+
+	ffmpegPath := "ffmpeg"
+	if _, err := exec.LookPath(ffmpegPath); err != nil {
+		return fmt.Errorf("downloaded trailer uses video=%q audio=%q and ffmpeg is unavailable", videoCodec, audioCodec)
+	}
+
+	compatPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".compat.mp4"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	args := []string{
+		"-y",
+		"-i", path,
+		"-map", "0:v:0",
+		"-map", "0:a:0?",
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-crf", "21",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "160k",
+		"-movflags", "+faststart",
+		compatPath,
+	}
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(compatPath)
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return fmt.Errorf("ffmpeg transcode failed: %s", errMsg)
+	}
+
+	if err := os.Rename(compatPath, path); err != nil {
+		_ = os.Remove(compatPath)
+		return fmt.Errorf("replace converted trailer: %w", err)
+	}
+
+	log.Printf("[trailer-prequeue] converted trailer to H.264/AAC MP4 (was video=%q audio=%q)", videoCodec, audioCodec)
+	return nil
+}
+
+func probeTrailerCodecs(path string) (string, string, error) {
+	ffprobePath := "ffprobe"
+	if _, err := exec.LookPath(ffprobePath); err != nil {
+		return "", "", fmt.Errorf("ffprobe not found")
+	}
+
+	probe := func(selector string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(
+			ctx,
+			ffprobePath,
+			"-v", "error",
+			"-select_streams", selector,
+			"-show_entries", "stream=codec_name",
+			"-of", "default=noprint_wrappers=1:nokey=1",
+			path,
+		)
+		out, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]), nil
+	}
+
+	videoCodec, err := probe("v:0")
+	if err != nil {
+		return "", "", fmt.Errorf("probe video codec: %w", err)
+	}
+	if videoCodec == "" {
+		return "", "", fmt.Errorf("no video stream found")
+	}
+
+	audioCodec, err := probe("a:0")
+	if err != nil {
+		audioCodec = ""
+	}
+
+	return videoCodec, audioCodec, nil
 }
 
 // setFailed marks a trailer as failed
