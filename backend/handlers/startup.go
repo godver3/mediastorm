@@ -13,6 +13,7 @@ import (
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/kids"
+	"novastream/services/playback"
 
 	"github.com/gorilla/mux"
 )
@@ -33,6 +34,10 @@ type startupCalendarService interface {
 	GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward int) []models.CalendarItem
 }
 
+type startupPrequeueStore interface {
+	GetByTitleUser(titleID, userID string) (*playback.PrequeueEntry, bool)
+}
+
 // StartupHandler serves a combined startup payload to reduce the number of
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
@@ -46,6 +51,7 @@ type StartupHandler struct {
 	usersProvider usersServiceInterface // for kids profile filtering
 	calendar      startupCalendarService
 	localMedia    localLibraryLister
+	prequeueStore startupPrequeueStore
 }
 
 // NewStartupHandler constructs a StartupHandler.
@@ -71,6 +77,10 @@ func NewStartupHandler(
 // the calendar service is created after the startup handler in main.go.
 func (h *StartupHandler) SetCalendar(cal startupCalendarService) {
 	h.calendar = cal
+}
+
+func (h *StartupHandler) SetPrequeueStore(store startupPrequeueStore) {
+	h.prequeueStore = store
 }
 
 // StartupResponse is the combined payload returned by GET /api/users/{userID}/startup.
@@ -160,6 +170,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.ContinueWatchingTotal = len(items)
+		items = h.withPrequeueStatus(userID, items)
 		progress, err := h.history.ListPlaybackProgress(userID)
 		if err != nil {
 			log.Printf("[startup] playback progress error for %s: %v", userID, err)
@@ -340,6 +351,37 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *StartupHandler) withPrequeueStatus(userID string, items []models.SeriesWatchState) []models.SeriesWatchState {
+	if h.prequeueStore == nil || len(items) == 0 {
+		return items
+	}
+
+	for i := range items {
+		entry, ok := h.prequeueStore.GetByTitleUser(items[i].SeriesID, userID)
+		if !ok || entry == nil || !startupPrequeueMatchesContinueWatchingItem(entry, items[i]) {
+			continue
+		}
+		items[i].PrequeueID = entry.ID
+		items[i].PrequeueStatus = string(entry.Status)
+	}
+
+	return items
+}
+
+func startupPrequeueMatchesContinueWatchingItem(entry *playback.PrequeueEntry, item models.SeriesWatchState) bool {
+	if entry == nil {
+		return false
+	}
+	if item.NextEpisode == nil {
+		return entry.TargetEpisode == nil
+	}
+	if entry.TargetEpisode == nil {
+		return false
+	}
+	return entry.TargetEpisode.SeasonNumber == item.NextEpisode.SeasonNumber &&
+		entry.TargetEpisode.EpisodeNumber == item.NextEpisode.EpisodeNumber
 }
 
 // SetUsersProvider sets the users service for kids profile filtering.

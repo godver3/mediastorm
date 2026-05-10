@@ -554,6 +554,8 @@ func main() {
 		prequeueHandler.GetStore().SetDataStore(store)
 	}
 	prequeueHandler.GetStore().SetStoragePath(settings.Cache.Directory)
+	historyHandler.SetPrequeueStore(prequeueHandler.GetStore())
+	startupHandler.SetPrequeueStore(prequeueHandler.GetStore())
 
 	// Restore magnet links from persisted prequeue entries into the magnet registry
 	// so stale torrents can be re-added after a server restart

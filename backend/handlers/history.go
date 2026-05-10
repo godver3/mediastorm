@@ -8,6 +8,7 @@ import (
 
 	"novastream/models"
 	"novastream/services/history"
+	"novastream/services/playback"
 
 	"github.com/gorilla/mux"
 )
@@ -38,10 +39,15 @@ type historyService interface {
 
 var _ historyService = (*history.Service)(nil)
 
+type continueWatchingPrequeueStore interface {
+	GetByTitleUser(titleID, userID string) (*playback.PrequeueEntry, bool)
+}
+
 type HistoryHandler struct {
-	Service  historyService
-	Users    userService
-	DemoMode bool
+	Service       historyService
+	Users         userService
+	DemoMode      bool
+	PrequeueStore continueWatchingPrequeueStore
 }
 
 type hideContinueWatchingRequest struct {
@@ -54,6 +60,10 @@ type continueWatchingRevisionResponse struct {
 
 func NewHistoryHandler(service historyService, users userService, demoMode bool) *HistoryHandler {
 	return &HistoryHandler{Service: service, Users: users, DemoMode: demoMode}
+}
+
+func (h *HistoryHandler) SetPrequeueStore(store continueWatchingPrequeueStore) {
+	h.PrequeueStore = store
 }
 
 func (h *HistoryHandler) ListContinueWatching(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +83,38 @@ func (h *HistoryHandler) ListContinueWatching(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(h.withPrequeueStatus(userID, items))
+}
+
+func (h *HistoryHandler) withPrequeueStatus(userID string, items []models.SeriesWatchState) []models.SeriesWatchState {
+	if h.PrequeueStore == nil || len(items) == 0 {
+		return items
+	}
+
+	for i := range items {
+		entry, ok := h.PrequeueStore.GetByTitleUser(items[i].SeriesID, userID)
+		if !ok || entry == nil || !prequeueMatchesContinueWatchingItem(entry, items[i]) {
+			continue
+		}
+		items[i].PrequeueID = entry.ID
+		items[i].PrequeueStatus = string(entry.Status)
+	}
+
+	return items
+}
+
+func prequeueMatchesContinueWatchingItem(entry *playback.PrequeueEntry, item models.SeriesWatchState) bool {
+	if entry == nil {
+		return false
+	}
+	if item.NextEpisode == nil {
+		return entry.TargetEpisode == nil
+	}
+	if entry.TargetEpisode == nil {
+		return false
+	}
+	return entry.TargetEpisode.SeasonNumber == item.NextEpisode.SeasonNumber &&
+		entry.TargetEpisode.EpisodeNumber == item.NextEpisode.EpisodeNumber
 }
 
 func (h *HistoryHandler) GetContinueWatchingRevision(w http.ResponseWriter, r *http.Request) {

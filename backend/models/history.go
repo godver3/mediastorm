@@ -38,6 +38,11 @@ type SeriesWatchState struct {
 	// Episode counts for tracking series completion (excludes specials/season 0)
 	WatchedEpisodeCount int `json:"watchedEpisodeCount,omitempty"` // Number of episodes user has watched
 	TotalEpisodeCount   int `json:"totalEpisodeCount,omitempty"`   // Total released episodes in series
+
+	// Prequeue/prewarm status for the current next item. Prewarm entries are
+	// stored in the same prequeue store, so this covers both paths.
+	PrequeueID     string `json:"prequeueId,omitempty"`
+	PrequeueStatus string `json:"prequeueStatus,omitempty"`
 }
 
 // EpisodeWatchPayload represents a request to record that a user started an episode.
