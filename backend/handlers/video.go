@@ -1419,7 +1419,7 @@ func (h *VideoHandler) buildWebDAVURL(cleanPath string) string {
 		pathToUse = prefix + pathToUse
 	}
 
-	return base + pathToUse
+	return base + (&url.URL{Path: pathToUse}).EscapedPath()
 }
 
 func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath string) (*ffprobeOutput, error) {

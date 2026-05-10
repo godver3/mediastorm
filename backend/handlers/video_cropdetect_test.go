@@ -128,6 +128,18 @@ func TestCropDetect_WebDAVPathCleaning(t *testing.T) {
 	}
 }
 
+func TestBuildWebDAVURLEncodesPath(t *testing.T) {
+	h := &VideoHandler{}
+	h.webdavBaseURL = "http://user:pass@127.0.0.1:7777"
+	h.webdavPrefix = "/webdav"
+
+	got := h.buildWebDAVURL("localmedia:item-123/Mr Inbetween (2018) - S02E08.mkv")
+	want := "http://user:pass@127.0.0.1:7777/webdav/localmedia:item-123/Mr%20Inbetween%20%282018%29%20-%20S02E08.mkv"
+	if got != want {
+		t.Fatalf("buildWebDAVURL() = %q, want %q", got, want)
+	}
+}
+
 func TestCropdetectRegex(t *testing.T) {
 	tests := []struct {
 		name  string

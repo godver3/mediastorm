@@ -52,6 +52,34 @@ func NewProvider(service *Service) *Provider {
 	return &Provider{service: service}
 }
 
+func (p *Provider) GetDirectURL(ctx context.Context, path string) (string, error) {
+	if p == nil || p.service == nil {
+		return "", streaming.ErrNotFound
+	}
+
+	itemID, ok := ParseStreamPath(path)
+	if !ok {
+		return "", streaming.ErrNotFound
+	}
+
+	item, err := p.service.GetItem(ctx, itemID)
+	if err != nil {
+		if err == ErrItemNotFound || err == ErrLibraryNotFound {
+			return "", streaming.ErrNotFound
+		}
+		return "", err
+	}
+	if item == nil {
+		return "", streaming.ErrNotFound
+	}
+
+	filePath := strings.TrimSpace(item.FilePath)
+	if filePath == "" {
+		return "", streaming.ErrNotFound
+	}
+	return filePath, nil
+}
+
 func (p *Provider) Stream(ctx context.Context, req streaming.Request) (*streaming.Response, error) {
 	if p == nil || p.service == nil {
 		return nil, streaming.ErrNotFound

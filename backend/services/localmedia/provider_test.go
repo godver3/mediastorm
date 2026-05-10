@@ -90,6 +90,46 @@ func TestProviderStreamRange(t *testing.T) {
 	}
 }
 
+func TestProviderGetDirectURL(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "Mr Inbetween (2018) - S02E08.mkv")
+	if err := os.WriteFile(filePath, []byte("video"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:        "lib1",
+			Name:      "TV Shows",
+			Type:      models.LocalMediaLibraryTypeShow,
+			RootPath:  root,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"Mr Inbetween (2018) - S02E08.mkv": {
+				ID:           "item1",
+				LibraryID:    "lib1",
+				FilePath:     filePath,
+				FileName:     "Mr Inbetween (2018) - S02E08.mkv",
+				RelativePath: "Mr Inbetween (2018) - S02E08.mkv",
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+		},
+	}
+	provider := NewProvider(&Service{repo: repo})
+
+	got, err := provider.GetDirectURL(context.Background(), "localmedia:item1/Mr+Inbetween+(2018)+-+S02E08.mkv")
+	if err != nil {
+		t.Fatalf("GetDirectURL() error = %v", err)
+	}
+	if got != filePath {
+		t.Fatalf("GetDirectURL() = %q, want %q", got, filePath)
+	}
+}
+
 func TestProviderRejectsPathOutsideLibraryRoot(t *testing.T) {
 	root := t.TempDir()
 	outsideDir := t.TempDir()
