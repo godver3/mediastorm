@@ -155,6 +155,48 @@ func (s *Service) AdoptEntry(prequeueID string) {
 	log.Printf("[prewarm] Adopted ad-hoc prequeue entry %s", prequeueID)
 }
 
+// UpdateFromPrequeue refreshes an existing warm entry after a replacement
+// prequeue finishes resolving.
+func (s *Service) UpdateFromPrequeue(prequeueID string) {
+	if s.prequeueStore == nil {
+		return
+	}
+
+	pqEntry, ok := s.prequeueStore.Get(prequeueID)
+	if !ok || pqEntry.Status != playback.PrequeueStatusReady {
+		return
+	}
+
+	key := entryKey(pqEntry.TitleID, pqEntry.UserID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	warmEntry, ok := s.entries[key]
+	if !ok {
+		return
+	}
+
+	warmEntry.TitleID = pqEntry.TitleID
+	warmEntry.TitleName = pqEntry.TitleName
+	warmEntry.UserID = pqEntry.UserID
+	warmEntry.MediaType = pqEntry.MediaType
+	warmEntry.Year = pqEntry.Year
+	warmEntry.TargetEpisode = pqEntry.TargetEpisode
+	warmEntry.PrequeueID = pqEntry.ID
+	warmEntry.StreamPath = pqEntry.StreamPath
+	warmEntry.LastRefresh = time.Now()
+	warmEntry.LastResolve = time.Now()
+	warmEntry.Error = ""
+	if warmEntry.ExpiresAt.IsZero() || pqEntry.ExpiresAt.After(warmEntry.ExpiresAt) {
+		warmEntry.ExpiresAt = pqEntry.ExpiresAt
+	}
+
+	if err := s.saveLocked(); err != nil {
+		log.Printf("[prewarm] Warning: failed to persist updated warm entry %s: %v", key, err)
+	}
+	log.Printf("[prewarm] Updated warm entry %s from ready prequeue %s", key, prequeueID)
+}
+
 // RestorePrequeueEntries re-creates PrequeueStore entries from persisted warm data.
 // Call this after wiring all dependencies and before starting the service.
 func (s *Service) RestorePrequeueEntries() {
@@ -289,7 +331,7 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 			continue
 		}
 
-			resolveCount := 0
+		resolveCount := 0
 		for _, state := range states {
 			key := entryKey(state.SeriesID, user.ID)
 			activeKeys[key] = true
@@ -327,16 +369,16 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 				// Adopt this prequeue entry into prewarm (batch save after loop)
 				s.mu.Lock()
 				s.entries[key] = &WarmEntry{
-					TitleID:       state.SeriesID,
-					TitleName:     state.SeriesTitle,
-					UserID:        user.ID,
-					MediaType:     "series",
-					Year:          state.Year,
-					PrequeueID:    pqEntry.ID,
-					StreamPath:    pqEntry.StreamPath,
-					LastResolve:   pqEntry.CreatedAt,
-					LastRefresh:   time.Now(),
-					ExpiresAt:     pqEntry.ExpiresAt,
+					TitleID:     state.SeriesID,
+					TitleName:   state.SeriesTitle,
+					UserID:      user.ID,
+					MediaType:   "series",
+					Year:        state.Year,
+					PrequeueID:  pqEntry.ID,
+					StreamPath:  pqEntry.StreamPath,
+					LastResolve: pqEntry.CreatedAt,
+					LastRefresh: time.Now(),
+					ExpiresAt:   pqEntry.ExpiresAt,
 				}
 				s.mu.Unlock()
 				log.Printf("[prewarm] Adopted existing prequeue entry %s for %q (skipping resolve)", pqEntry.ID, state.SeriesTitle)

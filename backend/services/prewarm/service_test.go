@@ -597,6 +597,56 @@ func TestAdoptEntry(t *testing.T) {
 	}
 }
 
+func TestUpdateFromPrequeueRefreshesExistingWarmEntry(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(store)
+
+	key := entryKey("title1", "user1")
+	svc.entries[key] = &WarmEntry{
+		TitleID:    "title1",
+		TitleName:  "Old Title",
+		UserID:     "user1",
+		MediaType:  "series",
+		PrequeueID: "pq_old",
+		StreamPath: "/old/path.mkv",
+		ExpiresAt:  time.Now().Add(12 * time.Hour),
+	}
+
+	entry, _ := store.Create(
+		"title1",
+		"New Title",
+		"user1",
+		"series",
+		2026,
+		&models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 4},
+		"next_episode",
+	)
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = "/new/path.mkv"
+	})
+
+	svc.UpdateFromPrequeue(entry.ID)
+
+	warmEntry := svc.entries[key]
+	if warmEntry.PrequeueID != entry.ID {
+		t.Fatalf("PrequeueID = %q, want %q", warmEntry.PrequeueID, entry.ID)
+	}
+	if warmEntry.StreamPath != "/new/path.mkv" {
+		t.Fatalf("StreamPath = %q, want /new/path.mkv", warmEntry.StreamPath)
+	}
+	if warmEntry.TitleName != "New Title" {
+		t.Fatalf("TitleName = %q, want New Title", warmEntry.TitleName)
+	}
+	if warmEntry.Year != 2026 {
+		t.Fatalf("Year = %d, want 2026", warmEntry.Year)
+	}
+	if warmEntry.TargetEpisode == nil || warmEntry.TargetEpisode.SeasonNumber != 2 || warmEntry.TargetEpisode.EpisodeNumber != 4 {
+		t.Fatalf("TargetEpisode = %#v, want S02E04", warmEntry.TargetEpisode)
+	}
+}
+
 func TestPruneAdhocEntries_PrunesOldEntries(t *testing.T) {
 	store := playback.NewPrequeueStore(30 * time.Minute)
 

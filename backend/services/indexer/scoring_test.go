@@ -314,6 +314,31 @@ func TestScoreResult_DownloadPreferredTerms(t *testing.T) {
 	}
 }
 
+func TestScoreResult_DownloadPreferredTermsIgnoredWhenDisabled(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 0},
+		},
+		DownloadPreferredTerms: filter.CompileTerms([]string{"x265=3"}),
+		UseDownloadRanking:     false,
+	}
+
+	match := models.NZBResult{Title: "Show.S01.1080p.WEBRip.x265"}
+	plain := models.NZBResult{Title: "Show.S01E01.2160p.WEB-DL"}
+
+	scoreMatch, breakdownMatch := ScoreResult(match, ctx)
+	scorePlain, _ := ScoreResult(plain, ctx)
+
+	if scoreMatch >= scorePlain {
+		t.Fatalf("expected disabled download terms not to outrank 2160p result (%d >= %d)", scoreMatch, scorePlain)
+	}
+	for _, item := range breakdownMatch {
+		if item.Criterion == "Download Preferred Terms" {
+			t.Fatal("did not expect download preferred terms breakdown when download ranking is disabled")
+		}
+	}
+}
+
 func TestSortResultsByScore_NegativeScoresLast(t *testing.T) {
 	ctx := ScoringContext{
 		RankingCriteria: []config.RankingCriterion{

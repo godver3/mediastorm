@@ -27,6 +27,15 @@ func (m *mockMovieDetailsProvider) MovieInfo(_ context.Context, _ models.MovieDe
 	return m.title, m.err
 }
 
+type mockSeriesDetailsProvider struct {
+	details *models.SeriesDetails
+	err     error
+}
+
+func (m *mockSeriesDetailsProvider) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return m.details, m.err
+}
+
 func TestPrequeueMovieAnimeDetection(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -137,6 +146,45 @@ func TestPrequeueMovieAnimeDetection_NilService(t *testing.T) {
 
 	if isAnime {
 		t.Error("isAnime should be false when service is nil")
+	}
+}
+
+func TestCreateEpisodeResolverPopulatesEpisodeAirYear(t *testing.T) {
+	handler := &PrequeueHandler{
+		metadataSvc: &mockSeriesDetailsProvider{
+			details: &models.SeriesDetails{
+				Title: models.Title{Name: "ONE PIECE (2023)", Year: 2023},
+				Seasons: []models.SeriesSeason{
+					{
+						Number:       2,
+						EpisodeCount: 8,
+						Episodes: []models.SeriesEpisode{
+							{
+								SeasonNumber:  2,
+								EpisodeNumber: 4,
+								AiredDate:     "2026-03-10",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := handler.createEpisodeResolverAndLookupAbsoluteEp(
+		context.Background(),
+		"tvdb:series:392276",
+		"ONE PIECE (2023)",
+		2023,
+		"tt11737520",
+		&models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 4},
+	)
+
+	if got.TargetAirDate != "2026-03-10" {
+		t.Fatalf("TargetAirDate = %q, want 2026-03-10", got.TargetAirDate)
+	}
+	if got.EpisodeAirYear != 2026 {
+		t.Fatalf("EpisodeAirYear = %d, want 2026", got.EpisodeAirYear)
 	}
 }
 

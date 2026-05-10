@@ -37,6 +37,7 @@ type MovieDetailsProvider interface {
 type PrewarmService interface {
 	GetWarm(titleID, userID string) *playback.WarmRef
 	AdoptEntry(prequeueID string)
+	UpdateFromPrequeue(prequeueID string)
 }
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
@@ -599,6 +600,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	var isDaily bool
 	var isAnime bool
 	var targetAirDate string
+	var episodeAirYear int
 	if mediaType == "series" && h.metadataSvc != nil {
 		seriesMeta := h.createEpisodeResolverAndLookupAbsoluteEp(ctx, titleID, titleName, year, imdbID, targetEpisode)
 		episodeResolver = seriesMeta.EpisodeResolver
@@ -606,6 +608,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		isDaily = seriesMeta.IsDaily
 		isAnime = seriesMeta.IsAnime
 		targetAirDate = seriesMeta.TargetAirDate
+		episodeAirYear = seriesMeta.EpisodeAirYear
 		if year == 0 && seriesMeta.Year > 0 {
 			year = seriesMeta.Year
 			log.Printf("[prequeue] Populated year %d from series metadata", year)
@@ -639,18 +642,18 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// Use the same search path as the regular search UI: wait for all sources
 	// (debrid + usenet), combine, rank, and return a single ordered list.
 	searchOpts := indexer.SearchOptions{
-		Query:              query,
-		MaxResults:         50,
-		MediaType:          mediaType,
-		IMDBID:             imdbID,
-		Year:               year,
-		UserID:             userID,
-		ClientID:           clientID,
-		EpisodeResolver:    episodeResolver,
-		IsDaily:            isDaily,
-		IsAnime:            isAnime,
-		TargetAirDate:      targetAirDate,
-		UseDownloadRanking: true,
+		Query:           query,
+		MaxResults:      50,
+		MediaType:       mediaType,
+		IMDBID:          imdbID,
+		Year:            year,
+		UserID:          userID,
+		ClientID:        clientID,
+		EpisodeResolver: episodeResolver,
+		IsDaily:         isDaily,
+		IsAnime:         isAnime,
+		TargetAirDate:   targetAirDate,
+		EpisodeAirYear:  episodeAirYear,
 	}
 	// Pass absolute episode number for anime matching (if available)
 	if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
@@ -1114,6 +1117,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 		e.Status = playback.PrequeueStatusReady
 	})
+	if h.prewarmSvc != nil {
+		h.prewarmSvc.UpdateFromPrequeue(prequeueID)
+	}
 
 	log.Printf("[prequeue] TIMING: Prequeue %s is ready (TOTAL: %v)", prequeueID, time.Since(workerStart))
 }
@@ -1423,6 +1429,7 @@ type SeriesMetadataResult struct {
 	TargetEpisode   *models.EpisodeReference
 	IsDaily         bool   // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate   string // Air date from TVDB in YYYY-MM-DD format
+	EpisodeAirYear  int    // Year the target episode aired, used to allow later-season year tags
 	IsAnime         bool   // True for anime content - requires waiting for Nyaa scraper
 	Year            int    // Series premiere year from metadata (used when frontend doesn't provide it)
 }
@@ -1539,6 +1546,11 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	// Set the air date for daily show matching
 	if foundAirDate != "" {
 		result.TargetAirDate = foundAirDate
+		if len(foundAirDate) >= 4 {
+			if airYear, err := strconv.Atoi(foundAirDate[:4]); err == nil && airYear > 0 {
+				result.EpisodeAirYear = airYear
+			}
+		}
 	}
 
 	if len(seasonCounts) == 0 {
