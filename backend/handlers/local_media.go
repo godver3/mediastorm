@@ -21,6 +21,7 @@ import (
 
 type localMediaService interface {
 	GetItem(ctx context.Context, itemID string) (*models.LocalMediaItem, error)
+	ProbeItemForPlayback(ctx context.Context, item *models.LocalMediaItem) (*models.LocalMediaProbe, error)
 	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
 	ListGroups(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaGroupListResult, error)
 	FindMatches(ctx context.Context, query models.LocalMediaMatchQuery) ([]models.LocalMediaMatchedGroup, error)
@@ -159,6 +160,21 @@ func (h *LocalMediaHandler) GetPlayback(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
+
+	probe, err := h.service.ProbeItemForPlayback(r.Context(), item)
+	if err != nil {
+		log.Printf("[localmedia] playback probe failed item=%s file=%q err=%v", item.ID, item.FilePath, err)
+		switch {
+		case errors.Is(err, localmedia.ErrLocalMediaNotPlayable):
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		case errors.Is(err, localmedia.ErrItemNotFound), errors.Is(err, localmedia.ErrLibraryNotFound):
+			http.Error(w, "local media item not found", http.StatusNotFound)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+	item.Probe = probe
 
 	streamPath := localmedia.BuildStreamPath(*item)
 	query := url.Values{}

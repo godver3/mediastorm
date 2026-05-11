@@ -11,12 +11,15 @@ import (
 
 	"novastream/internal/auth"
 	"novastream/models"
+	"novastream/services/localmedia"
 
 	"github.com/gorilla/mux"
 )
 
 type fakeLocalMediaPlaybackService struct {
 	item      *models.LocalMediaItem
+	probe     *models.LocalMediaProbe
+	probeErr  error
 	libraries []models.LocalMediaLibrary
 	groups    *models.LocalMediaGroupListResult
 	matches   []models.LocalMediaMatchedGroup
@@ -25,6 +28,16 @@ type fakeLocalMediaPlaybackService struct {
 
 func (f *fakeLocalMediaPlaybackService) GetItem(ctx context.Context, itemID string) (*models.LocalMediaItem, error) {
 	return f.item, f.err
+}
+
+func (f *fakeLocalMediaPlaybackService) ProbeItemForPlayback(ctx context.Context, item *models.LocalMediaItem) (*models.LocalMediaProbe, error) {
+	if f.probeErr != nil {
+		return nil, f.probeErr
+	}
+	if f.probe != nil {
+		return f.probe, nil
+	}
+	return &models.LocalMediaProbe{VideoCodec: "h264", DurationSeconds: 120, SizeBytes: 1024}, nil
 }
 
 func (f *fakeLocalMediaPlaybackService) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error) {
@@ -91,6 +104,34 @@ func TestLocalMediaHandlerGetPlayback(t *testing.T) {
 	}
 	if resp.HLSStartURL == "" || !resp.HLSAvailable {
 		t.Fatalf("expected HLS response, got %+v", resp)
+	}
+}
+
+func TestLocalMediaHandlerGetPlaybackRejectsUnplayableProbe(t *testing.T) {
+	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+		item: &models.LocalMediaItem{
+			ID:            "item1",
+			FileName:      "Movie.Title.2024.mkv",
+			FilePath:      "/srv/media/Movie.Title.2024.mkv",
+			MatchedName:   "Movie Title",
+			DetectedTitle: "Movie Title",
+		},
+		probeErr: localmedia.ErrLocalMediaNotPlayable,
+	}, fakeLocalMediaUsersProvider{allowed: true}, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/items/item1/playback?profileId=user1", nil)
+	req = mux.SetURLVars(req, map[string]string{"itemID": "item1"})
+	ctx := context.WithValue(req.Context(), auth.ContextKeyAccountID, "acct1")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	handler.GetPlayback(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+	if !strings.Contains(rec.Body.String(), "local media file is not playable") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 

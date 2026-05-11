@@ -26,12 +26,13 @@ import (
 )
 
 var (
-	ErrLibraryNotFound   = errors.New("local media library not found")
-	ErrLibraryScanning   = errors.New("local media library scan already in progress")
-	ErrLibraryNameNeeded = errors.New("library name is required")
-	ErrLibraryPathNeeded = errors.New("library root path is required")
-	ErrLibraryTypeNeeded = errors.New("library type is required")
-	ErrItemNotFound      = errors.New("local media item not found")
+	ErrLibraryNotFound       = errors.New("local media library not found")
+	ErrLibraryScanning       = errors.New("local media library scan already in progress")
+	ErrLibraryNameNeeded     = errors.New("library name is required")
+	ErrLibraryPathNeeded     = errors.New("library root path is required")
+	ErrLibraryTypeNeeded     = errors.New("library type is required")
+	ErrItemNotFound          = errors.New("local media item not found")
+	ErrLocalMediaNotPlayable = errors.New("local media file is not playable")
 )
 
 type metadataMatcher interface {
@@ -1097,6 +1098,36 @@ func (s *Service) GetItem(ctx context.Context, itemID string) (*models.LocalMedi
 	return &copy, nil
 }
 
+func (s *Service) ProbeItemForPlayback(ctx context.Context, item *models.LocalMediaItem) (*models.LocalMediaProbe, error) {
+	if item == nil {
+		return nil, ErrItemNotFound
+	}
+
+	filePath := filepath.Clean(strings.TrimSpace(item.FilePath))
+	if filePath == "" || filePath == "." {
+		return nil, ErrItemNotFound
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrItemNotFound
+		}
+		return nil, fmt.Errorf("%w: stat failed: %v", ErrLocalMediaNotPlayable, err)
+	}
+	if info.IsDir() {
+		return nil, ErrItemNotFound
+	}
+
+	probe, err := s.probeLocalFileWithError(ctx, filePath, info.Size())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrLocalMediaNotPlayable, err)
+	}
+	if probe == nil || strings.TrimSpace(probe.VideoCodec) == "" {
+		return nil, fmt.Errorf("%w: no video stream found", ErrLocalMediaNotPlayable)
+	}
+	return probe, nil
+}
+
 func (s *Service) DeleteItem(ctx context.Context, itemID string) error {
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
@@ -1795,6 +1826,14 @@ type ffprobeResponse struct {
 }
 
 func (s *Service) probeLocalFile(ctx context.Context, path string, fileSize int64) *models.LocalMediaProbe {
+	probe, err := s.probeLocalFileWithError(ctx, path, fileSize)
+	if err != nil {
+		return &models.LocalMediaProbe{SizeBytes: fileSize}
+	}
+	return probe
+}
+
+func (s *Service) probeLocalFileWithError(ctx context.Context, path string, fileSize int64) (*models.LocalMediaProbe, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
@@ -1811,12 +1850,16 @@ func (s *Service) probeLocalFile(ctx context.Context, path string, fileSize int6
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return &models.LocalMediaProbe{SizeBytes: fileSize}
+		stderrText := strings.TrimSpace(stderr.String())
+		if stderrText != "" {
+			return nil, fmt.Errorf("ffprobe failed: %w: %s", err, stderrText)
+		}
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
 	}
 
 	var resp ffprobeResponse
 	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		return &models.LocalMediaProbe{SizeBytes: fileSize}
+		return nil, fmt.Errorf("parse ffprobe output: %w", err)
 	}
 
 	probe := &models.LocalMediaProbe{
@@ -1860,7 +1903,7 @@ func (s *Service) probeLocalFile(ctx context.Context, path string, fileSize int6
 	}
 	sort.Strings(probe.AudioCodecs)
 	sort.Strings(probe.SubtitleCodecs)
-	return probe
+	return probe, nil
 }
 
 func detectHDRFormat(colorTransfer, colorPrimaries string, sideData []map[string]any) string {
