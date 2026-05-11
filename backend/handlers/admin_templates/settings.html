@@ -1916,7 +1916,7 @@
                 const colorValue = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#ffffff';
                 return '<input type="color" class="color-input'+invalidClass+'" id="'+id+'" value="'+colorValue+'" '+isReadonly+' style="width:44px;height:36px;min-width:44px;padding:2px;border-radius:6px;cursor:pointer;" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'password':
-                return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
+                return '<input type="password" class="form-input'+invalidClass+'" id="'+id+'" value="'+escapeHtml(value || '').replace(/"/g, '&quot;')+'" '+isReadonly+' oninput="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)" onchange="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
             case 'tags':
                 const tags = Array.isArray(value) ? value : [];
                 const tagsHtml = tags.map((tag, idx) => '<span class="tag" title="'+escapeHtml(tag).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(tag)+'</span><span class="tag-remove" onclick="removeTagByIndex(\''+basePath+'\', \''+fieldKey+'\', '+idx+')">&times;</span></span>').join('');
@@ -1968,8 +1968,14 @@
                     '</div>' +
                     '<script>checkFileUploadStatus("'+id+'", "'+uploadEndpoint+'");</script>';
             default:
-                return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+(value || '')+'" '+isReadonly+' onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
+                return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+escapeHtml(value || '').replace(/"/g, '&quot;')+'" '+isReadonly+' oninput="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)" onchange="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
+    }
+    function handleFieldInputChange(basePath, fieldKey, value) {
+        if (fieldKey.startsWith('config.') && typeof value === 'boolean') {
+            value = value ? 'true' : 'false';
+        }
+        setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
     }
     function handleFieldChange(basePath, fieldKey, value) {
         // For nested config fields (e.g., config.autoClearQueue), convert booleans to strings
@@ -2373,6 +2379,9 @@
                     defaultValue = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
                     break;
                 default: defaultValue = '';
+            }
+            if (fieldKey.startsWith('config.') && typeof defaultValue === 'boolean') {
+                defaultValue = defaultValue ? 'true' : 'false';
             }
             if (fieldKey.includes('.')) {
                 const parts = fieldKey.split('.');
@@ -3239,6 +3248,7 @@
                 }
             } else {
                 // Save global settings
+                normalizeSettingsForSave(currentSettings);
                 const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -5934,6 +5944,23 @@
         // Initialize drag-drop for provider priority and shelves
         initDragDrop();
     }
+
+    function normalizeSettingsForSave(settings) {
+        if (!settings || !Array.isArray(settings.torrentScrapers)) return settings;
+        settings.torrentScrapers.forEach(scraper => {
+            if (!scraper || !scraper.config || typeof scraper.config !== 'object' || Array.isArray(scraper.config)) return;
+            Object.keys(scraper.config).forEach(key => {
+                const value = scraper.config[key];
+                if (value === undefined || value === null) {
+                    delete scraper.config[key];
+                } else if (typeof value !== 'string') {
+                    scraper.config[key] = String(value);
+                }
+            });
+        });
+        return settings;
+    }
+
     async function saveAllSettings() {
         try {
             if (selectedClientId && clientSettings !== null) {
@@ -5984,6 +6011,7 @@
                 }
             } else {
                 // Save global settings
+                normalizeSettingsForSave(currentSettings);
                 const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
