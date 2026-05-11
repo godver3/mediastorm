@@ -1006,6 +1006,7 @@ type AdminUIHandler struct {
 	connectionsTemplate   *template.Template
 	prequeueTemplate      *template.Template
 	recordingsTemplate    *template.Template
+	onboardingTemplate    *template.Template
 	settingsPath          string
 	logFile               string
 	hlsManager            *HLSManager
@@ -1245,6 +1246,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		connectionsTemplate:  createPageTemplate("connections.html"),
 		prequeueTemplate:     createPageTemplate("prequeue.html"),
 		recordingsTemplate:   createPageTemplate("recordings.html"),
+		onboardingTemplate:   createPageTemplate("onboarding.html"),
 		settingsPath:         settingsPath,
 		logFile:              logFile,
 		hlsManager:           hlsManager,
@@ -1406,6 +1408,186 @@ func (h *AdminUIHandler) StatusPage(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Status template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// OnboardingPage serves the guided first-run setup wizard.
+func (h *AdminUIHandler) OnboardingPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	if !isAdmin {
+		http.Error(w, "Admin access required", http.StatusForbidden)
+		return
+	}
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	data := AdminPageData{
+		CurrentPath:    basePath + "/onboarding",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.onboardingTemplate == nil {
+		http.Error(w, "Onboarding template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.onboardingTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Onboarding template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+type onboardingStatus struct {
+	Completed              bool `json:"completed"`
+	Skipped                bool `json:"skipped"`
+	NeedsOnboarding        bool `json:"needsOnboarding"`
+	SetupComplete          bool `json:"setupComplete"`
+	DefaultPassword        bool `json:"defaultPassword"`
+	HasStreamingProvider   bool `json:"hasStreamingProvider"`
+	HasSearchSource        bool `json:"hasSearchSource"`
+	HasMetadataProvider    bool `json:"hasMetadataProvider"`
+	HasUsableProfile       bool `json:"hasUsableProfile"`
+	AccountCount           int  `json:"accountCount"`
+	ProfileCount           int  `json:"profileCount"`
+	EnabledDebridProviders int  `json:"enabledDebridProviders"`
+	EnabledUsenetProviders int  `json:"enabledUsenetProviders"`
+	EnabledTorrentScrapers int  `json:"enabledTorrentScrapers"`
+	EnabledUsenetIndexers  int  `json:"enabledUsenetIndexers"`
+}
+
+func (h *AdminUIHandler) buildOnboardingStatus() (onboardingStatus, error) {
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		return onboardingStatus{}, err
+	}
+
+	status := onboardingStatus{
+		Completed: settings.UI.OnboardingCompleted,
+		Skipped:   settings.UI.OnboardingSkipped,
+	}
+
+	if h.accountsService != nil {
+		status.DefaultPassword = h.accountsService.HasDefaultPassword()
+		status.AccountCount = len(h.accountsService.List())
+	}
+	if h.usersService != nil {
+		status.ProfileCount = len(h.usersService.List())
+	}
+
+	for _, p := range settings.Streaming.DebridProviders {
+		if p.Enabled {
+			status.EnabledDebridProviders++
+		}
+	}
+	for _, p := range settings.Usenet {
+		if p.Enabled {
+			status.EnabledUsenetProviders++
+		}
+	}
+	for _, s := range settings.TorrentScrapers {
+		if s.Enabled {
+			status.EnabledTorrentScrapers++
+		}
+	}
+	for _, i := range settings.Indexers {
+		if i.Enabled {
+			status.EnabledUsenetIndexers++
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(string(settings.Streaming.ServiceMode))) {
+	case "debrid":
+		status.HasStreamingProvider = status.EnabledDebridProviders > 0
+		status.HasSearchSource = status.EnabledTorrentScrapers > 0
+	case "usenet":
+		status.HasStreamingProvider = status.EnabledUsenetProviders > 0
+		status.HasSearchSource = status.EnabledUsenetIndexers > 0
+	default:
+		status.HasStreamingProvider = status.EnabledDebridProviders > 0 && status.EnabledUsenetProviders > 0
+		status.HasSearchSource = status.EnabledTorrentScrapers > 0 && status.EnabledUsenetIndexers > 0
+	}
+	status.HasMetadataProvider = strings.TrimSpace(settings.Metadata.TMDBAPIKey) != "" && strings.TrimSpace(settings.Metadata.TVDBAPIKey) != ""
+	status.HasUsableProfile = status.ProfileCount > 0
+	status.SetupComplete = !status.DefaultPassword && status.HasStreamingProvider && status.HasSearchSource && status.HasMetadataProvider && status.HasUsableProfile
+	status.NeedsOnboarding = !status.Completed && !status.Skipped && !status.SetupComplete
+
+	return status, nil
+}
+
+// GetOnboardingStatus returns first-run setup progress for the admin wizard.
+func (h *AdminUIHandler) GetOnboardingStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
+
+	status, err := h.buildOnboardingStatus()
+	if err != nil {
+		http.Error(w, "Failed to load onboarding status", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func (h *AdminUIHandler) updateOnboardingState(update func(*config.Settings)) error {
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		return err
+	}
+	update(&settings)
+	return mgr.Save(settings)
+}
+
+// SkipOnboarding marks first-run setup as skipped.
+func (h *AdminUIHandler) SkipOnboarding(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := h.updateOnboardingState(func(settings *config.Settings) {
+		settings.UI.OnboardingSkipped = true
+		settings.UI.OnboardingSkippedAt = now
+	}); err != nil {
+		http.Error(w, "Failed to save onboarding state", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "skipped"})
+}
+
+// CompleteOnboarding marks first-run setup as complete.
+func (h *AdminUIHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := h.updateOnboardingState(func(settings *config.Settings) {
+		settings.UI.OnboardingCompleted = true
+		settings.UI.OnboardingCompletedAt = now
+	}); err != nil {
+		http.Error(w, "Failed to save onboarding state", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "completed"})
 }
 
 // HistoryPage serves the watch history page
@@ -2367,6 +2549,34 @@ func (h *AdminUIHandler) getSession(r *http.Request) *models.Session {
 	return &session
 }
 
+func (h *AdminUIHandler) shouldGateOnboarding(r *http.Request, session *models.Session) bool {
+	if session == nil || !session.IsMaster || r.Method != http.MethodGet {
+		return false
+	}
+
+	path := r.URL.Path
+	if h.serverBasePath != "" {
+		path = strings.TrimPrefix(path, h.serverBasePath)
+		if path == "" {
+			path = "/"
+		}
+	}
+
+	if !strings.HasPrefix(path, "/admin") {
+		return false
+	}
+	if path == "/admin/onboarding" || strings.HasPrefix(path, "/admin/api/") || path == "/admin/login" || path == "/admin/logout" {
+		return false
+	}
+
+	status, err := h.buildOnboardingStatus()
+	if err != nil {
+		log.Printf("[admin] failed to evaluate onboarding gate: %v", err)
+		return false
+	}
+	return status.NeedsOnboarding
+}
+
 // getPageRoleInfo returns IsAdmin, AccountID, BasePath, and Username based on session and request path
 func (h *AdminUIHandler) getPageRoleInfo(r *http.Request) (isAdmin bool, accountID string, basePath string, username string) {
 	session := adminSessionFromContext(r.Context())
@@ -2450,6 +2660,10 @@ func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		session := h.getSession(r)
 		if session == nil {
 			http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
+			return
+		}
+		if h.shouldGateOnboarding(r, session) {
+			http.Redirect(w, r, h.serverBasePath+"/admin/onboarding", http.StatusSeeOther)
 			return
 		}
 		// Add session to context for handlers to use

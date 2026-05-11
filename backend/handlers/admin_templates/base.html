@@ -1710,11 +1710,12 @@
             }
         }
     </style>
+    {{block "styles" .}}{{end}}
 </head>
 <body>
     <nav class="navbar">
         <div class="navbar-content">
-            <a href="{{.BasePath}}" class="navbar-brand">
+            <a {{if not (hasSuffix .CurrentPath "/onboarding")}}href="{{.BasePath}}"{{end}} class="navbar-brand" {{if hasSuffix .CurrentPath "/onboarding"}}aria-disabled="true" onclick="return false;" style="cursor: default;"{{end}}>
                 <img src="{{.ServerBasePath}}/api/static/icon-rounded.png" alt="mediastorm" style="width: 32px; height: 32px; border-radius: 6px;">
                 <div style="display: flex; flex-direction: column; line-height: 1.2;">
                     <span>{{if .IsAdmin}}mediastorm admin{{else}}mediastorm account{{end}} <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 400;">v{{.Version}}</span></span>
@@ -1723,6 +1724,7 @@
                 </div>
             </a>
 
+            {{if not (hasSuffix .CurrentPath "/onboarding")}}
             <button class="menu-toggle" onclick="toggleMenu()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="3" y1="12" x2="21" y2="12"/>
@@ -1967,6 +1969,7 @@
                     Logout
                 </a>
             </div>
+            {{end}}
         </div>
     </nav>
 

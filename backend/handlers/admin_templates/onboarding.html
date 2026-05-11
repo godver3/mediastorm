@@ -1,0 +1,908 @@
+{{template "base" .}}
+
+{{define "title"}}Onboarding - mediastorm Admin{{end}}
+
+{{define "styles"}}
+<style>
+.onboarding-shell { display: grid; gap: 1.25rem; }
+.onboarding-progress-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1rem; }
+.onboarding-progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.875rem; color: var(--text-secondary); font-size: 0.875rem; }
+.onboarding-progress-track { height: 6px; background: var(--bg-tertiary); border-radius: 999px; overflow: hidden; margin-bottom: 1rem; }
+.onboarding-progress-fill { height: 100%; width: 0%; background: var(--success); border-radius: 999px; transition: width 0.25s ease; }
+.onboarding-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.5rem; }
+.onboarding-step-button { width: 100%; min-height: 72px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius); padding: 0.625rem; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 0.5rem; cursor: pointer; text-align: left; transition: border-color 0.2s, background 0.2s, color 0.2s, opacity 0.2s; }
+.onboarding-step-button:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+.onboarding-step-button.active { color: var(--text-primary); border-color: var(--accent); background: rgba(99, 102, 241, 0.12); }
+.onboarding-step-button.complete { border-color: rgba(34, 197, 94, 0.45); background: rgba(34, 197, 94, 0.08); color: var(--text-primary); }
+.onboarding-step-button.locked { opacity: 0.55; cursor: not-allowed; }
+.step-topline { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 0.5rem; }
+.step-index { width: 1.5rem; height: 1.5rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
+.onboarding-step-button.complete .step-index { background: var(--success); color: #06140a; }
+.onboarding-step-button.active .step-index { background: var(--accent); color: white; }
+.step-label { font-weight: 600; font-size: 0.82rem; line-height: 1.2; }
+.step-state { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.onboarding-step-button.complete .step-state { color: var(--success); }
+.onboarding-step-button.active .step-state { color: var(--accent-hover); }
+.onboarding-panel { display: none; }
+.onboarding-panel.active { display: block; }
+.onboarding-panel .card-body { padding: 1.5rem; }
+.onboarding-actions { display: flex; justify-content: space-between; margin-top: 1rem; gap: 0.75rem; }
+.step-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 1.25rem; }
+.inline-result { font-size: 0.8125rem; color: var(--text-secondary); min-height: 1.25rem; }
+.inline-result.success { color: var(--success); }
+.inline-result.error { color: var(--danger); }
+.profile-form-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem; }
+#providerFields { display: grid; gap: 1rem; margin-bottom: 1.25rem; }
+.source-list { display: grid; gap: 0.75rem; margin-top: 1rem; }
+.source-section { display: grid; gap: 0.75rem; }
+.source-section + .source-section { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.source-section-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.source-section-title { margin: 0; font-size: 1rem; }
+.source-row { display: grid; grid-template-columns: minmax(140px, 0.7fr) repeat(4, minmax(0, 1fr)) auto; gap: 0.75rem; align-items: end; padding: 0.875rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
+.source-row .source-extra { display: none; }
+.source-row.needs-url .source-url, .source-row.needs-key .source-key, .source-row.needs-options .source-options, .source-row.needs-categories .source-categories { display: block; }
+.color-control { width: 52px !important; min-width: 52px; height: 40px; padding: 3px !important; cursor: pointer; }
+.setup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.setup-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.checklist { display: grid; gap: 0.5rem; }
+.check-item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
+.check-state { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
+.check-item.done .check-state { color: var(--success); }
+.hidden { display: none !important; }
+@media (max-width: 900px) {
+  .onboarding-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setup-grid, .setup-row, .source-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .onboarding-steps { grid-template-columns: 1fr; }
+  .onboarding-actions { flex-direction: column-reverse; }
+  .onboarding-actions .btn { width: 100%; }
+}
+</style>
+{{end}}
+
+{{define "content"}}
+<div class="page-header" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+    <div>
+        <h1>Admin Onboarding</h1>
+        <p>Finish the core setup needed for accounts, profiles, and playback.</p>
+    </div>
+    <button class="btn btn-secondary" onclick="skipOnboarding()">Skip for now</button>
+</div>
+
+<div class="onboarding-shell">
+    <div class="onboarding-progress-card">
+        <div class="onboarding-progress-meta">
+            <span id="progressSummary">Step 1 of 6</span>
+            <span id="progressStatus">Setup in progress</span>
+        </div>
+        <div class="onboarding-progress-track">
+            <div class="onboarding-progress-fill" id="progressFill"></div>
+        </div>
+        <div class="onboarding-steps" id="stepList"></div>
+    </div>
+    <div>
+        <section class="card onboarding-panel active" data-panel="0">
+            <div class="card-header"><h2>Master Admin Account</h2></div>
+            <div class="card-body">
+                <div id="passwordStatus" class="check-item" style="margin-bottom: 1rem;"></div>
+                <form onsubmit="saveMasterAdminAccount(event)" class="setup-grid">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label class="form-label">Admin Username</label>
+                        <input type="text" id="adminUsername" class="form-input" autocomplete="username">
+                        <p class="form-hint">You can keep this as admin or choose a different master username.</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">New Password</label>
+                        <input type="password" id="adminPassword" class="form-input" minlength="4" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Confirm Password</label>
+                        <input type="password" id="adminPasswordConfirm" class="form-input" minlength="4" autocomplete="new-password">
+                    </div>
+                    <div style="grid-column: 1 / -1;">
+                        <button class="btn btn-primary" type="submit">Save Master Admin Account</button>
+                        <p class="form-hint">Changing the password signs out existing admin sessions.</p>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <section class="card onboarding-panel" data-panel="1">
+            <div class="card-header"><h2>Streaming Source</h2></div>
+            <div class="card-body">
+                <div class="form-group">
+                    <label class="form-label">Service Mode</label>
+                    <select id="serviceMode" class="form-select" onchange="renderProviderFields()">
+                        <option value="debrid">Debrid</option>
+                        <option value="usenet">Usenet</option>
+                        <option value="hybrid">Hybrid</option>
+                    </select>
+                </div>
+                <div id="providerFields"></div>
+                <div class="step-actions">
+                    <button class="btn btn-secondary" onclick="testStreamingSource()">Test Source</button>
+                    <button class="btn btn-primary" onclick="saveStreamingSource()">Save Streaming Source</button>
+                    <span class="inline-result" id="streamingTestResult"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="card onboarding-panel" data-panel="2">
+            <div class="card-header"><h2>Search Source</h2></div>
+            <div class="card-body">
+                <div class="source-section">
+                    <div class="source-section-header">
+                        <h3 class="source-section-title">Torrent &amp; Stream Sources</h3>
+                        <button class="btn btn-secondary btn-sm" type="button" onclick="addSearchSourceRow({ sourceKey: 'torrentio' })">Add Source</button>
+                    </div>
+                    <div id="torrentSearchSources" class="source-list"></div>
+                </div>
+                <div class="source-section">
+                    <div class="source-section-header">
+                        <h3 class="source-section-title">Usenet Indexers</h3>
+                        <button class="btn btn-secondary btn-sm" type="button" onclick="addSearchSourceRow({ sourceKey: 'newznab' })">Add Indexer</button>
+                    </div>
+                    <div id="usenetSearchSources" class="source-list"></div>
+                </div>
+                <div class="step-actions">
+                    <button class="btn btn-primary" onclick="saveSearchSources()">Save Search Sources</button>
+                    <span class="inline-result" id="searchTestResult"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="card onboarding-panel" data-panel="3">
+            <div class="card-header"><h2>Metadata Basics</h2></div>
+            <div class="card-body">
+                <div class="setup-grid">
+                    <div class="form-group">
+                        <label class="form-label">TMDB API Key</label>
+                        <input type="password" id="tmdbApiKey" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">TVDB API Key</label>
+                        <input type="password" id="tvdbApiKey" class="form-input">
+                    </div>
+                </div>
+                <div class="step-actions">
+                    <button class="btn btn-secondary" onclick="testMetadata()">Test Metadata</button>
+                    <button class="btn btn-primary" onclick="saveMetadata()">Save Metadata</button>
+                    <span class="inline-result" id="metadataTestResult"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="card onboarding-panel" data-panel="4">
+            <div class="card-header">
+                <h2>Profiles</h2>
+                <button class="btn btn-secondary btn-sm" onclick="loadAccountsAndProfiles()">Refresh</button>
+            </div>
+            <div class="card-body">
+                <div class="setup-grid">
+                    <form onsubmit="createProfile(event)" style="grid-column: 1 / -1;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">Create Profile</h3>
+                        <div class="form-group">
+                            <label class="form-label">Account</label>
+                            <select id="profileAccountId" class="form-select"></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Profile Name</label>
+                            <input type="text" id="profileName" class="form-input">
+                        </div>
+                        <div class="setup-row">
+                            <div class="form-group">
+                                <label class="form-label">Color</label>
+                                <input type="color" id="profileColor" class="form-input color-control" value="#3B82F6">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">PIN</label>
+                                <input type="password" id="profilePin" class="form-input" minlength="4">
+                            </div>
+                        </div>
+                        <label class="toggle" style="margin-bottom: 1rem;">
+                            <input type="checkbox" id="profileKids">
+                            <span class="toggle-slider"></span>
+                            <span>Kids profile</span>
+                        </label>
+                        <div class="profile-form-actions">
+                            <button class="btn btn-primary" type="submit">Create Profile</button>
+                        </div>
+                    </form>
+                </div>
+                <div id="accountsSummary" style="margin-top: 1.25rem;"></div>
+            </div>
+        </section>
+
+        <section class="card onboarding-panel" data-panel="5">
+            <div class="card-header"><h2>Review</h2></div>
+            <div class="card-body">
+                <div class="checklist" id="reviewChecklist"></div>
+            </div>
+        </section>
+
+        <div class="onboarding-actions">
+            <button class="btn btn-secondary" id="backStepBtn" onclick="previousStep()">Back</button>
+            <button class="btn btn-primary" id="nextStepBtn" onclick="nextStep()">Next</button>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const settings = {{json .Settings}};
+let statusData = null;
+let accounts = [];
+let profiles = [];
+let activeStep = 0;
+const steps = ['Master Admin', 'Streaming Source', 'Search Source', 'Metadata Basics', 'Profiles', 'Review'];
+const redacted = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+let searchSourceCounter = 0;
+let searchSourcesSeeded = false;
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+async function requestJSON(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function setInlineResult(id, message, tone = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'inline-result' + (tone ? ' ' + tone : '');
+}
+
+async function loadStatus() {
+  statusData = await requestJSON(basePath + '/api/onboarding/status');
+  renderPasswordStatus();
+  renderSteps();
+  renderReview();
+}
+
+function renderSteps() {
+  const rawDone = getRawStepDone();
+  const completed = getSequentialStepDone(rawDone);
+  const highestUnlocked = getHighestUnlocked(rawDone);
+  const completeCount = completed.filter(Boolean).length;
+  const progress = Math.round((completeCount / steps.length) * 100);
+  document.getElementById('progressSummary').textContent = `Step ${activeStep + 1} of ${steps.length}`;
+  document.getElementById('progressStatus').textContent = statusData && statusData.setupComplete ? 'Core setup complete' : `${completeCount} of ${steps.length} stages complete`;
+  document.getElementById('progressFill').style.width = progress + '%';
+  document.getElementById('stepList').innerHTML = steps.map((label, index) => {
+    const locked = index > highestUnlocked;
+    const state = completed[index] ? 'Done' : (index === activeStep ? 'Current' : (locked ? 'Locked' : 'Ready'));
+    return `
+    <button class="onboarding-step-button ${index === activeStep ? 'active' : ''} ${completed[index] ? 'complete' : ''} ${locked ? 'locked' : ''}" onclick="goToStep(${index})" ${locked ? 'disabled' : ''}>
+      <span class="step-topline">
+        <span class="step-index">${completed[index] ? '&#10003;' : index + 1}</span>
+        <span class="step-state">${state}</span>
+      </span>
+      <span class="step-label">${label}</span>
+    </button>
+  `;
+  }).join('');
+
+  const backBtn = document.getElementById('backStepBtn');
+  const nextBtn = document.getElementById('nextStepBtn');
+  if (backBtn) backBtn.disabled = activeStep === 0;
+  if (nextBtn) {
+    nextBtn.textContent = activeStep === steps.length - 1 ? 'Review Complete' : 'Next';
+    nextBtn.disabled = activeStep > highestUnlocked || (activeStep !== steps.length - 1 && activeStep >= highestUnlocked);
+  }
+}
+
+function getRawStepDone() {
+  return [
+    statusData && !statusData.defaultPassword,
+    statusData && statusData.hasStreamingProvider,
+    statusData && statusData.hasSearchSource,
+    statusData && statusData.hasMetadataProvider,
+    statusData && statusData.hasUsableProfile,
+    statusData && statusData.setupComplete,
+  ];
+}
+
+function getSequentialStepDone(rawDone) {
+  const completed = [];
+  let blocked = false;
+  for (let i = 0; i < rawDone.length; i++) {
+    completed[i] = !blocked && Boolean(rawDone[i]);
+    if (!completed[i]) blocked = true;
+  }
+  return completed;
+}
+
+function getHighestUnlocked(rawDone) {
+  for (let i = 0; i < rawDone.length; i++) {
+    if (!rawDone[i]) return i;
+  }
+  return steps.length - 1;
+}
+
+function goToStep(index) {
+  const highestUnlocked = getHighestUnlocked(getRawStepDone());
+  const nextIndex = Math.max(0, Math.min(steps.length - 1, index));
+  if (nextIndex > highestUnlocked) {
+    showToast('Complete the current stage before continuing', 'info');
+    return;
+  }
+  activeStep = nextIndex;
+  document.querySelectorAll('.onboarding-panel').forEach(panel => {
+    panel.classList.toggle('active', Number(panel.dataset.panel) === activeStep);
+  });
+  renderSteps();
+  if (activeStep === 5) renderReview();
+}
+
+function nextStep() {
+  if (activeStep === steps.length - 1) {
+    completeOnboarding();
+    return;
+  }
+  goToStep(activeStep + 1);
+}
+function previousStep() { goToStep(activeStep - 1); }
+
+function renderPasswordStatus() {
+  const el = document.getElementById('passwordStatus');
+  if (!statusData) return;
+  el.className = 'check-item ' + (!statusData.defaultPassword ? 'done' : '');
+  el.innerHTML = `<span>${statusData.defaultPassword ? 'Master admin account is using the default password.' : 'Master admin account is secured.'}</span><span class="check-state">${statusData.defaultPassword ? 'Needs action' : 'Done'}</span>`;
+}
+
+function getMasterAccount() {
+  return accounts.find(account => account.isMaster) || accounts.find(account => account.id === 'master') || null;
+}
+
+async function saveMasterAdminAccount(event) {
+  event.preventDefault();
+  const master = getMasterAccount();
+  const username = document.getElementById('adminUsername').value.trim();
+  const password = document.getElementById('adminPassword').value;
+  const confirm = document.getElementById('adminPasswordConfirm').value;
+  if (!master) return showToast('Master account could not be loaded. Refresh and try again.', 'error');
+  if (!username) return showToast('Admin username is required', 'error');
+  if (password || statusData?.defaultPassword) {
+    if (password.length < 4) return showToast('Password must be at least 4 characters', 'error');
+    if (password !== confirm) return showToast('Passwords do not match', 'error');
+  }
+
+  if (username !== master.username) {
+    await requestJSON(basePath + '/api/accounts?accountId=' + encodeURIComponent(master.id), {
+      method: 'PATCH',
+      body: JSON.stringify({ username })
+    });
+  }
+
+  if (password) {
+    await requestJSON(basePath + '/api/accounts/password?accountId=' + encodeURIComponent(master.id), {
+      method: 'PUT',
+      body: JSON.stringify({ newPassword: password })
+    });
+    showToast('Master admin account saved. Sign in again with the new credentials.', 'info');
+    setTimeout(() => {
+      window.location.href = serverBasePath + '/admin/login';
+    }, 1000);
+    return;
+  }
+
+  document.getElementById('adminPassword').value = '';
+  document.getElementById('adminPasswordConfirm').value = '';
+  showToast('Master admin account saved');
+  await loadAccountsAndProfiles();
+  await loadStatus();
+}
+
+function renderProviderFields() {
+  const mode = document.getElementById('serviceMode').value;
+  const showDebrid = mode === 'debrid' || mode === 'hybrid';
+  const showUsenet = mode === 'usenet' || mode === 'hybrid';
+  document.getElementById('providerFields').innerHTML = `
+    <div class="${showDebrid ? '' : 'hidden'}">
+      <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">Debrid Provider</h3>
+      <div class="setup-grid">
+        <div class="form-group"><label class="form-label">Name</label><input id="debridName" class="form-input" value="Real-Debrid"></div>
+        <div class="form-group"><label class="form-label">Provider</label><select id="debridProvider" class="form-select"><option value="realdebrid">Real-Debrid</option><option value="torbox">TorBox</option><option value="alldebrid">AllDebrid</option></select></div>
+        <div class="form-group" style="grid-column: 1 / -1;"><label class="form-label">API Key</label><input id="debridApiKey" type="password" class="form-input"></div>
+      </div>
+    </div>
+    <div class="${showUsenet ? '' : 'hidden'}" style="margin-top: 1rem;">
+      <h3 style="font-size: 1rem; margin-bottom: 0.75rem;">Usenet Provider</h3>
+      <div class="setup-grid">
+        <div class="form-group"><label class="form-label">Name</label><input id="usenetName" class="form-input" value="Usenet"></div>
+        <div class="form-group"><label class="form-label">Host</label><input id="usenetHost" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Port</label><input id="usenetPort" type="number" class="form-input" value="563"></div>
+        <div class="form-group"><label class="form-label">Connections</label><input id="usenetConnections" type="number" class="form-input" value="10"></div>
+        <div class="form-group"><label class="form-label">Username</label><input id="usenetUsername" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Password</label><input id="usenetPassword" type="password" class="form-input"></div>
+        <label class="toggle"><input type="checkbox" id="usenetSSL" checked><span class="toggle-slider"></span><span>SSL</span></label>
+      </div>
+    </div>
+  `;
+  renderSearchSourceVisibility();
+}
+
+async function saveSettings(nextSettings) {
+  await requestJSON(basePath + '/api/settings', { method: 'PUT', body: JSON.stringify(nextSettings) });
+  Object.assign(settings, nextSettings);
+}
+
+async function saveStreamingSource() {
+  const next = JSON.parse(JSON.stringify(settings));
+  const mode = document.getElementById('serviceMode').value;
+  next.streaming = next.streaming || {};
+  next.streaming.serviceMode = mode;
+  if ((mode === 'debrid' || mode === 'hybrid') && document.getElementById('debridApiKey').value.trim()) {
+    next.streaming.debridProviders = next.streaming.debridProviders || [];
+    next.streaming.debridProviders.push({
+      name: document.getElementById('debridName').value.trim() || 'Debrid',
+      provider: document.getElementById('debridProvider').value,
+      apiKey: document.getElementById('debridApiKey').value.trim(),
+      enabled: true
+    });
+  }
+  if ((mode === 'usenet' || mode === 'hybrid') && document.getElementById('usenetHost').value.trim()) {
+    next.usenet = next.usenet || [];
+    next.usenet.push({
+      name: document.getElementById('usenetName').value.trim() || 'Usenet',
+      host: document.getElementById('usenetHost').value.trim(),
+      port: Number(document.getElementById('usenetPort').value || 563),
+      ssl: document.getElementById('usenetSSL').checked,
+      username: document.getElementById('usenetUsername').value.trim(),
+      password: document.getElementById('usenetPassword').value,
+      connections: Number(document.getElementById('usenetConnections').value || 10),
+      enabled: true
+    });
+  }
+  await saveSettings(next);
+  showToast('Streaming source saved');
+  await loadStatus();
+}
+
+async function testStreamingSource() {
+  const mode = document.getElementById('serviceMode').value;
+  setInlineResult('streamingTestResult', 'Testing...');
+  try {
+    const results = [];
+    const needsDebrid = mode === 'debrid' || mode === 'hybrid';
+    const needsUsenet = mode === 'usenet' || mode === 'hybrid';
+    if (needsDebrid && !document.getElementById('debridApiKey').value.trim()) {
+      results.push({ label: 'Debrid', result: { success: false, error: 'API key required' } });
+    } else if (needsDebrid) {
+      const debridResult = await requestJSON(basePath + '/api/test/debrid-provider', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: document.getElementById('debridName').value.trim() || 'Debrid',
+          provider: document.getElementById('debridProvider').value,
+          apiKey: document.getElementById('debridApiKey').value.trim()
+        })
+      });
+      results.push({ label: 'Debrid', result: debridResult });
+    }
+    if (needsUsenet && !document.getElementById('usenetHost').value.trim()) {
+      results.push({ label: 'Usenet', result: { success: false, error: 'Host required' } });
+    } else if (needsUsenet) {
+      const usenetResult = await requestJSON(basePath + '/api/test/usenet-provider', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: document.getElementById('usenetName').value.trim() || 'Usenet',
+          host: document.getElementById('usenetHost').value.trim(),
+          port: Number(document.getElementById('usenetPort').value || 563),
+          ssl: document.getElementById('usenetSSL').checked,
+          username: document.getElementById('usenetUsername').value.trim(),
+          password: document.getElementById('usenetPassword').value
+        })
+      });
+      results.push({ label: 'Usenet', result: usenetResult });
+    }
+    if (!results.length) {
+      setInlineResult('streamingTestResult', 'Enter provider details before testing.', 'error');
+      return;
+    }
+    const failed = results.find(item => !item.result.success);
+    const message = results.map(item => `${item.label}: ${item.result.message || item.result.error || (item.result.success ? 'OK' : 'Failed')}`).join(' | ');
+    setInlineResult('streamingTestResult', message, failed ? 'error' : 'success');
+  } catch (err) {
+    setInlineResult('streamingTestResult', err.message, 'error');
+  }
+}
+
+const searchSourceTypes = {
+  torrentio: { label: 'Torrentio', group: 'torrent', type: 'torrentio', name: 'Torrentio', url: false, key: false, options: true, optionsDefault: 'sort=qualitysize|qualityfilter=480p,scr,cam' },
+  'prowlarr-torrent': { label: 'Prowlarr (Torrent)', group: 'torrent', type: 'prowlarr', name: 'Prowlarr', url: true, key: true },
+  jackett: { label: 'Jackett', group: 'torrent', type: 'jackett', name: 'Jackett', url: true, key: true },
+  zilean: { label: 'Zilean', group: 'torrent', type: 'zilean', name: 'Zilean', url: true, key: false },
+  aiostreams: { label: 'AIOStreams', group: 'torrent', type: 'aiostreams', name: 'AIOStreams', url: true, key: false },
+  nyaa: { label: 'Nyaa', group: 'torrent', type: 'nyaa', name: 'Nyaa', url: false, key: false },
+  comet: { label: 'Comet', group: 'torrent', type: 'comet', name: 'Comet', url: true, key: false, options: true },
+  mediafusion: { label: 'MediaFusion', group: 'torrent', type: 'mediafusion', name: 'MediaFusion', url: true, key: false },
+  'prowlarr-usenet': { label: 'Prowlarr (Usenet)', group: 'usenet', type: 'prowlarr', name: 'Prowlarr Usenet', url: true, key: true },
+  newznab: { label: 'Newznab', group: 'usenet', type: 'newznab', name: 'Newznab', url: true, key: true, categories: true },
+};
+
+function sourceKeyFromConfig(item, group) {
+  if (group === 'usenet') return item.type === 'prowlarr' ? 'prowlarr-usenet' : 'newznab';
+  if (item.type === 'prowlarr') return 'prowlarr-torrent';
+  return searchSourceTypes[item.type] ? item.type : 'torrentio';
+}
+
+function sourceTypeOptions(selected, group) {
+  return Object.entries(searchSourceTypes)
+    .filter(([, def]) => !group || def.group === group)
+    .map(([key, def]) => `<option value="${key}" ${key === selected ? 'selected' : ''}>${def.label}</option>`)
+    .join('');
+}
+
+function addSearchSourceRow(source = {}) {
+  const id = ++searchSourceCounter;
+  const key = source.sourceKey || sourceKeyFromConfig(source, source.group || 'torrent');
+  const def = searchSourceTypes[key] || searchSourceTypes.torrentio;
+  const container = document.getElementById(def.group === 'usenet' ? 'usenetSearchSources' : 'torrentSearchSources');
+  const row = document.createElement('div');
+  row.className = 'source-row';
+  row.dataset.sourceId = id;
+  row.innerHTML = `
+    <div class="form-group">
+      <label class="form-label">Type</label>
+      <select class="form-select source-type" onchange="updateSearchSourceRow(${id})">${sourceTypeOptions(key, def.group)}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Name</label>
+      <input class="form-input source-name" value="${escapeHtml(source.name || def.name)}">
+    </div>
+    <div class="form-group source-extra source-url">
+      <label class="form-label">URL</label>
+      <input class="form-input source-url-input" value="${escapeHtml(source.url || '')}" placeholder="http://prowlarr:9696">
+    </div>
+    <div class="form-group source-extra source-key">
+      <label class="form-label">API Key</label>
+      <input type="password" class="form-input source-key-input" value="${escapeHtml(source.apiKey || '')}">
+    </div>
+    <div class="form-group source-extra source-options">
+      <label class="form-label">Options</label>
+      <input class="form-input source-options-input" value="${escapeHtml(source.options || def.optionsDefault || '')}">
+    </div>
+    <div class="form-group source-extra source-categories">
+      <label class="form-label">Categories</label>
+      <input class="form-input source-categories-input" value="${escapeHtml(source.categories || '')}" placeholder="2000,5000">
+    </div>
+    <div class="step-actions" style="margin: 0; justify-content: flex-end;">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="testSearchSourceRow(${id})">Test</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="removeSearchSourceRow(${id})">Remove</button>
+    </div>
+  `;
+  container.appendChild(row);
+  updateSearchSourceRow(id);
+  renderSearchSourceVisibility();
+}
+
+function updateSearchSourceRow(id) {
+  const row = document.querySelector(`[data-source-id="${id}"]`);
+  if (!row) return;
+  const def = searchSourceTypes[row.querySelector('.source-type').value] || searchSourceTypes.torrentio;
+  const target = document.getElementById(def.group === 'usenet' ? 'usenetSearchSources' : 'torrentSearchSources');
+  if (target && row.parentElement !== target) target.appendChild(row);
+  row.classList.toggle('needs-url', Boolean(def.url));
+  row.classList.toggle('needs-key', Boolean(def.key));
+  row.classList.toggle('needs-options', Boolean(def.options));
+  row.classList.toggle('needs-categories', Boolean(def.categories));
+  const name = row.querySelector('.source-name');
+  if (!name.value.trim()) name.value = def.name;
+  const options = row.querySelector('.source-options-input');
+  if (def.options && !options.value.trim() && def.optionsDefault) options.value = def.optionsDefault;
+}
+
+function removeSearchSourceRow(id) {
+  document.querySelector(`[data-source-id="${id}"]`)?.remove();
+  if (sourceGroupEnabled('torrent') && !document.querySelector('#torrentSearchSources .source-row')) addSearchSourceRow({ sourceKey: 'torrentio' });
+  if (sourceGroupEnabled('usenet') && !document.querySelector('#usenetSearchSources .source-row')) addSearchSourceRow({ sourceKey: 'newznab' });
+}
+
+function getSelectedServiceMode() {
+  return document.getElementById('serviceMode')?.value || settings.streaming?.serviceMode || 'hybrid';
+}
+
+function sourceGroupEnabled(group) {
+  const mode = getSelectedServiceMode();
+  return mode === 'hybrid' || (group === 'torrent' && mode === 'debrid') || (group === 'usenet' && mode === 'usenet');
+}
+
+function renderSearchSourceVisibility() {
+  const torrentSection = document.getElementById('torrentSearchSources')?.closest('.source-section');
+  const usenetSection = document.getElementById('usenetSearchSources')?.closest('.source-section');
+  if (torrentSection) torrentSection.classList.toggle('hidden', !sourceGroupEnabled('torrent'));
+  if (usenetSection) usenetSection.classList.toggle('hidden', !sourceGroupEnabled('usenet'));
+
+  if (searchSourcesSeeded && sourceGroupEnabled('torrent') && !document.querySelector('#torrentSearchSources .source-row')) {
+    addSearchSourceRow({ sourceKey: 'torrentio' });
+  }
+  if (searchSourcesSeeded && sourceGroupEnabled('usenet') && !document.querySelector('#usenetSearchSources .source-row')) {
+    addSearchSourceRow({ sourceKey: 'newznab' });
+  }
+}
+
+function collectSearchSources(visibleOnly = false) {
+  return Array.from(document.querySelectorAll('#torrentSearchSources .source-row, #usenetSearchSources .source-row')).map(row => {
+    const sourceKey = row.querySelector('.source-type').value;
+    const def = searchSourceTypes[sourceKey] || searchSourceTypes.torrentio;
+    return {
+      sourceKey,
+      group: def.group,
+      name: row.querySelector('.source-name').value.trim() || def.name,
+      type: def.type,
+      url: row.querySelector('.source-url-input').value.trim(),
+      apiKey: row.querySelector('.source-key-input').value.trim(),
+      options: row.querySelector('.source-options-input').value.trim(),
+      categories: row.querySelector('.source-categories-input').value.trim(),
+      enabled: true
+    };
+  }).filter(source => !visibleOnly || sourceGroupEnabled(source.group));
+}
+
+function validateSearchSource(source) {
+  const def = searchSourceTypes[source.sourceKey] || searchSourceTypes.torrentio;
+  if (def.url && !source.url) return `${def.label} requires a URL`;
+  if (def.key && !source.apiKey) return `${def.label} requires an API key`;
+  return '';
+}
+
+function seedSearchSources() {
+  const existing = [
+    ...(settings.torrentScrapers || []).map(item => ({ ...item, group: 'torrent' })),
+    ...(settings.indexers || []).map(item => ({ ...item, group: 'usenet' })),
+  ];
+  existing.forEach(item => addSearchSourceRow({ ...item, sourceKey: sourceKeyFromConfig(item, item.group) }));
+  searchSourcesSeeded = true;
+  renderSearchSourceVisibility();
+}
+
+async function saveSearchSources() {
+  const next = JSON.parse(JSON.stringify(settings));
+  const sources = collectSearchSources(true);
+  const error = sources.map(validateSearchSource).find(Boolean);
+  if (error) {
+    setInlineResult('searchTestResult', error, 'error');
+    return;
+  }
+  if (sourceGroupEnabled('torrent')) {
+    next.torrentScrapers = sources.filter(source => source.group === 'torrent').map(source => ({
+      name: source.name,
+      type: source.type,
+      url: source.url,
+      apiKey: source.apiKey,
+      options: source.options,
+      enabled: true
+    }));
+  }
+  if (sourceGroupEnabled('usenet')) {
+    next.indexers = sources.filter(source => source.group === 'usenet').map(source => ({
+      name: source.name,
+      url: source.url,
+      apiKey: source.apiKey,
+      type: source.type,
+      categories: source.categories,
+      enabled: true
+    }));
+  }
+  await saveSettings(next);
+  setInlineResult('searchTestResult', `${sources.length} search source${sources.length === 1 ? '' : 's'} saved.`, 'success');
+  showToast('Search sources saved');
+  await loadStatus();
+}
+
+async function testSearchSourceRow(id) {
+  const row = document.querySelector(`[data-source-id="${id}"]`);
+  if (!row) return;
+  const source = collectSearchSources().find((_, index) => document.querySelectorAll('#torrentSearchSources .source-row, #usenetSearchSources .source-row')[index] === row);
+  const error = validateSearchSource(source);
+  if (error) {
+    setInlineResult('searchTestResult', error, 'error');
+    return;
+  }
+  setInlineResult('searchTestResult', 'Testing...');
+  try {
+    let result;
+    if (source.group === 'torrent') {
+      result = await requestJSON(basePath + '/api/test/scraper', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: source.name,
+          type: source.type,
+          url: source.url,
+          apiKey: source.apiKey,
+          options: source.options
+        })
+      });
+    } else {
+      result = await requestJSON(basePath + '/api/test/indexer', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: source.name,
+          url: source.url,
+          apiKey: source.apiKey,
+          type: source.type
+        })
+      });
+    }
+    setInlineResult('searchTestResult', `${source.name}: ${result.message || result.error || (result.success ? 'Source is reachable.' : 'Source test failed.')}`, result.success ? 'success' : 'error');
+  } catch (err) {
+    setInlineResult('searchTestResult', err.message, 'error');
+  }
+}
+
+async function saveMetadata() {
+  const next = JSON.parse(JSON.stringify(settings));
+  next.metadata = next.metadata || {};
+  const tmdb = document.getElementById('tmdbApiKey').value.trim();
+  const tvdb = document.getElementById('tvdbApiKey').value.trim();
+  if (!tmdb || tmdb === redacted || !tvdb || tvdb === redacted) {
+    setInlineResult('metadataTestResult', 'TMDB and TVDB API keys are both required for onboarding.', 'error');
+    return;
+  }
+  if (tmdb && tmdb !== redacted) next.metadata.tmdbApiKey = tmdb;
+  if (tvdb && tvdb !== redacted) next.metadata.tvdbApiKey = tvdb;
+  if (!next.metadata.language) next.metadata.language = 'eng';
+  await saveSettings(next);
+  showToast('Metadata saved');
+  await loadStatus();
+}
+
+async function testMetadata() {
+  const tmdb = document.getElementById('tmdbApiKey').value.trim();
+  const tvdb = document.getElementById('tvdbApiKey').value.trim();
+  if (!tmdb || tmdb === redacted || !tvdb || tvdb === redacted) {
+    setInlineResult('metadataTestResult', 'Enter both TMDB and TVDB API keys before testing.', 'error');
+    return;
+  }
+  setInlineResult('metadataTestResult', 'Testing...');
+  try {
+    const result = await requestJSON(basePath + '/api/test/metadata', {
+      method: 'POST',
+      body: JSON.stringify({
+        tmdbApiKey: tmdb === redacted ? '' : tmdb,
+        tvdbApiKey: tvdb === redacted ? '' : tvdb
+      })
+    });
+    const scopedResults = Array.isArray(result.results)
+      ? result.results.filter(item => ['tmdb', 'tvdb'].includes(String(item.provider || '').toLowerCase()))
+      : [];
+    const message = scopedResults.length
+      ? scopedResults.map(item => `${String(item.provider || '').toUpperCase()}: ${item.message || item.error || (item.success ? 'OK' : 'Failed')}`).join(' | ')
+      : (result.message || result.error || (result.success ? 'Metadata keys are valid.' : 'Metadata test failed.'));
+    const success = scopedResults.length ? scopedResults.every(item => item.success) : result.success;
+    setInlineResult('metadataTestResult', message, success ? 'success' : 'error');
+  } catch (err) {
+    setInlineResult('metadataTestResult', err.message, 'error');
+  }
+}
+
+async function loadAccountsAndProfiles() {
+  const [accountData, profileData] = await Promise.all([
+    requestJSON(basePath + '/api/accounts'),
+    requestJSON(basePath + '/api/profiles')
+  ]);
+  accounts = accountData.accounts || [];
+  profiles = profileData || [];
+  const selector = document.getElementById('profileAccountId');
+  selector.innerHTML = accounts.map(account => `<option value="${account.id}">${escapeHtml(account.username)}${account.isMaster ? ' (Master)' : ''}</option>`).join('');
+  renderMasterAdminForm();
+  renderAccountsSummary();
+  await loadStatus();
+}
+
+function renderAccountsSummary() {
+  const profilesByAccount = new Map(accounts.map(account => [account.id, []]));
+  profiles.forEach(profile => {
+    if (!profilesByAccount.has(profile.accountId)) profilesByAccount.set(profile.accountId, []);
+    profilesByAccount.get(profile.accountId).push(profile);
+  });
+  document.getElementById('accountsSummary').innerHTML = '<div class="array-items">' + accounts.map(account => {
+    const accountProfiles = profilesByAccount.get(account.id) || [];
+    return `<div class="array-item">
+      <div class="array-item-header">
+        <div class="array-item-title">${escapeHtml(account.username)}${account.isMaster ? ' <span class="status-badge online">Master</span>' : ''}</div>
+        <div class="form-group" style="margin: 0; width: 190px;">
+          <input type="number" class="form-input" min="0" value="${account.maxStreams || 0}" onchange="setAccountMaxStreams('${account.id}', this.value)" title="Max concurrent streams">
+        </div>
+      </div>
+      <div style="color: var(--text-secondary); font-size: 0.875rem;">${accountProfiles.length ? accountProfiles.map(p => escapeHtml(p.name)).join(', ') : 'No profiles assigned'}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderMasterAdminForm() {
+  const usernameInput = document.getElementById('adminUsername');
+  if (!usernameInput) return;
+  const master = getMasterAccount();
+  if (master && !usernameInput.value) {
+    usernameInput.value = master.username || 'admin';
+  }
+}
+
+async function setAccountMaxStreams(accountId, value) {
+  await requestJSON(basePath + '/api/accounts/max-streams?accountId=' + encodeURIComponent(accountId), {
+    method: 'PUT',
+    body: JSON.stringify({ maxStreams: Number(value || 0) })
+  });
+  showToast('Account stream limit updated');
+}
+
+async function createProfile(event) {
+  event.preventDefault();
+  const accountId = document.getElementById('profileAccountId').value;
+  const name = document.getElementById('profileName').value.trim();
+  const pin = document.getElementById('profilePin').value;
+  if (!accountId || !name) return showToast('Account and profile name are required', 'error');
+  const profile = await requestJSON(basePath + '/api/profiles', {
+    method: 'POST',
+    body: JSON.stringify({
+      accountId,
+      name,
+      color: document.getElementById('profileColor').value,
+      isKidsProfile: document.getElementById('profileKids').checked
+    })
+  });
+  if (pin) {
+    await requestJSON(basePath + '/api/profiles/pin?profileId=' + encodeURIComponent(profile.id), {
+      method: 'PUT',
+      body: JSON.stringify({ pin })
+    });
+  }
+  document.getElementById('profileName').value = '';
+  document.getElementById('profilePin').value = '';
+  document.getElementById('profileKids').checked = false;
+  showToast('Profile created');
+  await loadAccountsAndProfiles();
+}
+
+function renderReview() {
+  if (!statusData) return;
+  const items = [
+    ['Master admin account secured', !statusData.defaultPassword],
+    ['Streaming provider configured', statusData.hasStreamingProvider],
+    ['Search source configured', statusData.hasSearchSource],
+    ['Metadata provider configured', statusData.hasMetadataProvider],
+    ['At least one profile exists', statusData.hasUsableProfile],
+  ];
+  document.getElementById('reviewChecklist').innerHTML = items.map(([label, done]) => `
+    <div class="check-item ${done ? 'done' : ''}">
+      <span>${label}</span>
+      <span class="check-state">${done ? 'Done' : 'Open'}</span>
+    </div>
+  `).join('');
+}
+
+async function skipOnboarding() {
+  await requestJSON(basePath + '/api/onboarding/skip', { method: 'POST' });
+  window.location.href = basePath;
+}
+
+async function completeOnboarding() {
+  await requestJSON(basePath + '/api/onboarding/complete', { method: 'POST' });
+  window.location.href = basePath;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  document.getElementById('serviceMode').value = settings.streaming?.serviceMode || 'hybrid';
+  document.getElementById('tmdbApiKey').value = settings.metadata?.tmdbApiKey || '';
+  document.getElementById('tvdbApiKey').value = settings.metadata?.tvdbApiKey || '';
+  seedSearchSources();
+  renderProviderFields();
+  await Promise.all([loadStatus(), loadAccountsAndProfiles()]);
+  goToStep(0);
+});
+</script>
+{{end}}
