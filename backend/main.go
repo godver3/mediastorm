@@ -766,6 +766,7 @@ func main() {
 	r.HandleFunc("/admin/api/onboarding/status", adminUIHandler.RequireMasterAuth(adminUIHandler.GetOnboardingStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/onboarding/skip", adminUIHandler.RequireMasterAuth(adminUIHandler.SkipOnboarding)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/onboarding/complete", adminUIHandler.RequireMasterAuth(adminUIHandler.CompleteOnboarding)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/walkthrough/dismiss", adminUIHandler.RequireMasterAuth(adminUIHandler.DismissAdminWalkthrough)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/streams", adminUIHandler.RequireAuth(adminUIHandler.GetStreams)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams/sse", adminUIHandler.RequireAuth(adminUIHandler.GetStreamsSSE)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/streams/{streamID}/terminate", adminUIHandler.RequireAuth(adminUIHandler.TerminateStream)).Methods(http.MethodPost)

@@ -72,6 +72,9 @@ func TestAdminOnboardingStatus_DefaultNeedsOnboarding(t *testing.T) {
 	if got := rr.Body.String(); !containsAll(got, `"needsOnboarding":true`, `"defaultPassword":true`, `"hasSearchSource":false`) {
 		t.Fatalf("unexpected onboarding status body: %s", got)
 	}
+	if got := rr.Body.String(); !strings.Contains(got, `"adminWalkthroughDismissed":false`) {
+		t.Fatalf("missing walkthrough dismissal state in onboarding status body: %s", got)
+	}
 }
 
 func TestAdminOnboardingStatus_SearchSourceFollowsStreamingMode(t *testing.T) {
@@ -141,6 +144,37 @@ func TestAdminOnboardingSkipAndCompletePersistState(t *testing.T) {
 	}
 	if !settings.UI.OnboardingCompleted || settings.UI.OnboardingCompletedAt == "" {
 		t.Fatalf("complete state not persisted: %+v", settings.UI)
+	}
+}
+
+func TestAdminWalkthroughDismissPersistsState(t *testing.T) {
+	h, sessionsSvc, settingsPath := newAdminOnboardingTestHandler(t, func(settings *config.Settings) {
+		settings.UI.OnboardingSkipped = true
+	})
+
+	dismissReq := newAdminRequestWithSession(t, sessionsSvc, http.MethodPost, "/admin/api/walkthrough/dismiss", true)
+	dismissRR := httptest.NewRecorder()
+	h.RequireMasterAuth(h.DismissAdminWalkthrough).ServeHTTP(dismissRR, dismissReq)
+	if dismissRR.Code != http.StatusOK {
+		t.Fatalf("dismiss status = %d, want %d; body=%s", dismissRR.Code, http.StatusOK, dismissRR.Body.String())
+	}
+
+	settings, err := config.NewManager(settingsPath).Load()
+	if err != nil {
+		t.Fatalf("load settings after dismiss: %v", err)
+	}
+	if !settings.UI.AdminWalkthroughDismissed || settings.UI.AdminWalkthroughDismissedAt == "" {
+		t.Fatalf("walkthrough dismiss state not persisted: %+v", settings.UI)
+	}
+
+	statusReq := newAdminRequestWithSession(t, sessionsSvc, http.MethodGet, "/admin/api/onboarding/status", true)
+	statusRR := httptest.NewRecorder()
+	h.RequireMasterAuth(h.GetOnboardingStatus).ServeHTTP(statusRR, statusReq)
+	if statusRR.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", statusRR.Code, http.StatusOK, statusRR.Body.String())
+	}
+	if got := statusRR.Body.String(); !strings.Contains(got, `"adminWalkthroughDismissed":true`) {
+		t.Fatalf("walkthrough dismissal not reflected in status body: %s", got)
 	}
 }
 

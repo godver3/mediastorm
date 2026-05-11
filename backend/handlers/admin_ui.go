@@ -1449,21 +1449,22 @@ func (h *AdminUIHandler) OnboardingPage(w http.ResponseWriter, r *http.Request) 
 }
 
 type onboardingStatus struct {
-	Completed              bool `json:"completed"`
-	Skipped                bool `json:"skipped"`
-	NeedsOnboarding        bool `json:"needsOnboarding"`
-	SetupComplete          bool `json:"setupComplete"`
-	DefaultPassword        bool `json:"defaultPassword"`
-	HasStreamingProvider   bool `json:"hasStreamingProvider"`
-	HasSearchSource        bool `json:"hasSearchSource"`
-	HasMetadataProvider    bool `json:"hasMetadataProvider"`
-	HasUsableProfile       bool `json:"hasUsableProfile"`
-	AccountCount           int  `json:"accountCount"`
-	ProfileCount           int  `json:"profileCount"`
-	EnabledDebridProviders int  `json:"enabledDebridProviders"`
-	EnabledUsenetProviders int  `json:"enabledUsenetProviders"`
-	EnabledTorrentScrapers int  `json:"enabledTorrentScrapers"`
-	EnabledUsenetIndexers  int  `json:"enabledUsenetIndexers"`
+	Completed                 bool `json:"completed"`
+	Skipped                   bool `json:"skipped"`
+	NeedsOnboarding           bool `json:"needsOnboarding"`
+	SetupComplete             bool `json:"setupComplete"`
+	AdminWalkthroughDismissed bool `json:"adminWalkthroughDismissed"`
+	DefaultPassword           bool `json:"defaultPassword"`
+	HasStreamingProvider      bool `json:"hasStreamingProvider"`
+	HasSearchSource           bool `json:"hasSearchSource"`
+	HasMetadataProvider       bool `json:"hasMetadataProvider"`
+	HasUsableProfile          bool `json:"hasUsableProfile"`
+	AccountCount              int  `json:"accountCount"`
+	ProfileCount              int  `json:"profileCount"`
+	EnabledDebridProviders    int  `json:"enabledDebridProviders"`
+	EnabledUsenetProviders    int  `json:"enabledUsenetProviders"`
+	EnabledTorrentScrapers    int  `json:"enabledTorrentScrapers"`
+	EnabledUsenetIndexers     int  `json:"enabledUsenetIndexers"`
 }
 
 func (h *AdminUIHandler) buildOnboardingStatus() (onboardingStatus, error) {
@@ -1474,8 +1475,9 @@ func (h *AdminUIHandler) buildOnboardingStatus() (onboardingStatus, error) {
 	}
 
 	status := onboardingStatus{
-		Completed: settings.UI.OnboardingCompleted,
-		Skipped:   settings.UI.OnboardingSkipped,
+		Completed:                 settings.UI.OnboardingCompleted,
+		Skipped:                   settings.UI.OnboardingSkipped,
+		AdminWalkthroughDismissed: settings.UI.AdminWalkthroughDismissed,
 	}
 
 	if h.accountsService != nil {
@@ -1550,6 +1552,25 @@ func (h *AdminUIHandler) updateOnboardingState(update func(*config.Settings)) er
 	}
 	update(&settings)
 	return mgr.Save(settings)
+}
+
+// DismissAdminWalkthrough marks the post-onboarding admin tour as shown for this instance.
+func (h *AdminUIHandler) DismissAdminWalkthrough(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdminScope(w, r) {
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := h.updateOnboardingState(func(settings *config.Settings) {
+		settings.UI.AdminWalkthroughDismissed = true
+		settings.UI.AdminWalkthroughDismissedAt = now
+	}); err != nil {
+		http.Error(w, "Failed to save walkthrough state", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "dismissed"})
 }
 
 // SkipOnboarding marks first-run setup as skipped.

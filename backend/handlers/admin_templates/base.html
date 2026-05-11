@@ -122,6 +122,105 @@
             flex-shrink: 0;
         }
 
+        .admin-walkthrough-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2000;
+            display: none;
+            background: transparent;
+            padding: 1rem;
+        }
+
+        .admin-walkthrough-overlay.open {
+            display: grid;
+            place-items: center;
+        }
+
+        .admin-walkthrough-highlight {
+            position: fixed;
+            z-index: 2001;
+            pointer-events: none;
+            border: 2px solid var(--accent-hover);
+            border-radius: var(--radius);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.38), 0 0 0 4px rgba(99, 102, 241, 0.3);
+            transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease, opacity 0.2s ease;
+        }
+
+        .admin-walkthrough-active-target {
+            position: relative;
+            z-index: 101;
+        }
+
+        .admin-walkthrough-card {
+            position: relative;
+            z-index: 2002;
+            width: min(520px, 100%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+            overflow: hidden;
+        }
+
+        .admin-walkthrough-body {
+            padding: 1.25rem;
+        }
+
+        .admin-walkthrough-kicker {
+            color: var(--accent-hover);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 0.375rem;
+        }
+
+        .admin-walkthrough-title {
+            margin: 0 0 0.5rem;
+            font-size: 1.25rem;
+        }
+
+        .admin-walkthrough-text {
+            color: var(--text-secondary);
+            margin: 0 0 1rem;
+        }
+
+        .admin-walkthrough-list {
+            display: grid;
+            gap: 0.5rem;
+            margin: 0;
+            padding-left: 1.1rem;
+            color: var(--text-secondary);
+        }
+
+        .admin-walkthrough-list strong {
+            color: var(--text-primary);
+        }
+
+        .admin-walkthrough-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem;
+            border-top: 1px solid var(--border);
+            background: var(--bg-tertiary);
+        }
+
+        .admin-walkthrough-progress {
+            color: var(--text-muted);
+            font-size: 0.8125rem;
+            white-space: nowrap;
+        }
+
+        .admin-walkthrough-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
         /* Dropdown menus */
         .nav-dropdown {
             position: relative;
@@ -182,6 +281,10 @@
             transform: rotate(180deg);
         }
 
+        .nav-dropdown.open .nav-dropdown-toggle .chevron {
+            transform: rotate(180deg);
+        }
+
         .nav-dropdown-menu {
             display: none;
             position: absolute;
@@ -197,7 +300,8 @@
         }
 
         .nav-dropdown:hover .nav-dropdown-menu,
-        .nav-dropdown:focus-within .nav-dropdown-menu {
+        .nav-dropdown:focus-within .nav-dropdown-menu,
+        .nav-dropdown.open .nav-dropdown-menu {
             display: flex;
             flex-direction: column;
             gap: 0.125rem;
@@ -1567,13 +1671,14 @@
                 display: none !important;
             }
 
-            /* Mobile: hide desktop dropdowns, show flat links */
+            /* Mobile: use grouped dropdowns instead of flat duplicated links */
             .desktop-dropdown {
-                display: none !important;
+                display: block !important;
+                width: 100%;
             }
 
             .mobile-nav-link {
-                display: flex !important;
+                display: none !important;
             }
 
             .menu-toggle {
@@ -1598,6 +1703,52 @@
 
             .nav-link {
                 padding: 0.75rem 1rem;
+            }
+
+            .nav-dropdown::after {
+                display: none;
+            }
+
+            .nav-dropdown-toggle {
+                width: 100%;
+                justify-content: flex-start;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-dropdown-toggle .chevron {
+                margin-left: auto;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                min-width: 0;
+                width: 100%;
+                margin: 0.125rem 0 0.375rem;
+                padding: 0.25rem 0 0.25rem 1.75rem;
+                background: transparent;
+                border: none;
+                border-left: 1px solid var(--border);
+                border-radius: 0;
+                box-shadow: none;
+            }
+
+            .nav-dropdown:hover .nav-dropdown-menu,
+            .nav-dropdown:focus-within .nav-dropdown-menu {
+                display: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                display: flex;
+            }
+
+            .nav-dropdown.open .nav-dropdown-toggle,
+            .nav-dropdown-toggle.has-active {
+                background: var(--bg-hover);
+                color: var(--text-primary);
+            }
+
+            .nav-dropdown-menu .nav-link {
+                padding: 0.625rem 0.75rem;
             }
 
             .grid-2,
@@ -1647,6 +1798,27 @@
 
             .array-item {
                 padding: 0.75rem;
+            }
+
+            .admin-walkthrough-overlay.open {
+                place-items: end center;
+            }
+
+            .admin-walkthrough-card {
+                width: 100%;
+            }
+
+            .admin-walkthrough-footer {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .admin-walkthrough-actions {
+                width: 100%;
+            }
+
+            .admin-walkthrough-actions .btn {
+                flex: 1 1 auto;
             }
         }
 
@@ -1725,7 +1897,7 @@
             </a>
 
             {{if not (hasSuffix .CurrentPath "/onboarding")}}
-            <button class="menu-toggle" onclick="toggleMenu()">
+            <button class="menu-toggle" type="button" onclick="toggleMenu()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="3" y1="12" x2="21" y2="12"/>
                     <line x1="3" y1="6" x2="21" y2="6"/>
@@ -1734,14 +1906,14 @@
             </button>
 
             <div class="navbar-nav" id="navMenu">
-                <a href="{{.BasePath}}" class="nav-link {{if or (hasSuffix .CurrentPath "/status") (eq .CurrentPath .BasePath)}}active{{end}}">
+                <a href="{{.BasePath}}" class="nav-link {{if or (hasSuffix .CurrentPath "/status") (eq .CurrentPath .BasePath)}}active{{end}}" data-walkthrough-target="dashboard">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                         <polyline points="9 22 9 12 15 12 15 22"/>
                     </svg>
                     Dashboard
                 </a>
-                <a href="{{.BasePath}}/settings" class="nav-link {{if hasSuffix .CurrentPath "/settings"}}active{{end}}">
+                <a href="{{.BasePath}}/settings" class="nav-link {{if hasSuffix .CurrentPath "/settings"}}active{{end}}" data-walkthrough-target="settings">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -1750,7 +1922,7 @@
                 </a>
                 <!-- Media dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library") (hasSuffix .CurrentPath "/recordings")}}has-active{{end}}">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/history") (hasSuffix .CurrentPath "/calendar") (hasSuffix .CurrentPath "/schedule") (hasSuffix .CurrentPath "/search") (hasSuffix .CurrentPath "/library") (hasSuffix .CurrentPath "/recordings")}}has-active{{end}}" type="button" aria-expanded="false" data-nav-dropdown-toggle data-walkthrough-target="media">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="23 7 16 12 23 17 23 7"/>
                             <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -1806,7 +1978,7 @@
                     </div>
                 </div>
                 <!-- Media items (mobile only, flat) -->
-                <a href="{{.BasePath}}/history" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/history"}}active{{end}}">
+                <a href="{{.BasePath}}/history" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/history"}}active{{end}}" data-walkthrough-mobile-target="media">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
                         <polyline points="12 6 12 12 16 14"/>
@@ -1844,7 +2016,7 @@
                 {{if .IsAdmin}}
                 <!-- System dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/connections") (hasSuffix .CurrentPath "/backup") (hasSuffix .CurrentPath "/performance") (hasSuffix .CurrentPath "/logs") (hasSuffix .CurrentPath "/tools")}}has-active{{end}}">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/connections") (hasSuffix .CurrentPath "/backup") (hasSuffix .CurrentPath "/performance") (hasSuffix .CurrentPath "/logs") (hasSuffix .CurrentPath "/tools")}}has-active{{end}}" type="button" aria-expanded="false" data-nav-dropdown-toggle data-walkthrough-target="system">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
                             <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
@@ -1897,7 +2069,7 @@
                     </div>
                 </div>
                 <!-- System items (mobile only, flat) -->
-                <a href="{{.BasePath}}/connections" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/connections"}}active{{end}}">
+                <a href="{{.BasePath}}/connections" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/connections"}}active{{end}}" data-walkthrough-mobile-target="system">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                         <polyline points="22 4 12 14.01 9 11.01"/>
@@ -1942,7 +2114,7 @@
                     Logs
                 </a>
                 {{end}}
-                <a href="{{.BasePath}}/accounts" class="nav-link {{if hasSuffix .CurrentPath "/accounts"}}active{{end}}">
+                <a href="{{.BasePath}}/accounts" class="nav-link {{if hasSuffix .CurrentPath "/accounts"}}active{{end}}" data-walkthrough-target="accounts">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                         <circle cx="9" cy="7" r="4"/>
@@ -1979,6 +2151,28 @@
 
     <div class="toast-container" id="toastContainer"></div>
 
+    {{if and .IsAdmin (not (hasSuffix .CurrentPath "/onboarding"))}}
+    <div class="admin-walkthrough-overlay" id="adminWalkthrough" aria-hidden="true">
+        <div class="admin-walkthrough-highlight" id="adminWalkthroughHighlight" hidden></div>
+        <section class="admin-walkthrough-card" role="dialog" aria-modal="true" aria-labelledby="adminWalkthroughTitle">
+            <div class="admin-walkthrough-body">
+                <div class="admin-walkthrough-kicker" id="adminWalkthroughKicker">Admin tour</div>
+                <h2 class="admin-walkthrough-title" id="adminWalkthroughTitle">Dashboard</h2>
+                <p class="admin-walkthrough-text" id="adminWalkthroughText"></p>
+                <ul class="admin-walkthrough-list" id="adminWalkthroughList"></ul>
+            </div>
+            <div class="admin-walkthrough-footer">
+                <span class="admin-walkthrough-progress" id="adminWalkthroughProgress">1 of 5</span>
+                <div class="admin-walkthrough-actions">
+                    <button class="btn btn-secondary" type="button" id="adminWalkthroughSkip">Skip</button>
+                    <button class="btn btn-secondary" type="button" id="adminWalkthroughBack">Back</button>
+                    <button class="btn btn-primary" type="button" id="adminWalkthroughNext">Next</button>
+                </div>
+            </div>
+        </section>
+    </div>
+    {{end}}
+
     <script>
         const basePath = {{json .BasePath}};
         const serverBasePath = {{json .ServerBasePath}};
@@ -1986,6 +2180,34 @@
         function toggleMenu() {
             document.getElementById('navMenu').classList.toggle('open');
         }
+
+        function isMobileNavMenu() {
+            return window.matchMedia('(max-width: 768px)').matches;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('[data-nav-dropdown-toggle]').forEach(button => {
+                const dropdown = button.closest('.nav-dropdown');
+                if (!dropdown) return;
+
+                if (isMobileNavMenu() && button.classList.contains('has-active')) {
+                    dropdown.classList.add('open');
+                    button.setAttribute('aria-expanded', 'true');
+                }
+
+                button.addEventListener('click', () => {
+                    if (!isMobileNavMenu()) return;
+                    const willOpen = !dropdown.classList.contains('open');
+                    dropdown.parentElement?.querySelectorAll('.nav-dropdown.open').forEach(openDropdown => {
+                        if (openDropdown === dropdown) return;
+                        openDropdown.classList.remove('open');
+                        openDropdown.querySelector('[data-nav-dropdown-toggle]')?.setAttribute('aria-expanded', 'false');
+                    });
+                    dropdown.classList.toggle('open', willOpen);
+                    button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+                });
+            });
+        });
 
         function toggleSection(el) {
             el.closest('.section').classList.toggle('open');
@@ -2016,6 +2238,201 @@
             const response = await fetch(url, options);
             return response.json();
         }
+
+        {{if and .IsAdmin (not (hasSuffix .CurrentPath "/onboarding"))}}
+        (function initAdminWalkthrough() {
+            const overlay = document.getElementById('adminWalkthrough');
+            if (!overlay) return;
+
+            const steps = [
+                {
+                    title: 'Dashboard',
+                    selector: '[data-walkthrough-target="dashboard"]',
+                    text: 'The dashboard is the operational home for the server.',
+                    items: [
+                        '<strong>Live streams</strong> show current playback activity and let you terminate a stream.',
+                        '<strong>Provider health</strong> summarizes debrid, usenet, HLS, and backend status.',
+                        '<strong>Queues and metrics</strong> help you spot stalled transfers or playback issues.'
+                    ]
+                },
+                {
+                    title: 'Settings',
+                    selector: '[data-walkthrough-target="settings"]',
+                    text: 'Settings is where core server and client behavior is configured.',
+                    items: [
+                        '<strong>Providers and sources</strong> control debrid, usenet, torrent scrapers, and indexers.',
+                        '<strong>Search and filtering</strong> tunes quality limits, preferred terms, and resolution rules.',
+                        '<strong>Experience and server</strong> cover shelves, playback defaults, API keys, and network options.'
+                    ]
+                },
+                {
+                    title: 'Media',
+                    selector: '[data-walkthrough-target="media"]',
+                    text: 'Media groups the pages used to inspect content activity and library data.',
+                    items: [
+                        '<strong>History</strong> shows watched items and continue-watching state.',
+                        '<strong>Schedule and recordings</strong> manage live TV guide data and recorded programs.',
+                        '<strong>Search and library</strong> test metadata/search results and manage local media libraries.'
+                    ]
+                },
+                {
+                    title: 'System',
+                    selector: '[data-walkthrough-target="system"]',
+                    text: 'System contains admin tools for maintenance, diagnostics, and server operations.',
+                    items: [
+                        '<strong>Connections</strong> checks provider connectivity and configuration readiness.',
+                        '<strong>Backup, performance, and logs</strong> cover recovery, runtime stats, and troubleshooting.',
+                        '<strong>Tools</strong> exposes targeted admin actions such as cache and metadata maintenance.'
+                    ]
+                },
+                {
+                    title: 'Accounts',
+                    selector: '[data-walkthrough-target="accounts"]',
+                    text: 'Accounts controls who can use the server and how profiles are organized.',
+                    items: [
+                        '<strong>Profiles</strong> are the viewer identities used by the apps.',
+                        '<strong>Accounts</strong> are login identities with stream limits and passwords.',
+                        '<strong>Invitations</strong> let you create sign-up links for new users.'
+                    ]
+                }
+            ];
+
+            let currentStep = 0;
+            const title = document.getElementById('adminWalkthroughTitle');
+            const text = document.getElementById('adminWalkthroughText');
+            const list = document.getElementById('adminWalkthroughList');
+            const progress = document.getElementById('adminWalkthroughProgress');
+            const highlight = document.getElementById('adminWalkthroughHighlight');
+            const backButton = document.getElementById('adminWalkthroughBack');
+            const nextButton = document.getElementById('adminWalkthroughNext');
+            const skipButton = document.getElementById('adminWalkthroughSkip');
+            const navMenu = document.getElementById('navMenu');
+            let activeTarget = null;
+            let dismissalSent = false;
+
+            function isMobileNav() {
+                return window.matchMedia('(max-width: 768px)').matches;
+            }
+
+            function clearActiveTarget() {
+                if (activeTarget) {
+                    activeTarget.classList.remove('admin-walkthrough-active-target');
+                    activeTarget = null;
+                }
+            }
+
+            function dismiss() {
+                if (!dismissalSent) {
+                    dismissalSent = true;
+                    fetch(basePath + '/api/walkthrough/dismiss', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        keepalive: true
+                    }).catch(() => {});
+                }
+                clearActiveTarget();
+                overlay.classList.remove('open');
+                overlay.setAttribute('aria-hidden', 'true');
+                highlight.hidden = true;
+                document.body.classList.remove('admin-walkthrough-running');
+                if (navMenu) navMenu.classList.remove('open');
+                window.removeEventListener('resize', positionHighlight);
+                window.removeEventListener('scroll', positionHighlight, true);
+            }
+
+            function getStepTarget(step) {
+                if (isMobileNav()) {
+                    if (step.title === 'Media' || step.title === 'System') {
+                        return document.querySelector(step.selector);
+                    }
+                }
+                const target = document.querySelector(step.selector);
+                if (target && target.offsetParent !== null) return target;
+                if (step.title === 'Media') return document.querySelector('a[href="' + basePath + '/history"]');
+                if (step.title === 'System') return document.querySelector('a[href="' + basePath + '/connections"]');
+                return target;
+            }
+
+            function positionHighlight() {
+                clearActiveTarget();
+                if (isMobileNav() && navMenu) navMenu.classList.add('open');
+                const target = getStepTarget(steps[currentStep]);
+                if (!target) {
+                    highlight.hidden = true;
+                    return;
+                }
+                if (typeof target.scrollIntoView === 'function') {
+                    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }
+                const rect = target.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) {
+                    highlight.hidden = true;
+                    return;
+                }
+                activeTarget = target;
+                activeTarget.classList.add('admin-walkthrough-active-target');
+                highlight.hidden = false;
+                highlight.style.top = Math.max(6, rect.top - 5) + 'px';
+                highlight.style.left = Math.max(6, rect.left - 5) + 'px';
+                highlight.style.width = rect.width + 10 + 'px';
+                highlight.style.height = rect.height + 10 + 'px';
+            }
+
+            function renderStep() {
+                const step = steps[currentStep];
+                title.textContent = step.title;
+                text.textContent = step.text;
+                list.innerHTML = step.items.map(item => '<li>' + item + '</li>').join('');
+                progress.textContent = (currentStep + 1) + ' of ' + steps.length;
+                backButton.disabled = currentStep === 0;
+                nextButton.textContent = currentStep === steps.length - 1 ? 'Close' : 'Next';
+                positionHighlight();
+            }
+
+            function openWalkthrough() {
+                document.body.classList.add('admin-walkthrough-running');
+                if (isMobileNav() && navMenu) navMenu.classList.add('open');
+                overlay.classList.add('open');
+                overlay.setAttribute('aria-hidden', 'false');
+                renderStep();
+                window.addEventListener('resize', positionHighlight);
+                window.addEventListener('scroll', positionHighlight, true);
+            }
+
+            backButton.addEventListener('click', () => {
+                if (currentStep > 0) {
+                    currentStep -= 1;
+                    renderStep();
+                }
+            });
+            nextButton.addEventListener('click', () => {
+                if (currentStep >= steps.length - 1) {
+                    dismiss();
+                    return;
+                }
+                currentStep += 1;
+                renderStep();
+            });
+            skipButton.addEventListener('click', dismiss);
+            overlay.addEventListener('click', event => {
+                if (event.target === overlay) dismiss();
+            });
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape' && overlay.classList.contains('open')) dismiss();
+            });
+
+            document.addEventListener('DOMContentLoaded', async () => {
+                try {
+                    const response = await fetch(basePath + '/api/onboarding/status');
+                    if (!response.ok) return;
+                    const status = await response.json();
+                    if (status && !status.needsOnboarding && !status.adminWalkthroughDismissed) {
+                        window.setTimeout(openWalkthrough, 250);
+                    }
+                } catch (e) {}
+            });
+        })();
+        {{end}}
     </script>
 
     {{block "scripts" .}}{{end}}
