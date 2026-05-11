@@ -150,6 +150,33 @@ func (s *Service) Delete(clientID string) error {
 	return s.saveLocked()
 }
 
+// ClearAppearanceOverrides removes client-level display appearance overrides.
+// It is intended for one-time cleanup of appearance values previously saved by
+// the removed mobile settings UI.
+func (s *Service) ClearAppearanceOverrides() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := 0
+	for clientID, settings := range s.settings {
+		if settings.Appearance == nil {
+			continue
+		}
+		settings.Appearance = nil
+		if settings.IsEmpty() {
+			delete(s.settings, clientID)
+		} else {
+			s.settings[clientID] = settings
+		}
+		changed++
+	}
+
+	if changed == 0 {
+		return 0, nil
+	}
+	return changed, s.saveLocked()
+}
+
 func (s *Service) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

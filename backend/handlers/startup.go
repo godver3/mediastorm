@@ -582,6 +582,17 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 		Display: models.DisplaySettings{
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
 			AppLanguage:                      globalSettings.Display.AppLanguage,
+			Appearance: models.AppearanceSettings{
+				FontScale:            globalSettings.Display.Appearance.FontScale,
+				AccentColor:          globalSettings.Display.Appearance.AccentColor,
+				TextColor:            globalSettings.Display.Appearance.TextColor,
+				SecondaryTextColor:   globalSettings.Display.Appearance.SecondaryTextColor,
+				ModalBackgroundColor: globalSettings.Display.Appearance.ModalBackgroundColor,
+				ButtonStyle:          globalSettings.Display.Appearance.ButtonStyle,
+				ButtonRadius:         globalSettings.Display.Appearance.ButtonRadius,
+				HighContrast:         globalSettings.Display.Appearance.HighContrast,
+				ReduceOverlays:       globalSettings.Display.Appearance.ReduceOverlays,
+			},
 		},
 		LiveTV: models.LiveTVSettings{
 			HiddenChannels:     []string{},

@@ -23,8 +23,9 @@ type ClientFilterSettings struct {
 	RemoteBackendUrl *string `json:"remoteBackendUrl,omitempty"`
 
 	// Display overrides
-	BypassFilteringForAIOStreamsOnly *bool     `json:"bypassFilteringForAioStreamsOnly,omitempty"`
-	NavigationTabVisibility          *[]string `json:"navigationTabVisibility,omitempty"`
+	BypassFilteringForAIOStreamsOnly *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	NavigationTabVisibility          *[]string           `json:"navigationTabVisibility,omitempty"`
+	Appearance                       *AppearanceSettings `json:"appearance,omitempty"`
 
 	// Playback overrides
 	MaxResultsPerResolution *int `json:"maxResultsPerResolution,omitempty"`
@@ -48,6 +49,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.AnimePreferredLanguage == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&
 		c.NavigationTabVisibility == nil &&
+		c.Appearance == nil &&
 		c.MaxResultsPerResolution == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&

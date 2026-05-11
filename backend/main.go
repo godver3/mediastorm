@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -452,6 +453,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialise client settings: %v", err)
 	}
+	clearLegacyAppearanceOverridesOnce(settings.Cache.Directory, userSettingsService, clientSettingsService)
 	clientsHandler := handlers.NewClientsHandler(clientsService, clientSettingsService)
 
 	// Wire up user settings to services for per-user settings
@@ -1382,6 +1384,38 @@ type countingWriter struct {
 func (cw *countingWriter) Write(p []byte) (int, error) {
 	cw.total += int64(len(p))
 	return len(p), nil
+}
+
+func clearLegacyAppearanceOverridesOnce(cacheDir string, userSettingsService *user_settings.Service, clientSettingsService *client_settings.Service) {
+	markerPath := filepath.Join(cacheDir, ".appearance-overrides-cleared-v1")
+	if _, err := os.Stat(markerPath); err == nil {
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("[appearance-migration] warning: could not read migration marker: %v", err)
+		return
+	}
+
+	profileCount, err := userSettingsService.ClearAppearanceOverrides()
+	if err != nil {
+		log.Printf("[appearance-migration] warning: failed to clear profile appearance overrides: %v", err)
+		return
+	}
+	clientCount, err := clientSettingsService.ClearAppearanceOverrides()
+	if err != nil {
+		log.Printf("[appearance-migration] warning: failed to clear client appearance overrides: %v", err)
+		return
+	}
+
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		log.Printf("[appearance-migration] warning: failed to create cache dir for marker: %v", err)
+		return
+	}
+	if err := os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		log.Printf("[appearance-migration] warning: failed to write migration marker: %v", err)
+		return
+	}
+
+	log.Printf("[appearance-migration] cleared legacy appearance overrides: profiles=%d clients=%d", profileCount, clientCount)
 }
 
 func warmUpUsenetArticle(ctx context.Context, manager pool.Manager, messageID string, groups []string) error {

@@ -155,6 +155,18 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			NavigationTabVisibility:          g.Display.NavigationTabVisibility,
 			WatchStateIconStyle:              g.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly),
+			AppLanguage:                      g.Display.AppLanguage,
+			Appearance: models.AppearanceSettings{
+				FontScale:            g.Display.Appearance.FontScale,
+				AccentColor:          g.Display.Appearance.AccentColor,
+				TextColor:            g.Display.Appearance.TextColor,
+				SecondaryTextColor:   g.Display.Appearance.SecondaryTextColor,
+				ModalBackgroundColor: g.Display.Appearance.ModalBackgroundColor,
+				ButtonStyle:          g.Display.Appearance.ButtonStyle,
+				ButtonRadius:         g.Display.Appearance.ButtonRadius,
+				HighContrast:         g.Display.Appearance.HighContrast,
+				ReduceOverlays:       g.Display.Appearance.ReduceOverlays,
+			},
 		},
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves: configShelvesToModel(g.HomeShelves.Shelves),
@@ -299,6 +311,33 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Display.AppLanguage == "" {
 		eff.Display.AppLanguage = g.Display.AppLanguage
+	}
+	if eff.Display.Appearance.FontScale == nil {
+		eff.Display.Appearance.FontScale = g.Display.Appearance.FontScale
+	}
+	if eff.Display.Appearance.AccentColor == "" {
+		eff.Display.Appearance.AccentColor = g.Display.Appearance.AccentColor
+	}
+	if eff.Display.Appearance.TextColor == "" {
+		eff.Display.Appearance.TextColor = g.Display.Appearance.TextColor
+	}
+	if eff.Display.Appearance.SecondaryTextColor == "" {
+		eff.Display.Appearance.SecondaryTextColor = g.Display.Appearance.SecondaryTextColor
+	}
+	if eff.Display.Appearance.ModalBackgroundColor == "" {
+		eff.Display.Appearance.ModalBackgroundColor = g.Display.Appearance.ModalBackgroundColor
+	}
+	if eff.Display.Appearance.ButtonStyle == "" {
+		eff.Display.Appearance.ButtonStyle = g.Display.Appearance.ButtonStyle
+	}
+	if eff.Display.Appearance.ButtonRadius == "" {
+		eff.Display.Appearance.ButtonRadius = g.Display.Appearance.ButtonRadius
+	}
+	if eff.Display.Appearance.HighContrast == nil {
+		eff.Display.Appearance.HighContrast = g.Display.Appearance.HighContrast
+	}
+	if eff.Display.Appearance.ReduceOverlays == nil {
+		eff.Display.Appearance.ReduceOverlays = g.Display.Appearance.ReduceOverlays
 	}
 
 	// HomeShelves
@@ -492,6 +531,42 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 		d.AppLanguage = ""
 		changed = true
 	}
+	if d.Appearance.FontScale != nil && g.Appearance.FontScale != nil && *d.Appearance.FontScale == *g.Appearance.FontScale {
+		d.Appearance.FontScale = nil
+		changed = true
+	}
+	if d.Appearance.AccentColor != "" && d.Appearance.AccentColor == g.Appearance.AccentColor {
+		d.Appearance.AccentColor = ""
+		changed = true
+	}
+	if d.Appearance.TextColor != "" && d.Appearance.TextColor == g.Appearance.TextColor {
+		d.Appearance.TextColor = ""
+		changed = true
+	}
+	if d.Appearance.SecondaryTextColor != "" && d.Appearance.SecondaryTextColor == g.Appearance.SecondaryTextColor {
+		d.Appearance.SecondaryTextColor = ""
+		changed = true
+	}
+	if d.Appearance.ModalBackgroundColor != "" && d.Appearance.ModalBackgroundColor == g.Appearance.ModalBackgroundColor {
+		d.Appearance.ModalBackgroundColor = ""
+		changed = true
+	}
+	if d.Appearance.ButtonStyle != "" && d.Appearance.ButtonStyle == g.Appearance.ButtonStyle {
+		d.Appearance.ButtonStyle = ""
+		changed = true
+	}
+	if d.Appearance.ButtonRadius != "" && d.Appearance.ButtonRadius == g.Appearance.ButtonRadius {
+		d.Appearance.ButtonRadius = ""
+		changed = true
+	}
+	if d.Appearance.HighContrast != nil && g.Appearance.HighContrast != nil && *d.Appearance.HighContrast == *g.Appearance.HighContrast {
+		d.Appearance.HighContrast = nil
+		changed = true
+	}
+	if d.Appearance.ReduceOverlays != nil && g.Appearance.ReduceOverlays != nil && *d.Appearance.ReduceOverlays == *g.Appearance.ReduceOverlays {
+		d.Appearance.ReduceOverlays = nil
+		changed = true
+	}
 	return changed
 }
 
@@ -588,6 +663,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 		cs.NavigationTabVisibility = nil
 		changed = true
 	}
+	if cs.Appearance != nil && appearanceEqual(*cs.Appearance, eff.Display.Appearance) {
+		cs.Appearance = nil
+		changed = true
+	}
 
 	// AnimeFiltering
 	if cs.AnimeLanguageEnabled != nil && eff.AnimeFiltering.AnimeLanguageEnabled != nil && *cs.AnimeLanguageEnabled == *eff.AnimeFiltering.AnimeLanguageEnabled {
@@ -667,6 +746,36 @@ func stringSliceEqualOrdered(a, b []string) bool {
 		if a[i] != b[i] {
 			return false
 		}
+	}
+	return true
+}
+
+func appearanceEqual(a, b models.AppearanceSettings) bool {
+	if (a.FontScale == nil) != (b.FontScale == nil) {
+		return false
+	}
+	if a.FontScale != nil && b.FontScale != nil && *a.FontScale != *b.FontScale {
+		return false
+	}
+	if a.AccentColor != b.AccentColor ||
+		a.TextColor != b.TextColor ||
+		a.SecondaryTextColor != b.SecondaryTextColor ||
+		a.ModalBackgroundColor != b.ModalBackgroundColor ||
+		a.ButtonStyle != b.ButtonStyle ||
+		a.ButtonRadius != b.ButtonRadius {
+		return false
+	}
+	if (a.HighContrast == nil) != (b.HighContrast == nil) {
+		return false
+	}
+	if a.HighContrast != nil && b.HighContrast != nil && *a.HighContrast != *b.HighContrast {
+		return false
+	}
+	if (a.ReduceOverlays == nil) != (b.ReduceOverlays == nil) {
+		return false
+	}
+	if a.ReduceOverlays != nil && b.ReduceOverlays != nil && *a.ReduceOverlays != *b.ReduceOverlays {
+		return false
 	}
 	return true
 }

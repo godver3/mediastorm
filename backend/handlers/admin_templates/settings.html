@@ -240,6 +240,136 @@
     let hasDefaultPassword = false; // Whether admin has default password
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
+    const themeQuickSelects = [
+        {
+            id: 'default-dark',
+            name: 'Default Dark',
+            description: 'Standard dark theme with blue accent and default sizing.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#0061fe',
+                textColor: '#ffffff',
+                secondaryTextColor: '#a8adbd',
+                modalBackgroundColor: '#1f1f2a',
+                buttonStyle: 'soft',
+                buttonRadius: 'rounded',
+                highContrast: false,
+                reduceOverlays: false,
+            },
+        },
+        {
+            id: 'high-contrast',
+            name: 'High Contrast',
+            description: 'Brighter text, stronger borders, filled buttons, and flatter overlays.',
+            appearance: {
+                fontScale: 1.15,
+                accentColor: '#ffd400',
+                textColor: '#ffffff',
+                secondaryTextColor: '#e6e8f2',
+                modalBackgroundColor: '#101018',
+                buttonStyle: 'filled',
+                buttonRadius: 'rounded',
+                highContrast: true,
+                reduceOverlays: true,
+            },
+        },
+        {
+            id: 'large-accessible',
+            name: 'Large Accessible',
+            description: 'Larger text with calmer contrast for readability testing.',
+            appearance: {
+                fontScale: 1.3,
+                accentColor: '#22c55e',
+                textColor: '#f8fafc',
+                secondaryTextColor: '#cbd5e1',
+                modalBackgroundColor: '#172033',
+                buttonStyle: 'soft',
+                buttonRadius: 'pill',
+                highContrast: false,
+                reduceOverlays: true,
+            },
+        },
+        {
+            id: 'ocean-cyan',
+            name: 'Ocean Cyan',
+            description: 'Cool blue modal surfaces with cyan accents and soft buttons.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#00d4ff',
+                textColor: '#e6fbff',
+                secondaryTextColor: '#8bd8e8',
+                modalBackgroundColor: '#082f49',
+                buttonStyle: 'soft',
+                buttonRadius: 'rounded',
+                highContrast: false,
+                reduceOverlays: false,
+            },
+        },
+        {
+            id: 'rose-pop',
+            name: 'Rose Pop',
+            description: 'Pink accent theme with deep berry modal surfaces.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#ff4fa3',
+                textColor: '#fff1f7',
+                secondaryTextColor: '#f9a8d4',
+                modalBackgroundColor: '#4a1230',
+                buttonStyle: 'filled',
+                buttonRadius: 'pill',
+                highContrast: false,
+                reduceOverlays: false,
+            },
+        },
+        {
+            id: 'ember-gold',
+            name: 'Ember Gold',
+            description: 'Warm gold accent with dark red modal surfaces.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#ffb000',
+                textColor: '#fff7ed',
+                secondaryTextColor: '#fdba74',
+                modalBackgroundColor: '#431407',
+                buttonStyle: 'outlined',
+                buttonRadius: 'rounded',
+                highContrast: false,
+                reduceOverlays: true,
+            },
+        },
+        {
+            id: 'terminal-lime',
+            name: 'Terminal Lime',
+            description: 'Green-on-dark styling for obvious text and accent checks.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#7cff00',
+                textColor: '#d9ffb3',
+                secondaryTextColor: '#8ee66b',
+                modalBackgroundColor: '#061a0b',
+                buttonStyle: 'outlined',
+                buttonRadius: 'square',
+                highContrast: true,
+                reduceOverlays: true,
+            },
+        },
+        {
+            id: 'scan-bright',
+            name: 'Bright Scan',
+            description: 'Deliberately loud colors for spotting screens that ignore theme values.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#00ff66',
+                textColor: '#ff1a1a',
+                secondaryTextColor: '#00ffff',
+                modalBackgroundColor: '#2b0052',
+                buttonStyle: 'outlined',
+                buttonRadius: 'square',
+                highContrast: false,
+                reduceOverlays: false,
+            },
+        },
+    ];
 
     // Search state
     let searchTerm = '';
@@ -1295,6 +1425,17 @@
             }
         }
 
+        // Check display fields
+        if (!hasActualOverrides) {
+            for (const key of clientDisplayFields) {
+                const clientVal = getAtPath(clientSettings, key);
+                if (normalizeForComparison(clientVal) !== null) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
         // Check network fields (simpler - just check if set and non-empty)
         if (!hasActualOverrides) {
             for (const key of clientNetworkFields) {
@@ -1354,7 +1495,7 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
-    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility'];
+    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
     const clientPlaybackFields = ['maxResultsPerResolution'];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
     // Map network field paths to client settings keys
@@ -1366,12 +1507,15 @@
         // playback.maxResultsPerResolution -> maxResultsPerResolution
         // network.homeWifiSSID -> homeWifiSSID
         const keys = path.split('.');
-        if (keys.length === 2) {
+        if (keys.length >= 2) {
             if (keys[0] === 'filtering' && clientFilterFields.includes(keys[1])) {
                 return keys[1];
             }
-            if (keys[0] === 'display' && clientDisplayFields.includes(keys[1])) {
-                return keys[1];
+            if (keys[0] === 'display') {
+                const displayKey = keys.slice(1).join('.');
+                if (clientDisplayFields.includes(displayKey)) {
+                    return displayKey;
+                }
             }
             if (keys[0] === 'playback' && clientPlaybackFields.includes(keys[1])) {
                 return keys[1];
@@ -1386,6 +1530,40 @@
         return null;
     }
 
+    function getAtPath(obj, path) {
+        if (!obj || !path) return undefined;
+        let val = obj;
+        for (const key of path.split('.')) {
+            if (val === undefined || val === null || typeof val !== 'object' || !(key in val)) return undefined;
+            val = val[key];
+        }
+        return val;
+    }
+
+    function setAtPath(obj, path, value) {
+        const keys = path.split('.');
+        let target = obj;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (target[keys[i]] === undefined || target[keys[i]] === null || typeof target[keys[i]] !== 'object') {
+                target[keys[i]] = {};
+            }
+            target = target[keys[i]];
+        }
+        target[keys[keys.length - 1]] = value;
+    }
+
+    function deleteAtPath(obj, path) {
+        const keys = path.split('.');
+        let target = obj;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (target === undefined || target === null || typeof target !== 'object') return;
+            target = target[keys[i]];
+        }
+        if (target && typeof target === 'object') {
+            delete target[keys[keys.length - 1]];
+        }
+    }
+
     function getValue(path) {
         const keys = path.split('.');
         const topKey = keys[0];
@@ -1394,8 +1572,9 @@
         const clientKey = getClientSettingsKey(path);
         if (selectedClientId && clientSettings && clientKey) {
             // Return client setting if set, otherwise fall through to profile/global
-            if (clientSettings[clientKey] !== undefined && clientSettings[clientKey] !== null) {
-                return clientSettings[clientKey];
+            const clientValue = getAtPath(clientSettings, clientKey);
+            if (clientValue !== undefined && clientValue !== null) {
+                return clientValue;
             }
         }
 
@@ -1427,7 +1606,7 @@
         // If client selected and this is a client-supported filtering field
         const clientKey = getClientSettingsKey(path);
         if (selectedClientId && clientSettings !== null && clientKey) {
-            clientSettings[clientKey] = value;
+            setAtPath(clientSettings, clientKey, value);
             return;
         }
 
@@ -1471,7 +1650,8 @@
     // Check if a client setting is explicitly set (not inherited)
     function isClientSettingSet(fieldKey) {
         if (!selectedClientId || !clientSettings) return false;
-        return clientSettings[fieldKey] !== undefined && clientSettings[fieldKey] !== null;
+        const value = getAtPath(clientSettings, fieldKey);
+        return value !== undefined && value !== null;
     }
 
     // Resolve which settings section a client field key belongs to
@@ -1485,18 +1665,20 @@
     }
 
     // Check if a client value is actually different from what it would inherit
-    function isClientValueDifferent(fieldKey) {
+    function isClientValueDifferent(path) {
         if (!selectedClientId || !clientSettings) return false;
-        const clientVal = clientSettings[fieldKey];
+        const fieldKey = getClientSettingsKey(path);
+        if (!fieldKey) return false;
+        const clientVal = getAtPath(clientSettings, fieldKey);
         if (clientVal === undefined || clientVal === null) return false;
 
         // Get the effective inherited value (profile if different from global, otherwise global)
         const section = getClientFieldSection(fieldKey);
-        const globalVal = currentSettings[section] ? currentSettings[section][fieldKey] : undefined;
+        const globalVal = getGlobalValue(path);
         let inheritedVal;
 
         if (selectedUserId && userSettings && userSettings[section]) {
-            const profileVal = userSettings[section][fieldKey];
+            const profileVal = getAtPath(userSettings, path);
             // Use profile value if it's set AND differs from global
             if (profileVal !== undefined && profileVal !== null &&
                 !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
@@ -1514,7 +1696,7 @@
     // Clear a client setting (revert to profile default)
     function clearClientSetting(fieldKey) {
         if (selectedClientId && clientSettings) {
-            delete clientSettings[fieldKey];
+            deleteAtPath(clientSettings, fieldKey);
             renderSettings();
         }
     }
@@ -1622,7 +1804,7 @@
         // Check if we're editing client settings and this field supports client override
         if (selectedClientId && clientSettings && clientKey) {
             // Check if client has a value that's actually different from what it would inherit
-            if (isClientValueDifferent(clientKey)) {
+            if (isClientValueDifferent(path)) {
                 // Value is set at client level AND differs from inherited - check what it would inherit from
                 const profileHasOverride = isUserSettingSet(path) && isProfileValueDifferent(path);
                 return { source: 'client', isOverridden: true, inheritedFrom: profileHasOverride ? 'profile' : 'global' };
@@ -1650,14 +1832,8 @@
     // Clear a profile setting (revert to global default)
     function clearProfileSetting(path) {
         if (!selectedUserId || !userSettings) return;
-        const keys = path.split('.');
-        if (keys.length === 2) {
-            const [section, field] = keys;
-            if (userSettings[section]) {
-                delete userSettings[section][field];
-                renderSettings();
-            }
-        }
+        deleteAtPath(userSettings, path);
+        renderSettings();
     }
 
     // Format a value for display in tooltip
@@ -4070,6 +4246,62 @@
         renderSettings();
     }
 
+    function detectCurrentThemeQuickSelect() {
+        for (const preset of themeQuickSelects) {
+            let match = true;
+            for (const [key, value] of Object.entries(preset.appearance)) {
+                const current = getValue('display.appearance.' + key);
+                if (!deepEqual(normalizeForComparison(current), normalizeForComparison(value))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return preset.id;
+        }
+        return 'custom';
+    }
+
+    function renderThemeQuickSelect() {
+        const currentPresetId = detectCurrentThemeQuickSelect();
+        const options = ['<option value="custom"' + (currentPresetId === 'custom' ? ' selected' : '') + '>Custom</option>'];
+        for (const preset of themeQuickSelects) {
+            options.push('<option value="' + preset.id + '"' + (currentPresetId === preset.id ? ' selected' : '') + '>' + preset.name + '</option>');
+        }
+
+        const currentPreset = themeQuickSelects.find(p => p.id === currentPresetId);
+        const descHtml = currentPreset
+            ? '<span style="color: var(--text-muted); font-size: 0.8rem;">' + currentPreset.description + '</span>'
+            : '<span style="color: var(--text-muted); font-size: 0.8rem;">Choose a preset to fill the appearance fields below.</span>';
+        const swatchHtml = (currentPreset ? ['accentColor', 'textColor', 'secondaryTextColor', 'modalBackgroundColor'].map(key => {
+            const color = currentPreset.appearance[key];
+            return '<span title="' + key + ': ' + color + '" style="display:inline-block;width:18px;height:18px;border-radius:4px;background:' + color + ';border:1px solid var(--border-color);"></span>';
+        }).join('') : '');
+
+        return '<div style="margin-bottom: 1.25rem; padding: 0.85rem 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary);">' +
+            '<label style="display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-secondary);">Theme Quick Select</label>' +
+            '<div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">' +
+            '<select class="form-select" style="max-width: 240px;" onchange="applyThemeQuickSelect(this.value)">' +
+            options.join('') +
+            '</select>' +
+            '<div style="display:flex;align-items:center;gap:0.35rem;">' + swatchHtml + '</div>' +
+            descHtml +
+            '</div>' +
+            '<p class="form-hint" style="margin: 0.5rem 0 0;">Applies to the current scope (global, profile, or device). Changes are not saved until you click Save.</p>' +
+            '</div>';
+    }
+
+    function applyThemeQuickSelect(presetId) {
+        if (presetId === 'custom') return;
+        const preset = themeQuickSelects.find(p => p.id === presetId);
+        if (!preset) return;
+
+        for (const [key, value] of Object.entries(preset.appearance)) {
+            setValue('display.appearance.' + key, value);
+        }
+
+        renderSettings();
+    }
+
     // Ranking Examples Modal
     function showRankingExamplesModal() {
         const body = document.getElementById('rankingExamplesBody');
@@ -4747,6 +4979,9 @@
         if (sectionKey === 'streaming') {
             customHtml = renderProviderPriorityUI();
         }
+        if (sectionKey === 'display') {
+            customHtml = renderThemeQuickSelect();
+        }
 
         // Add test button for testable object sections
         let testHtml = '';
@@ -4756,7 +4991,7 @@
                 '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection</button>'+
                 '<span id="test-result-'+sectionKey+'" class="test-result"></span></div>';
         }
-        return fieldsHtml + customHtml + testHtml;
+        return (sectionKey === 'display' ? customHtml + fieldsHtml : fieldsHtml + customHtml) + testHtml;
     }
 
     // Test object section (non-array sections like subtitles)

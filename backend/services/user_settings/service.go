@@ -219,6 +219,33 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.AppLanguage == "" {
 			settings.Display.AppLanguage = defaults.Display.AppLanguage
 		}
+		if settings.Display.Appearance.FontScale == nil {
+			settings.Display.Appearance.FontScale = defaults.Display.Appearance.FontScale
+		}
+		if settings.Display.Appearance.AccentColor == "" {
+			settings.Display.Appearance.AccentColor = defaults.Display.Appearance.AccentColor
+		}
+		if settings.Display.Appearance.TextColor == "" {
+			settings.Display.Appearance.TextColor = defaults.Display.Appearance.TextColor
+		}
+		if settings.Display.Appearance.SecondaryTextColor == "" {
+			settings.Display.Appearance.SecondaryTextColor = defaults.Display.Appearance.SecondaryTextColor
+		}
+		if settings.Display.Appearance.ModalBackgroundColor == "" {
+			settings.Display.Appearance.ModalBackgroundColor = defaults.Display.Appearance.ModalBackgroundColor
+		}
+		if settings.Display.Appearance.ButtonStyle == "" {
+			settings.Display.Appearance.ButtonStyle = defaults.Display.Appearance.ButtonStyle
+		}
+		if settings.Display.Appearance.ButtonRadius == "" {
+			settings.Display.Appearance.ButtonRadius = defaults.Display.Appearance.ButtonRadius
+		}
+		if settings.Display.Appearance.HighContrast == nil {
+			settings.Display.Appearance.HighContrast = defaults.Display.Appearance.HighContrast
+		}
+		if settings.Display.Appearance.ReduceOverlays == nil {
+			settings.Display.Appearance.ReduceOverlays = defaults.Display.Appearance.ReduceOverlays
+		}
 		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
 			settings.HomeShelves.Shelves = shelves
 		}
@@ -357,7 +384,16 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		len(s.Display.NavigationTabVisibility) > 0 ||
 		s.Display.WatchStateIconStyle != "" ||
 		s.Display.BypassFilteringForAIOStreamsOnly != nil ||
-		s.Display.AppLanguage != "" {
+		s.Display.AppLanguage != "" ||
+		s.Display.Appearance.FontScale != nil ||
+		s.Display.Appearance.AccentColor != "" ||
+		s.Display.Appearance.TextColor != "" ||
+		s.Display.Appearance.SecondaryTextColor != "" ||
+		s.Display.Appearance.ModalBackgroundColor != "" ||
+		s.Display.Appearance.ButtonStyle != "" ||
+		s.Display.Appearance.ButtonRadius != "" ||
+		s.Display.Appearance.HighContrast != nil ||
+		s.Display.Appearance.ReduceOverlays != nil {
 		return false
 	}
 
@@ -397,6 +433,18 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	return true
 }
 
+func appearanceSettingsSet(a models.AppearanceSettings) bool {
+	return a.FontScale != nil ||
+		a.AccentColor != "" ||
+		a.TextColor != "" ||
+		a.SecondaryTextColor != "" ||
+		a.ModalBackgroundColor != "" ||
+		a.ButtonStyle != "" ||
+		a.ButtonRadius != "" ||
+		a.HighContrast != nil ||
+		a.ReduceOverlays != nil
+}
+
 // Delete removes a user's settings.
 func (s *Service) Delete(userID string) error {
 	userID = strings.TrimSpace(userID)
@@ -414,6 +462,33 @@ func (s *Service) Delete(userID string) error {
 	delete(s.settings, userID)
 
 	return s.saveLocked()
+}
+
+// ClearAppearanceOverrides removes profile-level display appearance overrides.
+// It is intended for one-time cleanup of appearance values previously saved by
+// the removed mobile settings UI.
+func (s *Service) ClearAppearanceOverrides() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := 0
+	for userID, settings := range s.settings {
+		if !appearanceSettingsSet(settings.Display.Appearance) {
+			continue
+		}
+		settings.Display.Appearance = models.AppearanceSettings{}
+		if isSettingsEmpty(settings) {
+			delete(s.settings, userID)
+		} else {
+			s.settings[userID] = settings
+		}
+		changed++
+	}
+
+	if changed == 0 {
+		return 0, nil
+	}
+	return changed, s.saveLocked()
 }
 
 func (s *Service) load() error {

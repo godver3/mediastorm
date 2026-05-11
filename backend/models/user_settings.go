@@ -90,6 +90,21 @@ type DisplaySettings struct {
 	BypassFilteringForAIOStreamsOnly *bool `json:"bypassFilteringForAioStreamsOnly,omitempty"`
 	// AppLanguage overrides the app UI language (ISO 639-1 code, e.g. "en", "fr"). Empty = use device locale.
 	AppLanguage string `json:"appLanguage,omitempty"`
+	// Appearance controls app-wide visual accessibility and theming preferences.
+	Appearance AppearanceSettings `json:"appearance,omitempty"`
+}
+
+// AppearanceSettings controls app-wide visual accessibility and theming preferences.
+type AppearanceSettings struct {
+	FontScale            *float64 `json:"fontScale,omitempty"`            // App text scale multiplier (1.0 = default)
+	AccentColor          string   `json:"accentColor,omitempty"`          // Primary accent color as #RRGGBB
+	TextColor            string   `json:"textColor,omitempty"`            // Primary text color as #RRGGBB
+	SecondaryTextColor   string   `json:"secondaryTextColor,omitempty"`   // Secondary text color as #RRGGBB
+	ModalBackgroundColor string   `json:"modalBackgroundColor,omitempty"` // Modal background color as #RRGGBB
+	ButtonStyle          string   `json:"buttonStyle,omitempty"`          // "soft", "outlined", or "filled"
+	ButtonRadius         string   `json:"buttonRadius,omitempty"`         // "square", "rounded", or "pill"
+	HighContrast         *bool    `json:"highContrast,omitempty"`         // Strengthen text/borders/background contrast
+	ReduceOverlays       *bool    `json:"reduceOverlays,omitempty"`       // Prefer flatter, less translucent surfaces
 }
 
 // LiveTVSettings contains per-user Live TV preferences.
@@ -447,6 +462,11 @@ func DefaultUserSettings() UserSettings {
 			BadgeVisibility:         []string{"watchProgress"},
 			NavigationTabVisibility: []string{"home", "search", "lists", "live", "profiles", "downloads"},
 			WatchStateIconStyle:     "colored",
+			Appearance: AppearanceSettings{
+				FontScale:    FloatPtr(1.0),
+				ButtonStyle:  "soft",
+				ButtonRadius: "rounded",
+			},
 		},
 		Network: NetworkSettings{
 			HomeWifiSSID:     "",

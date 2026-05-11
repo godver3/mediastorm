@@ -157,6 +157,84 @@ func TestGetWithDefaults_DisplayAppLanguagePreservesUserOverride(t *testing.T) {
 	}
 }
 
+func TestClearAppearanceOverrides_RemovesOnlyAppearance(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	fontScale := 1.2
+	settings := models.UserSettings{
+		Display: models.DisplaySettings{
+			AppLanguage: "fr",
+			Appearance: models.AppearanceSettings{
+				FontScale:   &fontScale,
+				AccentColor: "#ff00cc",
+				TextColor:   "#ff1a1a",
+			},
+		},
+	}
+	if err := svc.Update("user1", settings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	count, err := svc.ClearAppearanceOverrides()
+	if err != nil {
+		t.Fatalf("ClearAppearanceOverrides: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("cleared count = %d, want 1", count)
+	}
+
+	got, err := svc.Get("user1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-appearance settings to remain")
+	}
+	if got.Display.AppLanguage != "fr" {
+		t.Fatalf("appLanguage = %q, want fr", got.Display.AppLanguage)
+	}
+	if appearanceSettingsSet(got.Display.Appearance) {
+		t.Fatalf("appearance overrides were not cleared: %+v", got.Display.Appearance)
+	}
+}
+
+func TestClearAppearanceOverrides_DeletesAppearanceOnlySettings(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	fontScale := 1.2
+	if err := svc.Update("user1", models.UserSettings{
+		Display: models.DisplaySettings{
+			Appearance: models.AppearanceSettings{FontScale: &fontScale},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	count, err := svc.ClearAppearanceOverrides()
+	if err != nil {
+		t.Fatalf("ClearAppearanceOverrides: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("cleared count = %d, want 1", count)
+	}
+
+	got, err := svc.Get("user1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("appearance-only settings should be deleted, got %+v", got)
+	}
+}
+
 func TestIsSettingsEmpty_Default(t *testing.T) {
 	if !isSettingsEmpty(models.UserSettings{}) {
 		t.Error("empty UserSettings should be considered empty")
