@@ -2410,7 +2410,9 @@
         const sectionDef = schema[sectionKey];
         let items;
 
-        if (sectionDef.parent) {
+        if (sectionKey === 'liveTV.sources') {
+            items = getValue('liveTV.sources') || [];
+        } else if (sectionDef.parent) {
             items = currentSettings[sectionDef.parent]?.[sectionDef.key] || [];
         } else {
             items = currentSettings[sectionKey] || [];
@@ -2446,6 +2448,17 @@
             case 'debridProviders':
                 endpoint = basePath + '/api/test/debrid-provider';
                 payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
+                break;
+            case 'live.sources':
+            case 'liveTV.sources':
+                endpoint = basePath + '/api/test/live';
+                payload = {
+                    mode: item.mode || '',
+                    playlistUrl: item.playlistUrl || '',
+                    xtreamHost: item.xtreamHost || '',
+                    xtreamUsername: item.xtreamUsername || '',
+                    xtreamPassword: item.xtreamPassword || ''
+                };
                 break;
             default:
                 btn.disabled = false;
@@ -3005,7 +3018,7 @@
     }
 
     // Testable sections
-    const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders'];
+    const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders', 'live.sources', 'liveTV.sources'];
 
     // Deep equality check for comparing values
     function deepEqual(a, b) {
@@ -5029,13 +5042,14 @@
                 payload = { apiKey: sectionData.apiKey || '' };
                 break;
             case 'live':
+            case 'liveTV':
                 endpoint = basePath + '/api/test/live';
                 payload = {
-                    mode: sectionData.mode || '',
-                    playlistUrl: sectionData.playlistUrl || '',
-                    xtreamHost: sectionData.xtreamHost || '',
-                    xtreamUsername: sectionData.xtreamUsername || '',
-                    xtreamPassword: sectionData.xtreamPassword || ''
+                    mode: getValue(sectionKey + '.mode') || '',
+                    playlistUrl: getValue(sectionKey + '.playlistUrl') || '',
+                    xtreamHost: getValue(sectionKey + '.xtreamHost') || '',
+                    xtreamUsername: getValue(sectionKey + '.xtreamUsername') || '',
+                    xtreamPassword: getValue(sectionKey + '.xtreamPassword') || ''
                 };
                 break;
             default:

@@ -828,6 +828,7 @@ var SettingsSchema = map[string]interface{}{
 		"icon":        "tv",
 		"order":       3,
 		"inheritFrom": "live",
+		"testable":    true,
 		"fields": map[string]interface{}{
 			"mode": map[string]interface{}{
 				"type":        "select",

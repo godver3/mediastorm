@@ -158,6 +158,14 @@ func TestAdminUIHandler_GetSchema(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &schema); err != nil {
 		t.Errorf("failed to parse schema JSON: %v", err)
 	}
+
+	liveTV, ok := schema["liveTV"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema missing liveTV section")
+	}
+	if liveTV["testable"] != true {
+		t.Errorf("liveTV testable = %v, want true", liveTV["testable"])
+	}
 }
 
 func TestAdminUIHandler_HasDefaultPassword(t *testing.T) {
