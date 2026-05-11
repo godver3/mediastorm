@@ -141,4 +141,7 @@ type PlaybackProgress struct {
 
 	// Hidden from continue watching (user dismissed)
 	HiddenFromContinueWatching bool `json:"hiddenFromContinueWatching,omitempty"`
+
+	// Runtime playback control response fields. Not persisted.
+	AllowedToContinue *bool `json:"allowedToContinue,omitempty"`
 }

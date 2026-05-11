@@ -456,6 +456,8 @@ func (h *HistoryHandler) UpdatePlaybackProgress(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	allowedToContinue := !GetStreamTracker().ShouldStopPlayback(userID, update)
+	progress.AllowedToContinue = &allowedToContinue
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(progress)

@@ -4,10 +4,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"novastream/models"
 )
 
 func newTestTracker() *StreamTracker {
-	return &StreamTracker{streams: make(map[string]*TrackedStream)}
+	return &StreamTracker{streams: make(map[string]*TrackedStream), stopPlaybacks: make(map[string]time.Time)}
 }
 
 func startTestStream(t *testing.T, tracker *StreamTracker, profileID, accountID string) string {
@@ -80,6 +83,26 @@ func TestStreamUsageUnlimited(t *testing.T) {
 	usage := tracker.GetAccountStreamUsage("acct1", 0)
 	if usage.CurrentStreams != 2 || usage.AtLimit || usage.AvailableStreams != 0 {
 		t.Fatalf("unlimited should never be at limit, got %+v", usage)
+	}
+}
+
+func TestMarkStopPlaybackStopsMatchingHeartbeat(t *testing.T) {
+	tracker := newTestTracker()
+	req := httptest.NewRequest(http.MethodGet, "/video/stream?profileId=default&profileName=godver3&mediaType=episode&itemId=tvdb:series:392276:s02e05", nil)
+	id, _, _ := tracker.StartStreamWithAccount(req, "/test/file.mkv", 1000, 0, 0, "acct1")
+
+	if !tracker.MarkStopPlayback(id) {
+		t.Fatal("expected playback stop signal to be marked")
+	}
+
+	update := models.PlaybackProgressUpdate{MediaType: "episode", ItemID: "tvdb:series:392276:s02e05"}
+	if !tracker.ShouldStopPlayback("godver3", update) {
+		t.Fatal("expected matching heartbeat to be told to stop")
+	}
+
+	other := models.PlaybackProgressUpdate{MediaType: "episode", ItemID: "tvdb:series:392276:s02e06"}
+	if tracker.ShouldStopPlayback("godver3", other) {
+		t.Fatal("did not expect different media item to be stopped")
 	}
 }
 

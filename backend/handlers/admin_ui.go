@@ -1736,6 +1736,75 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// TerminateStream stops an active stream from the admin/account dashboard.
+func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	vars := mux.Vars(r)
+	streamID := strings.TrimSpace(vars["streamID"])
+	if streamID == "" {
+		http.Error(w, `{"error":"missing stream ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	if h.hlsManager != nil {
+		session, exists := h.hlsManager.GetSession(streamID)
+		if exists {
+			session.mu.RLock()
+			profileID := session.ProfileID
+			profileName := session.ProfileName
+			mediaType := session.MediaMetadata.MediaType
+			itemID := session.MediaMetadata.ItemID
+			session.mu.RUnlock()
+
+			if !isAdmin && !h.profileBelongsToAccount(profileID, accountID) {
+				http.Error(w, `{"error":"stream not found"}`, http.StatusNotFound)
+				return
+			}
+
+			if !GetStreamTracker().MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID) {
+				http.Error(w, `{"error":"stream cannot be controlled"}`, http.StatusBadRequest)
+				return
+			}
+			log.Printf("[admin-ui] marked HLS stream %s to stop on heartbeat", streamID)
+
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"terminated": true,
+				"id":         streamID,
+				"type":       "hls",
+			})
+			return
+		}
+	}
+
+	tracker := GetStreamTracker()
+	stream, exists := tracker.GetStream(streamID)
+	if !exists {
+		http.Error(w, `{"error":"stream not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if !isAdmin && stream.AccountID != accountID && !h.profileBelongsToAccount(stream.ProfileID, accountID) {
+		http.Error(w, `{"error":"stream not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if !tracker.MarkStopPlayback(streamID) {
+		http.Error(w, `{"error":"stream cannot be controlled"}`, http.StatusBadRequest)
+		return
+	}
+	log.Printf("[admin-ui] marked direct stream %s to stop on heartbeat", streamID)
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"terminated": true,
+		"id":         streamID,
+		"type":       "direct",
+	})
+}
+
 // GetStreamsSSE streams active streams data via Server-Sent Events every 5 seconds.
 func (h *AdminUIHandler) GetStreamsSSE(w http.ResponseWriter, r *http.Request) {
 	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
