@@ -1610,6 +1610,10 @@
             return;
         }
 
+        if (selectedUserId && userSettings && path.startsWith('liveTV.sources.')) {
+            ensureProfileLiveSourceOverride();
+        }
+
         // If user selected and this is a per-user section, update userSettings
         if (selectedUserId && userSettings && perUserSections.includes(topKey)) {
             // Get global value for comparison (mapping section key if needed)
@@ -1645,6 +1649,16 @@
             obj = obj[keys[i]];
         }
         obj[keys[keys.length - 1]] = value;
+    }
+
+    function ensureProfileLiveSourceOverride() {
+        if (!selectedUserId || !userSettings) return [];
+        if (!userSettings.liveTV) userSettings.liveTV = {};
+        if (!Array.isArray(userSettings.liveTV.sources)) {
+            const inheritedSources = getGlobalValue('liveTV.sources') || [];
+            userSettings.liveTV.sources = JSON.parse(JSON.stringify(inheritedSources));
+        }
+        return userSettings.liveTV.sources;
     }
 
     // Check if a client setting is explicitly set (not inherited)
@@ -2355,9 +2369,13 @@
 
         let arr;
         if (sectionDef.parent) {
+            if (sectionKey === 'liveTV.sources' && selectedUserId && userSettings) {
+                arr = ensureProfileLiveSourceOverride();
+            } else {
             if (!targetSettings[sectionDef.parent]) targetSettings[sectionDef.parent] = {};
             arr = targetSettings[sectionDef.parent][sectionDef.key] || [];
             targetSettings[sectionDef.parent][sectionDef.key] = arr;
+            }
         } else {
             arr = targetSettings[sectionKey] || [];
             targetSettings[sectionKey] = arr;
@@ -2404,7 +2422,12 @@
         const isPerUserSection = perUserSections.includes(sectionKey) || (parentKey && perUserSections.includes(parentKey));
         const targetSettings = (selectedUserId && userSettings && isPerUserSection) ? userSettings : currentSettings;
 
-        let arr = sectionDef.parent ? targetSettings[sectionDef.parent]?.[sectionDef.key] : targetSettings[sectionKey];
+        let arr;
+        if (sectionKey === 'liveTV.sources' && selectedUserId && userSettings) {
+            arr = ensureProfileLiveSourceOverride();
+        } else {
+            arr = sectionDef.parent ? targetSettings[sectionDef.parent]?.[sectionDef.key] : targetSettings[sectionKey];
+        }
         if (arr && arr.length > index) { arr.splice(index, 1); renderSettings(); }
     }
     // Test provider functions
@@ -2555,10 +2578,13 @@
     }
 
     let hiddenChannelsManager = {
+        mode: 'profile',
         userId: '',
         userName: '',
         settings: null,
         channels: [],
+        sourceId: '',
+        sourceName: '',
         loading: false,
         error: '',
         search: '',
@@ -2588,6 +2614,13 @@
 
     function uniqueStrings(items) {
         return Array.from(new Set((items || []).filter(item => typeof item === 'string' && item.trim() !== '')));
+    }
+
+    function intersectStringArrays(arrays) {
+        if (!Array.isArray(arrays) || arrays.length === 0) return [];
+        const normalized = arrays.map(uniqueStrings);
+        const [first, ...rest] = normalized;
+        return first.filter(item => rest.every(arr => arr.includes(item)));
     }
 
     function escapeJsSingleQuotedAttr(value) {
@@ -2642,15 +2675,23 @@
                 <label class="form-label">Profile Channel Visibility</label>
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
                     <p class="form-hint" style="margin: 0;">Manage hidden Live TV channels for ${profiles.length} profile${profiles.length === 1 ? '' : 's'} in this view.</p>
-                    <button type="button" class="btn btn-secondary" onclick="openHiddenChannelsScopeManager(event)">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                            <circle cx="9" cy="7" r="4"/>
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                        </svg>
-                        Manage Profiles
-                    </button>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="openGlobalHiddenChannelsManager(event)">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                            </svg>
+                            Manage Global
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="openHiddenChannelsScopeManager(event)">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                            Manage Profiles
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -2746,10 +2787,13 @@
         }
         const liveTV = getLiveTVSettings(settings);
         hiddenChannelsManager = {
+            mode: 'profile',
             userId: profileId,
             userName: profileName || profileId,
             settings,
             channels: [],
+            sourceId: '',
+            sourceName: '',
             loading: true,
             error: '',
             search: '',
@@ -2761,6 +2805,161 @@
         modal.classList.add('visible');
         renderHiddenChannelsManager();
         loadHiddenChannelsManagerChannels();
+    }
+
+    function openHiddenChannelsManagerForSource(sectionKey, index, event) {
+        if (event) event.stopPropagation();
+        const sectionDef = schema[sectionKey];
+        let items;
+        if (sectionKey === 'liveTV.sources') {
+            items = getValue('liveTV.sources') || [];
+        } else if (sectionDef.parent) {
+            items = currentSettings[sectionDef.parent]?.[sectionDef.key] || [];
+        } else {
+            items = currentSettings[sectionKey] || [];
+        }
+        const source = items[index];
+        if (!source) {
+            showToast('Live TV source not found', 'error');
+            return;
+        }
+
+        const sourceId = String(source.id || '').trim();
+        const sourceName = source.name || sourceId || 'Live TV source';
+
+        if (selectedUserId && userSettings && sectionKey === 'liveTV.sources') {
+            const liveTV = getLiveTVSettings(userSettings);
+            hiddenChannelsManager = {
+                mode: 'profile',
+                userId: selectedUserId,
+                userName: getSelectedUserName(),
+                settings: userSettings,
+                channels: [],
+                sourceId,
+                sourceName,
+                loading: true,
+                error: '',
+                search: '',
+                hiddenDraft: uniqueStrings(liveTV.hiddenChannels),
+            };
+        } else {
+            const profiles = getScopedProfilesFromSelector();
+            if (profiles.length === 0) {
+                showToast('No profiles available in this view', 'error');
+                return;
+            }
+            hiddenChannelsManager = {
+                mode: 'global',
+                userId: '',
+                userName: 'All profiles',
+                settings: null,
+                channels: [],
+                sourceId,
+                sourceName,
+                loading: true,
+                error: '',
+                search: '',
+                hiddenDraft: [],
+                globalHiddenOriginal: [],
+                profiles: profiles.map(profile => ({ ...profile, settings: null, error: '' })),
+            };
+        }
+
+        ensureHiddenChannelsModal();
+        const modal = document.getElementById('hiddenChannelsModal');
+        document.body.appendChild(modal);
+        modal.classList.add('visible');
+        renderHiddenChannelsManager();
+        loadHiddenChannelsManagerChannels().then(() => {
+            if (hiddenChannelsManager.mode === 'global') {
+                loadGlobalHiddenChannelDraft();
+            } else {
+                filterHiddenDraftToLoadedSource();
+            }
+        });
+    }
+
+    function filterHiddenDraftToLoadedSource() {
+        if (!hiddenChannelsManager.sourceId) return;
+        const channelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
+        hiddenChannelsManager.hiddenDraft = uniqueStrings(hiddenChannelsManager.hiddenDraft).filter(id => channelIds.has(id));
+        renderHiddenChannelsManager();
+    }
+
+    async function loadGlobalHiddenChannelDraft() {
+        try {
+            const profiles = hiddenChannelsManager.profiles || [];
+            const loadedProfiles = await Promise.all(profiles.map(async (profile) => {
+                if (profile.settings) return profile;
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(profile.id), {
+                    credentials: 'same-origin'
+                });
+                if (!response.ok) throw new Error(await response.text() || 'Failed to load profile settings');
+                const settings = await response.json();
+                return { ...profile, settings, error: '' };
+            }));
+            hiddenChannelsManager.profiles = loadedProfiles;
+            const channelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
+            const hiddenByProfile = loadedProfiles.map(profile => {
+                const hidden = uniqueStrings(profile.settings?.liveTV?.hiddenChannels || []);
+                return hiddenChannelsManager.sourceId ? hidden.filter(id => channelIds.has(id)) : hidden;
+            });
+            const globalHidden = intersectStringArrays(hiddenByProfile);
+            hiddenChannelsManager.globalHiddenOriginal = globalHidden;
+            hiddenChannelsManager.hiddenDraft = globalHidden;
+        } catch (e) {
+            hiddenChannelsManager.error = e?.message || 'Failed to load profile settings';
+        } finally {
+            renderHiddenChannelsManager();
+        }
+    }
+
+    async function openGlobalHiddenChannelsManager(event) {
+        if (event) event.stopPropagation();
+        const profiles = getScopedProfilesFromSelector();
+        if (profiles.length === 0) {
+            showToast('No profiles available in this view', 'error');
+            return;
+        }
+        hiddenChannelsManager = {
+            mode: 'global',
+            userId: '',
+            userName: 'All profiles',
+            settings: null,
+            channels: [],
+            sourceId: '',
+            sourceName: '',
+            loading: true,
+            error: '',
+            search: '',
+            hiddenDraft: [],
+            globalHiddenOriginal: [],
+            profiles: profiles.map(profile => ({ ...profile, settings: null, error: '' })),
+        };
+        ensureHiddenChannelsModal();
+        const modal = document.getElementById('hiddenChannelsModal');
+        document.body.appendChild(modal);
+        modal.classList.add('visible');
+        renderHiddenChannelsManager();
+
+        try {
+            const loadedProfiles = await Promise.all(profiles.map(async (profile) => {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(profile.id), {
+                    credentials: 'same-origin'
+                });
+                if (!response.ok) throw new Error(await response.text() || 'Failed to load profile settings');
+                const settings = await response.json();
+                return { ...profile, settings, error: '' };
+            }));
+            hiddenChannelsManager.profiles = loadedProfiles;
+            const globalHidden = intersectStringArrays(loadedProfiles.map(profile => profile.settings?.liveTV?.hiddenChannels || []));
+            hiddenChannelsManager.globalHiddenOriginal = globalHidden;
+            hiddenChannelsManager.hiddenDraft = globalHidden;
+        } catch (e) {
+            hiddenChannelsManager.error = e?.message || 'Failed to load profile settings';
+        }
+
+        await loadHiddenChannelsManagerChannels();
     }
 
     async function openHiddenChannelsScopeManager(event) {
@@ -2844,7 +3043,11 @@
 
     async function loadHiddenChannelsManagerChannels() {
         try {
-            const response = await fetch(basePath + '/api/live/channels?profileId=' + encodeURIComponent(hiddenChannelsManager.userId), {
+            const params = new URLSearchParams();
+            if (hiddenChannelsManager.userId) params.set('profileId', hiddenChannelsManager.userId);
+            if (hiddenChannelsManager.sourceId) params.set('sourceId', hiddenChannelsManager.sourceId);
+            const query = params.toString();
+            const response = await fetch(basePath + '/api/live/channels' + (query ? '?' + query : ''), {
                 credentials: 'same-origin'
             });
             if (!response.ok) throw new Error(await response.text() || 'Failed to load Live TV channels');
@@ -2896,7 +3099,7 @@
     function renderHiddenChannelRow(channelId, channelMap) {
         const channel = channelMap.get(channelId);
         const name = channel?.name || 'Unknown channel';
-        const group = channel?.group || channelId;
+        const group = [channel?.sourceName, channel?.group].filter(Boolean).join(' • ') || channelId;
         return `
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); max-width: 100%; overflow: hidden;">
                 <div style="min-width: 0;">
@@ -2914,7 +3117,7 @@
             <div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; max-width: 100%; overflow: hidden;">
                 <div style="min-width: 0;">
                     <div style="font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(channel.name || channel.id || 'Unnamed channel')}</div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(channel.group || channel.id || '')}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml([channel.sourceName, channel.group].filter(Boolean).join(' • ') || channel.id || '')}</div>
                 </div>
                 <button type="button" class="btn btn-sm btn-secondary" style="white-space: nowrap;" onclick="addHiddenChannel('${safeId}')">Hide</button>
             </div>
@@ -2928,6 +3131,8 @@
         const hiddenSet = new Set(hiddenChannelsManager.hiddenDraft);
         const channelMap = getChannelByIdMap();
         const search = hiddenChannelsManager.search.trim().toLowerCase();
+        const isGlobalMode = hiddenChannelsManager.mode === 'global';
+        const globalProfileCount = Array.isArray(hiddenChannelsManager.profiles) ? hiddenChannelsManager.profiles.length : 0;
         const hiddenRows = hiddenChannelsManager.hiddenDraft.map(id => renderHiddenChannelRow(id, channelMap)).join('');
         const available = (hiddenChannelsManager.channels || [])
             .filter(channel => channel?.id && !hiddenSet.has(channel.id))
@@ -2935,14 +3140,21 @@
                 if (!search) return true;
                 return String(channel.name || '').toLowerCase().includes(search) ||
                     String(channel.group || '').toLowerCase().includes(search) ||
+                    String(channel.sourceName || '').toLowerCase().includes(search) ||
                     String(channel.id || '').toLowerCase().includes(search);
             });
         const availableRows = available.slice(0, 100).map(renderAvailableChannelRow).join('');
         const moreCount = Math.max(0, available.length - 100);
+        const scopeLabel = hiddenChannelsManager.sourceName
+            ? `${hiddenChannelsManager.sourceName} (${hiddenChannelsManager.mode === 'global' ? 'global' : 'profile'})`
+            : (hiddenChannelsManager.mode === 'global' ? 'Global' : (hiddenChannelsManager.userName || hiddenChannelsManager.userId));
 
         body.innerHTML = `
             <p style="margin: 0 0 1rem; color: var(--text-secondary);">
-                Editing hidden channels for <strong>${escapeHtml(hiddenChannelsManager.userName || hiddenChannelsManager.userId)}</strong>. Hidden channels are stored in backend profile settings and apply to that profile in the app.
+                ${isGlobalMode
+                    ? `Editing hidden channels for <strong>${escapeHtml(scopeLabel)}</strong>. Saving applies this source list to <strong>${globalProfileCount}</strong> profile${globalProfileCount === 1 ? '' : 's'}.`
+                    : `Editing hidden channels for <strong>${escapeHtml(scopeLabel)}</strong>. Hidden channels are stored in backend profile settings and apply to that profile in the app.`
+                }
             </p>
             ${hiddenChannelsManager.error ? '<div style="margin-bottom: 1rem; color: var(--danger);">' + escapeHtml(hiddenChannelsManager.error) + '</div>' : ''}
             <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
@@ -2976,7 +3188,7 @@
     }
 
     async function saveHiddenChannelsManager() {
-        if (!hiddenChannelsManager.userId || !hiddenChannelsManager.settings) return;
+        if (hiddenChannelsManager.mode !== 'global' && (!hiddenChannelsManager.userId || !hiddenChannelsManager.settings)) return;
         const btn = document.getElementById('hiddenChannelsSaveBtn');
         const originalHtml = btn ? btn.innerHTML : '';
         if (btn) {
@@ -2985,32 +3197,81 @@
         }
 
         try {
-            const liveTV = getLiveTVSettings(hiddenChannelsManager.settings);
-            liveTV.hiddenChannels = uniqueStrings(hiddenChannelsManager.hiddenDraft);
-            const strippedSettings = stripInheritedValues(hiddenChannelsManager.settings, currentSettings);
-            const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(hiddenChannelsManager.userId), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(strippedSettings)
-            });
-            if (!response.ok) throw new Error(await response.text() || 'Failed to save hidden channels');
+            const hiddenDraft = uniqueStrings(hiddenChannelsManager.hiddenDraft);
+            const sourceChannelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
+            const mergeHiddenChannels = (settings) => {
+                const liveTV = getLiveTVSettings(settings);
+                if (hiddenChannelsManager.sourceId && sourceChannelIds.size > 0) {
+                    const originalGlobal = new Set(uniqueStrings(hiddenChannelsManager.globalHiddenOriginal || []));
+                    const preserved = uniqueStrings(liveTV.hiddenChannels || []).filter(id => {
+                        if (!sourceChannelIds.has(id)) return true;
+                        return hiddenChannelsManager.mode === 'global' && !originalGlobal.has(id);
+                    });
+                    liveTV.hiddenChannels = uniqueStrings([...preserved, ...hiddenDraft]);
+                } else {
+                    const originalGlobal = new Set(uniqueStrings(hiddenChannelsManager.globalHiddenOriginal || []));
+                    const preserved = hiddenChannelsManager.mode === 'global'
+                        ? uniqueStrings(liveTV.hiddenChannels || []).filter(id => !originalGlobal.has(id))
+                        : [];
+                    liveTV.hiddenChannels = uniqueStrings([...preserved, ...hiddenDraft]);
+                }
+                return settings;
+            };
+            const savedProfiles = [];
 
-            const savedUserId = hiddenChannelsManager.userId;
-            const savedHiddenCount = uniqueStrings(strippedSettings?.liveTV?.hiddenChannels || []).length;
-            hiddenChannelsManager.settings = strippedSettings;
-            if (selectedUserId === savedUserId) {
-                userSettings = strippedSettings;
-                originalUserSettings = JSON.parse(JSON.stringify(strippedSettings));
+            if (hiddenChannelsManager.mode === 'global') {
+                const profiles = hiddenChannelsManager.profiles || getScopedProfilesFromSelector();
+                if (profiles.length === 0) throw new Error('No profiles available to save');
+
+                await Promise.all(profiles.map(async (profile) => {
+                    let settings = profile.settings;
+                    if (!settings) {
+                        const loadResponse = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(profile.id), {
+                            credentials: 'same-origin'
+                        });
+                        if (!loadResponse.ok) throw new Error(await loadResponse.text() || 'Failed to load profile settings');
+                        settings = await loadResponse.json();
+                    }
+                    mergeHiddenChannels(settings);
+                    const strippedSettings = stripInheritedValues(settings, currentSettings);
+                    const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(profile.id), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(strippedSettings)
+                    });
+                    if (!response.ok) throw new Error(await response.text() || 'Failed to save hidden channels');
+                    savedProfiles.push({ id: profile.id, settings: strippedSettings });
+                }));
+            } else {
+                mergeHiddenChannels(hiddenChannelsManager.settings);
+                const strippedSettings = stripInheritedValues(hiddenChannelsManager.settings, currentSettings);
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(hiddenChannelsManager.userId), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(strippedSettings)
+                });
+                if (!response.ok) throw new Error(await response.text() || 'Failed to save hidden channels');
+                hiddenChannelsManager.settings = strippedSettings;
+                savedProfiles.push({ id: hiddenChannelsManager.userId, settings: strippedSettings });
             }
-            const scopedProfile = hiddenChannelsScopeManager.profiles.find(profile => profile.id === savedUserId);
-            if (scopedProfile) {
-                scopedProfile.settings = strippedSettings;
-                scopedProfile.hiddenCount = savedHiddenCount;
-                scopedProfile.error = '';
+
+            for (const savedProfile of savedProfiles) {
+                const savedHiddenCount = uniqueStrings(savedProfile.settings?.liveTV?.hiddenChannels || []).length;
+                if (selectedUserId === savedProfile.id) {
+                    userSettings = savedProfile.settings;
+                    originalUserSettings = JSON.parse(JSON.stringify(savedProfile.settings));
+                }
+                const scopedProfile = hiddenChannelsScopeManager.profiles.find(profile => profile.id === savedProfile.id);
+                if (scopedProfile) {
+                    scopedProfile.settings = savedProfile.settings;
+                    scopedProfile.hiddenCount = savedHiddenCount;
+                    scopedProfile.error = '';
+                }
+                recalculateUserOverrides(savedProfile.id);
             }
-            showToast('Hidden channels saved successfully');
+
+            showToast(hiddenChannelsManager.mode === 'global' ? 'Hidden channels saved for all profiles' : 'Hidden channels saved successfully');
             closeHiddenChannelsManager();
-            recalculateUserOverrides(savedUserId);
             updateUserDropdownIndicators();
             updateClientDropdownIndicators();
             updateRevertButtonVisibility();
@@ -3283,7 +3544,9 @@
 
         if (sectionDef.parent) {
             // For nested array sections like homeShelves.shelves
-            if (selectedUserId && userSettings && isPerUserSection) {
+            if (sectionKey === 'liveTV.sources') {
+                items = getValue('liveTV.sources') || [];
+            } else if (selectedUserId && userSettings && isPerUserSection) {
                 items = userSettings[sectionDef.parent]?.[sectionDef.key] || [];
             } else {
                 items = currentSettings[sectionDef.parent]?.[sectionDef.key] || [];
@@ -3345,6 +3608,9 @@
                 return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
+            const hiddenChannelsBtn = (sectionKey === 'live.sources' || sectionKey === 'liveTV.sources')
+                ? '<button class="btn btn-sm btn-secondary" onclick="openHiddenChannelsManagerForSource(\''+sectionKey+'\', '+index+', event)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l18 18"/><path d="M10.58 10.58A2 2 0 0 0 13.42 13.42"/><path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M6.61 6.61C3.98 8.38 2 12 2 12s3 8 10 8a10.9 10.9 0 0 0 5.39-1.39"/></svg> Manage Hidden Channels</button>'
+                : '';
             let hintHtml = '';
             if (sectionKey === 'torrentScrapers' && item.type === 'aiostreams' && item.enabled && (currentSettings.streaming?.indexerTimeoutSec || 5) <= 5) {
                 hintHtml = '<div style="margin-top:0.75rem;padding:0.6rem 0.75rem;background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:6px;font-size:0.8rem;color:var(--warning);display:flex;align-items:center;gap:0.5rem;">' +
@@ -3355,7 +3621,7 @@
             const badgesTitleHtml = typeBadgesHtml
                 ? '<div class="array-item-type-badges-row" style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap;margin-top:0.15rem;">'+typeBadgesHtml+'</div>'
                 : '';
-            return '<div class="array-item"><div class="array-item-header" style="align-items:flex-start;"><div class="array-item-title" style="display:flex;flex-direction:column;align-items:flex-start;"><span>'+(item.name || item.id || 'Item '+(index+1))+'</span>'+badgesTitleHtml+'</div><div class="array-item-actions" style="align-items:flex-start;">'+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
+            return '<div class="array-item"><div class="array-item-header" style="align-items:flex-start;"><div class="array-item-title" style="display:flex;flex-direction:column;align-items:flex-start;"><span>'+(item.name || item.id || 'Item '+(index+1))+'</span>'+badgesTitleHtml+'</div><div class="array-item-actions" style="align-items:flex-start;">'+hiddenChannelsBtn+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
         }).join('');
         const styles = '<style></style>';
         return styles + '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
@@ -5139,14 +5405,6 @@
         // Add preset dropdown before filtering section content
         if (sectionKey === 'filtering' && !selectedClientId) {
             contentHtml = renderPresetDropdown() + contentHtml;
-        }
-
-        if (sectionKey === 'liveTV' && selectedUserId && !selectedClientId) {
-            contentHtml += renderLiveTVChannelManager();
-        }
-
-        if (sectionKey === 'live' && !selectedUserId && !selectedClientId) {
-            contentHtml += renderLiveTVScopeChannelManager();
         }
 
         // Add clear cache button for cache section
