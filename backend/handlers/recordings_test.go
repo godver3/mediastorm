@@ -124,7 +124,13 @@ func TestRecordingsHandlerTracksRunningRecordingStreamUsage(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	cancel()
+	activeStreams := globalStreamTracker.GetActiveStreams()
+	if len(activeStreams) != 1 {
+		t.Fatalf("expected one active stream, got %d", len(activeStreams))
+	}
+	if !globalStreamTracker.TerminateStream(activeStreams[0].ID) {
+		t.Fatal("expected tracked recording stream to terminate")
+	}
 
 	select {
 	case <-done:
@@ -134,5 +140,46 @@ func TestRecordingsHandlerTracksRunningRecordingStreamUsage(t *testing.T) {
 
 	if count := globalStreamTracker.CountForAccount("acct-1"); count != 0 {
 		t.Fatalf("expected tracked recording stream to be removed after completion, got %d", count)
+	}
+}
+
+func TestRecordingsHandlerAddsProfileMetadataToStreamTrackingRequest(t *testing.T) {
+	users := &fakeRecordingUsersProvider{
+		users: []models.User{{ID: "profile-1", AccountID: "acct-1", Name: "Profile 1"}},
+	}
+	handler := NewRecordingsHandler(nil, users)
+	recording := &models.Recording{
+		ID:          "rec-1",
+		UserID:      "profile-1",
+		ChannelID:   "channel-1",
+		TvgID:       "tvg-1",
+		ChannelName: "News Channel",
+		Title:       "Evening+News",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/live/recordings/rec-1/stream?token=abc&title=Live%2BPD%3A%2BGreatest%2BShifts", nil)
+	got := handler.requestWithRecordingStreamMetadata(req, recording)
+	values := got.URL.Query()
+
+	if values.Get("profileId") != "profile-1" {
+		t.Fatalf("profileId = %q, want profile-1", values.Get("profileId"))
+	}
+	if values.Get("profileName") != "Profile 1" {
+		t.Fatalf("profileName = %q, want Profile 1", values.Get("profileName"))
+	}
+	if values.Get("mediaType") != "channel" {
+		t.Fatalf("mediaType = %q, want channel", values.Get("mediaType"))
+	}
+	if values.Get("itemId") != "tvg-1" {
+		t.Fatalf("itemId = %q, want tvg-1", values.Get("itemId"))
+	}
+	if values.Get("title") != "Live PD: Greatest Shifts" {
+		t.Fatalf("title = %q, want Live PD: Greatest Shifts", values.Get("title"))
+	}
+	if values.Get("token") != "abc" {
+		t.Fatalf("token = %q, want abc", values.Get("token"))
+	}
+	if req.URL.Query().Get("profileId") != "" {
+		t.Fatal("original request was mutated")
 	}
 }

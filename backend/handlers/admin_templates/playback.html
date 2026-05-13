@@ -1,0 +1,1578 @@
+{{template "base" .}}
+
+{{define "title"}}Playback - mediastorm{{end}}
+
+{{define "content"}}
+<div class="page-header">
+    <h1>Playback</h1>
+    <p>Search media, resume watching, and launch streams from the web UI</p>
+</div>
+
+{{if .NoProfiles}}
+<div class="empty-state">
+    <h3>No profiles available</h3>
+    <p>Create a profile before using playback.</p>
+</div>
+{{else}}
+<div class="playback-layout">
+    <section class="playback-sidebar">
+        <div class="section-label">Profile</div>
+        <div id="profileList" class="profile-list"></div>
+
+        <div class="section-label" style="margin-top: 1.25rem;">Source</div>
+        <div class="segmented">
+            <button class="segment active" data-tab="search" onclick="setTab('search')">Search</button>
+            <button class="segment" data-tab="continue" onclick="setTab('continue')">Continue</button>
+        </div>
+    </section>
+
+    <main class="playback-main">
+        <section id="searchPanel">
+            <div class="toolbar">
+                <input type="text" id="searchQuery" class="form-input" placeholder="Search movies or shows" onkeydown="if(event.key==='Enter') searchMedia()">
+                <select id="searchType" class="form-select compact-select">
+                    <option value="all">All</option>
+                    <option value="movie">Movies</option>
+                    <option value="series">TV Shows</option>
+                </select>
+                <button class="btn btn-primary" onclick="searchMedia()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    Search
+                </button>
+            </div>
+            <div id="searchResults" class="media-grid"></div>
+        </section>
+
+        <section id="continuePanel" style="display: none;">
+            <div class="toolbar">
+                <button class="btn btn-secondary" onclick="loadContinueWatching()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"/>
+                        <polyline points="1 20 1 14 7 14"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
+                        <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+            <div id="continueResults" class="media-grid"></div>
+        </section>
+
+        <section id="detailsPanel" class="details-panel" style="display: none;"></section>
+        <section id="playbackPanel" class="playback-panel" style="display: none;"></section>
+    </main>
+</div>
+{{end}}
+
+<style>
+    .playback-layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 1.25rem;
+        align-items: start;
+    }
+
+    .playback-sidebar {
+        position: sticky;
+        top: 76px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1rem;
+    }
+
+    .section-label {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 0.5rem;
+    }
+
+    .profile-list {
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .profile-option {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        width: 100%;
+        padding: 0.625rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text-primary);
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .profile-option.active {
+        border-color: var(--accent);
+        background: rgba(99, 102, 241, 0.16);
+    }
+
+    .profile-dot {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: white;
+        font-size: 0.8125rem;
+        font-weight: 700;
+        flex: 0 0 auto;
+    }
+
+    .segmented {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.25rem;
+        gap: 0.25rem;
+    }
+
+    .segment {
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-secondary);
+        padding: 0.5rem 0.625rem;
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    .segment.active {
+        background: var(--accent);
+        color: white;
+    }
+
+    .playback-main {
+        min-width: 0;
+    }
+
+    .toolbar {
+        display: flex;
+        gap: 0.625rem;
+        margin-bottom: 1rem;
+        align-items: center;
+    }
+
+    .compact-select {
+        width: 130px;
+        flex: 0 0 auto;
+    }
+
+    .media-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 1rem;
+    }
+
+    .media-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        cursor: pointer;
+        min-width: 0;
+    }
+
+    .media-card:hover {
+        border-color: var(--accent);
+    }
+
+    .poster {
+        aspect-ratio: 2 / 3;
+        background: var(--bg-tertiary);
+        display: grid;
+        place-items: center;
+        color: var(--text-muted);
+        overflow: hidden;
+    }
+
+    .poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .media-info {
+        padding: 0.75rem;
+    }
+
+    .media-title {
+        font-weight: 600;
+        font-size: 0.875rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .media-meta {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }
+
+    .details-panel,
+    .playback-panel {
+        margin-top: 1.25rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+    }
+
+    .details-hero {
+        min-height: 320px;
+        background: var(--bg-tertiary);
+        background-size: cover;
+        background-position: center;
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+    }
+
+    .details-hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(15,15,15,0.96) 0%, rgba(15,15,15,0.72) 52%, rgba(15,15,15,0.28) 100%);
+    }
+
+    .details-content {
+        position: relative;
+        display: grid;
+        grid-template-columns: 170px minmax(0, 1fr);
+        gap: 1.25rem;
+        padding: 1.25rem;
+        width: 100%;
+    }
+
+    .details-poster {
+        width: 170px;
+        aspect-ratio: 2 / 3;
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--bg-primary);
+        border: 1px solid var(--border);
+    }
+
+    .details-poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .details-copy h2 {
+        font-size: 2rem;
+        line-height: 1.15;
+        margin-bottom: 0.5rem;
+    }
+
+    .details-meta {
+        color: var(--text-secondary);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .overview {
+        color: var(--text-secondary);
+        max-width: 860px;
+        margin-bottom: 1rem;
+    }
+
+    .details-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.625rem;
+        align-items: center;
+    }
+
+    .episode-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.625rem;
+        align-items: end;
+        margin-top: 1rem;
+    }
+
+    .episode-row .form-group {
+        margin-bottom: 0;
+        min-width: 150px;
+    }
+
+    .details-sections {
+        display: grid;
+        gap: 1rem;
+        padding: 1.25rem;
+    }
+
+    .horizontal-list {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(130px, 160px);
+        gap: 0.75rem;
+        overflow-x: auto;
+        padding-bottom: 0.25rem;
+    }
+
+    .mini-card {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.75rem;
+        min-height: 76px;
+    }
+
+    .player-wrap {
+        padding: 1rem;
+    }
+
+    .player-wrap video {
+        width: 100%;
+        max-height: 70vh;
+        background: black;
+        border-radius: var(--radius);
+    }
+
+    .web-player-controls {
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        gap: 0.75rem;
+        align-items: center;
+        margin-top: 0.75rem;
+    }
+
+    .web-player-controls input[type="range"] {
+        width: 100%;
+    }
+
+    .web-player-time {
+        color: var(--text-secondary);
+        font-size: 0.8125rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .empty-inline {
+        padding: 2rem;
+        text-align: center;
+        color: var(--text-muted);
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+    }
+
+    .manual-results {
+        display: grid;
+        gap: 0.625rem;
+        margin-top: 1rem;
+    }
+
+    .manual-result {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 1rem;
+        align-items: center;
+        padding: 0.875rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+
+    .manual-result:hover {
+        border-color: var(--accent);
+    }
+
+    .manual-result-title {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .manual-result-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.35rem;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+    }
+
+    .manual-result-excluded {
+        opacity: 0.62;
+        border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .manual-result-score {
+        color: var(--accent-hover);
+        font-weight: 700;
+    }
+
+    @media (max-width: 820px) {
+        .playback-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .playback-sidebar {
+            position: static;
+        }
+
+        .toolbar {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .compact-select {
+            width: 100%;
+        }
+
+        .details-content {
+            grid-template-columns: 1fr;
+        }
+
+        .details-poster {
+            width: 130px;
+        }
+
+        .manual-result {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{{end}}
+
+{{define "scripts"}}
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+    const profiles = {{json .Users}};
+    let activeProfileId = profiles.length ? profiles[0].id : '';
+    let activeProfileName = profiles.length ? profiles[0].name : '';
+    let activeTab = 'search';
+    let selectedItem = null;
+    let selectedDetails = null;
+    let selectedEpisode = null;
+    let resolvedPlayback = null;
+    let currentResolvedCandidate = null;
+    let manualResults = [];
+    let profileSettingsCache = {};
+    let hlsInstance = null;
+    let hlsSessionId = '';
+    let keepaliveTimer = null;
+    let hlsPlaybackOffset = 0;
+    let hlsDuration = 0;
+    let lastWebPlayerTime = 0;
+    let suppressWebPlayerSeek = false;
+    let webPlayerSeekInProgress = false;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        renderProfiles();
+        if (activeProfileId) void loadProfileSettings(activeProfileId);
+        if (activeProfileId) loadContinueWatching();
+    });
+
+    window.addEventListener('beforeunload', stopHlsSession);
+
+    function apiUrl(path) {
+        if (path.startsWith('/video/')) return `${basePath}/api${path}`;
+        if (path.startsWith('/api/')) return `${basePath}${path}`;
+        return path;
+    }
+
+    async function apiCall(path, options = {}) {
+        const response = await fetch(apiUrl(path), {
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+            ...options,
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || `HTTP ${response.status}`);
+        }
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) return null;
+        return response.json();
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function renderProfiles() {
+        const list = document.getElementById('profileList');
+        if (!profiles.length) {
+            list.innerHTML = '<div class="empty-inline">No profiles</div>';
+            return;
+        }
+        list.innerHTML = profiles.map((profile) => {
+            const active = profile.id === activeProfileId ? ' active' : '';
+            const color = profile.color || '#6366f1';
+            const initial = escapeHtml((profile.name || '?').slice(0, 1).toUpperCase());
+            return `
+                <button class="profile-option${active}" onclick="selectProfile('${escapeHtml(profile.id)}')">
+                    <span class="profile-dot" style="background: ${escapeHtml(color)};">${initial}</span>
+                    <span>${escapeHtml(profile.name || profile.id)}</span>
+                </button>
+            `;
+        }).join('');
+    }
+
+    function selectProfile(profileId) {
+        const profile = profiles.find((p) => p.id === profileId);
+        if (!profile) return;
+        activeProfileId = profile.id;
+        activeProfileName = profile.name || profile.id;
+        renderProfiles();
+        clearDetails();
+        void loadProfileSettings(activeProfileId);
+        if (activeTab === 'continue') loadContinueWatching();
+    }
+
+    async function loadProfileSettings(profileId) {
+        if (!profileId) return null;
+        if (profileSettingsCache[profileId]) return profileSettingsCache[profileId];
+        try {
+            const settings = await apiCall(`/api/user-settings?userId=${encodeURIComponent(profileId)}`);
+            profileSettingsCache[profileId] = settings || {};
+            return profileSettingsCache[profileId];
+        } catch (error) {
+            console.warn('Failed to load profile settings:', error);
+            profileSettingsCache[profileId] = {};
+            return profileSettingsCache[profileId];
+        }
+    }
+
+    async function getPlaybackPreferences() {
+        const settings = await loadProfileSettings(activeProfileId);
+        const playback = settings?.playback || {};
+        const audioLanguage = normalizeLanguagePreference(playback.preferredAudioLanguage) || 'eng';
+        const subtitleLanguage = normalizeLanguagePreference(playback.preferredSubtitleLanguage) || 'eng';
+        const rawSubtitleMode = playback.preferredSubtitleMode || 'off';
+        const subtitleMode = rawSubtitleMode === 'always'
+            ? 'on'
+            : rawSubtitleMode === 'auto'
+                ? 'forced-only'
+                : ['on', 'off', 'forced-only'].includes(rawSubtitleMode)
+                    ? rawSubtitleMode
+                    : 'off';
+        return { audioLanguage, subtitleLanguage, subtitleMode };
+    }
+
+    function setTab(tab) {
+        activeTab = tab;
+        document.querySelectorAll('.segment').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
+        document.getElementById('searchPanel').style.display = tab === 'search' ? '' : 'none';
+        document.getElementById('continuePanel').style.display = tab === 'continue' ? '' : 'none';
+        clearDetails();
+        if (tab === 'continue') loadContinueWatching();
+    }
+
+    async function searchMedia() {
+        const query = document.getElementById('searchQuery').value.trim();
+        const type = document.getElementById('searchType').value;
+        const container = document.getElementById('searchResults');
+        if (!query) {
+            showToast('Enter a search query', 'error');
+            return;
+        }
+        container.innerHTML = '<div class="empty-inline">Searching...</div>';
+        try {
+            const params = new URLSearchParams({ q: query });
+            if (type !== 'all') params.set('type', type);
+            const results = await apiCall(`/api/search?${params.toString()}`);
+            const items = Array.isArray(results) ? results : [];
+            if (!items.length) {
+                container.innerHTML = '<div class="empty-inline">No results found</div>';
+                return;
+            }
+            container.innerHTML = items.slice(0, 24).map((item, index) => renderMediaCard(normalizeSearchItem(item), index, 'search')).join('');
+            window.playbackSearchItems = items.map(normalizeSearchItem);
+        } catch (error) {
+            container.innerHTML = `<div class="empty-inline">Search failed: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function loadContinueWatching() {
+        const container = document.getElementById('continueResults');
+        if (!activeProfileId) {
+            container.innerHTML = '<div class="empty-inline">Select a profile</div>';
+            return;
+        }
+        container.innerHTML = '<div class="empty-inline">Loading...</div>';
+        try {
+            const items = await apiCall(`/api/history/continue?userId=${encodeURIComponent(activeProfileId)}`);
+            const list = Array.isArray(items) ? items : [];
+            if (!list.length) {
+                container.innerHTML = '<div class="empty-inline">Nothing to continue</div>';
+                return;
+            }
+            window.playbackContinueItems = list.map(normalizeContinueItem);
+            container.innerHTML = window.playbackContinueItems.map((item, index) => renderMediaCard(item, index, 'continue')).join('');
+        } catch (error) {
+            container.innerHTML = `<div class="empty-inline">Could not load Continue Watching: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function normalizeSearchItem(result) {
+        const title = result.title || result;
+        return {
+            id: title.id || title.titleId || title.imdbId || title.tvdbId || title.tmdbId || title.name,
+            title: title.name || title.title || 'Unknown',
+            mediaType: title.mediaType || result.mediaType || 'movie',
+            year: title.year || result.year || 0,
+            overview: title.overview || '',
+            posterUrl: title.poster?.url || title.posterUrl || title.poster || '',
+            backdropUrl: title.backdrop?.url || title.backdropUrl || '',
+            imdbId: title.imdbId || '',
+            tvdbId: title.tvdbId || '',
+            tmdbId: title.tmdbId || '',
+            raw: title,
+        };
+    }
+
+    function normalizeContinueItem(item) {
+        const isSeries = !!item.nextEpisode || !!item.lastWatched?.seasonNumber;
+        const external = item.externalIds || {};
+        return {
+            id: item.seriesId || external.tmdb || external.imdb || external.tvdb || item.seriesTitle,
+            title: item.seriesTitle || item.movieName || 'Unknown',
+            mediaType: isSeries ? 'series' : 'movie',
+            year: item.year || 0,
+            overview: item.overview || '',
+            posterUrl: item.textPosterUrl || item.posterUrl || '',
+            backdropUrl: item.backdropUrl || '',
+            imdbId: external.imdb || '',
+            tvdbId: external.tvdb || '',
+            tmdbId: external.tmdb || '',
+            nextEpisode: item.nextEpisode || null,
+            progress: item.resumePercent || item.percentWatched || 0,
+            raw: item,
+        };
+    }
+
+    function renderMediaCard(item, index, source) {
+        const poster = item.posterUrl
+            ? `<img src="${escapeHtml(item.posterUrl)}" alt="">`
+            : '<span>No image</span>';
+        const type = item.mediaType === 'series' ? 'TV Show' : 'Movie';
+        const episode = item.nextEpisode
+            ? ` S${String(item.nextEpisode.seasonNumber).padStart(2, '0')}E${String(item.nextEpisode.episodeNumber).padStart(2, '0')}`
+            : '';
+        const progress = item.progress ? ` - ${Math.round(item.progress)}%` : '';
+        return `
+            <article class="media-card" onclick="openDetails('${source}', ${index})">
+                <div class="poster">${poster}</div>
+                <div class="media-info">
+                    <div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
+                    <div class="media-meta">${item.year ? `${escapeHtml(item.year)} - ` : ''}${type}${escapeHtml(episode)}${escapeHtml(progress)}</div>
+                </div>
+            </article>
+        `;
+    }
+
+    async function openDetails(source, index) {
+        const list = source === 'continue' ? window.playbackContinueItems : window.playbackSearchItems;
+        selectedItem = list?.[index];
+        if (!selectedItem) return;
+        selectedEpisode = selectedItem.nextEpisode || null;
+        resolvedPlayback = null;
+        stopHlsSession();
+
+        const panel = document.getElementById('detailsPanel');
+        panel.style.display = 'block';
+        panel.innerHTML = '<div class="empty-inline">Loading details...</div>';
+        document.getElementById('playbackPanel').style.display = 'none';
+
+        try {
+            const params = new URLSearchParams({
+                type: selectedItem.mediaType,
+                titleId: selectedItem.id || '',
+                name: selectedItem.title || '',
+            });
+            if (selectedItem.year) params.set('year', String(selectedItem.year));
+            if (selectedItem.imdbId) params.set('imdbId', selectedItem.imdbId);
+            if (selectedItem.tvdbId) params.set('tvdbId', selectedItem.tvdbId);
+            if (selectedItem.tmdbId) params.set('tmdbId', selectedItem.tmdbId);
+            selectedDetails = await apiCall(`/api/users/${encodeURIComponent(activeProfileId)}/details-bundle?${params.toString()}`);
+        } catch (error) {
+            selectedDetails = null;
+            showToast(`Details load failed: ${error.message}`, 'error');
+        }
+        renderDetails();
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function getDetailTitle() {
+        return selectedDetails?.seriesDetails?.title || selectedDetails?.movieDetails || selectedItem?.raw || {};
+    }
+
+    function renderDetails() {
+        const title = getDetailTitle();
+        const item = selectedItem;
+        const name = title.name || title.title || item.title;
+        const poster = title.textPoster?.url || title.poster?.url || item.posterUrl;
+        const backdrop = title.backdrop?.url || item.backdropUrl || poster;
+        const overview = title.overview || item.overview || '';
+        const runtime = title.runtimeMinutes ? `${title.runtimeMinutes} min` : '';
+        const rating = title.contentRating || title.rating || '';
+        const year = title.year || item.year || '';
+        const meta = [item.mediaType === 'series' ? 'TV Show' : 'Movie', year, runtime, rating].filter(Boolean).join(' - ');
+        const episodeControls = item.mediaType === 'series' ? renderEpisodeControls() : '';
+        const sections = renderDetailsSections();
+
+        document.getElementById('detailsPanel').innerHTML = `
+            <div class="details-hero" style="${backdrop ? `background-image: url('${escapeHtml(backdrop)}')` : ''}">
+                <div class="details-content">
+                    <div class="details-poster">${poster ? `<img src="${escapeHtml(poster)}" alt="">` : ''}</div>
+                    <div class="details-copy">
+                        <h2>${escapeHtml(name)}</h2>
+                        <div class="details-meta">${escapeHtml(meta)}</div>
+                        <p class="overview">${escapeHtml(overview)}</p>
+                        <div class="details-actions">
+                            <button class="btn btn-primary" onclick="autoPlaySelected()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="5 3 19 12 5 21 5 3"/>
+                                </svg>
+                                Auto Select
+                            </button>
+                            <button class="btn btn-secondary" onclick="openManualSelection()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="8" y1="6" x2="21" y2="6"/>
+                                    <line x1="8" y1="12" x2="21" y2="12"/>
+                                    <line x1="8" y1="18" x2="21" y2="18"/>
+                                    <line x1="3" y1="6" x2="3.01" y2="6"/>
+                                    <line x1="3" y1="12" x2="3.01" y2="12"/>
+                                    <line x1="3" y1="18" x2="3.01" y2="18"/>
+                                </svg>
+                                Select Release
+                            </button>
+                            <button class="btn btn-secondary" onclick="clearDetails()">Close</button>
+                        </div>
+                        ${episodeControls}
+                    </div>
+                </div>
+            </div>
+            ${sections}
+        `;
+    }
+
+    function renderEpisodeControls() {
+        const seasons = selectedDetails?.seriesDetails?.seasons || [];
+        const regularSeasons = seasons.filter((season) => Number(season.number) > 0);
+        if (!regularSeasons.length) return '<div class="episode-row"><div class="media-meta">No episode data available.</div></div>';
+        const initialSeason = selectedEpisode?.seasonNumber || regularSeasons[0].number;
+        const seasonOptions = regularSeasons.map((season) => {
+            const selected = Number(season.number) === Number(initialSeason) ? ' selected' : '';
+            return `<option value="${season.number}"${selected}>Season ${season.number}</option>`;
+        }).join('');
+        const season = regularSeasons.find((entry) => Number(entry.number) === Number(initialSeason)) || regularSeasons[0];
+        const episodes = season.episodes || [];
+        const initialEpisode = selectedEpisode?.episodeNumber || episodes[0]?.episodeNumber || episodes[0]?.number || 1;
+        const episodeOptions = episodes.map((episode) => {
+            const number = episode.episodeNumber || episode.number || 0;
+            const selected = Number(number) === Number(initialEpisode) ? ' selected' : '';
+            return `<option value="${number}"${selected}>E${String(number).padStart(2, '0')} - ${escapeHtml(episode.name || episode.title || `Episode ${number}`)}</option>`;
+        }).join('');
+        selectedEpisode = { seasonNumber: Number(initialSeason), episodeNumber: Number(initialEpisode) };
+        return `
+            <div class="episode-row">
+                <div class="form-group">
+                    <label class="form-label">Season</label>
+                    <select id="seasonSelect" class="form-select" onchange="changeSeason()">${seasonOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Episode</label>
+                    <select id="episodeSelect" class="form-select" onchange="changeEpisode()">${episodeOptions}</select>
+                </div>
+            </div>
+        `;
+    }
+
+    function changeSeason() {
+        const seasonNumber = Number(document.getElementById('seasonSelect').value);
+        const seasons = selectedDetails?.seriesDetails?.seasons || [];
+        const season = seasons.find((entry) => Number(entry.number) === seasonNumber);
+        const episodes = season?.episodes || [];
+        const episodeSelect = document.getElementById('episodeSelect');
+        episodeSelect.innerHTML = episodes.map((episode) => {
+            const number = episode.episodeNumber || episode.number || 0;
+            return `<option value="${number}">E${String(number).padStart(2, '0')} - ${escapeHtml(episode.name || episode.title || `Episode ${number}`)}</option>`;
+        }).join('');
+        selectedEpisode = { seasonNumber, episodeNumber: Number(episodeSelect.value || 1) };
+        resolvedPlayback = null;
+    }
+
+    function changeEpisode() {
+        selectedEpisode = {
+            seasonNumber: Number(document.getElementById('seasonSelect')?.value || 1),
+            episodeNumber: Number(document.getElementById('episodeSelect')?.value || 1),
+        };
+        resolvedPlayback = null;
+    }
+
+    function renderDetailsSections() {
+        const cast = selectedDetails?.seriesDetails?.cast || selectedDetails?.movieDetails?.cast || [];
+        const chunks = [];
+        if (cast.length) {
+            chunks.push(`<div><div class="section-label">Cast</div><div class="horizontal-list">${cast.slice(0, 12).map((person) => `<div class="mini-card"><strong>${escapeHtml(person.name)}</strong><div class="media-meta">${escapeHtml(person.character || person.role || '')}</div></div>`).join('')}</div></div>`);
+        }
+        return chunks.length ? `<div class="details-sections">${chunks.join('')}</div>` : '';
+    }
+
+    async function autoPlaySelected() {
+        if (!selectedItem || !activeProfileId) return;
+        stopHlsSession();
+        const panel = document.getElementById('playbackPanel');
+        panel.style.display = 'block';
+        panel.innerHTML = '<div class="empty-inline">Searching automatic releases...</div>';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        try {
+            const results = await searchStreamCandidates();
+            const candidates = orderAutoPlayCandidates(results);
+            if (!candidates.length) {
+                panel.innerHTML = '<div class="empty-inline">No automatic releases found.</div>';
+                return;
+            }
+
+            const failures = [];
+            for (let index = 0; index < candidates.length; index += 1) {
+                const candidate = candidates[index];
+                panel.innerHTML = `<div class="empty-inline">Selecting release ${index + 1} of ${candidates.length}: ${escapeHtml(candidate.title || 'Unknown release')}</div>`;
+                try {
+                    await resolveCandidate(candidate, { autoStart: false, throwOnError: true });
+                    return;
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error || 'Unknown error');
+                    failures.push({ title: candidate.title || 'Unknown release', message });
+                    console.warn('Auto select candidate failed, trying next release:', candidate.title, message);
+                }
+            }
+
+            const last = failures[failures.length - 1];
+            panel.innerHTML = `
+                <div class="empty-inline">
+                    Auto selection failed${last ? ` (last error: ${escapeHtml(last.message)})` : ''}.
+                    Use Select Release to choose manually.
+                </div>
+            `;
+        } catch (error) {
+            panel.innerHTML = `<div class="empty-inline">Auto select failed: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function orderAutoPlayCandidates(results) {
+        const list = Array.isArray(results) ? results : [];
+        const playable = list.filter((entry) => entry.filterStatus !== 'filtered');
+        return playable.length ? playable : list;
+    }
+
+    async function openManualSelection() {
+        if (!selectedItem || !activeProfileId) return;
+        stopHlsSession();
+        resolvedPlayback = null;
+        currentResolvedCandidate = null;
+        const panel = document.getElementById('playbackPanel');
+        panel.style.display = 'block';
+        panel.innerHTML = '<div class="empty-inline">Searching releases...</div>';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        try {
+            manualResults = await searchStreamCandidates();
+            if (!manualResults.length) {
+                panel.innerHTML = '<div class="empty-inline">No releases found.</div>';
+                return;
+            }
+            renderManualResults();
+        } catch (error) {
+            panel.innerHTML = `<div class="empty-inline">Manual search failed: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function findBestStreamCandidate() {
+        const list = await searchStreamCandidates();
+        const candidate = list.find((entry) => entry.filterStatus !== 'filtered') || list[0];
+        if (!candidate) throw new Error('No stream candidates found.');
+        return candidate;
+    }
+
+    async function searchStreamCandidates() {
+        const params = new URLSearchParams({
+            q: buildStreamQuery(),
+            mediaType: selectedItem.mediaType,
+            limit: '50',
+            userId: activeProfileId,
+            includeFiltered: 'true',
+        });
+        if (selectedItem.imdbId) params.set('imdbId', selectedItem.imdbId);
+        if (selectedItem.year) params.set('year', String(selectedItem.year));
+        const results = await apiCall(`/api/indexers/search?${params.toString()}`);
+        const list = Array.isArray(results) ? results : [];
+        return list;
+    }
+
+    function renderManualResults() {
+        const panel = document.getElementById('playbackPanel');
+        const included = manualResults.filter((entry) => entry.filterStatus !== 'filtered').length;
+        panel.innerHTML = `
+            <div class="player-wrap">
+                <div class="details-actions" style="margin-bottom: 0.75rem;">
+                    <button class="btn btn-secondary" onclick="openManualSelection()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <polyline points="1 20 1 14 7 14"/>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
+                            <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>
+                        </svg>
+                        Refresh Releases
+                    </button>
+                </div>
+                <div class="section-label">Select Release</div>
+                <div class="media-meta">${included} playable candidates, ${manualResults.length} total</div>
+                <div class="manual-results">
+                    ${manualResults.map(renderManualResult).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderManualResult(result, index) {
+        const attrs = result.attributes || {};
+        const isExcluded = result.filterStatus === 'filtered';
+        const size = result.sizeBytes ? `${(result.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
+        const service = result.serviceType || attrs.serviceType || 'source';
+        const resolution = attrs.resolution || '';
+        const hdr = attrs.hdr || (attrs.hasDV === 'true' ? 'DV' : '');
+        const score = result.totalScore != null ? `<span class="manual-result-score">Score ${escapeHtml(result.totalScore)}</span>` : '';
+        const reason = isExcluded && result.filterReason ? `<span style="color: var(--danger);">${escapeHtml(result.filterReason)}</span>` : '';
+        return `
+            <article class="manual-result ${isExcluded ? 'manual-result-excluded' : ''}">
+                <div style="min-width: 0;">
+                    <div class="manual-result-title" title="${escapeHtml(result.title || '')}">${escapeHtml(result.title || 'Unknown release')}</div>
+                    <div class="manual-result-meta">
+                        <span>${escapeHtml(service)}</span>
+                        ${size ? `<span>${escapeHtml(size)}</span>` : ''}
+                        ${resolution ? `<span>${escapeHtml(resolution)}</span>` : ''}
+                        ${hdr ? `<span>${escapeHtml(hdr)}</span>` : ''}
+                        ${score}
+                        ${reason}
+                    </div>
+                </div>
+                <div class="details-actions">
+                    <button class="btn btn-sm btn-primary" onclick="resolveManualResult(${index}, false)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Select
+                    </button>
+                </div>
+            </article>
+        `;
+    }
+
+    async function resolveManualResult(index, autoStart) {
+        const result = manualResults[index];
+        if (!result) return;
+        await resolveCandidate(result, { autoStart });
+    }
+
+    async function resolveCandidate(result, options = {}) {
+        const panel = document.getElementById('playbackPanel');
+        panel.style.display = 'block';
+        panel.innerHTML = `<div class="empty-inline">Resolving ${escapeHtml(result.title || 'selected release')}...</div>`;
+        try {
+            resolvedPlayback = await apiCall('/api/playback/resolve', {
+                method: 'POST',
+                body: JSON.stringify({ result, startOffset: getResumeOffset() }),
+            });
+            currentResolvedCandidate = result;
+            renderPlaybackChoices(result);
+            if (options.autoStart) {
+                await startWebPlayer({ throwOnError: options.throwOnError });
+            }
+        } catch (error) {
+            if (options.throwOnError) {
+                throw error;
+            }
+            panel.innerHTML = `<div class="empty-inline">Playback preparation failed: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function buildStreamQuery() {
+        let query = selectedItem.title || '';
+        if (selectedItem.mediaType === 'series') {
+            const season = selectedEpisode?.seasonNumber || 1;
+            const episode = selectedEpisode?.episodeNumber || 1;
+            query += ` S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+        }
+        return query;
+    }
+
+    function getResumeOffset() {
+        const progress = selectedDetails?.playbackProgress || [];
+        if (!Array.isArray(progress)) return 0;
+        const match = progress.find((entry) => {
+            if (selectedItem.mediaType === 'movie') return entry.mediaType === 'movie';
+            return entry.mediaType === 'episode' &&
+                Number(entry.seasonNumber) === Number(selectedEpisode?.seasonNumber) &&
+                Number(entry.episodeNumber) === Number(selectedEpisode?.episodeNumber);
+        });
+        return Math.max(0, Number(match?.position || 0));
+    }
+
+    function renderPlaybackChoices(candidate) {
+        const path = resolvedPlayback?.webdavPath;
+        if (!path) {
+            document.getElementById('playbackPanel').innerHTML = '<div class="empty-inline">Resolved stream did not include a playable path.</div>';
+            return;
+        }
+        const size = candidate.sizeBytes ? `${(candidate.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
+        document.getElementById('playbackPanel').innerHTML = `
+            <div class="player-wrap">
+                <div class="details-actions" style="margin-bottom: 1rem;">
+                    <button class="btn btn-primary" onclick="startWebPlayer()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Web Player
+                    </button>
+                    <button class="btn btn-secondary" onclick="downloadSTRM()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        STRM File
+                    </button>
+                    <button class="btn btn-secondary" onclick="downloadM3U()">
+                        M3U File
+                    </button>
+                </div>
+                <div class="media-meta">${escapeHtml(candidate.title || '')}${size ? ` - ${escapeHtml(size)}` : ''}</div>
+                <div id="videoHost" style="display: none; margin-top: 1rem;"></div>
+            </div>
+        `;
+    }
+
+    function downloadSTRM() {
+        downloadExternalPlaylist('strm');
+    }
+
+    function downloadM3U() {
+        downloadExternalPlaylist('m3u');
+    }
+
+    function downloadExternalPlaylist(format) {
+        if (!resolvedPlayback?.webdavPath) return;
+        const params = new URLSearchParams({
+            path: resolvedPlayback.webdavPath,
+            title: buildDownloadTitle(),
+            profileId: activeProfileId,
+            profileName: activeProfileName,
+        });
+        if (format === 'm3u') params.set('format', 'm3u');
+        window.location.href = apiUrl(`/api/playback/strm?${params.toString()}`);
+    }
+
+    function buildDownloadTitle() {
+        if (selectedItem.mediaType === 'series') {
+            return `${selectedItem.title} S${String(selectedEpisode?.seasonNumber || 1).padStart(2, '0')}E${String(selectedEpisode?.episodeNumber || 1).padStart(2, '0')}`;
+        }
+        return selectedItem.title || 'mediastorm';
+    }
+
+    async function startWebPlayer(options = {}) {
+        if (!resolvedPlayback?.webdavPath) return;
+        stopHlsSession();
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        host.style.display = 'block';
+        host.innerHTML = '<div class="empty-inline">Starting HLS session...</div>';
+        host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        try {
+            const preferences = await getPlaybackPreferences();
+            const tracks = await selectPreferredTracks(resolvedPlayback.webdavPath, preferences);
+            const params = new URLSearchParams({
+                path: resolvedPlayback.webdavPath,
+                forceAAC: 'true',
+                target: 'web',
+                profileId: activeProfileId,
+                profileName: activeProfileName,
+                mediaType: selectedItem.mediaType === 'series' ? 'episode' : 'movie',
+                title: selectedItem.title || '',
+                itemId: selectedItem.id || '',
+                audioLang: preferences.audioLanguage,
+            });
+            if (tracks.audioTrack !== null && tracks.audioTrack !== undefined && tracks.audioTrack >= 0) {
+                params.set('audioTrack', String(tracks.audioTrack));
+            }
+            if (tracks.subtitleTrack !== null && tracks.subtitleTrack !== undefined && tracks.subtitleTrack >= 0) {
+                params.set('subtitleTrack', String(tracks.subtitleTrack));
+            }
+            if (selectedItem.year) params.set('year', String(selectedItem.year));
+            if (selectedItem.imdbId) params.set('imdb', selectedItem.imdbId);
+            if (selectedItem.tmdbId) params.set('tmdb', selectedItem.tmdbId);
+            if (selectedItem.tvdbId) params.set('tvdb', selectedItem.tvdbId);
+            if (selectedItem.mediaType === 'series') {
+                params.set('seasonNumber', String(selectedEpisode?.seasonNumber || 1));
+                params.set('episodeNumber', String(selectedEpisode?.episodeNumber || 1));
+                params.set('seriesId', selectedItem.id || '');
+                params.set('seriesName', selectedItem.title || '');
+            } else {
+                params.set('movieName', selectedItem.title || '');
+            }
+            const session = await apiCall(`/api/video/hls/start?${params.toString()}`);
+            hlsSessionId = session.sessionId || '';
+            hlsPlaybackOffset = Number(session.startOffset ?? session.actualStartOffset ?? 0);
+            hlsDuration = Number(session.duration || 0);
+            lastWebPlayerTime = 0;
+            const playlistUrl = apiUrl(session.playlistUrl || '');
+            host.innerHTML = `
+                <video id="webPlayer" playsinline onclick="toggleWebPlayerPlayback()"></video>
+                <div class="web-player-controls">
+                    <button class="btn btn-sm btn-secondary" id="webPlayerPlayButton" onclick="toggleWebPlayerPlayback()">Play</button>
+                    <button class="btn btn-sm btn-secondary" onclick="toggleWebPlayerFullscreen()">Fullscreen</button>
+                    <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
+                    <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
+                </div>
+                <div id="webPlayerStatus" class="media-meta" style="margin-top: 0.5rem;"></div>
+            `;
+            const video = document.getElementById('webPlayer');
+            attachWebPlayer(video, playlistUrl);
+            installWebPlayerSeekHandler(video);
+            startKeepalive(video);
+            window.setTimeout(() => {
+                host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+        } catch (error) {
+            if (options.throwOnError) {
+                throw error;
+            }
+            host.innerHTML = `<div class="empty-inline">Web player failed: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    function attachWebPlayer(video, playlistUrl) {
+        if (!video || !playlistUrl) return;
+        if (hlsInstance) {
+            hlsInstance.destroy();
+            hlsInstance = null;
+        }
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = playlistUrl;
+        } else if (window.Hls && window.Hls.isSupported()) {
+            hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0 });
+            hlsInstance.loadSource(playlistUrl);
+            hlsInstance.attachMedia(video);
+            hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+                console.warn('HLS.js error:', data);
+                setWebPlayerStatus(data?.fatal ? 'Playback error. Try seeking again or select another release.' : '');
+                if (data?.fatal && hlsInstance) {
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        hlsInstance.startLoad();
+                    } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                        hlsInstance.recoverMediaError();
+                    }
+                }
+            });
+        } else {
+            throw new Error('This browser does not support HLS playback.');
+        }
+        video.addEventListener('loadedmetadata', () => resetWebPlayerToStart(video), { once: true });
+    }
+
+    function resetWebPlayerToStart(video) {
+        suppressWebPlayerSeek = true;
+        try {
+            if (video.currentTime > 1) video.currentTime = 0;
+        } finally {
+            window.setTimeout(() => {
+                suppressWebPlayerSeek = false;
+            }, 250);
+        }
+    }
+
+    function installWebPlayerSeekHandler(video) {
+        if (!video) return;
+        video.addEventListener('timeupdate', () => {
+            if (!webPlayerSeekInProgress && !video.seeking) {
+                lastWebPlayerTime = Number(video.currentTime || 0);
+                updateWebPlayerControls();
+            }
+        });
+        video.addEventListener('play', updateWebPlayerControls);
+        video.addEventListener('pause', updateWebPlayerControls);
+        video.addEventListener('seeking', () => {
+            if (suppressWebPlayerSeek || webPlayerSeekInProgress || !hlsSessionId) return;
+            const relativeTarget = Number(video.currentTime || 0);
+            if (Math.abs(relativeTarget - lastWebPlayerTime) < 2) return;
+            void seekWebPlayer(video, hlsPlaybackOffset + relativeTarget);
+        });
+    }
+
+    async function seekWebPlayer(video, absoluteTarget) {
+        if (!hlsSessionId || !Number.isFinite(absoluteTarget) || absoluteTarget < 0) return;
+        webPlayerSeekInProgress = true;
+        suppressWebPlayerSeek = true;
+        setWebPlayerStatus(`Seeking to ${formatTime(absoluteTarget)}...`);
+        try {
+            video.pause();
+            if (hlsInstance) {
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
+            video.removeAttribute('src');
+            video.load();
+
+            const response = await apiCall(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/seek?time=${absoluteTarget.toFixed(2)}`, {
+                method: 'POST',
+            });
+            if (!response?.playlistUrl) {
+                throw new Error('seek response missing playlist URL');
+            }
+            hlsPlaybackOffset = Number(response?.startOffset ?? absoluteTarget);
+            hlsDuration = Number(response?.duration || hlsDuration || 0);
+            lastWebPlayerTime = 0;
+            updateWebPlayerControls();
+            attachWebPlayer(video, apiUrl(response.playlistUrl));
+            video.addEventListener('canplay', () => {
+                updateWebPlayerControls();
+                setWebPlayerStatus('');
+            }, { once: true });
+        } catch (error) {
+            console.error('Web player seek failed:', error);
+            setWebPlayerStatus(`Seek failed: ${error.message}`);
+        } finally {
+            window.setTimeout(() => {
+                suppressWebPlayerSeek = false;
+                webPlayerSeekInProgress = false;
+            }, 500);
+        }
+    }
+
+    function currentWebPlayerAbsoluteTime() {
+        const video = document.getElementById('webPlayer');
+        return hlsPlaybackOffset + Number(video?.currentTime || 0);
+    }
+
+    function updateWebPlayerControls() {
+        const video = document.getElementById('webPlayer');
+        const seek = document.getElementById('webPlayerSeek');
+        const time = document.getElementById('webPlayerTime');
+        const button = document.getElementById('webPlayerPlayButton');
+        const absoluteTime = currentWebPlayerAbsoluteTime();
+        const duration = hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + hlsPlaybackOffset);
+        if (seek && document.activeElement !== seek) {
+            seek.max = String(Math.max(1, Math.floor(duration || 1)));
+            seek.value = String(Math.floor(Math.min(absoluteTime, duration || absoluteTime)));
+        }
+        if (time) time.textContent = `${formatTime(absoluteTime)} / ${formatTime(duration)}`;
+        if (button && video) button.textContent = video.paused ? 'Play' : 'Pause';
+    }
+
+    function toggleWebPlayerPlayback() {
+        const video = document.getElementById('webPlayer');
+        if (!video) return;
+        if (video.paused) {
+            video.play().catch(() => {});
+        } else {
+            video.pause();
+        }
+        updateWebPlayerControls();
+    }
+
+    function toggleWebPlayerFullscreen() {
+        const video = document.getElementById('webPlayer');
+        if (!video) return;
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+            return;
+        }
+        if (video.requestFullscreen) {
+            video.requestFullscreen().catch(() => {});
+        } else if (video.webkitEnterFullscreen) {
+            video.webkitEnterFullscreen();
+        }
+    }
+
+    function previewWebPlayerSeek(value) {
+        const time = document.getElementById('webPlayerTime');
+        const target = Number(value || 0);
+        if (time) time.textContent = `${formatTime(target)} / ${formatTime(hlsDuration || target)}`;
+    }
+
+    function commitWebPlayerSeek(value) {
+        const video = document.getElementById('webPlayer');
+        const target = Number(value || 0);
+        if (!video || !Number.isFinite(target)) return;
+        void seekWebPlayer(video, target);
+    }
+
+    function setWebPlayerStatus(message) {
+        const status = document.getElementById('webPlayerStatus');
+        if (status) status.textContent = message || '';
+    }
+
+    function formatTime(seconds) {
+        const total = Math.max(0, Math.floor(Number(seconds) || 0));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+
+    async function selectPreferredTracks(path, preferences) {
+        try {
+            const params = new URLSearchParams({
+                path,
+                profileId: activeProfileId,
+                audioLang: preferences.audioLanguage,
+            });
+            const metadata = await apiCall(`/api/video/metadata?${params.toString()}`);
+            const audioStreams = Array.isArray(metadata?.audioStreams) ? metadata.audioStreams : [];
+            const subtitleStreams = Array.isArray(metadata?.subtitleStreams) ? metadata.subtitleStreams : [];
+            const audioTrack = findAudioTrackByLanguage(audioStreams, preferences.audioLanguage);
+            const selectedAudio = audioStreams.find((stream) => Number(stream.index) === Number(audioTrack));
+            const actualAudioLanguage = normalizeLanguagePreference(selectedAudio?.language) || preferences.audioLanguage;
+            const subtitleTrack = findSubtitleTrackByPreference(
+                subtitleStreams,
+                preferences.subtitleLanguage,
+                preferences.subtitleMode,
+                actualAudioLanguage,
+            );
+            return { audioTrack, subtitleTrack };
+        } catch (error) {
+            console.warn('Failed to resolve preferred tracks; using HLS defaults:', error);
+            return { audioTrack: null, subtitleTrack: null };
+        }
+    }
+
+    function normalizeLanguagePreference(value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (!normalized) return '';
+        const aliases = {
+            en: 'eng',
+            english: 'eng',
+            es: 'spa',
+            spanish: 'spa',
+            fr: 'fra',
+            fre: 'fra',
+            french: 'fra',
+            de: 'deu',
+            ger: 'deu',
+            german: 'deu',
+            ja: 'jpn',
+            japanese: 'jpn',
+            jp: 'jpn',
+            ko: 'kor',
+            korean: 'kor',
+            zh: 'zho',
+            chi: 'zho',
+            chinese: 'zho',
+            pt: 'por',
+            portuguese: 'por',
+            it: 'ita',
+            italian: 'ita',
+            nl: 'nld',
+            dut: 'nld',
+            dutch: 'nld',
+            pl: 'pol',
+            polish: 'pol',
+            ru: 'rus',
+            russian: 'rus',
+        };
+        return aliases[normalized] || normalized;
+    }
+
+    function languageMatches(language, title, preference) {
+        const pref = normalizeLanguagePreference(preference);
+        if (!pref) return false;
+        const lang = normalizeLanguagePreference(language);
+        const text = String(title || '').toLowerCase();
+        const names = {
+            eng: ['english', 'eng', 'en'],
+            spa: ['spanish', 'spa', 'es', 'espanol', 'español'],
+            fra: ['french', 'fra', 'fre', 'fr'],
+            deu: ['german', 'deu', 'ger', 'de'],
+            jpn: ['japanese', 'jpn', 'ja'],
+            kor: ['korean', 'kor', 'ko'],
+            zho: ['chinese', 'zho', 'chi', 'zh'],
+            por: ['portuguese', 'por', 'pt'],
+            ita: ['italian', 'ita', 'it'],
+            nld: ['dutch', 'nld', 'dut', 'nl'],
+            pol: ['polish', 'pol', 'pl'],
+            rus: ['russian', 'rus', 'ru'],
+        };
+        if (lang && (lang === pref || lang.includes(pref) || pref.includes(lang))) return true;
+        return (names[pref] || [pref]).some((term) => text.includes(term));
+    }
+
+    function isCommentaryTrack(title) {
+        return /\b(commentary|comment|director|producer|writer)\b/i.test(String(title || ''));
+    }
+
+    function isTrueHDCodec(codec) {
+        return /truehd|mlp/i.test(String(codec || ''));
+    }
+
+    function findAudioTrackByLanguage(streams, preferredLanguage) {
+        const compatible = new Set(['aac', 'ac3', 'eac3', 'mp3']);
+        const normalizedStreams = streams.map((stream) => ({
+            index: Number(stream.index),
+            codec: String(stream.codecName || stream.codec || '').toLowerCase(),
+            language: stream.language || '',
+            title: stream.title || '',
+        })).filter((stream) => Number.isFinite(stream.index));
+
+        const passes = [
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage) && compatible.has(stream.codec) && !isCommentaryTrack(stream.title),
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage) && !isTrueHDCodec(stream.codec) && !isCommentaryTrack(stream.title),
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage) && isTrueHDCodec(stream.codec) && !isCommentaryTrack(stream.title),
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage) && compatible.has(stream.codec),
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage) && !isTrueHDCodec(stream.codec),
+            (stream) => languageMatches(stream.language, stream.title, preferredLanguage),
+        ];
+        for (const pass of passes) {
+            const match = normalizedStreams.find(pass);
+            if (match) return match.index;
+        }
+        return normalizedStreams.length ? normalizedStreams[0].index : null;
+    }
+
+    function isForcedSubtitle(stream) {
+        const disposition = stream.disposition || {};
+        return Number(disposition.forced || 0) > 0 || /\bforced\b/i.test(String(stream.title || ''));
+    }
+
+    function isSDHTrack(title) {
+        return /\b(sdh|cc|closed captions?)\b/i.test(String(title || ''));
+    }
+
+    function isSignsTrack(title) {
+        return /\b(signs?|songs?)\b/i.test(String(title || ''));
+    }
+
+    function isDubtitleTrack(title) {
+        return /\b(dubtitle|dubtitles|dub)\b/i.test(String(title || ''));
+    }
+
+    function isFullSubsTrack(title) {
+        return /\b(full|full subs?)\b/i.test(String(title || ''));
+    }
+
+    function findSubtitleTrackByPreference(streams, preferredLanguage, mode, audioLanguage) {
+        if (!streams.length || mode === 'off') return -1;
+        const normalizedStreams = streams.map((stream) => ({
+            index: Number(stream.index),
+            language: stream.language || '',
+            title: stream.title || '',
+            disposition: stream.disposition || {},
+        })).filter((stream) => Number.isFinite(stream.index));
+
+        if (mode === 'forced-only') {
+            const forced = normalizedStreams.filter(isForcedSubtitle);
+            const match = forced.find((stream) => languageMatches(stream.language, stream.title, preferredLanguage));
+            return match ? match.index : -1;
+        }
+
+        const matches = normalizedStreams.filter((stream) =>
+            !isForcedSubtitle(stream) && languageMatches(stream.language, stream.title, preferredLanguage)
+        );
+        if (!matches.length) {
+            const forcedMatch = normalizedStreams.find((stream) =>
+                isForcedSubtitle(stream) && languageMatches(stream.language, stream.title, preferredLanguage)
+            );
+            return forcedMatch ? forcedMatch.index : -1;
+        }
+
+        const sameLanguageAudio = normalizeLanguagePreference(audioLanguage) === normalizeLanguagePreference(preferredLanguage);
+        const priority = sameLanguageAudio
+            ? [
+                (stream) => isSDHTrack(stream.title) && !isSignsTrack(stream.title),
+                (stream) => isDubtitleTrack(stream.title),
+                (stream) => isFullSubsTrack(stream.title) || !String(stream.title || '').trim(),
+                (stream) => !isSignsTrack(stream.title),
+            ]
+            : [
+                (stream) => isSDHTrack(stream.title) && !isSignsTrack(stream.title),
+                (stream) => isFullSubsTrack(stream.title) || !String(stream.title || '').trim(),
+                (stream) => isDubtitleTrack(stream.title),
+                (stream) => !isSignsTrack(stream.title),
+            ];
+        for (const pass of priority) {
+            const match = matches.find(pass);
+            if (match) return match.index;
+        }
+        return matches[0].index;
+    }
+
+    function startKeepalive(video) {
+        if (keepaliveTimer) clearInterval(keepaliveTimer);
+        keepaliveTimer = setInterval(() => {
+            if (!hlsSessionId) return;
+            const currentTime = Number(video?.currentTime || 0);
+            fetch(apiUrl(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentTime.toFixed(2)}`), {
+                method: 'POST',
+                credentials: 'same-origin',
+            }).catch(() => {});
+        }, 20000);
+    }
+
+    function stopHlsSession() {
+        if (keepaliveTimer) {
+            clearInterval(keepaliveTimer);
+            keepaliveTimer = null;
+        }
+        if (hlsInstance) {
+            hlsInstance.destroy();
+            hlsInstance = null;
+        }
+        hlsPlaybackOffset = 0;
+        hlsDuration = 0;
+        lastWebPlayerTime = 0;
+        suppressWebPlayerSeek = false;
+        webPlayerSeekInProgress = false;
+        if (hlsSessionId) {
+            const id = hlsSessionId;
+            hlsSessionId = '';
+            fetch(apiUrl(`/api/video/hls/${encodeURIComponent(id)}/stop`), {
+                method: 'POST',
+                credentials: 'same-origin',
+                keepalive: true,
+            }).catch(() => {});
+        }
+    }
+
+    function clearDetails() {
+        selectedItem = null;
+        selectedDetails = null;
+        selectedEpisode = null;
+        resolvedPlayback = null;
+        currentResolvedCandidate = null;
+        manualResults = [];
+        stopHlsSession();
+        document.getElementById('detailsPanel').style.display = 'none';
+        document.getElementById('playbackPanel').style.display = 'none';
+    }
+</script>
+{{end}}

@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -995,6 +996,7 @@ type AdminUIHandler struct {
 	historyTemplate       *template.Template
 	toolsTemplate         *template.Template
 	searchTemplate        *template.Template
+	playbackTemplate      *template.Template
 	loginTemplate         *template.Template
 	registerTemplate      *template.Template
 	accountsTemplate      *template.Template
@@ -1235,6 +1237,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		historyTemplate:      createPageTemplate("history.html"),
 		toolsTemplate:        createPageTemplate("tools.html"),
 		searchTemplate:       createPageTemplate("search.html"),
+		playbackTemplate:     createPageTemplate("playback.html"),
 		loginTemplate:        loginTmpl,
 		registerTemplate:     registerTmpl,
 		accountsTemplate:     createPageTemplate("accounts.html"),
@@ -1992,6 +1995,18 @@ func (h *AdminUIHandler) TerminateStream(w http.ResponseWriter, r *http.Request)
 
 	if !isAdmin && stream.AccountID != accountID && !h.profileBelongsToAccount(stream.ProfileID, accountID) {
 		http.Error(w, `{"error":"stream not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if tracker.TerminateStream(streamID) {
+		log.Printf("[admin-ui] terminated direct stream transport %s", streamID)
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"terminated": true,
+			"id":         streamID,
+			"type":       "direct",
+		})
 		return
 	}
 
@@ -6209,6 +6224,160 @@ func (h *AdminUIHandler) SearchPage(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Search template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// PlaybackPage serves the web playback page.
+func (h *AdminUIHandler) PlaybackPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+
+	mgr := config.NewManager(h.settingsPath)
+	settings, err := mgr.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	usersList := h.getScopedUsers(isAdmin, accountID)
+
+	data := AdminPageData{
+		CurrentPath:    basePath + "/playback",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
+		AccountID:      accountID,
+		Username:       username,
+		Settings:       settings,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+		NoProfiles:     !isAdmin && len(usersList) == 0,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.playbackTemplate == nil {
+		http.Error(w, "Playback template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.playbackTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Playback template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// DownloadSTRM emits a tokenized .strm file for external players.
+func (h *AdminUIHandler) DownloadSTRM(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(adminSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		http.Error(w, "session token unavailable", http.StatusUnauthorized)
+		return
+	}
+	if h.sessionsService != nil {
+		if _, err := h.sessionsService.Validate(cookie.Value); err != nil {
+			http.Error(w, "invalid session", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	sourcePath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if sourcePath == "" {
+		http.Error(w, "missing path parameter", http.StatusBadRequest)
+		return
+	}
+
+	q := make(url.Values)
+	q.Set("path", sourcePath)
+	q.Set("token", cookie.Value)
+	q.Set("transmux", "false")
+	if profileID := strings.TrimSpace(r.URL.Query().Get("profileId")); profileID != "" {
+		q.Set("profileId", profileID)
+	}
+	if profileName := strings.TrimSpace(r.URL.Query().Get("profileName")); profileName != "" {
+		q.Set("profileName", profileName)
+	}
+
+	filename := sanitizeSTRMFilename(r.URL.Query().Get("title"))
+	if filename == "" {
+		filename = "mediastorm"
+	}
+	displayName := filename
+	if filepath.Ext(displayName) == "" {
+		if ext := mediaExtensionFromPath(sourcePath); ext != "" {
+			displayName += ext
+		} else {
+			displayName += ".mkv"
+		}
+	}
+
+	baseURL := strings.TrimRight(h.absoluteRequestURL(r, h.serverBasePath), "/")
+	streamURL := baseURL + "/api/video/stream/" + url.PathEscape(displayName) + "?" + q.Encode()
+
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "m3u") {
+		w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.m3u"`, filename))
+		_, _ = fmt.Fprintf(w, "#EXTM3U\n#EXTINF:-1,%s\n%s\n", filename, streamURL)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.strm"`, filename))
+	_, _ = w.Write([]byte(streamURL + "\n"))
+}
+
+func (h *AdminUIHandler) absoluteRequestURL(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded != "" {
+		scheme = strings.Split(forwarded, ",")[0]
+	}
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return scheme + "://" + host + path
+}
+
+func sanitizeSTRMFilename(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "",
+		"?", "",
+		`"`, "",
+		"<", "",
+		">", "",
+		"|", "-",
+	)
+	name = replacer.Replace(name)
+	name = strings.Join(strings.Fields(name), " ")
+	if len(name) > 120 {
+		name = strings.TrimSpace(name[:120])
+	}
+	return name
+}
+
+func mediaExtensionFromPath(sourcePath string) string {
+	candidates := []string{sourcePath}
+	if parsed, err := url.Parse(sourcePath); err == nil && parsed.Path != "" {
+		candidates = append(candidates, parsed.Path)
+	}
+	for _, candidate := range candidates {
+		ext := strings.ToLower(filepath.Ext(strings.TrimSpace(candidate)))
+		switch ext {
+		case ".mkv", ".mp4", ".m4v", ".avi", ".webm", ".mov", ".ts", ".m2ts", ".mts":
+			return ext
+		}
+	}
+	return ""
 }
 
 // AccountsPage serves the account management page

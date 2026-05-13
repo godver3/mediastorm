@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -38,6 +39,7 @@ type TrackedStream struct {
 	Method          string
 	UserAgent       string
 	MediaMetadata   StreamMediaMetadata
+	cancel          context.CancelFunc
 	bytesCounter    *int64
 	activityCounter *int64 // unix nanos of last byte transfer, updated atomically
 }
@@ -118,6 +120,23 @@ func (t *StreamTracker) StartStreamWithAccount(r *http.Request, path string, con
 
 	t.streams[id] = stream
 	return id, bytesCounter, activityCounter
+}
+
+// SetStreamCancel attaches a cancellation function to a tracked stream.
+func (t *StreamTracker) SetStreamCancel(id string, cancel context.CancelFunc) bool {
+	if cancel == nil {
+		return false
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	stream, ok := t.streams[id]
+	if !ok {
+		return false
+	}
+	stream.cancel = cancel
+	return true
 }
 
 func (t *StreamTracker) pruneStopSignalsLocked() {
@@ -292,6 +311,26 @@ func (t *StreamTracker) EndStream(id string) {
 	if _, ok := t.streams[id]; ok {
 		delete(t.streams, id)
 	}
+}
+
+// TerminateStream cancels the stream transport when the handler registered a cancel function.
+func (t *StreamTracker) TerminateStream(id string) bool {
+	t.mu.Lock()
+	stream, ok := t.streams[id]
+	if !ok {
+		t.mu.Unlock()
+		return false
+	}
+	cancel := stream.cancel
+	if cancel == nil {
+		t.mu.Unlock()
+		return false
+	}
+	delete(t.streams, id)
+	t.mu.Unlock()
+
+	cancel()
+	return true
 }
 
 // GetActiveStreams returns all currently active streams

@@ -862,6 +862,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		}
 		log.Printf("[video] setting filename headers: %s", filename)
 	}
+	normalizeMediaContentType(w, filename, cleanPath)
 
 	status := resp.Status
 	if status == 0 {
@@ -2715,6 +2716,36 @@ func inferFilenameFromPath(cleanPath string) string {
 	return sanitizeExternalDisplayName(base)
 }
 
+func normalizeMediaContentType(w http.ResponseWriter, filename, sourcePath string) {
+	current := strings.ToLower(strings.TrimSpace(strings.Split(w.Header().Get("Content-Type"), ";")[0]))
+	if current != "" && current != "application/force-download" && current != "application/octet-stream" && current != "binary/octet-stream" {
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
+	if ext == "" {
+		ext = strings.ToLower(filepath.Ext(strings.TrimSpace(sourcePath)))
+	}
+	if ext == "" && (strings.HasPrefix(sourcePath, "http://") || strings.HasPrefix(sourcePath, "https://")) {
+		if parsed, err := url.Parse(sourcePath); err == nil {
+			ext = strings.ToLower(filepath.Ext(parsed.Path))
+		}
+	}
+
+	switch ext {
+	case ".mkv":
+		w.Header().Set("Content-Type", "video/x-matroska")
+	case ".mp4", ".m4v", ".mov":
+		w.Header().Set("Content-Type", "video/mp4")
+	case ".avi":
+		w.Header().Set("Content-Type", "video/x-msvideo")
+	case ".webm":
+		w.Header().Set("Content-Type", "video/webm")
+	case ".ts", ".m2ts", ".mts":
+		w.Header().Set("Content-Type", "video/mp2t")
+	}
+}
+
 func buildInlineContentDisposition(filename string) string {
 	safe := sanitizeExternalDisplayName(filename)
 	if safe == "" {
@@ -2976,6 +3007,12 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
 	profileName := strings.TrimSpace(r.URL.Query().Get("profileName"))
+	if profileName == "" && profileID != "" && h.usersSvc != nil {
+		if user, ok := h.usersSvc.Get(profileID); ok {
+			profileName = user.Name
+		}
+	}
+	mediaMetadata := parseStreamMediaMetadata(r)
 	target := h.resolveLiveStreamTarget(profileID)
 
 	if target.MaxStreams > 0 {
@@ -3010,6 +3047,13 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	if streamFormat == "direct" {
 		proxyParams := url.Values{}
 		proxyParams.Set("url", liveURL)
+		if profileID != "" {
+			proxyParams.Set("profileId", profileID)
+		}
+		if profileName != "" {
+			proxyParams.Set("profileName", profileName)
+		}
+		addStreamMediaMetadataParams(proxyParams, mediaMetadata)
 		directURL := fmt.Sprintf("/live/stream?%s", proxyParams.Encode())
 
 		log.Printf("[video] live session using direct proxy for URL: %s (provider=%s profile=%s)", liveURL, target.Provider, profileID)
@@ -3039,6 +3083,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		http.Error(w, fmt.Sprintf("failed to create live HLS session: %v", err), http.StatusInternalServerError)
 		return
 	}
+	session.mu.Lock()
+	session.MediaMetadata = mediaMetadata
+	session.mu.Unlock()
 
 	response := map[string]interface{}{
 		"sessionId":   session.ID,

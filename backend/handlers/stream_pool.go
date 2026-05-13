@@ -274,6 +274,7 @@ dataReady:
 		w.Header().Set("X-Filename", fn)
 		w.Header().Set("Content-Disposition", buildInlineContentDisposition(fn))
 	}
+	normalizeMediaContentType(w, fn, path)
 
 	if status == 0 {
 		status = http.StatusPartialContent

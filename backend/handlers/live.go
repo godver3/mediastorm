@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"novastream/config"
@@ -349,8 +350,13 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Ranges", "none")
 	w.WriteHeader(http.StatusOK)
 
+	tracker := GetStreamTracker()
+	streamID, bytesCounter, activityCounter := tracker.StartStream(r, targetURL.String(), 0, 0, 0)
+	defer tracker.EndStream(streamID)
+
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 256*1024)
+	var total int64
 
 	for {
 		select {
@@ -369,6 +375,9 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
+			total += int64(n)
+			atomic.StoreInt64(bytesCounter, total)
+			atomic.StoreInt64(activityCounter, time.Now().UnixNano())
 			if flusher != nil {
 				flusher.Flush()
 			}

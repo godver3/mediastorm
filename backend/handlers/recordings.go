@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -246,10 +247,16 @@ func (h *RecordingsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var trackedWriter http.ResponseWriter = w
+	streamRequest := r
 	if r.Method == http.MethodGet {
 		tracker := GetStreamTracker()
 		accountID := h.accountIDForProfile(recording.UserID)
-		streamID, bytesCounter, activityCounter := tracker.StartStreamWithAccount(r, outputPath, info.Size(), 0, 0, accountID)
+		streamCtx, cancelStream := context.WithCancel(r.Context())
+		defer cancelStream()
+		streamRequest = r.WithContext(streamCtx)
+		trackingRequest := h.requestWithRecordingStreamMetadata(streamRequest, recording)
+		streamID, bytesCounter, activityCounter := tracker.StartStreamWithAccount(trackingRequest, outputPath, info.Size(), 0, 0, accountID)
+		tracker.SetStreamCancel(streamID, cancelStream)
 		defer tracker.EndStream(streamID)
 		trackedWriter = &trackingWriter{
 			ResponseWriter:  w,
@@ -264,15 +271,59 @@ func (h *RecordingsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	trackedWriter.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
 	if recording.Status == models.RecordingStatusRunning {
-		rangeHeader := strings.TrimSpace(r.Header.Get("Range"))
+		rangeHeader := strings.TrimSpace(streamRequest.Header.Get("Range"))
 		log.Printf("[recordings] streaming running recording id=%s mode=growing range=%q path=%s", recordingID, rangeHeader, outputPath)
-		if err := h.streamGrowingRecording(trackedWriter, r, recordingID, outputPath); err != nil && !errors.Is(err, r.Context().Err()) {
+		if err := h.streamGrowingRecording(trackedWriter, streamRequest, recordingID, outputPath); err != nil && !errors.Is(err, streamRequest.Context().Err()) {
 			http.Error(trackedWriter, "failed to stream recording", http.StatusInternalServerError)
 		}
 		return
 	}
 	log.Printf("[recordings] streaming recording id=%s mode=file status=%s path=%s", recordingID, recording.Status, outputPath)
-	http.ServeFile(trackedWriter, r, outputPath)
+	http.ServeFile(trackedWriter, streamRequest, outputPath)
+}
+
+func (h *RecordingsHandler) requestWithRecordingStreamMetadata(r *http.Request, recording *models.Recording) *http.Request {
+	if r == nil || recording == nil {
+		return r
+	}
+	cloned := r.Clone(r.Context())
+	u := *r.URL
+	q := u.Query()
+	if strings.TrimSpace(q.Get("profileId")) == "" && strings.TrimSpace(recording.UserID) != "" {
+		q.Set("profileId", recording.UserID)
+	}
+	if strings.TrimSpace(q.Get("profileName")) == "" {
+		if profileName := h.profileNameForProfile(recording.UserID); profileName != "" {
+			q.Set("profileName", profileName)
+		}
+	}
+	if strings.TrimSpace(q.Get("mediaType")) == "" {
+		q.Set("mediaType", "channel")
+	}
+	if strings.TrimSpace(q.Get("itemId")) == "" {
+		if tvgID := strings.TrimSpace(recording.TvgID); tvgID != "" {
+			q.Set("itemId", tvgID)
+		} else if channelID := strings.TrimSpace(recording.ChannelID); channelID != "" {
+			q.Set("itemId", channelID)
+		}
+	}
+	if title := normalizeRecordingDisplayText(q.Get("title")); title != "" {
+		q.Set("title", title)
+	} else {
+		if title := normalizeRecordingDisplayText(recording.Title); title != "" {
+			q.Set("title", title)
+		} else if channelName := normalizeRecordingDisplayText(recording.ChannelName); channelName != "" {
+			q.Set("title", channelName)
+		}
+	}
+	u.RawQuery = q.Encode()
+	cloned.URL = &u
+	return cloned
+}
+
+func normalizeRecordingDisplayText(value string) string {
+	normalized := strings.ReplaceAll(strings.TrimSpace(value), "+", " ")
+	return strings.Join(strings.Fields(normalized), " ")
 }
 
 func (h *RecordingsHandler) streamGrowingRecording(w http.ResponseWriter, r *http.Request, recordingID, outputPath string) error {
@@ -337,6 +388,18 @@ func (h *RecordingsHandler) accountIDForProfile(profileID string) string {
 	for _, user := range h.users.ListAll() {
 		if user.ID == profileID {
 			return user.AccountID
+		}
+	}
+	return ""
+}
+
+func (h *RecordingsHandler) profileNameForProfile(profileID string) string {
+	if h.users == nil || profileID == "" {
+		return ""
+	}
+	for _, user := range h.users.ListAll() {
+		if user.ID == profileID {
+			return user.Name
 		}
 	}
 	return ""

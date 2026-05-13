@@ -60,6 +60,44 @@ func parseStreamMediaMetadata(r *http.Request) StreamMediaMetadata {
 	return meta
 }
 
+func addStreamMediaMetadataParams(values url.Values, meta StreamMediaMetadata) {
+	if meta.MediaType != "" {
+		values.Set("mediaType", meta.MediaType)
+	}
+	if meta.ItemID != "" {
+		values.Set("itemId", meta.ItemID)
+	}
+	if meta.Title != "" {
+		values.Set("title", meta.Title)
+	}
+	if meta.EpisodeName != "" {
+		values.Set("episodeName", meta.EpisodeName)
+	}
+	if meta.SeriesID != "" {
+		values.Set("seriesId", meta.SeriesID)
+	}
+	if meta.SeriesName != "" {
+		values.Set("seriesName", meta.SeriesName)
+	}
+	if meta.MovieName != "" {
+		values.Set("movieName", meta.MovieName)
+	}
+	if meta.Year > 0 {
+		values.Set("year", strconv.Itoa(meta.Year))
+	}
+	if meta.SeasonNumber > 0 {
+		values.Set("seasonNumber", strconv.Itoa(meta.SeasonNumber))
+	}
+	if meta.EpisodeNumber > 0 {
+		values.Set("episodeNumber", strconv.Itoa(meta.EpisodeNumber))
+	}
+	for key, value := range meta.ExternalIDs {
+		if strings.TrimSpace(value) != "" {
+			values.Set(key, value)
+		}
+	}
+}
+
 func parseOptionalInt(raw string) (int, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
