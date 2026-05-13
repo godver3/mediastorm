@@ -959,6 +959,11 @@ func titleContainmentScore(parsedTitle, candidate string) float64 {
 		// Verify word boundary at end of prefix
 		endIdx := len(candidate)
 		if endIdx == len(parsedTitle) || parsedTitle[endIdx] == ' ' {
+			candidateWords := strings.Fields(candidate)
+			parsedWords := strings.Fields(parsedTitle)
+			if len(candidateWords) == 1 && len(parsedWords) > 1 && !containsDigit(candidateWords[0]) {
+				return 0
+			}
 			ratio := float64(len(candidate)) / float64(len(parsedTitle))
 			if len(candidate) <= 3 && ratio < 0.2 {
 				return 0.92
@@ -968,6 +973,15 @@ func titleContainmentScore(parsedTitle, candidate string) float64 {
 	}
 
 	return 0
+}
+
+func containsDigit(value string) bool {
+	for _, r := range value {
+		if unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func candidateContainsParsedScore(candidate, parsedTitle string) float64 {

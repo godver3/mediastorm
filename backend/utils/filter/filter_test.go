@@ -751,6 +751,12 @@ func TestTitleContainmentScore(t *testing.T) {
 			wantHigh:    true,
 		},
 		{
+			name:        "single word show title rejected as prefix - From vs From Scratch",
+			parsedTitle: "from scratch",
+			candidate:   "from",
+			wantHigh:    false,
+		},
+		{
 			name:        "generic trailing word subset rejected - Ragnarok vs Record of Ragnarok",
 			parsedTitle: "ragnarok",
 			candidate:   "record of ragnarok",
@@ -1007,6 +1013,35 @@ func TestResults_TitleContainment(t *testing.T) {
 		for _, r := range filtered {
 			if r.Title == "Matrix.2003.1080p.BluRay.x264" {
 				t.Error("Single-word subset should have been filtered")
+			}
+		}
+	})
+
+	t.Run("single word series title does not match longer different title", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "FROM.2022.S01E01.Long.Days.Journey.Into.Night.1080p.WEB-DL.H.264"},
+			{Title: "From.Scratch.S01E01.2022.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV"},
+		}
+
+		opts := Options{
+			ExpectedTitle: "FROM",
+			ExpectedYear:  2022,
+			IsMovie:       false,
+			TargetSeason:  1,
+			TargetEpisode: 1,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 1 {
+			t.Errorf("Expected only FROM result, got %d", len(filtered))
+			for i, r := range filtered {
+				t.Logf("  Result[%d]: %s", i, r.Title)
+			}
+		}
+
+		for _, r := range filtered {
+			if r.Title == "From.Scratch.S01E01.2022.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV" {
+				t.Error("From Scratch should have been filtered when searching for FROM")
 			}
 		}
 	})
