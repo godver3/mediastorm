@@ -787,7 +787,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		log.Printf("[video] provider stream failed path=%q range=%q err=%v", cleanPath, rangeHeader, err)
 		if h.failures != nil && h.failures.recordIfMissingArticles(cleanPath, err) {
-			log.Printf("[stream-migration] confirmed missing-article stream failure during open path=%q range=%q err=%v", cleanPath, rangeHeader, err)
+			log.Printf("[stream-migration] confirmed recoverable stream failure during open path=%q range=%q err=%v", cleanPath, rangeHeader, err)
 		}
 		if errors.Is(err, streaming.ErrNotFound) {
 			return false, nil

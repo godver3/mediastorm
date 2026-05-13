@@ -637,7 +637,7 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 				s.mu.Unlock()
 				log.Printf("[stream-pool] CDN read error: path=%q err=%v", s.path, err)
 				if s.failures != nil && s.failures.recordIfMissingArticles(s.path, err) {
-					log.Printf("[stream-migration] confirmed missing-article stream failure in stream pool path=%q err=%v", s.path, err)
+					log.Printf("[stream-migration] confirmed recoverable stream failure in stream pool path=%q err=%v", s.path, err)
 				}
 			}
 			return

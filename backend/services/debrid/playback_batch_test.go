@@ -21,6 +21,7 @@ type mockProvider struct {
 	links           []string // links returned after selection
 	status          string   // torrent status (e.g. "downloaded")
 	torrentFilename string
+	unrestrictErr   error
 }
 
 func (m *mockProvider) Name() string { return m.name }
@@ -50,6 +51,9 @@ func (m *mockProvider) DeleteTorrent(_ context.Context, _ string) error {
 	return nil
 }
 func (m *mockProvider) UnrestrictLink(_ context.Context, link string) (*UnrestrictResult, error) {
+	if m.unrestrictErr != nil {
+		return nil, m.unrestrictErr
+	}
 	return &UnrestrictResult{DownloadURL: link}, nil
 }
 func (m *mockProvider) CheckInstantAvailability(_ context.Context, _ string) (bool, error) {

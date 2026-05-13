@@ -9,6 +9,7 @@ import (
 	nzbfilesystem "novastream/internal/nzb/filesystem"
 	nzbfilesystemlegacy "novastream/internal/nzbfilesystem"
 	"novastream/internal/usenet"
+	"novastream/services/debrid"
 )
 
 const streamFailureConfirmationTTL = 2 * time.Minute
@@ -115,6 +116,10 @@ func missingArticleFailureReason(err error) (string, bool) {
 
 	if errors.Is(err, nzbfilesystem.ErrFileIsCorrupted) || errors.Is(err, nzbfilesystemlegacy.ErrFileIsCorrupted) {
 		return "corrupted_missing_articles", true
+	}
+
+	if debrid.IsBlockedContentError(err) {
+		return "provider_blocked_content", true
 	}
 
 	return "", false

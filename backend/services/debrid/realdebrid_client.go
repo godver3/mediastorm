@@ -518,7 +518,7 @@ type unrestrictLinkResponse struct {
 	Filename string `json:"filename"`
 	MimeType string `json:"mimeType"`
 	Filesize int64  `json:"filesize"`
-	Link     string `json:"link"`     // This is the actual direct download URL
+	Link     string `json:"link"` // This is the actual direct download URL
 	Host     string `json:"host"`
 	HostIcon string `json:"host_icon"`
 	Chunks   int    `json:"chunks"`
@@ -562,7 +562,19 @@ func (c *RealDebridClient) UnrestrictLink(ctx context.Context, link string) (*Un
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("unrestrict failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		bodyText := strings.TrimSpace(string(body))
+		providerErr := &ProviderError{
+			Provider:   c.Name(),
+			Operation:  "unrestrict",
+			StatusCode: resp.StatusCode,
+			Body:       bodyText,
+		}
+		var apiErr ErrorResponse
+		if err := json.Unmarshal(body, &apiErr); err == nil {
+			providerErr.Message = apiErr.Error
+			providerErr.Code = apiErr.ErrorCode
+		}
+		return nil, providerErr
 	}
 
 	var result unrestrictLinkResponse

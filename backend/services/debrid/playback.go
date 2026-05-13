@@ -293,6 +293,16 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 		log.Printf("[debrid-playback] using download link #%d for selected file (id=%s)", preferredLinkIdx, selection.PreferredID)
 	}
 
+	if validatedURL, validatedFilename, err := validatePlayableRestrictedLink(ctx, client, restrictedLink, selection.PreferredLabel); err != nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, err
+	} else if validatedURL != "" {
+		downloadURL = validatedURL
+		if filename == "" && validatedFilename != "" {
+			filename = validatedFilename
+		}
+	}
+
 	// Keep torrent in provider for playback
 	// Note: We don't delete the torrent here because we need it for streaming.
 	// Mark it as active so concurrent health checks won't delete it.
@@ -331,9 +341,7 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 			return nil, fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
 		}
 
-		// TESTING: Skip HEAD verification to save ~600-700ms
-		// Real-Debrid URLs are generally reliable, and if they fail the player will error anyway
-		log.Printf("[debrid-playback] TIMING: skipping HEAD verify (testing) - total elapsed: %v", time.Since(resolveStart))
+		log.Printf("[debrid-playback] TIMING: selected link validated via provider unrestrict - total elapsed: %v", time.Since(resolveStart))
 
 		// TODO: Re-enable HEAD verification if needed, or make it configurable
 		// headStart := time.Now()
@@ -478,6 +486,16 @@ func (s *PlaybackService) completeResolution(
 		log.Printf("[debrid-playback] using download link #%d for selected file (id=%s)", preferredLinkIdx, selection.PreferredID)
 	}
 
+	if validatedURL, validatedFilename, err := validatePlayableRestrictedLink(ctx, client, restrictedLink, selection.PreferredLabel); err != nil {
+		_ = client.DeleteTorrent(ctx, torrentID)
+		return nil, err
+	} else if validatedURL != "" {
+		downloadURL = validatedURL
+		if filename == "" && validatedFilename != "" {
+			filename = validatedFilename
+		}
+	}
+
 	log.Printf("[debrid-playback] keeping torrent %s in %s for playback", torrentID, providerName)
 	if s.healthService != nil {
 		s.healthService.MarkTorrentActive(providerName, torrentID)
@@ -505,8 +523,7 @@ func (s *PlaybackService) completeResolution(
 			return nil, fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
 		}
 
-		// TESTING: Skip HEAD verification to save ~600-700ms
-		log.Printf("[debrid-playback] skipping HEAD verify (testing) for multi-provider resolution")
+		log.Printf("[debrid-playback] selected link validated via provider unrestrict for multi-provider resolution")
 	} else {
 		log.Printf("[debrid-playback] download link is internal reference, will be resolved at stream time: %s", downloadURL)
 	}
@@ -543,6 +560,37 @@ func detectArchiveExtension(downloadURL string) string {
 	default:
 		return ""
 	}
+}
+
+func validatePlayableRestrictedLink(ctx context.Context, client Provider, restrictedLink, label string) (string, string, error) {
+	link := strings.TrimSpace(restrictedLink)
+	if link == "" {
+		return "", "", fmt.Errorf("selected file has no download link")
+	}
+	if !(strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://")) {
+		return "", "", nil
+	}
+	if archiveExt := detectArchiveExtension(link); archiveExt != "" {
+		return "", "", fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
+	}
+
+	unrestricted, err := client.UnrestrictLink(ctx, link)
+	if err != nil {
+		if IsBlockedContentError(err) {
+			if strings.TrimSpace(label) != "" {
+				return "", "", fmt.Errorf("selected file blocked by provider (%s): %w", label, err)
+			}
+			return "", "", fmt.Errorf("selected file blocked by provider: %w", err)
+		}
+		return "", "", fmt.Errorf("validate selected file link: %w", err)
+	}
+	if unrestricted == nil || strings.TrimSpace(unrestricted.DownloadURL) == "" {
+		return "", "", fmt.Errorf("provider returned no download URL for selected file")
+	}
+	if archiveExt := detectArchiveExtension(unrestricted.DownloadURL); archiveExt != "" {
+		return "", "", fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
+	}
+	return unrestricted.DownloadURL, unrestricted.Filename, nil
 }
 
 // preferredFileSize returns the byte size of the preferred file from the torrent's file list.

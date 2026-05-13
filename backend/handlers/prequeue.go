@@ -14,6 +14,7 @@ import (
 	"novastream/internal/mediaresolve"
 	"novastream/models"
 	content_preferences "novastream/services/content_preferences"
+	"novastream/services/debrid"
 	"novastream/services/history"
 	"novastream/services/indexer"
 	"novastream/services/playback"
@@ -750,7 +751,11 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 		resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
 		if lastErr != nil || resolution == nil || resolution.WebDAVPath == "" {
-			log.Printf("[prequeue] Failed to resolve result [%d] (%s) %s: %v", i, result.ServiceType, result.Title, lastErr)
+			if debrid.IsBlockedContentError(lastErr) {
+				log.Printf("[prequeue] Provider blocked selected file for result [%d] (%s) %s; trying next result: %v", i, result.ServiceType, result.Title, lastErr)
+			} else {
+				log.Printf("[prequeue] Failed to resolve result [%d] (%s) %s: %v", i, result.ServiceType, result.Title, lastErr)
+			}
 			resolution = nil
 			continue
 		}
@@ -1189,7 +1194,7 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 	}
 	failure, confirmed := failures.confirmedRecent(failedPath, streamFailureConfirmationTTL)
 	if !confirmed {
-		log.Printf("[stream-migration] Refusing migration without recent missing-article confirmation (failed=%q, position=%.1fs)",
+		log.Printf("[stream-migration] Refusing migration without recent recoverable stream failure confirmation (failed=%q, position=%.1fs)",
 			failedPath, req.LastPosition)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -1199,7 +1204,7 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	log.Printf("[stream-migration] Confirmed recent missing-article failure for %q: reason=%s age=%s",
+	log.Printf("[stream-migration] Confirmed recent recoverable stream failure for %q: reason=%s age=%s",
 		failedPath, failure.Reason, time.Since(failure.RecordedAt).Round(time.Millisecond))
 
 	ctx := r.Context()
