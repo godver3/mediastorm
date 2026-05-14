@@ -1310,7 +1310,8 @@
                 const infoEl = row.querySelector('.debrid-expiry-info');
                 if (infoEl && provider) {
                     if (provider.error) {
-                        infoEl.innerHTML = '<div style="font-size: 0.75rem; color: #ef4444;" title="'+provider.error+'">Error</div>';
+                        const errorText = provider.error.replace(/^torbox /i, 'TorBox ');
+                        infoEl.innerHTML = '<div style="font-size: 0.75rem; color: #ef4444; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(errorText)+'">'+escapeHtml(errorText)+'</div>';
                     } else if (!provider.has_api_key) {
                         infoEl.innerHTML = '<div style="font-size: 0.75rem; color: var(--text-muted);">No API Key</div>';
                     } else if (provider.premium_active) {
@@ -1342,6 +1343,18 @@
                 }
             });
         }
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(char) {
+            return ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[char];
+        });
     }
 
     // --- SSE + Interpolation ---

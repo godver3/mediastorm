@@ -76,31 +76,31 @@ type torboxCreateTorrentData struct {
 
 // torboxTorrent represents a torrent in Torbox.
 type torboxTorrent struct {
-	ID               int            `json:"id"`
-	Hash             string         `json:"hash"`
-	CreatedAt        string         `json:"created_at"`
-	UpdatedAt        string         `json:"updated_at"`
-	Magnet           string         `json:"magnet"`
-	Size             int64          `json:"size"`
-	Active           bool           `json:"active"`
-	AuthID           string         `json:"auth_id"`
-	DownloadState    string         `json:"download_state"` // cached, completed, downloading, etc.
-	Seeds            int            `json:"seeds"`
-	Peers            int            `json:"peers"`
-	Ratio            float32        `json:"ratio"`
-	Progress         float32        `json:"progress"`
-	DownloadSpeed    int            `json:"download_speed"`
-	UploadSpeed      int            `json:"upload_speed"`
-	Name             string         `json:"name"`
-	ETA              int            `json:"eta"`
-	Server           int            `json:"server"`
-	TorrentFile      bool           `json:"torrent_file"`
-	ExpiresAt        string         `json:"expires_at"`
-	DownloadPresent  bool           `json:"download_present"`
-	DownloadFinished bool           `json:"download_finished"`
-	Files            []torboxFile   `json:"files"`
-	InactiveCheck    int            `json:"inactive_check"`
-	Availability     int            `json:"availability"`
+	ID               int          `json:"id"`
+	Hash             string       `json:"hash"`
+	CreatedAt        string       `json:"created_at"`
+	UpdatedAt        string       `json:"updated_at"`
+	Magnet           string       `json:"magnet"`
+	Size             int64        `json:"size"`
+	Active           bool         `json:"active"`
+	AuthID           string       `json:"auth_id"`
+	DownloadState    string       `json:"download_state"` // cached, completed, downloading, etc.
+	Seeds            int          `json:"seeds"`
+	Peers            int          `json:"peers"`
+	Ratio            float32      `json:"ratio"`
+	Progress         float32      `json:"progress"`
+	DownloadSpeed    int          `json:"download_speed"`
+	UploadSpeed      int          `json:"upload_speed"`
+	Name             string       `json:"name"`
+	ETA              int          `json:"eta"`
+	Server           int          `json:"server"`
+	TorrentFile      bool         `json:"torrent_file"`
+	ExpiresAt        string       `json:"expires_at"`
+	DownloadPresent  bool         `json:"download_present"`
+	DownloadFinished bool         `json:"download_finished"`
+	Files            []torboxFile `json:"files"`
+	InactiveCheck    int          `json:"inactive_check"`
+	Availability     int          `json:"availability"`
 }
 
 // torboxFile represents a file within a torrent.
@@ -133,7 +133,22 @@ type torboxRequestDLData struct {
 // doRequest performs an HTTP request with authorization.
 func (c *TorboxClient) doRequest(req *http.Request) (*http.Response, error) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	req.Header.Set("User-Agent", "mediastorm/1.0")
+	req.Header.Set("Accept", "application/json")
 	return c.httpClient.Do(req)
+}
+
+func torboxAuthError(statusCode int, body []byte) error {
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
+		return nil
+	}
+
+	bodyText := strings.TrimSpace(string(body))
+	if strings.Contains(strings.ToLower(bodyText), "error code: 1010") {
+		return fmt.Errorf("torbox request blocked by Cloudflare (error code 1010)")
+	}
+
+	return fmt.Errorf("torbox authentication failed: invalid API key")
 }
 
 // AddMagnet adds a magnet link to Torbox and returns the torrent ID.
@@ -151,7 +166,7 @@ func (c *TorboxClient) AddMagnet(ctx context.Context, magnetURL string) (*AddMag
 
 	formData := url.Values{}
 	formData.Set("magnet", trimmedMagnet)
-	formData.Set("seed", "1")        // Auto seed
+	formData.Set("seed", "1") // Auto seed
 	formData.Set("allow_zip", "false")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(formData.Encode()))

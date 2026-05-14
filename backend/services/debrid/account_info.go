@@ -12,13 +12,13 @@ import (
 
 // AccountInfo contains premium/subscription information for a debrid provider
 type AccountInfo struct {
-	Username        string     `json:"username"`
-	Email           string     `json:"email,omitempty"`
-	PremiumActive   bool       `json:"premium_active"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	DaysRemaining   int        `json:"days_remaining,omitempty"`
-	IsLifetime      bool       `json:"is_lifetime,omitempty"`
-	Error           string     `json:"error,omitempty"`
+	Username      string     `json:"username"`
+	Email         string     `json:"email,omitempty"`
+	PremiumActive bool       `json:"premium_active"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	DaysRemaining int        `json:"days_remaining,omitempty"`
+	IsLifetime    bool       `json:"is_lifetime,omitempty"`
+	Error         string     `json:"error,omitempty"`
 }
 
 // GetAccountInfo returns account/subscription info for a Real-Debrid account
@@ -111,13 +111,17 @@ func (c *TorboxClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("torbox authentication failed: invalid API key")
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	if err := torboxAuthError(resp.StatusCode, body); err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("user request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var result struct {
@@ -203,15 +207,15 @@ func (c *AllDebridClient) GetAccountInfo(ctx context.Context) (*AccountInfo, err
 		Status string `json:"status"`
 		Data   struct {
 			User struct {
-				Username          string `json:"username"`
-				Email             string `json:"email"`
-				IsPremium         bool   `json:"isPremium"`
-				IsSubscribed      bool   `json:"isSubscribed"`
-				IsTrial           bool   `json:"isTrial"`
-				PremiumUntil      int64  `json:"premiumUntil"` // Unix timestamp
-				Lang              string `json:"lang"`
-				PreferedDomain    string `json:"preferedDomain"`
-				FidelityPoints    int    `json:"fidelityPoints"`
+				Username            string                 `json:"username"`
+				Email               string                 `json:"email"`
+				IsPremium           bool                   `json:"isPremium"`
+				IsSubscribed        bool                   `json:"isSubscribed"`
+				IsTrial             bool                   `json:"isTrial"`
+				PremiumUntil        int64                  `json:"premiumUntil"` // Unix timestamp
+				Lang                string                 `json:"lang"`
+				PreferedDomain      string                 `json:"preferedDomain"`
+				FidelityPoints      int                    `json:"fidelityPoints"`
 				LimitedHostersQuota map[string]interface{} `json:"limitedHostersQuota,omitempty"`
 			} `json:"user"`
 		} `json:"data"`

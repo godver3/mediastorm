@@ -5908,6 +5908,8 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		apiReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", req.APIKey))
+		apiReq.Header.Set("User-Agent", "mediastorm/1.0")
+		apiReq.Header.Set("Accept", "application/json")
 
 		resp, err := client.Do(apiReq)
 		if err != nil {
@@ -5983,11 +5985,25 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
-				"error":   "Invalid API key",
+				"error":   fmt.Sprintf("Failed to read response: %v", err),
+			})
+			return
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			errorMessage := "Invalid API key"
+			if strings.Contains(strings.ToLower(string(body)), "error code: 1010") {
+				errorMessage = "TorBox request blocked by Cloudflare (error code 1010)"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   errorMessage,
 			})
 			return
 		}
@@ -6000,7 +6016,7 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 			} `json:"data"`
 			Detail string `json:"detail"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&result); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
