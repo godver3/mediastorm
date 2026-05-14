@@ -190,6 +190,12 @@ func TestAnimeFilter_OnePiece_SeasonPackRejection(t *testing.T) {
 			description: "S01E1153 is anime absolute format, should match S22E68 (abs 1153)",
 		},
 		{
+			name:        "Current season plus absolute episode accepted",
+			title:       "One.Piece.S22E1153.1080p.WEB-DL.x264",
+			shouldPass:  true,
+			description: "Some indexers normalize absolute anime episode 1153 with the current TVDB season",
+		},
+		{
 			name:        "s01e1153 lowercase accepted",
 			title:       "one.piece.s01e1153.1080p.web-dl.x264",
 			shouldPass:  true,
@@ -222,6 +228,12 @@ func TestAnimeFilter_OnePiece_SeasonPackRejection(t *testing.T) {
 			title:       "One.Piece.S01E1063.1080p.WEB-DL.x264",
 			shouldPass:  false,
 			description: "S01E1063 is not S01E1153",
+		},
+		{
+			name:        "Wrong current season absolute episode rejected",
+			title:       "One.Piece.S22E1063.1080p.WEB-DL.x264",
+			shouldPass:  false,
+			description: "S22E1063 is not absolute episode 1153",
 		},
 	}
 
@@ -867,9 +879,9 @@ func TestAnimeFilter_WithoutResolver_LimitedFiltering(t *testing.T) {
 	// but season matching should still work
 
 	results := []models.NZBResult{
-		{Title: "One.Piece.S22.1080p.WEB-DL"},          // Matches target season
-		{Title: "One.Piece.S01.1080p.WEB-DL"},          // Wrong season
-		{Title: "One.Piece.S01E1153.1080p.WEB-DL"},     // S01E#### format (anime absolute)
+		{Title: "One.Piece.S22.1080p.WEB-DL"},                // Matches target season
+		{Title: "One.Piece.S01.1080p.WEB-DL"},                // Wrong season
+		{Title: "One.Piece.S01E1153.1080p.WEB-DL"},           // S01E#### format (anime absolute)
 		{Title: "[SubsPlease] One Piece - 1153 (1080p).mkv"}, // Fansub absolute
 	}
 

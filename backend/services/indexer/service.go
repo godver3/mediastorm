@@ -1160,15 +1160,17 @@ func (s *Service) fetchUsenetResultsAllQueries(ctx context.Context, settings con
 
 	var allResults []models.NZBResult
 	var lastErr error
+	successes := 0
 	for range validQueries {
 		res := <-resultsChan
 		if res.err != nil {
 			lastErr = res.err
 			continue
 		}
+		successes++
 		allResults = append(allResults, res.results...)
 	}
-	if len(allResults) == 0 && lastErr != nil {
+	if len(allResults) == 0 && lastErr != nil && successes == 0 {
 		return nil, lastErr
 	}
 
@@ -1571,6 +1573,9 @@ func buildSearchQueries(opts SearchOptions, parsed debrid.ParsedQuery, alternate
 		for _, variant := range titleVariants(title) {
 			composed := composeQueryForSearch(variant, opts, parsed)
 			addQuery(composed)
+			for _, absolute := range composeAbsoluteEpisodeQueries(variant, opts) {
+				addQuery(absolute)
+			}
 		}
 	}
 
@@ -1606,6 +1611,20 @@ func composeQueryForSearch(title string, opts SearchOptions, parsed debrid.Parse
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func composeAbsoluteEpisodeQueries(title string, opts SearchOptions) []string {
+	title = strings.TrimSpace(title)
+	if title == "" || !opts.IsAnime || opts.AbsoluteEpisodeNumber <= 0 {
+		return nil
+	}
+
+	episode := opts.AbsoluteEpisodeNumber
+	return []string{
+		fmt.Sprintf("%s %d", title, episode),
+		fmt.Sprintf("%s EP%d", title, episode),
+		fmt.Sprintf("%s E%d", title, episode),
+	}
 }
 
 func shouldIncludeYear(opts SearchOptions, parsed debrid.ParsedQuery) bool {
@@ -1737,6 +1756,7 @@ func (s *Service) searchUsenetWithFilter(ctx context.Context, settings config.Se
 	// Collect results, preferring higher priority (lower index) results
 	var bestResult *searchResult
 	var lastErr error
+	successes := 0
 	resultsReceived := 0
 
 	for resultsReceived < len(validQueries) {
@@ -1753,6 +1773,7 @@ func (s *Service) searchUsenetWithFilter(ctx context.Context, settings config.Se
 				lastErr = res.err
 				continue
 			}
+			successes++
 
 			if len(res.results) == 0 {
 				continue
@@ -1775,7 +1796,7 @@ func (s *Service) searchUsenetWithFilter(ctx context.Context, settings config.Se
 		return bestResult.results, nil
 	}
 
-	if lastErr != nil {
+	if lastErr != nil && successes == 0 {
 		return nil, lastErr
 	}
 	return []models.NZBResult{}, nil
@@ -1869,15 +1890,17 @@ func (s *Service) fetchUsenetResults(ctx context.Context, settings config.Settin
 
 	var allResults []models.NZBResult
 	var lastErr error
+	successes := 0
 	for range enabled {
 		res := <-resultsChan
 		if res.err != nil {
 			lastErr = res.err
 			continue
 		}
+		successes++
 		allResults = append(allResults, res.results...)
 	}
-	if len(allResults) == 0 && lastErr != nil {
+	if len(allResults) == 0 && lastErr != nil && successes == 0 {
 		return nil, lastErr
 	}
 	return allResults, nil
@@ -1915,19 +1938,23 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 	}
 
 	filterOpts := filter.Options{
-		ExpectedTitle:    expectedTitle,
-		ExpectedYear:     expectedYear,
-		EpisodeAirYear:   opts.EpisodeAirYear,
-		IsMovie:          isMovie,
-		MaxSizeMovieGB:   models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
-		MaxSizeEpisodeGB: models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
-		MaxResolution:    filterSettings.MaxResolution,
-		HDRDVPolicy:      filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-		AlternateTitles:  alternateTitles,
-		RequiredTerms:    filterSettings.RequiredTerms,
-		FilterOutTerms:   filterSettings.FilterOutTerms,
-		IsDaily:          opts.IsDaily,
-		TargetAirDate:    opts.TargetAirDate,
+		ExpectedTitle:         expectedTitle,
+		ExpectedYear:          expectedYear,
+		EpisodeAirYear:        opts.EpisodeAirYear,
+		IsMovie:               isMovie,
+		MaxSizeMovieGB:        models.FloatVal(filterSettings.MaxSizeMovieGB, 0),
+		MaxSizeEpisodeGB:      models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
+		MaxResolution:         filterSettings.MaxResolution,
+		HDRDVPolicy:           filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
+		AlternateTitles:       alternateTitles,
+		RequiredTerms:         filterSettings.RequiredTerms,
+		FilterOutTerms:        filterSettings.FilterOutTerms,
+		EpisodeResolver:       opts.EpisodeResolver,
+		TargetSeason:          baseParsed.Season,
+		TargetEpisode:         baseParsed.Episode,
+		TargetAbsoluteEpisode: opts.AbsoluteEpisodeNumber,
+		IsDaily:               opts.IsDaily,
+		TargetAirDate:         opts.TargetAirDate,
 	}
 
 	log.Printf("[indexer/usenet] Applying filter with title=%q, year=%d, isMovie=%t, isDaily=%t, airDate=%q",

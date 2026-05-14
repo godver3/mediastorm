@@ -1125,8 +1125,11 @@ func shouldRejectByTargetEpisode(parsed *parsett.ParsedTitle, opts Options) (boo
 		if !hasSeason {
 			// Fansub style: "[SubsPlease] Anime - 1153 (1080p)" - no season, just episode
 			isAnimeAbsoluteFormat = true
-		} else if len(parsed.Seasons) == 1 && parsed.Seasons[0] == 1 {
-			// S01E#### style - check if episode number suggests absolute (> typical season length)
+		} else if len(parsed.Seasons) == 1 && (parsed.Seasons[0] == 1 || opts.TargetAbsoluteEpisode > 0) {
+			// SxxE#### style - check if episode number suggests absolute (> typical season length).
+			// Some indexers normalize long-running anime absolute releases as S01E1161,
+			// while others use the current TVDB season as S23E1161. Only treat these
+			// as absolute when a target absolute episode is available.
 			for _, ep := range parsed.Episodes {
 				if ep > 100 {
 					isAnimeAbsoluteFormat = true

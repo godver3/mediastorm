@@ -8,9 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/debrid"
 )
 
 func TestSearchTorznab_IndexerCategories(t *testing.T) {
@@ -208,6 +210,62 @@ func TestSearchTorznab_MultipleIndexers(t *testing.T) {
 	for i, expected := range expectedCats {
 		if requestLog[i] != expected {
 			t.Errorf("categories[%d]: expected %q, got %q", i, expected, requestLog[i])
+		}
+	}
+}
+
+func TestFetchUsenetResults_PartialIndexerFailureWithEmptySuccess(t *testing.T) {
+	emptyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer emptyServer.Close()
+
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slowServer.Close()
+
+	settings := config.DefaultSettings()
+	settings.Indexers = []config.IndexerConfig{
+		{Name: "Empty", URL: emptyServer.URL, APIKey: "key1", Type: "newznab", Enabled: true},
+		{Name: "Slow", URL: slowServer.URL, APIKey: "key2", Type: "newznab", Enabled: true},
+	}
+
+	svc := &Service{httpc: &http.Client{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	results, err := svc.fetchUsenetResults(ctx, settings, SearchOptions{Query: "One Piece S23E06"})
+	if err != nil {
+		t.Fatalf("expected empty successful result set despite one failed indexer, got error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestBuildSearchQueries_AnimeAbsoluteEpisode(t *testing.T) {
+	opts := SearchOptions{
+		Query:                 "One Piece S23E06",
+		MediaType:             "series",
+		IsAnime:               true,
+		AbsoluteEpisodeNumber: 1161,
+	}
+
+	queries := buildSearchQueries(opts, debrid.ParseQuery(opts.Query), nil)
+
+	for _, expected := range []string{"One Piece 1161", "One Piece EP1161", "One Piece E1161"} {
+		found := false
+		for _, query := range queries {
+			if query == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected query %q in %v", expected, queries)
 		}
 	}
 }

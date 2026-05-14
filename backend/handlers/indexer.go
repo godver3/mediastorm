@@ -76,6 +76,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var isAnime bool
 	var targetAirDate string
 	var episodeAirYear int
+	var absoluteEpisodeNumber int
 	if mediaType == "series" && h.MetadataSvc != nil {
 		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year, imdbID)
 		if seriesMeta != nil {
@@ -84,6 +85,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
 			episodeAirYear = seriesMeta.EpisodeAirYear
+			absoluteEpisodeNumber = seriesMeta.AbsoluteEpisodeNumber
 			if year == 0 && seriesMeta.Year > 0 {
 				year = seriesMeta.Year
 				log.Printf("[indexer] Populated year %d from series metadata", year)
@@ -115,19 +117,20 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := indexer.SearchOptions{
-		Query:           query,
-		Categories:      categories,
-		MaxResults:      max,
-		IMDBID:          imdbID,
-		MediaType:       mediaType,
-		Year:            year,
-		UserID:          userID,
-		ClientID:        clientID,
-		EpisodeResolver: episodeResolver,
-		IsDaily:         isDaily,
-		IsAnime:         isAnime,
-		TargetAirDate:   targetAirDate,
-		EpisodeAirYear:  episodeAirYear,
+		Query:                 query,
+		Categories:            categories,
+		MaxResults:            max,
+		IMDBID:                imdbID,
+		MediaType:             mediaType,
+		Year:                  year,
+		UserID:                userID,
+		ClientID:              clientID,
+		EpisodeResolver:       episodeResolver,
+		IsDaily:               isDaily,
+		IsAnime:               isAnime,
+		TargetAirDate:         targetAirDate,
+		EpisodeAirYear:        episodeAirYear,
+		AbsoluteEpisodeNumber: absoluteEpisodeNumber,
 	}
 
 	useDownloadRanking := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("downloadRanking")), "true")
@@ -225,6 +228,7 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 	var isAnime bool
 	var targetAirDate string
 	var episodeAirYear int
+	var absoluteEpisodeNumber int
 	if mediaType == "series" && h.MetadataSvc != nil {
 		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year, imdbID)
 		if seriesMeta != nil {
@@ -233,6 +237,7 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
 			episodeAirYear = seriesMeta.EpisodeAirYear
+			absoluteEpisodeNumber = seriesMeta.AbsoluteEpisodeNumber
 			if year == 0 && seriesMeta.Year > 0 {
 				year = seriesMeta.Year
 			}
@@ -258,20 +263,21 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := indexer.SearchOptions{
-		Query:              query,
-		Categories:         categories,
-		MaxResults:         max,
-		IMDBID:             imdbID,
-		MediaType:          mediaType,
-		Year:               year,
-		UserID:             userID,
-		ClientID:           clientID,
-		EpisodeResolver:    episodeResolver,
-		IsDaily:            isDaily,
-		IsAnime:            isAnime,
-		TargetAirDate:      targetAirDate,
-		EpisodeAirYear:     episodeAirYear,
-		UseDownloadRanking: useDownloadRanking,
+		Query:                 query,
+		Categories:            categories,
+		MaxResults:            max,
+		IMDBID:                imdbID,
+		MediaType:             mediaType,
+		Year:                  year,
+		UserID:                userID,
+		ClientID:              clientID,
+		EpisodeResolver:       episodeResolver,
+		IsDaily:               isDaily,
+		IsAnime:               isAnime,
+		TargetAirDate:         targetAirDate,
+		EpisodeAirYear:        episodeAirYear,
+		AbsoluteEpisodeNumber: absoluteEpisodeNumber,
+		UseDownloadRanking:    useDownloadRanking,
 	}
 
 	results, err := h.Service.SearchTest(r.Context(), opts)
@@ -358,12 +364,13 @@ func classifySearchError(err error) (int, map[string]interface{}) {
 
 // seriesSearchMetadata contains series metadata needed for search
 type seriesSearchMetadata struct {
-	EpisodeResolver *filter.SeriesEpisodeResolver
-	IsDaily         bool
-	IsAnime         bool
-	TargetAirDate   string // YYYY-MM-DD format for daily shows
-	Year            int    // Series premiere year from metadata
-	EpisodeAirYear  int    // Year the target episode actually aired (may differ from series premiere year)
+	EpisodeResolver       *filter.SeriesEpisodeResolver
+	IsDaily               bool
+	IsAnime               bool
+	TargetAirDate         string // YYYY-MM-DD format for daily shows
+	Year                  int    // Series premiere year from metadata
+	EpisodeAirYear        int    // Year the target episode actually aired (may differ from series premiere year)
+	AbsoluteEpisodeNumber int
 }
 
 // getSeriesSearchMetadata fetches series metadata for search, including episode resolver
@@ -434,18 +441,25 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 		for _, season := range details.Seasons {
 			if season.Number == parsed.Season {
 				for _, ep := range season.Episodes {
-					if ep.EpisodeNumber == parsed.Episode && ep.AiredDate != "" {
-						if result.IsDaily {
-							result.TargetAirDate = ep.AiredDate
-							log.Printf("[indexer] Found air date %s for S%02dE%02d",
-								result.TargetAirDate, parsed.Season, parsed.Episode)
+					if ep.EpisodeNumber == parsed.Episode {
+						if ep.AbsoluteEpisodeNumber > 0 {
+							result.AbsoluteEpisodeNumber = ep.AbsoluteEpisodeNumber
+							log.Printf("[indexer] Found absolute episode number %d for S%02dE%02d",
+								result.AbsoluteEpisodeNumber, parsed.Season, parsed.Episode)
 						}
-						// Extract year from air date for year filter tolerance
-						if parts := strings.SplitN(ep.AiredDate, "-", 2); len(parts) >= 1 {
-							if airYear, err := strconv.Atoi(parts[0]); err == nil && airYear > 0 {
-								result.EpisodeAirYear = airYear
-								log.Printf("[indexer] Episode air year %d for S%02dE%02d",
-									airYear, parsed.Season, parsed.Episode)
+						if ep.AiredDate != "" {
+							if result.IsDaily {
+								result.TargetAirDate = ep.AiredDate
+								log.Printf("[indexer] Found air date %s for S%02dE%02d",
+									result.TargetAirDate, parsed.Season, parsed.Episode)
+							}
+							// Extract year from air date for year filter tolerance
+							if parts := strings.SplitN(ep.AiredDate, "-", 2); len(parts) >= 1 {
+								if airYear, err := strconv.Atoi(parts[0]); err == nil && airYear > 0 {
+									result.EpisodeAirYear = airYear
+									log.Printf("[indexer] Episode air year %d for S%02dE%02d",
+										airYear, parsed.Season, parsed.Episode)
+								}
 							}
 						}
 						break

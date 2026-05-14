@@ -23,6 +23,18 @@ type fakeMovieMetadataService struct {
 	err   error
 }
 
+type fakeSeriesMetadataService struct {
+	details *models.SeriesDetails
+	err     error
+}
+
+func (f *fakeSeriesMetadataService) SeriesDetails(_ context.Context, _ models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.details, nil
+}
+
 func (f *fakeMovieMetadataService) MovieInfo(_ context.Context, _ models.MovieDetailsQuery) (*models.Title, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -195,6 +207,47 @@ func TestIndexerHandler_SearchMovieNonAnime(t *testing.T) {
 	}
 	if fake.lastOpts.IsAnime {
 		t.Fatal("expected IsAnime=false for non-anime movie, got true")
+	}
+}
+
+func TestIndexerHandler_SearchSeriesAbsoluteEpisode(t *testing.T) {
+	fake := &fakeIndexerService{results: []models.NZBResult{}}
+	seriesSvc := &fakeSeriesMetadataService{
+		details: &models.SeriesDetails{
+			Title: models.Title{
+				Name:   "One Piece",
+				Year:   1999,
+				Genres: []string{"Anime"},
+			},
+			Seasons: []models.SeriesSeason{
+				{
+					Number: 23,
+					Episodes: []models.SeriesEpisode{
+						{SeasonNumber: 23, EpisodeNumber: 6, AbsoluteEpisodeNumber: 1161, AiredDate: "2026-05-10"},
+					},
+				},
+			},
+		},
+	}
+	handler := NewIndexerHandler(fake, false)
+	handler.SetMetadataService(seriesSvc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/indexers/search?q=One+Piece+S23E06&mediaType=series&year=1999", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if !fake.lastOpts.IsAnime {
+		t.Fatal("expected IsAnime=true for anime series")
+	}
+	if fake.lastOpts.AbsoluteEpisodeNumber != 1161 {
+		t.Fatalf("expected absolute episode 1161, got %d", fake.lastOpts.AbsoluteEpisodeNumber)
+	}
+	if fake.lastOpts.EpisodeAirYear != 2026 {
+		t.Fatalf("expected episode air year 2026, got %d", fake.lastOpts.EpisodeAirYear)
 	}
 }
 
