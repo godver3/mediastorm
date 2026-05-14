@@ -372,10 +372,13 @@ type HLSSession struct {
 	ProbeData *UnifiedProbeResult
 
 	// Per-track extraction tracking (prevents duplicate extractions without blocking session)
-	subtitleExtractionMu sync.Mutex   // Protects subtitleExtracting map
-	subtitleExtracting   map[int]bool // Tracks which subtitle tracks are currently being extracted
-	FatalErrorTime       time.Time
-	BitstreamErrors      int // Count of bitstream filter errors (to detect persistent issues)
+	subtitleExtractionMu      sync.Mutex                 // Protects subtitle extraction maps
+	subtitleExtracting        map[int]bool               // Tracks which subtitle tracks are currently being extracted
+	subtitleExtractCancelFunc map[int]context.CancelFunc // Cancels subtitle extractions when seeking
+	subtitleExtractIDs        map[int]int64              // Identifies active extraction jobs for cleanup
+	subtitleExtractSeq        int64
+	FatalErrorTime            time.Time
+	BitstreamErrors           int // Count of bitstream filter errors (to detect persistent issues)
 
 	// Live TV session fields
 	IsLive       bool               // True for live TV streams (no duration, no seeking)
@@ -1839,6 +1842,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			"-crf", "23",
 			"-profile:v", "high",
 			"-level", "4.1",
+			"-pix_fmt", "yuv420p",
 			"-threads", "0", // Use all available CPU cores
 		)
 		// When transcoding video for fMP4, also check if audio needs transcoding
@@ -2033,23 +2037,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			playlistPath,
 		)
 
-		// Additional outputs: Sidecar VTT files for ALL text-based subtitle tracks
-		// This allows track switching without re-downloading the source file
-		// Each subtitle track is extracted to subtitles_<streamIndex>.vtt
-		// Use absolute stream index (0:N) instead of relative subtitle index (0:s:N)
-		// because 0:s:N includes bitmap subtitles which are filtered out from our list
-		for _, sub := range sidecarSubtitles {
-			vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", sub.streamIndex))
-			subtitleMap := fmt.Sprintf("0:%d", sub.streamIndex)
-			args = append(args,
-				"-map", subtitleMap,
-				"-c", "webvtt",
-				"-f", "webvtt",
-				"-flush_packets", "1",
-				vttPath,
-			)
-			log.Printf("[hls] session %s: adding sidecar VTT output at %s (streamIndex=%d codec=%s)",
-				session.ID, vttPath, sub.streamIndex, sub.codec)
+		if len(sidecarSubtitles) > 0 {
+			log.Printf("[hls] session %s: %d subtitle tracks will be extracted on demand", session.ID, len(sidecarSubtitles))
 		}
 	} else {
 		// Use MPEG-TS segments for non-HDR content
@@ -2067,20 +2056,8 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			playlistPath,
 		)
 
-		// Additional outputs: Sidecar VTT files for ALL text-based subtitle tracks
-		// Extract progressively during streaming with flush_packets
-		for _, sub := range sidecarSubtitles {
-			vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", sub.streamIndex))
-			subtitleMap := fmt.Sprintf("0:%d", sub.streamIndex)
-			args = append(args,
-				"-map", subtitleMap,
-				"-c", "webvtt",
-				"-f", "webvtt",
-				"-flush_packets", "1",
-				vttPath,
-			)
-			log.Printf("[hls] session %s: adding sidecar VTT output at %s (streamIndex=%d codec=%s)",
-				session.ID, vttPath, sub.streamIndex, sub.codec)
+		if len(sidecarSubtitles) > 0 {
+			log.Printf("[hls] session %s: %d subtitle tracks will be extracted on demand", session.ID, len(sidecarSubtitles))
 		}
 	}
 
@@ -3216,9 +3193,20 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 	outputDir := session.OutputDir
 	session.mu.RUnlock()
 
+	session.subtitleExtractionMu.Lock()
+	activeSubtitleExtractions := len(session.subtitleExtractCancelFunc)
+	for _, cancel := range session.subtitleExtractCancelFunc {
+		cancel()
+	}
+	session.subtitleExtractSeq++
+	session.subtitleExtracting = make(map[int]bool)
+	session.subtitleExtractCancelFunc = make(map[int]context.CancelFunc)
+	session.subtitleExtractIDs = make(map[int]int64)
+	session.subtitleExtractionMu.Unlock()
+
 	// Remove all segment files (.ts, .m4s) and VTT subtitle files
 	// VTT files MUST be cleared on seek to prevent stale subtitle timing
-	// The new FFmpeg process will regenerate VTT from the new seek position
+	// The web subtitle endpoint will regenerate VTT from the new seek position on demand.
 	patterns := []string{
 		filepath.Join(outputDir, "segment*.ts"),
 		filepath.Join(outputDir, "segment*.m4s"),
@@ -3240,7 +3228,7 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 		}
 	}
 
-	log.Printf("[hls] session %s: cleared %d segment files for seek", session.ID, removeCount)
+	log.Printf("[hls] session %s: cleared %d segment files for seek, canceled %d subtitle extractions", session.ID, removeCount, activeSubtitleExtractions)
 	return nil
 }
 
@@ -3800,15 +3788,34 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 		// Use per-track extraction tracking to prevent duplicates without blocking the session
 		// This avoids a deadlock where subtitle extraction holds session.mu while the
 		// transcoding pipeline waits for session.mu.RLock at startup
+		var (
+			extractCtx    context.Context
+			extractCancel context.CancelFunc
+			extractID     int64
+			startExtract  bool
+		)
+
 		session.subtitleExtractionMu.Lock()
 		if session.subtitleExtracting == nil {
 			session.subtitleExtracting = make(map[int]bool)
+		}
+		if session.subtitleExtractCancelFunc == nil {
+			session.subtitleExtractCancelFunc = make(map[int]context.CancelFunc)
+		}
+		if session.subtitleExtractIDs == nil {
+			session.subtitleExtractIDs = make(map[int]int64)
 		}
 		alreadyExtracting := session.subtitleExtracting[requestedTrack]
 		if !alreadyExtracting {
 			// Double-check file doesn't exist after acquiring lock
 			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+				session.subtitleExtractSeq++
+				extractID = session.subtitleExtractSeq
 				session.subtitleExtracting[requestedTrack] = true
+				extractCtx, extractCancel = context.WithCancel(context.Background())
+				session.subtitleExtractCancelFunc[requestedTrack] = extractCancel
+				session.subtitleExtractIDs[requestedTrack] = extractID
+				startExtract = true
 			}
 		}
 		session.subtitleExtractionMu.Unlock()
@@ -3816,24 +3823,23 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 		if alreadyExtracting {
 			// Another request is already extracting this track, wait and retry
 			log.Printf("[hls] subtitle track %d extraction already in progress for session %s, waiting", requestedTrack, sessionID)
-			time.Sleep(500 * time.Millisecond)
-			// Check if file now exists
-			if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-				// Still not ready, return empty VTT
-				w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Write([]byte("WEBVTT\n\n"))
-				return
-			}
-		} else if _, err := os.Stat(vttPath); os.IsNotExist(err) {
-			// Subtitle extraction disabled — the player handles subtitles natively.
-			log.Printf("[hls] subtitle track %d not available, returning empty VTT for session %s", requestedTrack, sessionID)
-			w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Write([]byte("WEBVTT\n\n"))
-			return
+		} else if startExtract {
+			log.Printf("[hls] starting subtitle track %d extraction on demand for session %s", requestedTrack, sessionID)
+			go func() {
+				extractErr := m.extractSubtitleTrackToVTT(extractCtx, session, requestedTrack, vttPath)
+				session.subtitleExtractionMu.Lock()
+				if session.subtitleExtractIDs != nil && session.subtitleExtractIDs[requestedTrack] == extractID {
+					delete(session.subtitleExtractCancelFunc, requestedTrack)
+					delete(session.subtitleExtracting, requestedTrack)
+					delete(session.subtitleExtractIDs, requestedTrack)
+				}
+				session.subtitleExtractionMu.Unlock()
+				if extractErr != nil {
+					log.Printf("[hls] subtitle track %d extraction failed for session %s: %v", requestedTrack, sessionID, extractErr)
+					return
+				}
+				log.Printf("[hls] subtitle track %d extraction complete for session %s", requestedTrack, sessionID)
+			}()
 		}
 	}
 
@@ -3846,7 +3852,7 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	if waitForCue {
 		stat, content, err = waitForSubtitleFile(vttPath, true, 10*time.Second)
 	} else {
-		stat, err = os.Stat(vttPath)
+		stat, content, err = waitForSubtitleFile(vttPath, true, 2*time.Second)
 	}
 	if os.IsNotExist(err) {
 		// Return empty VTT header if file doesn't exist yet
@@ -3893,9 +3899,7 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 // extractSubtitleTrackToVTT extracts a specific subtitle track to a VTT file on-demand
 // This allows switching subtitle tracks without recreating the HLS session
 // trackIndex is the absolute ffprobe stream index (same as session.SubtitleTrackIndex)
-func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex int, outputPath string) error {
-	ctx := context.Background()
-
+func (m *HLSManager) extractSubtitleTrackToVTT(ctx context.Context, session *HLSSession, trackIndex int, outputPath string) error {
 	// Probe subtitle streams to map absolute stream index to relative subtitle index
 	subtitleStreams, err := m.probeSubtitleStreams(ctx, session.Path)
 	if err != nil {
@@ -3983,6 +3987,7 @@ func (m *HLSManager) extractSubtitleTrackToVTT(session *HLSSession, trackIndex i
 		"-map", fmt.Sprintf("0:%d", actualStreamIndex),
 		"-c", "webvtt",
 		"-f", "webvtt",
+		"-flush_packets", "1",
 		outputPath,
 	)
 

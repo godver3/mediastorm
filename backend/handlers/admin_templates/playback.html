@@ -348,12 +348,194 @@
         border-radius: var(--radius);
     }
 
+    .web-player-video-frame {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        max-height: 70vh;
+        background: black;
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+
+    .web-player-video-frame video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        border-radius: 0;
+    }
+
+    #videoHost {
+        position: relative;
+    }
+
+    #videoHost.web-player-fullscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: block !important;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        margin: 0 !important;
+        padding: 0;
+        background: black;
+        overflow: hidden;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-video-frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        aspect-ratio: auto;
+        max-height: none;
+        border-radius: 0;
+    }
+
+    #videoHost.web-player-fullscreen video {
+        width: 100%;
+        height: 100%;
+        max-height: none;
+        border-radius: 0;
+        object-fit: contain;
+    }
+
+    .web-player-subtitle-overlay {
+        position: absolute;
+        left: 5%;
+        right: 5%;
+        bottom: 7%;
+        z-index: 2;
+        color: white;
+        font-size: clamp(1rem, 2.5vw, 2rem);
+        font-weight: 700;
+        line-height: 1.25;
+        text-align: center;
+        text-shadow: 0 2px 6px black, 0 0 2px black;
+        white-space: pre-line;
+        pointer-events: none;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-subtitle-overlay {
+        bottom: 14%;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-controls {
+        position: absolute;
+        left: clamp(0.75rem, 3vw, 2rem);
+        right: clamp(0.75rem, 3vw, 2rem);
+        bottom: clamp(0.75rem, 3vw, 2rem);
+        z-index: 4;
+        grid-template-columns: repeat(4, auto) minmax(0, 1fr) auto;
+        padding: 0.75rem;
+        margin-top: 0;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: var(--radius-lg);
+        background: rgba(0, 0, 0, 0.72);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(14px);
+        transition: opacity 0.18s ease;
+    }
+
+    #videoHost.web-player-fullscreen.web-player-controls-hidden .web-player-controls {
+        opacity: 0;
+        pointer-events: none;
+    }
+
     .web-player-controls {
         display: grid;
-        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        grid-template-columns: repeat(4, auto) minmax(0, 1fr) auto;
         gap: 0.75rem;
         align-items: center;
         margin-top: 0.75rem;
+    }
+
+    .web-player-control-btn {
+        min-width: 2.25rem;
+    }
+
+    .web-player-play-button {
+        min-width: 5.25rem;
+        justify-content: center;
+    }
+
+    .web-player-control-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .web-player-control-icon svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    .web-player-control-icon-only,
+    .web-player-pause-icon,
+    .web-player-fullscreen-exit {
+        display: none;
+    }
+
+    .web-player-play-button.is-playing .web-player-play-icon {
+        display: none;
+    }
+
+    .web-player-play-button.is-playing .web-player-pause-icon {
+        display: inline-flex;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-control-btn {
+        width: 2.75rem;
+        height: 2.75rem;
+        padding: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.16);
+        color: white;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-play-button {
+        width: 3.125rem;
+        height: 3.125rem;
+        min-width: 3.125rem;
+        background: rgba(255, 255, 255, 0.22);
+    }
+
+    #videoHost.web-player-fullscreen .web-player-control-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    #videoHost.web-player-fullscreen .web-player-button-label,
+    #videoHost.web-player-fullscreen .web-player-control-text {
+        display: none;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-control-icon-only {
+        display: inline-flex;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-fullscreen-enter {
+        display: none;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-fullscreen-exit {
+        display: inline-flex;
+    }
+
+    .web-player-track-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+        align-items: center;
+    }
+
+    .web-player-track-controls select {
+        max-width: min(280px, 100%);
     }
 
     .web-player-controls input[type="range"] {
@@ -365,6 +547,54 @@
         font-size: 0.8125rem;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-time {
+        color: rgba(255, 255, 255, 0.82);
+    }
+
+    #videoHost.web-player-fullscreen #webPlayerStatus {
+        position: absolute;
+        left: clamp(0.75rem, 3vw, 2rem);
+        bottom: calc(clamp(0.75rem, 3vw, 2rem) + 4.75rem);
+        z-index: 4;
+        margin-top: 0 !important;
+        color: rgba(255, 255, 255, 0.82);
+    }
+
+    #videoHost.web-player-fullscreen .web-player-track-controls {
+        position: absolute;
+        top: clamp(0.75rem, 3vw, 2rem);
+        right: clamp(0.75rem, 3vw, 2rem);
+        z-index: 4;
+        max-width: min(520px, calc(100% - 1.5rem));
+        padding: 0.625rem;
+        margin-top: 0;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: var(--radius);
+        background: rgba(0, 0, 0, 0.66);
+        backdrop-filter: blur(14px);
+        transition: opacity 0.18s ease;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-track-controls .media-meta {
+        color: rgba(255, 255, 255, 0.82);
+    }
+
+    #videoHost.web-player-fullscreen.web-player-controls-hidden .web-player-track-controls {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    @media (max-width: 820px) {
+        .web-player-controls {
+            grid-template-columns: repeat(4, auto);
+        }
+
+        .web-player-controls input[type="range"],
+        .web-player-time {
+            grid-column: 1 / -1;
+        }
     }
 
     .empty-inline {
@@ -478,6 +708,21 @@
     let lastWebPlayerTime = 0;
     let suppressWebPlayerSeek = false;
     let webPlayerSeekInProgress = false;
+    let webPlayerQueuedSeekTarget = null;
+    let webPlayerDisplayedSeekTarget = null;
+    let webPlayerSeekInputActive = false;
+    let webPlayerAudioStreams = [];
+    let webPlayerSubtitleStreams = [];
+    let webPlayerSelectedAudioTrack = null;
+    let webPlayerSelectedSubtitleTrack = -1;
+    let webPlayerControlsHideTimer = null;
+    let webPlayerSubtitleCues = [];
+    let webPlayerSubtitleLoadToken = 0;
+    let webPlayerSubtitleRefreshTimer = null;
+    let webPlayerDebugSessionId = '';
+    let webPlayerDebugQueue = [];
+    let webPlayerDebugFlushTimer = null;
+    let webPlayerFullscreenScrollTimer = null;
 
     document.addEventListener('DOMContentLoaded', () => {
         renderProfiles();
@@ -491,6 +736,70 @@
         if (path.startsWith('/video/')) return `${basePath}/api${path}`;
         if (path.startsWith('/api/')) return `${basePath}${path}`;
         return path;
+    }
+
+    function webPlayerDebug(event, data = {}) {
+        const video = document.getElementById('webPlayer');
+        const seek = document.getElementById('webPlayerSeek');
+        const entry = {
+            event,
+            hlsSessionId,
+            hlsPlaybackOffset,
+            hlsDuration,
+            seekInProgress: webPlayerSeekInProgress,
+            queuedSeekTarget: webPlayerQueuedSeekTarget,
+            displayedSeekTarget: webPlayerDisplayedSeekTarget,
+            seekInputActive: webPlayerSeekInputActive,
+            videoCurrentTime: video ? Number(video.currentTime || 0) : null,
+            videoPaused: video ? Boolean(video.paused) : null,
+            videoReadyState: video ? video.readyState : null,
+            videoNetworkState: video ? video.networkState : null,
+            videoSrc: video ? String(video.currentSrc || video.src || '').slice(0, 160) : '',
+            seekValue: seek ? seek.value : '',
+            seekDisabled: seek ? Boolean(seek.disabled) : null,
+            ...data,
+        };
+        try {
+            console.log('[web-player]', event, entry);
+        } catch {}
+        if (!webPlayerDebugSessionId) {
+            webPlayerDebugSessionId = `web-player-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        }
+        webPlayerDebugQueue.push({
+            level: 'debug',
+            message: JSON.stringify(entry),
+            timestamp: new Date().toISOString(),
+        });
+        if (webPlayerDebugQueue.length >= 8) {
+            flushWebPlayerDebug();
+            return;
+        }
+        if (!webPlayerDebugFlushTimer) {
+            webPlayerDebugFlushTimer = window.setTimeout(() => {
+                webPlayerDebugFlushTimer = null;
+                flushWebPlayerDebug();
+            }, 500);
+        }
+    }
+
+    function flushWebPlayerDebug() {
+        if (!webPlayerDebugQueue.length) return;
+        const entries = webPlayerDebugQueue.splice(0, webPlayerDebugQueue.length);
+        const payload = {
+            sessionId: webPlayerDebugSessionId || 'web-player',
+            userAgent: navigator.userAgent,
+            path: window.location.href,
+            entries,
+        };
+        fetch(apiUrl('/api/debug/log'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            keepalive: true,
+        }).catch(() => {
+            webPlayerDebugQueue.unshift(...entries);
+        });
     }
 
     async function apiCall(path, options = {}) {
@@ -1102,15 +1411,27 @@
 
     async function startWebPlayer(options = {}) {
         if (!resolvedPlayback?.webdavPath) return;
+        const requestedStartOffset = Number.isFinite(Number(options.startOffset)) ? Math.max(0, Number(options.startOffset)) : 0;
+        webPlayerDebug('startWebPlayer.begin', {
+            requestedStartOffset,
+            preserveTrackSelection: Boolean(options.preserveTrackSelection),
+            autoPlay: Boolean(options.autoPlay),
+        });
         stopHlsSession();
         const host = document.getElementById('videoHost');
         if (!host) return;
+        const wasFullscreen = host.classList.contains('web-player-fullscreen');
         host.style.display = 'block';
+        host.classList.remove('web-player-controls-hidden');
         host.innerHTML = '<div class="empty-inline">Starting HLS session...</div>';
         host.scrollIntoView({ behavior: 'smooth', block: 'start' });
         try {
             const preferences = await getPlaybackPreferences();
             const tracks = await selectPreferredTracks(resolvedPlayback.webdavPath, preferences);
+            webPlayerAudioStreams = tracks.audioStreams || [];
+            webPlayerSubtitleStreams = tracks.subtitleStreams || [];
+            webPlayerSelectedAudioTrack = options.preserveTrackSelection ? webPlayerSelectedAudioTrack : tracks.audioTrack;
+            webPlayerSelectedSubtitleTrack = options.preserveTrackSelection ? webPlayerSelectedSubtitleTrack : tracks.subtitleTrack;
             const params = new URLSearchParams({
                 path: resolvedPlayback.webdavPath,
                 forceAAC: 'true',
@@ -1121,12 +1442,10 @@
                 title: selectedItem.title || '',
                 itemId: selectedItem.id || '',
                 audioLang: preferences.audioLanguage,
+                startOffset: requestedStartOffset.toFixed(2),
             });
-            if (tracks.audioTrack !== null && tracks.audioTrack !== undefined && tracks.audioTrack >= 0) {
-                params.set('audioTrack', String(tracks.audioTrack));
-            }
-            if (tracks.subtitleTrack !== null && tracks.subtitleTrack !== undefined && tracks.subtitleTrack >= 0) {
-                params.set('subtitleTrack', String(tracks.subtitleTrack));
+            if (webPlayerSelectedAudioTrack !== null && webPlayerSelectedAudioTrack !== undefined && webPlayerSelectedAudioTrack >= 0) {
+                params.set('audioTrack', String(webPlayerSelectedAudioTrack));
             }
             if (selectedItem.year) params.set('year', String(selectedItem.year));
             if (selectedItem.imdbId) params.set('imdb', selectedItem.imdbId);
@@ -1146,24 +1465,68 @@
             hlsDuration = Number(session.duration || 0);
             lastWebPlayerTime = 0;
             const playlistUrl = apiUrl(session.playlistUrl || '');
+            webPlayerDebug('startWebPlayer.session', {
+                sessionId: hlsSessionId,
+                startOffset: session.startOffset,
+                actualStartOffset: session.actualStartOffset,
+                duration: session.duration,
+                playlistUrl,
+            });
             host.innerHTML = `
-                <video id="webPlayer" playsinline onclick="toggleWebPlayerPlayback()"></video>
+                <div class="web-player-video-frame">
+                    <video id="webPlayer" playsinline webkit-playsinline controlsList="nodownload noplaybackrate noremoteplayback nofullscreen" onclick="toggleWebPlayerPlayback()"></video>
+                    <div id="webPlayerSubtitleOverlay" class="web-player-subtitle-overlay"></div>
+                </div>
                 <div class="web-player-controls">
-                    <button class="btn btn-sm btn-secondary" id="webPlayerPlayButton" onclick="toggleWebPlayerPlayback()">Play</button>
-                    <button class="btn btn-sm btn-secondary" onclick="toggleWebPlayerFullscreen()">Fullscreen</button>
-                    <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
+                    <button class="btn btn-sm btn-secondary web-player-control-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
+                        <span class="web-player-control-icon web-player-control-icon-only" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></span>
+                        <span class="web-player-control-text">-30s</span>
+                    </button>
+                    <button class="btn btn-sm btn-secondary web-player-control-btn web-player-play-button" id="webPlayerPlayButton" onclick="toggleWebPlayerPlayback()" aria-label="Play" title="Play">
+                        <span class="web-player-control-icon web-player-play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+                        <span class="web-player-control-icon web-player-pause-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></span>
+                        <span class="web-player-button-label">Play</span>
+                    </button>
+                    <button class="btn btn-sm btn-secondary web-player-control-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="Skip forward 30 seconds">
+                        <span class="web-player-control-icon web-player-control-icon-only" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
+                        <span class="web-player-control-text">+30s</span>
+                    </button>
+                    <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerFullscreenButton" onclick="toggleWebPlayerFullscreen()" aria-label="Enter fullscreen" title="Enter fullscreen">
+                        <span class="web-player-control-icon web-player-fullscreen-enter" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
+                        <span class="web-player-control-icon web-player-fullscreen-exit" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
+                        <span class="web-player-button-label">Fullscreen</span>
+                    </button>
+                    <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginWebPlayerSeekInput()" ontouchstart="beginWebPlayerSeekInput()" onkeydown="beginWebPlayerSeekInput()" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
                     <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
+                </div>
+                <div class="web-player-track-controls">
+                    ${renderWebPlayerTrackSelectors()}
                 </div>
                 <div id="webPlayerStatus" class="media-meta" style="margin-top: 0.5rem;"></div>
             `;
             const video = document.getElementById('webPlayer');
             attachWebPlayer(video, playlistUrl);
             installWebPlayerSeekHandler(video);
+            installWebPlayerControlsAutoHide(host);
             startKeepalive(video);
+            video.addEventListener('canplay', () => {
+                void installWebPlayerSubtitleTrack(video);
+            }, { once: true });
+            if (options.autoPlay) {
+                video.addEventListener('canplay', () => {
+                    video.play().catch(() => {});
+                }, { once: true });
+            }
+            if (wasFullscreen) {
+                host.classList.add('web-player-fullscreen');
+                document.body.style.overflow = 'hidden';
+            }
+            webPlayerDebug('startWebPlayer.attached');
             window.setTimeout(() => {
                 host.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 50);
         } catch (error) {
+            webPlayerDebug('startWebPlayer.error', { message: error.message });
             if (options.throwOnError) {
                 throw error;
             }
@@ -1171,19 +1534,41 @@
         }
     }
 
-    function attachWebPlayer(video, playlistUrl) {
+    function attachWebPlayer(video, playlistUrl, options = {}) {
         if (!video || !playlistUrl) return;
-        if (hlsInstance) {
-            hlsInstance.destroy();
-            hlsInstance = null;
-        }
+        webPlayerDebug('attachWebPlayer.begin', { playlistUrl, reuseHls: Boolean(options.reuseHls), hasHlsInstance: Boolean(hlsInstance) });
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = playlistUrl;
+            webPlayerDebug('attachWebPlayer.nativeSrcSet', { playlistUrl });
         } else if (window.Hls && window.Hls.isSupported()) {
+            if (hlsInstance && options.reuseHls) {
+                webPlayerDebug('attachWebPlayer.hlsReuseBeforeLoad', { playlistUrl });
+                hlsInstance.stopLoad();
+                hlsInstance.loadSource(playlistUrl);
+                hlsInstance.startLoad(0);
+                webPlayerDebug('attachWebPlayer.hlsReuseAfterLoad', { playlistUrl });
+                return;
+            }
+            if (hlsInstance) {
+                webPlayerDebug('attachWebPlayer.destroyExisting');
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
             hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0 });
+            webPlayerDebug('attachWebPlayer.hlsCreate', { playlistUrl });
             hlsInstance.loadSource(playlistUrl);
             hlsInstance.attachMedia(video);
+            hlsInstance.on(Hls.Events.MEDIA_ATTACHED, () => webPlayerDebug('hls.mediaAttached'));
+            hlsInstance.on(Hls.Events.MANIFEST_LOADING, (_event, data) => webPlayerDebug('hls.manifestLoading', { url: data?.url }));
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event, data) => webPlayerDebug('hls.manifestParsed', { levels: data?.levels?.length }));
+            hlsInstance.on(Hls.Events.LEVEL_LOADED, (_event, data) => webPlayerDebug('hls.levelLoaded', { live: data?.details?.live, fragments: data?.details?.fragments?.length }));
             hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+                webPlayerDebug('hls.error', {
+                    type: data?.type,
+                    details: data?.details,
+                    fatal: Boolean(data?.fatal),
+                    reason: data?.reason,
+                });
                 console.warn('HLS.js error:', data);
                 setWebPlayerStatus(data?.fatal ? 'Playback error. Try seeking again or select another release.' : '');
                 if (data?.fatal && hlsInstance) {
@@ -1197,54 +1582,71 @@
         } else {
             throw new Error('This browser does not support HLS playback.');
         }
-        video.addEventListener('loadedmetadata', () => resetWebPlayerToStart(video), { once: true });
-    }
-
-    function resetWebPlayerToStart(video) {
-        suppressWebPlayerSeek = true;
-        try {
-            if (video.currentTime > 1) video.currentTime = 0;
-        } finally {
-            window.setTimeout(() => {
-                suppressWebPlayerSeek = false;
-            }, 250);
-        }
     }
 
     function installWebPlayerSeekHandler(video) {
         if (!video) return;
+        ['loadstart', 'loadedmetadata', 'durationchange', 'canplay', 'playing', 'waiting', 'stalled', 'emptied', 'seeking', 'seeked', 'pause', 'play', 'error'].forEach((eventName) => {
+            video.addEventListener(eventName, () => {
+                webPlayerDebug(`video.${eventName}`, {
+                    duration: Number(video.duration || 0),
+                    errorCode: video.error ? video.error.code : null,
+                    errorMessage: video.error ? video.error.message : '',
+                });
+            });
+        });
         video.addEventListener('timeupdate', () => {
             if (!webPlayerSeekInProgress && !video.seeking) {
                 lastWebPlayerTime = Number(video.currentTime || 0);
                 updateWebPlayerControls();
+                renderWebPlayerSubtitles();
             }
         });
-        video.addEventListener('play', updateWebPlayerControls);
-        video.addEventListener('pause', updateWebPlayerControls);
-        video.addEventListener('seeking', () => {
-            if (suppressWebPlayerSeek || webPlayerSeekInProgress || !hlsSessionId) return;
-            const relativeTarget = Number(video.currentTime || 0);
-            if (Math.abs(relativeTarget - lastWebPlayerTime) < 2) return;
-            void seekWebPlayer(video, hlsPlaybackOffset + relativeTarget);
+        video.addEventListener('play', () => {
+            updateWebPlayerControls();
+            renderWebPlayerSubtitles();
+            showWebPlayerControls();
         });
+        video.addEventListener('pause', () => {
+            updateWebPlayerControls();
+            renderWebPlayerSubtitles();
+            showWebPlayerControls();
+        });
+        video.addEventListener('seeked', renderWebPlayerSubtitles);
+        video.addEventListener('loadedmetadata', renderWebPlayerSubtitles);
     }
 
     async function seekWebPlayer(video, absoluteTarget) {
-        if (!hlsSessionId || !Number.isFinite(absoluteTarget) || absoluteTarget < 0) return;
+        if (!hlsSessionId || !video) return;
+        webPlayerDebug('seekWebPlayer.called', { requestedTarget: absoluteTarget });
+        absoluteTarget = clampWebPlayerSeekTarget(absoluteTarget);
+        if (!Number.isFinite(absoluteTarget)) return;
+        if (webPlayerSeekInProgress) {
+            webPlayerDebug('seekWebPlayer.queued', { absoluteTarget });
+            webPlayerQueuedSeekTarget = absoluteTarget;
+            webPlayerDisplayedSeekTarget = absoluteTarget;
+            updateWebPlayerControls();
+            setWebPlayerStatus(`Seeking to ${formatTime(absoluteTarget)}...`);
+            return;
+        }
         webPlayerSeekInProgress = true;
         suppressWebPlayerSeek = true;
+        webPlayerDisplayedSeekTarget = absoluteTarget;
         setWebPlayerStatus(`Seeking to ${formatTime(absoluteTarget)}...`);
+        const wasPlaying = !video.paused;
+        webPlayerDebug('seekWebPlayer.begin', { absoluteTarget, wasPlaying });
         try {
             video.pause();
-            if (hlsInstance) {
-                hlsInstance.destroy();
-                hlsInstance = null;
-            }
-            video.removeAttribute('src');
-            video.load();
 
             const response = await apiCall(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/seek?time=${absoluteTarget.toFixed(2)}`, {
                 method: 'POST',
+            });
+            webPlayerDebug('seekWebPlayer.response', {
+                absoluteTarget,
+                startOffset: response?.startOffset,
+                actualStartOffset: response?.actualStartOffset,
+                duration: response?.duration,
+                playlistUrl: response?.playlistUrl,
             });
             if (!response?.playlistUrl) {
                 throw new Error('seek response missing playlist URL');
@@ -1253,18 +1655,37 @@
             hlsDuration = Number(response?.duration || hlsDuration || 0);
             lastWebPlayerTime = 0;
             updateWebPlayerControls();
-            attachWebPlayer(video, apiUrl(response.playlistUrl));
+            attachWebPlayer(video, apiUrl(response.playlistUrl), { reuseHls: true });
             video.addEventListener('canplay', () => {
+                void installWebPlayerSubtitleTrack(video);
                 updateWebPlayerControls();
+                renderWebPlayerSubtitles();
                 setWebPlayerStatus('');
+                if (wasPlaying) {
+                    webPlayerDebug('seekWebPlayer.resumePlayback');
+                    video.play().catch(() => {});
+                }
             }, { once: true });
         } catch (error) {
+            webPlayerDebug('seekWebPlayer.error', { absoluteTarget, message: error.message });
             console.error('Web player seek failed:', error);
             setWebPlayerStatus(`Seek failed: ${error.message}`);
         } finally {
             window.setTimeout(() => {
+                webPlayerDebug('seekWebPlayer.finalizeBeforeQueueCheck', { absoluteTarget });
                 suppressWebPlayerSeek = false;
                 webPlayerSeekInProgress = false;
+                const hasQueuedTarget = webPlayerQueuedSeekTarget !== null && webPlayerQueuedSeekTarget !== undefined;
+                const queuedTarget = hasQueuedTarget ? Number(webPlayerQueuedSeekTarget) : Number.NaN;
+                webPlayerQueuedSeekTarget = null;
+                if (Number.isFinite(queuedTarget) && Math.abs(queuedTarget - absoluteTarget) >= 0.5) {
+                    webPlayerDebug('seekWebPlayer.runQueued', { queuedTarget, absoluteTarget });
+                    void seekWebPlayer(video, queuedTarget);
+                    return;
+                }
+                webPlayerDisplayedSeekTarget = null;
+                updateWebPlayerControls();
+                webPlayerDebug('seekWebPlayer.done', { absoluteTarget });
             }, 500);
         }
     }
@@ -1274,19 +1695,60 @@
         return hlsPlaybackOffset + Number(video?.currentTime || 0);
     }
 
+    function currentWebPlayerControlTime() {
+        const hasDisplayedTarget = webPlayerDisplayedSeekTarget !== null && webPlayerDisplayedSeekTarget !== undefined;
+        const displayedTarget = hasDisplayedTarget ? Number(webPlayerDisplayedSeekTarget) : Number.NaN;
+        return Number.isFinite(displayedTarget) ? displayedTarget : currentWebPlayerAbsoluteTime();
+    }
+
+    function currentWebPlayerSkipBaseTime() {
+        const hasQueuedTarget = webPlayerQueuedSeekTarget !== null && webPlayerQueuedSeekTarget !== undefined;
+        const queuedTarget = hasQueuedTarget ? Number(webPlayerQueuedSeekTarget) : Number.NaN;
+        if (Number.isFinite(queuedTarget)) return queuedTarget;
+        return currentWebPlayerControlTime();
+    }
+
+    function clampWebPlayerSeekTarget(value) {
+        const target = Number(value);
+        if (!Number.isFinite(target)) return Number.NaN;
+        const duration = Number(hlsDuration || 0);
+        if (duration > 0) return Math.max(0, Math.min(target, duration));
+        return Math.max(0, target);
+    }
+
     function updateWebPlayerControls() {
         const video = document.getElementById('webPlayer');
         const seek = document.getElementById('webPlayerSeek');
         const time = document.getElementById('webPlayerTime');
         const button = document.getElementById('webPlayerPlayButton');
+        const fullscreenButton = document.getElementById('webPlayerFullscreenButton');
+        const host = document.getElementById('videoHost');
         const absoluteTime = currentWebPlayerAbsoluteTime();
+        const controlTime = currentWebPlayerControlTime();
         const duration = hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + hlsPlaybackOffset);
-        if (seek && document.activeElement !== seek) {
-            seek.max = String(Math.max(1, Math.floor(duration || 1)));
-            seek.value = String(Math.floor(Math.min(absoluteTime, duration || absoluteTime)));
+        if (seek) {
+            seek.disabled = webPlayerSeekInProgress;
         }
-        if (time) time.textContent = `${formatTime(absoluteTime)} / ${formatTime(duration)}`;
-        if (button && video) button.textContent = video.paused ? 'Play' : 'Pause';
+        if (seek && !webPlayerSeekInputActive) {
+            seek.max = String(Math.max(1, Math.floor(duration || 1)));
+            seek.value = String(Math.floor(Math.min(controlTime, duration || controlTime)));
+        }
+        if (time) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+        if (button && video) {
+            const isPlaying = !video.paused;
+            button.classList.toggle('is-playing', isPlaying);
+            button.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
+            button.setAttribute('title', isPlaying ? 'Pause' : 'Play');
+            const label = button.querySelector('.web-player-button-label');
+            if (label) label.textContent = isPlaying ? 'Pause' : 'Play';
+        }
+        if (fullscreenButton && host) {
+            const isFullscreen = host.classList.contains('web-player-fullscreen');
+            fullscreenButton.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+            fullscreenButton.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+            const label = fullscreenButton.querySelector('.web-player-button-label');
+            if (label) label.textContent = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+        }
     }
 
     function toggleWebPlayerPlayback() {
@@ -1300,30 +1762,113 @@
         updateWebPlayerControls();
     }
 
+    function skipWebPlayer(deltaSeconds) {
+        const target = clampWebPlayerSeekTarget(currentWebPlayerSkipBaseTime() + Number(deltaSeconds || 0));
+        webPlayerDebug('skipWebPlayer', { deltaSeconds, target });
+        void seekWebPlayer(document.getElementById('webPlayer'), target);
+    }
+
     function toggleWebPlayerFullscreen() {
-        const video = document.getElementById('webPlayer');
-        if (!video) return;
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
-            return;
-        }
-        if (video.requestFullscreen) {
-            video.requestFullscreen().catch(() => {});
-        } else if (video.webkitEnterFullscreen) {
-            video.webkitEnterFullscreen();
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        const isFullscreen = !host.classList.contains('web-player-fullscreen');
+        setWebPlayerFullscreen(isFullscreen);
+        if (isFullscreen) {
+            const request = host.requestFullscreen || host.webkitRequestFullscreen;
+            if (request) {
+                try {
+                    const result = request.call(host);
+                    if (result?.catch) result.catch(() => {});
+                } catch {}
+            }
+        } else if (document.fullscreenElement || document.webkitFullscreenElement) {
+            const exit = document.exitFullscreen || document.webkitExitFullscreen;
+            if (exit) {
+                try {
+                    const result = exit.call(document);
+                    if (result?.catch) result.catch(() => {});
+                } catch {}
+            }
         }
     }
 
+    function setWebPlayerFullscreen(isFullscreen) {
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        const wasFullscreen = host.classList.contains('web-player-fullscreen');
+        host.classList.toggle('web-player-fullscreen', Boolean(isFullscreen));
+        document.body.style.overflow = isFullscreen ? 'hidden' : '';
+        showWebPlayerControls();
+        updateWebPlayerControls();
+        if (wasFullscreen && !isFullscreen) {
+            restoreWebPlayerViewport();
+        }
+    }
+
+    function restoreWebPlayerViewport() {
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        if (webPlayerFullscreenScrollTimer) clearTimeout(webPlayerFullscreenScrollTimer);
+        const scrollToPlayer = () => {
+            host.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+        };
+        requestAnimationFrame(scrollToPlayer);
+        webPlayerFullscreenScrollTimer = window.setTimeout(() => {
+            webPlayerFullscreenScrollTimer = null;
+            scrollToPlayer();
+        }, 120);
+    }
+
+    function installWebPlayerControlsAutoHide(host) {
+        if (!host) return;
+        const wake = () => showWebPlayerControls();
+        host.addEventListener('mousemove', wake);
+        host.addEventListener('touchstart', wake, { passive: true });
+        host.addEventListener('click', wake);
+        showWebPlayerControls();
+    }
+
+    function showWebPlayerControls() {
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        host.classList.remove('web-player-controls-hidden');
+        if (webPlayerControlsHideTimer) clearTimeout(webPlayerControlsHideTimer);
+        webPlayerControlsHideTimer = window.setTimeout(() => {
+            const video = document.getElementById('webPlayer');
+            if (host.classList.contains('web-player-fullscreen') && video && !video.paused) {
+                host.classList.add('web-player-controls-hidden');
+            }
+        }, 3000);
+    }
+
     function previewWebPlayerSeek(value) {
+        webPlayerSeekInputActive = true;
         const time = document.getElementById('webPlayerTime');
         const target = Number(value || 0);
+        webPlayerDebug('seekbar.preview', { value, target });
         if (time) time.textContent = `${formatTime(target)} / ${formatTime(hlsDuration || target)}`;
+    }
+
+    function beginWebPlayerSeekInput() {
+        webPlayerSeekInputActive = true;
+        webPlayerDebug('seekbar.beginInput');
     }
 
     function commitWebPlayerSeek(value) {
         const video = document.getElementById('webPlayer');
         const target = Number(value || 0);
+        webPlayerDebug('seekbar.commit', { value, target });
         if (!video || !Number.isFinite(target)) return;
+        if (webPlayerSeekInProgress) {
+            webPlayerDebug('seekbar.commitIgnored.inProgress', { value, target });
+            return;
+        }
+        if (!webPlayerSeekInputActive) {
+            webPlayerDebug('seekbar.commitIgnored.notUserInput', { value, target });
+            return;
+        }
+        webPlayerSeekInputActive = false;
+        if (document.activeElement?.id === 'webPlayerSeek') document.activeElement.blur();
         void seekWebPlayer(video, target);
     }
 
@@ -1331,6 +1876,214 @@
         const status = document.getElementById('webPlayerStatus');
         if (status) status.textContent = message || '';
     }
+
+    function renderWebPlayerTrackSelectors() {
+        const audioOptions = webPlayerAudioStreams.map((stream) => {
+            const index = Number(stream.index);
+            const selected = Number(webPlayerSelectedAudioTrack) === index ? ' selected' : '';
+            return `<option value="${index}"${selected}>${escapeHtml(formatTrackLabel(stream, 'Audio'))}</option>`;
+        }).join('');
+        const textSubtitleStreams = webPlayerSubtitleStreams.filter(isWebTextSubtitleStream);
+        const subtitleOptions = [
+            `<option value="-1"${Number(webPlayerSelectedSubtitleTrack) < 0 ? ' selected' : ''}>Subtitles Off</option>`,
+            ...textSubtitleStreams.map((stream) => {
+                const index = Number(stream.index);
+                const selected = Number(webPlayerSelectedSubtitleTrack) === index ? ' selected' : '';
+                return `<option value="${index}"${selected}>${escapeHtml(formatTrackLabel(stream, 'Subtitles'))}</option>`;
+            }),
+        ].join('');
+
+        return `
+            <label class="media-meta">Audio
+                <select class="form-select compact-select" onchange="changeWebPlayerAudioTrack(this.value)" ${audioOptions ? '' : 'disabled'}>
+                    ${audioOptions || '<option>No audio tracks</option>'}
+                </select>
+            </label>
+            <label class="media-meta">Subtitles
+                <select class="form-select compact-select" onchange="changeWebPlayerSubtitleTrack(this.value)" ${textSubtitleStreams.length ? '' : 'disabled'}>
+                    ${subtitleOptions}
+                </select>
+            </label>
+        `;
+    }
+
+    function formatTrackLabel(stream, fallback) {
+        const index = Number(stream?.index);
+        const language = String(stream?.language || '').trim();
+        const title = String(stream?.title || '').trim();
+        const codec = String(stream?.codecName || stream?.codec || '').trim();
+        const parts = [];
+        parts.push(`${fallback} ${Number.isFinite(index) ? index : ''}`.trim());
+        if (language) parts.push(language.toUpperCase());
+        if (title) parts.push(title);
+        if (codec) parts.push(codec.toUpperCase());
+        return parts.join(' - ');
+    }
+
+    function isWebTextSubtitleStream(stream) {
+        const codec = String(stream?.codecName || stream?.codec || '').toLowerCase();
+        return ['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'vtt', 'mov_text', 'text'].includes(codec);
+    }
+
+    function changeWebPlayerAudioTrack(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedAudioTrack)) return;
+        webPlayerSelectedAudioTrack = parsed;
+        restartWebPlayerWithSelectedTracks();
+    }
+
+    function changeWebPlayerSubtitleTrack(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedSubtitleTrack)) return;
+        webPlayerSelectedSubtitleTrack = parsed;
+        void installWebPlayerSubtitleTrack(document.getElementById('webPlayer'));
+    }
+
+    async function installWebPlayerSubtitleTrack(video, options = {}) {
+        if (!video) return;
+        const loadToken = ++webPlayerSubtitleLoadToken;
+        if (!options.silent) {
+            webPlayerSubtitleCues = [];
+            renderWebPlayerSubtitles();
+        }
+        if (!hlsSessionId || Number(webPlayerSelectedSubtitleTrack) < 0) {
+            clearWebPlayerSubtitleRefresh();
+            setWebPlayerStatus('');
+            return;
+        }
+
+        const stream = webPlayerSubtitleStreams.find((entry) => Number(entry.index) === Number(webPlayerSelectedSubtitleTrack));
+        if (!stream || !isWebTextSubtitleStream(stream)) {
+            clearWebPlayerSubtitleRefresh();
+            setWebPlayerStatus('');
+            return;
+        }
+
+        if (!options.silent) setWebPlayerStatus('Loading subtitles...');
+        try {
+            const response = await fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/subtitles-${encodeURIComponent(String(webPlayerSelectedSubtitleTrack))}.vtt?reload=${Date.now()}`), {
+                credentials: 'same-origin',
+                cache: 'no-store',
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            if (loadToken !== webPlayerSubtitleLoadToken) return;
+            webPlayerSubtitleCues = parseWebVttCues(text);
+            renderWebPlayerSubtitles();
+            scheduleWebPlayerSubtitleRefresh(video);
+            setWebPlayerStatus('');
+        } catch (error) {
+            if (loadToken !== webPlayerSubtitleLoadToken) return;
+            console.warn('Failed to load subtitles:', error);
+            if (!options.silent) {
+                webPlayerSubtitleCues = [];
+                renderWebPlayerSubtitles();
+                setWebPlayerStatus(`Subtitle load failed: ${error.message}`);
+            }
+            scheduleWebPlayerSubtitleRefresh(video);
+        }
+    }
+
+    function clearWebPlayerSubtitleRefresh() {
+        if (webPlayerSubtitleRefreshTimer) {
+            clearTimeout(webPlayerSubtitleRefreshTimer);
+            webPlayerSubtitleRefreshTimer = null;
+        }
+    }
+
+    function scheduleWebPlayerSubtitleRefresh(video) {
+        clearWebPlayerSubtitleRefresh();
+        if (!video || !hlsSessionId || Number(webPlayerSelectedSubtitleTrack) < 0) return;
+        webPlayerSubtitleRefreshTimer = window.setTimeout(() => {
+            void installWebPlayerSubtitleTrack(video, { silent: true });
+        }, 5000);
+    }
+
+    function parseWebVttCues(text) {
+        const cues = [];
+        const normalized = String(text || '').replace(/\r/g, '');
+        for (const block of normalized.split(/\n{2,}/)) {
+            const lines = block.split('\n').map((line) => line.trimEnd()).filter(Boolean);
+            if (!lines.length) continue;
+            if (/^(WEBVTT|NOTE|STYLE|REGION)(\s|$)/i.test(lines[0])) continue;
+
+            const timingIndex = lines.findIndex((line) => line.includes('-->'));
+            if (timingIndex < 0) continue;
+
+            const match = lines[timingIndex].match(/^\s*([\d:.]+)\s+-->\s+([\d:.]+)/);
+            if (!match) continue;
+
+            const start = parseWebVttTimestamp(match[1]);
+            const end = parseWebVttTimestamp(match[2]);
+            const cueText = lines.slice(timingIndex + 1)
+                .join('\n')
+                .replace(/<[^>]+>/g, '')
+                .trim();
+            if (Number.isFinite(start) && Number.isFinite(end) && end > start && cueText) {
+                cues.push({ start, end, text: cueText });
+            }
+        }
+        return cues;
+    }
+
+    function parseWebVttTimestamp(value) {
+        const parts = String(value || '').split(':');
+        if (parts.length < 2 || parts.length > 3) return Number.NaN;
+        const seconds = Number(parts.pop());
+        const minutes = Number(parts.pop());
+        const hours = parts.length ? Number(parts.pop()) : 0;
+        if (![hours, minutes, seconds].every(Number.isFinite)) return Number.NaN;
+        return (hours * 3600) + (minutes * 60) + seconds;
+    }
+
+    function renderWebPlayerSubtitles() {
+        const overlay = document.getElementById('webPlayerSubtitleOverlay');
+        const video = document.getElementById('webPlayer');
+        if (!overlay || !video || Number(webPlayerSelectedSubtitleTrack) < 0 || !webPlayerSubtitleCues.length) {
+            if (overlay) overlay.textContent = '';
+            return;
+        }
+        const currentTime = Number(video.currentTime || 0);
+        overlay.textContent = webPlayerSubtitleCues
+            .filter((cue) => currentTime >= cue.start && currentTime <= cue.end)
+            .map((cue) => cue.text)
+            .join('\n');
+    }
+
+    function restartWebPlayerWithSelectedTracks() {
+        const video = document.getElementById('webPlayer');
+        const target = currentWebPlayerAbsoluteTime();
+        const wasPlaying = Boolean(video && !video.paused);
+        setWebPlayerStatus('Switching tracks...');
+        void startWebPlayer({
+            startOffset: target,
+            preserveTrackSelection: true,
+            autoPlay: wasPlaying,
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const host = document.getElementById('videoHost');
+        if (!host?.classList.contains('web-player-fullscreen')) return;
+        setWebPlayerFullscreen(false);
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        if (document.fullscreenElement !== host && host.classList.contains('web-player-fullscreen')) {
+            setWebPlayerFullscreen(false);
+        }
+    });
+
+    document.addEventListener('webkitfullscreenchange', () => {
+        const host = document.getElementById('videoHost');
+        if (!host) return;
+        if (document.webkitFullscreenElement !== host && host.classList.contains('web-player-fullscreen')) {
+            setWebPlayerFullscreen(false);
+        }
+    });
 
     function formatTime(seconds) {
         const total = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -1350,7 +2103,9 @@
             });
             const metadata = await apiCall(`/api/video/metadata?${params.toString()}`);
             const audioStreams = Array.isArray(metadata?.audioStreams) ? metadata.audioStreams : [];
-            const subtitleStreams = Array.isArray(metadata?.subtitleStreams) ? metadata.subtitleStreams : [];
+            const subtitleStreams = Array.isArray(metadata?.subtitleStreams)
+                ? metadata.subtitleStreams.filter(isWebTextSubtitleStream)
+                : [];
             const audioTrack = findAudioTrackByLanguage(audioStreams, preferences.audioLanguage);
             const selectedAudio = audioStreams.find((stream) => Number(stream.index) === Number(audioTrack));
             const actualAudioLanguage = normalizeLanguagePreference(selectedAudio?.language) || preferences.audioLanguage;
@@ -1360,10 +2115,10 @@
                 preferences.subtitleMode,
                 actualAudioLanguage,
             );
-            return { audioTrack, subtitleTrack };
+            return { audioTrack, subtitleTrack, audioStreams, subtitleStreams };
         } catch (error) {
             console.warn('Failed to resolve preferred tracks; using HLS defaults:', error);
-            return { audioTrack: null, subtitleTrack: null };
+            return { audioTrack: null, subtitleTrack: -1, audioStreams: [], subtitleStreams: [] };
         }
     }
 
@@ -1530,7 +2285,7 @@
         if (keepaliveTimer) clearInterval(keepaliveTimer);
         keepaliveTimer = setInterval(() => {
             if (!hlsSessionId) return;
-            const currentTime = Number(video?.currentTime || 0);
+            const currentTime = currentWebPlayerAbsoluteTime();
             fetch(apiUrl(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentTime.toFixed(2)}`), {
                 method: 'POST',
                 credentials: 'same-origin',
@@ -1539,6 +2294,8 @@
     }
 
     function stopHlsSession() {
+        webPlayerDebug('stopHlsSession.begin');
+        flushWebPlayerDebug();
         if (keepaliveTimer) {
             clearInterval(keepaliveTimer);
             keepaliveTimer = null;
@@ -1552,6 +2309,18 @@
         lastWebPlayerTime = 0;
         suppressWebPlayerSeek = false;
         webPlayerSeekInProgress = false;
+        webPlayerQueuedSeekTarget = null;
+        webPlayerDisplayedSeekTarget = null;
+        webPlayerSeekInputActive = false;
+        webPlayerSubtitleCues = [];
+        webPlayerSubtitleLoadToken++;
+        clearWebPlayerSubtitleRefresh();
+        renderWebPlayerSubtitles();
+        if (webPlayerControlsHideTimer) {
+            clearTimeout(webPlayerControlsHideTimer);
+            webPlayerControlsHideTimer = null;
+        }
+        document.body.style.overflow = '';
         if (hlsSessionId) {
             const id = hlsSessionId;
             hlsSessionId = '';
