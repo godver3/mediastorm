@@ -50,6 +50,28 @@ func (h *EPGHandler) getEPGTimeOffset(r *http.Request) time.Duration {
 	return time.Duration(offset) * time.Minute
 }
 
+func (h *EPGHandler) resolveEPGEnabled(r *http.Request, fallback bool) bool {
+	if h.cfgManager == nil {
+		return fallback
+	}
+
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return fallback
+	}
+
+	enabled := settings.Live.EPG.Enabled
+	profileID := r.URL.Query().Get("profileId")
+	if profileID != "" && h.userSettingsSvc != nil {
+		userSettings, err := h.userSettingsSvc.Get(profileID)
+		if err == nil && userSettings != nil && userSettings.LiveTV.EPG != nil && userSettings.LiveTV.EPG.Enabled != nil {
+			enabled = *userSettings.LiveTV.EPG.Enabled
+		}
+	}
+
+	return enabled
+}
+
 // applyOffsetToProgram returns a copy of the program with start/stop shifted by the offset.
 func applyOffsetToProgram(p models.EPGProgram, offset time.Duration) models.EPGProgram {
 	p.Start = p.Start.Add(offset)
@@ -62,6 +84,11 @@ func applyOffsetToProgram(p models.EPGProgram, offset time.Duration) models.EPGP
 func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 	if h.epgService == nil {
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
 		return
 	}
 
@@ -106,6 +133,11 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	if h.epgService == nil {
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"channelId":"","programs":[]}`))
 		return
 	}
 
@@ -160,6 +192,11 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request) {
 	if h.epgService == nil {
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
 		return
 	}
 
@@ -222,6 +259,11 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
 		return
 	}
+	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"channelId":"","programs":[]}`))
+		return
+	}
 
 	// Extract channel ID from path
 	path := r.URL.Path
@@ -282,6 +324,7 @@ func (h *EPGHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := h.epgService.GetStatus()
+	status.Enabled = h.resolveEPGEnabled(r, status.Enabled)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(status); err != nil {
