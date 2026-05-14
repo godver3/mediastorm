@@ -18,6 +18,7 @@ import (
 	"github.com/javi11/nntppool"
 
 	"novastream/config"
+	"novastream/internal/httpheaders"
 	"novastream/models"
 )
 
@@ -527,6 +528,36 @@ func TestServiceCheckHealthErrorsWithoutHost(t *testing.T) {
 	_, err := svc.CheckHealth(context.Background(), models.NZBResult{DownloadURL: "https://example.com/file.nzb"})
 	if err == nil {
 		t.Fatalf("expected error when host missing")
+	}
+}
+
+func TestFetchNZBSetsDownloadHeaders(t *testing.T) {
+	var receivedUserAgent string
+	var receivedAccept string
+
+	svc := NewService(nil, nil)
+	svc.httpClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			receivedUserAgent = req.Header.Get("User-Agent")
+			receivedAccept = req.Header.Get("Accept")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><nzb></nzb>`)),
+				Header:     http.Header{"Content-Disposition": []string{`attachment; filename="test.nzb"`}},
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	_, _, err := svc.fetchNZB(context.Background(), "https://example.com/test.nzb", models.NZBResult{Title: "Test"})
+	if err != nil {
+		t.Fatalf("fetchNZB returned error: %v", err)
+	}
+	if receivedUserAgent != httpheaders.UserAgent {
+		t.Fatalf("User-Agent = %q, want %q", receivedUserAgent, httpheaders.UserAgent)
+	}
+	if receivedAccept == "" {
+		t.Fatal("expected Accept header to be set")
 	}
 }
 

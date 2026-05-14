@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/httpheaders"
 	"novastream/models"
 	"novastream/services/debrid"
 )
@@ -18,10 +19,14 @@ import (
 func TestSearchTorznab_IndexerCategories(t *testing.T) {
 	// Track the categories received by the mock server
 	var receivedCategories string
+	var receivedUserAgent string
+	var receivedAccept string
 
 	// Create a mock newznab server
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedCategories = r.URL.Query().Get("cat")
+		receivedUserAgent = r.Header.Get("User-Agent")
+		receivedAccept = r.Header.Get("Accept")
 		// Return empty RSS feed
 		w.Header().Set("Content-Type", "application/xml")
 		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
@@ -61,6 +66,12 @@ func TestSearchTorznab_IndexerCategories(t *testing.T) {
 
 		if receivedCategories != "2000,2040,2045" {
 			t.Errorf("expected categories '2000,2040,2045', got '%s'", receivedCategories)
+		}
+		if receivedUserAgent != httpheaders.UserAgent {
+			t.Fatalf("expected User-Agent %q, got %q", httpheaders.UserAgent, receivedUserAgent)
+		}
+		if receivedAccept == "" {
+			t.Fatal("expected Accept header to be set")
 		}
 	})
 

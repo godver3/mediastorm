@@ -20,6 +20,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/database"
+	"novastream/internal/httpheaders"
 	"novastream/internal/importer"
 	"novastream/internal/integration"
 	"novastream/internal/mediaresolve"
@@ -544,6 +545,7 @@ func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate mo
 	if err != nil {
 		return nil, "", fmt.Errorf("build nzb request: %w", err)
 	}
+	httpheaders.SetNZBDownloadHeaders(req)
 
 	log.Printf("[playback] sending http request...")
 	resp, err := s.httpClient.Do(req)

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/httpheaders"
 	"novastream/models"
 	usenetsvc "novastream/services/usenet"
 )
@@ -86,6 +87,7 @@ func (p *usenetTrackProber) fetchNZB(ctx context.Context, downloadURL string) ([
 	if err != nil {
 		return nil, "", err
 	}
+	httpheaders.SetNZBDownloadHeaders(req)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, "", err

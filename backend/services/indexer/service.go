@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"novastream/config"
+	"novastream/internal/httpheaders"
 	"novastream/models"
 	"novastream/services/debrid"
 	"novastream/utils/filter"
@@ -2078,6 +2079,7 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 	if err != nil {
 		return nil, err
 	}
+	httpheaders.SetIndexerSearchHeaders(req)
 	req.URL.RawQuery = params.Encode()
 
 	resp, err := s.httpc.Do(req)

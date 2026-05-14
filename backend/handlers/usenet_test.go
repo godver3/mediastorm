@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"novastream/internal/httpheaders"
 	"novastream/models"
 )
 
@@ -90,6 +91,32 @@ func TestUsenetHandlerServiceError(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected status 502, got %d", rec.Code)
+	}
+}
+
+func TestUsenetTrackProberFetchNZBSetsDownloadHeaders(t *testing.T) {
+	var receivedUserAgent string
+	var receivedAccept string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUserAgent = r.Header.Get("User-Agent")
+		receivedAccept = r.Header.Get("Accept")
+		w.Header().Set("Content-Disposition", `attachment; filename="test.nzb"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><nzb></nzb>`))
+	}))
+	defer server.Close()
+
+	prober := &usenetTrackProber{httpClient: server.Client()}
+	_, _, err := prober.fetchNZB(context.Background(), server.URL+"/test.nzb")
+	if err != nil {
+		t.Fatalf("fetchNZB returned error: %v", err)
+	}
+	if receivedUserAgent != httpheaders.UserAgent {
+		t.Fatalf("User-Agent = %q, want %q", receivedUserAgent, httpheaders.UserAgent)
+	}
+	if receivedAccept == "" {
+		t.Fatal("expected Accept header to be set")
 	}
 }
 

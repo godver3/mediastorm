@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/httpheaders"
 	"novastream/internal/pool"
 	"novastream/models"
 
@@ -182,6 +183,7 @@ func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate mo
 	if err != nil {
 		return nil, "", fmt.Errorf("build nzb request: %w", err)
 	}
+	httpheaders.SetNZBDownloadHeaders(req)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -442,8 +444,8 @@ func (s *Service) checkSegmentsWithPool(ctx context.Context, segments []string, 
 	var (
 		wg                sync.WaitGroup
 		mu                sync.Mutex
-		retryIDs          []string               // Segments that need retry (connection issues)
-		definitelyMissing []string               // Segments confirmed missing from all providers
+		retryIDs          []string // Segments that need retry (connection issues)
+		definitelyMissing []string // Segments confirmed missing from all providers
 		seen              = make(map[string]struct{})
 	)
 
