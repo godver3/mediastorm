@@ -372,6 +372,35 @@
         position: relative;
     }
 
+    .playback-panel.web-player-theater-panel {
+        position: relative;
+        z-index: 5;
+        margin-left: calc(-260px - 1.25rem);
+        background: transparent;
+        border-color: transparent;
+    }
+
+    .playback-panel.web-player-theater-panel .player-wrap {
+        padding: 0;
+    }
+
+    #videoHost.web-player-theater {
+        padding: 1rem;
+        background: black;
+        border-radius: var(--radius-lg);
+    }
+
+    #videoHost.web-player-theater .web-player-video-frame {
+        max-height: calc(100vh - 220px);
+        border-radius: var(--radius);
+    }
+
+    #videoHost.web-player-theater .web-player-controls,
+    #videoHost.web-player-theater .web-player-track-controls,
+    #videoHost.web-player-theater #webPlayerStatus {
+        color: white;
+    }
+
     #videoHost.web-player-fullscreen {
         position: fixed;
         inset: 0;
@@ -430,11 +459,12 @@
         right: clamp(0.75rem, 3vw, 2rem);
         bottom: clamp(0.75rem, 3vw, 2rem);
         z-index: 4;
-        grid-template-columns: repeat(4, auto) minmax(0, 1fr) auto;
-        padding: 0.75rem;
+        grid-template-columns: repeat(6, auto) minmax(0, 1fr) auto;
+        gap: 0.5rem;
+        padding: 0.5rem;
         margin-top: 0;
         border: 1px solid rgba(255, 255, 255, 0.14);
-        border-radius: var(--radius-lg);
+        border-radius: var(--radius);
         background: rgba(0, 0, 0, 0.72);
         box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
         backdrop-filter: blur(14px);
@@ -448,7 +478,7 @@
 
     .web-player-controls {
         display: grid;
-        grid-template-columns: repeat(4, auto) minmax(0, 1fr) auto;
+        grid-template-columns: repeat(6, auto) minmax(0, 1fr) auto;
         gap: 0.75rem;
         align-items: center;
         margin-top: 0.75rem;
@@ -476,6 +506,7 @@
 
     .web-player-control-icon-only,
     .web-player-pause-icon,
+    .web-player-theater-exit,
     .web-player-fullscreen-exit {
         display: none;
     }
@@ -489,8 +520,9 @@
     }
 
     #videoHost.web-player-fullscreen .web-player-control-btn {
-        width: 2.75rem;
-        height: 2.75rem;
+        width: 2.25rem;
+        height: 2.25rem;
+        min-width: 2.25rem;
         padding: 0;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.12);
@@ -499,14 +531,19 @@
     }
 
     #videoHost.web-player-fullscreen .web-player-play-button {
-        width: 3.125rem;
-        height: 3.125rem;
-        min-width: 3.125rem;
+        width: 2.5rem;
+        height: 2.5rem;
+        min-width: 2.5rem;
         background: rgba(255, 255, 255, 0.22);
     }
 
     #videoHost.web-player-fullscreen .web-player-control-btn:hover {
         background: rgba(255, 255, 255, 0.2);
+    }
+
+    #videoHost.web-player-fullscreen .web-player-control-icon svg {
+        width: 14px;
+        height: 14px;
     }
 
     #videoHost.web-player-fullscreen .web-player-button-label,
@@ -526,6 +563,37 @@
         display: inline-flex;
     }
 
+    .web-player-volume-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 132px;
+    }
+
+    .web-player-volume-control input[type="range"] {
+        width: 84px;
+        min-width: 84px;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-volume-control {
+        gap: 0.375rem;
+        min-width: 104px;
+        color: white;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-volume-control input[type="range"] {
+        width: 64px;
+        min-width: 64px;
+    }
+
+    #videoHost.web-player-theater .web-player-theater-enter {
+        display: none;
+    }
+
+    #videoHost.web-player-theater .web-player-theater-exit {
+        display: inline-flex;
+    }
+
     .web-player-track-controls {
         display: flex;
         flex-wrap: wrap;
@@ -540,6 +608,16 @@
 
     .web-player-controls input[type="range"] {
         width: 100%;
+    }
+
+    .web-player-controls .web-player-volume-control input[type="range"] {
+        width: 84px;
+        min-width: 84px;
+    }
+
+    #videoHost.web-player-fullscreen .web-player-controls .web-player-volume-control input[type="range"] {
+        width: 64px;
+        min-width: 64px;
     }
 
     .web-player-time {
@@ -587,6 +665,37 @@
     }
 
     @media (max-width: 820px) {
+        .playback-panel.web-player-theater-panel {
+            margin-left: 0;
+            background: var(--bg-secondary);
+            border-color: var(--border);
+        }
+
+        .playback-panel.web-player-theater-panel .player-wrap {
+            padding: 1rem;
+        }
+
+        #videoHost.web-player-theater {
+            padding: 0;
+            background: transparent;
+            border-radius: 0;
+        }
+
+        .web-player-theater-button {
+            display: none;
+        }
+
+        .web-player-volume-control {
+            grid-column: 1 / -1;
+            width: 100%;
+        }
+
+        .web-player-controls .web-player-volume-control input[type="range"] {
+            flex: 1;
+            width: 100%;
+            min-width: 0;
+        }
+
         .web-player-controls {
             grid-template-columns: repeat(4, auto);
         }
@@ -723,6 +832,10 @@
     let webPlayerDebugQueue = [];
     let webPlayerDebugFlushTimer = null;
     let webPlayerFullscreenScrollTimer = null;
+    let webPlayerTheaterBodyOverflow = null;
+    let webPlayerTheaterDocumentOverflow = null;
+    let webPlayerVolume = 1;
+    let webPlayerMuted = false;
 
     document.addEventListener('DOMContentLoaded', () => {
         renderProfiles();
@@ -1354,8 +1467,10 @@
             document.getElementById('playbackPanel').innerHTML = '<div class="empty-inline">Resolved stream did not include a playable path.</div>';
             return;
         }
+        const panel = document.getElementById('playbackPanel');
+        panel.classList.remove('web-player-theater-panel');
         const size = candidate.sizeBytes ? `${(candidate.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
-        document.getElementById('playbackPanel').innerHTML = `
+        panel.innerHTML = `
             <div class="player-wrap">
                 <div class="details-actions" style="margin-bottom: 1rem;">
                     <button class="btn btn-primary" onclick="startWebPlayer()">
@@ -1417,6 +1532,8 @@
             preserveTrackSelection: Boolean(options.preserveTrackSelection),
             autoPlay: Boolean(options.autoPlay),
         });
+        const existingHost = document.getElementById('videoHost');
+        const wasTheater = Boolean(existingHost?.classList.contains('web-player-theater'));
         stopHlsSession();
         const host = document.getElementById('videoHost');
         if (!host) return;
@@ -1491,11 +1608,22 @@
                         <span class="web-player-control-icon web-player-control-icon-only" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
                         <span class="web-player-control-text">+30s</span>
                     </button>
+                    <button class="btn btn-sm btn-secondary web-player-control-btn web-player-theater-button" id="webPlayerTheaterButton" onclick="toggleWebPlayerTheater()" aria-label="Enter theater mode" title="Enter theater mode">
+                        <span class="web-player-control-icon web-player-theater-enter" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10v4H7z"/></svg></span>
+                        <span class="web-player-control-icon web-player-theater-exit" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 9v6"/><path d="M15 9v6"/></svg></span>
+                        <span class="web-player-button-label">Theater</span>
+                    </button>
                     <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerFullscreenButton" onclick="toggleWebPlayerFullscreen()" aria-label="Enter fullscreen" title="Enter fullscreen">
                         <span class="web-player-control-icon web-player-fullscreen-enter" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
                         <span class="web-player-control-icon web-player-fullscreen-exit" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
                         <span class="web-player-button-label">Fullscreen</span>
                     </button>
+                    <div class="web-player-volume-control" aria-label="Volume">
+                        <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerMuteButton" onclick="toggleWebPlayerMute()" aria-label="Mute" title="Mute">
+                            <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerVolumeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
+                        </button>
+                        <input id="webPlayerVolume" type="range" min="0" max="100" step="1" value="${Math.round(webPlayerVolume * 100)}" oninput="setWebPlayerVolume(this.value)" aria-label="Volume">
+                    </div>
                     <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginWebPlayerSeekInput()" ontouchstart="beginWebPlayerSeekInput()" onkeydown="beginWebPlayerSeekInput()" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
                     <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
                 </div>
@@ -1505,6 +1633,7 @@
                 <div id="webPlayerStatus" class="media-meta" style="margin-top: 0.5rem;"></div>
             `;
             const video = document.getElementById('webPlayer');
+            applyWebPlayerVolume(video);
             attachWebPlayer(video, playlistUrl);
             installWebPlayerSeekHandler(video);
             installWebPlayerControlsAutoHide(host);
@@ -1520,6 +1649,9 @@
             if (wasFullscreen) {
                 host.classList.add('web-player-fullscreen');
                 document.body.style.overflow = 'hidden';
+            }
+            if (wasTheater) {
+                setWebPlayerTheater(true);
             }
             webPlayerDebug('startWebPlayer.attached');
             window.setTimeout(() => {
@@ -1586,7 +1718,7 @@
 
     function installWebPlayerSeekHandler(video) {
         if (!video) return;
-        ['loadstart', 'loadedmetadata', 'durationchange', 'canplay', 'playing', 'waiting', 'stalled', 'emptied', 'seeking', 'seeked', 'pause', 'play', 'error'].forEach((eventName) => {
+        ['loadstart', 'loadedmetadata', 'durationchange', 'canplay', 'playing', 'waiting', 'stalled', 'emptied', 'seeking', 'seeked', 'pause', 'play', 'volumechange', 'error'].forEach((eventName) => {
             video.addEventListener(eventName, () => {
                 webPlayerDebug(`video.${eventName}`, {
                     duration: Number(video.duration || 0),
@@ -1594,6 +1726,11 @@
                     errorMessage: video.error ? video.error.message : '',
                 });
             });
+        });
+        video.addEventListener('volumechange', () => {
+            webPlayerVolume = Number(video.volume || 0);
+            webPlayerMuted = Boolean(video.muted);
+            updateWebPlayerControls();
         });
         video.addEventListener('timeupdate', () => {
             if (!webPlayerSeekInProgress && !video.seeking) {
@@ -1721,7 +1858,11 @@
         const seek = document.getElementById('webPlayerSeek');
         const time = document.getElementById('webPlayerTime');
         const button = document.getElementById('webPlayerPlayButton');
+        const theaterButton = document.getElementById('webPlayerTheaterButton');
         const fullscreenButton = document.getElementById('webPlayerFullscreenButton');
+        const muteButton = document.getElementById('webPlayerMuteButton');
+        const volumeInput = document.getElementById('webPlayerVolume');
+        const volumeIcon = document.getElementById('webPlayerVolumeIcon');
         const host = document.getElementById('videoHost');
         const absoluteTime = currentWebPlayerAbsoluteTime();
         const controlTime = currentWebPlayerControlTime();
@@ -1742,12 +1883,32 @@
             const label = button.querySelector('.web-player-button-label');
             if (label) label.textContent = isPlaying ? 'Pause' : 'Play';
         }
+        if (theaterButton && host) {
+            const isTheater = host.classList.contains('web-player-theater');
+            theaterButton.setAttribute('aria-label', isTheater ? 'Exit theater mode' : 'Enter theater mode');
+            theaterButton.setAttribute('title', isTheater ? 'Exit theater mode' : 'Enter theater mode');
+            const label = theaterButton.querySelector('.web-player-button-label');
+            if (label) label.textContent = isTheater ? 'Default' : 'Theater';
+        }
         if (fullscreenButton && host) {
             const isFullscreen = host.classList.contains('web-player-fullscreen');
             fullscreenButton.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
             fullscreenButton.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
             const label = fullscreenButton.querySelector('.web-player-button-label');
             if (label) label.textContent = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
+        }
+        if (volumeInput && video) {
+            volumeInput.value = String(Math.round(Number(video.volume || 0) * 100));
+        }
+        if (muteButton && video) {
+            const muted = Boolean(video.muted || Number(video.volume || 0) === 0);
+            muteButton.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+            muteButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
+            if (volumeIcon) {
+                volumeIcon.innerHTML = muted
+                    ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/>'
+                    : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>';
+            }
         }
     }
 
@@ -1762,10 +1923,85 @@
         updateWebPlayerControls();
     }
 
+    function applyWebPlayerVolume(video) {
+        if (!video) return;
+        video.volume = Math.max(0, Math.min(1, Number(webPlayerVolume) || 0));
+        video.muted = Boolean(webPlayerMuted);
+        updateWebPlayerControls();
+    }
+
+    function setWebPlayerVolume(value) {
+        const video = document.getElementById('webPlayer');
+        const nextVolume = Math.max(0, Math.min(1, Number(value || 0) / 100));
+        webPlayerVolume = nextVolume;
+        webPlayerMuted = nextVolume <= 0;
+        applyWebPlayerVolume(video);
+    }
+
+    function toggleWebPlayerMute() {
+        const video = document.getElementById('webPlayer');
+        webPlayerMuted = !webPlayerMuted;
+        if (!webPlayerMuted && webPlayerVolume <= 0) {
+            webPlayerVolume = 0.5;
+        }
+        applyWebPlayerVolume(video);
+    }
+
     function skipWebPlayer(deltaSeconds) {
         const target = clampWebPlayerSeekTarget(currentWebPlayerSkipBaseTime() + Number(deltaSeconds || 0));
         webPlayerDebug('skipWebPlayer', { deltaSeconds, target });
         void seekWebPlayer(document.getElementById('webPlayer'), target);
+    }
+
+    function isDesktopWebPlayerViewport() {
+        return window.matchMedia('(min-width: 821px)').matches;
+    }
+
+    function toggleWebPlayerTheater() {
+        const host = document.getElementById('videoHost');
+        if (!host || !isDesktopWebPlayerViewport()) return;
+        setWebPlayerTheater(!host.classList.contains('web-player-theater'));
+    }
+
+    function setWebPlayerTheater(isTheater) {
+        const host = document.getElementById('videoHost');
+        const panel = document.getElementById('playbackPanel');
+        if (!host || !panel) return;
+        const enable = Boolean(isTheater) && isDesktopWebPlayerViewport();
+        host.classList.toggle('web-player-theater', enable);
+        panel.classList.toggle('web-player-theater-panel', enable);
+        updateWebPlayerControls();
+        if (enable) {
+            lockWebPlayerTheaterScroll();
+            host.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        } else {
+            unlockWebPlayerTheaterScroll();
+            restoreWebPlayerViewport();
+        }
+    }
+
+    function lockWebPlayerTheaterScroll() {
+        if (webPlayerTheaterBodyOverflow === null) {
+            webPlayerTheaterBodyOverflow = document.body.style.overflow || '';
+        }
+        if (webPlayerTheaterDocumentOverflow === null) {
+            webPlayerTheaterDocumentOverflow = document.documentElement.style.overflow || '';
+        }
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+    }
+
+    function unlockWebPlayerTheaterScroll(force = false) {
+        const host = document.getElementById('videoHost');
+        if (!force && host?.classList.contains('web-player-fullscreen')) return;
+        if (webPlayerTheaterBodyOverflow !== null) {
+            document.body.style.overflow = webPlayerTheaterBodyOverflow;
+            webPlayerTheaterBodyOverflow = null;
+        }
+        if (webPlayerTheaterDocumentOverflow !== null) {
+            document.documentElement.style.overflow = webPlayerTheaterDocumentOverflow;
+            webPlayerTheaterDocumentOverflow = null;
+        }
     }
 
     function toggleWebPlayerFullscreen() {
@@ -1798,9 +2034,13 @@
         const wasFullscreen = host.classList.contains('web-player-fullscreen');
         host.classList.toggle('web-player-fullscreen', Boolean(isFullscreen));
         document.body.style.overflow = isFullscreen ? 'hidden' : '';
+        document.documentElement.style.overflow = isFullscreen ? 'hidden' : '';
         showWebPlayerControls();
         updateWebPlayerControls();
         if (wasFullscreen && !isFullscreen) {
+            if (host.classList.contains('web-player-theater')) {
+                lockWebPlayerTheaterScroll();
+            }
             restoreWebPlayerViewport();
         }
     }
@@ -2085,6 +2325,13 @@
         }
     });
 
+    window.addEventListener('resize', () => {
+        const host = document.getElementById('videoHost');
+        if (host?.classList.contains('web-player-theater') && !isDesktopWebPlayerViewport()) {
+            setWebPlayerTheater(false);
+        }
+    });
+
     function formatTime(seconds) {
         const total = Math.max(0, Math.floor(Number(seconds) || 0));
         const hours = Math.floor(total / 3600);
@@ -2296,6 +2543,11 @@
     function stopHlsSession() {
         webPlayerDebug('stopHlsSession.begin');
         flushWebPlayerDebug();
+        const host = document.getElementById('videoHost');
+        const panel = document.getElementById('playbackPanel');
+        if (host) host.classList.remove('web-player-theater');
+        if (panel) panel.classList.remove('web-player-theater-panel');
+        unlockWebPlayerTheaterScroll(true);
         if (keepaliveTimer) {
             clearInterval(keepaliveTimer);
             keepaliveTimer = null;
@@ -2321,6 +2573,7 @@
             webPlayerControlsHideTimer = null;
         }
         document.body.style.overflow = '';
+        document.documentElement.style.overflow = '';
         if (hlsSessionId) {
             const id = hlsSessionId;
             hlsSessionId = '';
