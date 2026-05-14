@@ -62,6 +62,8 @@ type UnifiedProbeResult struct {
 	Duration           float64
 	ColorTransfer      string // e.g., "smpte2084" for HDR, "bt709" for SDR
 	VideoCodec         string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
+	VideoPixFmt        string // e.g., "yuv420p", "yuv420p10le" - used for browser copy compatibility
+	VideoProfile       string // e.g., "High", "High 10" - used for browser copy compatibility
 	AudioStreams       []audioStreamInfo
 	SubtitleStreams    []subtitleStreamInfo
 	HasTrueHD          bool
@@ -215,7 +217,7 @@ func (m *HLSManager) probeAllMetadata(ctx context.Context, path string) (*Unifie
 
 	args := []string{
 		"-v", "error",
-		"-probesize", "1000000",      // 1MB (faster startup)
+		"-probesize", "1000000", // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
@@ -248,7 +250,7 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 
 	args := []string{
 		"-v", "error",
-		"-probesize", "1000000",      // 1MB (faster startup)
+		"-probesize", "1000000", // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
@@ -276,6 +278,8 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			Index         int               `json:"index"`
 			CodecType     string            `json:"codec_type"`
 			CodecName     string            `json:"codec_name"`
+			PixFmt        string            `json:"pix_fmt"`
+			Profile       string            `json:"profile"`
 			ColorTransfer string            `json:"color_transfer"`
 			Tags          map[string]string `json:"tags"`
 			Disposition   map[string]int    `json:"disposition"`
@@ -327,6 +331,8 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			// Get video codec and color transfer from first video stream
 			if result.VideoCodec == "" {
 				result.VideoCodec = codec
+				result.VideoPixFmt = strings.ToLower(strings.TrimSpace(stream.PixFmt))
+				result.VideoProfile = strings.ToLower(strings.TrimSpace(stream.Profile))
 			}
 			if result.ColorTransfer == "" {
 				result.ColorTransfer = stream.ColorTransfer
@@ -1011,7 +1017,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 	// Format: -read_intervals START%+#COUNT means "read COUNT frames starting from START seconds"
 	args := []string{
 		"-v", "error",
-		"-probesize", "1000000",      // 1MB (faster startup)
+		"-probesize", "1000000", // 1MB (faster startup)
 		"-analyzeduration", "500000", // 0.5s (faster startup)
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-i", url,
@@ -1030,7 +1036,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 		log.Printf("[hls] keyframe probe with skip_frame failed: %v, trying without skip_frame", err)
 		args = []string{
 			"-v", "error",
-			"-probesize", "1000000",      // 1MB (faster startup)
+			"-probesize", "1000000", // 1MB (faster startup)
 			"-analyzeduration", "500000", // 0.5s (faster startup)
 			"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 			"-i", url,

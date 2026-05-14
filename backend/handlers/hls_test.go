@@ -540,6 +540,43 @@ func TestHLSManager_ServeMasterPlaylist(t *testing.T) {
 	}
 }
 
+func TestIsBrowserCopyCompatibleVideo(t *testing.T) {
+	tests := []struct {
+		name  string
+		probe *UnifiedProbeResult
+		want  bool
+	}{
+		{
+			name:  "h264 8-bit yuv420p",
+			probe: &UnifiedProbeResult{VideoCodec: "h264", VideoPixFmt: "yuv420p", VideoProfile: "High"},
+			want:  true,
+		},
+		{
+			name:  "h264 high 10",
+			probe: &UnifiedProbeResult{VideoCodec: "h264", VideoPixFmt: "yuv420p10le", VideoProfile: "High 10"},
+			want:  false,
+		},
+		{
+			name:  "hevc is not broadly browser copy compatible",
+			probe: &UnifiedProbeResult{VideoCodec: "hevc", VideoPixFmt: "yuv420p", VideoProfile: "Main"},
+			want:  false,
+		},
+		{
+			name:  "missing probe data",
+			probe: nil,
+			want:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isBrowserCopyCompatibleVideo(tc.probe); got != tc.want {
+				t.Fatalf("isBrowserCopyCompatibleVideo() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHLSManager_ServeSubtitlePlaylist(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := NewHLSManager(tmpDir, "", "", nil)

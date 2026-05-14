@@ -389,8 +389,9 @@ type HLSSession struct {
 	ccExtractor       *ccExtractor // Running ccextractor process for this session (nil if not started)
 
 	// Prequeue tracking
-	PrequeueType string // "", "details" (details page), or "next_episode" (auto-play next)
-	CastMode     bool   // True when the session is being prepared for Chromecast-style HLS playback
+	PrequeueType   string // "", "details" (details page), or "next_episode" (auto-play next)
+	CastMode       bool   // True when the session is being prepared for Chromecast-style HLS playback
+	PlaybackTarget string // Optional client target hint, e.g. "web"
 }
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
@@ -465,6 +466,31 @@ func isTextSubtitleCodec(codec string) bool {
 	default:
 		return false
 	}
+}
+
+func isBrowserCopyCompatibleVideo(probe *UnifiedProbeResult) bool {
+	if probe == nil {
+		return false
+	}
+
+	codec := strings.ToLower(strings.TrimSpace(probe.VideoCodec))
+	switch codec {
+	case "h264", "avc", "avc1":
+	default:
+		return false
+	}
+
+	pixFmt := strings.ToLower(strings.TrimSpace(probe.VideoPixFmt))
+	if pixFmt != "" && pixFmt != "yuv420p" {
+		return false
+	}
+
+	profile := strings.ToLower(strings.TrimSpace(probe.VideoProfile))
+	if strings.Contains(profile, "10") || strings.Contains(profile, "4:2:2") || strings.Contains(profile, "4:4:4") {
+		return false
+	}
+
+	return true
 }
 
 func sanitizeHLSLanguage(language string) string {
@@ -898,7 +924,7 @@ func (m *HLSManager) buildLocalWebDAVURLFromPath(path string) (string, bool) {
 }
 
 // CreateSession starts a new HLS transcoding session
-func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string, castMode bool, prequeueType string) (*HLSSession, error) {
+func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPath string, hasDV bool, dvProfile string, hasHDR bool, forceAAC bool, startOffset float64, transcodingOffset float64, audioTrackIndex int, subtitleTrackIndex int, profileID string, profileName string, clientIP string, castMode bool, prequeueType string, playbackTarget string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
@@ -1005,6 +1031,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		ProbeData:               probeData, // Cache unified probe results for startTranscoding
 		CastMode:                castMode,
 		PrequeueType:            prequeueType, // "", "details", or "next_episode"
+		PlaybackTarget:          strings.ToLower(strings.TrimSpace(playbackTarget)),
 	}
 
 	m.mu.Lock()
@@ -1789,6 +1816,15 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	if session.ProbeData != nil {
 		videoCodec = session.ProbeData.VideoCodec
 		needsVideoTranscode = IsIncompatibleVideoCodec(videoCodec)
+	}
+	if session.PlaybackTarget == "web" && !isBrowserCopyCompatibleVideo(session.ProbeData) {
+		needsVideoTranscode = true
+		if session.ProbeData != nil {
+			log.Printf("[hls] session %s: web target requires browser-compatible video; transcoding codec=%q pix_fmt=%q profile=%q to H.264",
+				session.ID, session.ProbeData.VideoCodec, session.ProbeData.VideoPixFmt, session.ProbeData.VideoProfile)
+		} else {
+			log.Printf("[hls] session %s: web target has no video probe data; transcoding to H.264", session.ID)
+		}
 	}
 
 	if needsVideoTranscode {

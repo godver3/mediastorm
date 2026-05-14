@@ -2826,6 +2826,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	hasHDR := r.URL.Query().Get("hdr") == "true"
 	forceAAC := r.URL.Query().Get("forceAAC") == "true"
 	castMode := r.URL.Query().Get("cast") == "true"
+	playbackTarget := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	// Check global setting for forced AAC transcoding (for Bluetooth compatibility)
 	if !forceAAC && h.configManager != nil {
 		if settings, err := h.configManager.Load(); err == nil {
@@ -2936,7 +2937,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs transcodingOffset=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex)
 
-	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), castMode, "")
+	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), castMode, "", playbackTarget)
 	if err != nil {
 		log.Printf("[video] failed to create HLS session: %v", err)
 		if errors.Is(err, streaming.ErrStaleTorrent) {
@@ -3593,7 +3594,7 @@ func (h *VideoHandler) CreateHLSSession(ctx context.Context, path string, hasDV 
 		}
 	}
 
-	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "", false, prequeueType)
+	session, err := h.hlsManager.CreateSession(ctx, path, path, hasDV, dvProfile, hasHDR, false, startOffset, 0, audioTrackIndex, subtitleTrackIndex, profileID, "", "", false, prequeueType, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HLS session: %w", err)
 	}
@@ -3870,6 +3871,8 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 	if stream != nil {
 		// Extract video codec for compatibility detection
 		result.VideoCodec = strings.ToLower(strings.TrimSpace(stream.CodecName))
+		result.VideoPixFmt = strings.ToLower(strings.TrimSpace(stream.PixFmt))
+		result.VideoProfile = strings.ToLower(strings.TrimSpace(stream.Profile))
 
 		// Detect Dolby Vision
 		hasDV, dvProfile, _ := detectDolbyVision(stream)
@@ -3969,6 +3972,8 @@ func (h *VideoHandler) unifiedProbeToVideoFull(cached *UnifiedProbeResult) *Vide
 	result := &VideoFullResult{
 		Duration:           cached.Duration,
 		VideoCodec:         cached.VideoCodec,
+		VideoPixFmt:        cached.VideoPixFmt,
+		VideoProfile:       cached.VideoProfile,
 		HasDolbyVision:     cached.HasDolbyVision,
 		HasHDR10:           cached.HasHDR10,
 		DolbyVisionProfile: cached.DolbyVisionProfile,
@@ -4008,6 +4013,8 @@ func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *Unified
 	cached := &UnifiedProbeResult{
 		Duration:           result.Duration,
 		VideoCodec:         result.VideoCodec,
+		VideoPixFmt:        result.VideoPixFmt,
+		VideoProfile:       result.VideoProfile,
 		HasDolbyVision:     result.HasDolbyVision,
 		HasHDR10:           result.HasHDR10,
 		DolbyVisionProfile: result.DolbyVisionProfile,
