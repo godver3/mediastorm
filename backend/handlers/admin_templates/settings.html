@@ -250,11 +250,29 @@
                 accentColor: '#0061fe',
                 textColor: '#ffffff',
                 secondaryTextColor: '#a8adbd',
+                backgroundColor: '#0b0b0f',
                 modalBackgroundColor: '#1f1f2a',
                 buttonStyle: 'soft',
                 buttonRadius: 'rounded',
                 highContrast: false,
                 reduceOverlays: false,
+            },
+        },
+        {
+            id: 'amoled-black',
+            name: 'AMOLED Black',
+            description: 'Pure black page and modal backgrounds for OLED displays.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#3f66ff',
+                textColor: '#ffffff',
+                secondaryTextColor: '#b8bdcf',
+                backgroundColor: '#000000',
+                modalBackgroundColor: '#000000',
+                buttonStyle: 'soft',
+                buttonRadius: 'rounded',
+                highContrast: false,
+                reduceOverlays: true,
             },
         },
         {
@@ -266,6 +284,7 @@
                 accentColor: '#ffd400',
                 textColor: '#ffffff',
                 secondaryTextColor: '#e6e8f2',
+                backgroundColor: '#0b0b0f',
                 modalBackgroundColor: '#101018',
                 buttonStyle: 'filled',
                 buttonRadius: 'rounded',
@@ -282,6 +301,7 @@
                 accentColor: '#22c55e',
                 textColor: '#f8fafc',
                 secondaryTextColor: '#cbd5e1',
+                backgroundColor: '#0f172a',
                 modalBackgroundColor: '#172033',
                 buttonStyle: 'soft',
                 buttonRadius: 'pill',
@@ -298,6 +318,7 @@
                 accentColor: '#00d4ff',
                 textColor: '#e6fbff',
                 secondaryTextColor: '#8bd8e8',
+                backgroundColor: '#031521',
                 modalBackgroundColor: '#082f49',
                 buttonStyle: 'soft',
                 buttonRadius: 'rounded',
@@ -314,6 +335,7 @@
                 accentColor: '#ff4fa3',
                 textColor: '#fff1f7',
                 secondaryTextColor: '#f9a8d4',
+                backgroundColor: '#1f0714',
                 modalBackgroundColor: '#4a1230',
                 buttonStyle: 'filled',
                 buttonRadius: 'pill',
@@ -330,6 +352,7 @@
                 accentColor: '#ffb000',
                 textColor: '#fff7ed',
                 secondaryTextColor: '#fdba74',
+                backgroundColor: '#1c0703',
                 modalBackgroundColor: '#431407',
                 buttonStyle: 'outlined',
                 buttonRadius: 'rounded',
@@ -346,6 +369,7 @@
                 accentColor: '#7cff00',
                 textColor: '#d9ffb3',
                 secondaryTextColor: '#8ee66b',
+                backgroundColor: '#000000',
                 modalBackgroundColor: '#061a0b',
                 buttonStyle: 'outlined',
                 buttonRadius: 'square',
@@ -362,6 +386,7 @@
                 accentColor: '#00ff66',
                 textColor: '#ff1a1a',
                 secondaryTextColor: '#00ffff',
+                backgroundColor: '#120021',
                 modalBackgroundColor: '#2b0052',
                 buttonStyle: 'outlined',
                 buttonRadius: 'square',
@@ -1495,7 +1520,7 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
-    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
+    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
     const clientPlaybackFields = ['maxResultsPerResolution'];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
     // Map network field paths to client settings keys
@@ -4561,7 +4586,7 @@
         const descHtml = currentPreset
             ? '<span style="color: var(--text-muted); font-size: 0.8rem;">' + currentPreset.description + '</span>'
             : '<span style="color: var(--text-muted); font-size: 0.8rem;">Choose a preset to fill the appearance fields below.</span>';
-        const swatchHtml = (currentPreset ? ['accentColor', 'textColor', 'secondaryTextColor', 'modalBackgroundColor'].map(key => {
+        const swatchHtml = (currentPreset ? ['accentColor', 'textColor', 'secondaryTextColor', 'backgroundColor', 'modalBackgroundColor'].map(key => {
             const color = currentPreset.appearance[key];
             return '<span title="' + key + ': ' + color + '" style="display:inline-block;width:18px;height:18px;border-radius:4px;background:' + color + ';border:1px solid var(--border-color);"></span>';
         }).join('') : '');

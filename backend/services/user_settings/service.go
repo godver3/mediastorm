@@ -438,6 +438,7 @@ func appearanceSettingsSet(a models.AppearanceSettings) bool {
 		a.AccentColor != "" ||
 		a.TextColor != "" ||
 		a.SecondaryTextColor != "" ||
+		a.BackgroundColor != "" ||
 		a.ModalBackgroundColor != "" ||
 		a.ButtonStyle != "" ||
 		a.ButtonRadius != "" ||

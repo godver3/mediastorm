@@ -534,6 +534,7 @@ type AppearanceSettings struct {
 	AccentColor          string   `json:"accentColor,omitempty"`          // Primary accent color as #RRGGBB
 	TextColor            string   `json:"textColor,omitempty"`            // Primary text color as #RRGGBB
 	SecondaryTextColor   string   `json:"secondaryTextColor,omitempty"`   // Secondary text color as #RRGGBB
+	BackgroundColor      string   `json:"backgroundColor,omitempty"`      // Page background color as #RRGGBB
 	ModalBackgroundColor string   `json:"modalBackgroundColor,omitempty"` // Modal background color as #RRGGBB
 	ButtonStyle          string   `json:"buttonStyle,omitempty"`          // "soft", "outlined", or "filled"
 	ButtonRadius         string   `json:"buttonRadius,omitempty"`         // "square", "rounded", or "pill"

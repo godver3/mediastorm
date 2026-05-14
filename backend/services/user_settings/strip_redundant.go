@@ -161,6 +161,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 				AccentColor:          g.Display.Appearance.AccentColor,
 				TextColor:            g.Display.Appearance.TextColor,
 				SecondaryTextColor:   g.Display.Appearance.SecondaryTextColor,
+				BackgroundColor:      g.Display.Appearance.BackgroundColor,
 				ModalBackgroundColor: g.Display.Appearance.ModalBackgroundColor,
 				ButtonStyle:          g.Display.Appearance.ButtonStyle,
 				ButtonRadius:         g.Display.Appearance.ButtonRadius,
@@ -760,6 +761,7 @@ func appearanceEqual(a, b models.AppearanceSettings) bool {
 	if a.AccentColor != b.AccentColor ||
 		a.TextColor != b.TextColor ||
 		a.SecondaryTextColor != b.SecondaryTextColor ||
+		a.BackgroundColor != b.BackgroundColor ||
 		a.ModalBackgroundColor != b.ModalBackgroundColor ||
 		a.ButtonStyle != b.ButtonStyle ||
 		a.ButtonRadius != b.ButtonRadius {

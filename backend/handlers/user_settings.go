@@ -196,6 +196,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 				AccentColor:          globalSettings.Display.Appearance.AccentColor,
 				TextColor:            globalSettings.Display.Appearance.TextColor,
 				SecondaryTextColor:   globalSettings.Display.Appearance.SecondaryTextColor,
+				BackgroundColor:      globalSettings.Display.Appearance.BackgroundColor,
 				ModalBackgroundColor: globalSettings.Display.Appearance.ModalBackgroundColor,
 				ButtonStyle:          globalSettings.Display.Appearance.ButtonStyle,
 				ButtonRadius:         globalSettings.Display.Appearance.ButtonRadius,
