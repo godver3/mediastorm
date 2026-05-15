@@ -241,6 +241,9 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 
 func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		q = r.URL.Query().Get("query")
+	}
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 

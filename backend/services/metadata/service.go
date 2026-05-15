@@ -2035,13 +2035,24 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if q == "" {
 		return []models.SearchResult{}, nil
 	}
-	if mediaType == "" {
-		mediaType = "series"
-	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
 
 	// In demo mode, only return matching public domain content
 	if s.demo {
 		return s.searchDemo(ctx, q, mediaType), nil
+	}
+
+	if mediaType == "" || mediaType == "all" {
+		movieResults, movieErr := s.Search(ctx, q, "movie")
+		seriesResults, seriesErr := s.Search(ctx, q, "series")
+		results := mergeSearchResults(append(movieResults, seriesResults...))
+		if len(results) > 0 || movieErr == nil || seriesErr == nil {
+			return results, nil
+		}
+		if movieErr != nil {
+			return nil, movieErr
+		}
+		return nil, seriesErr
 	}
 
 	key := cacheKey("metadata", "search", "v2", mediaType, q, s.client.language)

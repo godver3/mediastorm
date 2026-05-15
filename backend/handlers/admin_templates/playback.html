@@ -497,6 +497,41 @@
         bottom: 14%;
     }
 
+    .web-player-pause-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.16s ease;
+    }
+
+    .web-player-pause-overlay-inner {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: clamp(3rem, 6.5vw, 4.5rem);
+        height: clamp(3rem, 6.5vw, 4.5rem);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.58);
+        color: white;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+        backdrop-filter: blur(10px);
+    }
+
+    .web-player-pause-overlay-inner svg {
+        width: 48%;
+        height: 48%;
+    }
+
+    #videoHost.web-player-paused .web-player-pause-overlay {
+        opacity: 1;
+    }
+
     #videoHost.web-player-fullscreen .web-player-controls {
         position: absolute;
         left: clamp(0.75rem, 3vw, 2rem);
@@ -610,24 +645,102 @@
     .web-player-volume-control {
         display: inline-flex;
         align-items: center;
-        gap: 0.5rem;
-        min-width: 132px;
+        justify-content: center;
+        position: relative;
+        min-width: 2.25rem;
     }
 
-    .web-player-volume-control input[type="range"] {
-        width: 84px;
-        min-width: 84px;
+    .web-player-volume-control::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: 100%;
+        width: 4rem;
+        height: 0.85rem;
+        transform: translateX(-50%);
+    }
+
+    .web-player-volume-popover {
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 0.35rem);
+        z-index: 8;
+        display: grid;
+        justify-items: center;
+        gap: 0.5rem;
+        width: 3rem;
+        padding: 0.65rem 0.45rem;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: var(--radius);
+        background: rgba(11, 11, 15, 0.94);
+        box-shadow: var(--shadow-lg);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transform: translateX(-50%) translateY(0.25rem);
+        transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+    }
+
+    .web-player-volume-control:hover .web-player-volume-popover,
+    .web-player-volume-control:focus-within .web-player-volume-popover {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transform: translateX(-50%) translateY(0);
+    }
+
+    .web-player-volume-popover::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: -0.38rem;
+        width: 0.7rem;
+        height: 0.7rem;
+        background: rgba(11, 11, 15, 0.94);
+        border-right: 1px solid rgba(255, 255, 255, 0.14);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+        transform: translateX(-50%) rotate(45deg);
+    }
+
+    .web-player-volume-slider {
+        width: 1.7rem;
+        height: 7rem;
+        writing-mode: vertical-rl;
+        direction: rtl;
+        accent-color: var(--accent);
+    }
+
+    .web-player-volume-value {
+        color: var(--text-secondary);
+        font-size: 0.6875rem;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+    }
+
+    .web-player-volume-mute {
+        width: 1.9rem;
+        height: 1.9rem;
+        min-width: 1.9rem;
+        padding: 0;
+        border-radius: 999px;
     }
 
     #videoHost.web-player-fullscreen .web-player-volume-control {
-        gap: 0.375rem;
-        min-width: 104px;
+        min-width: 2.25rem;
         color: white;
     }
 
-    #videoHost.web-player-fullscreen .web-player-volume-control input[type="range"] {
-        width: 64px;
-        min-width: 64px;
+    #videoHost.web-player-fullscreen .web-player-volume-popover {
+        background: rgba(0, 0, 0, 0.76);
+        backdrop-filter: blur(14px);
+    }
+
+    #videoHost.web-player-fullscreen .web-player-volume-popover::after {
+        background: rgba(0, 0, 0, 0.76);
+    }
+
+    #videoHost.web-player-theater .web-player-volume-popover {
+        z-index: 8002;
     }
 
     #videoHost.web-player-theater .web-player-theater-enter {
@@ -652,16 +765,6 @@
 
     .web-player-controls input[type="range"] {
         width: 100%;
-    }
-
-    .web-player-controls .web-player-volume-control input[type="range"] {
-        width: 84px;
-        min-width: 84px;
-    }
-
-    #videoHost.web-player-fullscreen .web-player-controls .web-player-volume-control input[type="range"] {
-        width: 64px;
-        min-width: 64px;
     }
 
     .web-player-time {
@@ -730,14 +833,7 @@
         }
 
         .web-player-volume-control {
-            grid-column: 1 / -1;
-            width: 100%;
-        }
-
-        .web-player-controls .web-player-volume-control input[type="range"] {
-            flex: 1;
-            width: 100%;
-            min-width: 0;
+            width: 2.25rem;
         }
 
         .web-player-controls {
@@ -1159,10 +1255,11 @@
 
     function normalizeSearchItem(result) {
         const title = result.title || result;
+        const mediaType = normalizeMediaType(title.mediaType || title.type || result.mediaType || result.type);
         return {
             id: title.id || title.titleId || title.imdbId || title.tvdbId || title.tmdbId || title.name,
             title: title.name || title.title || 'Unknown',
-            mediaType: title.mediaType || result.mediaType || 'movie',
+            mediaType,
             year: title.year || result.year || 0,
             overview: title.overview || '',
             posterUrl: title.poster?.url || title.posterUrl || title.poster || '',
@@ -1172,6 +1269,12 @@
             tmdbId: title.tmdbId || '',
             raw: title,
         };
+    }
+
+    function normalizeMediaType(value) {
+        const type = String(value || '').trim().toLowerCase();
+        if (type === 'series' || type === 'tv' || type === 'show' || type === 'shows') return 'series';
+        return 'movie';
     }
 
     function normalizeContinueItem(item) {
@@ -1632,10 +1735,11 @@
     async function startWebPlayer(options = {}) {
         if (!resolvedPlayback?.webdavPath) return;
         const requestedStartOffset = Number.isFinite(Number(options.startOffset)) ? Math.max(0, Number(options.startOffset)) : 0;
+        const shouldAutoPlay = options.autoPlay !== false;
         webPlayerDebug('startWebPlayer.begin', {
             requestedStartOffset,
             preserveTrackSelection: Boolean(options.preserveTrackSelection),
-            autoPlay: Boolean(options.autoPlay),
+            autoPlay: shouldAutoPlay,
         });
         const existingHost = document.getElementById('videoHost');
         const wasTheater = Boolean(existingHost?.classList.contains('web-player-theater'));
@@ -1702,6 +1806,11 @@
                 <div class="web-player-video-frame">
                     <video id="webPlayer" playsinline webkit-playsinline controlsList="nodownload noplaybackrate noremoteplayback nofullscreen" onclick="toggleWebPlayerPlayback()"></video>
                     <div id="webPlayerSubtitleOverlay" class="web-player-subtitle-overlay"></div>
+                    <div class="web-player-pause-overlay" aria-hidden="true">
+                        <div class="web-player-pause-overlay-inner">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+                        </div>
+                    </div>
                 </div>
                 <div class="web-player-controls">
                     <button class="btn btn-sm btn-secondary web-player-control-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
@@ -1727,11 +1836,17 @@
                         <span class="web-player-control-icon web-player-fullscreen-exit" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
                         <span class="web-player-button-label">Fullscreen</span>
                     </button>
-                    <div class="web-player-volume-control" aria-label="Volume">
-                        <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerMuteButton" onclick="toggleWebPlayerMute()" aria-label="Mute" title="Mute">
+                    <div class="web-player-volume-control" id="webPlayerVolumeControl" aria-label="Volume">
+                        <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerVolumeButton" aria-label="Volume" title="Volume">
                             <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerVolumeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
                         </button>
-                        <input id="webPlayerVolume" type="range" min="0" max="100" step="1" value="${Math.round(webPlayerVolume * 100)}" oninput="setWebPlayerVolume(this.value)" aria-label="Volume">
+                        <div class="web-player-volume-popover" id="webPlayerVolumePopover">
+                            <input id="webPlayerVolume" class="web-player-volume-slider" type="range" min="0" max="100" step="1" value="${Math.round(webPlayerVolume * 100)}" oninput="setWebPlayerVolume(this.value)" aria-label="Volume">
+                            <div class="web-player-volume-value" id="webPlayerVolumeValue">${Math.round(webPlayerVolume * 100)}%</div>
+                            <button class="btn btn-sm btn-secondary web-player-volume-mute" id="webPlayerMuteButton" onclick="toggleWebPlayerMute(event)" aria-label="Mute" title="Mute">
+                                <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerMuteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
+                            </button>
+                        </div>
                     </div>
                     <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginWebPlayerSeekInput()" ontouchstart="beginWebPlayerSeekInput()" onkeydown="beginWebPlayerSeekInput()" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
                     <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
@@ -1743,6 +1858,15 @@
             `;
             const video = document.getElementById('webPlayer');
             applyWebPlayerVolume(video);
+            if (video) video.autoplay = shouldAutoPlay;
+            if (shouldAutoPlay) {
+                video.addEventListener('canplay', () => {
+                    webPlayerDebug('startWebPlayer.autoplay');
+                    video.play().catch((error) => {
+                        webPlayerDebug('startWebPlayer.autoplayBlocked', { message: error?.message || String(error || '') });
+                    });
+                }, { once: true });
+            }
             attachWebPlayer(video, playlistUrl);
             installWebPlayerSeekHandler(video);
             installWebPlayerControlsAutoHide(host);
@@ -1750,11 +1874,6 @@
             video.addEventListener('canplay', () => {
                 void installWebPlayerSubtitleTrack(video);
             }, { once: true });
-            if (options.autoPlay) {
-                video.addEventListener('canplay', () => {
-                    video.play().catch(() => {});
-                }, { once: true });
-            }
             if (wasFullscreen) {
                 host.classList.add('web-player-fullscreen');
                 document.body.style.overflow = 'hidden';
@@ -1972,9 +2091,12 @@
         const button = document.getElementById('webPlayerPlayButton');
         const theaterButton = document.getElementById('webPlayerTheaterButton');
         const fullscreenButton = document.getElementById('webPlayerFullscreenButton');
+        const volumeButton = document.getElementById('webPlayerVolumeButton');
         const muteButton = document.getElementById('webPlayerMuteButton');
         const volumeInput = document.getElementById('webPlayerVolume');
+        const volumeValue = document.getElementById('webPlayerVolumeValue');
         const volumeIcon = document.getElementById('webPlayerVolumeIcon');
+        const muteIcon = document.getElementById('webPlayerMuteIcon');
         const host = document.getElementById('videoHost');
         const absoluteTime = currentWebPlayerAbsoluteTime();
         const controlTime = currentWebPlayerControlTime();
@@ -1989,6 +2111,7 @@
         if (time) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
         if (button && video) {
             const isPlaying = !video.paused;
+            if (host) host.classList.toggle('web-player-paused', !isPlaying);
             button.classList.toggle('is-playing', isPlaying);
             button.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play');
             button.setAttribute('title', isPlaying ? 'Pause' : 'Play');
@@ -2010,17 +2133,24 @@
             if (label) label.textContent = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
         }
         if (volumeInput && video) {
-            volumeInput.value = String(Math.round(Number(video.volume || 0) * 100));
+            const volumePercent = Math.round(Number(video.volume || 0) * 100);
+            volumeInput.value = String(volumePercent);
+            if (volumeValue) volumeValue.textContent = `${volumePercent}%`;
+        }
+        if (volumeButton && video) {
+            const volumePercent = Math.round(Number(video.volume || 0) * 100);
+            volumeButton.setAttribute('aria-label', `Volume ${volumePercent}%`);
+            volumeButton.setAttribute('title', `Volume ${volumePercent}%`);
         }
         if (muteButton && video) {
             const muted = Boolean(video.muted || Number(video.volume || 0) === 0);
             muteButton.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
             muteButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
-            if (volumeIcon) {
-                volumeIcon.innerHTML = muted
+            const iconMarkup = muted
                     ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/>'
                     : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>';
-            }
+            if (volumeIcon) volumeIcon.innerHTML = iconMarkup;
+            if (muteIcon) muteIcon.innerHTML = iconMarkup;
         }
     }
 
@@ -2050,7 +2180,12 @@
         applyWebPlayerVolume(video);
     }
 
-    function toggleWebPlayerMute() {
+    function closeWebPlayerVolumeScrub() {
+        document.getElementById('webPlayerVolume')?.blur();
+    }
+
+    function toggleWebPlayerMute(event) {
+        if (event) event.stopPropagation();
         const video = document.getElementById('webPlayer');
         webPlayerMuted = !webPlayerMuted;
         if (!webPlayerMuted && webPlayerVolume <= 0) {
@@ -2709,6 +2844,7 @@
 
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
+        closeWebPlayerVolumeScrub();
         const host = document.getElementById('videoHost');
         if (!host?.classList.contains('web-player-fullscreen')) return;
         setWebPlayerFullscreen(false);
@@ -2980,6 +3116,7 @@
         webPlayerQueuedSeekTarget = null;
         webPlayerDisplayedSeekTarget = null;
         webPlayerSeekInputActive = false;
+        closeWebPlayerVolumeScrub();
         webPlayerSubtitleCues = [];
         webPlayerSubtitleLoadToken++;
         clearWebPlayerSubtitleRefresh();

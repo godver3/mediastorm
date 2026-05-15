@@ -351,6 +351,25 @@ func TestMetadataHandler_Search(t *testing.T) {
 	}
 }
 
+func TestMetadataHandler_SearchAcceptsQueryParam(t *testing.T) {
+	fake := &fakeMetadataService{
+		searchResp: []models.SearchResult{{Score: 88, Title: models.Title{Name: "Heat", MediaType: "movie"}}},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/search?query=heat&type=movie", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Search(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	if fake.lastSearchQuery != "heat" || fake.lastSearchType != "movie" {
+		t.Fatalf("unexpected captured values query=%q type=%q", fake.lastSearchQuery, fake.lastSearchType)
+	}
+}
+
 func TestMetadataHandler_SearchError(t *testing.T) {
 	fake := &fakeMetadataService{searchErr: errors.New("search down")}
 	handler := NewMetadataHandler(fake, testConfigManager(t))

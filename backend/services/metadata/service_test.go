@@ -390,6 +390,53 @@ func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
 	}
 }
 
+func TestSearchWithoutMediaTypeIncludesMoviesAndSeries(t *testing.T) {
+	var searchedTypes []string
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/v4/login":
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			case "/v4/search":
+				mediaType := req.URL.Query().Get("type")
+				searchedTypes = append(searchedTypes, mediaType)
+				body := `{"data":[{"type":"series","tvdb_id":"202","name":"Heat Vision","year":"1999","score":90}]}`
+				if mediaType == "movie" {
+					body = `{"data":[{"type":"movie","tvdb_id":"101","name":"Heat","year":"1995","score":100}]}`
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			default:
+				t.Fatalf("unexpected request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	svc := &Service{
+		client: newTVDBClient("test-api-key", "eng", httpc, 24),
+		cache:  newFileCache(t.TempDir(), 24),
+	}
+	svc.client.minInterval = 0
+
+	results, err := svc.Search(context.Background(), "heat", "")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if strings.Join(searchedTypes, ",") != "movie,series" {
+		t.Fatalf("searched types = %v, want [movie series]", searchedTypes)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected movie and series results, got %d: %+v", len(results), results)
+	}
+	seen := map[string]bool{}
+	for _, result := range results {
+		seen[result.Title.MediaType] = true
+	}
+	if !seen["movie"] || !seen["series"] {
+		t.Fatalf("expected both movie and series results, got %+v", results)
+	}
+}
+
 func TestPreferTMDBEpisodeImagesOverridesTVDBStills(t *testing.T) {
 	httpc := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
