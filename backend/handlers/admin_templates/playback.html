@@ -5,7 +5,7 @@
 {{define "content"}}
 <div class="page-header">
     <h1>Playback</h1>
-    <p>Search media, resume watching, and launch streams from the web UI</p>
+    <p>Browse shelves, resume watching, and launch streams from the web UI</p>
 </div>
 
 {{if .NoProfiles}}
@@ -18,18 +18,12 @@
     <section class="playback-sidebar">
         <div class="section-label">Profile</div>
         <div id="profileList" class="profile-list"></div>
-
-        <div class="section-label" style="margin-top: 1.25rem;">Source</div>
-        <div class="segmented">
-            <button class="segment active" data-tab="search" onclick="setTab('search')">Search</button>
-            <button class="segment" data-tab="continue" onclick="setTab('continue')">Continue</button>
-        </div>
     </section>
 
     <main class="playback-main">
-        <section id="searchPanel">
-            <div class="toolbar">
-                <input type="text" id="searchQuery" class="form-input" placeholder="Search movies or shows" onkeydown="if(event.key==='Enter') searchMedia()">
+        <section id="shelvesPanel">
+            <div class="toolbar search-toolbar">
+                <input type="text" id="searchQuery" class="form-input search-input" placeholder="Search movies or shows" onkeydown="if(event.key==='Enter') searchMedia()">
                 <select id="searchType" class="form-select compact-select">
                     <option value="all">All</option>
                     <option value="movie">Movies</option>
@@ -42,13 +36,7 @@
                     </svg>
                     Search
                 </button>
-            </div>
-            <div id="searchResults" class="media-grid"></div>
-        </section>
-
-        <section id="continuePanel" style="display: none;">
-            <div class="toolbar">
-                <button class="btn btn-secondary" onclick="loadContinueWatching()">
+                <button class="btn btn-secondary" onclick="loadPlaybackShelves({ force: true })">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="23 4 23 10 17 10"/>
                         <polyline points="1 20 1 14 7 14"/>
@@ -58,7 +46,8 @@
                     Refresh
                 </button>
             </div>
-            <div id="continueResults" class="media-grid"></div>
+            <div id="searchResults"></div>
+            <div id="playbackShelves" class="playback-shelves"></div>
         </section>
 
         <section id="detailsPanel" class="details-panel" style="display: none;"></section>
@@ -129,31 +118,6 @@
         flex: 0 0 auto;
     }
 
-    .segmented {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        background: var(--bg-tertiary);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 0.25rem;
-        gap: 0.25rem;
-    }
-
-    .segment {
-        border: 0;
-        border-radius: 6px;
-        background: transparent;
-        color: var(--text-secondary);
-        padding: 0.5rem 0.625rem;
-        cursor: pointer;
-        font-weight: 600;
-    }
-
-    .segment.active {
-        background: var(--accent);
-        color: white;
-    }
-
     .playback-main {
         min-width: 0;
     }
@@ -165,6 +129,17 @@
         align-items: center;
     }
 
+    .search-toolbar {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 0.75rem;
+    }
+
+    .search-input {
+        min-width: 180px;
+    }
+
     .compact-select {
         width: 130px;
         flex: 0 0 auto;
@@ -174,6 +149,79 @@
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
         gap: 1rem;
+    }
+
+    .playback-shelves {
+        display: grid;
+        gap: 1.5rem;
+    }
+
+    .media-shelf {
+        min-width: 0;
+    }
+
+    .shelf-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .shelf-title {
+        margin: 0;
+        color: var(--text-primary);
+        font-size: 1.15rem;
+        font-weight: 700;
+    }
+
+    .shelf-count {
+        color: var(--text-muted);
+        font-size: 0.8125rem;
+        white-space: nowrap;
+    }
+
+    .media-row {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(150px, 170px);
+        gap: 1rem;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        padding-bottom: 0.75rem;
+        scrollbar-color: rgba(148, 163, 184, 0.55) rgba(148, 163, 184, 0.12);
+        scrollbar-width: thin;
+    }
+
+    .media-row::-webkit-scrollbar {
+        height: 10px;
+    }
+
+    .media-row::-webkit-scrollbar-track {
+        background: rgba(148, 163, 184, 0.12);
+        border-radius: 999px;
+    }
+
+    .media-row::-webkit-scrollbar-thumb {
+        background: linear-gradient(90deg, rgba(99, 102, 241, 0.85), rgba(20, 184, 166, 0.8));
+        border: 2px solid var(--bg-primary);
+        border-radius: 999px;
+    }
+
+    .media-row::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(90deg, rgba(129, 140, 248, 0.95), rgba(45, 212, 191, 0.9));
+    }
+
+    .shelf-expanded-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 1rem;
+    }
+
+    .shelf-actions {
+        display: flex;
+        justify-content: flex-start;
+        margin-top: 0.75rem;
     }
 
     .media-card {
@@ -938,6 +986,10 @@
             align-items: stretch;
         }
 
+        .search-toolbar {
+            padding: 0.625rem;
+        }
+
         .compact-select {
             width: 100%;
         }
@@ -963,7 +1015,6 @@
     const profiles = {{json .Users}};
     let activeProfileId = profiles.length ? profiles[0].id : '';
     let activeProfileName = profiles.length ? profiles[0].name : '';
-    let activeTab = 'search';
     let selectedItem = null;
     let selectedDetails = null;
     let selectedEpisode = null;
@@ -1007,11 +1058,12 @@
     let webPlayerTheaterDimLastSuppressedLog = 0;
     let webPlayerVolume = 1;
     let webPlayerMuted = false;
+    let continueWatchingExpanded = false;
 
     document.addEventListener('DOMContentLoaded', () => {
         renderProfiles();
         if (activeProfileId) void loadProfileSettings(activeProfileId);
-        if (activeProfileId) loadContinueWatching();
+        if (activeProfileId) loadPlaybackShelves();
     });
 
     window.addEventListener('beforeunload', stopHlsSession);
@@ -1165,7 +1217,8 @@
         renderProfiles();
         clearDetails();
         void loadProfileSettings(activeProfileId);
-        if (activeTab === 'continue') loadContinueWatching();
+        continueWatchingExpanded = false;
+        loadPlaybackShelves({ force: true });
     }
 
     async function loadProfileSettings(profileId) {
@@ -1198,13 +1251,54 @@
         return { audioLanguage, subtitleLanguage, subtitleMode };
     }
 
-    function setTab(tab) {
-        activeTab = tab;
-        document.querySelectorAll('.segment').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
-        document.getElementById('searchPanel').style.display = tab === 'search' ? '' : 'none';
-        document.getElementById('continuePanel').style.display = tab === 'continue' ? '' : 'none';
-        clearDetails();
-        if (tab === 'continue') loadContinueWatching();
+    async function loadPlaybackShelves(options = {}) {
+        const container = document.getElementById('playbackShelves');
+        if (!activeProfileId) {
+            container.innerHTML = '<div class="empty-inline">Select a profile</div>';
+            return;
+        }
+        if (options.force) continueWatchingExpanded = false;
+        container.innerHTML = '<div class="empty-inline">Loading shelves...</div>';
+        try {
+            const [fullContinue, moviesData, showsData] = await Promise.all([
+                apiCall(`/api/history/continue?userId=${encodeURIComponent(activeProfileId)}`).catch((error) => {
+                    console.warn('Continue watching load failed:', error);
+                    return [];
+                }),
+                apiCall(`/api/discover/new?type=movie&limit=24&userId=${encodeURIComponent(activeProfileId)}`).catch((error) => {
+                    console.warn('Trending movies load failed:', error);
+                    return null;
+                }),
+                apiCall(`/api/discover/new?type=tv&limit=24&userId=${encodeURIComponent(activeProfileId)}`).catch((error) => {
+                    console.warn('Trending shows load failed:', error);
+                    return null;
+                }),
+            ]);
+            const continueItems = Array.isArray(fullContinue) ? fullContinue.map(normalizeContinueItem) : [];
+            const trendingMovies = Array.isArray(moviesData?.items)
+                ? moviesData.items.map((item) => normalizeTrendingItem(item, 'movie'))
+                : [];
+            const trendingShows = Array.isArray(showsData?.items)
+                ? showsData.items.map((item) => normalizeTrendingItem(item, 'series'))
+                : [];
+
+            window.playbackShelfItems = {
+                search: window.playbackShelfItems?.search || [],
+                continue: continueItems,
+                trendingMovies,
+                trendingShows,
+            };
+
+            const shelves = renderPlaybackShelves();
+
+            if (!shelves.length) {
+                container.innerHTML = '<div class="empty-inline">No shelf items available</div>';
+                return;
+            }
+            container.innerHTML = shelves.join('');
+        } catch (error) {
+            container.innerHTML = `<div class="empty-inline">Could not load shelves: ${escapeHtml(error.message)}</div>`;
+        }
     }
 
     async function searchMedia() {
@@ -1215,42 +1309,65 @@
             showToast('Enter a search query', 'error');
             return;
         }
-        container.innerHTML = '<div class="empty-inline">Searching...</div>';
+        container.innerHTML = '<div class="empty-inline" style="margin-bottom: 1rem;">Searching...</div>';
         try {
             const params = new URLSearchParams({ q: query });
             if (type !== 'all') params.set('type', type);
             const results = await apiCall(`/api/search?${params.toString()}`);
-            const items = Array.isArray(results) ? results : [];
+            const items = Array.isArray(results) ? results.map(normalizeSearchItem) : [];
             if (!items.length) {
-                container.innerHTML = '<div class="empty-inline">No results found</div>';
+                window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: [] };
+                container.innerHTML = '<div class="empty-inline" style="margin-bottom: 1rem;">No results found</div>';
                 return;
             }
-            container.innerHTML = items.slice(0, 24).map((item, index) => renderMediaCard(normalizeSearchItem(item), index, 'search')).join('');
-            window.playbackSearchItems = items.map(normalizeSearchItem);
+            window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: items };
+            container.innerHTML = renderMediaShelf(`Search Results for "${query}"`, 'search', items);
         } catch (error) {
-            container.innerHTML = `<div class="empty-inline">Search failed: ${escapeHtml(error.message)}</div>`;
+            container.innerHTML = `<div class="empty-inline" style="margin-bottom: 1rem;">Search failed: ${escapeHtml(error.message)}</div>`;
         }
     }
 
-    async function loadContinueWatching() {
-        const container = document.getElementById('continueResults');
-        if (!activeProfileId) {
-            container.innerHTML = '<div class="empty-inline">Select a profile</div>';
-            return;
-        }
-        container.innerHTML = '<div class="empty-inline">Loading...</div>';
-        try {
-            const items = await apiCall(`/api/history/continue?userId=${encodeURIComponent(activeProfileId)}`);
-            const list = Array.isArray(items) ? items : [];
-            if (!list.length) {
-                container.innerHTML = '<div class="empty-inline">Nothing to continue</div>';
-                return;
-            }
-            window.playbackContinueItems = list.map(normalizeContinueItem);
-            container.innerHTML = window.playbackContinueItems.map((item, index) => renderMediaCard(item, index, 'continue')).join('');
-        } catch (error) {
-            container.innerHTML = `<div class="empty-inline">Could not load Continue Watching: ${escapeHtml(error.message)}</div>`;
-        }
+    function renderPlaybackShelves() {
+        const items = window.playbackShelfItems || {};
+        return [
+            renderMediaShelf('Continue Watching', 'continue', items.continue || [], { expandable: true, expanded: continueWatchingExpanded }),
+            renderMediaShelf('Trending Movies', 'trendingMovies', items.trendingMovies || []),
+            renderMediaShelf('Trending Shows', 'trendingShows', items.trendingShows || []),
+        ].filter(Boolean);
+    }
+
+    function renderMediaShelf(title, source, items, options = {}) {
+        if (!items.length) return '';
+        const total = items.length;
+        const shouldCollapse = options.expandable && total > 20 && !options.expanded;
+        const visibleItems = shouldCollapse ? items.slice(0, 20) : items;
+        const bodyClass = options.expanded ? 'shelf-expanded-grid' : 'media-row';
+        const action = options.expandable && total > 20
+            ? `<div class="shelf-actions">
+                <button class="btn btn-sm btn-secondary" onclick="toggleContinueWatchingExpanded()">
+                    ${options.expanded ? 'Show Less' : `Show All ${total}`}
+                </button>
+            </div>`
+            : '';
+        return `
+            <section class="media-shelf" data-shelf="${escapeHtml(source)}">
+                <div class="shelf-header">
+                    <h2 class="shelf-title">${escapeHtml(title)}</h2>
+                    <span class="shelf-count">${visibleItems.length}${total !== visibleItems.length ? ` of ${total}` : ''}</span>
+                </div>
+                <div class="${bodyClass}">
+                    ${visibleItems.map((item, index) => renderMediaCard(item, index, source)).join('')}
+                </div>
+                ${action}
+            </section>
+        `;
+    }
+
+    function toggleContinueWatchingExpanded() {
+        continueWatchingExpanded = !continueWatchingExpanded;
+        const container = document.getElementById('playbackShelves');
+        const shelves = renderPlaybackShelves();
+        container.innerHTML = shelves.join('') || '<div class="empty-inline">No shelf items available</div>';
     }
 
     function normalizeSearchItem(result) {
@@ -1263,6 +1380,24 @@
             year: title.year || result.year || 0,
             overview: title.overview || '',
             posterUrl: title.poster?.url || title.posterUrl || title.poster || '',
+            backdropUrl: title.backdrop?.url || title.backdropUrl || '',
+            imdbId: title.imdbId || '',
+            tvdbId: title.tvdbId || '',
+            tmdbId: title.tmdbId || '',
+            raw: title,
+        };
+    }
+
+    function normalizeTrendingItem(result, fallbackMediaType) {
+        const title = result.title || result;
+        const mediaType = normalizeMediaType(title.mediaType || title.type || fallbackMediaType);
+        return {
+            id: title.id || title.titleId || title.imdbId || title.tvdbId || title.tmdbId || title.name,
+            title: title.name || title.title || 'Unknown',
+            mediaType,
+            year: title.year || result.year || 0,
+            overview: title.overview || '',
+            posterUrl: title.textPoster?.url || title.poster?.url || title.posterUrl || title.poster || '',
             backdropUrl: title.backdrop?.url || title.backdropUrl || '',
             imdbId: title.imdbId || '',
             tvdbId: title.tvdbId || '',
@@ -1318,7 +1453,7 @@
     }
 
     async function openDetails(source, index) {
-        const list = source === 'continue' ? window.playbackContinueItems : window.playbackSearchItems;
+        const list = window.playbackShelfItems?.[source] || [];
         selectedItem = list?.[index];
         if (!selectedItem) return;
         selectedEpisode = selectedItem.nextEpisode || null;
@@ -1328,6 +1463,7 @@
         const panel = document.getElementById('detailsPanel');
         panel.style.display = 'block';
         panel.innerHTML = '<div class="empty-inline">Loading details...</div>';
+        document.getElementById('shelvesPanel').style.display = 'none';
         document.getElementById('playbackPanel').style.display = 'none';
 
         try {
@@ -3148,6 +3284,7 @@
         stopHlsSession();
         document.getElementById('detailsPanel').style.display = 'none';
         document.getElementById('playbackPanel').style.display = 'none';
+        document.getElementById('shelvesPanel').style.display = '';
     }
 </script>
 {{end}}
