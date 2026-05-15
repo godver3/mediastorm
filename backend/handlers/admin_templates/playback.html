@@ -1140,7 +1140,14 @@
     let webPlayerTheaterDimLastSuppressedLog = 0;
     let webPlayerVolume = 1;
     let webPlayerMuted = false;
+    let webPlayerProgressTimer = null;
+    let webPlayerLastProgressSentAt = 0;
+    let webPlayerLastProgressPosition = 0;
+    let webPlayerLastProgressPaused = false;
+    let webPlayerProgressCompleted = false;
     let continueWatchingExpanded = false;
+    const WEB_PLAYER_PROGRESS_INTERVAL_MS = 10000;
+    const WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS = 5;
 
     document.addEventListener('DOMContentLoaded', () => {
         renderProfiles();
@@ -1148,7 +1155,10 @@
         if (activeProfileId) loadPlaybackShelves();
     });
 
-    window.addEventListener('beforeunload', stopHlsSession);
+    window.addEventListener('beforeunload', () => {
+        sendWebPlayerProgress({ force: true, keepalive: true, isPaused: true });
+        stopHlsSession();
+    });
 
     function apiUrl(path) {
         if (path.startsWith('/video/')) return `${basePath}/api${path}`;
@@ -1896,6 +1906,77 @@
         return Math.max(0, Math.min(99, Math.round(percent)));
     }
 
+    function getSelectedEpisodeInfo() {
+        if (selectedItem?.mediaType !== 'series') return null;
+        const seasonNumber = Number(selectedEpisode?.seasonNumber || 0);
+        const episodeNumber = Number(selectedEpisode?.episodeNumber || 0);
+        if (!seasonNumber || !episodeNumber) {
+            return { seasonNumber, episodeNumber, title: '' };
+        }
+        const seasons = selectedDetails?.seriesDetails?.seasons || [];
+        const episode = seasons
+            .flatMap((season) => season.episodes || [])
+            .find((entry) =>
+                Number(entry.seasonNumber || entry.season || selectedEpisode?.seasonNumber) === seasonNumber &&
+                Number(entry.episodeNumber || entry.number) === episodeNumber
+            );
+        return {
+            seasonNumber,
+            episodeNumber,
+            title: episode?.name || episode?.title || '',
+        };
+    }
+
+    function buildWebPlayerItemId() {
+        const existing = getProgressMatch();
+        if (existing?.itemId) return existing.itemId;
+        if (selectedItem?.mediaType !== 'series') return selectedItem?.id || '';
+        const episode = getSelectedEpisodeInfo();
+        const seriesId = selectedItem?.id || selectedItem?.seriesId || '';
+        if (!seriesId || !episode?.seasonNumber || !episode?.episodeNumber) return seriesId;
+        return `${seriesId}:S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`;
+    }
+
+    function buildWebPlayerExternalIds() {
+        const ids = {};
+        if (selectedItem?.imdbId) ids.imdb = selectedItem.imdbId;
+        if (selectedItem?.tmdbId) ids.tmdb = String(selectedItem.tmdbId);
+        if (selectedItem?.tvdbId) ids.tvdb = String(selectedItem.tvdbId);
+        if (selectedItem?.id) ids.titleId = selectedItem.id;
+        return ids;
+    }
+
+    function buildWebPlayerProgressPayload(position, duration, isPaused) {
+        if (!selectedItem || !activeProfileId) return null;
+        const mediaType = selectedItem.mediaType === 'series' ? 'episode' : 'movie';
+        const itemId = buildWebPlayerItemId();
+        if (!itemId) return null;
+
+        const payload = {
+            mediaType,
+            itemId,
+            position,
+            duration,
+            isPaused: Boolean(isPaused),
+            timestamp: new Date().toISOString(),
+            externalIds: buildWebPlayerExternalIds(),
+            year: selectedItem.year || undefined,
+        };
+
+        if (mediaType === 'episode') {
+            const episode = getSelectedEpisodeInfo();
+            payload.seasonNumber = episode?.seasonNumber || undefined;
+            payload.episodeNumber = episode?.episodeNumber || undefined;
+            payload.seriesId = selectedItem.id || undefined;
+            payload.seriesName = selectedItem.title || undefined;
+            payload.episodeName = episode?.title || undefined;
+        } else {
+            payload.movieName = selectedItem.title || undefined;
+        }
+
+        return payload;
+    }
+
     function shouldOfferWebPlayerResume() {
         const percent = getResumePercent();
         return percent > 5 && percent < 95;
@@ -2154,6 +2235,7 @@
             installWebPlayerSeekHandler(video);
             installWebPlayerControlsAutoHide(host);
             startKeepalive(video);
+            startWebPlayerProgressTracking(video);
             video.addEventListener('canplay', () => {
                 void installWebPlayerSubtitleTrack(video);
             }, { once: true });
@@ -2248,17 +2330,26 @@
                 lastWebPlayerTime = Number(video.currentTime || 0);
                 updateWebPlayerControls();
                 renderWebPlayerSubtitles();
+                sendWebPlayerProgress();
             }
         });
         video.addEventListener('play', () => {
             updateWebPlayerControls();
             renderWebPlayerSubtitles();
             showWebPlayerControls();
+            sendWebPlayerProgress({ force: true, isPaused: false });
         });
         video.addEventListener('pause', () => {
             updateWebPlayerControls();
             renderWebPlayerSubtitles();
             showWebPlayerControls();
+            sendWebPlayerProgress({ force: true, isPaused: true });
+        });
+        video.addEventListener('ended', () => {
+            updateWebPlayerControls();
+            renderWebPlayerSubtitles();
+            showWebPlayerControls();
+            sendWebPlayerProgress({ force: true, isPaused: true, ended: true });
         });
         video.addEventListener('seeked', renderWebPlayerSubtitles);
         video.addEventListener('loadedmetadata', renderWebPlayerSubtitles);
@@ -2344,6 +2435,104 @@
     function currentWebPlayerAbsoluteTime() {
         const video = document.getElementById('webPlayer');
         return hlsPlaybackOffset + Number(video?.currentTime || 0);
+    }
+
+    function currentWebPlayerDuration() {
+        const video = document.getElementById('webPlayer');
+        const absoluteTime = currentWebPlayerAbsoluteTime();
+        return hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + hlsPlaybackOffset);
+    }
+
+    function startWebPlayerProgressTracking(video) {
+        stopWebPlayerProgressTracking();
+        webPlayerLastProgressSentAt = 0;
+        webPlayerLastProgressPosition = 0;
+        webPlayerLastProgressPaused = Boolean(video?.paused);
+        webPlayerProgressCompleted = false;
+        webPlayerProgressTimer = window.setInterval(() => {
+            sendWebPlayerProgress();
+        }, WEB_PLAYER_PROGRESS_INTERVAL_MS);
+    }
+
+    function stopWebPlayerProgressTracking() {
+        if (webPlayerProgressTimer) {
+            clearInterval(webPlayerProgressTimer);
+            webPlayerProgressTimer = null;
+        }
+    }
+
+    function sendWebPlayerProgress(options = {}) {
+        const video = document.getElementById('webPlayer');
+        if (!video || webPlayerProgressCompleted) return Promise.resolve(null);
+        const duration = currentWebPlayerDuration();
+        if (!Number.isFinite(duration) || duration <= 0) return Promise.resolve(null);
+
+        const isEnded = Boolean(options.ended);
+        const isPaused = options.isPaused !== undefined ? Boolean(options.isPaused) : Boolean(video.paused);
+        let position = isEnded ? duration : currentWebPlayerAbsoluteTime();
+        if (!Number.isFinite(position) || position < 0) return Promise.resolve(null);
+        position = Math.max(0, Math.min(position, duration));
+
+        if (position <= 0 && !options.force) return Promise.resolve(null);
+
+        const now = Date.now();
+        const positionDelta = Math.abs(position - webPlayerLastProgressPosition);
+        const pauseStateChanged = isPaused !== webPlayerLastProgressPaused;
+        if (
+            !options.force &&
+            !pauseStateChanged &&
+            now - webPlayerLastProgressSentAt < WEB_PLAYER_PROGRESS_INTERVAL_MS &&
+            positionDelta < WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS
+        ) {
+            return Promise.resolve(null);
+        }
+
+        const payload = buildWebPlayerProgressPayload(position, duration, isPaused);
+        if (!payload) return Promise.resolve(null);
+
+        const endpoint = `/api/users/${encodeURIComponent(activeProfileId)}/history/progress`;
+        const fetchOptions = {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        };
+        if (options.keepalive) {
+            return fetch(apiUrl(endpoint), {
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                ...fetchOptions,
+                keepalive: true,
+            }).catch(() => null);
+        }
+
+        return apiCall(endpoint, fetchOptions)
+            .then((result) => {
+                webPlayerLastProgressSentAt = Date.now();
+                webPlayerLastProgressPosition = position;
+                webPlayerLastProgressPaused = isPaused;
+                const percentWatched = Number(result?.percentWatched ?? (duration > 0 ? (position / duration) * 100 : 0));
+                if (percentWatched >= 90 || isEnded) {
+                    webPlayerProgressCompleted = true;
+                    stopWebPlayerProgressTracking();
+                }
+                if (result?.allowedToContinue === false) {
+                    video.pause();
+                    setWebPlayerStatus('Playback stopped by server policy.');
+                }
+                webPlayerDebug('progress.sent', {
+                    position,
+                    duration,
+                    percentWatched,
+                    isPaused,
+                    mediaType: payload.mediaType,
+                    itemId: payload.itemId,
+                });
+                return result;
+            })
+            .catch((error) => {
+                console.warn('Failed to update web player progress:', error);
+                webPlayerDebug('progress.error', { message: error?.message || String(error || '') });
+                return null;
+            });
     }
 
     function currentWebPlayerControlTime() {
@@ -3380,6 +3569,8 @@
 
     function stopHlsSession() {
         webPlayerDebug('stopHlsSession.begin');
+        sendWebPlayerProgress({ force: true, isPaused: true });
+        stopWebPlayerProgressTracking();
         flushWebPlayerDebug();
         const host = document.getElementById('videoHost');
         const panel = document.getElementById('playbackPanel');

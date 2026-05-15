@@ -788,6 +788,7 @@ func main() {
 	r.HandleFunc("/admin/api/metadata/movie/details", adminUIHandler.RequireAuth(metadataHandler.MovieDetails)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/users/{userID}/details-shell", adminUIHandler.RequireAuth(detailsBundleHandler.GetDetailsShell)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/users/{userID}/details-bundle", adminUIHandler.RequireAuth(detailsBundleHandler.GetDetailsBundle)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/users/{userID}/history/progress", adminUIHandler.RequireAuth(historyHandler.UpdatePlaybackProgress)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/indexers/search", adminUIHandler.RequireAuth(indexerHandler.Search)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/indexers/search-test", adminUIHandler.RequireAuth(indexerHandler.SearchTest)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/playback/resolve", adminUIHandler.RequireAuth(playbackHandler.Resolve)).Methods(http.MethodPost)
