@@ -24,6 +24,7 @@ import (
 	"novastream/services/localmedia"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 	"novastream/services/watchlist"
 )
@@ -33,6 +34,7 @@ type Service struct {
 	configManager     *config.Manager
 	plexClient        *plex.Client
 	traktClient       *trakt.Client
+	simklClient       *simkl.Client
 	jellyfinClient    *jellyfin.Client
 	usersService      schedulerUsersProvider
 	watchlistService  *watchlist.Service
@@ -73,6 +75,7 @@ type SyncResult struct {
 	ToAdd    []config.DryRunItem
 	ToRemove []config.DryRunItem
 	Message  string // Optional message for display
+	Config   map[string]string
 }
 
 const (
@@ -293,6 +296,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeLocalMediaScan(task)
 	case config.ScheduledTaskTypeTraktHistorySync:
 		result, err = s.executeTraktHistorySync(task)
+	case config.ScheduledTaskTypeSimklHistorySync:
+		result, err = s.executeSimklHistorySync(task)
 	case config.ScheduledTaskTypePrewarm:
 		result, err = s.executePrewarm(task)
 	case config.ScheduledTaskTypePlexHistorySync:
@@ -383,6 +388,14 @@ func (s *Service) updateTaskStatus(taskID string, err error, result SyncResult) 
 		if settings.ScheduledTasks.Tasks[i].ID == taskID {
 			settings.ScheduledTasks.Tasks[i].LastRunAt = &now
 			settings.ScheduledTasks.Tasks[i].ItemsImported = result.Count
+			if result.Config != nil {
+				if settings.ScheduledTasks.Tasks[i].Config == nil {
+					settings.ScheduledTasks.Tasks[i].Config = make(map[string]string)
+				}
+				for key, value := range result.Config {
+					settings.ScheduledTasks.Tasks[i].Config[key] = value
+				}
+			}
 
 			// Store dry run details if this was a dry run
 			if result.DryRun {
@@ -500,6 +513,13 @@ func (s *Service) SetHistoryService(historyService *history.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.historyService = historyService
+}
+
+// SetSimklClient sets the Simkl client for scheduled Simkl sync tasks.
+func (s *Service) SetSimklClient(simklClient *simkl.Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.simklClient = simklClient
 }
 
 // SetPrewarmService sets the prewarm service for scheduled prewarm tasks.
@@ -2292,6 +2312,362 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 		ToAdd:  append(toLocalResult.ToAdd, toTraktResult.ToAdd...),
 	}
 	return combined, nil
+}
+
+// executeSimklHistorySync imports watch history from Simkl into local history.
+func (s *Service) executeSimklHistorySync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	historySvc := s.historyService
+	simklClient := s.simklClient
+	s.mu.RUnlock()
+
+	if historySvc == nil {
+		return SyncResult{}, errors.New("history service not configured")
+	}
+	if simklClient == nil {
+		return SyncResult{}, errors.New("simkl client not configured")
+	}
+
+	simklAccountID := task.Config["simklAccountId"]
+	profileID, err := s.resolveTaskProfileID(task)
+	if simklAccountID == "" || profileID == "" {
+		return SyncResult{}, errors.New("missing simklAccountId or profileId in task config")
+	}
+	if err != nil {
+		return SyncResult{}, err
+	}
+	dryRun := task.Config["dryRun"] == "true"
+
+	settings, err := s.configManager.Load()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load settings: %w", err)
+	}
+	simklAccount := settings.Simkl.GetAccountByID(simklAccountID)
+	if simklAccount == nil {
+		return SyncResult{}, errors.New("simkl account not found")
+	}
+	if simklAccount.ClientID == "" || simklAccount.AccessToken == "" {
+		return SyncResult{}, errors.New("simkl account not authenticated")
+	}
+
+	activities, err := simklClient.GetActivities(simklAccount.ClientID, simklAccount.AccessToken)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("fetch simkl activities: %w", err)
+	}
+	latestActivity := latestTimeInSimklActivity(activities)
+	savedActivity := strings.TrimSpace(task.Config["lastSimklActivityAt"])
+	if savedActivity != "" && !latestActivity.IsZero() {
+		savedAt, parseErr := time.Parse(time.RFC3339, savedActivity)
+		if parseErr == nil && !latestActivity.After(savedAt) {
+			log.Printf("[scheduler] Simkl history unchanged since %s; skipping listing calls", savedActivity)
+			return SyncResult{DryRun: dryRun, Count: 0}, nil
+		}
+	}
+
+	var responses []*simkl.AllItemsResponse
+	if savedActivity == "" {
+		log.Printf("[scheduler] Performing initial Simkl history sync using sequential bucket fetches")
+		for _, bucket := range []string{"movies", "shows", "anime"} {
+			resp, err := simklClient.GetInitialSyncItems(simklAccount.ClientID, simklAccount.AccessToken, bucket)
+			if err != nil {
+				return SyncResult{DryRun: dryRun}, fmt.Errorf("fetch simkl %s history: %w", bucket, err)
+			}
+			responses = append(responses, resp)
+		}
+	} else {
+		log.Printf("[scheduler] Fetching Simkl history delta since %s", savedActivity)
+		resp, err := simklClient.GetAllItemsSince(simklAccount.ClientID, simklAccount.AccessToken, savedActivity)
+		if err != nil {
+			return SyncResult{DryRun: dryRun}, fmt.Errorf("fetch simkl history delta: %w", err)
+		}
+		responses = append(responses, resp)
+	}
+
+	watched := true
+	seen := make(map[string]bool)
+	var updates []models.WatchHistoryUpdate
+	result := SyncResult{DryRun: dryRun}
+	for _, resp := range responses {
+		for _, update := range simklAllItemsToWatchHistory(resp, &watched) {
+			key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(update.ItemID)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if dryRun {
+				result.ToAdd = append(result.ToAdd, config.DryRunItem{Name: update.Name, MediaType: update.MediaType, ID: update.ItemID})
+				continue
+			}
+			updates = append(updates, update)
+		}
+	}
+
+	if dryRun {
+		result.Count = len(result.ToAdd)
+		return result, nil
+	}
+	if len(updates) > 0 {
+		imported, err := historySvc.ImportWatchHistory(profileID, updates)
+		if err != nil {
+			return result, fmt.Errorf("import simkl watch history: %w", err)
+		}
+		result.Count = imported
+	}
+	if !latestActivity.IsZero() {
+		result.Config = map[string]string{"lastSimklActivityAt": latestActivity.UTC().Format(time.RFC3339)}
+	}
+	log.Printf("[scheduler] Imported %d/%d items from Simkl history", result.Count, len(updates))
+	return result, nil
+}
+
+func latestTimeInSimklActivity(activity simkl.ActivityResponse) time.Time {
+	var latest time.Time
+	var walk func(interface{})
+	walk = func(v interface{}) {
+		switch value := v.(type) {
+		case map[string]interface{}:
+			for _, child := range value {
+				walk(child)
+			}
+		case []interface{}:
+			for _, child := range value {
+				walk(child)
+			}
+		case string:
+			if ts, err := time.Parse(time.RFC3339, value); err == nil && ts.After(latest) {
+				latest = ts
+			}
+		}
+	}
+	walk(map[string]interface{}(activity))
+	return latest
+}
+
+func simklAllItemsToWatchHistory(resp *simkl.AllItemsResponse, watched *bool) []models.WatchHistoryUpdate {
+	if resp == nil {
+		return nil
+	}
+	var updates []models.WatchHistoryUpdate
+	for _, raw := range resp.Movies {
+		if update := simklMovieToUpdate(raw, watched); update != nil {
+			updates = append(updates, *update)
+		}
+	}
+	for _, raw := range resp.Shows {
+		updates = append(updates, simklShowToUpdates(raw, watched)...)
+	}
+	for _, raw := range resp.Anime {
+		updates = append(updates, simklShowToUpdates(raw, watched)...)
+	}
+	return updates
+}
+
+func simklMovieToUpdate(raw json.RawMessage, watched *bool) *models.WatchHistoryUpdate {
+	obj := decodeJSONObject(raw)
+	if len(obj) == 0 || !simklItemIsWatched(obj) {
+		return nil
+	}
+	movie := nestedObject(obj, "movie")
+	if movie == nil {
+		movie = obj
+	}
+	ids := simklIDsFromObject(movie)
+	if len(ids) == 0 {
+		ids = simklIDsFromObject(obj)
+	}
+	itemID := simklMovieItemID(ids)
+	if itemID == "" {
+		return nil
+	}
+	return &models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      itemID,
+		Name:        stringFromAny(movie["title"]),
+		Year:        intFromAny(movie["year"]),
+		Watched:     watched,
+		WatchedAt:   simklFirstTime(obj, "watched_at", "last_watched_at", "completed_at", "last_watched"),
+		ExternalIDs: ids,
+	}
+}
+
+func simklShowToUpdates(raw json.RawMessage, watched *bool) []models.WatchHistoryUpdate {
+	obj := decodeJSONObject(raw)
+	if len(obj) == 0 || !simklItemIsWatched(obj) {
+		return nil
+	}
+	show := nestedObject(obj, "show")
+	if show == nil {
+		show = nestedObject(obj, "anime")
+	}
+	if show == nil {
+		show = obj
+	}
+	ids := simklIDsFromObject(show)
+	if len(ids) == 0 {
+		ids = simklIDsFromObject(obj)
+	}
+	seriesID := simklSeriesItemID(ids)
+	if seriesID == "" {
+		return nil
+	}
+
+	showTitle := stringFromAny(show["title"])
+	showYear := intFromAny(show["year"])
+	var updates []models.WatchHistoryUpdate
+	for _, seasonObj := range objectArray(obj["seasons"]) {
+		seasonNumber := intFromAny(seasonObj["number"])
+		for _, episodeObj := range objectArray(seasonObj["episodes"]) {
+			episodeNumber := intFromAny(episodeObj["number"])
+			if episodeNumber == 0 {
+				episodeNumber = intFromAny(episodeObj["episode"])
+			}
+			if seasonNumber == 0 || episodeNumber == 0 {
+				continue
+			}
+			watchedAt := simklFirstTime(episodeObj, "watched_at", "last_watched_at", "completed_at", "last_watched")
+			if watchedAt.IsZero() {
+				watchedAt = simklFirstTime(obj, "watched_at", "last_watched_at", "completed_at", "last_watched")
+			}
+			updates = append(updates, models.WatchHistoryUpdate{
+				MediaType:     "episode",
+				ItemID:        fmt.Sprintf("%s:s%02de%02d", seriesID, seasonNumber, episodeNumber),
+				Name:          stringFromAny(episodeObj["title"]),
+				Year:          showYear,
+				Watched:       watched,
+				WatchedAt:     watchedAt,
+				ExternalIDs:   ids,
+				SeriesID:      seriesID,
+				SeriesName:    showTitle,
+				SeasonNumber:  seasonNumber,
+				EpisodeNumber: episodeNumber,
+			})
+		}
+	}
+	return updates
+}
+
+func simklItemIsWatched(obj map[string]interface{}) bool {
+	status := strings.ToLower(strings.TrimSpace(stringFromAny(obj["status"])))
+	return status == "" || status == "completed" || status == "watching"
+}
+
+func simklMovieItemID(ids map[string]string) string {
+	if id := ids["tvdb"]; id != "" {
+		return "tvdb:movie:" + id
+	}
+	if id := ids["tmdb"]; id != "" {
+		return "tmdb:movie:" + id
+	}
+	return ids["imdb"]
+}
+
+func simklSeriesItemID(ids map[string]string) string {
+	if id := ids["tvdb"]; id != "" {
+		return "tvdb:series:" + id
+	}
+	if id := ids["tmdb"]; id != "" {
+		return "tmdb:tv:" + id
+	}
+	if id := ids["imdb"]; id != "" {
+		return "imdb:" + id
+	}
+	return ""
+}
+
+func simklIDsFromObject(obj map[string]interface{}) map[string]string {
+	idsObj := nestedObject(obj, "ids")
+	ids := make(map[string]string)
+	for _, key := range []string{"simkl", "imdb", "tmdb", "tvdb"} {
+		if value := stringFromAny(idsObj[key]); value != "" {
+			ids[key] = value
+		}
+	}
+	return ids
+}
+
+func simklFirstTime(obj map[string]interface{}, keys ...string) time.Time {
+	for _, key := range keys {
+		if ts, ok := parseFlexibleTime(obj[key]); ok {
+			return ts
+		}
+	}
+	return time.Time{}
+}
+
+func decodeJSONObject(raw json.RawMessage) map[string]interface{} {
+	var obj map[string]interface{}
+	_ = json.Unmarshal(raw, &obj)
+	return obj
+}
+
+func nestedObject(obj map[string]interface{}, key string) map[string]interface{} {
+	if obj == nil {
+		return nil
+	}
+	child, _ := obj[key].(map[string]interface{})
+	return child
+}
+
+func objectArray(value interface{}) []map[string]interface{} {
+	array, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(array))
+	for _, item := range array {
+		if obj, ok := item.(map[string]interface{}); ok {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
+func parseFlexibleTime(value interface{}) (time.Time, bool) {
+	v, ok := value.(string)
+	if !ok || strings.TrimSpace(v) == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"} {
+		if ts, err := time.Parse(layout, v); err == nil {
+			return ts, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func stringFromAny(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		if math.Trunc(v) == v {
+			return strconv.Itoa(int(v))
+		}
+		return fmt.Sprintf("%v", v)
+	case int:
+		return strconv.Itoa(v)
+	case json.Number:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+func intFromAny(value interface{}) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		i, _ := strconv.Atoi(v)
+		return i
+	case json.Number:
+		i, _ := strconv.Atoi(v.String())
+		return i
+	default:
+		return 0
+	}
 }
 
 // syncPlaybackToTrakt exports playback progress to Trakt.

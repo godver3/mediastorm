@@ -212,6 +212,12 @@ func redactSettings(s *config.Settings) {
 		mask(&s.Trakt.Accounts[i].RefreshToken)
 	}
 
+	// Simkl account credentials
+	for i := range s.Simkl.Accounts {
+		mask(&s.Simkl.Accounts[i].ClientSecret)
+		mask(&s.Simkl.Accounts[i].AccessToken)
+	}
+
 	// Plex (legacy field + account-level tokens)
 	mask(&s.Plex.AuthToken)
 	for i := range s.Plex.Accounts {
@@ -305,6 +311,14 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 			restore(&incoming.Trakt.Accounts[i].ClientSecret, existing.Trakt.Accounts[i].ClientSecret)
 			restore(&incoming.Trakt.Accounts[i].AccessToken, existing.Trakt.Accounts[i].AccessToken)
 			restore(&incoming.Trakt.Accounts[i].RefreshToken, existing.Trakt.Accounts[i].RefreshToken)
+		}
+	}
+
+	// Simkl account credentials
+	for i := range incoming.Simkl.Accounts {
+		if i < len(existing.Simkl.Accounts) {
+			restore(&incoming.Simkl.Accounts[i].ClientSecret, existing.Simkl.Accounts[i].ClientSecret)
+			restore(&incoming.Simkl.Accounts[i].AccessToken, existing.Simkl.Accounts[i].AccessToken)
 		}
 	}
 

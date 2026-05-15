@@ -78,6 +78,8 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 		} else if taskConfig["syncDirection"] != "trakt_to_local" && taskConfig["syncDirection"] != "local_to_trakt" && taskConfig["syncDirection"] != "bidirectional" {
 			return fmt.Errorf("Invalid sync direction. Must be trakt_to_local, local_to_trakt, or bidirectional")
 		}
+	case config.ScheduledTaskTypeSimklHistorySync:
+		return requireProfile("simklAccountId", "Simkl history sync requires simklAccountId and profileId in config")
 	case config.ScheduledTaskTypeLocalMediaScan:
 		if taskConfig == nil || strings.TrimSpace(taskConfig["libraryId"]) == "" {
 			return errors.New("Local media scan requires libraryId in config")
@@ -96,6 +98,18 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 	}
 
 	return nil
+}
+
+func validateScheduledTaskFrequency(taskType config.ScheduledTaskType, frequency config.ScheduledTaskFrequency) error {
+	if taskType != config.ScheduledTaskTypeSimklHistorySync {
+		return nil
+	}
+	switch frequency {
+	case config.ScheduledTaskFrequency1Min, config.ScheduledTaskFrequency5Min, config.ScheduledTaskFrequency15Min:
+		return errors.New("Simkl history sync must be scheduled no more frequently than every 30 minutes")
+	default:
+		return nil
+	}
 }
 
 func validateScheduledTaskProfileID(profileID string, usersService scheduledTaskUsersProvider) error {
@@ -177,6 +191,14 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 	// Validate frequency
 	if req.Frequency == "" {
 		req.Frequency = config.ScheduledTaskFrequency12Hours
+	}
+	if err := validateScheduledTaskFrequency(req.Type, req.Frequency); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
 	}
 
 	if err := validateScheduledTaskConfig(req.Type, req.Config, h.usersService); err != nil {
@@ -298,6 +320,15 @@ func (h *ScheduledTasksHandler) UpdateTask(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "Task not found",
+		})
+		return
+	}
+
+	if err := validateScheduledTaskFrequency(updatedTask.Type, updatedTask.Frequency); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": err.Error(),
 		})
 		return
 	}

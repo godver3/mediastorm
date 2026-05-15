@@ -42,6 +42,7 @@ import (
 	"novastream/services/metadata"
 	"novastream/services/plex"
 	"novastream/services/sessions"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
@@ -3803,6 +3804,7 @@ type ProfileWithPinStatus struct {
 	KidsAllowedLists   []string  `json:"kidsAllowedLists,omitempty"`
 	TraktAccountID     string    `json:"traktAccountId,omitempty"`
 	MdblistAccountID   string    `json:"mdblistAccountId,omitempty"`
+	SimklAccountID     string    `json:"simklAccountId,omitempty"`
 	CreatedAt          time.Time `json:"createdAt"`
 	UpdatedAt          time.Time `json:"updatedAt"`
 }
@@ -3836,6 +3838,7 @@ func (h *AdminUIHandler) GetProfiles(w http.ResponseWriter, r *http.Request) {
 			KidsAllowedLists:   u.KidsAllowedLists,
 			TraktAccountID:     u.TraktAccountID,
 			MdblistAccountID:   u.MdblistAccountID,
+			SimklAccountID:     u.SimklAccountID,
 			CreatedAt:          u.CreatedAt,
 			UpdatedAt:          u.UpdatedAt,
 		}
@@ -5667,6 +5670,282 @@ func (h *AdminUIHandler) UpdateMDBListAccount(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(account)
+}
+
+// GetSimklAccounts returns all configured Simkl accounts.
+func (h *AdminUIHandler) GetSimklAccounts(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	type simklAccountResponse struct {
+		ID             string   `json:"id"`
+		Name           string   `json:"name"`
+		ClientID       string   `json:"clientId"`
+		Username       string   `json:"username,omitempty"`
+		Connected      bool     `json:"connected"`
+		LinkedProfiles []string `json:"linkedProfiles,omitempty"`
+	}
+	resp := make([]simklAccountResponse, 0, len(settings.Simkl.Accounts))
+	for _, account := range settings.Simkl.Accounts {
+		users := h.usersService.GetUsersBySimklAccountID(account.ID)
+		linkedProfiles := make([]string, 0, len(users))
+		for _, user := range users {
+			linkedProfiles = append(linkedProfiles, user.ID)
+		}
+		resp = append(resp, simklAccountResponse{
+			ID:             account.ID,
+			Name:           account.Name,
+			ClientID:       account.ClientID,
+			Username:       account.Username,
+			Connected:      account.AccessToken != "",
+			LinkedProfiles: linkedProfiles,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// CreateSimklAccount adds a new Simkl account.
+func (h *AdminUIHandler) CreateSimklAccount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string `json:"name"`
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+		AccessToken  string `json:"accessToken"`
+		Username     string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.ClientID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Client ID is required"})
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	account := config.SimklAccount{
+		ID:           uuid.New().String(),
+		Name:         req.Name,
+		ClientID:     req.ClientID,
+		ClientSecret: req.ClientSecret,
+		AccessToken:  req.AccessToken,
+		Username:     req.Username,
+	}
+	if account.Name == "" {
+		account.Name = "Simkl Account"
+	}
+
+	settings.Simkl.Accounts = append(settings.Simkl.Accounts, account)
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(account)
+}
+
+// DeleteSimklAccount removes a Simkl account.
+func (h *AdminUIHandler) DeleteSimklAccount(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		http.Error(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	if !settings.Simkl.RemoveAccount(accountID) {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+	for _, user := range h.usersService.GetUsersBySimklAccountID(accountID) {
+		_, _ = h.usersService.ClearSimklAccountID(user.ID)
+	}
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// UpdateSimklAccount updates a Simkl account's settings.
+func (h *AdminUIHandler) UpdateSimklAccount(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	if accountID == "" {
+		http.Error(w, "Account ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Name         *string `json:"name,omitempty"`
+		ClientID     *string `json:"clientId,omitempty"`
+		ClientSecret *string `json:"clientSecret,omitempty"`
+		AccessToken  *string `json:"accessToken,omitempty"`
+		Username     *string `json:"username,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	account := settings.Simkl.GetAccountByID(accountID)
+	if account == nil {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+	if req.Name != nil {
+		account.Name = *req.Name
+	}
+	if req.ClientID != nil {
+		account.ClientID = *req.ClientID
+	}
+	if req.ClientSecret != nil {
+		account.ClientSecret = *req.ClientSecret
+	}
+	if req.AccessToken != nil {
+		account.AccessToken = *req.AccessToken
+	}
+	if req.Username != nil {
+		account.Username = *req.Username
+	}
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(account)
+}
+
+// StartSimklAuth starts the Simkl PIN/device authorization flow.
+func (h *AdminUIHandler) StartSimklAuth(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	account := settings.Simkl.GetAccountByID(accountID)
+	if account == nil {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+	if account.ClientID == "" {
+		http.Error(w, "Client ID not configured", http.StatusBadRequest)
+		return
+	}
+
+	pin, err := simkl.NewClient().StartPINAuth(account.ClientID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"userCode":        pin.UserCode,
+		"verificationUrl": pin.VerificationURL,
+		"expiresIn":       pin.ExpiresIn,
+		"interval":        pin.Interval,
+	})
+}
+
+// CheckSimklAuth polls the Simkl PIN/device flow until the account is authorized.
+func (h *AdminUIHandler) CheckSimklAuth(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	userCode := strings.TrimSpace(mux.Vars(r)["userCode"])
+	if userCode == "" {
+		http.Error(w, "User code is required", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	account := settings.Simkl.GetAccountByID(accountID)
+	if account == nil {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+	if account.ClientID == "" {
+		http.Error(w, "Client ID not configured", http.StatusBadRequest)
+		return
+	}
+
+	token, err := simkl.NewClient().CheckPINAuth(account.ClientID, userCode)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if token.AccessToken == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": false})
+		return
+	}
+
+	account.AccessToken = token.AccessToken
+	if token.UserID != "" {
+		account.Username = token.UserID
+	}
+	settings.Simkl.UpdateAccount(*account)
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": true})
+}
+
+// DisconnectSimklAccount clears the stored Simkl access token.
+func (h *AdminUIHandler) DisconnectSimklAccount(w http.ResponseWriter, r *http.Request) {
+	accountID := mux.Vars(r)["accountID"]
+	settings, err := h.configManager.Load()
+	if err != nil {
+		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	account := settings.Simkl.GetAccountByID(accountID)
+	if account == nil {
+		http.Error(w, "Account not found", http.StatusNotFound)
+		return
+	}
+	account.AccessToken = ""
+	account.Username = ""
+	settings.Simkl.UpdateAccount(*account)
+	if err := h.configManager.Save(settings); err != nil {
+		http.Error(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "connected": false})
 }
 
 // TestLiveTVRequest represents a request to test a Live TV connection

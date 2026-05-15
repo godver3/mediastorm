@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/mux"
 )
 
-
 type usersService interface {
 	List() []models.User
 	ListForAccount(accountID string) []models.User
@@ -38,6 +37,8 @@ type usersService interface {
 	ClearMdblistAccountID(id string) (models.User, error)
 	SetTraktAccountID(id, traktAccountID string) (models.User, error)
 	ClearTraktAccountID(id string) (models.User, error)
+	SetSimklAccountID(id, simklAccountID string) (models.User, error)
+	ClearSimklAccountID(id string) (models.User, error)
 	SetPlexAccountID(id, plexAccountID string) (models.User, error)
 	ClearPlexAccountID(id string) (models.User, error)
 	SetKidsProfile(id string, isKids bool) (models.User, error)
@@ -639,6 +640,84 @@ func (h *UsersHandler) ClearMdblistAccount(w http.ResponseWriter, r *http.Reques
 	}
 
 	user, err := h.Service.ClearMdblistAccountID(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// SetSimklAccount associates a Simkl account with a user profile.
+func (h *UsersHandler) SetSimklAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	if !auth.IsMaster(r) {
+		accountID := auth.GetAccountID(r)
+		if !h.Service.BelongsToAccount(id, accountID) {
+			http.Error(w, "profile not found", http.StatusNotFound)
+			return
+		}
+	} else if !h.Service.Exists(id) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		SimklAccountID string `json:"simklAccountId"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.Service.SetSimklAccountID(id, body.SimklAccountID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, users.ErrUserNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// ClearSimklAccount removes the Simkl account association from a user profile.
+func (h *UsersHandler) ClearSimklAccount(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := strings.TrimSpace(vars["userID"])
+	if id == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	if !auth.IsMaster(r) {
+		accountID := auth.GetAccountID(r)
+		if !h.Service.BelongsToAccount(id, accountID) {
+			http.Error(w, "profile not found", http.StatusNotFound)
+			return
+		}
+	} else if !h.Service.Exists(id) {
+		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	user, err := h.Service.ClearSimklAccountID(id)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, users.ErrUserNotFound) {

@@ -50,6 +50,7 @@ import (
 	"novastream/services/recordings"
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
@@ -494,9 +495,16 @@ func main() {
 	mdblistRTScrobbler := mdblist.NewScrobbleStateTracker(mdblistScrobbleClient, mdblistScrobbler, 15*time.Minute)
 	go mdblistRTScrobbler.StartCleanup(context.Background())
 
+	// Wire up Simkl scrobbler
+	simklClient := simkl.NewClient()
+	simklScrobbler := simkl.NewScrobbler(simklClient, cfgManager)
+	simklScrobbler.SetUserService(userService)
+	simklRTScrobbler := simkl.NewScrobbleStateTracker(simklClient, simklScrobbler, 15*time.Minute)
+	go simklRTScrobbler.StartCleanup(context.Background())
+
 	// Wire up multi-scrobblers that fan out to all enabled providers
-	multiScrobbler := history.NewMultiScrobbler(traktScrobbler, mdblistScrobbler)
-	multiRTScrobbler := history.NewMultiRealTimeScrobbler(scrobbleTracker, mdblistRTScrobbler)
+	multiScrobbler := history.NewMultiScrobbler(traktScrobbler, mdblistScrobbler, simklScrobbler)
+	multiRTScrobbler := history.NewMultiRealTimeScrobbler(scrobbleTracker, mdblistRTScrobbler, simklRTScrobbler)
 	historyService.SetTraktScrobbler(multiScrobbler)
 	historyService.SetTraktRealTimeScrobbler(multiRTScrobbler)
 
@@ -716,6 +724,7 @@ func main() {
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	schedulerService.SetEPGService(epgService)
 	schedulerService.SetHistoryService(historyService)
+	schedulerService.SetSimklClient(simklClient)
 	schedulerService.SetUsersService(userService)
 	schedulerService.SetJellyfinClient(jellyfinClient)
 	schedulerService.SetLocalMediaService(localMediaService)
@@ -949,12 +958,21 @@ func main() {
 	// Profile MDBList linking (admin routes)
 	r.HandleFunc("/admin/api/users/{userID}/mdblist", adminUIHandler.RequireAuth(usersHandler.SetMdblistAccount)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/mdblist", adminUIHandler.RequireAuth(usersHandler.ClearMdblistAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/users/{userID}/simkl", adminUIHandler.RequireAuth(usersHandler.SetSimklAccount)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/users/{userID}/simkl", adminUIHandler.RequireAuth(usersHandler.ClearSimklAccount)).Methods(http.MethodDelete)
 
 	// MDBList multi-account management (admin routes)
 	r.HandleFunc("/admin/api/mdblist/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetMDBListAccounts)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/mdblist/accounts", adminUIHandler.RequireAuth(adminUIHandler.CreateMDBListAccount)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/mdblist/accounts/{accountID}", adminUIHandler.RequireAuth(adminUIHandler.UpdateMDBListAccount)).Methods(http.MethodPatch)
 	r.HandleFunc("/admin/api/mdblist/accounts/{accountID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteMDBListAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/simkl/accounts", adminUIHandler.RequireAuth(adminUIHandler.GetSimklAccounts)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/simkl/accounts", adminUIHandler.RequireAuth(adminUIHandler.CreateSimklAccount)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/simkl/accounts/{accountID}", adminUIHandler.RequireAuth(adminUIHandler.UpdateSimklAccount)).Methods(http.MethodPatch)
+	r.HandleFunc("/admin/api/simkl/accounts/{accountID}", adminUIHandler.RequireAuth(adminUIHandler.DeleteSimklAccount)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/simkl/accounts/{accountID}/auth/start", adminUIHandler.RequireAuth(adminUIHandler.StartSimklAuth)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/simkl/accounts/{accountID}/auth/check/{userCode}", adminUIHandler.RequireAuth(adminUIHandler.CheckSimklAuth)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/simkl/accounts/{accountID}/disconnect", adminUIHandler.RequireAuth(adminUIHandler.DisconnectSimklAccount)).Methods(http.MethodPost)
 
 	// Plex multi-account management (admin routes)
 	r.HandleFunc("/admin/api/plex/accounts", adminUIHandler.RequireAuth(plexAccountsHandler.ListAccounts)).Methods(http.MethodGet)

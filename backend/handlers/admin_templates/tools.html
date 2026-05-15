@@ -29,7 +29,7 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Register Trakt and MDBList accounts here, then link them to profiles in the <strong style="color: var(--text-secondary);">Profile Scrobbling</strong> section below.
+                Register Trakt, Simkl, and MDBList accounts here, then link them to profiles in the <strong style="color: var(--text-secondary);">Profile Scrobbling</strong> section below.
                 Scrobbling pushes watched items to the linked service. To pull watch history, create a sync scheduled task.
             </p>
 
@@ -81,6 +81,62 @@
                     </p>
                     <div id="traktUserCode" style="font-family: monospace; font-size: 2rem; font-weight: bold; color: var(--accent); margin-bottom: 1.5rem;"></div>
                     <button class="btn btn-secondary" onclick="cancelTraktAuth()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Simkl Accounts -->
+            <h4 style="font-size: 0.9rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: var(--text-secondary);">Simkl</h4>
+            <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">
+                Create an app at <a href="https://simkl.com/settings/developer/new" target="_blank">simkl.com/settings/developer/new</a> and copy the Client ID. Authorization uses Simkl's PIN flow, so no app redirect is needed.
+            </p>
+            <div id="simklAccountsList" style="margin-bottom: 1rem;">
+                <!-- Accounts will be rendered here -->
+            </div>
+
+            <button class="btn btn-primary" onclick="showAddSimklAccountForm()" id="addSimklAccountBtn" style="margin-bottom: 1.5rem;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Simkl Account
+            </button>
+
+            <div id="simklAddAccountForm" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <h4 style="margin-bottom: 1rem;">Add New Simkl Account</h4>
+                <div class="form-group">
+                    <label class="form-label">Account Name</label>
+                    <input type="text" class="form-input" id="newSimklAccountName" placeholder="e.g., My Simkl">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Client ID</label>
+                    <input type="text" class="form-input" id="newSimklClientId" placeholder="From simkl.com/settings/developer/new">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Client Secret</label>
+                    <input type="password" class="form-input" id="newSimklClientSecret" placeholder="From simkl.com/settings/developer/new">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Redirect URI</label>
+                    <input type="text" class="form-input" value="Not used by PIN auth" readonly>
+                    <small class="text-muted">If Simkl requires one while creating the app, use urn:ietf:wg:oauth:2.0:oob.</small>
+                </div>
+                <div class="btn-group" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="hideAddSimklAccountForm()">Cancel</button>
+                    <button class="btn btn-primary" onclick="createSimklAccount()">Create Account</button>
+                </div>
+            </div>
+
+            <div id="simklAuthModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center;">
+                <div style="background: var(--bg-elevated); padding: 2rem; border-radius: 12px; max-width: 560px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                    <h3 style="margin-bottom: 0.5rem;">Authorize Simkl</h3>
+                    <p class="text-muted" style="margin-bottom: 1rem;">
+                        Copy this code, then open <a id="simklAuthUrl" href="#" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">Simkl authorization</a> and enter it:
+                    </p>
+                    <div id="simklUserCode" style="font-family: monospace; font-size: 2rem; font-weight: bold; color: var(--accent); margin-bottom: 1.5rem;"></div>
+                    <div class="btn-group" style="margin-top: 1rem;">
+                        <button class="btn btn-secondary" onclick="copySimklUserCode()">Copy Code</button>
+                        <button class="btn btn-secondary" onclick="cancelSimklAuth()">Cancel</button>
+                    </div>
                 </div>
             </div>
 
@@ -137,7 +193,7 @@
         </div>
         <div class="section-content">
             <p class="text-muted" style="margin-bottom: 1rem;">
-                Link each profile to a Trakt account and/or enable MDBList scrobbling. When a profile watches content, it will automatically scrobble to their linked services (one-way push).
+                Link each profile to Trakt, Simkl, and/or MDBList. When a profile watches content, it will automatically scrobble to their linked services (one-way push).
                 To sync history in the other direction (e.g. items watched in other apps), use a <strong style="color: var(--text-secondary);">Trakt History Sync</strong> scheduled task.
             </p>
             <div id="profileTraktLinkingList">
@@ -326,6 +382,7 @@
                             <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="simkl_history_sync">Simkl History Sync</option>
                             <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
                             <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
@@ -443,6 +500,26 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="newTaskHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Simkl History Sync specific config -->
+                    <div id="simklHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Simkl Account</label>
+                            <select id="newTaskHistorySimklAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Select a connected Simkl account to import history from</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskSimklHistoryProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -661,6 +738,7 @@
                             <option value="plex_history_sync">Plex Watch History Sync</option>
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
+                            <option value="simkl_history_sync">Simkl History Sync</option>
                             <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
                             <option value="mdblist_history_sync">MDBList History Sync</option>
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
@@ -762,6 +840,25 @@
                         <div class="form-group">
                             <label class="form-label">Sync to Profile</label>
                             <select id="editTaskHistoryProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Simkl History Sync specific config (edit) -->
+                    <div id="editSimklHistorySyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Simkl Account</label>
+                            <select id="editTaskHistorySimklAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskSimklHistoryProfile" class="form-select">
                                 {{range .Users}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -1638,6 +1735,9 @@
     let traktPollInterval = null;
     let userProfiles = [];
     let mdblistAccounts = [];
+    let simklAccounts = [];
+    let simklAuthAccountId = null;
+    let simklPollInterval = null;
     let localMediaLibraries = [];
     const ALL_LOCAL_MEDIA_LIBRARIES_VALUE = '__all__';
 
@@ -1657,7 +1757,7 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadBackendVersionInfo(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadSimklAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadBackendVersionInfo(), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     async function loadLocalMediaLibraries() {
@@ -2039,6 +2139,205 @@
         }
     }
 
+    // ========== Simkl Accounts Functions ==========
+    async function loadSimklAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/simkl/accounts');
+            if (response.ok) {
+                simklAccounts = await response.json() || [];
+                renderSimklAccountsList();
+                updateTraktStatusBadge();
+                renderProfileTraktLinking();
+            }
+        } catch (err) {
+            console.error('Failed to load Simkl accounts:', err);
+        }
+    }
+
+    function renderSimklAccountsList() {
+        const container = document.getElementById('simklAccountsList');
+        if (!container) return;
+        if (simklAccounts.length === 0) {
+            container.innerHTML = '<p class="text-muted">No Simkl accounts configured. Add one to get started.</p>';
+            return;
+        }
+
+        container.innerHTML = simklAccounts.map(account => {
+            const linkedProfiles = userProfiles.filter(p => p.simklAccountId === account.id);
+            return `
+            <div style="padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                    <div style="flex: 1; min-width: 140px;">
+                        <strong>${escapeHtml(account.name || 'Simkl Account')}</strong>
+                        ${account.connected ?
+                            `<span class="status-badge connected" style="font-size: 0.75rem;">Connected</span>` :
+                            `<span class="status-badge disconnected" style="font-size: 0.75rem;">Not Connected</span>`
+                        }
+                        ${account.username ?
+                            `<div class="text-muted" style="font-size: 0.875rem; margin-top: 0.25rem;">Logged in as ${escapeHtml(account.username)}</div>` :
+                            ''
+                        }
+                        ${linkedProfiles.length > 0 ?
+                            `<div class="text-muted" style="font-size: 0.8rem; margin-top: 0.25rem;">Linked to: ${linkedProfiles.map(p => escapeHtml(p.name)).join(', ')}</div>` :
+                            ''
+                        }
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-shrink: 0; align-items: center;">
+                        ${account.connected ? `
+                            <button class="btn btn-secondary btn-sm" onclick="disconnectSimklAccount('${account.id}')">Disconnect</button>
+                        ` : `
+                            <button class="btn btn-primary btn-sm" onclick="connectSimklAccount('${account.id}')">Authorize</button>
+                        `}
+                        <button class="btn btn-secondary btn-sm" onclick="deleteSimklAccount('${account.id}')" style="color: var(--danger);">Delete</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function showAddSimklAccountForm() {
+        document.getElementById('simklAddAccountForm').style.display = 'block';
+        document.getElementById('addSimklAccountBtn').style.display = 'none';
+    }
+
+    function hideAddSimklAccountForm() {
+        document.getElementById('simklAddAccountForm').style.display = 'none';
+        document.getElementById('addSimklAccountBtn').style.display = 'inline-flex';
+        document.getElementById('newSimklAccountName').value = '';
+        document.getElementById('newSimklClientId').value = '';
+        document.getElementById('newSimklClientSecret').value = '';
+    }
+
+    async function createSimklAccount() {
+        const name = document.getElementById('newSimklAccountName').value.trim();
+        const clientId = document.getElementById('newSimklClientId').value.trim();
+        const clientSecret = document.getElementById('newSimklClientSecret').value.trim();
+
+        if (!clientId) {
+            showToast('Client ID is required', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(basePath + '/api/simkl/accounts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name || 'Simkl Account', clientId, clientSecret })
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to create account');
+            }
+
+            showToast('Simkl account created', 'success');
+            hideAddSimklAccountForm();
+            await loadSimklAccounts();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function deleteSimklAccount(accountId) {
+        if (!confirm('Delete this Simkl account? Any linked profiles will be unlinked.')) return;
+
+        try {
+            const response = await fetch(`${basePath}/api/simkl/accounts/${accountId}`, { method: 'DELETE' });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to delete account');
+            }
+            showToast('Simkl account deleted', 'success');
+            await loadSimklAccounts();
+            await loadUserProfiles();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function connectSimklAccount(accountId) {
+        try {
+            const response = await fetch(`${basePath}/api/simkl/accounts/${accountId}/auth/start`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to start Simkl authorization');
+            }
+            const data = await response.json();
+            simklAuthAccountId = accountId;
+            document.getElementById('simklAuthUrl').href = data.verificationUrl;
+            document.getElementById('simklAuthUrl').textContent = data.verificationUrl || 'Simkl authorization';
+            document.getElementById('simklUserCode').textContent = data.userCode || '';
+            document.getElementById('simklAuthModal').style.display = 'flex';
+
+            const pollInterval = (data.interval || 5) * 1000;
+            simklPollInterval = setInterval(() => pollSimklAuth(accountId, data.userCode), pollInterval);
+            setTimeout(() => {
+                if (simklPollInterval) {
+                    cancelSimklAuth();
+                    showToast('Simkl authorization timed out', 'error');
+                }
+            }, (data.expiresIn || 600) * 1000);
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    async function pollSimklAuth(accountId, userCode) {
+        if (!accountId || !userCode) return;
+        try {
+            const response = await fetch(`${basePath}/api/simkl/accounts/${accountId}/auth/check/${encodeURIComponent(userCode)}`);
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to check Simkl authorization');
+            }
+            const data = await response.json();
+            if (data.authenticated) {
+                cancelSimklAuth();
+                showToast('Successfully connected to Simkl', 'success');
+                await loadSimklAccounts();
+                renderProfileTraktLinking();
+            }
+        } catch (err) {
+            console.error('Simkl poll error:', err);
+        }
+    }
+
+    async function copySimklUserCode() {
+        const code = document.getElementById('simklUserCode')?.textContent || '';
+        if (!code) return;
+        try {
+            await navigator.clipboard.writeText(code);
+            showToast('Simkl code copied', 'success');
+        } catch (err) {
+            showToast('Could not copy code automatically', 'error');
+        }
+    }
+
+    function cancelSimklAuth() {
+        if (simklPollInterval) {
+            clearInterval(simklPollInterval);
+            simklPollInterval = null;
+        }
+        document.getElementById('simklAuthModal').style.display = 'none';
+        document.getElementById('simklUserCode').textContent = '';
+        simklAuthAccountId = null;
+    }
+
+    async function disconnectSimklAccount(accountId) {
+        try {
+            const response = await fetch(`${basePath}/api/simkl/accounts/${accountId}/disconnect`, { method: 'POST' });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to disconnect Simkl');
+            }
+            showToast('Disconnected from Simkl', 'success');
+            await loadSimklAccounts();
+            renderProfileTraktLinking();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
     // ========== Trakt Accounts Functions ==========
     async function loadTraktAccounts() {
         try {
@@ -2058,9 +2357,10 @@
     function updateTraktStatusBadge() {
         const badge = document.getElementById('traktStatusBadge');
         const traktConnected = traktAccounts.filter(a => a.connected).length;
+        const simklConnected = simklAccounts.filter(a => a.connected).length;
         const mdblistCount = mdblistAccounts.length;
-        const totalConnected = traktConnected + mdblistCount;
-        const totalAccounts = traktAccounts.length + mdblistCount;
+        const totalConnected = traktConnected + simklConnected + mdblistCount;
+        const totalAccounts = traktAccounts.length + simklAccounts.length + mdblistCount;
 
         if (totalConnected > 0) {
             badge.textContent = `${totalConnected} Connected`;
@@ -2127,13 +2427,16 @@
         }
 
         const connectedAccounts = traktAccounts.filter(a => a.connected);
+        const connectedSimklAccounts = simklAccounts.filter(a => a.connected);
 
         container.innerHTML = userProfiles.map(profile => {
             const currentTraktId = profile.traktAccountId || '';
             const currentMdblistId = profile.mdblistAccountId || '';
+            const currentSimklId = profile.simklAccountId || '';
             const currentAccountExists = currentTraktId && traktAccounts.some(a => a.id === currentTraktId);
             const orphanedLink = currentTraktId && !currentAccountExists;
             const mdblistOrphaned = currentMdblistId && !mdblistAccounts.some(a => a.id === currentMdblistId);
+            const simklOrphaned = currentSimklId && !simklAccounts.some(a => a.id === currentSimklId);
 
             return `
                 <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 0.75rem; margin-bottom: 0.5rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); gap: 0.5rem;">
@@ -2151,6 +2454,16 @@
                             ${connectedAccounts.map(acc => `
                                 <option value="${acc.id}" ${currentTraktId === acc.id ? 'selected' : ''}>
                                     ${escapeHtml(acc.name || acc.username || 'Unnamed')}
+                                </option>
+                            `).join('')}
+                        </select>
+                        ${simklOrphaned ? `<span class="status-badge" style="background: var(--warning); color: #000; font-size: 0.7rem;">Orphaned Simkl</span>` : ''}
+                        <select class="form-select" style="max-width: 180px; min-width: 140px;" onchange="updateProfileSimklLink('${profile.id}', this.value)" title="Simkl account">
+                            <option value="" ${!currentSimklId ? 'selected' : ''}>No Simkl</option>
+                            ${simklOrphaned ? `<option value="${currentSimklId}" selected style="color: var(--warning);">Unknown</option>` : ''}
+                            ${connectedSimklAccounts.map(acc => `
+                                <option value="${acc.id}" ${currentSimklId === acc.id ? 'selected' : ''}>
+                                    ${escapeHtml(acc.name || acc.username || 'Simkl Account')}
                                 </option>
                             `).join('')}
                         </select>
@@ -2342,6 +2655,27 @@
             }
             showToast(mdblistAccountId ? 'Profile linked to MDBList account' : 'Profile unlinked from MDBList', 'success');
             await loadUserProfiles();
+        } catch (err) {
+            showToast(err.message, 'error');
+            await loadUserProfiles();
+        }
+    }
+
+    async function updateProfileSimklLink(profileId, simklAccountId) {
+        try {
+            const method = simklAccountId ? 'PUT' : 'DELETE';
+            const response = await fetch(`${basePath}/api/users/${profileId}/simkl`, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: simklAccountId ? JSON.stringify({ simklAccountId }) : undefined
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Failed to update profile');
+            }
+            showToast(simklAccountId ? 'Profile linked to Simkl account' : 'Profile unlinked from Simkl', 'success');
+            await loadUserProfiles();
+            await loadSimklAccounts();
         } catch (err) {
             showToast(err.message, 'error');
             await loadUserProfiles();
@@ -3821,6 +4155,11 @@
                     accountSource = 'Trakt';
                     const dirLabels = { trakt_to_local: 'Import', local_to_trakt: 'Export', bidirectional: 'Bidirectional' };
                     listTypeLabel = dirLabels[task.config.syncDirection] || 'Import';
+                } else if (task.type === 'simkl_history_sync') {
+                    const simklAccount = simklAccounts.find(a => a.id === task.config.simklAccountId);
+                    if (simklAccount) accountName = simklAccount.name || simklAccount.username || 'Simkl Account';
+                    accountSource = 'Simkl';
+                    listTypeLabel = 'Import';
                 } else if (task.type === 'mdblist_watchlist_sync') {
                     const mdbWLAccount = mdblistAccounts.find(a => a.id === task.config.mdblistAccountId);
                     if (mdbWLAccount) accountName = mdbWLAccount.name || 'MDBList Account';
@@ -3982,6 +4321,7 @@
             case 'plex_history_sync': return 'Plex History';
             case 'trakt_list_sync': return 'Trakt List';
             case 'trakt_history_sync': return 'Trakt History';
+            case 'simkl_history_sync': return 'Simkl History';
             case 'mdblist_watchlist_sync': return 'MDBList Watchlist';
             case 'mdblist_history_sync': return 'MDBList History';
             case 'jellyfin_favorites_sync': return 'Jellyfin Favorites';
@@ -4108,6 +4448,7 @@
         const plexConfig = document.getElementById('plexWatchlistSyncConfig');
         const traktConfig = document.getElementById('traktListSyncConfig');
         const traktHistoryConfig = document.getElementById('traktHistorySyncConfig');
+        const simklHistoryConfig = document.getElementById('simklHistorySyncConfig');
         const plexHistoryConfig = document.getElementById('plexHistorySyncConfig');
         const jellyfinFavConfig = document.getElementById('jellyfinFavoritesSyncConfig');
         const jellyfinHistConfig = document.getElementById('jellyfinHistorySyncConfig');
@@ -4121,6 +4462,7 @@
         plexConfig.style.display = taskType === 'plex_watchlist_sync' ? 'block' : 'none';
         traktConfig.style.display = taskType === 'trakt_list_sync' ? 'block' : 'none';
         traktHistoryConfig.style.display = taskType === 'trakt_history_sync' ? 'block' : 'none';
+        simklHistoryConfig.style.display = taskType === 'simkl_history_sync' ? 'block' : 'none';
         const mdblistWatchlistConfig = document.getElementById('mdblistWatchlistSyncConfig');
         mdblistWatchlistConfig.style.display = taskType === 'mdblist_watchlist_sync' ? 'block' : 'none';
         const mdblistHistoryConfig = document.getElementById('mdblistHistorySyncConfig');
@@ -4138,6 +4480,14 @@
             const connectedTraktAccounts = traktAccounts.filter(a => a.connected);
             historyTraktSelect.innerHTML = connectedTraktAccounts.map(account =>
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
+            ).join('');
+        }
+
+        if (taskType === 'simkl_history_sync') {
+            const historySimklSelect = document.getElementById('newTaskHistorySimklAccount');
+            const connectedSimklAccounts = simklAccounts.filter(a => a.connected);
+            historySimklSelect.innerHTML = connectedSimklAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Simkl Account')}</option>`
             ).join('');
         }
 
@@ -4207,7 +4557,7 @@
         // Show sync options and dry run for appropriate task types
         // Hide generic sync options for history sync types (they have their own controls or no direction needed)
         const isSyncTask = taskType.includes('sync');
-        const hasOwnDirection = taskType === 'trakt_history_sync' || taskType === 'mdblist_history_sync' || taskType === 'plex_history_sync' || taskType === 'jellyfin_history_sync';
+        const hasOwnDirection = taskType === 'trakt_history_sync' || taskType === 'simkl_history_sync' || taskType === 'mdblist_history_sync' || taskType === 'plex_history_sync' || taskType === 'jellyfin_history_sync';
         syncOptions.style.display = (isSyncTask && !hasOwnDirection) ? 'block' : 'none';
         document.getElementById('dryRunGroup').style.display = isSyncTask ? 'block' : 'none';
     }
@@ -4343,6 +4693,14 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'simkl_history_sync') {
+            config.simklAccountId = document.getElementById('newTaskHistorySimklAccount').value;
+            config.profileId = document.getElementById('newTaskSimklHistoryProfile').value;
+
+            if (!config.simklAccountId || !config.profileId) {
+                showToast('Please select a Simkl account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'mdblist_watchlist_sync') {
             config.mdblistAccountId = document.getElementById('newTaskMdblistWatchlistAccount').value;
             config.profileId = document.getElementById('newTaskMdblistWatchlistProfile').value;
@@ -4396,7 +4754,7 @@
         }
 
         // Add sync options for sync-type tasks (but not history sync types which have their own controls)
-        const historyTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const historyTypes = ['trakt_history_sync', 'simkl_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         if (taskType.includes('sync') && !historyTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('newTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('newTaskDeleteBehavior').value;
@@ -4552,6 +4910,7 @@
         document.getElementById('editPlexWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editTraktListSyncConfig').style.display = 'none';
         document.getElementById('editTraktHistorySyncConfig').style.display = 'none';
+        document.getElementById('editSimklHistorySyncConfig').style.display = 'none';
         document.getElementById('editMdblistWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editMdblistHistorySyncConfig').style.display = 'none';
         document.getElementById('editPlexHistorySyncConfig').style.display = 'none';
@@ -4600,6 +4959,17 @@
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Trakt Account')}</option>`
             ).join('');
             historyTraktSelect.value = task.config.traktAccountId || '';
+        }
+
+        if (task.type === 'simkl_history_sync' && task.config) {
+            document.getElementById('editSimklHistorySyncConfig').style.display = 'block';
+            const historySimklSelect = document.getElementById('editTaskHistorySimklAccount');
+            const connectedSimklAccounts = simklAccounts.filter(a => a.connected);
+            historySimklSelect.innerHTML = connectedSimklAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Simkl Account')}</option>`
+            ).join('');
+            historySimklSelect.value = task.config.simklAccountId || '';
+            document.getElementById('editTaskSimklHistoryProfile').value = task.config.profileId || '';
         }
 
         // Set config values for MDBList watchlist sync
@@ -4695,7 +5065,7 @@
 
         // Set sync options for sync-type tasks (but not history sync types which have their own controls)
         const isSyncTask = task.type.includes('sync');
-        const editHistoryTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const editHistoryTypes = ['trakt_history_sync', 'simkl_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         const isHistorySync = editHistoryTypes.includes(task.type);
         document.getElementById('editSyncOptionsConfig').style.display = (isSyncTask && !isHistorySync) ? 'block' : 'none';
 
@@ -4821,6 +5191,18 @@
                 showToast('Please select a Trakt account and profile', 'error');
                 return;
             }
+        } else if (taskType === 'simkl_history_sync') {
+            config.simklAccountId = document.getElementById('editTaskHistorySimklAccount').value;
+            config.profileId = document.getElementById('editTaskSimklHistoryProfile').value;
+            const existingTask = scheduledTasks.find(t => t.id === taskId);
+            if (existingTask && existingTask.config && existingTask.config.lastSimklActivityAt) {
+                config.lastSimklActivityAt = existingTask.config.lastSimklActivityAt;
+            }
+
+            if (!config.simklAccountId || !config.profileId) {
+                showToast('Please select a Simkl account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'mdblist_watchlist_sync') {
             config.mdblistAccountId = document.getElementById('editTaskMdblistWatchlistAccount').value;
             config.profileId = document.getElementById('editTaskMdblistWatchlistProfile').value;
@@ -4874,7 +5256,7 @@
         }
 
         // Add sync options for sync-type tasks (but not history sync types which have their own controls)
-        const editHistTypes = ['trakt_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
+        const editHistTypes = ['trakt_history_sync', 'simkl_history_sync', 'mdblist_history_sync', 'plex_history_sync', 'jellyfin_history_sync'];
         if (taskType.includes('sync') && !editHistTypes.includes(taskType)) {
             config.syncDirection = document.getElementById('editTaskSyncDirection').value;
             config.deleteBehavior = document.getElementById('editTaskDeleteBehavior').value;

@@ -510,6 +510,9 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.SetMdblistAccount).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.ClearMdblistAccount).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/mdblist", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/simkl", usersHandler.SetSimklAccount).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/simkl", usersHandler.ClearSimklAccount).Methods(http.MethodDelete)
+	profileProtected.HandleFunc("/{userID}/simkl", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
 	// Kids profile content restriction configuration

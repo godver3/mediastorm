@@ -1025,6 +1025,50 @@ func (s *Service) GetUsersByTraktAccountID(traktAccountID string) []models.User 
 	return users
 }
 
+// SetSimklAccountID associates a Simkl account with the user.
+func (s *Service) SetSimklAccountID(id, simklAccountID string) (models.User, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return models.User{}, ErrUserNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[id]
+	if !ok {
+		return models.User{}, ErrUserNotFound
+	}
+
+	user.SimklAccountID = strings.TrimSpace(simklAccountID)
+	user.UpdatedAt = time.Now().UTC()
+	s.users[id] = user
+
+	if err := s.saveLocked(); err != nil {
+		return models.User{}, err
+	}
+	return user, nil
+}
+
+// ClearSimklAccountID removes the Simkl account association from the user.
+func (s *Service) ClearSimklAccountID(id string) (models.User, error) {
+	return s.SetSimklAccountID(id, "")
+}
+
+// GetUsersBySimklAccountID returns all users that have the specified Simkl account linked.
+func (s *Service) GetUsersBySimklAccountID(simklAccountID string) []models.User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var users []models.User
+	for _, user := range s.users {
+		if user.SimklAccountID == simklAccountID {
+			users = append(users, user)
+		}
+	}
+	return users
+}
+
 // SetPlexAccountID associates a Plex account with the user.
 func (s *Service) SetPlexAccountID(id, plexAccountID string) (models.User, error) {
 	id = strings.TrimSpace(id)

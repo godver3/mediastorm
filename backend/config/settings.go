@@ -39,6 +39,7 @@ type Settings struct {
 	Subtitles       SubtitleSettings        `json:"subtitles"`
 	MDBList         MDBListSettings         `json:"mdblist"`
 	Trakt           TraktSettings           `json:"trakt,omitempty"`
+	Simkl           SimklSettings           `json:"simkl,omitempty"`
 	Plex            PlexSettings            `json:"plex,omitempty"`
 	Jellyfin        JellyfinSettings        `json:"jellyfin,omitempty"`
 	Log             LogConfig               `json:"log"`
@@ -626,6 +627,53 @@ type TraktSettings struct {
 	ScrobblingEnabled bool   `json:"scrobblingEnabled,omitempty"`
 }
 
+// SimklAccount represents a registered Simkl account with app credentials and a user token.
+type SimklAccount struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret,omitempty"`
+	AccessToken  string `json:"accessToken,omitempty"`
+	Username     string `json:"username,omitempty"`
+}
+
+// SimklSettings defines Simkl integration configuration.
+type SimklSettings struct {
+	Accounts []SimklAccount `json:"accounts,omitempty"`
+}
+
+// GetAccountByID returns a Simkl account by its ID, or nil if not found.
+func (s *SimklSettings) GetAccountByID(id string) *SimklAccount {
+	for i := range s.Accounts {
+		if s.Accounts[i].ID == id {
+			return &s.Accounts[i]
+		}
+	}
+	return nil
+}
+
+// UpdateAccount updates an existing Simkl account or adds it if not found.
+func (s *SimklSettings) UpdateAccount(account SimklAccount) {
+	for i := range s.Accounts {
+		if s.Accounts[i].ID == account.ID {
+			s.Accounts[i] = account
+			return
+		}
+	}
+	s.Accounts = append(s.Accounts, account)
+}
+
+// RemoveAccount removes a Simkl account by ID.
+func (s *SimklSettings) RemoveAccount(id string) bool {
+	for i := range s.Accounts {
+		if s.Accounts[i].ID == id {
+			s.Accounts = append(s.Accounts[:i], s.Accounts[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // GetAccountByID returns a Trakt account by its ID, or nil if not found.
 func (t *TraktSettings) GetAccountByID(id string) *TraktAccount {
 	for i := range t.Accounts {
@@ -766,6 +814,7 @@ const (
 	ScheduledTaskTypeBackup                ScheduledTaskType = "backup"
 	ScheduledTaskTypeLocalMediaScan        ScheduledTaskType = "local_media_scan"
 	ScheduledTaskTypeTraktHistorySync      ScheduledTaskType = "trakt_history_sync"
+	ScheduledTaskTypeSimklHistorySync      ScheduledTaskType = "simkl_history_sync"
 	ScheduledTaskTypePrewarm               ScheduledTaskType = "prewarm"
 	ScheduledTaskTypePlexHistorySync       ScheduledTaskType = "plex_history_sync"
 	ScheduledTaskTypeJellyfinFavoritesSync ScheduledTaskType = "jellyfin_favorites_sync"
@@ -948,6 +997,7 @@ func DefaultSettings() Settings {
 			EnabledRatings: []string{"imdb", "tomatoes", "audience"}, // Default to IMDB and Rotten Tomatoes
 		},
 		Trakt: TraktSettings{},
+		Simkl: SimklSettings{},
 		Plex:  PlexSettings{},
 		Log: LogConfig{
 			File:       "cache/logs/backend.log",

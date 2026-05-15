@@ -40,7 +40,7 @@ func (s *Scrobbler) IsEnabled() bool {
 		return false
 	}
 	for _, account := range settings.Trakt.Accounts {
-		if account.AccessToken != "" {
+		if account.ScrobblingEnabled && account.AccessToken != "" {
 			return true
 		}
 	}
@@ -50,7 +50,7 @@ func (s *Scrobbler) IsEnabled() bool {
 // IsEnabledForUser returns whether a specific user is linked to a connected Trakt account.
 func (s *Scrobbler) IsEnabledForUser(userID string) bool {
 	account := s.getAccountForUser(userID)
-	return account != nil && account.AccessToken != ""
+	return account != nil && account.ScrobblingEnabled && account.AccessToken != ""
 }
 
 // getAccountForUser returns the Trakt account associated with the given user, or nil if none.

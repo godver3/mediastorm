@@ -364,6 +364,37 @@ func TestCreateTask_InvalidProfileIDValidation(t *testing.T) {
 	}
 }
 
+func TestCreateTask_SimklHistorySyncValidation(t *testing.T) {
+	h := newTestScheduledTasksHandler(t)
+
+	body := map[string]interface{}{
+		"type":    string(config.ScheduledTaskTypeSimklHistorySync),
+		"name":    "Simkl history sync",
+		"enabled": true,
+		"config": map[string]string{
+			"simklAccountId": "simkl-1",
+			"profileId":      "prof-1",
+		},
+	}
+	rec := postCreateTask(t, h, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	body["config"] = map[string]string{"profileId": "prof-1"}
+	rec = postCreateTask(t, h, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	body["config"] = map[string]string{"simklAccountId": "simkl-1", "profileId": "prof-1"}
+	body["frequency"] = string(config.ScheduledTaskFrequency5Min)
+	rec = postCreateTask(t, h, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for rapid Simkl schedule, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestUpdateTask_InvalidProfileIDValidation(t *testing.T) {
 	h := newTestScheduledTasksHandler(t)
 

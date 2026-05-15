@@ -16,7 +16,7 @@ type pgUserRepo struct {
 }
 
 const userColumns = `id, account_id, name, color, icon_url, pin_hash, trakt_account_id, plex_account_id,
-	mdblist_account_id, is_kids_profile, kids_mode, kids_max_rating, kids_max_movie_rating, kids_max_tv_rating,
+	mdblist_account_id, simkl_account_id, is_kids_profile, kids_mode, kids_max_rating, kids_max_movie_rating, kids_max_tv_rating,
 	kids_allowed_lists, created_at, updated_at`
 
 func (r *pgUserRepo) Get(ctx context.Context, id string) (*models.User, error) {
@@ -46,9 +46,9 @@ func (r *pgUserRepo) Create(ctx context.Context, user *models.User) error {
 	listsJSON, _ := json.Marshal(user.KidsAllowedLists)
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO users (`+userColumns+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		user.ID, user.AccountID, user.Name, user.Color, user.IconURL, user.PinHash,
-		user.TraktAccountID, user.PlexAccountID, user.MdblistAccountID, user.IsKidsProfile,
+		user.TraktAccountID, user.PlexAccountID, user.MdblistAccountID, user.SimklAccountID, user.IsKidsProfile,
 		user.KidsMode, user.KidsMaxRating, user.KidsMaxMovieRating, user.KidsMaxTVRating,
 		listsJSON, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
@@ -61,12 +61,12 @@ func (r *pgUserRepo) Update(ctx context.Context, user *models.User) error {
 	listsJSON, _ := json.Marshal(user.KidsAllowedLists)
 	_, err := r.pool.Exec(ctx, `
 		UPDATE users SET account_id=$2, name=$3, color=$4, icon_url=$5, pin_hash=$6,
-		trakt_account_id=$7, plex_account_id=$8, mdblist_account_id=$9, is_kids_profile=$10,
-		kids_mode=$11, kids_max_rating=$12, kids_max_movie_rating=$13, kids_max_tv_rating=$14,
-		kids_allowed_lists=$15, updated_at=$16
+		trakt_account_id=$7, plex_account_id=$8, mdblist_account_id=$9, simkl_account_id=$10, is_kids_profile=$11,
+		kids_mode=$12, kids_max_rating=$13, kids_max_movie_rating=$14, kids_max_tv_rating=$15,
+		kids_allowed_lists=$16, updated_at=$17
 		WHERE id=$1`,
 		user.ID, user.AccountID, user.Name, user.Color, user.IconURL, user.PinHash,
-		user.TraktAccountID, user.PlexAccountID, user.MdblistAccountID, user.IsKidsProfile,
+		user.TraktAccountID, user.PlexAccountID, user.MdblistAccountID, user.SimklAccountID, user.IsKidsProfile,
 		user.KidsMode, user.KidsMaxRating, user.KidsMaxMovieRating, user.KidsMaxTVRating,
 		listsJSON, user.UpdatedAt)
 	if err != nil {
@@ -93,7 +93,7 @@ func scanUser(row pgx.Row) (*models.User, error) {
 	var u models.User
 	var listsJSON []byte
 	err := row.Scan(&u.ID, &u.AccountID, &u.Name, &u.Color, &u.IconURL, &u.PinHash,
-		&u.TraktAccountID, &u.PlexAccountID, &u.MdblistAccountID, &u.IsKidsProfile,
+		&u.TraktAccountID, &u.PlexAccountID, &u.MdblistAccountID, &u.SimklAccountID, &u.IsKidsProfile,
 		&u.KidsMode, &u.KidsMaxRating, &u.KidsMaxMovieRating, &u.KidsMaxTVRating,
 		&listsJSON, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -114,7 +114,7 @@ func collectUsers(rows pgx.Rows) ([]models.User, error) {
 		var u models.User
 		var listsJSON []byte
 		err := rows.Scan(&u.ID, &u.AccountID, &u.Name, &u.Color, &u.IconURL, &u.PinHash,
-			&u.TraktAccountID, &u.PlexAccountID, &u.MdblistAccountID, &u.IsKidsProfile,
+			&u.TraktAccountID, &u.PlexAccountID, &u.MdblistAccountID, &u.SimklAccountID, &u.IsKidsProfile,
 			&u.KidsMode, &u.KidsMaxRating, &u.KidsMaxMovieRating, &u.KidsMaxTVRating,
 			&listsJSON, &u.CreatedAt, &u.UpdatedAt)
 		if err != nil {

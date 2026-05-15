@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"novastream/services/history"
 	"novastream/services/jellyfin"
 	"novastream/services/plex"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 	"novastream/services/watchlist"
 )
@@ -53,6 +55,29 @@ func (f *fakeSchedulerUsersProvider) ListAll() []models.User {
 		result = append(result, user)
 	}
 	return result
+}
+
+func TestSimklAllItemsToWatchHistoryParsesMoviesAndEpisodes(t *testing.T) {
+	watched := true
+	resp := &simkl.AllItemsResponse{
+		Movies: []json.RawMessage{
+			json.RawMessage(`{"status":"completed","movie":{"title":"Inception","year":2010,"ids":{"imdb":"tt1375666","tmdb":27205}},"last_watched_at":"2026-05-15T12:00:00Z"}`),
+		},
+		Shows: []json.RawMessage{
+			json.RawMessage(`{"status":"watching","show":{"title":"The Show","year":2020,"ids":{"tvdb":12345}},"seasons":[{"number":1,"episodes":[{"number":2,"title":"Pilot","watched_at":"2026-05-15T13:00:00Z"}]}]}`),
+		},
+	}
+
+	updates := simklAllItemsToWatchHistory(resp, &watched)
+	if len(updates) != 2 {
+		t.Fatalf("updates len = %d, want 2", len(updates))
+	}
+	if updates[0].MediaType != "movie" || updates[0].ItemID != "tmdb:movie:27205" {
+		t.Fatalf("movie update = %+v", updates[0])
+	}
+	if updates[1].MediaType != "episode" || updates[1].ItemID != "tvdb:series:12345:s01e02" {
+		t.Fatalf("episode update = %+v", updates[1])
+	}
 }
 
 func TestResolveProfileID(t *testing.T) {

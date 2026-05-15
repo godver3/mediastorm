@@ -14,24 +14,25 @@ const (
 
 // User models a NovaStream profile capable of holding watchlist data.
 type User struct {
-	ID             string    `json:"id"`
-	AccountID      string    `json:"accountId"`                // ID of the owning account
-	Name           string    `json:"name"`
-	Color          string    `json:"color,omitempty"`
-	IconURL        string    `json:"iconUrl,omitempty"`        // Local path to downloaded profile icon image (set via admin UI)
-	PinHash        string    `json:"pinHash,omitempty"`        // bcrypt hash of PIN — persisted to disk, stripped from API responses by MarshalJSON
-	TraktAccountID string    `json:"traktAccountId,omitempty"` // ID of the linked Trakt account (from config.TraktAccount)
-	PlexAccountID    string    `json:"plexAccountId,omitempty"`    // ID of the linked Plex account (from config.PlexAccount)
-	MdblistAccountID string    `json:"mdblistAccountId,omitempty"` // ID of the linked MDBList account (from config.MDBListAccount)
-	IsKidsProfile    bool      `json:"isKidsProfile"`              // Whether this is a kids profile with content restrictions
+	ID               string `json:"id"`
+	AccountID        string `json:"accountId"` // ID of the owning account
+	Name             string `json:"name"`
+	Color            string `json:"color,omitempty"`
+	IconURL          string `json:"iconUrl,omitempty"`          // Local path to downloaded profile icon image (set via admin UI)
+	PinHash          string `json:"pinHash,omitempty"`          // bcrypt hash of PIN — persisted to disk, stripped from API responses by MarshalJSON
+	TraktAccountID   string `json:"traktAccountId,omitempty"`   // ID of the linked Trakt account (from config.TraktAccount)
+	PlexAccountID    string `json:"plexAccountId,omitempty"`    // ID of the linked Plex account (from config.PlexAccount)
+	MdblistAccountID string `json:"mdblistAccountId,omitempty"` // ID of the linked MDBList account (from config.MDBListAccount)
+	SimklAccountID   string `json:"simklAccountId,omitempty"`   // ID of the linked Simkl account (from config.SimklAccount)
+	IsKidsProfile    bool   `json:"isKidsProfile"`              // Whether this is a kids profile with content restrictions
 	// Kids profile content restriction settings
-	KidsMode           string   `json:"kidsMode,omitempty"`           // "rating", "content_list", or "" (disabled)
-	KidsMaxRating      string   `json:"kidsMaxRating,omitempty"`      // Deprecated: use KidsMaxMovieRating/KidsMaxTVRating instead
-	KidsMaxMovieRating string   `json:"kidsMaxMovieRating,omitempty"` // Max allowed movie rating: "G", "PG", "PG-13", "R", "NC-17"
-	KidsMaxTVRating    string   `json:"kidsMaxTVRating,omitempty"`    // Max allowed TV rating: "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"
-	KidsAllowedLists   []string `json:"kidsAllowedLists,omitempty"`   // MDBList URLs allowed for content_list mode
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	KidsMode           string    `json:"kidsMode,omitempty"`           // "rating", "content_list", or "" (disabled)
+	KidsMaxRating      string    `json:"kidsMaxRating,omitempty"`      // Deprecated: use KidsMaxMovieRating/KidsMaxTVRating instead
+	KidsMaxMovieRating string    `json:"kidsMaxMovieRating,omitempty"` // Max allowed movie rating: "G", "PG", "PG-13", "R", "NC-17"
+	KidsMaxTVRating    string    `json:"kidsMaxTVRating,omitempty"`    // Max allowed TV rating: "TV-Y", "TV-Y7", "TV-G", "TV-PG", "TV-14", "TV-MA"
+	KidsAllowedLists   []string  `json:"kidsAllowedLists,omitempty"`   // MDBList URLs allowed for content_list mode
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 // HasPin returns true if the user has a PIN set.
@@ -50,12 +51,13 @@ func (u User) MarshalJSON() ([]byte, error) {
 	type UserAlias User // prevent recursion
 	return json.Marshal(&struct {
 		UserAlias
-		PinHash        *struct{} `json:"pinHash,omitempty"` // shadow to exclude from output (nil + omitempty = dropped)
-		HasPin         bool      `json:"hasPin"`
-		HasIcon        bool      `json:"hasIcon"`
-		TraktAccountID   string `json:"traktAccountId,omitempty"`
-		PlexAccountID    string `json:"plexAccountId,omitempty"`
-		MdblistAccountID string `json:"mdblistAccountId,omitempty"`
+		PinHash          *struct{} `json:"pinHash,omitempty"` // shadow to exclude from output (nil + omitempty = dropped)
+		HasPin           bool      `json:"hasPin"`
+		HasIcon          bool      `json:"hasIcon"`
+		TraktAccountID   string    `json:"traktAccountId,omitempty"`
+		PlexAccountID    string    `json:"plexAccountId,omitempty"`
+		MdblistAccountID string    `json:"mdblistAccountId,omitempty"`
+		SimklAccountID   string    `json:"simklAccountId,omitempty"`
 	}{
 		UserAlias:        UserAlias(u),
 		PinHash:          nil,
@@ -64,5 +66,6 @@ func (u User) MarshalJSON() ([]byte, error) {
 		TraktAccountID:   u.TraktAccountID,
 		PlexAccountID:    u.PlexAccountID,
 		MdblistAccountID: u.MdblistAccountID,
+		SimklAccountID:   u.SimklAccountID,
 	})
 }

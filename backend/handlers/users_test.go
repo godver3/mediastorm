@@ -70,7 +70,7 @@ type fakeUsersService struct {
 	removeAllowedErr    error
 }
 
-func (f *fakeUsersService) List() []models.User                      { return nil }
+func (f *fakeUsersService) List() []models.User { return nil }
 func (f *fakeUsersService) ListForAccount(accountID string) []models.User {
 	return f.listForAccountUsers
 }
@@ -123,6 +123,12 @@ func (f *fakeUsersService) SetTraktAccountID(id, traktAccountID string) (models.
 }
 func (f *fakeUsersService) ClearTraktAccountID(id string) (models.User, error) {
 	return f.clearTraktUser, f.clearTraktErr
+}
+func (f *fakeUsersService) SetSimklAccountID(id, simklAccountID string) (models.User, error) {
+	return models.User{ID: id, SimklAccountID: simklAccountID}, nil
+}
+func (f *fakeUsersService) ClearSimklAccountID(id string) (models.User, error) {
+	return models.User{ID: id}, nil
 }
 func (f *fakeUsersService) SetPlexAccountID(id, plexAccountID string) (models.User, error) {
 	return f.setPlexUser, f.setPlexErr
