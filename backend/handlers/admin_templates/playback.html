@@ -54,6 +54,31 @@
         <section id="playbackPanel" class="playback-panel" style="display: none;"></section>
     </main>
 </div>
+
+<div id="webPlayerResumeModal" class="web-player-resume-modal" aria-hidden="true">
+    <div class="web-player-resume-dialog" role="dialog" aria-modal="true" aria-labelledby="webPlayerResumeTitle">
+        <button class="web-player-resume-close" onclick="closeWebPlayerResumeModal()" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+        <div class="section-label">Web Player</div>
+        <h2 id="webPlayerResumeTitle">Resume Playback?</h2>
+        <p id="webPlayerResumeDescription" class="web-player-resume-description"></p>
+        <div class="details-actions">
+            <button class="btn btn-primary" onclick="confirmWebPlayerResume()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                Resume
+            </button>
+            <button class="btn btn-secondary" onclick="confirmWebPlayerStartOver()">
+                Start From Beginning
+            </button>
+        </div>
+    </div>
+</div>
 {{end}}
 
 <style>
@@ -820,6 +845,63 @@
         font-size: 0.8125rem;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
+    }
+
+    .web-player-resume-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: rgba(0, 0, 0, 0.62);
+    }
+
+    .web-player-resume-modal.is-open {
+        display: flex;
+    }
+
+    .web-player-resume-dialog {
+        position: relative;
+        width: min(100%, 460px);
+        padding: 1.25rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+    }
+
+    .web-player-resume-dialog h2 {
+        margin: 0 2rem 0.5rem 0;
+        font-size: 1.35rem;
+        line-height: 1.2;
+    }
+
+    .web-player-resume-description {
+        margin: 0 0 1rem;
+        color: var(--text-secondary);
+    }
+
+    .web-player-resume-close {
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 2rem;
+        height: 2rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        cursor: pointer;
+    }
+
+    .web-player-resume-close svg {
+        width: 1rem;
+        height: 1rem;
     }
 
     #videoHost.web-player-fullscreen .web-player-time {
@@ -1791,16 +1873,72 @@
         return query;
     }
 
-    function getResumeOffset() {
+    function getProgressMatch() {
         const progress = selectedDetails?.playbackProgress || [];
-        if (!Array.isArray(progress)) return 0;
-        const match = progress.find((entry) => {
+        if (!Array.isArray(progress)) return null;
+        return progress.find((entry) => {
             if (selectedItem.mediaType === 'movie') return entry.mediaType === 'movie';
             return entry.mediaType === 'episode' &&
                 Number(entry.seasonNumber) === Number(selectedEpisode?.seasonNumber) &&
                 Number(entry.episodeNumber) === Number(selectedEpisode?.episodeNumber);
-        });
+        }) || null;
+    }
+
+    function getResumeOffset() {
+        const match = getProgressMatch();
         return Math.max(0, Number(match?.position || 0));
+    }
+
+    function getResumePercent() {
+        const match = getProgressMatch();
+        const percent = Number(match?.percentWatched ?? selectedItem?.progress ?? 0);
+        if (!Number.isFinite(percent)) return 0;
+        return Math.max(0, Math.min(99, Math.round(percent)));
+    }
+
+    function shouldOfferWebPlayerResume() {
+        const percent = getResumePercent();
+        return percent > 5 && percent < 95;
+    }
+
+    function handleWebPlayerLaunch() {
+        if (!shouldOfferWebPlayerResume()) {
+            void startWebPlayer({ startPercent: 0 });
+            return;
+        }
+        openWebPlayerResumeModal();
+    }
+
+    function openWebPlayerResumeModal() {
+        const modal = document.getElementById('webPlayerResumeModal');
+        const description = document.getElementById('webPlayerResumeDescription');
+        const percent = getResumePercent();
+        if (description) {
+            description.textContent = `Continue from ${percent}% or start from the beginning.`;
+        }
+        if (!modal) return;
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        const resumeButton = modal.querySelector('.btn-primary');
+        if (resumeButton) resumeButton.focus();
+    }
+
+    function closeWebPlayerResumeModal() {
+        const modal = document.getElementById('webPlayerResumeModal');
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+
+    function confirmWebPlayerResume() {
+        const percent = getResumePercent();
+        closeWebPlayerResumeModal();
+        void startWebPlayer({ startPercent: percent });
+    }
+
+    function confirmWebPlayerStartOver() {
+        closeWebPlayerResumeModal();
+        void startWebPlayer({ startPercent: 0 });
     }
 
     function renderPlaybackChoices(candidate) {
@@ -1817,7 +1955,7 @@
         panel.innerHTML = `
             <div class="player-wrap">
                 <div class="details-actions" style="margin-bottom: 1rem;">
-                    <button class="btn btn-primary" onclick="startWebPlayer()">
+                    <button class="btn btn-primary" onclick="handleWebPlayerLaunch()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="5 3 19 12 5 21 5 3"/>
                         </svg>
@@ -1871,9 +2009,15 @@
     async function startWebPlayer(options = {}) {
         if (!resolvedPlayback?.webdavPath) return;
         const requestedStartOffset = Number.isFinite(Number(options.startOffset)) ? Math.max(0, Number(options.startOffset)) : 0;
+        const requestedStartPercent = requestedStartOffset > 0
+            ? 0
+            : (Number.isFinite(Number(options.startPercent))
+                ? Math.max(0, Math.min(99, Number(options.startPercent)))
+                : 0);
         const shouldAutoPlay = options.autoPlay !== false;
         webPlayerDebug('startWebPlayer.begin', {
             requestedStartOffset,
+            requestedStartPercent,
             preserveTrackSelection: Boolean(options.preserveTrackSelection),
             autoPlay: shouldAutoPlay,
         });
@@ -1906,6 +2050,9 @@
                 audioLang: preferences.audioLanguage,
                 startOffset: requestedStartOffset.toFixed(2),
             });
+            if (requestedStartPercent > 0) {
+                params.set('startPercent', requestedStartPercent.toFixed(2));
+            }
             if (webPlayerSelectedAudioTrack !== null && webPlayerSelectedAudioTrack !== undefined && webPlayerSelectedAudioTrack >= 0) {
                 params.set('audioTrack', String(webPlayerSelectedAudioTrack));
             }
@@ -2980,10 +3127,17 @@
 
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
+        closeWebPlayerResumeModal();
         closeWebPlayerVolumeScrub();
         const host = document.getElementById('videoHost');
         if (!host?.classList.contains('web-player-fullscreen')) return;
         setWebPlayerFullscreen(false);
+    });
+
+    document.getElementById('webPlayerResumeModal')?.addEventListener('click', (event) => {
+        if (event.target?.id === 'webPlayerResumeModal') {
+            closeWebPlayerResumeModal();
+        }
     });
 
     document.addEventListener('fullscreenchange', () => {
