@@ -88,6 +88,39 @@ func TestScoreResult_Resolution(t *testing.T) {
 	}
 }
 
+func TestScoreResult_LanguageBonusIsCapped(t *testing.T) {
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 0},
+			{ID: config.RankingLanguage, Name: "Language", Enabled: true, Order: 1},
+		},
+		PreferredLang: "eng",
+	}
+
+	r720English := models.NZBResult{
+		Title:      "Movie 720p",
+		Attributes: map[string]string{"languages": "eng"},
+	}
+	r2160Unknown := models.NZBResult{Title: "Movie 2160p"}
+
+	s720, breakdown := ScoreResult(r720English, ctx)
+	s2160, _ := ScoreResult(r2160Unknown, ctx)
+
+	if s720 >= s2160 {
+		t.Fatalf("expected 2160p without language (%d) > 720p with language (%d)", s2160, s720)
+	}
+
+	for _, item := range breakdown {
+		if item.Criterion == "Language" {
+			if item.Points != languageMatchMaxPoints {
+				t.Fatalf("language points = %d, want %d", item.Points, languageMatchMaxPoints)
+			}
+			return
+		}
+	}
+	t.Fatal("expected language breakdown item")
+}
+
 func TestScoreResult_Size(t *testing.T) {
 	ctx := ScoringContext{
 		RankingCriteria: []config.RankingCriterion{

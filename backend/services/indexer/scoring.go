@@ -22,7 +22,10 @@ type ScoringContext struct {
 	PreferredScraper       string
 }
 
-const downloadPreferredTermsMultiplier = 100000
+const (
+	downloadPreferredTermsMultiplier = 100000
+	languageMatchMaxPoints           = 50
+)
 
 // ScoreResult computes an absolute score and breakdown for a single NZBResult.
 func ScoreResult(result models.NZBResult, ctx ScoringContext) (int, []models.ScoreBreakdownItem) {
@@ -136,7 +139,11 @@ func scoreLanguage(r models.NZBResult, preferredLang string, weight int) (int, s
 		return 0, "no preferred language configured"
 	}
 	if language.HasPreferredLanguage(r.Attributes["languages"], preferredLang) {
-		return weight, fmt.Sprintf("has preferred language '%s'", preferredLang)
+		points := weight
+		if points > languageMatchMaxPoints {
+			points = languageMatchMaxPoints
+		}
+		return points, fmt.Sprintf("has preferred language '%s'", preferredLang)
 	}
 	return 0, fmt.Sprintf("missing preferred language '%s'", preferredLang)
 }
