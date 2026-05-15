@@ -249,6 +249,14 @@
         margin-top: 0.75rem;
     }
 
+    .shelf-top-collapse {
+        display: none;
+    }
+
+    .shelf-top-collapse.is-visible {
+        display: inline-flex;
+    }
+
     .media-card {
         background: var(--bg-secondary);
         border: 1px solid var(--border);
@@ -754,8 +762,7 @@
         transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
     }
 
-    .web-player-volume-control:hover .web-player-volume-popover,
-    .web-player-volume-control:focus-within .web-player-volume-popover {
+    .web-player-volume-control:hover .web-player-volume-popover {
         opacity: 1;
         visibility: visible;
         pointer-events: auto;
@@ -788,14 +795,6 @@
         font-size: 0.6875rem;
         font-variant-numeric: tabular-nums;
         line-height: 1;
-    }
-
-    .web-player-volume-mute {
-        width: 1.9rem;
-        height: 1.9rem;
-        min-width: 1.9rem;
-        padding: 0;
-        border-radius: 999px;
     }
 
     #videoHost.web-player-fullscreen .web-player-volume-control {
@@ -963,7 +962,7 @@
         }
 
         .web-player-volume-control {
-            width: 2.25rem;
+            display: none;
         }
 
         .web-player-controls {
@@ -1388,6 +1387,7 @@
                 return;
             }
             container.innerHTML = shelves.join('');
+            updateExpandedShelfTopCollapseButtons();
         } catch (error) {
             container.innerHTML = `<div class="empty-inline">Could not load shelves: ${escapeHtml(error.message)}</div>`;
         }
@@ -1406,14 +1406,16 @@
             const params = new URLSearchParams({ q: query });
             if (type !== 'all') params.set('type', type);
             const results = await apiCall(`/api/search?${params.toString()}`);
-            const items = Array.isArray(results) ? results.map(normalizeSearchItem) : [];
+            const items = Array.isArray(results)
+                ? sortSearchItems(results.map(normalizeSearchItem), query)
+                : [];
             if (!items.length) {
                 window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: [] };
                 container.innerHTML = '<div class="empty-inline" style="margin-bottom: 1rem;">No results found</div>';
                 return;
             }
             window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: items };
-            container.innerHTML = renderMediaShelf(`Search Results for "${query}"`, 'search', items);
+            container.innerHTML = renderMediaShelf(`Search Results for "${query}"`, 'search', items, { closeable: true });
         } catch (error) {
             container.innerHTML = `<div class="empty-inline" style="margin-bottom: 1rem;">Search failed: ${escapeHtml(error.message)}</div>`;
         }
@@ -1434,18 +1436,32 @@
         const shouldCollapse = options.expandable && total > 20 && !options.expanded;
         const visibleItems = shouldCollapse ? items.slice(0, 20) : items;
         const bodyClass = options.expanded ? 'shelf-expanded-grid' : 'media-row';
-        const action = options.expandable && total > 20
-            ? `<div class="shelf-actions">
+        const actions = [];
+        if (options.expandable && total > 20) {
+            actions.push(`
                 <button class="btn btn-sm btn-secondary" onclick="toggleContinueWatchingExpanded()">
                     ${options.expanded ? 'Show Less' : `Show All ${total}`}
                 </button>
-            </div>`
-            : '';
+            `);
+        }
+        const action = actions.length ? `<div class="shelf-actions">${actions.join('')}</div>` : '';
         return `
             <section class="media-shelf" data-shelf="${escapeHtml(source)}">
                 <div class="shelf-header">
                     <h2 class="shelf-title">${escapeHtml(title)}</h2>
-                    <span class="shelf-count">${visibleItems.length}${total !== visibleItems.length ? ` of ${total}` : ''}</span>
+                    <div style="display: flex; align-items: center; gap: 0.625rem;">
+                        <span class="shelf-count">${visibleItems.length}${total !== visibleItems.length ? ` of ${total}` : ''}</span>
+                        ${options.closeable ? `
+                            <button class="btn btn-sm btn-secondary" onclick="closeSearchResultsShelf()" aria-label="Close search results">
+                                Close
+                            </button>
+                        ` : ''}
+                        ${options.expandable && options.expanded ? `
+                            <button class="btn btn-sm btn-secondary shelf-top-collapse" onclick="toggleContinueWatchingExpanded()" aria-label="Collapse ${escapeHtml(title)}">
+                                Close
+                            </button>
+                        ` : ''}
+                    </div>
                 </div>
                 <div class="${bodyClass}">
                     ${visibleItems.map((item, index) => renderMediaCard(item, index, source)).join('')}
@@ -1455,11 +1471,101 @@
         `;
     }
 
+    function closeSearchResultsShelf() {
+        const container = document.getElementById('searchResults');
+        if (container) container.innerHTML = '';
+        window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: [] };
+    }
+
     function toggleContinueWatchingExpanded() {
         continueWatchingExpanded = !continueWatchingExpanded;
         const container = document.getElementById('playbackShelves');
         const shelves = renderPlaybackShelves();
         container.innerHTML = shelves.join('') || '<div class="empty-inline">No shelf items available</div>';
+        updateExpandedShelfTopCollapseButtons();
+    }
+
+    function updateExpandedShelfTopCollapseButtons() {
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.media-shelf[data-shelf="continue"]').forEach((shelf) => {
+                const button = shelf.querySelector('.shelf-top-collapse');
+                const grid = shelf.querySelector('.shelf-expanded-grid');
+                if (!button || !grid) return;
+                const columnCount = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length || 1;
+                const rowCount = Math.ceil(grid.children.length / columnCount);
+                button.classList.toggle('is-visible', rowCount > 3);
+            });
+        });
+    }
+
+    function calculateSingleSearchSimilarity(query, title) {
+        const queryLower = String(query || '').toLowerCase().trim();
+        const titleLower = String(title || '').toLowerCase().trim();
+        if (!queryLower || !titleLower) return 0;
+        if (titleLower === queryLower) return 1000;
+        if (titleLower.startsWith(queryLower)) return 900;
+
+        const queryWords = queryLower.split(/\s+/).filter(Boolean);
+        const titleWords = titleLower.split(/\s+/).filter(Boolean);
+        if (!queryWords.length || !titleWords.length) return 0;
+
+        let matchingWords = 0;
+        for (const queryWord of queryWords) {
+            if (titleWords.some((titleWord) => titleWord === queryWord)) {
+                matchingWords++;
+            }
+        }
+        if (matchingWords === queryWords.length) return 800;
+        if (titleLower.includes(queryLower)) return 700;
+
+        let partialMatches = 0;
+        for (const queryWord of queryWords) {
+            if (titleWords.some((titleWord) => titleWord.includes(queryWord) || queryWord.includes(titleWord))) {
+                partialMatches++;
+            }
+        }
+
+        const wordMatchScore = (partialMatches / queryWords.length) * 600;
+        let charIndex = 0;
+        for (let i = 0; i < titleLower.length && charIndex < queryLower.length; i++) {
+            if (titleLower[i] === queryLower[charIndex]) {
+                charIndex++;
+            }
+        }
+        const sequenceBonus = (charIndex / queryLower.length) * 100;
+        return wordMatchScore + sequenceBonus;
+    }
+
+    function calculateSearchSimilarity(query, item) {
+        const titles = [item.title, item.originalName, ...(Array.isArray(item.alternateTitles) ? item.alternateTitles : [])]
+            .filter(Boolean);
+        return titles.reduce((best, title) => Math.max(best, calculateSingleSearchSimilarity(query, title)), 0);
+    }
+
+    function normalizeAlternateTitles(value) {
+        if (!Array.isArray(value)) return [];
+        return value
+            .map((item) => {
+                if (typeof item === 'string') return item;
+                return item?.title || item?.name || item?.value || '';
+            })
+            .filter(Boolean);
+    }
+
+    function hasRealPosterUrl(posterUrl) {
+        return Boolean(posterUrl) && !String(posterUrl).includes('/missing/');
+    }
+
+    function sortSearchItems(items, query) {
+        const searchQuery = String(query || '').trim();
+        if (!searchQuery || !items.length) return items;
+        return [...items].sort((a, b) => {
+            const hasPosterA = hasRealPosterUrl(a.posterUrl);
+            const hasPosterB = hasRealPosterUrl(b.posterUrl);
+            if (hasPosterA && !hasPosterB) return -1;
+            if (!hasPosterA && hasPosterB) return 1;
+            return calculateSearchSimilarity(searchQuery, b) - calculateSearchSimilarity(searchQuery, a);
+        });
     }
 
     function normalizeSearchItem(result) {
@@ -1473,6 +1579,8 @@
             overview: title.overview || '',
             posterUrl: title.poster?.url || title.posterUrl || title.poster || '',
             backdropUrl: title.backdrop?.url || title.backdropUrl || '',
+            originalName: title.originalName || result.originalName || '',
+            alternateTitles: normalizeAlternateTitles(title.alternateTitles || result.alternateTitles),
             imdbId: title.imdbId || '',
             tvdbId: title.tvdbId || '',
             tmdbId: title.tmdbId || '',
@@ -2201,15 +2309,12 @@
                         <span class="web-player-button-label">Fullscreen</span>
                     </button>
                     <div class="web-player-volume-control" id="webPlayerVolumeControl" aria-label="Volume">
-                        <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerVolumeButton" aria-label="Volume" title="Volume">
+                        <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerVolumeButton" onclick="toggleWebPlayerMute(event)" aria-label="Mute" title="Mute">
                             <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerVolumeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
                         </button>
                         <div class="web-player-volume-popover" id="webPlayerVolumePopover">
                             <input id="webPlayerVolume" class="web-player-volume-slider" type="range" min="0" max="100" step="1" value="${Math.round(webPlayerVolume * 100)}" oninput="setWebPlayerVolume(this.value)" aria-label="Volume">
                             <div class="web-player-volume-value" id="webPlayerVolumeValue">${Math.round(webPlayerVolume * 100)}%</div>
-                            <button class="btn btn-sm btn-secondary web-player-volume-mute" id="webPlayerMuteButton" onclick="toggleWebPlayerMute(event)" aria-label="Mute" title="Mute">
-                                <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerMuteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
-                            </button>
                         </div>
                     </div>
                     <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginWebPlayerSeekInput()" ontouchstart="beginWebPlayerSeekInput()" onkeydown="beginWebPlayerSeekInput()" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
@@ -2564,11 +2669,9 @@
         const theaterButton = document.getElementById('webPlayerTheaterButton');
         const fullscreenButton = document.getElementById('webPlayerFullscreenButton');
         const volumeButton = document.getElementById('webPlayerVolumeButton');
-        const muteButton = document.getElementById('webPlayerMuteButton');
         const volumeInput = document.getElementById('webPlayerVolume');
         const volumeValue = document.getElementById('webPlayerVolumeValue');
         const volumeIcon = document.getElementById('webPlayerVolumeIcon');
-        const muteIcon = document.getElementById('webPlayerMuteIcon');
         const host = document.getElementById('videoHost');
         const absoluteTime = currentWebPlayerAbsoluteTime();
         const controlTime = currentWebPlayerControlTime();
@@ -2610,19 +2713,13 @@
             if (volumeValue) volumeValue.textContent = `${volumePercent}%`;
         }
         if (volumeButton && video) {
-            const volumePercent = Math.round(Number(video.volume || 0) * 100);
-            volumeButton.setAttribute('aria-label', `Volume ${volumePercent}%`);
-            volumeButton.setAttribute('title', `Volume ${volumePercent}%`);
-        }
-        if (muteButton && video) {
             const muted = Boolean(video.muted || Number(video.volume || 0) === 0);
-            muteButton.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
-            muteButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
+            volumeButton.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+            volumeButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
             const iconMarkup = muted
                     ? '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/>'
                     : '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>';
             if (volumeIcon) volumeIcon.innerHTML = iconMarkup;
-            if (muteIcon) muteIcon.innerHTML = iconMarkup;
         }
     }
 
@@ -3352,6 +3449,7 @@
         } else if (host?.classList.contains('web-player-theater')) {
             host.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
         }
+        updateExpandedShelfTopCollapseButtons();
     });
 
     function formatTime(seconds) {
