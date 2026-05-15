@@ -880,6 +880,9 @@
     let keepaliveTimer = null;
     let hlsPlaybackOffset = 0;
     let hlsDuration = 0;
+    let webPlayerActualStartOffset = 0;
+    let webPlayerSubtitleStartOffset = null;
+    let webPlayerSubtitleTimeOffset = 0;
     let lastWebPlayerTime = 0;
     let suppressWebPlayerSeek = false;
     let webPlayerSeekInProgress = false;
@@ -931,6 +934,9 @@
             hlsSessionId,
             hlsPlaybackOffset,
             hlsDuration,
+            actualStartOffset: webPlayerActualStartOffset,
+            subtitleStartOffset: webPlayerSubtitleStartOffset,
+            subtitleTimeOffset: webPlayerSubtitleTimeOffset,
             seekInProgress: webPlayerSeekInProgress,
             queuedSeekTarget: webPlayerQueuedSeekTarget,
             displayedSeekTarget: webPlayerDisplayedSeekTarget,
@@ -1677,7 +1683,9 @@
             }
             const session = await apiCall(`/api/video/hls/start?${params.toString()}`);
             hlsSessionId = session.sessionId || '';
-            hlsPlaybackOffset = Number(session.startOffset ?? session.actualStartOffset ?? 0);
+            const requestedOffset = Number(session.startOffset ?? requestedStartOffset ?? 0);
+            const actualOffset = Number(session.actualStartOffset ?? requestedOffset);
+            syncWebPlayerSubtitleOffset(requestedOffset, actualOffset, 'start-session');
             hlsDuration = Number(session.duration || 0);
             lastWebPlayerTime = 0;
             const playlistUrl = apiUrl(session.playlistUrl || '');
@@ -1685,6 +1693,8 @@
                 sessionId: hlsSessionId,
                 startOffset: session.startOffset,
                 actualStartOffset: session.actualStartOffset,
+                playbackOffset: hlsPlaybackOffset,
+                subtitleTimeOffset: webPlayerSubtitleTimeOffset,
                 duration: session.duration,
                 playlistUrl,
             });
@@ -1887,7 +1897,9 @@
             if (!response?.playlistUrl) {
                 throw new Error('seek response missing playlist URL');
             }
-            hlsPlaybackOffset = Number(response?.startOffset ?? absoluteTarget);
+            const requestedOffset = Number(response?.startOffset ?? absoluteTarget);
+            const actualOffset = Number(response?.actualStartOffset ?? requestedOffset);
+            syncWebPlayerSubtitleOffset(requestedOffset, actualOffset, 'seek-response');
             hlsDuration = Number(response?.duration || hlsDuration || 0);
             lastWebPlayerTime = 0;
             updateWebPlayerControls();
@@ -1897,6 +1909,7 @@
                 updateWebPlayerControls();
                 renderWebPlayerSubtitles();
                 setWebPlayerStatus('');
+                window.setTimeout(() => refreshWebPlayerActualStartOffset('seek-canplay'), 1500);
                 if (wasPlaying) {
                     webPlayerDebug('seekWebPlayer.resumePlayback');
                     video.play().catch(() => {});
@@ -2508,9 +2521,34 @@
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const text = await response.text();
             if (loadToken !== webPlayerSubtitleLoadToken) return;
+            const subtitleExtracting = response.headers.get('X-Subtitle-Extracting') === 'true';
+            const subtitleStartHeader = Number(response.headers.get('X-Subtitle-Start-Offset'));
+            if (Number.isFinite(subtitleStartHeader)) {
+                const subtitleStart = Math.max(0, subtitleStartHeader);
+                const cueCount = (text.match(/-->/g) || []).length;
+                const looksLikePlaceholderStart = hlsPlaybackOffset > 5 && subtitleStart <= 0.05 && cueCount < 2;
+                if (!looksLikePlaceholderStart) {
+                    webPlayerSubtitleStartOffset = subtitleStart;
+                    recomputeWebPlayerSubtitleTimeOffset('subtitle-response');
+                } else {
+                    webPlayerDebug('subtitleOffset.ignorePlaceholderStart', {
+                        playbackOffset: hlsPlaybackOffset,
+                        subtitleStartOffset: subtitleStart,
+                        cueCount,
+                    });
+                }
+            }
             webPlayerSubtitleCues = parseWebVttCues(text);
+            webPlayerDebug('subtitleTrack.loaded', {
+                cueCount: webPlayerSubtitleCues.length,
+                extracting: subtitleExtracting,
+                contentLength: text.length,
+                firstCue: webPlayerSubtitleCues[0] || null,
+                lastCue: webPlayerSubtitleCues[webPlayerSubtitleCues.length - 1] || null,
+            });
             renderWebPlayerSubtitles();
-            scheduleWebPlayerSubtitleRefresh(video);
+            scheduleWebPlayerSubtitleRefresh(video, subtitleExtracting ? 500 : undefined);
+            window.setTimeout(() => refreshWebPlayerActualStartOffset('subtitle-loaded'), 250);
             setWebPlayerStatus('');
         } catch (error) {
             if (loadToken !== webPlayerSubtitleLoadToken) return;
@@ -2524,6 +2562,72 @@
         }
     }
 
+    function syncWebPlayerSubtitleOffset(requestedOffset, actualOffset, reason) {
+        const requested = Number.isFinite(Number(requestedOffset)) ? Math.max(0, Number(requestedOffset)) : 0;
+        const actual = Number.isFinite(Number(actualOffset)) ? Math.max(0, Number(actualOffset)) : requested;
+        hlsPlaybackOffset = requested;
+        webPlayerActualStartOffset = actual;
+        webPlayerSubtitleStartOffset = requested;
+        recomputeWebPlayerSubtitleTimeOffset(reason);
+        webPlayerDebug('subtitleOffset.sync', {
+            reason,
+            requestedOffset: requested,
+            actualOffset: actual,
+            playbackOffset: hlsPlaybackOffset,
+            subtitleStartOffset: webPlayerSubtitleStartOffset,
+            subtitleTimeOffset: webPlayerSubtitleTimeOffset,
+            keyframeDelta: actual - requested,
+        });
+    }
+
+    function recomputeWebPlayerSubtitleTimeOffset(reason) {
+        if (!Number.isFinite(Number(hlsPlaybackOffset)) || !Number.isFinite(Number(webPlayerSubtitleStartOffset))) {
+            webPlayerSubtitleTimeOffset = 0;
+            return;
+        }
+        const nextOffset = Number(hlsPlaybackOffset) - Number(webPlayerSubtitleStartOffset);
+        if (Math.abs(nextOffset - webPlayerSubtitleTimeOffset) < 0.05) return;
+        webPlayerSubtitleTimeOffset = nextOffset;
+        webPlayerDebug('subtitleOffset.recompute', {
+            reason,
+            playbackOffset: hlsPlaybackOffset,
+            actualStartOffset: webPlayerActualStartOffset,
+            subtitleStartOffset: webPlayerSubtitleStartOffset,
+            subtitleTimeOffset: webPlayerSubtitleTimeOffset,
+        });
+        renderWebPlayerSubtitles();
+    }
+
+    async function refreshWebPlayerActualStartOffset(reason) {
+        if (!hlsSessionId || webPlayerSeekInProgress) return;
+        try {
+            const currentTime = currentWebPlayerAbsoluteTime();
+            const response = await fetch(apiUrl(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentTime.toFixed(2)}`), {
+                method: 'POST',
+                credentials: 'same-origin',
+            });
+            if (!response.ok) return;
+            const data = await response.json().catch(() => null);
+            applyWebPlayerActualStartOffsetCorrection(data, reason);
+        } catch {}
+    }
+
+    function applyWebPlayerActualStartOffsetCorrection(data, reason) {
+        if (!data || webPlayerSeekInProgress) return;
+        const actualOffset = Number(data.actualStartOffset);
+        if (!Number.isFinite(actualOffset) || actualOffset < 0) return;
+        if (Math.abs(actualOffset - webPlayerActualStartOffset) < 0.05) return;
+        webPlayerActualStartOffset = actualOffset;
+        webPlayerDebug('subtitleOffset.actualStartCorrection', {
+            reason,
+            actualStartOffset: actualOffset,
+            playbackOffset: hlsPlaybackOffset,
+            subtitleStartOffset: webPlayerSubtitleStartOffset,
+            subtitleTimeOffset: webPlayerSubtitleTimeOffset,
+            keyframeDelta: data.keyframeDelta,
+        });
+    }
+
     function clearWebPlayerSubtitleRefresh() {
         if (webPlayerSubtitleRefreshTimer) {
             clearTimeout(webPlayerSubtitleRefreshTimer);
@@ -2531,12 +2635,13 @@
         }
     }
 
-    function scheduleWebPlayerSubtitleRefresh(video) {
+    function scheduleWebPlayerSubtitleRefresh(video, delayMs) {
         clearWebPlayerSubtitleRefresh();
         if (!video || !hlsSessionId || Number(webPlayerSelectedSubtitleTrack) < 0) return;
+        const delay = Number.isFinite(Number(delayMs)) ? Math.max(250, Number(delayMs)) : 5000;
         webPlayerSubtitleRefreshTimer = window.setTimeout(() => {
             void installWebPlayerSubtitleTrack(video, { silent: true });
-        }, 5000);
+        }, delay);
     }
 
     function parseWebVttCues(text) {
@@ -2583,7 +2688,7 @@
             if (overlay) overlay.textContent = '';
             return;
         }
-        const currentTime = Number(video.currentTime || 0);
+        const currentTime = Number(video.currentTime || 0) + webPlayerSubtitleTimeOffset;
         overlay.textContent = webPlayerSubtitleCues
             .filter((cue) => currentTime >= cue.start && currentTime <= cue.end)
             .map((cue) => cue.text)
@@ -2838,7 +2943,12 @@
             fetch(apiUrl(`/api/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentTime.toFixed(2)}`), {
                 method: 'POST',
                 credentials: 'same-origin',
-            }).catch(() => {});
+            })
+                .then((response) => response.ok ? response.json().catch(() => null) : null)
+                .then((data) => {
+                    applyWebPlayerActualStartOffsetCorrection(data, 'keepalive');
+                })
+                .catch(() => {});
         }, 20000);
     }
 
@@ -2861,6 +2971,9 @@
         }
         hlsPlaybackOffset = 0;
         hlsDuration = 0;
+        webPlayerActualStartOffset = 0;
+        webPlayerSubtitleStartOffset = null;
+        webPlayerSubtitleTimeOffset = 0;
         lastWebPlayerTime = 0;
         suppressWebPlayerSeek = false;
         webPlayerSeekInProgress = false;

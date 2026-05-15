@@ -364,6 +364,7 @@ type HLSSession struct {
 	RecoveryAttempts   int  // Number of times we've attempted to recover this session
 	forceAAC           bool // Cached forceAAC setting for recovery restarts
 	SeekInProgress     bool // Set to true during user-initiated seek to prevent recovery logic
+	SeekGeneration     int  // Increments on each seek so regenerated segment URLs are cache-distinct
 
 	// Fatal error tracking (unplayable streams)
 	FatalError string // Set when stream is determined to be unplayable (persistent bitstream errors)
@@ -377,6 +378,7 @@ type HLSSession struct {
 	subtitleExtractCancelFunc map[int]context.CancelFunc // Cancels subtitle extractions when seeking
 	subtitleExtractIDs        map[int]int64              // Identifies active extraction jobs for cleanup
 	subtitleExtractSeq        int64
+	subtitleExtractOffsets    map[int]float64 // Actual -ss offset used for each extracted VTT
 	FatalErrorTime            time.Time
 	BitstreamErrors           int // Count of bitstream filter errors (to detect persistent issues)
 
@@ -561,6 +563,36 @@ func appendAuthTokenToPlaylist(content string, authToken string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func appendSegmentCacheBusterToPlaylist(content string, generation int) string {
+	if generation <= 0 {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	cacheParam := fmt.Sprintf("sg=%d", generation)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isHLSMediaURI(trimmed) && isHLSSegmentURI(trimmed) {
+			lines[i] = line + tokenSeparator(line) + cacheParam
+		} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
+			lines[i] = appendCacheBusterToInitMap(line, cacheParam)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func isHLSSegmentURI(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, ".ts") || strings.Contains(lower, ".m4s") || strings.Contains(lower, ".mp4")
+}
+
+func appendCacheBusterToInitMap(line, cacheParam string) string {
+	if strings.Contains(line, `"init.mp4?`) {
+		return strings.Replace(line, `"init.mp4?`, `"init.mp4?`+cacheParam+`&`, 1)
+	}
+	return strings.Replace(line, `"init.mp4"`, `"init.mp4?`+cacheParam+`"`, 1)
 }
 
 func isHLSMediaURI(line string) bool {
@@ -1032,6 +1064,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		EarliestBufferedSegment: -1,        // Initialize to -1 (no buffer info reported yet)
 		FinalSegmentCount:       -1,        // Initialize to -1 (transcoding still running)
 		ProbeData:               probeData, // Cache unified probe results for startTranscoding
+		subtitleExtractOffsets:  make(map[int]float64),
 		CastMode:                castMode,
 		PrequeueType:            prequeueType, // "", "details", or "next_episode"
 		PlaybackTarget:          strings.ToLower(strings.TrimSpace(playbackTarget)),
@@ -1104,6 +1137,7 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 		ProfileName:             profileName,
 		ClientIP:                clientIP,
 		LiveTuning:              tuning,
+		subtitleExtractOffsets:  make(map[int]float64),
 	}
 
 	m.mu.Lock()
@@ -3083,6 +3117,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	session.StartOffset = targetTime       // User's new position (for frontend display)
 	session.TranscodingOffset = targetTime // FFmpeg will seek to nearest keyframe
 	session.ActualStartOffset = targetTime // Will be updated from fMP4 tfdt after first segment
+	session.SeekGeneration++
 	session.CreatedAt = time.Now()
 	session.LastSegmentRequest = time.Now()
 	session.SegmentsCreated = 0
@@ -3202,6 +3237,7 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 	session.subtitleExtracting = make(map[int]bool)
 	session.subtitleExtractCancelFunc = make(map[int]context.CancelFunc)
 	session.subtitleExtractIDs = make(map[int]int64)
+	session.subtitleExtractOffsets = make(map[int]float64)
 	session.subtitleExtractionMu.Unlock()
 
 	// Remove all segment files (.ts, .m4s) and VTT subtitle files
@@ -3349,6 +3385,9 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 
 	// Rewrite segment URLs to include auth token and inject HLS tags
 	playlistContent := string(content)
+	session.mu.RLock()
+	seekGeneration := session.SeekGeneration
+	session.mu.RUnlock()
 
 	// Build header tags to inject after #EXTM3U
 	var headerTags []string
@@ -3443,6 +3482,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	}
 
 	playlistContent = appendAuthTokenToPlaylist(playlistContent, authToken)
+	playlistContent = appendSegmentCacheBusterToPlaylist(playlistContent, seekGeneration)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -3707,7 +3747,7 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	if strings.HasSuffix(segmentName, ".vtt") || strings.HasSuffix(segmentName, ".webvtt") {
 		w.Header().Set("Cache-Control", "no-cache")
 	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("Cache-Control", "no-store, max-age=0")
 	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Accept-Ranges", "bytes")
@@ -3805,6 +3845,9 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 		if session.subtitleExtractIDs == nil {
 			session.subtitleExtractIDs = make(map[int]int64)
 		}
+		if session.subtitleExtractOffsets == nil {
+			session.subtitleExtractOffsets = make(map[int]float64)
+		}
 		alreadyExtracting := session.subtitleExtracting[requestedTrack]
 		if !alreadyExtracting {
 			// Double-check file doesn't exist after acquiring lock
@@ -3860,6 +3903,12 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if session.subtitleExtractionInProgress(requestedTrack) {
+			w.Header().Set("X-Subtitle-Extracting", "true")
+		}
+		if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
+			w.Header().Set("X-Subtitle-Start-Offset", fmt.Sprintf("%.3f", offset))
+		}
 		w.Write([]byte("WEBVTT\n\n"))
 		return
 	} else if err != nil {
@@ -3890,10 +3939,41 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache") // Don't cache since file is growing
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if session.subtitleExtractionInProgress(requestedTrack) {
+		w.Header().Set("X-Subtitle-Extracting", "true")
+	}
+	if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
+		w.Header().Set("X-Subtitle-Start-Offset", fmt.Sprintf("%.3f", offset))
+	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(processedContent)))
 
 	w.Write([]byte(processedContent))
 	log.Printf("[hls] served subtitles for session %s track %d, size=%d bytes", sessionID, requestedTrack, len(processedContent))
+}
+
+func (s *HLSSession) subtitleExtractionOffset(track int) (float64, bool) {
+	s.subtitleExtractionMu.Lock()
+	defer s.subtitleExtractionMu.Unlock()
+	if s.subtitleExtractOffsets == nil {
+		return 0, false
+	}
+	offset, ok := s.subtitleExtractOffsets[track]
+	return offset, ok
+}
+
+func (s *HLSSession) setSubtitleExtractionOffset(track int, offset float64) {
+	s.subtitleExtractionMu.Lock()
+	defer s.subtitleExtractionMu.Unlock()
+	if s.subtitleExtractOffsets == nil {
+		s.subtitleExtractOffsets = make(map[int]float64)
+	}
+	s.subtitleExtractOffsets[track] = offset
+}
+
+func (s *HLSSession) subtitleExtractionInProgress(track int) bool {
+	s.subtitleExtractionMu.Lock()
+	defer s.subtitleExtractionMu.Unlock()
+	return s.subtitleExtracting != nil && s.subtitleExtracting[track]
 }
 
 // extractSubtitleTrackToVTT extracts a specific subtitle track to a VTT file on-demand
@@ -3963,17 +4043,19 @@ func (m *HLSManager) extractSubtitleTrackToVTT(ctx context.Context, session *HLS
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 	}
 
-	// Add input seeking if session has a start offset
-	// Use ActualStartOffset (keyframe-aligned) for proper sync with video stream
-	// Video seeks to nearest keyframe, so subtitles must start from the same position
-	seekOffset := session.ActualStartOffset
+	// Add input seeking if session has a start offset. Match the main HLS
+	// transcoding input seek, not the background keyframe probe result. For
+	// browser MPEG-TS sessions FFmpeg normalizes the output to the requested
+	// seek point, so using the probed keyframe here makes subtitles early.
+	seekOffset := session.TranscodingOffset
 	if seekOffset <= 0 {
-		seekOffset = session.StartOffset // Fallback to requested offset if actual not set
+		seekOffset = session.StartOffset
 	}
+	session.setSubtitleExtractionOffset(trackIndex, seekOffset)
 	if seekOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", seekOffset))
-		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs (keyframe-aligned) for sync (requested was %.3fs)",
-			session.ID, seekOffset, session.StartOffset)
+		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs for sync (requested was %.3fs, actual probe %.3fs)",
+			session.ID, seekOffset, session.StartOffset, session.ActualStartOffset)
 	}
 
 	args = append(args, "-i", streamURL)
