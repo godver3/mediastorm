@@ -385,14 +385,28 @@
     }
 
     #videoHost.web-player-theater {
-        padding: 1rem;
+        box-sizing: border-box;
+        display: grid !important;
+        grid-template-rows: minmax(0, auto) auto auto auto;
+        gap: 0.75rem;
+        max-height: calc(100vh - 2rem);
+        max-height: calc(100dvh - 2rem);
+        padding: clamp(0.5rem, 1.8vh, 1rem);
         background: black;
         border-radius: var(--radius-lg);
+        overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
     #videoHost.web-player-theater .web-player-video-frame {
-        max-height: calc(100vh - 220px);
+        max-height: min(70vh, calc(100vh - 12rem));
+        max-height: min(70dvh, calc(100dvh - 12rem));
         border-radius: var(--radius);
+    }
+
+    #videoHost.web-player-theater .web-player-controls,
+    #videoHost.web-player-theater .web-player-track-controls {
+        margin-top: 0;
     }
 
     #videoHost.web-player-theater .web-player-controls,
@@ -706,6 +720,28 @@
         }
     }
 
+    @media (min-width: 821px) and (max-height: 760px) {
+        #videoHost.web-player-theater {
+            gap: 0.5rem;
+            max-height: calc(100vh - 1rem);
+            max-height: calc(100dvh - 1rem);
+            padding: 0.5rem;
+        }
+
+        #videoHost.web-player-theater .web-player-video-frame {
+            max-height: min(62vh, calc(100vh - 10rem));
+            max-height: min(62dvh, calc(100dvh - 10rem));
+        }
+
+        #videoHost.web-player-theater .web-player-controls {
+            gap: 0.5rem;
+        }
+
+        #videoHost.web-player-theater .web-player-track-controls {
+            gap: 0.375rem;
+        }
+    }
+
     .empty-inline {
         padding: 2rem;
         text-align: center;
@@ -937,6 +973,31 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function safeDecodeURIComponent(value) {
+        try {
+            return decodeURIComponent(value);
+        } catch {
+            return value;
+        }
+    }
+
+    function playbackDisplayFilename(resolution, fallbackTitle) {
+        const rawPath = String(resolution?.webdavPath || resolution?.sourceNzbPath || '').trim();
+        if (!rawPath) return fallbackTitle || '';
+
+        let pathPart = rawPath;
+        try {
+            const parsed = new URL(rawPath, window.location.origin);
+            pathPart = parsed.pathname || rawPath;
+        } catch {
+            pathPart = rawPath.split(/[?#]/, 1)[0];
+        }
+
+        const segments = pathPart.split('/').filter(Boolean);
+        const filename = safeDecodeURIComponent(segments[segments.length - 1] || '').trim();
+        return filename || fallbackTitle || '';
     }
 
     function renderProfiles() {
@@ -1469,7 +1530,9 @@
         }
         const panel = document.getElementById('playbackPanel');
         panel.classList.remove('web-player-theater-panel');
-        const size = candidate.sizeBytes ? `${(candidate.sizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
+        const displaySizeBytes = Number(resolvedPlayback?.fileSize || candidate.sizeBytes || 0);
+        const size = displaySizeBytes > 0 ? `${(displaySizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
+        const displayFilename = playbackDisplayFilename(resolvedPlayback, candidate.title || '');
         panel.innerHTML = `
             <div class="player-wrap">
                 <div class="details-actions" style="margin-bottom: 1rem;">
@@ -1491,7 +1554,7 @@
                         M3U File
                     </button>
                 </div>
-                <div class="media-meta">${escapeHtml(candidate.title || '')}${size ? ` - ${escapeHtml(size)}` : ''}</div>
+                <div class="media-meta" title="${escapeHtml(resolvedPlayback.webdavPath || '')}">${escapeHtml(displayFilename)}${size ? ` - ${escapeHtml(size)}` : ''}</div>
                 <div id="videoHost" style="display: none; margin-top: 1rem;"></div>
             </div>
         `;
@@ -1973,6 +2036,7 @@
         updateWebPlayerControls();
         if (enable) {
             lockWebPlayerTheaterScroll();
+            host.scrollTop = 0;
             host.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
         } else {
             unlockWebPlayerTheaterScroll();
@@ -2329,6 +2393,8 @@
         const host = document.getElementById('videoHost');
         if (host?.classList.contains('web-player-theater') && !isDesktopWebPlayerViewport()) {
             setWebPlayerTheater(false);
+        } else if (host?.classList.contains('web-player-theater')) {
+            host.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
         }
     });
 
