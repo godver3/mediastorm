@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -350,6 +351,71 @@ func TestStartupHandler_Success(t *testing.T) {
 	}
 	if cwRevision != "wh:1:123|pp:1:0:456" {
 		t.Errorf("expected continueWatchingRevision to round-trip, got %q", cwRevision)
+	}
+}
+
+func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+	watchlistItems := make([]models.WatchlistItem, 30)
+	continueWatchingItems := make([]models.SeriesWatchState, 30)
+	trendingItems := make([]models.TrendingItem, 30)
+	for i := 0; i < 30; i++ {
+		watchlistItems[i] = models.WatchlistItem{ID: fmt.Sprintf("m%d", i), MediaType: "movie", Name: "Movie"}
+		continueWatchingItems[i] = models.SeriesWatchState{SeriesID: fmt.Sprintf("s%d", i), SeriesTitle: "Series"}
+		trendingItems[i] = models.TrendingItem{Rank: i + 1, Title: models.Title{ID: fmt.Sprintf("t%d", i), Name: "Trending"}}
+	}
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{
+			withDefault: models.UserSettings{
+				Playback: models.PlaybackSettings{PreferredPlayer: "native"},
+				HomeShelves: models.HomeShelvesSettings{
+					Shelves: models.DefaultHomeShelfConfigs(),
+					ItemCap: 25,
+				},
+			},
+		},
+		&mockWatchlistService{items: watchlistItems},
+		&mockHistoryService{continueWatching: continueWatchingItems},
+		&mockMetadataServiceStartup{movieItems: trendingItems, seriesItems: trendingItems},
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/startup", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetStartup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp handlers.StartupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got := len(resp.Watchlist); got != 25 {
+		t.Fatalf("watchlist startup count = %d, want 25", got)
+	}
+	if resp.WatchlistTotal != 30 {
+		t.Fatalf("watchlistTotal = %d, want 30", resp.WatchlistTotal)
+	}
+	if got := len(resp.ContinueWatching); got != 25 {
+		t.Fatalf("continueWatching startup count = %d, want 25", got)
+	}
+	if resp.ContinueWatchingTotal != 30 {
+		t.Fatalf("continueWatchingTotal = %d, want 30", resp.ContinueWatchingTotal)
+	}
+	if resp.TrendingMovies == nil {
+		t.Fatal("trendingMovies is nil")
+	}
+	if got := len(resp.TrendingMovies.Items); got != 25 {
+		t.Fatalf("trendingMovies startup count = %d, want 25", got)
+	}
+	if resp.TrendingMovies.Total != 30 {
+		t.Fatalf("trendingMovies total = %d, want 30", resp.TrendingMovies.Total)
 	}
 }
 

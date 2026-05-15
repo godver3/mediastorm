@@ -172,7 +172,9 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: shelves,
+			Shelves:             shelves,
+			ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
+			ItemCap:             globalSettings.HomeShelves.ItemCap,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),

@@ -249,6 +249,15 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
 			settings.HomeShelves.Shelves = shelves
 		}
+		if settings.HomeShelves.ExploreCardPosition == "" {
+			settings.HomeShelves.ExploreCardPosition = string(defaults.HomeShelves.ExploreCardPosition)
+		}
+		if settings.HomeShelves.ItemCap <= 0 {
+			settings.HomeShelves.ItemCap = defaults.HomeShelves.ItemCap
+			if settings.HomeShelves.ItemCap <= 0 {
+				settings.HomeShelves.ItemCap = 20
+			}
+		}
 		// Inject any non-builtin shelves from defaults (e.g. newly-added local library
 		// or mdblist shelves) that are not yet present in the user's saved settings.
 		// We only inject non-builtin types so that built-in shelves the user deliberately
@@ -341,7 +350,9 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	}
 
 	// Check HomeShelves
-	if len(s.HomeShelves.Shelves) > 0 {
+	if len(s.HomeShelves.Shelves) > 0 ||
+		s.HomeShelves.ExploreCardPosition != "" ||
+		s.HomeShelves.ItemCap != 0 {
 		return false
 	}
 

@@ -383,6 +383,7 @@ const (
 type HomeShelvesSettings struct {
 	Shelves             []ShelfConfig       `json:"shelves"`
 	ExploreCardPosition ExploreCardPosition `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
+	ItemCap             int                 `json:"itemCap,omitempty"`             // Max items shown per home shelf before Explore card (default 20)
 }
 
 // DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
@@ -913,6 +914,7 @@ func DefaultSettings() Settings {
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves: DefaultHomeShelfConfigs(),
+			ItemCap: 20,
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   0,                       // 0 means no limit
@@ -1386,6 +1388,11 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill ExploreCardPosition if empty (default to front)
 	if s.HomeShelves.ExploreCardPosition == "" {
 		s.HomeShelves.ExploreCardPosition = ExploreCardPositionFront
+	}
+
+	// Backfill ItemCap if empty or invalid (default to 20)
+	if s.HomeShelves.ItemCap <= 0 {
+		s.HomeShelves.ItemCap = 20
 	}
 
 	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults

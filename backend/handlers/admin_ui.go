@@ -533,6 +533,7 @@ var SettingsSchema = map[string]interface{}{
 		"order": 1,
 		"fields": map[string]interface{}{
 			"exploreCardPosition": map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
+			"itemCap":             map[string]interface{}{"type": "number", "label": "Shelf Item Cap", "description": "Max items shown per home shelf before the Explore card (default 20)", "order": 2, "step": 1, "min": 1, "max": 100},
 		},
 	},
 	"homeShelves.shelves": map[string]interface{}{
@@ -2293,7 +2294,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: shelves,
+			Shelves:             shelves,
+			ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
+			ItemCap:             globalSettings.HomeShelves.ItemCap,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -2475,7 +2478,9 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 					},
 					HomeShelves: models.HomeShelvesSettings{
-						Shelves: propagateShelves,
+						Shelves:             propagateShelves,
+						ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
+						ItemCap:             globalSettings.HomeShelves.ItemCap,
 					},
 				}
 			}

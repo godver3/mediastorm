@@ -18,9 +18,9 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// startupShelfLimit caps list data in the startup bundle to reduce payload
+// defaultStartupShelfLimit caps list data in the startup bundle to reduce payload
 // size on low-power devices. Full lists are fetched on demand (e.g. explore page).
-const startupShelfLimit = 20
+const defaultStartupShelfLimit = 20
 
 // startupTrendingTimeout limits how long the startup handler waits for trending
 // data. On cold start, Trending() can take 20-30s enriching metadata from TMDB.
@@ -119,20 +119,19 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	includeTrendingSeries := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeTrendingSeries"))) != "false"
 
 	resp := StartupResponse{}
-	var wg sync.WaitGroup
-
-	// 1. User settings
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defaults := h.getDefaultsFromGlobal()
-		settings, err := h.userSettings.GetWithDefaults(userID, defaults)
-		if err != nil {
-			log.Printf("[startup] user settings error for %s: %v", userID, err)
-			return
-		}
+	defaults := h.getDefaultsFromGlobal()
+	settings, err := h.userSettings.GetWithDefaults(userID, defaults)
+	if err != nil {
+		log.Printf("[startup] user settings error for %s: %v", userID, err)
+	} else {
 		resp.UserSettings = &settings
-	}()
+	}
+
+	startupShelfLimit := defaultStartupShelfLimit
+	if resp.UserSettings != nil && resp.UserSettings.HomeShelves.ItemCap > 0 {
+		startupShelfLimit = resp.UserSettings.HomeShelves.ItemCap
+	}
+	var wg sync.WaitGroup
 
 	// 2. Watchlist (capped to startupShelfLimit — full list fetched on demand)
 	wg.Add(1)
@@ -567,7 +566,9 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: shelves,
+			Shelves:             shelves,
+			ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
+			ItemCap:             globalSettings.HomeShelves.ItemCap,
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),

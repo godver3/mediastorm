@@ -170,7 +170,9 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			},
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves: configShelvesToModel(g.HomeShelves.Shelves),
+			Shelves:             configShelvesToModel(g.HomeShelves.Shelves),
+			ExploreCardPosition: string(g.HomeShelves.ExploreCardPosition),
+			ItemCap:             g.HomeShelves.ItemCap,
 		},
 		Network: models.NetworkSettings{
 			HomeWifiSSID:     g.Network.HomeWifiSSID,
@@ -345,6 +347,12 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	if len(eff.HomeShelves.Shelves) == 0 {
 		eff.HomeShelves.Shelves = configShelvesToModel(g.HomeShelves.Shelves)
 	}
+	if eff.HomeShelves.ExploreCardPosition == "" {
+		eff.HomeShelves.ExploreCardPosition = string(g.HomeShelves.ExploreCardPosition)
+	}
+	if eff.HomeShelves.ItemCap <= 0 {
+		eff.HomeShelves.ItemCap = g.HomeShelves.ItemCap
+	}
 
 	// Network
 	if eff.Network.HomeWifiSSID == "" {
@@ -500,14 +508,22 @@ func stripFiltering(f *models.FilterSettings, g config.FilterSettings) bool {
 }
 
 func stripHomeShelves(h *models.HomeShelvesSettings, g config.HomeShelvesSettings) bool {
+	changed := false
 	if len(h.Shelves) == 0 {
-		return false
-	}
-	if shelfConfigsEqual(h.Shelves, g.Shelves) {
+		// continue checking scalar home shelf options
+	} else if shelfConfigsEqual(h.Shelves, g.Shelves) {
 		h.Shelves = nil
-		return true
+		changed = true
 	}
-	return false
+	if h.ExploreCardPosition != "" && h.ExploreCardPosition == string(g.ExploreCardPosition) {
+		h.ExploreCardPosition = ""
+		changed = true
+	}
+	if h.ItemCap != 0 && h.ItemCap == g.ItemCap {
+		h.ItemCap = 0
+		changed = true
+	}
+	return changed
 }
 
 func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
