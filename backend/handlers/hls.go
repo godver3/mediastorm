@@ -1001,8 +1001,8 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		} else if probeErr == nil && pd != nil {
 			probeData = pd
 			duration = pd.Duration
-			log.Printf("[hls] unified probe for session %s: duration=%.2fs colorTransfer=%q audioStreams=%d",
-				sessionID, duration, pd.ColorTransfer, len(pd.AudioStreams))
+			log.Printf("[hls] unified probe for session %s: duration=%.2fs startTime=%.3fs colorTransfer=%q audioStreams=%d",
+				sessionID, duration, pd.StartTime, pd.ColorTransfer, len(pd.AudioStreams))
 
 			// Check for incorrect color tagging on DV Profile 8 content
 			// Some re-encodes (e.g., YTS) have DV RPU data but wrong color metadata (bt709 instead of smpte2084)
@@ -4044,18 +4044,24 @@ func (m *HLSManager) extractSubtitleTrackToVTT(ctx context.Context, session *HLS
 	}
 
 	// Add input seeking if session has a start offset. Match the main HLS
-	// transcoding input seek, not the background keyframe probe result. For
-	// browser MPEG-TS sessions FFmpeg normalizes the output to the requested
-	// seek point, so using the probed keyframe here makes subtitles early.
+	// transcoding input seek, not the background keyframe probe result. Some
+	// MP4 files have a positive container start_time; FFmpeg includes that
+	// lead-in in the HLS media timeline, so sidecar subtitles must start from
+	// the same earlier source position and let the web overlay apply the offset.
 	seekOffset := session.TranscodingOffset
 	if seekOffset <= 0 {
 		seekOffset = session.StartOffset
 	}
+	mediaLeadIn := 0.0
+	if session.ProbeData != nil && session.ProbeData.StartTime > 0 {
+		mediaLeadIn = session.ProbeData.StartTime
+		seekOffset = math.Max(0, seekOffset-mediaLeadIn)
+	}
 	session.setSubtitleExtractionOffset(trackIndex, seekOffset)
 	if seekOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", seekOffset))
-		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs for sync (requested was %.3fs, actual probe %.3fs)",
-			session.ID, seekOffset, session.StartOffset, session.ActualStartOffset)
+		log.Printf("[hls] session %s: subtitle extraction using -ss %.3fs for sync (requested was %.3fs, media lead-in %.3fs, actual probe %.3fs)",
+			session.ID, seekOffset, session.StartOffset, mediaLeadIn, session.ActualStartOffset)
 	}
 
 	args = append(args, "-i", streamURL)

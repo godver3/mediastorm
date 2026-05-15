@@ -60,6 +60,7 @@ func isHLSCommentaryTrack(title string) bool {
 // UnifiedProbeResult holds all data extracted from a single ffprobe call
 type UnifiedProbeResult struct {
 	Duration           float64
+	StartTime          float64
 	ColorTransfer      string // e.g., "smpte2084" for HDR, "bt709" for SDR
 	VideoCodec         string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
 	VideoPixFmt        string // e.g., "yuv420p", "yuv420p10le" - used for browser copy compatibility
@@ -272,7 +273,8 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult, error) {
 	var probeData struct {
 		Format struct {
-			Duration string `json:"duration"`
+			Duration  string `json:"duration"`
+			StartTime string `json:"start_time"`
 		} `json:"format"`
 		Streams []struct {
 			Index         int               `json:"index"`
@@ -296,6 +298,11 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 	if probeData.Format.Duration != "" {
 		if d, err := strconv.ParseFloat(probeData.Format.Duration, 64); err == nil {
 			result.Duration = d
+		}
+	}
+	if probeData.Format.StartTime != "" {
+		if s, err := strconv.ParseFloat(probeData.Format.StartTime, 64); err == nil && s > 0 {
+			result.StartTime = s
 		}
 	}
 
