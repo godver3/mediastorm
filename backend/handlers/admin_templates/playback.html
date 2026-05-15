@@ -372,9 +372,22 @@
         position: relative;
     }
 
+    .web-player-theater-dim-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 8000;
+        pointer-events: none;
+        background: rgba(0, 0, 0, 0.76);
+        opacity: 1;
+        transition: opacity 280ms ease;
+    }
+
+    .web-player-theater-dim-layer.is-awake {
+        opacity: 0;
+    }
+
     .playback-panel.web-player-theater-panel {
         position: relative;
-        z-index: 5;
         margin-left: calc(-260px - 1.25rem);
         background: transparent;
         border-color: transparent;
@@ -402,6 +415,7 @@
         max-height: min(70vh, calc(100vh - 12rem));
         max-height: min(70dvh, calc(100dvh - 12rem));
         border-radius: var(--radius);
+        z-index: 8001;
     }
 
     #videoHost.web-player-theater .web-player-controls,
@@ -413,6 +427,22 @@
     #videoHost.web-player-theater .web-player-track-controls,
     #videoHost.web-player-theater #webPlayerStatus {
         color: white;
+    }
+
+    #videoHost.web-player-theater.web-player-theater-debug::before {
+        content: "theater dim debug";
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        z-index: 8002;
+        padding: 0.375rem 0.5rem;
+        border: 2px solid #22c55e;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.84);
+        color: #22c55e;
+        font-size: 0.75rem;
+        font-weight: 700;
+        pointer-events: none;
     }
 
     #videoHost.web-player-fullscreen {
@@ -870,6 +900,12 @@
     let webPlayerFullscreenScrollTimer = null;
     let webPlayerTheaterBodyOverflow = null;
     let webPlayerTheaterDocumentOverflow = null;
+    let webPlayerTheaterDimTimer = null;
+    let webPlayerTheaterDimListenersInstalled = false;
+    let webPlayerTheaterDimReady = false;
+    let webPlayerTheaterDimIgnoreUntil = 0;
+    let webPlayerTheaterDimLastWakeLog = 0;
+    let webPlayerTheaterDimLastSuppressedLog = 0;
     let webPlayerVolume = 1;
     let webPlayerMuted = false;
 
@@ -2031,17 +2067,217 @@
         const panel = document.getElementById('playbackPanel');
         if (!host || !panel) return;
         const enable = Boolean(isTheater) && isDesktopWebPlayerViewport();
+        webPlayerDebug('theater.toggle', {
+            requested: Boolean(isTheater),
+            enable,
+            isDesktop: isDesktopWebPlayerViewport(),
+            hostClassBefore: host.className || '',
+            panelClassBefore: panel.className || '',
+        });
         host.classList.toggle('web-player-theater', enable);
+        host.classList.toggle('web-player-theater-debug', enable && isWebPlayerTheaterDebugEnabled());
         panel.classList.toggle('web-player-theater-panel', enable);
         updateWebPlayerControls();
         if (enable) {
             lockWebPlayerTheaterScroll();
+            enableWebPlayerTheaterDimming();
             host.scrollTop = 0;
             host.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
         } else {
+            disableWebPlayerTheaterDimming();
             unlockWebPlayerTheaterScroll();
             restoreWebPlayerViewport();
         }
+    }
+
+    function enableWebPlayerTheaterDimming() {
+        const layer = ensureWebPlayerTheaterDimLayer();
+        if (webPlayerTheaterDimTimer) {
+            clearTimeout(webPlayerTheaterDimTimer);
+            webPlayerTheaterDimTimer = null;
+        }
+        layer.classList.remove('is-awake');
+        webPlayerTheaterDimReady = false;
+        webPlayerTheaterDimIgnoreUntil = Date.now() + 900;
+        webPlayerTheaterDimLastWakeLog = 0;
+        webPlayerTheaterDimLastSuppressedLog = 0;
+        installWebPlayerTheaterDimListeners();
+        logWebPlayerTheaterDimState('enable');
+        window.setTimeout(() => {
+            const host = document.getElementById('videoHost');
+            webPlayerTheaterDimReady = Boolean(host?.classList.contains('web-player-theater'));
+            logWebPlayerTheaterDimState('ready-check');
+        }, 250);
+    }
+
+    function isWebPlayerTheaterDebugEnabled() {
+        const params = new URLSearchParams(window.location.search || '');
+        return params.get('theaterDebug') === '1' || localStorage.getItem('webPlayerTheaterDebug') === '1';
+    }
+
+    function disableWebPlayerTheaterDimming() {
+        if (webPlayerTheaterDimTimer) {
+            clearTimeout(webPlayerTheaterDimTimer);
+            webPlayerTheaterDimTimer = null;
+        }
+        logWebPlayerTheaterDimState('disable-before-remove');
+        webPlayerTheaterDimReady = false;
+        webPlayerTheaterDimIgnoreUntil = 0;
+        webPlayerTheaterDimLastWakeLog = 0;
+        webPlayerTheaterDimLastSuppressedLog = 0;
+        document.getElementById('webPlayerTheaterDimLayer')?.remove();
+        removeWebPlayerTheaterDimListeners();
+        webPlayerDebug('theater.dim.disable-after-remove', {
+            layerExists: Boolean(document.getElementById('webPlayerTheaterDimLayer')),
+            listenersInstalled: webPlayerTheaterDimListenersInstalled,
+        });
+    }
+
+    function ensureWebPlayerTheaterDimLayer() {
+        let layer = document.getElementById('webPlayerTheaterDimLayer');
+        if (!layer) {
+            layer = document.createElement('div');
+            layer.id = 'webPlayerTheaterDimLayer';
+            layer.className = 'web-player-theater-dim-layer';
+            layer.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(layer);
+            webPlayerDebug('theater.dim.layer-created');
+        }
+        return layer;
+    }
+
+    function installWebPlayerTheaterDimListeners() {
+        if (webPlayerTheaterDimListenersInstalled) return;
+        webPlayerTheaterDimListenersInstalled = true;
+        document.addEventListener('mousemove', wakeWebPlayerTheaterSurroundings, { passive: true });
+        document.addEventListener('pointerdown', wakeWebPlayerTheaterSurroundings, { passive: true });
+        document.addEventListener('touchstart', wakeWebPlayerTheaterSurroundings, { passive: true });
+        document.addEventListener('keydown', wakeWebPlayerTheaterSurroundings);
+        document.addEventListener('click', exitWebPlayerTheaterOnOutsideClick, true);
+        webPlayerDebug('theater.dim.listeners-installed');
+    }
+
+    function removeWebPlayerTheaterDimListeners() {
+        if (!webPlayerTheaterDimListenersInstalled) return;
+        webPlayerTheaterDimListenersInstalled = false;
+        document.removeEventListener('mousemove', wakeWebPlayerTheaterSurroundings);
+        document.removeEventListener('pointerdown', wakeWebPlayerTheaterSurroundings);
+        document.removeEventListener('touchstart', wakeWebPlayerTheaterSurroundings);
+        document.removeEventListener('keydown', wakeWebPlayerTheaterSurroundings);
+        document.removeEventListener('click', exitWebPlayerTheaterOnOutsideClick, true);
+        webPlayerDebug('theater.dim.listeners-removed');
+    }
+
+    function exitWebPlayerTheaterOnOutsideClick(event) {
+        const host = document.getElementById('videoHost');
+        if (!host?.classList.contains('web-player-theater')) return;
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (host.contains(target)) return;
+        if (target.closest('button, a, input, select, textarea, label, video, [role="button"], [role="link"]')) return;
+        webPlayerDebug('theater.outside-click-exit', {
+            target: describeWebPlayerElement(target),
+        });
+        setWebPlayerTheater(false);
+    }
+
+    function wakeWebPlayerTheaterSurroundings(event) {
+        const host = document.getElementById('videoHost');
+        const layer = document.getElementById('webPlayerTheaterDimLayer');
+        const now = Date.now();
+        if (!webPlayerTheaterDimReady || !host?.classList.contains('web-player-theater') || !layer) {
+            if (now - webPlayerTheaterDimLastSuppressedLog > 750) {
+                webPlayerTheaterDimLastSuppressedLog = now;
+                webPlayerDebug('theater.dim.wake-ignored', {
+                    ready: webPlayerTheaterDimReady,
+                    hostExists: Boolean(host),
+                    isTheater: Boolean(host?.classList.contains('web-player-theater')),
+                    layerExists: Boolean(layer),
+                    eventType: event?.type || '',
+                });
+            }
+            return;
+        }
+        if (now < webPlayerTheaterDimIgnoreUntil) {
+            if (now - webPlayerTheaterDimLastSuppressedLog > 250) {
+                webPlayerTheaterDimLastSuppressedLog = now;
+                webPlayerDebug('theater.dim.wake-suppressed-initial', {
+                    eventType: event?.type || '',
+                    remainingMs: Math.max(0, webPlayerTheaterDimIgnoreUntil - now),
+                });
+            }
+            return;
+        }
+        const wasAwake = layer.classList.contains('is-awake');
+        layer.classList.add('is-awake');
+        if (!wasAwake || now - webPlayerTheaterDimLastWakeLog > 1000) {
+            webPlayerTheaterDimLastWakeLog = now;
+            logWebPlayerTheaterDimState('wake');
+        }
+        if (webPlayerTheaterDimTimer) clearTimeout(webPlayerTheaterDimTimer);
+        webPlayerTheaterDimTimer = window.setTimeout(() => {
+            webPlayerTheaterDimTimer = null;
+            if (host.classList.contains('web-player-theater') && !host.classList.contains('web-player-fullscreen')) {
+                layer.classList.remove('is-awake');
+                logWebPlayerTheaterDimState('sleep');
+                window.setTimeout(() => {
+                    logWebPlayerTheaterDimState('sleep-settled');
+                }, 320);
+            }
+        }, 1800);
+    }
+
+    function logWebPlayerTheaterDimState(stage) {
+        const host = document.getElementById('videoHost');
+        const panel = document.getElementById('playbackPanel');
+        const layer = document.getElementById('webPlayerTheaterDimLayer');
+        const layerStyle = layer ? getComputedStyle(layer) : null;
+        const hostStyle = host ? getComputedStyle(host) : null;
+        const panelStyle = panel ? getComputedStyle(panel) : null;
+        const nav = document.querySelector('.navbar');
+        const navStyle = nav ? getComputedStyle(nav) : null;
+        const videoFrame = document.querySelector('#videoHost .web-player-video-frame');
+        const controls = document.querySelector('#videoHost .web-player-controls');
+        const controlsRect = controls?.getBoundingClientRect();
+        const viewportCenterElement = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2));
+        const controlsCenterElement = controlsRect ? document.elementFromPoint(
+            Math.round(controlsRect.left + controlsRect.width / 2),
+            Math.round(controlsRect.top + controlsRect.height / 2)
+        ) : null;
+        webPlayerDebug(`theater.dim.${stage}`, {
+            ready: webPlayerTheaterDimReady,
+            debugEnabled: isWebPlayerTheaterDebugEnabled(),
+            layerExists: Boolean(layer),
+            layerClass: layer?.className || '',
+            layerOpacity: layerStyle?.opacity || null,
+            layerDisplay: layerStyle?.display || null,
+            layerZIndex: layerStyle?.zIndex || null,
+            layerRect: layer ? {
+                width: Math.round(layer.getBoundingClientRect().width),
+                height: Math.round(layer.getBoundingClientRect().height),
+            } : null,
+            hostClass: host?.className || '',
+            hostZIndex: hostStyle?.zIndex || null,
+            panelClass: panel?.className || '',
+            panelZIndex: panelStyle?.zIndex || null,
+            navZIndex: navStyle?.zIndex || null,
+            videoFrameZIndex: videoFrame ? getComputedStyle(videoFrame).zIndex : null,
+            viewportCenterElement: describeWebPlayerElement(viewportCenterElement),
+            controlsCenterElement: describeWebPlayerElement(controlsCenterElement),
+            viewport: {
+                width: window.innerWidth,
+                height: window.innerHeight,
+            },
+        });
+    }
+
+    function describeWebPlayerElement(element) {
+        if (!element) return null;
+        return {
+            tag: element.tagName?.toLowerCase() || '',
+            id: element.id || '',
+            className: typeof element.className === 'string' ? element.className : '',
+        };
     }
 
     function lockWebPlayerTheaterScroll() {
@@ -2611,8 +2847,9 @@
         flushWebPlayerDebug();
         const host = document.getElementById('videoHost');
         const panel = document.getElementById('playbackPanel');
-        if (host) host.classList.remove('web-player-theater');
+        if (host) host.classList.remove('web-player-theater', 'web-player-theater-debug');
         if (panel) panel.classList.remove('web-player-theater-panel');
+        disableWebPlayerTheaterDimming();
         unlockWebPlayerTheaterScroll(true);
         if (keepaliveTimer) {
             clearInterval(keepaliveTimer);
