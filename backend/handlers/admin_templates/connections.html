@@ -88,6 +88,21 @@ function getScraperBadges(item) {
     return createBadge('TOR', 'conn-card-badge-tor');
 }
 
+function isConfiguredLiveSource(source) {
+    if (!source || source.enabled === false) return false;
+    const mode = source.mode || 'm3u';
+    if (mode === 'xtream') {
+        return !!(source.xtreamHost && source.xtreamUsername && source.xtreamPassword);
+    }
+    return !!source.playlistUrl;
+}
+
+function liveSourceLabel(source, index) {
+    const mode = source?.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist';
+    const name = source?.name || (source?.id ? source.id : '');
+    return name ? `${mode}: ${name}` : mode || `Live TV ${index + 1}`;
+}
+
 function buildCards() {
     testCards = [];
 
@@ -98,15 +113,36 @@ function buildCards() {
     testCards.push(createCard('Content Services', 'OpenSubtitles', createBadge('META', 'conn-card-badge-meta'), 'subtitles'));
     testCards.push(createCard('Content Services', 'MDBList', createBadge('META', 'conn-card-badge-meta'), 'mdblist'));
 
-    if (settings.live && settings.live.mode) {
-        testCards.push(
-            createCard(
-                'Live TV',
-                settings.live.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist',
-                createBadge(String(settings.live.mode || 'live').toUpperCase(), 'conn-card-badge-meta'),
-                'live'
-            )
-        );
+    if (settings.live) {
+        const liveSources = Array.isArray(settings.live.sources) && settings.live.sources.length
+            ? settings.live.sources
+            : (Array.isArray(settings.live.playlistSources) ? settings.live.playlistSources : []);
+        const configuredLiveSources = liveSources.filter(isConfiguredLiveSource);
+
+        if (configuredLiveSources.length) {
+            configuredLiveSources.forEach((source, i) => {
+                const mode = source.mode || 'm3u';
+                testCards.push(
+                    createCard(
+                        'Live TV',
+                        liveSourceLabel(source, i),
+                        createBadge(String(mode || 'live').toUpperCase(), 'conn-card-badge-meta'),
+                        `live:${i}`,
+                        source
+                    )
+                );
+            });
+        } else if (settings.live.mode) {
+            testCards.push(
+                createCard(
+                    'Live TV',
+                    settings.live.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist',
+                    createBadge(String(settings.live.mode || 'live').toUpperCase(), 'conn-card-badge-meta'),
+                    'live',
+                    settings.live
+                )
+            );
+        }
     }
 
     if (settings.indexers) {
@@ -280,13 +316,14 @@ async function runAllTests() {
             p = testPost(basePath + '/api/test/mdblist', {
                 apiKey: settings.mdblist?.apiKey || ''
             });
-        } else if (card.key === 'live') {
+        } else if (card.key === 'live' || (card.key && card.key.startsWith('live:'))) {
+            const source = card.payload || settings.live || {};
             p = testPost(basePath + '/api/test/live', {
-                mode: settings.live?.mode || '',
-                playlistUrl: settings.live?.playlistUrl || '',
-                xtreamHost: settings.live?.xtreamHost || '',
-                xtreamUsername: settings.live?.xtreamUsername || '',
-                xtreamPassword: settings.live?.xtreamPassword || ''
+                mode: source.mode || settings.live?.mode || '',
+                playlistUrl: source.playlistUrl || '',
+                xtreamHost: source.xtreamHost || '',
+                xtreamUsername: source.xtreamUsername || '',
+                xtreamPassword: source.xtreamPassword || ''
             });
         } else if (card.key && card.key.startsWith('indexer:')) {
             const item = card.payload;
