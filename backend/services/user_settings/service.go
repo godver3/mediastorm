@@ -231,6 +231,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.Appearance.SecondaryTextColor == "" {
 			settings.Display.Appearance.SecondaryTextColor = defaults.Display.Appearance.SecondaryTextColor
 		}
+		if settings.Display.Appearance.BackgroundColor == "" {
+			settings.Display.Appearance.BackgroundColor = defaults.Display.Appearance.BackgroundColor
+		}
 		if settings.Display.Appearance.ModalBackgroundColor == "" {
 			settings.Display.Appearance.ModalBackgroundColor = defaults.Display.Appearance.ModalBackgroundColor
 		}
@@ -400,6 +403,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Display.Appearance.AccentColor != "" ||
 		s.Display.Appearance.TextColor != "" ||
 		s.Display.Appearance.SecondaryTextColor != "" ||
+		s.Display.Appearance.BackgroundColor != "" ||
 		s.Display.Appearance.ModalBackgroundColor != "" ||
 		s.Display.Appearance.ButtonStyle != "" ||
 		s.Display.Appearance.ButtonRadius != "" ||

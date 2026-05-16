@@ -2727,7 +2727,7 @@ func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // CaptureDebugLog accepts browser debug logs through the admin/account session-auth routes.
 func (h *AdminUIHandler) CaptureDebugLog(w http.ResponseWriter, r *http.Request) {
-	NewDebugHandler(nil).Capture(w, r)
+	NewDebugHandler(log.Default()).Capture(w, r)
 }
 
 // RequireMasterAuth is middleware that only allows master (admin) accounts

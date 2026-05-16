@@ -240,6 +240,54 @@
     let hasDefaultPassword = false; // Whether admin has default password
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
+    const settingsDebugSessionId = 'settings-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+
+    function stringifyDebugArg(arg) {
+        if (arg instanceof Error) {
+            return `${arg.name}: ${arg.message}${arg.stack ? '\n' + arg.stack : ''}`;
+        }
+        if (typeof arg === 'string') return arg;
+        try {
+            return JSON.stringify(arg);
+        } catch (e) {
+            return String(arg);
+        }
+    }
+
+    function sendSettingsDebugLog(level, args) {
+        const entries = [{
+            level,
+            timestamp: new Date().toISOString(),
+            message: args.map(stringifyDebugArg).join(' '),
+        }];
+        fetch(basePath + '/api/debug/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            keepalive: true,
+            body: JSON.stringify({
+                sessionId: settingsDebugSessionId,
+                userAgent: navigator.userAgent,
+                path: window.location.pathname + window.location.search,
+                entries,
+            }),
+        }).catch(() => {});
+    }
+
+    (function installSettingsConsoleDebugBridge() {
+        if (window.__settingsConsoleDebugBridgeInstalled) return;
+        window.__settingsConsoleDebugBridgeInstalled = true;
+        ['log', 'info', 'warn', 'error'].forEach(level => {
+            const original = console[level]?.bind(console);
+            if (!original) return;
+            console[level] = (...args) => {
+                original(...args);
+                sendSettingsDebugLog(level, args);
+            };
+        });
+        console.info('[settings-debug] console bridge installed', { sessionId: settingsDebugSessionId, path: window.location.pathname });
+    })();
+
     const themeQuickSelects = [
         {
             id: 'default-dark',
@@ -821,6 +869,13 @@
                     const profileSection = settings[sec.key];
                     if (!profileSection) continue;
                     const globalSection = currentSettings[sec.globalKey] || {};
+                    if (sec.key === 'display') {
+                        console.info('[settings-propagation] recalc display section start', {
+                            userId,
+                            profileDisplay: profileSection,
+                            globalDisplay: globalSection,
+                        });
+                    }
 
                     // Special case: homeShelves — compare shelves array
                     if (sec.key === 'homeShelves') {
@@ -865,6 +920,17 @@
                         if (profileVal === null) continue;
                         const globalVal = normalizeForComparison(globalSection[fieldKey]);
                         if (!deepEqual(profileVal, globalVal)) {
+                            if (sec.key === 'display') {
+                                console.info('[settings-propagation] recalc display field differs', {
+                                    userId,
+                                    fieldKey,
+                                    fieldLabel: getFieldLabel(sec.key, fieldKey),
+                                    rawProfile: profileSection[fieldKey],
+                                    rawGlobal: globalSection[fieldKey],
+                                    normalizedProfile: profileVal,
+                                    normalizedGlobal: globalVal,
+                                });
+                            }
                             diffFields.push(getFieldLabel(sec.key, fieldKey));
                         }
                     }
@@ -884,6 +950,11 @@
                 }
 
                 const hasOverrides = Object.keys(details).length > 0;
+                console.info('[settings-propagation] recalc profile result', {
+                    userId,
+                    hasOverrides,
+                    details,
+                });
                 userOverrides[userId] = hasOverrides;
                 if (hasOverrides) {
                     userOverrideDetails[userId] = details;
@@ -1132,6 +1203,188 @@
     // Track which propagation level the modal is showing for
     let propagateLevel = ''; // 'global' or 'profile'
     let propagateUserId = ''; // userId when propagating at profile level
+    const propagationGroups = [
+        {
+            key: 'playback',
+            label: 'Playback',
+            description: 'Audio Language, Subtitle Language, Subtitle Mode',
+            detailSection: 'Playback',
+            detailFields: ['Audio Language', 'Subtitle Language', 'Subtitle Mode'],
+            userPaths: [
+                'playback.preferredAudioLanguage',
+                'playback.preferredSubtitleLanguage',
+                'playback.preferredSubtitleMode',
+            ],
+            clientPaths: [],
+        },
+        {
+            key: 'contentFiltering',
+            label: 'Content Filtering',
+            description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, Filter Out Terms, Preferred Terms, Non-Preferred Terms',
+            detailSection: 'Content Filtering',
+            detailFields: ['Max Movie Size (GB)', 'Max Episode Size (GB)', 'Max Resolution', 'Filter Out Terms', 'Preferred Terms', 'Non-Preferred Terms'],
+            userPaths: [
+                'filtering.maxSizeMovieGb',
+                'filtering.maxSizeEpisodeGb',
+                'filtering.maxResolution',
+                'filtering.filterOutTerms',
+                'filtering.preferredTerms',
+                'filtering.nonPreferredTerms',
+            ],
+            clientPaths: [
+                'maxSizeMovieGb',
+                'maxSizeEpisodeGb',
+                'maxResolution',
+                'filterOutTerms',
+                'preferredTerms',
+                'nonPreferredTerms',
+            ],
+        },
+        {
+            key: 'display',
+            label: 'Display',
+            description: 'Badge Icon Style, appearance',
+            detailSection: 'Display',
+            detailFields: ['Badge Icon Style', 'appearance'],
+            userPaths: [
+                'display.watchStateIconStyle',
+                'display.appearance',
+            ],
+            clientPaths: [
+                'appearance',
+            ],
+        },
+        {
+            key: 'liveTV',
+            label: 'Live TV',
+            description: 'Low Latency Mode, filtering',
+            detailSection: 'Live TV',
+            detailFields: ['Low Latency Mode', 'filtering'],
+            userPaths: [
+                'liveTV.lowLatency',
+                'liveTV.filtering',
+            ],
+            clientPaths: [],
+        },
+    ];
+
+    function propagationGroupsForOverrideDetails(details) {
+        if (!details || Object.keys(details).length === 0) return [];
+        return propagationGroups.map(group => {
+            const fields = details[group.detailSection];
+            const matchingFields = Array.isArray(fields)
+                ? fields.filter(field => group.detailFields.includes(field))
+                : [];
+            if (matchingFields.length === 0) return null;
+            console.info('[settings-propagation] group eligible', {
+                group: group.key,
+                section: group.detailSection,
+                matchingFields,
+                allFields: fields,
+            });
+            return {
+                ...group,
+                description: matchingFields.join(', '),
+            };
+        }).filter(Boolean);
+    }
+
+    function renderPropagationGroupToggles(targetId, groupsForTarget) {
+        return groupsForTarget.map(group => {
+            const unsupported = propagateLevel === 'profile' && group.clientPaths.length === 0;
+            return `<label style="display: flex; align-items: flex-start; gap: 0.45rem; padding: 0.45rem 0.5rem; background: var(--bg-tertiary); border-radius: var(--radius); cursor: ${unsupported ? 'not-allowed' : 'pointer'}; opacity: ${unsupported ? '0.55' : '1'};">
+                <input type="checkbox" class="propagate-section-check" data-target-id="${escapeHtml(targetId)}" value="${group.key}" ${unsupported ? 'disabled' : ''} onchange="syncPropagateTargetFromGroups(this.dataset.targetId)" style="margin-top: 0.15rem; flex-shrink: 0;">
+                <span style="min-width: 0;">
+                    <span style="display: block; font-weight: 500; font-size: 0.85rem;">${group.label}</span>
+                    <span style="display: block; color: var(--text-secondary); font-size: 0.75rem; line-height: 1.3;">${group.description}${unsupported ? ' (profile-only)' : ''}</span>
+                </span>
+            </label>`;
+        }).join('');
+    }
+
+    function getSelectedPropagationGroupsForTarget(targetId) {
+        const keys = new Set(Array.from(document.querySelectorAll('.propagate-section-check:checked'))
+            .filter(cb => cb.dataset.targetId === targetId)
+            .map(cb => cb.value));
+        return propagationGroups.filter(group => keys.has(group.key));
+    }
+
+    function syncPropagateTargetGroups(targetId) {
+        const targetCheck = Array.from(document.querySelectorAll('.propagate-check')).find(cb => cb.value === targetId);
+        const groupChecks = Array.from(document.querySelectorAll('.propagate-section-check:not(:disabled)'))
+            .filter(cb => cb.dataset.targetId === targetId);
+        groupChecks.forEach(cb => {
+            cb.checked = !!targetCheck?.checked;
+        });
+        if (targetCheck) targetCheck.indeterminate = false;
+        updatePropagateConfirmState();
+    }
+
+    function syncPropagateTargetFromGroups(targetId) {
+        const targetCheck = Array.from(document.querySelectorAll('.propagate-check')).find(cb => cb.value === targetId);
+        const groupChecks = Array.from(document.querySelectorAll('.propagate-section-check:not(:disabled)'))
+            .filter(cb => cb.dataset.targetId === targetId);
+        if (targetCheck) {
+            const checkedCount = groupChecks.filter(cb => cb.checked).length;
+            targetCheck.checked = checkedCount > 0;
+            targetCheck.indeterminate = checkedCount > 0 && checkedCount < groupChecks.length;
+        }
+        updatePropagateConfirmState();
+    }
+
+    function getPropagationSelectionsByTarget() {
+        const selections = new Map();
+        document.querySelectorAll('.propagate-check').forEach(cb => {
+            if (!cb.checked && !cb.indeterminate) return;
+            const groupsForTarget = getSelectedPropagationGroupsForTarget(cb.value);
+            if (groupsForTarget.length > 0) {
+                selections.set(cb.value, groupsForTarget);
+            }
+        });
+        return selections;
+    }
+
+    function updatePropagateConfirmState() {
+        const btn = document.getElementById('propagateConfirmBtn');
+        if (!btn) return;
+        btn.disabled = getPropagationSelectionsByTarget().size === 0;
+    }
+
+    function clearProfilePropagationGroup(targetSettings, group) {
+        for (const path of group.userPaths) {
+            deleteAtPath(targetSettings, path);
+        }
+    }
+
+    function clearClientPropagationGroup(targetSettings, group) {
+        for (const path of group.clientPaths) {
+            deleteAtPath(targetSettings, path);
+        }
+    }
+
+    function debugPropagationSettingsSlice(settings) {
+        return {
+            display: settings?.display,
+            appearance: settings?.display?.appearance,
+            playback: settings?.playback ? {
+                preferredAudioLanguage: settings.playback.preferredAudioLanguage,
+                preferredSubtitleLanguage: settings.playback.preferredSubtitleLanguage,
+                preferredSubtitleMode: settings.playback.preferredSubtitleMode,
+            } : undefined,
+            filtering: settings?.filtering ? {
+                maxSizeMovieGb: settings.filtering.maxSizeMovieGb,
+                maxSizeEpisodeGb: settings.filtering.maxSizeEpisodeGb,
+                maxResolution: settings.filtering.maxResolution,
+                filterOutTerms: settings.filtering.filterOutTerms,
+                preferredTerms: settings.filtering.preferredTerms,
+                nonPreferredTerms: settings.filtering.nonPreferredTerms,
+            } : undefined,
+            liveTV: settings?.liveTV ? {
+                lowLatency: settings.liveTV.lowLatency,
+                filtering: settings.liveTV.filtering,
+            } : undefined,
+        };
+    }
 
     // After saving global settings, check which profiles have overrides and prompt to propagate
     async function promptPropagateIfNeeded() {
@@ -1163,27 +1416,39 @@
         propagateUserId = '';
         document.getElementById('propagateModalTitle').textContent = 'Propagate to profiles?';
         document.getElementById('propagateModalDesc').textContent =
-            'These profiles have overrides that differ from the new global settings. Select which to overwrite:';
+            'These profiles have overrides that differ from the new global settings. Select which groups to overwrite within each profile:';
         document.getElementById('propagateModalNote').textContent =
-            'Selected profiles will have their settings overwritten with the current global values and their client-level overrides cleared.';
+            'A profile checkbox toggles all groups inside that profile. All propagation selections start off.';
 
         const list = document.getElementById('propagateTargetList');
-        list.innerHTML = profilesWithOverrides.map(p => {
-            const detailHtml = Object.entries(p.details).map(([section, fields]) =>
-                `<span style="display:inline-block;background:var(--bg-tertiary);padding:0.15rem 0.4rem;border-radius:3px;font-size:0.75rem;margin:0.15rem 0.1rem;">${section}: ${fields.join(', ')}</span>`
-            ).join(' ');
+        const profilesWithPropagatableOverrides = profilesWithOverrides
+            .map(p => ({ ...p, propagationGroups: propagationGroupsForOverrideDetails(p.details) }))
+            .filter(p => p.propagationGroups.length > 0);
+
+        if (profilesWithPropagatableOverrides.length === 0) return;
+
+        console.info('[settings-propagation] prompt profiles with eligible groups', profilesWithPropagatableOverrides.map(p => ({
+            id: p.id,
+            name: p.name,
+            groups: p.propagationGroups.map(g => ({ key: g.key, description: g.description })),
+        })));
+
+        list.innerHTML = profilesWithPropagatableOverrides.map(p => {
             return `<li style="padding: 0.5rem 0.6rem; margin-bottom: 0.35rem; background: var(--bg-secondary); border-radius: var(--radius);">
-                <label style="display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; margin: 0;">
-                    <input type="checkbox" class="propagate-check" value="${p.id}" checked style="margin-top: 0.2rem; flex-shrink: 0;">
+                <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin: 0;">
+                    <input type="checkbox" class="propagate-check" value="${p.id}" onchange="syncPropagateTargetGroups(this.value)" style="margin-top: 0.2rem; flex-shrink: 0;">
                     <div style="min-width: 0;">
-                        <div style="font-weight: 500;">${p.name}</div>
-                        <div style="margin-top: 0.25rem; line-height: 1.6;">${detailHtml}</div>
+                        <label style="font-weight: 500; cursor: pointer;">
+                            <span>${p.name}</span>
+                        </label>
+                        <div style="display: grid; gap: 0.4rem; margin-top: 0.55rem;">${renderPropagationGroupToggles(p.id, p.propagationGroups)}</div>
                     </div>
-                </label>
+                </div>
             </li>`;
         }).join('');
 
         document.getElementById('propagateModal').classList.add('visible');
+        updatePropagateConfirmState();
     }
 
     // After saving profile settings, check which clients have overrides and prompt to propagate
@@ -1201,21 +1466,25 @@
         propagateUserId = selectedUserId;
         document.getElementById('propagateModalTitle').textContent = 'Propagate to devices?';
         document.getElementById('propagateModalDesc').textContent =
-            'These devices have custom overrides that differ from this profile\u2019s settings. Select which to reset:';
+            'These devices have custom overrides that differ from this profile\u2019s settings. Select which groups to reset within each device:';
         document.getElementById('propagateModalNote').textContent =
-            'Selected devices will have their filter overrides cleared so they inherit from the profile.';
+            'A device checkbox toggles all supported groups inside that device. All propagation selections start off.';
 
         const list = document.getElementById('propagateTargetList');
         list.innerHTML = clientsWithOverrides.map(c =>
             `<li style="padding: 0.5rem 0.6rem; margin-bottom: 0.35rem; background: var(--bg-secondary); border-radius: var(--radius);">
-                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin: 0;">
-                    <input type="checkbox" class="propagate-check" value="${c.id}" checked style="flex-shrink: 0;">
-                    <span style="font-weight: 500;">${c.name || c.deviceType || c.id}</span>
-                </label>
+                <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin: 0;">
+                    <input type="checkbox" class="propagate-check" value="${c.id}" onchange="syncPropagateTargetGroups(this.value)" style="margin-top: 0.2rem; flex-shrink: 0;">
+                    <span style="min-width: 0;">
+                        <span style="display: block; font-weight: 500;">${c.name || c.deviceType || c.id}</span>
+                        <span style="display: grid; gap: 0.4rem; margin-top: 0.55rem;">${renderPropagationGroupToggles(c.id, propagationGroups.filter(group => group.clientPaths.length > 0))}</span>
+                    </span>
+                </div>
             </li>`
         ).join('');
 
         document.getElementById('propagateModal').classList.add('visible');
+        updatePropagateConfirmState();
     }
 
     function closePropagateModal() {
@@ -1223,11 +1492,15 @@
     }
 
     async function confirmPropagate() {
-        const checkedIds = Array.from(document.querySelectorAll('.propagate-check:checked')).map(cb => cb.value);
-        if (checkedIds.length === 0) {
-            closePropagateModal();
+        const selectionsByTarget = getPropagationSelectionsByTarget();
+        if (selectionsByTarget.size === 0) {
+            showToast('Select at least one setting group', 'error');
             return;
         }
+        console.info('[settings-propagation] confirm selections', Array.from(selectionsByTarget.entries()).map(([targetId, groups]) => ({
+            targetId,
+            groups: groups.map(group => group.key),
+        })));
 
         const btn = document.getElementById('propagateConfirmBtn');
         const originalHTML = btn.innerHTML;
@@ -1239,23 +1512,64 @@
             let failCount = 0;
 
             if (propagateLevel === 'global') {
-                // Reset selected profiles so they inherit global defaults
-                for (const userId of checkedIds) {
+                // Reset selected profile groups so they inherit current global defaults.
+                for (const [userId, selectedGroups] of selectionsByTarget.entries()) {
                     try {
-                        const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
-                            method: 'DELETE',
+                        const loadResponse = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
                             credentials: 'same-origin'
                         });
+                        if (!loadResponse.ok) {
+                            failCount++;
+                            continue;
+                        }
+                        const targetSettings = await loadResponse.json();
+                        console.info('[settings-propagation] profile before clear', {
+                            userId,
+                            selectedGroups: selectedGroups.map(group => group.key),
+                            settings: debugPropagationSettingsSlice(targetSettings),
+                        });
+                        for (const group of selectedGroups) {
+                            clearProfilePropagationGroup(targetSettings, group);
+                        }
+                        console.info('[settings-propagation] profile after clear before strip', {
+                            userId,
+                            settings: debugPropagationSettingsSlice(targetSettings),
+                        });
+                        const strippedSettings = stripInheritedValues(targetSettings, currentSettings);
+                        console.info('[settings-propagation] profile after strip', {
+                            userId,
+                            strippedSettings: debugPropagationSettingsSlice(strippedSettings),
+                        });
+                        const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify(strippedSettings)
+                        });
                         if (response.ok) {
-                            userOverrides[userId] = false;
-                            delete userOverrideDetails[userId];
-                            // Also clear client overrides for this profile
-                            if (clientsForUser) {
-                                // We don't have all clients loaded here, but the backend
-                                // strip_redundant will handle cleanup on next global save
+                            const savedResponse = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
+                                credentials: 'same-origin'
+                            });
+                            if (savedResponse.ok) {
+                                const savedSettings = await savedResponse.json();
+                                console.info('[settings-propagation] profile readback after save', {
+                                    userId,
+                                    settings: debugPropagationSettingsSlice(savedSettings),
+                                    global: debugPropagationSettingsSlice(currentSettings),
+                                });
+                            } else {
+                                console.warn('[settings-propagation] profile readback failed', {
+                                    userId,
+                                    status: savedResponse.status,
+                                });
                             }
                             successCount++;
                         } else {
+                            console.warn('[settings-propagation] profile save failed', {
+                                userId,
+                                status: response.status,
+                                body: await response.text().catch(() => ''),
+                            });
                             failCount++;
                         }
                     } catch (e) {
@@ -1263,16 +1577,31 @@
                     }
                 }
             } else if (propagateLevel === 'profile') {
-                // Reset selected client overrides so they inherit from profile
-                for (const clientId of checkedIds) {
+                // Clear selected client override groups so they inherit from profile.
+                for (const [clientId, selectedGroups] of selectionsByTarget.entries()) {
+                    const applicableGroups = selectedGroups.filter(group => group.clientPaths.length > 0);
+                    if (applicableGroups.length === 0) continue;
                     try {
-                        const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/settings', {
-                            method: 'DELETE',
+                        const loadResponse = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/settings', {
                             credentials: 'same-origin'
+                        });
+                        if (!loadResponse.ok) {
+                            failCount++;
+                            continue;
+                        }
+                        const targetSettings = await loadResponse.json();
+                        for (const group of applicableGroups) {
+                            clearClientPropagationGroup(targetSettings, group);
+                        }
+                        const response = await fetch(basePath + '/api/clients/' + encodeURIComponent(clientId) + '/settings', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify(targetSettings)
                         });
                         if (response.ok) {
                             const client = clientsForUser.find(c => c.id === clientId);
-                            if (client) client.hasOverrides = false;
+                            if (client) recalculateClientOverrides(clientId);
                             successCount++;
                         } else {
                             failCount++;
@@ -1289,6 +1618,13 @@
                 showToast(`Propagated to ${successCount}, failed for ${failCount}`, 'error');
             }
 
+            if (propagateLevel === 'global') {
+                await recalculateAllUserOverrides();
+                updateUserDropdownIndicators();
+            } else if (propagateLevel === 'profile') {
+                await recalculateAllClientOverrides();
+                updateClientDropdownIndicators();
+            }
             updateRevertButtonVisibility();
         } catch (e) {
             showToast('Failed to propagate: ' + e.message, 'error');

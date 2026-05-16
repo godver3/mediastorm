@@ -564,6 +564,10 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 		d.Appearance.SecondaryTextColor = ""
 		changed = true
 	}
+	if d.Appearance.BackgroundColor != "" && d.Appearance.BackgroundColor == g.Appearance.BackgroundColor {
+		d.Appearance.BackgroundColor = ""
+		changed = true
+	}
 	if d.Appearance.ModalBackgroundColor != "" && d.Appearance.ModalBackgroundColor == g.Appearance.ModalBackgroundColor {
 		d.Appearance.ModalBackgroundColor = ""
 		changed = true

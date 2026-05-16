@@ -123,6 +123,41 @@ func TestGetWithDefaults_DisplayAppLanguageFallsBackToGlobal(t *testing.T) {
 	}
 }
 
+func TestGetWithDefaults_DisplayAppearanceBackgroundColorFallsBackToGlobal(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	if err := svc.Update("user1", models.UserSettings{
+		Display: models.DisplaySettings{
+			Appearance: models.AppearanceSettings{
+				ModalBackgroundColor: "#000000",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	defaults := models.UserSettings{
+		Display: models.DisplaySettings{
+			Appearance: models.AppearanceSettings{
+				BackgroundColor:      "#111111",
+				ModalBackgroundColor: "#000000",
+			},
+		},
+	}
+
+	got, err := svc.GetWithDefaults("user1", defaults)
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+	if got.Display.Appearance.BackgroundColor != "#111111" {
+		t.Fatalf("display.appearance.backgroundColor = %q, want %q", got.Display.Appearance.BackgroundColor, "#111111")
+	}
+}
+
 func TestGetWithDefaults_DisplayAppLanguagePreservesUserOverride(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
