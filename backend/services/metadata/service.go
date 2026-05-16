@@ -53,16 +53,18 @@ type Service struct {
 	cacheDir string
 
 	// Background cache manager
-	cacheStopCh      chan struct{}
-	cacheStatusMu    sync.RWMutex
-	cacheStatus      CacheManagerStatus
-	topTenStopCh     chan struct{}
-	topTenStatusMu   sync.RWMutex
-	topTenStatus     TopTenWorkerStatus
-	topTenInterval   time.Duration
-	topTenRefreshMu  sync.Mutex
-	customListInfoFn func() []CustomListInfo // returns configured custom MDBList URLs with display names
-	ratingItemsFn    func() []RatingItem     // returns all items that need ratings (watchlist, continue watching, user lists)
+	cacheStopCh          chan struct{}
+	cacheStatusMu        sync.RWMutex
+	cacheStatus          CacheManagerStatus
+	topTenStopCh         chan struct{}
+	topTenStatusMu       sync.RWMutex
+	topTenStatus         TopTenWorkerStatus
+	topTenInterval       time.Duration
+	topTenRefreshMu      sync.Mutex
+	topTenInFlight       sync.Map
+	topTenSourceInFlight sync.Map
+	customListInfoFn     func() []CustomListInfo // returns configured custom MDBList URLs with display names
+	ratingItemsFn        func() []RatingItem     // returns all items that need ratings (watchlist, continue watching, user lists)
 
 	// Progress tracking for long-running enrichment operations
 	progressMu    sync.RWMutex
@@ -71,6 +73,7 @@ type Service struct {
 	// Guards against concurrent background re-enrichment of the same trending list.
 	// At most one enrichment goroutine per media type runs at a time.
 	trendingEnrichInProgress sync.Map
+	cachedFetchInFlight      sync.Map
 }
 
 // CacheManagerStatus holds the current state of the background cache manager.
@@ -559,6 +562,70 @@ func topTenCacheKey(mediaType string, customListURLs []string, language string) 
 	return cacheKey(parts...)
 }
 
+type topTenListSourceCacheEntry struct {
+	Items []models.TrendingItem `json:"items"`
+}
+
+type topTenInflightResult struct {
+	done  chan struct{}
+	items []models.TrendingItem
+	debug []TopTenDebugEntry
+	err   error
+}
+
+type topTenListSourceInflightResult struct {
+	done  chan struct{}
+	items []models.TrendingItem
+	err   error
+}
+
+type cachedFetchInflightResult struct {
+	done  chan struct{}
+	value any
+	err   error
+}
+
+func topTenListSourceCacheKey(listURL string, limit int, language string) string {
+	return cacheKey("topten", "source-list", "v1", listURL, strconv.Itoa(limit), language)
+}
+
+func (s *Service) getTopTenListSource(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, error) {
+	cacheID := topTenListSourceCacheKey(listURL, limit, s.client.language)
+	var cached topTenListSourceCacheEntry
+	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Items) > 0 {
+		return cached.Items, nil
+	}
+
+	call := &topTenListSourceInflightResult{done: make(chan struct{})}
+	actual, loaded := s.topTenSourceInFlight.LoadOrStore(cacheID, call)
+	if loaded {
+		inflight := actual.(*topTenListSourceInflightResult)
+		select {
+		case <-inflight.done:
+			return inflight.items, inflight.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	defer func() {
+		s.topTenSourceInFlight.Delete(cacheID)
+		close(call.done)
+	}()
+
+	items, _, _, err := s.GetCustomList(ctx, listURL, CustomListOptions{Limit: limit, SuppressProgress: true})
+	if err != nil {
+		call.err = err
+		return nil, err
+	}
+	if len(items) > 0 {
+		if err := s.cache.set(cacheID, topTenListSourceCacheEntry{Items: items}); err != nil {
+			log.Printf("[topten] failed to cache source list url=%s limit=%d: %v", listURL, limit, err)
+		}
+	}
+	call.items = items
+	return items, nil
+}
+
 // RefreshTopTenCache warms the cached API top ten payloads for the built-in
 // variants served by /api/discover/top-ten.
 func (s *Service) RefreshTopTenCache(ctx context.Context) error {
@@ -571,15 +638,35 @@ func (s *Service) RefreshTopTenCache(ctx context.Context) error {
 }
 
 func (s *Service) refreshTopTenCache(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, []TopTenDebugEntry, error) {
+	cacheID := topTenCacheKey(mediaType, customListURLs, s.client.language)
+	call := &topTenInflightResult{done: make(chan struct{})}
+	actual, loaded := s.topTenInFlight.LoadOrStore(cacheID, call)
+	if loaded {
+		inflight := actual.(*topTenInflightResult)
+		select {
+		case <-inflight.done:
+			return inflight.items, inflight.debug, inflight.err
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	defer func() {
+		s.topTenInFlight.Delete(cacheID)
+		close(call.done)
+	}()
+
 	items, debug, err := s.getTopTenUncached(ctx, mediaType, customListURLs)
 	if err != nil {
+		call.err = err
 		return nil, nil, err
 	}
 	if len(items) > 0 {
-		if err := s.cache.set(topTenCacheKey(mediaType, customListURLs, s.client.language), items); err != nil {
+		if err := s.cache.set(cacheID, items); err != nil {
 			log.Printf("[topten] failed to cache results mediaType=%s: %v", mediaType, err)
 		}
 	}
+	call.items = items
+	call.debug = debug
 	return items, debug, nil
 }
 
@@ -1464,7 +1551,7 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 			title.Name = tvdbDetails.Name
 			title.Overview = tvdbDetails.Overview
 
-			if translation, err := s.client.movieTranslations(*movie.TVDBID, s.client.language); err == nil && translation != nil {
+			if translation, err := s.cachedMovieTranslations(*movie.TVDBID, s.client.language); err == nil && translation != nil {
 				if strings.TrimSpace(translation.Name) != "" {
 					title.Name = translation.Name
 				}
@@ -1558,7 +1645,7 @@ func (s *Service) enrichMovieTVDB(title *models.Title, movie mdblistMovie) {
 				}
 			}
 			// Fetch translations for the user's language (authoritative, overrides search result)
-			if translation, err := s.client.movieTranslations(title.TVDBID, s.client.language); err == nil && translation != nil {
+			if translation, err := s.cachedMovieTranslations(title.TVDBID, s.client.language); err == nil && translation != nil {
 				if strings.TrimSpace(translation.Name) != "" {
 					title.Name = translation.Name
 				}
@@ -3133,7 +3220,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	// Fetch series translations in background
 	go func() {
 		var result translationResult
-		if translation, err := s.client.seriesTranslations(tvdbID, s.client.language); err == nil && translation != nil {
+		if translation, err := s.cachedSeriesTranslations(tvdbID, s.client.language); err == nil && translation != nil {
 			result.name = strings.TrimSpace(translation.Name)
 			result.overview = strings.TrimSpace(translation.Overview)
 		}
@@ -3188,7 +3275,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			seasonType = "official"
 		}
 		englishEpisodes := make(map[int64]tvdbEpisode)
-		if localized, err := s.client.seriesEpisodesBySeasonType(tvdbID, seasonType, s.client.language); err == nil {
+		if localized, err := s.cachedSeriesEpisodesBySeasonType(tvdbID, seasonType, s.client.language); err == nil {
 			for _, ep := range localized {
 				englishEpisodes[ep.ID] = ep
 			}
@@ -3770,7 +3857,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 
 	go func() {
 		var result transResult
-		if tr, err := s.client.seriesTranslations(tvdbID, s.client.language); err == nil && tr != nil {
+		if tr, err := s.cachedSeriesTranslations(tvdbID, s.client.language); err == nil && tr != nil {
 			result.name = strings.TrimSpace(tr.Name)
 			result.overview = strings.TrimSpace(tr.Overview)
 		}
@@ -3799,7 +3886,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 				transChan = make(chan transResult, 1)
 				go func() {
 					var result transResult
-					if tr, err := s.client.seriesTranslations(tvdbID, s.client.language); err == nil && tr != nil {
+					if tr, err := s.cachedSeriesTranslations(tvdbID, s.client.language); err == nil && tr != nil {
 						result.name = strings.TrimSpace(tr.Name)
 						result.overview = strings.TrimSpace(tr.Overview)
 					}
@@ -3820,7 +3907,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			seasonType = "official"
 		}
 		localizedEps := make(map[int64]tvdbEpisode)
-		if localized, err := s.client.seriesEpisodesBySeasonType(tvdbID, seasonType, s.client.language); err == nil {
+		if localized, err := s.cachedSeriesEpisodesBySeasonType(tvdbID, seasonType, s.client.language); err == nil {
 			for _, ep := range localized {
 				localizedEps[ep.ID] = ep
 			}
@@ -4444,7 +4531,7 @@ func (s *Service) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery)
 	translatedName := extended.Name
 	translatedOverview := extended.Overview
 
-	if translation, err := s.client.seriesTranslations(tvdbID, s.client.language); err == nil && translation != nil {
+	if translation, err := s.cachedSeriesTranslations(tvdbID, s.client.language); err == nil && translation != nil {
 		if strings.TrimSpace(translation.Name) != "" {
 			translatedName = translation.Name
 			log.Printf("[metadata] using translated series name tvdbId=%d lang=%s name=%q", tvdbID, s.client.language, translation.Name)
@@ -5224,7 +5311,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	translatedOverview := base.Overview
 	gotTranslatedOverview := false
 
-	if translation, err := s.client.movieTranslations(tvdbID, s.client.language); err == nil && translation != nil {
+	if translation, err := s.cachedMovieTranslations(tvdbID, s.client.language); err == nil && translation != nil {
 		if strings.TrimSpace(translation.Name) != "" {
 			translatedName = translation.Name
 			log.Printf("[metadata] using translated movie name tvdbId=%d lang=%s name=%q", tvdbID, s.client.language, translation.Name)
@@ -6234,13 +6321,14 @@ type HistoryChecker interface {
 
 // CustomListOptions configures filtering and pagination for GetCustomList.
 type CustomListOptions struct {
-	Limit          int
-	Offset         int
-	HideUnreleased bool
-	HideWatched    bool
-	UserID         string
-	HistorySvc     HistoryChecker // nil if hideWatched is false
-	Label          string         // optional display name for progress tracking (e.g. shelf name)
+	Limit            int
+	Offset           int
+	HideUnreleased   bool
+	HideWatched      bool
+	UserID           string
+	HistorySvc       HistoryChecker // nil if hideWatched is false
+	Label            string         // optional display name for progress tracking (e.g. shelf name)
+	SuppressProgress bool           // true for background/internal refreshes that should not surface in UI progress
 }
 
 // GetCustomListForCalendar fetches a custom MDBList with the lighter-weight options calendar needs.
@@ -6252,6 +6340,29 @@ func (s *Service) GetCustomListForCalendar(ctx context.Context, listURL string, 
 	return items, err
 }
 
+func (s *Service) singleflightCachedFetch(ctx context.Context, key string, fetch func() (any, error)) (any, error) {
+	call := &cachedFetchInflightResult{done: make(chan struct{})}
+	actual, loaded := s.cachedFetchInFlight.LoadOrStore(key, call)
+	if loaded {
+		inflight := actual.(*cachedFetchInflightResult)
+		select {
+		case <-inflight.done:
+			return inflight.value, inflight.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	defer func() {
+		s.cachedFetchInFlight.Delete(key)
+		close(call.done)
+	}()
+
+	value, err := fetch()
+	call.value = value
+	call.err = err
+	return value, err
+}
+
 // cachedMovieExtended fetches TVDB movie extended data with file caching.
 func (s *Service) cachedMovieExtended(tvdbID int64, meta []string) (tvdbMovieExtendedData, error) {
 	metaKey := strings.Join(meta, ",")
@@ -6260,11 +6371,22 @@ func (s *Service) cachedMovieExtended(tvdbID int64, meta []string) (tvdbMovieExt
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		return cached, nil
 	}
-	result, err := s.client.movieExtended(tvdbID, meta)
+	value, err := s.singleflightCachedFetch(context.Background(), cacheID, func() (any, error) {
+		var cached tvdbMovieExtendedData
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			return cached, nil
+		}
+		result, err := s.client.movieExtended(tvdbID, meta)
+		if err != nil {
+			return tvdbMovieExtendedData{}, err
+		}
+		_ = s.cache.set(cacheID, result)
+		return result, nil
+	})
 	if err != nil {
 		return tvdbMovieExtendedData{}, err
 	}
-	_ = s.cache.set(cacheID, result)
+	result, _ := value.(tvdbMovieExtendedData)
 	return result, nil
 }
 
@@ -6276,11 +6398,22 @@ func (s *Service) cachedSeriesExtended(tvdbID int64, meta []string) (tvdbSeriesE
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		return cached, nil
 	}
-	result, err := s.client.seriesExtended(tvdbID, meta)
+	value, err := s.singleflightCachedFetch(context.Background(), cacheID, func() (any, error) {
+		var cached tvdbSeriesExtendedData
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			return cached, nil
+		}
+		result, err := s.client.seriesExtended(tvdbID, meta)
+		if err != nil {
+			return tvdbSeriesExtendedData{}, err
+		}
+		_ = s.cache.set(cacheID, result)
+		return result, nil
+	})
 	if err != nil {
 		return tvdbSeriesExtendedData{}, err
 	}
-	_ = s.cache.set(cacheID, result)
+	result, _ := value.(tvdbSeriesExtendedData)
 	return result, nil
 }
 
@@ -6294,13 +6427,24 @@ func (s *Service) cachedFetchCredits(ctx context.Context, mediaType string, tmdb
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil
 	}
-	result, err := s.tmdb.fetchCredits(ctx, mediaType, tmdbID)
+	value, err := s.singleflightCachedFetch(ctx, key, func() (any, error) {
+		var cached models.Credits
+		if ok, _ := s.cache.get(key, &cached); ok {
+			return &cached, nil
+		}
+		result, err := s.tmdb.fetchCredits(ctx, mediaType, tmdbID)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			_ = s.cache.set(key, result)
+		}
+		return result, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if result != nil {
-		_ = s.cache.set(key, result)
-	}
+	result, _ := value.(*models.Credits)
 	return result, nil
 }
 
@@ -6315,13 +6459,24 @@ func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbI
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil
 	}
-	result, err := s.tmdb.fetchImages(ctx, mediaType, tmdbID)
+	value, err := s.singleflightCachedFetch(ctx, key, func() (any, error) {
+		var cached tmdbImagesResult
+		if ok, _ := s.cache.get(key, &cached); ok {
+			return &cached, nil
+		}
+		result, err := s.tmdb.fetchImages(ctx, mediaType, tmdbID)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			_ = s.cache.set(key, result)
+		}
+		return result, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if result != nil {
-		_ = s.cache.set(key, result)
-	}
+	result, _ := value.(*tmdbImagesResult)
 	return result, nil
 }
 
@@ -6332,13 +6487,24 @@ func (s *Service) cachedMovieTranslations(tvdbID int64, lang string) (*tvdbSerie
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		return &cached, nil
 	}
-	result, err := s.client.movieTranslations(tvdbID, lang)
+	value, err := s.singleflightCachedFetch(context.Background(), cacheID, func() (any, error) {
+		var cached tvdbSeriesTranslation
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			return &cached, nil
+		}
+		result, err := s.client.movieTranslations(tvdbID, lang)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			_ = s.cache.set(cacheID, *result)
+		}
+		return result, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if result != nil {
-		_ = s.cache.set(cacheID, *result)
-	}
+	result, _ := value.(*tvdbSeriesTranslation)
 	return result, nil
 }
 
@@ -6349,13 +6515,53 @@ func (s *Service) cachedSeriesTranslations(tvdbID int64, lang string) (*tvdbSeri
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		return &cached, nil
 	}
-	result, err := s.client.seriesTranslations(tvdbID, lang)
+	value, err := s.singleflightCachedFetch(context.Background(), cacheID, func() (any, error) {
+		var cached tvdbSeriesTranslation
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			return &cached, nil
+		}
+		result, err := s.client.seriesTranslations(tvdbID, lang)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			_ = s.cache.set(cacheID, *result)
+		}
+		return result, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if result != nil {
-		_ = s.cache.set(cacheID, *result)
+	result, _ := value.(*tvdbSeriesTranslation)
+	return result, nil
+}
+
+func (s *Service) cachedSeriesEpisodesBySeasonType(tvdbID int64, seasonType, lang string) ([]tvdbEpisode, error) {
+	seasonType = strings.TrimSpace(seasonType)
+	if seasonType == "" {
+		seasonType = "official"
 	}
+	cacheID := cacheKey("tvdb", "series", "episodes", "by-season-type", "v1", fmt.Sprintf("%d", tvdbID), seasonType, lang)
+	var cached []tvdbEpisode
+	if ok, _ := s.cache.get(cacheID, &cached); ok {
+		return cached, nil
+	}
+	value, err := s.singleflightCachedFetch(context.Background(), cacheID, func() (any, error) {
+		var cached []tvdbEpisode
+		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			return cached, nil
+		}
+		result, err := s.client.seriesEpisodesBySeasonType(tvdbID, seasonType, lang)
+		if err != nil {
+			return nil, err
+		}
+		_ = s.cache.set(cacheID, result)
+		return result, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result, _ := value.([]tvdbEpisode)
 	return result, nil
 }
 
@@ -6838,25 +7044,28 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		return result, total, total, nil
 	}
 
-	// Register progress task for custom list enrichment
-	progressID := "custom-list:" + listURL
-	// Use caller-provided label (shelf name) if available, otherwise derive from URL
-	progressLabel := opts.Label
-	if progressLabel == "" {
-		progressLabel = "Custom List"
-		if parsed, err := url.Parse(listURL); err == nil {
-			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-			// MDBList URLs end with /json — use the segment before it
-			for i := len(parts) - 1; i >= 0; i-- {
-				if !strings.EqualFold(parts[i], "json") && parts[i] != "" {
-					progressLabel = parts[i]
-					break
+	var progressID string
+	if !opts.SuppressProgress {
+		// Register progress task for custom list enrichment
+		progressID = "custom-list:" + listURL
+		// Use caller-provided label (shelf name) if available, otherwise derive from URL
+		progressLabel := opts.Label
+		if progressLabel == "" {
+			progressLabel = "Custom List"
+			if parsed, err := url.Parse(listURL); err == nil {
+				parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+				// MDBList URLs end with /json — use the segment before it
+				for i := len(parts) - 1; i >= 0; i-- {
+					if !strings.EqualFold(parts[i], "json") && parts[i] != "" {
+						progressLabel = parts[i]
+						break
+					}
 				}
 			}
 		}
+		cleanup := s.startProgressTask(progressID, progressLabel, "fetching", 0)
+		defer cleanup()
 	}
-	cleanup := s.startProgressTask(progressID, progressLabel, "fetching", 0)
-	defer cleanup()
 
 	// Fetch raw items from MDBList API
 	rawItems, err := s.client.FetchMDBListCustom(listURL)
@@ -6897,7 +7106,9 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		len(itemsToEnrich), filteredTotal, unfilteredTotal, opts.Offset, opts.Limit)
 
 	// Concurrent enrichment with worker pool
-	s.updateProgressPhase(progressID, "enriching", len(itemsToEnrich))
+	if progressID != "" {
+		s.updateProgressPhase(progressID, "enriching", len(itemsToEnrich))
+	}
 	const maxConcurrentEnrich = 10
 	sem := make(chan struct{}, maxConcurrentEnrich)
 	var wg sync.WaitGroup
@@ -6910,7 +7121,9 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[idx] = s.enrichCustomListItem(ctx, it)
-			s.incrementProgress(progressID)
+			if progressID != "" {
+				s.incrementProgress(progressID)
+			}
 		}(i, item)
 	}
 	wg.Wait()
@@ -7338,8 +7551,7 @@ func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, custo
 			continue
 		}
 		add(nl.name, topTenNetworkWeight, func() ([]models.TrendingItem, error) {
-			items, _, _, err := s.GetCustomList(ctx, nl.url, CustomListOptions{Limit: 10})
-			return items, err
+			return s.getTopTenListSource(ctx, nl.url, 10)
 		})
 	}
 
@@ -7347,8 +7559,7 @@ func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, custo
 	for _, u := range customListURLs {
 		u := u
 		add("mdblist:"+u, topTenCustomWeight, func() ([]models.TrendingItem, error) {
-			items, _, _, err := s.GetCustomList(ctx, u, CustomListOptions{Limit: 10})
-			return items, err
+			return s.getTopTenListSource(ctx, u, 10)
 		})
 	}
 

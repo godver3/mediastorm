@@ -632,6 +632,57 @@ func TestProgressIncrementNoTask(t *testing.T) {
 	svc.updateProgressPhase("nonexistent", "test", 10)
 }
 
+func TestGetCustomListSuppressProgress(t *testing.T) {
+	var (
+		svc                *Service
+		observedActive     int
+		observedSuppressed int
+		suppressExpected   bool
+	)
+
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Host, "mdblist.com") {
+				snap := svc.GetProgressSnapshot()
+				if suppressExpected {
+					observedSuppressed = snap.ActiveCount
+				} else {
+					observedActive = snap.ActiveCount
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewBufferString(`[]`)),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewBufferString(`{}`)), Header: make(http.Header)}, nil
+		}),
+	}
+
+	svc = &Service{
+		client:        newTVDBClient("test-api-key", "eng", httpc, 24),
+		cache:         newFileCache(t.TempDir(), 24),
+		progressTasks: make(map[string]*ProgressTask),
+	}
+	svc.client.minInterval = 0
+
+	suppressExpected = false
+	if _, _, _, err := svc.GetCustomList(context.Background(), "https://mdblist.com/lists/test/progress/json", CustomListOptions{}); err != nil {
+		t.Fatalf("GetCustomList with progress failed: %v", err)
+	}
+	if observedActive == 0 {
+		t.Fatal("expected active progress task during regular custom list fetch")
+	}
+
+	suppressExpected = true
+	if _, _, _, err := svc.GetCustomList(context.Background(), "https://mdblist.com/lists/test/suppressed/json", CustomListOptions{SuppressProgress: true}); err != nil {
+		t.Fatalf("GetCustomList with suppressed progress failed: %v", err)
+	}
+	if observedSuppressed != 0 {
+		t.Fatalf("expected no active progress task during suppressed custom list fetch, got %d", observedSuppressed)
+	}
+}
+
 // TestExtractTitleFields verifies that extractTitleFields copies only requested fields.
 func TestExtractTitleFields(t *testing.T) {
 	full := &models.Title{
@@ -1074,5 +1125,40 @@ func TestGetCacheManagerStatusCountsV5CustomListCache(t *testing.T) {
 	status := svc.GetCacheManagerStatus()
 	if status.CustomListsCached != 1 {
 		t.Fatalf("expected 1 cached custom list, got %d", status.CustomListsCached)
+	}
+}
+
+func TestGetTopTenListSourceUsesSourceCache(t *testing.T) {
+	const listURL = "https://mdblist.com/lists/test/provider/json"
+	requests := 0
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(bytes.NewBufferString(`{}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	svc := &Service{
+		client: newTVDBClient("test-api-key", "eng", httpc, 24),
+		cache:  newFileCache(t.TempDir(), 24),
+	}
+	cachedItems := []models.TrendingItem{{Rank: 1, Title: models.Title{Name: "Cached", MediaType: "movie"}}}
+	if err := svc.cache.set(topTenListSourceCacheKey(listURL, 10, "eng"), topTenListSourceCacheEntry{Items: cachedItems}); err != nil {
+		t.Fatalf("set top ten source cache: %v", err)
+	}
+
+	items, err := svc.getTopTenListSource(context.Background(), listURL, 10)
+	if err != nil {
+		t.Fatalf("getTopTenListSource: %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("expected cached source to avoid HTTP requests, got %d", requests)
+	}
+	if len(items) != 1 || items[0].Title.Name != "Cached" {
+		t.Fatalf("unexpected cached items: %#v", items)
 	}
 }

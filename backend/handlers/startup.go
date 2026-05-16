@@ -38,6 +38,13 @@ type startupPrequeueStore interface {
 	GetByTitleUser(titleID, userID string) (*playback.PrequeueEntry, bool)
 }
 
+type startupHistorySnapshot struct {
+	watchHistory        []models.WatchHistoryItem
+	playbackProgress    []models.PlaybackProgress
+	watchHistoryErr     error
+	playbackProgressErr error
+}
+
 // StartupHandler serves a combined startup payload to reduce the number of
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
@@ -118,6 +125,16 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	includeTrendingMovies := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeTrendingMovies"))) != "false"
 	includeTrendingSeries := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("includeTrendingSeries"))) != "false"
 
+	var historySnapshotOnce sync.Once
+	var historySnapshot startupHistorySnapshot
+	loadHistorySnapshot := func() startupHistorySnapshot {
+		historySnapshotOnce.Do(func() {
+			historySnapshot.watchHistory, historySnapshot.watchHistoryErr = h.history.ListWatchHistory(userID)
+			historySnapshot.playbackProgress, historySnapshot.playbackProgressErr = h.history.ListPlaybackProgress(userID)
+		})
+		return historySnapshot
+	}
+
 	resp := StartupResponse{}
 	defaults := h.getDefaultsFromGlobal()
 	settings, err := h.userSettings.GetWithDefaults(userID, defaults)
@@ -170,16 +187,16 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.ContinueWatchingTotal = len(items)
 		items = h.withPrequeueStatus(userID, items)
-		progress, err := h.history.ListPlaybackProgress(userID)
-		if err != nil {
-			log.Printf("[startup] playback progress error for %s: %v", userID, err)
+		snapshot := loadHistorySnapshot()
+		if snapshot.playbackProgressErr != nil {
+			log.Printf("[startup] playback progress error for %s: %v", userID, snapshot.playbackProgressErr)
 			if len(items) > startupShelfLimit {
 				items = items[:startupShelfLimit]
 			}
 			resp.ContinueWatching = items
 			return
 		}
-		merged := mergeProgressIntoContinueWatching(items, progress)
+		merged := mergeProgressIntoContinueWatching(items, snapshot.playbackProgress)
 		if len(merged) > startupShelfLimit {
 			merged = merged[:startupShelfLimit]
 		}
@@ -194,18 +211,17 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		wh, err := h.history.ListWatchHistory(userID)
-		if err != nil {
-			log.Printf("[startup] watch history error for %s: %v", userID, err)
-			return
+		snapshot := loadHistorySnapshot()
+		if snapshot.watchHistoryErr != nil {
+			log.Printf("[startup] watch history error for %s: %v", userID, snapshot.watchHistoryErr)
+		} else {
+			watchHistory = snapshot.watchHistory
 		}
-		watchHistory = wh
-		pp, err := h.history.ListPlaybackProgress(userID)
-		if err != nil {
-			log.Printf("[startup] playback progress error for %s: %v", userID, err)
-			return
+		if snapshot.playbackProgressErr != nil {
+			log.Printf("[startup] playback progress error for %s: %v", userID, snapshot.playbackProgressErr)
+		} else {
+			playbackProgress = snapshot.playbackProgress
 		}
-		playbackProgress = pp
 	}()
 
 	// 5b. Calendar home-shelf items (yesterday + next 2 days). Non-blocking:
