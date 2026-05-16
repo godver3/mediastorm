@@ -183,10 +183,13 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 
 type aiostreamsResponse struct {
 	Streams []struct {
-		Name          string `json:"name"`
-		Description   string `json:"description"`
-		URL           string `json:"url"`
-		ExternalURL   string `json:"externalUrl"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		URL         string `json:"url"`
+		ExternalURL string `json:"externalUrl"`
+		StreamData  struct {
+			Type string `json:"type"`
+		} `json:"streamData"`
 		BehaviorHints struct {
 			BingeGroup string `json:"bingeGroup"`
 			VideoSize  int64  `json:"videoSize"`
@@ -291,14 +294,19 @@ func (a *AIOStreamsScraper) fetchStreams(ctx context.Context, mediaType, id stri
 
 	streams := make([]aiostreamsStream, 0, len(payload.Streams))
 	for _, stream := range payload.Streams {
-		streamURL := strings.TrimSpace(stream.URL)
-		if streamURL == "" {
-			// Stremio stream objects may use externalUrl instead of url.
-			streamURL = strings.TrimSpace(stream.ExternalURL)
-		}
-		if streamURL == "" {
+		if strings.EqualFold(strings.TrimSpace(stream.StreamData.Type), "statistic") {
+			log.Printf("[aiostreams] skipping statistic stream entry: %s", strings.TrimSpace(stream.Name))
 			continue
 		}
+
+		streamURL := strings.TrimSpace(stream.URL)
+		if streamURL == "" {
+			if externalURL := strings.TrimSpace(stream.ExternalURL); externalURL != "" {
+				log.Printf("[aiostreams] skipping externalUrl-only stream entry %q: %s", strings.TrimSpace(stream.Name), externalURL)
+			}
+			continue
+		}
+
 		if IsKnownPlaceholderURL(streamURL) {
 			log.Printf("[aiostreams] skipping known placeholder stream URL: %s", streamURL)
 			continue
