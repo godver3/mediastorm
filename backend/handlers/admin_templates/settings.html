@@ -50,6 +50,68 @@
         grid-template-columns: 1fr;
     }
 }
+
+.branding-wizard-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 1rem;
+}
+
+.branding-wizard-preview {
+    min-height: 300px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #050505;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.branding-wizard-preview canvas {
+    max-width: 100%;
+    max-height: 520px;
+    background: #000;
+}
+
+.branding-wizard-targets {
+    display: grid;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.branding-wizard-target {
+    text-align: left;
+    justify-content: flex-start;
+}
+
+.branding-wizard-target.active {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+}
+
+.branding-wizard-control {
+    margin-bottom: 0.85rem;
+}
+
+.branding-wizard-control label {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.35rem;
+}
+
+.branding-wizard-control input[type="range"] {
+    width: 100%;
+}
+
+@media (max-width: 900px) {
+    .branding-wizard-layout {
+        grid-template-columns: 1fr;
+    }
+}
 </style>
 {{end}}
 
@@ -187,6 +249,61 @@
                 </svg>
                 Propagate
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Branding Wizard Modal -->
+<div id="brandingWizardModal" class="test-modal" onclick="closeBrandingWizard(event)">
+    <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 960px;">
+        <div class="test-modal-header">
+            <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                </svg>
+                <span>Branding Image Wizard</span>
+            </h3>
+            <button class="test-modal-close" onclick="closeBrandingWizard()">&times;</button>
+        </div>
+        <div class="test-modal-body">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Choose one high-resolution image, then crop it for each app surface. The wizard uploads PNG crops for all four targets.</p>
+            <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem;">
+                <label class="btn btn-primary" style="cursor: pointer; margin: 0;">
+                    <input id="brandingWizardFile" type="file" accept="image/png,image/jpeg" style="display: none;" onchange="handleBrandingWizardFile(this)">
+                    Choose Image
+                </label>
+                <span id="brandingWizardFileName" style="color: var(--text-muted); font-size: 0.85rem;">No image selected</span>
+            </div>
+            <div class="branding-wizard-layout">
+                <div class="branding-wizard-preview">
+                    <canvas id="brandingWizardCanvas" width="640" height="360"></canvas>
+                </div>
+                <div>
+                    <div id="brandingWizardTargets" class="branding-wizard-targets"></div>
+                    <div class="branding-wizard-control">
+                        <label><span>Zoom</span><span id="brandingWizardZoomValue">1.00x</span></label>
+                        <input id="brandingWizardZoom" type="range" min="1" max="3" step="0.01" value="1" oninput="updateBrandingWizardCrop('zoom', this.value)">
+                    </div>
+                    <div class="branding-wizard-control">
+                        <label><span>Horizontal Position</span><span id="brandingWizardPanXValue">0</span></label>
+                        <input id="brandingWizardPanX" type="range" min="-1" max="1" step="0.01" value="0" oninput="updateBrandingWizardCrop('panX', this.value)">
+                    </div>
+                    <div class="branding-wizard-control">
+                        <label><span>Vertical Position</span><span id="brandingWizardPanYValue">0</span></label>
+                        <input id="brandingWizardPanY" type="range" min="-1" max="1" step="0.01" value="0" oninput="updateBrandingWizardCrop('panY', this.value)">
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="resetBrandingWizardCrop()">Reset Current Crop</button>
+                </div>
+            </div>
+        </div>
+        <div class="test-modal-footer" style="display: flex; justify-content: space-between; gap: 0.75rem; align-items: center;">
+            <span id="brandingWizardStatus" style="color: var(--text-muted); font-size: 0.85rem;"></span>
+            <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-secondary" onclick="closeBrandingWizard()">Cancel</button>
+                <button id="brandingWizardUploadBtn" class="btn btn-primary" onclick="uploadBrandingWizardImages()" disabled>Apply Crops</button>
+            </div>
         </div>
     </div>
 </div>
@@ -2332,16 +2449,21 @@
             case 'file_upload':
                 const uploadEndpoint = fieldDef.endpoint || '';
                 const acceptTypes = fieldDef.accept || '';
-                return '<div class="file-upload-container" id="'+id+'_container" data-endpoint="'+uploadEndpoint+'">' +
+                const uploadFieldName = fieldDef.fieldName || 'cookies';
+                const uploadSuccessText = fieldDef.successText || 'File uploaded successfully';
+                const deleteSuccessText = fieldDef.deleteText || 'File removed';
+                const uploadedSettingPath = fieldDef.settingPath || '';
+                return '<div class="file-upload-container" id="'+id+'_container" data-file-upload="true" data-endpoint="'+uploadEndpoint+'">' +
                     '<div class="file-upload-status" id="'+id+'_status">Checking...</div>' +
                     '<div class="file-upload-actions" id="'+id+'_actions" style="display:flex;gap:0.5rem;align-items:center;">' +
                     '<label class="btn btn-sm btn-primary" style="cursor:pointer;margin:0;">' +
-                    '<input type="file" accept="'+acceptTypes+'" style="display:none;" onchange="handleFileUpload(\''+id+'\', \''+uploadEndpoint+'\', this)">' +
+                    '<input type="file" accept="'+acceptTypes+'" style="display:none;" onchange="handleFileUpload(\''+id+'\', \''+uploadEndpoint+'\', this, \''+uploadFieldName+'\', \''+escapeHtml(uploadSuccessText).replace(/'/g, "\\'")+'\', \''+uploadedSettingPath+'\')">' +
                     'Upload File</label>' +
-                    '<button type="button" class="btn btn-sm btn-danger" id="'+id+'_delete" style="display:none;" onclick="handleFileDelete(\''+id+'\', \''+uploadEndpoint+'\')">Remove</button>' +
+                    '<button type="button" class="btn btn-sm btn-danger" id="'+id+'_delete" style="display:none;" onclick="handleFileDelete(\''+id+'\', \''+uploadEndpoint+'\', \''+escapeHtml(deleteSuccessText).replace(/'/g, "\\'")+'\', \''+uploadedSettingPath+'\')">Remove</button>' +
                     '</div>' +
-                    '</div>' +
-                    '<script>checkFileUploadStatus("'+id+'", "'+uploadEndpoint+'");</script>';
+                    '</div>';
+            case 'branding_wizard':
+                return '<div><button type="button" class="btn btn-primary" onclick="openBrandingWizard()">Open Branding Wizard</button></div>';
             default:
                 return '<input type="text" class="form-input'+invalidClass+'" id="'+id+'" value="'+escapeHtml(value || '').replace(/"/g, '&quot;')+'" '+isReadonly+' oninput="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)" onchange="handleFieldInputChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">';
         }
@@ -2637,12 +2759,246 @@
         renderMultiselectOptions();
     }
 
+    const brandingWizardTargets = {
+        'home-tv': {
+            label: 'TV Home',
+            hint: '3319x1236',
+            width: 3319,
+            height: 1236,
+            endpoint: '/admin/api/settings/branding/home-tv/image',
+            settingPath: 'branding.homeTvImageUrl'
+        },
+        'home-mobile-logo': {
+            label: 'Mobile Home',
+            hint: '1280x768',
+            width: 1280,
+            height: 768,
+            endpoint: '/admin/api/settings/branding/home-mobile-logo/image',
+            settingPath: 'branding.homeMobileLogoUrl'
+        },
+        'settings-tv': {
+            label: 'TV Settings',
+            hint: '1200x1200',
+            width: 1200,
+            height: 1200,
+            endpoint: '/admin/api/settings/branding/settings-tv/image',
+            settingPath: 'branding.settingsTvImageUrl'
+        },
+        'loading-logo': {
+            label: 'Loading Logo',
+            hint: '800x320',
+            width: 800,
+            height: 320,
+            endpoint: '/admin/api/settings/branding/loading-logo/image',
+            settingPath: 'branding.loadingLogoUrl'
+        }
+    };
+
+    const brandingWizardState = {
+        image: null,
+        objectUrl: '',
+        activeTarget: 'home-tv',
+        crops: {}
+    };
+
+    Object.keys(brandingWizardTargets).forEach(key => {
+        brandingWizardState.crops[key] = { zoom: 1, panX: 0, panY: 0 };
+    });
+
+    function openBrandingWizard() {
+        if (selectedUserId || selectedClientId) {
+            showToast('Branding images are global settings. Switch to Global Defaults to edit them.', 'error');
+            return;
+        }
+        renderBrandingWizardTargets();
+        syncBrandingWizardControls();
+        renderBrandingWizardPreview();
+        document.getElementById('brandingWizardModal').classList.add('visible');
+    }
+
+    function closeBrandingWizard(event) {
+        if (event && event.target && event.target.id !== 'brandingWizardModal') return;
+        document.getElementById('brandingWizardModal').classList.remove('visible');
+    }
+
+    function renderBrandingWizardTargets() {
+        const container = document.getElementById('brandingWizardTargets');
+        if (!container) return;
+        container.innerHTML = Object.entries(brandingWizardTargets).map(([key, target]) => {
+            const active = key === brandingWizardState.activeTarget ? ' active' : '';
+            return '<button type="button" class="btn btn-secondary branding-wizard-target'+active+'" onclick="selectBrandingWizardTarget(\''+key+'\')">' +
+                '<span style="display:block;font-weight:600;">'+target.label+'</span>' +
+                '<span style="display:block;font-size:0.75rem;color:var(--text-muted);">'+target.hint+'</span>' +
+                '</button>';
+        }).join('');
+    }
+
+    function selectBrandingWizardTarget(targetKey) {
+        if (!brandingWizardTargets[targetKey]) return;
+        brandingWizardState.activeTarget = targetKey;
+        renderBrandingWizardTargets();
+        syncBrandingWizardControls();
+        renderBrandingWizardPreview();
+    }
+
+    function handleBrandingWizardFile(inputEl) {
+        const file = inputEl.files && inputEl.files[0];
+        if (!file) return;
+        if (!/^image\/(png|jpeg)$/.test(file.type)) {
+            showToast('Please choose a PNG or JPG image', 'error');
+            inputEl.value = '';
+            return;
+        }
+        if (brandingWizardState.objectUrl) {
+            URL.revokeObjectURL(brandingWizardState.objectUrl);
+        }
+        brandingWizardState.objectUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            brandingWizardState.image = img;
+            document.getElementById('brandingWizardFileName').textContent = file.name;
+            document.getElementById('brandingWizardUploadBtn').disabled = false;
+            document.getElementById('brandingWizardStatus').textContent = '';
+            renderBrandingWizardPreview();
+        };
+        img.onerror = () => {
+            showToast('Failed to load image', 'error');
+            document.getElementById('brandingWizardUploadBtn').disabled = true;
+        };
+        img.src = brandingWizardState.objectUrl;
+    }
+
+    function syncBrandingWizardControls() {
+        const crop = brandingWizardState.crops[brandingWizardState.activeTarget];
+        if (!crop) return;
+        const zoom = document.getElementById('brandingWizardZoom');
+        const panX = document.getElementById('brandingWizardPanX');
+        const panY = document.getElementById('brandingWizardPanY');
+        if (zoom) zoom.value = crop.zoom;
+        if (panX) panX.value = crop.panX;
+        if (panY) panY.value = crop.panY;
+        updateBrandingWizardControlLabels();
+    }
+
+    function updateBrandingWizardControlLabels() {
+        const crop = brandingWizardState.crops[brandingWizardState.activeTarget];
+        if (!crop) return;
+        document.getElementById('brandingWizardZoomValue').textContent = Number(crop.zoom).toFixed(2) + 'x';
+        document.getElementById('brandingWizardPanXValue').textContent = Number(crop.panX).toFixed(2);
+        document.getElementById('brandingWizardPanYValue').textContent = Number(crop.panY).toFixed(2);
+    }
+
+    function updateBrandingWizardCrop(key, value) {
+        const crop = brandingWizardState.crops[brandingWizardState.activeTarget];
+        if (!crop) return;
+        crop[key] = Number(value);
+        updateBrandingWizardControlLabels();
+        renderBrandingWizardPreview();
+    }
+
+    function resetBrandingWizardCrop() {
+        brandingWizardState.crops[brandingWizardState.activeTarget] = { zoom: 1, panX: 0, panY: 0 };
+        syncBrandingWizardControls();
+        renderBrandingWizardPreview();
+    }
+
+    function renderBrandingWizardPreview() {
+        const canvas = document.getElementById('brandingWizardCanvas');
+        if (!canvas) return;
+        const target = brandingWizardTargets[brandingWizardState.activeTarget];
+        const maxWidth = 640;
+        canvas.width = maxWidth;
+        canvas.height = Math.round(maxWidth * target.height / target.width);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#050505';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (!brandingWizardState.image) {
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '16px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Choose an image to start', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+        drawBrandingWizardCrop(ctx, canvas.width, canvas.height, brandingWizardState.activeTarget);
+    }
+
+    function drawBrandingWizardCrop(ctx, outW, outH, targetKey) {
+        const img = brandingWizardState.image;
+        const crop = brandingWizardState.crops[targetKey];
+        const scale = Math.max(outW / img.naturalWidth, outH / img.naturalHeight) * crop.zoom;
+        const drawW = img.naturalWidth * scale;
+        const drawH = img.naturalHeight * scale;
+        const maxOffsetX = Math.max(0, (drawW - outW) / 2);
+        const maxOffsetY = Math.max(0, (drawH - outH) / 2);
+        const dx = (outW - drawW) / 2 + crop.panX * maxOffsetX;
+        const dy = (outH - drawH) / 2 + crop.panY * maxOffsetY;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+    }
+
+    function createBrandingWizardBlob(targetKey) {
+        const target = brandingWizardTargets[targetKey];
+        const canvas = document.createElement('canvas');
+        canvas.width = target.width;
+        canvas.height = target.height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawBrandingWizardCrop(ctx, canvas.width, canvas.height, targetKey);
+        return new Promise((resolve, reject) => {
+            canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Failed to create image crop')), 'image/png', 0.92);
+        });
+    }
+
+    async function uploadBrandingWizardImages() {
+        if (!brandingWizardState.image) {
+            showToast('Choose an image first', 'error');
+            return;
+        }
+        const statusEl = document.getElementById('brandingWizardStatus');
+        const uploadBtn = document.getElementById('brandingWizardUploadBtn');
+        uploadBtn.disabled = true;
+        try {
+            const entries = Object.entries(brandingWizardTargets);
+            for (let i = 0; i < entries.length; i++) {
+                const [key, target] = entries[i];
+                statusEl.textContent = 'Uploading ' + target.label + ' (' + (i + 1) + '/' + entries.length + ')...';
+                const blob = await createBrandingWizardBlob(key);
+                const formData = new FormData();
+                formData.append('image', blob, key + '.png');
+                const response = await fetch(resolveFileUploadEndpoint(target.endpoint), {
+                    method: 'POST',
+                    credentials: 'include',
+                    body: formData
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(errText || ('Failed to upload ' + target.label));
+                }
+                const data = await response.json();
+                if (data.url) {
+                    setValue('display.' + target.settingPath, data.url);
+                }
+            }
+            statusEl.textContent = 'Branding images uploaded';
+            showToast('Branding images uploaded successfully', 'success');
+            renderSettings();
+            closeBrandingWizard();
+        } catch (e) {
+            statusEl.textContent = 'Upload failed';
+            showToast('Branding wizard failed: ' + e.message, 'error');
+        } finally {
+            uploadBtn.disabled = false;
+        }
+    }
+
     // ============================================
     // File Upload Handlers (for yt-dlp cookies etc.)
     // ============================================
     async function checkFileUploadStatus(fieldId, endpoint) {
         try {
-            const response = await fetch(endpoint, { credentials: 'include' });
+            const response = await fetch(resolveFileUploadEndpoint(endpoint), { credentials: 'include' });
             if (!response.ok) throw new Error('Status check failed');
             const data = await response.json();
             updateFileUploadUI(fieldId, data);
@@ -2650,6 +3006,23 @@
             const statusEl = document.getElementById(fieldId + '_status');
             if (statusEl) statusEl.textContent = 'Unable to check status';
         }
+    }
+
+    function resolveFileUploadEndpoint(endpoint) {
+        if (!endpoint) return endpoint;
+        if (/^https?:\/\//i.test(endpoint)) return endpoint;
+        if (endpoint.startsWith('/api/')) return basePath + endpoint;
+        if (endpoint.startsWith('/admin/') || endpoint.startsWith('/account/')) return (serverBasePath || '') + endpoint;
+        return endpoint;
+    }
+
+    function initFileUploadStatuses() {
+        document.querySelectorAll('[data-file-upload="true"]').forEach(container => {
+            const endpoint = container.dataset.endpoint || '';
+            const fieldId = container.id.replace(/_container$/, '');
+            if (!endpoint || !fieldId) return;
+            checkFileUploadStatus(fieldId, endpoint);
+        });
     }
 
     function updateFileUploadUI(fieldId, data) {
@@ -2673,7 +3046,7 @@
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
-    async function handleFileUpload(fieldId, endpoint, inputEl) {
+    async function handleFileUpload(fieldId, endpoint, inputEl, fieldName, successText, settingPath) {
         const file = inputEl.files[0];
         if (!file) return;
 
@@ -2682,8 +3055,8 @@
 
         try {
             const formData = new FormData();
-            formData.append('cookies', file);
-            const response = await fetch(endpoint, {
+            formData.append(fieldName || 'cookies', file);
+            const response = await fetch(resolveFileUploadEndpoint(endpoint), {
                 method: 'POST',
                 credentials: 'include',
                 body: formData,
@@ -2694,7 +3067,11 @@
             }
             const data = await response.json();
             updateFileUploadUI(fieldId, data);
-            showToast('Cookies file uploaded successfully', 'success');
+            if (settingPath && data.url) {
+                setValue('display.' + settingPath, data.url);
+                renderSettings();
+            }
+            showToast(successText || 'File uploaded successfully', 'success');
         } catch (e) {
             if (statusEl) statusEl.textContent = 'Upload failed';
             showToast('Upload failed: ' + e.message, 'error');
@@ -2703,22 +3080,26 @@
         inputEl.value = '';
     }
 
-    async function handleFileDelete(fieldId, endpoint) {
+    async function handleFileDelete(fieldId, endpoint, successText, settingPath) {
         const statusEl = document.getElementById(fieldId + '_status');
         if (statusEl) statusEl.textContent = 'Removing...';
 
         try {
-            const response = await fetch(endpoint, {
+            const response = await fetch(resolveFileUploadEndpoint(endpoint), {
                 method: 'DELETE',
                 credentials: 'include',
             });
             if (!response.ok) throw new Error('Delete failed');
             const data = await response.json();
             updateFileUploadUI(fieldId, data);
-            showToast('Cookies file removed', 'success');
+            if (settingPath) {
+                setValue('display.' + settingPath, data.url || '');
+                renderSettings();
+            }
+            showToast(successText || 'File removed', 'success');
         } catch (e) {
             if (statusEl) statusEl.textContent = 'Delete failed';
-            showToast('Failed to remove cookies file', 'error');
+            showToast('Failed to remove file', 'error');
         }
     }
 
@@ -6562,6 +6943,7 @@
 
         // Initialize drag-drop for provider priority and shelves
         initDragDrop();
+        initFileUploadStatuses();
     }
 
     function normalizeSettingsForSave(settings) {

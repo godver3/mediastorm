@@ -789,6 +789,9 @@ func main() {
 	// Global settings endpoint (master only)
 	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.GetSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/settings", adminUIHandler.RequireMasterAuth(settingsHandler.PutSettings)).Methods(http.MethodPut)
+	r.HandleFunc("/admin/api/settings/branding/{slot}/image", adminUIHandler.RequireMasterAuth(settingsHandler.GetBrandingImageStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/settings/branding/{slot}/image", adminUIHandler.RequireMasterAuth(settingsHandler.UploadBrandingImage)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/settings/branding/{slot}/image", adminUIHandler.RequireMasterAuth(settingsHandler.DeleteBrandingImage)).Methods(http.MethodDelete)
 
 	// Search and metadata endpoints (for admin search page)
 	r.HandleFunc("/admin/api/users", adminUIHandler.RequireAuth(usersHandler.List)).Methods(http.MethodGet)

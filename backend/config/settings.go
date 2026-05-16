@@ -528,6 +528,16 @@ type DisplaySettings struct {
 	AppLanguage string `json:"appLanguage,omitempty"`
 	// Appearance controls app-wide visual accessibility and theming preferences.
 	Appearance AppearanceSettings `json:"appearance,omitempty"`
+	// Branding controls runtime-customizable app branding images.
+	Branding BrandingSettings `json:"branding,omitempty"`
+}
+
+// BrandingSettings controls runtime-customizable app branding images.
+type BrandingSettings struct {
+	HomeTVImageURL     string `json:"homeTvImageUrl,omitempty"`     // Recommended 3319x1236 or equivalent wide landscape image
+	HomeMobileLogoURL  string `json:"homeMobileLogoUrl,omitempty"`  // Recommended 1280x768 to match the bundled mobile branding image
+	SettingsTVImageURL string `json:"settingsTvImageUrl,omitempty"` // Recommended 1200x1200 square image
+	LoadingLogoURL     string `json:"loadingLogoUrl,omitempty"`     // Recommended 800x320 transparent PNG or wide logo
 }
 
 // AppearanceSettings controls app-wide visual accessibility and theming preferences.

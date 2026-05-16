@@ -198,6 +198,10 @@ func Register(
 	settingsWriteRouter.HandleFunc("", settingsHandler.PutSettings).Methods(http.MethodPut)
 	settingsWriteRouter.HandleFunc("/cache/clear", settingsHandler.ClearMetadataCache).Methods(http.MethodPost)
 	settingsWriteRouter.HandleFunc("/cache/clear", handleOptions).Methods(http.MethodOptions)
+	settingsWriteRouter.HandleFunc("/branding/{slot}/image", settingsHandler.GetBrandingImageStatus).Methods(http.MethodGet)
+	settingsWriteRouter.HandleFunc("/branding/{slot}/image", settingsHandler.UploadBrandingImage).Methods(http.MethodPost)
+	settingsWriteRouter.HandleFunc("/branding/{slot}/image", settingsHandler.DeleteBrandingImage).Methods(http.MethodDelete)
+	settingsWriteRouter.HandleFunc("/branding/{slot}/image", handleOptions).Methods(http.MethodOptions)
 
 	// Content discovery and metadata (all authenticated users)
 	protected.HandleFunc("/discover/new", metadataHandler.DiscoverNew).Methods(http.MethodGet)
@@ -406,6 +410,7 @@ func Register(
 	// Static assets endpoint (public - rating icons, etc.)
 	staticHandler := handlers.NewStaticHandler()
 	api.PathPrefix("/static/").Handler(http.StripPrefix("/api/static/", staticHandler))
+	api.HandleFunc("/branding/images/{slot}", settingsHandler.ServeBrandingImage).Methods(http.MethodGet, http.MethodHead)
 
 	// Image proxy endpoint (public - no auth required for image loading)
 	if imageHandler != nil {

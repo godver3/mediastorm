@@ -8,11 +8,15 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 
 	"novastream/config"
 	"novastream/internal/pool"
@@ -125,6 +129,35 @@ type SettingsResponseWithLive struct {
 	Live LiveSettingsWithEffectiveURL `json:"live"`
 }
 
+type brandingSlot struct {
+	FileName string
+	Get      func(config.Settings) string
+	Set      func(*config.Settings, string)
+}
+
+var brandingSlots = map[string]brandingSlot{
+	"home-tv": {
+		FileName: "home-tv",
+		Get:      func(s config.Settings) string { return s.Display.Branding.HomeTVImageURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.HomeTVImageURL = v },
+	},
+	"home-mobile-logo": {
+		FileName: "home-mobile-logo",
+		Get:      func(s config.Settings) string { return s.Display.Branding.HomeMobileLogoURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.HomeMobileLogoURL = v },
+	},
+	"settings-tv": {
+		FileName: "settings-tv",
+		Get:      func(s config.Settings) string { return s.Display.Branding.SettingsTVImageURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.SettingsTVImageURL = v },
+	},
+	"loading-logo": {
+		FileName: "loading-logo",
+		Get:      func(s config.Settings) string { return s.Display.Branding.LoadingLogoURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.LoadingLogoURL = v },
+	},
+}
+
 func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	s, err := h.Manager.Load()
 	if err != nil {
@@ -150,6 +183,207 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *SettingsHandler) GetBrandingImageStatus(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.brandingSlotFromRequest(r)
+	if !ok {
+		jsonError(w, "Invalid branding image slot", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.Manager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	imageURL := slot.Get(settings)
+	localUploaded := strings.HasPrefix(imageURL, "/branding/images/")
+	resp := map[string]interface{}{
+		"uploaded": localUploaded,
+		"url":      imageURL,
+	}
+	if localUploaded {
+		if path, err := h.brandingImagePath(settings, slot); err == nil {
+			if info, statErr := os.Stat(path); statErr == nil {
+				resp["fileSize"] = info.Size()
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *SettingsHandler) UploadBrandingImage(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.brandingSlotFromRequest(r)
+	if !ok {
+		jsonError(w, "Invalid branding image slot", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		jsonError(w, "File too large or invalid form", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		jsonError(w, "image file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, 8*1024*1024+1))
+	if err != nil {
+		jsonError(w, "Failed to read file", http.StatusInternalServerError)
+		return
+	}
+	if len(data) == 0 {
+		jsonError(w, "image file is empty", http.StatusBadRequest)
+		return
+	}
+	if len(data) > 8*1024*1024 {
+		jsonError(w, "image file too large (max 8MB)", http.StatusBadRequest)
+		return
+	}
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+
+	ext := ""
+	switch {
+	case strings.Contains(contentType, "image/png"):
+		ext = ".png"
+	case strings.Contains(contentType, "image/jpeg"), strings.Contains(contentType, "image/jpg"):
+		ext = ".jpg"
+	default:
+		jsonError(w, "invalid image format, must be PNG or JPG", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.Manager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	brandingDir := h.brandingImageDir(settings)
+	if err := os.MkdirAll(brandingDir, 0o755); err != nil {
+		jsonError(w, "Failed to create branding image directory", http.StatusInternalServerError)
+		return
+	}
+
+	for _, oldExt := range []string{".png", ".jpg"} {
+		_ = os.Remove(filepath.Join(brandingDir, slot.FileName+oldExt))
+	}
+
+	localPath := filepath.Join(brandingDir, slot.FileName+ext)
+	if err := os.WriteFile(localPath, data, 0o644); err != nil {
+		jsonError(w, "Failed to save branding image", http.StatusInternalServerError)
+		return
+	}
+
+	imageURL := fmt.Sprintf("/branding/images/%s?v=%d", slot.FileName, time.Now().Unix())
+	slot.Set(&settings, imageURL)
+	if err := h.Manager.Save(settings); err != nil {
+		_ = os.Remove(localPath)
+		jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"uploaded": true,
+		"url":      imageURL,
+		"fileSize": len(data),
+	})
+}
+
+func (h *SettingsHandler) DeleteBrandingImage(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.brandingSlotFromRequest(r)
+	if !ok {
+		jsonError(w, "Invalid branding image slot", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.Manager.Load()
+	if err != nil {
+		jsonError(w, "Failed to load settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	brandingDir := h.brandingImageDir(settings)
+	for _, ext := range []string{".png", ".jpg"} {
+		_ = os.Remove(filepath.Join(brandingDir, slot.FileName+ext))
+	}
+	if strings.HasPrefix(slot.Get(settings), "/branding/images/") {
+		slot.Set(&settings, "")
+		if err := h.Manager.Save(settings); err != nil {
+			jsonError(w, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"uploaded": false,
+		"url":      slot.Get(settings),
+	})
+}
+
+func (h *SettingsHandler) ServeBrandingImage(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.brandingSlotFromRequest(r)
+	if !ok {
+		http.Error(w, "invalid branding image slot", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.Manager.Load()
+	if err != nil {
+		http.Error(w, "failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	localPath, err := h.brandingImagePath(settings, slot)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	http.ServeFile(w, r, localPath)
+}
+
+func (h *SettingsHandler) brandingSlotFromRequest(r *http.Request) (brandingSlot, bool) {
+	name := strings.TrimSpace(mux.Vars(r)["slot"])
+	if name == "" {
+		name = strings.TrimSpace(mux.Vars(r)["image"])
+	}
+	slot, ok := brandingSlots[name]
+	return slot, ok
+}
+
+func (h *SettingsHandler) brandingImageDir(settings config.Settings) string {
+	baseDir := strings.TrimSpace(settings.Cache.Directory)
+	if baseDir == "" {
+		baseDir = "cache"
+	}
+	return filepath.Join(baseDir, "branding")
+}
+
+func (h *SettingsHandler) brandingImagePath(settings config.Settings, slot brandingSlot) (string, error) {
+	dir := h.brandingImageDir(settings)
+	for _, ext := range []string{".png", ".jpg"} {
+		localPath := filepath.Join(dir, slot.FileName+ext)
+		if _, err := os.Stat(localPath); err == nil {
+			return localPath, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 // redactSettings replaces sensitive credentials with a placeholder so
