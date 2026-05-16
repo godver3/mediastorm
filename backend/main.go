@@ -857,6 +857,8 @@ func main() {
 	// Live TV endpoints for admin panel
 	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.GetCategories)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/channels", adminUIHandler.RequireAuth(liveHandler.GetChannels)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/stream", adminUIHandler.RequireAuth(liveHandler.StreamChannel)).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc("/admin/api/live/hls/start", adminUIHandler.RequireAuth(videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)
 	r.HandleFunc("/admin/api/live/epg/now", adminUIHandler.RequireAuth(epgHandler.GetNowPlaying)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/epg/schedule", adminUIHandler.RequireAuth(epgHandler.GetSchedule)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/epg/schedule/batch", adminUIHandler.RequireAuth(epgHandler.GetScheduleMultiple)).Methods(http.MethodGet)

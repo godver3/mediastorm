@@ -1258,17 +1258,27 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
 		"-i", session.Path,
-		// Output options - copy video, transcode audio to AAC for compatibility
-		"-c:v", "copy",
+		// Output options - transcode live video so HLS can start on our keyframe cadence
+		// instead of waiting for the upstream IPTV stream's next keyframe.
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-tune", "zerolatency",
+		"-profile:v", "main",
+		"-pix_fmt", "yuv420p",
+		"-crf", "23",
+		"-max_muxing_queue_size", "1024",
+		"-force_key_frames", "expr:gte(t,n_forced*1)",
+		"-sc_threshold", "0",
 		"-c:a", "aac",
 		"-ac", "2",
 		"-b:a", "128k",
 		"-ar", "48000",
 		// HLS output
 		"-f", "hls",
+		"-hls_init_time", "1",
 		"-hls_time", "2",
 		"-hls_list_size", "10", // Keep last 10 segments for live
-		"-hls_flags", "delete_segments+append_list",
+		"-hls_flags", "delete_segments+independent_segments+temp_file",
 		"-hls_segment_filename", segmentPattern,
 		playlistPath,
 	)
@@ -3359,12 +3369,27 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		}
 	}
 
-	// Read the playlist file
-	content, err := os.ReadFile(playlistPath)
-	if err != nil {
-		log.Printf("[hls] failed to read playlist for session %s: %v", sessionID, err)
-		http.Error(w, "playlist not ready", http.StatusInternalServerError)
-		return
+	// Read the playlist file. For live sessions, do not serve the first empty
+	// playlist; native HLS clients can stall if the initial response has no media
+	// segments and may not recover by polling.
+	var content []byte
+	for {
+		var err error
+		content, err = os.ReadFile(playlistPath)
+		if err != nil {
+			log.Printf("[hls] failed to read playlist for session %s: %v", sessionID, err)
+			http.Error(w, "playlist not ready", http.StatusInternalServerError)
+			return
+		}
+		if !session.IsLive || playlistHasMediaSegment(content) {
+			break
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[hls] live playlist has no media segments for session %s after 60s", sessionID)
+			http.Error(w, "playlist not ready", http.StatusGatewayTimeout)
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 	log.Printf("[hls] playlist file read successfully for session %s, size=%d bytes", sessionID, len(content))
 
@@ -3398,11 +3423,11 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		headerTags = append(headerTags, "#EXT-X-VIDEO-RANGE:PQ")
 	}
 
-	// Inject EXT-X-START:TIME-OFFSET=0 to tell iOS to start from the beginning
-	// This is critical for EVENT playlists during live transcoding, as iOS otherwise
-	// treats them like live streams and starts near the "live edge" (latest segments)
+	// Inject EXT-X-START:TIME-OFFSET=0 to tell iOS to start VOD/EVENT playlists
+	// from the beginning. Do not inject this for live IPTV playlists; live playback
+	// needs to stay near the moving live edge.
 	// Only do this for cold starts (StartOffset=0) - warm starts have their own seek logic
-	if session.StartOffset == 0 && !strings.Contains(playlistContent, "#EXT-X-START") {
+	if !session.IsLive && session.StartOffset == 0 && !strings.Contains(playlistContent, "#EXT-X-START") {
 		headerTags = append(headerTags, "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES")
 	}
 
@@ -3496,6 +3521,16 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		videoRange = "PQ"
 	}
 	log.Printf("[hls] served playlist for session %s, VIDEO-RANGE=%s, auth token=%v", sessionID, videoRange, authToken != "")
+}
+
+func playlistHasMediaSegment(content []byte) bool {
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "segment") && (strings.HasSuffix(line, ".ts") || strings.HasSuffix(line, ".m4s")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *HLSManager) ServeMasterPlaylist(w http.ResponseWriter, r *http.Request, sessionID string) {
