@@ -186,6 +186,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			PreferredTerms:         globalSettings.Filtering.PreferredTerms,
 			NonPreferredTerms:      globalSettings.Filtering.NonPreferredTerms,
 			DownloadPreferredTerms: globalSettings.Filtering.DownloadPreferredTerms,
+			UnknownTrackPolicy:     string(globalSettings.Filtering.UnknownTrackPolicy),
 		},
 		Display: models.DisplaySettings{
 			BadgeVisibility:                  globalSettings.Display.BadgeVisibility,

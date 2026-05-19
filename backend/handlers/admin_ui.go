@@ -339,6 +339,18 @@ var SettingsSchema = map[string]interface{}{
 			"preferredTerms":         map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},
 			"nonPreferredTerms":      map[string]interface{}{"type": "weighted-tags", "label": "Non-Preferred Terms", "description": "Terms to derank in results. Each term has a weight (1-10) that controls how strongly it penalizes ranking. Higher weights push results lower. Wrap in /slashes/ for regex."},
 			"downloadPreferredTerms": map[string]interface{}{"type": "weighted-tags", "label": "Download Preferred Terms", "description": "Terms to strongly prioritize only during download actions. They do not affect normal interactive search or playback prequeue ranking. Wrap in /slashes/ for regex."},
+			"unknownTrackPolicy": map[string]interface{}{
+				"type":  "select",
+				"label": "Unknown Track Preference",
+				"options": []map[string]string{
+					{"value": "none", "label": "Off"},
+					{"value": "audio", "label": "Prefer known audio"},
+					{"value": "subtitles", "label": "Prefer known subtitles"},
+					{"value": "both", "label": "Prefer known audio and subtitles"},
+				},
+				"description": "During automatic playback selection, probe resolved candidates and try known audio/subtitle language metadata before falling back to unknown candidates. Does not change manual search ordering.",
+				"order":       9,
+			},
 			"preferredScraper": map[string]interface{}{
 				"type":        "select",
 				"label":       "Preferred Scraper",
@@ -2383,14 +2395,15 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			ItemCap:             globalSettings.HomeShelves.ItemCap,
 		},
 		Filtering: models.FilterSettings{
-			MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
-			MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
-			MaxResolution:     globalSettings.Filtering.MaxResolution,
-			HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-			RequiredTerms:     globalSettings.Filtering.RequiredTerms,
-			FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
-			PreferredTerms:    globalSettings.Filtering.PreferredTerms,
-			NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
+			MaxSizeMovieGB:     models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+			MaxSizeEpisodeGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
+			MaxResolution:      globalSettings.Filtering.MaxResolution,
+			HDRDVPolicy:        models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+			RequiredTerms:      globalSettings.Filtering.RequiredTerms,
+			FilterOutTerms:     globalSettings.Filtering.FilterOutTerms,
+			PreferredTerms:     globalSettings.Filtering.PreferredTerms,
+			NonPreferredTerms:  globalSettings.Filtering.NonPreferredTerms,
+			UnknownTrackPolicy: string(globalSettings.Filtering.UnknownTrackPolicy),
 		},
 		LiveTV: models.LiveTVSettings{
 			HiddenChannels:     []string{},
@@ -2510,14 +2523,15 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 
 	// Build the filtering settings from global
 	globalFilterSettings := models.FilterSettings{
-		MaxSizeMovieGB:    models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
-		MaxSizeEpisodeGB:  models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
-		MaxResolution:     globalSettings.Filtering.MaxResolution,
-		HDRDVPolicy:       models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
-		RequiredTerms:     globalSettings.Filtering.RequiredTerms,
-		FilterOutTerms:    globalSettings.Filtering.FilterOutTerms,
-		PreferredTerms:    globalSettings.Filtering.PreferredTerms,
-		NonPreferredTerms: globalSettings.Filtering.NonPreferredTerms,
+		MaxSizeMovieGB:     models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:   models.FloatPtr(globalSettings.Filtering.MaxSizeEpisodeGB),
+		MaxResolution:      globalSettings.Filtering.MaxResolution,
+		HDRDVPolicy:        models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy),
+		RequiredTerms:      globalSettings.Filtering.RequiredTerms,
+		FilterOutTerms:     globalSettings.Filtering.FilterOutTerms,
+		PreferredTerms:     globalSettings.Filtering.PreferredTerms,
+		NonPreferredTerms:  globalSettings.Filtering.NonPreferredTerms,
+		UnknownTrackPolicy: string(globalSettings.Filtering.UnknownTrackPolicy),
 	}
 
 	var propagatedProfiles, propagatedClients int

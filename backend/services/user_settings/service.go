@@ -368,7 +368,8 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Filtering.FilterOutTerms != nil ||
 		s.Filtering.PreferredTerms != nil ||
 		s.Filtering.NonPreferredTerms != nil ||
-		s.Filtering.DownloadPreferredTerms != nil {
+		s.Filtering.DownloadPreferredTerms != nil ||
+		s.Filtering.UnknownTrackPolicy != "" {
 		return false
 	}
 

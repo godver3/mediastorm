@@ -183,6 +183,7 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 		PreferredTerms:         globalSettings.Filtering.PreferredTerms,
 		NonPreferredTerms:      globalSettings.Filtering.NonPreferredTerms,
 		DownloadPreferredTerms: globalSettings.Filtering.DownloadPreferredTerms,
+		UnknownTrackPolicy:     string(globalSettings.Filtering.UnknownTrackPolicy),
 	}
 	overrides := effectiveOverrides{
 		BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
@@ -227,6 +228,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if profileFiltering.DownloadPreferredTerms != nil {
 				filterSettings.DownloadPreferredTerms = profileFiltering.DownloadPreferredTerms
+			}
+			if profileFiltering.UnknownTrackPolicy != "" {
+				filterSettings.UnknownTrackPolicy = profileFiltering.UnknownTrackPolicy
 			}
 			if userSettings.Display.BypassFilteringForAIOStreamsOnly != nil {
 				overrides.BypassFilteringForAIOStreamsOnly = userSettings.Display.BypassFilteringForAIOStreamsOnly
@@ -277,6 +281,9 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			}
 			if clientSettings.DownloadPreferredTerms != nil {
 				filterSettings.DownloadPreferredTerms = *clientSettings.DownloadPreferredTerms
+			}
+			if clientSettings.UnknownTrackPolicy != nil {
+				filterSettings.UnknownTrackPolicy = *clientSettings.UnknownTrackPolicy
 			}
 			if clientSettings.BypassFilteringForAIOStreamsOnly != nil {
 				overrides.BypassFilteringForAIOStreamsOnly = clientSettings.BypassFilteringForAIOStreamsOnly

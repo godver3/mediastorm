@@ -26,6 +26,23 @@ func TestLoadMigratesCreditsDetectionToCreditsAutoSkip(t *testing.T) {
 	}
 }
 
+func TestLoadBackfillsUnknownTrackPolicy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"filtering":{"unknownTrackPolicy":"invalid"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Filtering.UnknownTrackPolicy != UnknownTrackPolicyNone {
+		t.Fatalf("UnknownTrackPolicy = %q, want %q", settings.Filtering.UnknownTrackPolicy, UnknownTrackPolicyNone)
+	}
+}
+
 func TestLoadMigratesLegacyLiveSettingsToFirstSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{

@@ -423,6 +423,7 @@ type FilterSettings struct {
 	PreferredTerms         []string    `json:"preferredTerms"`          // Terms to prioritize in results (case-insensitive match in title). Non-nil empty slice explicitly clears the inherited value.
 	NonPreferredTerms      []string    `json:"nonPreferredTerms"`       // Terms to derank in results (case-insensitive match in title, ranked lower but not removed). Non-nil empty slice explicitly clears the inherited value.
 	DownloadPreferredTerms []string    `json:"downloadPreferredTerms"`  // Terms to strongly prioritize only for download/prequeue selection. Non-nil empty slice explicitly clears the inherited value.
+	UnknownTrackPolicy     string      `json:"unknownTrackPolicy,omitempty"`
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences (per-user overrides).

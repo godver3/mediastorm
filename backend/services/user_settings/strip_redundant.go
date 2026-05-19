@@ -145,6 +145,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			PreferredTerms:         g.Filtering.PreferredTerms,
 			NonPreferredTerms:      g.Filtering.NonPreferredTerms,
 			DownloadPreferredTerms: g.Filtering.DownloadPreferredTerms,
+			UnknownTrackPolicy:     string(g.Filtering.UnknownTrackPolicy),
 		},
 		AnimeFiltering: models.AnimeFilteringSettings{
 			AnimeLanguageEnabled:   models.BoolPtr(g.AnimeFiltering.AnimeLanguageEnabled),
@@ -289,6 +290,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Filtering.DownloadPreferredTerms == nil {
 		eff.Filtering.DownloadPreferredTerms = g.Filtering.DownloadPreferredTerms
+	}
+	if eff.Filtering.UnknownTrackPolicy == "" {
+		eff.Filtering.UnknownTrackPolicy = string(g.Filtering.UnknownTrackPolicy)
 	}
 	if eff.Display.BypassFilteringForAIOStreamsOnly == nil {
 		eff.Display.BypassFilteringForAIOStreamsOnly = models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly)
@@ -504,6 +508,10 @@ func stripFiltering(f *models.FilterSettings, g config.FilterSettings) bool {
 		f.DownloadPreferredTerms = nil
 		changed = true
 	}
+	if f.UnknownTrackPolicy != "" && f.UnknownTrackPolicy == string(g.UnknownTrackPolicy) {
+		f.UnknownTrackPolicy = ""
+		changed = true
+	}
 	return changed
 }
 
@@ -674,6 +682,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.DownloadPreferredTerms != nil && stringSliceEqualUnordered(*cs.DownloadPreferredTerms, eff.Filtering.DownloadPreferredTerms) {
 		cs.DownloadPreferredTerms = nil
+		changed = true
+	}
+	if cs.UnknownTrackPolicy != nil && *cs.UnknownTrackPolicy == eff.Filtering.UnknownTrackPolicy {
+		cs.UnknownTrackPolicy = nil
 		changed = true
 	}
 	if cs.BypassFilteringForAIOStreamsOnly != nil && eff.Display.BypassFilteringForAIOStreamsOnly != nil && *cs.BypassFilteringForAIOStreamsOnly == *eff.Display.BypassFilteringForAIOStreamsOnly {

@@ -14,6 +14,7 @@ type ClientFilterSettings struct {
 	PreferredTerms         *[]string    `json:"preferredTerms,omitempty"`
 	NonPreferredTerms      *[]string    `json:"nonPreferredTerms,omitempty"`
 	DownloadPreferredTerms *[]string    `json:"downloadPreferredTerms,omitempty"`
+	UnknownTrackPolicy     *string      `json:"unknownTrackPolicy,omitempty"`
 	AnimeLanguageEnabled   *bool        `json:"animeLanguageEnabled,omitempty"`
 	AnimePreferredLanguage *string      `json:"animePreferredLanguage,omitempty"`
 
@@ -45,6 +46,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.PreferredTerms == nil &&
 		c.NonPreferredTerms == nil &&
 		c.DownloadPreferredTerms == nil &&
+		c.UnknownTrackPolicy == nil &&
 		c.AnimeLanguageEnabled == nil &&
 		c.AnimePreferredLanguage == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&

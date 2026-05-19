@@ -1337,13 +1337,14 @@
         {
             key: 'contentFiltering',
             label: 'Content Filtering',
-            description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, Filter Out Terms, Preferred Terms, Non-Preferred Terms',
+            description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, Unknown Track Preference, Filter Out Terms, Preferred Terms, Non-Preferred Terms',
             detailSection: 'Content Filtering',
-            detailFields: ['Max Movie Size (GB)', 'Max Episode Size (GB)', 'Max Resolution', 'Filter Out Terms', 'Preferred Terms', 'Non-Preferred Terms'],
+            detailFields: ['Max Movie Size (GB)', 'Max Episode Size (GB)', 'Max Resolution', 'Unknown Track Preference', 'Filter Out Terms', 'Preferred Terms', 'Non-Preferred Terms'],
             userPaths: [
                 'filtering.maxSizeMovieGb',
                 'filtering.maxSizeEpisodeGb',
                 'filtering.maxResolution',
+                'filtering.unknownTrackPolicy',
                 'filtering.filterOutTerms',
                 'filtering.preferredTerms',
                 'filtering.nonPreferredTerms',
@@ -1352,6 +1353,7 @@
                 'maxSizeMovieGb',
                 'maxSizeEpisodeGb',
                 'maxResolution',
+                'unknownTrackPolicy',
                 'filterOutTerms',
                 'preferredTerms',
                 'nonPreferredTerms',
@@ -1492,6 +1494,7 @@
                 maxSizeMovieGb: settings.filtering.maxSizeMovieGb,
                 maxSizeEpisodeGb: settings.filtering.maxSizeEpisodeGb,
                 maxResolution: settings.filtering.maxResolution,
+                unknownTrackPolicy: settings.filtering.unknownTrackPolicy,
                 filterOutTerms: settings.filtering.filterOutTerms,
                 preferredTerms: settings.filtering.preferredTerms,
                 nonPreferredTerms: settings.filtering.nonPreferredTerms,
@@ -1972,7 +1975,7 @@
     }
 
     // Map filtering field paths to client settings keys
-    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms'];
+    const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'unknownTrackPolicy'];
     const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
     const clientPlaybackFields = ['maxResultsPerResolution'];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
@@ -5176,6 +5179,7 @@
             if ((pf.maxSizeEpisodeGb || 0) !== (filtering.maxSizeEpisodeGb || 0)) continue;
             if ((pf.maxResolution || '') !== (filtering.maxResolution || '')) continue;
             if ((pf.hdrDvPolicy || 'none') !== (filtering.hdrDvPolicy || 'none')) continue;
+            if ((pf.unknownTrackPolicy || 'none') !== (filtering.unknownTrackPolicy || 'none')) continue;
 
             // Compare term arrays
             const arrEq = (a, b) => {
@@ -5256,6 +5260,7 @@
             target.filtering.maxSizeEpisodeGb = preset.filtering.maxSizeEpisodeGb;
             target.filtering.maxResolution = preset.filtering.maxResolution;
             target.filtering.hdrDvPolicy = preset.filtering.hdrDvPolicy;
+            target.filtering.unknownTrackPolicy = preset.filtering.unknownTrackPolicy || 'none';
             target.filtering.requiredTerms = preset.filtering.requiredTerms || [];
             target.filtering.filterOutTerms = preset.filtering.filterOutTerms || [];
             target.filtering.preferredTerms = preset.filtering.preferredTerms || [];

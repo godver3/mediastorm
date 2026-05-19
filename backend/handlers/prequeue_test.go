@@ -36,6 +36,75 @@ func (m *mockSeriesDetailsProvider) SeriesDetails(_ context.Context, _ models.Se
 	return m.details, m.err
 }
 
+func TestUnknownTrackPolicyRejects(t *testing.T) {
+	tests := []struct {
+		name      string
+		policy    string
+		audio     []AudioStreamInfo
+		subtitles []SubtitleStreamInfo
+		want      bool
+	}{
+		{
+			name:   "off allows unknown tracks",
+			policy: "none",
+			audio:  []AudioStreamInfo{{Index: 1}},
+			want:   false,
+		},
+		{
+			name:   "audio rejects all unknown audio tracks",
+			policy: "audio",
+			audio:  []AudioStreamInfo{{Index: 1}, {Index: 2}},
+			want:   true,
+		},
+		{
+			name:   "audio allows any known audio track",
+			policy: "audio",
+			audio:  []AudioStreamInfo{{Index: 1}, {Index: 2, Language: "eng"}},
+			want:   false,
+		},
+		{
+			name:      "subtitles rejects all unknown subtitle tracks",
+			policy:    "subtitles",
+			subtitles: []SubtitleStreamInfo{{Index: 3}},
+			want:      true,
+		},
+		{
+			name:      "subtitles allows known subtitle title",
+			policy:    "subtitles",
+			subtitles: []SubtitleStreamInfo{{Index: 3, Title: "English"}},
+			want:      false,
+		},
+		{
+			name:      "both rejects unknown subtitle when audio is known",
+			policy:    "both",
+			audio:     []AudioStreamInfo{{Index: 1, Language: "eng"}},
+			subtitles: []SubtitleStreamInfo{{Index: 3}},
+			want:      true,
+		},
+		{
+			name:      "both allows known audio and subtitles",
+			policy:    "both",
+			audio:     []AudioStreamInfo{{Index: 1, Language: "eng"}},
+			subtitles: []SubtitleStreamInfo{{Index: 3, Language: "eng"}},
+			want:      false,
+		},
+		{
+			name:   "no tracks are not treated as unknown tracks",
+			policy: "both",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := unknownTrackPolicyRejects(tt.policy, tt.audio, tt.subtitles)
+			if got != tt.want {
+				t.Fatalf("unknownTrackPolicyRejects() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPrequeueMovieAnimeDetection(t *testing.T) {
 	tests := []struct {
 		name      string

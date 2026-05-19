@@ -471,6 +471,26 @@ const (
 	HDRDVPolicyIncludeHDRDV HDRDVPolicy = "hdr_dv"
 )
 
+// UnknownTrackPolicy controls whether automatic resolution should prefer files
+// whose probed audio/subtitle tracks have language metadata.
+type UnknownTrackPolicy string
+
+const (
+	UnknownTrackPolicyNone      UnknownTrackPolicy = "none"
+	UnknownTrackPolicyAudio     UnknownTrackPolicy = "audio"
+	UnknownTrackPolicySubtitles UnknownTrackPolicy = "subtitles"
+	UnknownTrackPolicyBoth      UnknownTrackPolicy = "both"
+)
+
+func isValidUnknownTrackPolicy(policy UnknownTrackPolicy) bool {
+	switch policy {
+	case UnknownTrackPolicyNone, UnknownTrackPolicyAudio, UnknownTrackPolicySubtitles, UnknownTrackPolicyBoth:
+		return true
+	default:
+		return false
+	}
+}
+
 // FilterSettings controls content filtering preferences.
 type FilterSettings struct {
 	MaxSizeMovieGB         float64                  `json:"maxSizeMovieGb"`
@@ -484,6 +504,7 @@ type FilterSettings struct {
 	DownloadPreferredTerms []string                 `json:"downloadPreferredTerms,omitempty"` // Terms to strongly prioritize only for download/prequeue selection
 	PreferredScraper       string                   `json:"preferredScraper,omitempty"`       // Name of the preferred torrent scraper (empty = none)
 	ServicePriority        StreamingServicePriority `json:"servicePriority"`                  // Priority for service type in search results
+	UnknownTrackPolicy     UnknownTrackPolicy       `json:"unknownTrackPolicy,omitempty"`     // Post-probe automatic selection preference for files with known audio/subtitle language metadata
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.
@@ -976,10 +997,11 @@ func DefaultSettings() Settings {
 			ItemCap: 20,
 		},
 		Filtering: FilterSettings{
-			MaxSizeMovieGB:   0,                       // 0 means no limit
-			MaxSizeEpisodeGB: 0,                       // 0 means no limit
-			HDRDVPolicy:      HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
-			ServicePriority:  StreamingServicePriorityNone,
+			MaxSizeMovieGB:     0,                       // 0 means no limit
+			MaxSizeEpisodeGB:   0,                       // 0 means no limit
+			HDRDVPolicy:        HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
+			ServicePriority:    StreamingServicePriorityNone,
+			UnknownTrackPolicy: UnknownTrackPolicyNone,
 		},
 		AnimeFiltering: AnimeFilteringSettings{},
 		UI: UISettings{
@@ -1455,7 +1477,10 @@ func (m *Manager) Load() (Settings, error) {
 		s.HomeShelves.ItemCap = 20
 	}
 
-	// Backfill Filtering settings - no backfill needed as 0 and false are the correct defaults
+	// Backfill Filtering settings
+	if !isValidUnknownTrackPolicy(s.Filtering.UnknownTrackPolicy) {
+		s.Filtering.UnknownTrackPolicy = UnknownTrackPolicyNone
+	}
 
 	// Backfill Ranking criteria: add any new criteria that were introduced after the user saved settings
 	if len(s.Ranking.Criteria) > 0 {

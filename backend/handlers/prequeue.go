@@ -84,6 +84,72 @@ func shouldForceReresolveForStatus(status int) bool {
 	}
 }
 
+func normalizeUnknownTrackPolicy(policy string) string {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "audio", "subtitles", "both":
+		return strings.ToLower(strings.TrimSpace(policy))
+	default:
+		return "none"
+	}
+}
+
+func unknownTrackPolicyNeedsProbe(policy string) bool {
+	return normalizeUnknownTrackPolicy(policy) != "none"
+}
+
+func trackTextKnown(language, title string) bool {
+	return strings.TrimSpace(language) != "" || strings.TrimSpace(title) != ""
+}
+
+func hasKnownAudioTrack(streams []AudioStreamInfo) bool {
+	if len(streams) == 0 {
+		return true
+	}
+	for _, stream := range streams {
+		if trackTextKnown(stream.Language, stream.Title) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasKnownSubtitleTrack(streams []SubtitleStreamInfo) bool {
+	if len(streams) == 0 {
+		return true
+	}
+	for _, stream := range streams {
+		if trackTextKnown(stream.Language, stream.Title) {
+			return true
+		}
+	}
+	return false
+}
+
+func unknownTrackPolicyRejects(policy string, audioStreams []AudioStreamInfo, subtitleStreams []SubtitleStreamInfo) (bool, string) {
+	switch normalizeUnknownTrackPolicy(policy) {
+	case "audio":
+		if !hasKnownAudioTrack(audioStreams) {
+			return true, "audio tracks have unknown language metadata"
+		}
+	case "subtitles":
+		if !hasKnownSubtitleTrack(subtitleStreams) {
+			return true, "subtitle tracks have unknown language metadata"
+		}
+	case "both":
+		audioUnknown := !hasKnownAudioTrack(audioStreams)
+		subtitleUnknown := !hasKnownSubtitleTrack(subtitleStreams)
+		switch {
+		case audioUnknown && subtitleUnknown:
+			return true, "audio and subtitle tracks have unknown language metadata"
+		case audioUnknown:
+			return true, "audio tracks have unknown language metadata"
+		case subtitleUnknown:
+			return true, "subtitle tracks have unknown language metadata"
+		}
+	}
+	return false, ""
+}
+
 func defaultExternalURLValidator(ctx context.Context, streamURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, streamURL, nil)
 	if err != nil {
@@ -682,12 +748,14 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// Load filter settings for DV profile compatibility checking
 	// Priority: client settings > user settings > global settings > default
 	var hdrDVPolicy models.HDRDVPolicy
+	unknownTrackPolicy := "none"
 
 	// Layer 1: Start with global settings
 	if h.configManager != nil {
 		globalSettings, err := h.configManager.Load()
 		if err == nil {
 			hdrDVPolicy = models.HDRDVPolicy(globalSettings.Filtering.HDRDVPolicy)
+			unknownTrackPolicy = string(globalSettings.Filtering.UnknownTrackPolicy)
 		}
 	}
 
@@ -696,6 +764,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		userSettings, err := h.userSettingsSvc.Get(userID)
 		if err == nil && userSettings != nil && userSettings.Filtering.HDRDVPolicy != "" {
 			hdrDVPolicy = userSettings.Filtering.HDRDVPolicy
+		}
+		if err == nil && userSettings != nil && userSettings.Filtering.UnknownTrackPolicy != "" {
+			unknownTrackPolicy = userSettings.Filtering.UnknownTrackPolicy
 		}
 	}
 
@@ -706,19 +777,29 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			hdrDVPolicy = *clientSettings.HDRDVPolicy
 			log.Printf("[prequeue] Using client-specific HDR/DV policy: %s", hdrDVPolicy)
 		}
+		if err == nil && clientSettings != nil && clientSettings.UnknownTrackPolicy != nil {
+			unknownTrackPolicy = *clientSettings.UnknownTrackPolicy
+			log.Printf("[prequeue] Using client-specific unknown track policy: %s", unknownTrackPolicy)
+		}
 	}
 
 	// Default to allowing all content
 	if hdrDVPolicy == "" {
 		hdrDVPolicy = models.HDRDVPolicyIncludeHDRDV
 	}
+	unknownTrackPolicy = normalizeUnknownTrackPolicy(unknownTrackPolicy)
 	needsDVCheck := hdrDVPolicy == models.HDRDVPolicyIncludeHDR
-	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v", hdrDVPolicy, needsDVCheck)
+	needsUnknownTrackCheck := unknownTrackPolicyNeedsProbe(unknownTrackPolicy)
+	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v, unknownTrackPolicy: %s, needsUnknownTrackCheck: %v", hdrDVPolicy, needsDVCheck, unknownTrackPolicy, needsUnknownTrackCheck)
 
 	// Resolution phase — iterate through combined ranked results (same order as search UI)
 	var resolution *models.PlaybackResolution
 	var lastErr error
 	var selectedResult *models.NZBResult
+	var fallbackResolution *models.PlaybackResolution
+	var fallbackSelectedResult *models.NZBResult
+	var fallbackProbeResult *VideoFullResult
+	var fallbackMetadataResult *VideoMetadataResult
 
 	resolveStart := time.Now()
 	log.Printf("[prequeue] TIMING: starting resolution phase (%d results, elapsed: %v)",
@@ -726,6 +807,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 	// Cached probe result for DV checking (reused later for track selection)
 	var cachedProbeResult *VideoFullResult
+	var cachedMetadataResult *VideoMetadataResult
 
 	for i, result := range allResults {
 		select {
@@ -764,16 +846,20 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 		log.Printf("[prequeue] Resolved result [%d] (%s): %s -> %s", i, result.ServiceType, result.Title, resolution.WebDAVPath)
 
-		// Check DV compatibility
-		if needsDVCheck && h.fullProber != nil {
-			probeResult, probeErr := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+		var probeResult *VideoFullResult
+		var metadataResult *VideoMetadataResult
+
+		// Check DV compatibility and/or unknown track policy with the least probing possible.
+		if (needsDVCheck || needsUnknownTrackCheck) && h.fullProber != nil {
+			var probeErr error
+			probeResult, probeErr = h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
 			if probeErr != nil {
-				log.Printf("[prequeue] DV check failed for %s: %v, trying next result", result.Title, probeErr)
+				log.Printf("[prequeue] Probe check failed for %s: %v, trying next result", result.Title, probeErr)
 				resolution = nil
 				lastErr = probeErr
 				continue
 			}
-			if probeResult != nil {
+			if needsDVCheck && probeResult != nil {
 				if err := ValidateDVProfile(probeResult.DolbyVisionProfile, "hdr", probeResult.HasDolbyVision); err != nil {
 					log.Printf("[prequeue] DV profile incompatible for %s: %v, trying next result", result.Title, err)
 					resolution = nil
@@ -784,13 +870,64 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 					log.Printf("[prequeue] DV profile %s compatible with 'hdr' policy", probeResult.DolbyVisionProfile)
 				}
 			}
-			cachedProbeResult = probeResult
+		}
+
+		if needsUnknownTrackCheck && probeResult == nil && h.metadataProber != nil {
+			metadata, probeErr := h.metadataProber.ProbeVideoMetadata(ctx, resolution.WebDAVPath)
+			if probeErr != nil {
+				log.Printf("[prequeue] Track metadata probe failed for %s: %v, trying next result", result.Title, probeErr)
+				resolution = nil
+				lastErr = probeErr
+				continue
+			}
+			metadataResult = metadata
+		}
+
+		if needsUnknownTrackCheck {
+			var audioStreams []AudioStreamInfo
+			var subtitleStreams []SubtitleStreamInfo
+			if probeResult != nil {
+				audioStreams = probeResult.AudioStreams
+				subtitleStreams = probeResult.SubtitleStreams
+			} else if metadataResult != nil {
+				audioStreams = metadataResult.AudioStreams
+				subtitleStreams = metadataResult.SubtitleStreams
+			} else {
+				log.Printf("[prequeue] Unknown track policy %q enabled but no track prober is available; keeping result %q", unknownTrackPolicy, result.Title)
+			}
+
+			if probeResult != nil || metadataResult != nil {
+				if rejected, reason := unknownTrackPolicyRejects(unknownTrackPolicy, audioStreams, subtitleStreams); rejected {
+					log.Printf("[prequeue] Result [%d] deprioritized by unknown track policy %q: %s; trying next result: %s", i, unknownTrackPolicy, reason, result.Title)
+					if fallbackResolution == nil {
+						resultCopy := result
+						fallbackResolution = resolution
+						fallbackSelectedResult = &resultCopy
+						fallbackProbeResult = probeResult
+						fallbackMetadataResult = metadataResult
+					}
+					resolution = nil
+					continue
+				}
+			}
 		}
 
 		selectedResult = &result
+		cachedProbeResult = probeResult
+		cachedMetadataResult = metadataResult
 		log.Printf("[prequeue] TIMING: resolved (took: %v, total elapsed: %v)",
 			time.Since(resolveStart), time.Since(workerStart))
 		break
+	}
+
+	if resolution == nil && fallbackResolution != nil {
+		resolution = fallbackResolution
+		selectedResult = fallbackSelectedResult
+		cachedProbeResult = fallbackProbeResult
+		cachedMetadataResult = fallbackMetadataResult
+		if selectedResult != nil {
+			log.Printf("[prequeue] All fully known candidates failed or were unavailable; using first deprioritized unknown-track result: %s", selectedResult.Title)
+		}
 	}
 
 	if resolution == nil {
@@ -917,6 +1054,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			duration = cachedProbeResult.Duration
 			log.Printf("[prequeue] Using cached probe result: DV=%v HDR10=%v TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d duration=%.2fs",
 				hasDV, hasHDR10, hasTrueHD, hasCompatibleAudio, len(audioStreams), len(subtitleStreams), duration)
+		} else if cachedMetadataResult != nil {
+			audioStreams = cachedMetadataResult.AudioStreams
+			subtitleStreams = cachedMetadataResult.SubtitleStreams
+			log.Printf("[prequeue] Using cached metadata probe result: audioStreams=%d subStreams=%d", len(audioStreams), len(subtitleStreams))
 		} else if h.fullProber != nil {
 			// Single ffprobe call for both HDR detection and track metadata
 			fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
