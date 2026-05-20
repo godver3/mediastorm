@@ -592,15 +592,16 @@ func main() {
 		settings.Transmux.HLSTempDirectory,
 		compositeProvider,
 	)
+	videoHandler.SetThumbnailCacheDir(settings.Cache.Directory)
+	localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Server.Port)
+	videoHandler.SetLocalBaseURL(localBaseURL)
 
 	if videoHandler != nil && settings.WebDAV.Enabled {
-		localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Server.Port)
 		videoHandler.ConfigureLocalWebDAVAccess(localBaseURL, settings.WebDAV.Prefix, settings.WebDAV.Username, settings.WebDAV.Password)
 	}
 
 	// Enable usenet track probing when WebDAV and ffprobe are both configured.
 	if settings.WebDAV.Enabled && strings.TrimSpace(settings.Transmux.FFprobePath) != "" {
-		localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Server.Port)
 		usenetHandler.ConfigureTrackProbing(
 			nzbSystem.ImporterService(),
 			settings.Transmux.FFprobePath,

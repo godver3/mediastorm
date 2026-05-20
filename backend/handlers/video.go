@@ -85,6 +85,7 @@ type VideoHandler struct {
 	webdavMu      sync.RWMutex
 	webdavBaseURL string
 	webdavPrefix  string
+	localBaseURL  string
 
 	// User settings for policy checks (e.g., HDR/DV policy)
 	userSettingsSvc   UserSettingsProvider
@@ -118,6 +119,9 @@ type VideoHandler struct {
 
 	// Credits detection
 	creditsDetector *credits.Detector
+
+	// Preview thumbnail generation/cache for seek scrubbing
+	thumbnailManager *ThumbnailManager
 
 	// User/account services for stream limit enforcement
 	usersSvc    UsersProvider
@@ -318,6 +322,9 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		cropDetectCache:        make(map[string]*cropDetectCacheEntry),
 		streamPool:             newStreamPool(defaultStreamFailureRegistry),
 	}
+	if resolvedFFmpeg != "" {
+		h.thumbnailManager = NewThumbnailManager(filepath.Join(os.TempDir(), "strmr-thumbnails"), resolvedFFmpeg)
+	}
 
 	// Start background cleanup for metadata cache
 	go h.runMetadataCacheCleanup()
@@ -353,6 +360,14 @@ func (h *VideoHandler) SetAccountsService(svc AccountsProvider) {
 // SetCreditsDetector sets the credits detection service.
 func (h *VideoHandler) SetCreditsDetector(d *credits.Detector) {
 	h.creditsDetector = d
+}
+
+// SetThumbnailCacheDir moves the preview thumbnail cache under the configured app cache directory.
+func (h *VideoHandler) SetThumbnailCacheDir(baseDir string) {
+	if strings.TrimSpace(baseDir) == "" || h.ffmpegPath == "" {
+		return
+	}
+	h.thumbnailManager = NewThumbnailManager(filepath.Join(baseDir, "thumbnails"), h.ffmpegPath)
 }
 
 // DetectCredits triggers async credits detection for a video path.
@@ -4031,11 +4046,21 @@ func (h *VideoHandler) ConfigureLocalWebDAVAccess(baseURL, prefix, username, pas
 		return
 	}
 
-	// Store locally for ffprobe WebDAV URL building
+	// Store locally for ffprobe WebDAV URL building and localhost media access.
 	base := strings.TrimSpace(baseURL)
 	if base != "" {
-		parsed, err := url.Parse(base)
-		if err == nil {
+		if localParsed, err := url.Parse(base); err == nil {
+			localParsed.User = nil
+			localParsed.Path = ""
+			localParsed.RawQuery = ""
+			localParsed.Fragment = ""
+
+			h.webdavMu.Lock()
+			h.localBaseURL = strings.TrimRight(localParsed.String(), "/")
+			h.webdavMu.Unlock()
+		}
+
+		if parsed, err := url.Parse(base); err == nil {
 			if username != "" {
 				parsed.User = url.UserPassword(username, password)
 			}
@@ -4061,6 +4086,49 @@ func (h *VideoHandler) ConfigureLocalWebDAVAccess(baseURL, prefix, username, pas
 	if h.subtitleExtractManager != nil {
 		h.subtitleExtractManager.ConfigureLocalWebDAVAccess(baseURL, prefix, username, password)
 	}
+}
+
+func (h *VideoHandler) SetLocalBaseURL(baseURL string) {
+	if h == nil {
+		return
+	}
+	base := strings.TrimSpace(baseURL)
+	if base == "" {
+		return
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return
+	}
+	parsed.User = nil
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	h.webdavMu.Lock()
+	h.localBaseURL = strings.TrimRight(parsed.String(), "/")
+	h.webdavMu.Unlock()
+}
+
+func (h *VideoHandler) buildLocalVideoStreamURL(cleanPath string) string {
+	if h == nil {
+		return ""
+	}
+	h.webdavMu.RLock()
+	base := h.localBaseURL
+	h.webdavMu.RUnlock()
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	u.Path = "/api/video/internal-stream"
+	q := u.Query()
+	q.Set("path", cleanPath)
+	q.Set("transmux", "0")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // GetHLSManager returns the HLS manager for admin/monitoring purposes.

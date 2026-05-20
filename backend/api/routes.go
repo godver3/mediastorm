@@ -155,6 +155,9 @@ func Register(
 	// Must be registered before protected routes to avoid auth middleware
 	api.HandleFunc("/users/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/icon", handleOptions).Methods(http.MethodOptions)
+	if videoHandler != nil {
+		api.Handle("/video/internal-stream", localhostOnlyMiddleware(http.HandlerFunc(videoHandler.StreamVideo))).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
+	}
 
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
@@ -360,6 +363,9 @@ func Register(
 	protected.HandleFunc("/video/metadata", RateLimitHandlerFunc(probeLimiter, videoHandler.ProbeVideo)).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/direct-url", videoHandler.GetDirectURL).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/cropdetect", RateLimitHandlerFunc(probeLimiter, videoHandler.CropDetect)).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/thumbnails/start", RateLimitHandlerFunc(probeLimiter, videoHandler.StartThumbnails)).Methods(http.MethodPost, http.MethodOptions)
+	protected.HandleFunc("/video/thumbnails/status", videoHandler.GetThumbnailsStatus).Methods(http.MethodGet, http.MethodOptions)
+	protected.HandleFunc("/video/thumbnails/image/{key}/{file}", videoHandler.ServeThumbnailImage).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/credits/detect", videoHandler.DetectCredits).Methods(http.MethodPost, http.MethodOptions)
 	protected.HandleFunc("/video/credits/status", videoHandler.GetCreditsStatus).Methods(http.MethodGet, http.MethodOptions)
 
