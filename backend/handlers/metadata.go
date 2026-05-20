@@ -23,6 +23,7 @@ import (
 type metadataService interface {
 	Trending(context.Context, string) ([]models.TrendingItem, error)
 	Search(context.Context, string, string) ([]models.SearchResult, error)
+	SearchYouTubeVideos(context.Context, string, int) ([]models.YouTubeVideoSearchResult, error)
 	EnrichSearchCertifications(context.Context, []models.SearchResult)
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
@@ -57,6 +58,53 @@ type metadataService interface {
 	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
 	// Top Ten aggregated ranking
 	GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error)
+}
+
+func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		query = strings.TrimSpace(r.URL.Query().Get("query"))
+	}
+	if query == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "query is required"})
+		return
+	}
+	if len([]rune(query)) < 2 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "query must be at least 2 characters"})
+		return
+	}
+
+	limit := 10
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil {
+			limit = parsed
+		}
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	results, err := h.Service.SearchYouTubeVideos(r.Context(), query, limit)
+	if err != nil {
+		log.Printf("[metadata] youtube search error query=%q err=%v", query, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if results == nil {
+		results = []models.YouTubeVideoSearchResult{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
 type topTenDebugService interface {

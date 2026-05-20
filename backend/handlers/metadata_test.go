@@ -24,6 +24,8 @@ type fakeMetadataService struct {
 	trendingErr  error
 	searchResp   []models.SearchResult
 	searchErr    error
+	youtubeResp  []models.YouTubeVideoSearchResult
+	youtubeErr   error
 	seriesResp   *models.SeriesDetails
 	seriesErr    error
 	movieResp    *models.Title
@@ -37,6 +39,8 @@ type fakeMetadataService struct {
 	lastTrendingType        string
 	lastSearchQuery         string
 	lastSearchType          string
+	lastYouTubeQuery        string
+	lastYouTubeLimit        int
 	lastSeriesQuery         models.SeriesDetailsQuery
 	lastMovieQuery          models.MovieDetailsQuery
 	lastDiscoverGenreType   string
@@ -56,6 +60,12 @@ func (f *fakeMetadataService) Search(_ context.Context, query, mediaType string)
 	f.lastSearchQuery = query
 	f.lastSearchType = mediaType
 	return f.searchResp, f.searchErr
+}
+
+func (f *fakeMetadataService) SearchYouTubeVideos(_ context.Context, query string, limit int) ([]models.YouTubeVideoSearchResult, error) {
+	f.lastYouTubeQuery = query
+	f.lastYouTubeLimit = limit
+	return f.youtubeResp, f.youtubeErr
 }
 
 func (f *fakeMetadataService) SeriesDetails(_ context.Context, query models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
@@ -998,5 +1008,51 @@ func TestMetadataHandler_TopTen_EmptyResult(t *testing.T) {
 	}
 	if len(resp.Items) != 0 {
 		t.Errorf("expected 0 items, got %d", len(resp.Items))
+	}
+}
+
+func TestMetadataHandler_SearchYouTubeVideos_MissingQuery(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/youtube/search", nil)
+	rec := httptest.NewRecorder()
+
+	handler.SearchYouTubeVideos(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestMetadataHandler_SearchYouTubeVideos_ClampsLimit(t *testing.T) {
+	fake := &fakeMetadataService{
+		youtubeResp: []models.YouTubeVideoSearchResult{
+			{ID: "abc123", URL: "https://www.youtube.com/watch?v=abc123", Title: "Test Video"},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/youtube/search?q=test&limit=99", nil)
+	rec := httptest.NewRecorder()
+
+	handler.SearchYouTubeVideos(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if fake.lastYouTubeQuery != "test" {
+		t.Fatalf("expected query test, got %q", fake.lastYouTubeQuery)
+	}
+	if fake.lastYouTubeLimit != 20 {
+		t.Fatalf("expected clamped limit 20, got %d", fake.lastYouTubeLimit)
+	}
+
+	var resp []models.YouTubeVideoSearchResult
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp) != 1 || resp[0].ID != "abc123" {
+		t.Fatalf("unexpected response: %+v", resp)
 	}
 }

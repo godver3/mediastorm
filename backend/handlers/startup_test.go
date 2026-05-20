@@ -160,6 +160,9 @@ func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType str
 func (m *mockMetadataServiceStartup) Search(context.Context, string, string) ([]models.SearchResult, error) {
 	return nil, nil
 }
+func (m *mockMetadataServiceStartup) SearchYouTubeVideos(context.Context, string, int) ([]models.YouTubeVideoSearchResult, error) {
+	return nil, nil
+}
 func (m *mockMetadataServiceStartup) SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	return nil, nil
 }

@@ -76,6 +76,9 @@ func (m *mockMetadataServiceDetailsBundle) Trending(_ context.Context, _ string)
 func (m *mockMetadataServiceDetailsBundle) Search(_ context.Context, _ string, _ string) ([]models.SearchResult, error) {
 	return nil, nil
 }
+func (m *mockMetadataServiceDetailsBundle) SearchYouTubeVideos(_ context.Context, _ string, _ int) ([]models.YouTubeVideoSearchResult, error) {
+	return nil, nil
+}
 func (m *mockMetadataServiceDetailsBundle) BatchSeriesDetails(_ context.Context, _ []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem {
 	return nil
 }

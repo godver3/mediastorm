@@ -93,6 +93,18 @@ type SearchResult struct {
 	Score int   `json:"score"`
 }
 
+type YouTubeVideoSearchResult struct {
+	ID           string `json:"id"`
+	URL          string `json:"url"`
+	Title        string `json:"title"`
+	Description  string `json:"description,omitempty"`
+	Channel      string `json:"channel,omitempty"`
+	Uploader     string `json:"uploader,omitempty"`
+	ThumbnailURL string `json:"thumbnailUrl,omitempty"`
+	Duration     int    `json:"duration,omitempty"`
+	ViewCount    int64  `json:"viewCount,omitempty"`
+}
+
 type SeriesEpisode struct {
 	ID                    string `json:"id"`
 	TVDBID                int64  `json:"tvdbId,omitempty"`
