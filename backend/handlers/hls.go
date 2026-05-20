@@ -397,6 +397,10 @@ type HLSSession struct {
 	PrequeueType   string // "", "details" (details page), or "next_episode" (auto-play next)
 	CastMode       bool   // True when the session is being prepared for Chromecast-style HLS playback
 	PlaybackTarget string // Optional client target hint, e.g. "web"
+
+	// YouTube HLS sessions are assembled from separate direct video/audio URLs.
+	YouTubeVideoURL string
+	YouTubeAudioURL string
 }
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
@@ -1094,6 +1098,180 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// The actual start offset is stored in session.StartOffset for the frontend to use
 	// The frontend should seek to the start offset after loading the HLS stream
 	return session, nil
+}
+
+// CreateYouTubeSession starts an HLS session from separate YouTube video/audio URLs.
+func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioURL, originalURL, profileID, profileName, clientIP string) (*HLSSession, error) {
+	sessionID := generateSessionID()
+	outputDir := filepath.Join(m.baseDir, sessionID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("create session directory: %w", err)
+	}
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+	now := time.Now()
+	session := &HLSSession{
+		ID:                      sessionID,
+		Path:                    "youtube-hls:" + originalURL,
+		OriginalPath:            originalURL,
+		OutputDir:               outputDir,
+		CreatedAt:               now,
+		LastAccess:              now,
+		Cancel:                  cancel,
+		ProfileID:               profileID,
+		ProfileName:             profileName,
+		ClientIP:                clientIP,
+		AudioTrackIndex:         -1,
+		SubtitleTrackIndex:      -1,
+		StreamStartTime:         now,
+		LastSegmentRequest:      now,
+		MinSegmentRequested:     -1,
+		MaxSegmentRequested:     -1,
+		LastPlaybackSegment:     -1,
+		LastSegmentServed:       -1,
+		EarliestBufferedSegment: -1,
+		FinalSegmentCount:       -1,
+		subtitleExtractOffsets:  make(map[int]float64),
+		PlaybackTarget:          "youtube",
+		YouTubeVideoURL:         videoURL,
+		YouTubeAudioURL:         audioURL,
+	}
+
+	m.mu.Lock()
+	m.sessions[sessionID] = session
+	m.mu.Unlock()
+
+	go func() {
+		if err := m.startYouTubeTranscoding(bgCtx, session, videoURL, audioURL); err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Printf("[hls-youtube] session %s transcoding cancelled", sessionID)
+				return
+			}
+			log.Printf("[hls-youtube] session %s transcoding failed: %v", sessionID, err)
+			session.mu.Lock()
+			session.Completed = true
+			session.FatalError = err.Error()
+			session.FatalErrorTime = time.Now()
+			session.mu.Unlock()
+		}
+	}()
+
+	log.Printf("[hls-youtube] created session %s for %s", sessionID, originalURL)
+	return session, nil
+}
+
+func (m *HLSManager) startYouTubeTranscoding(ctx context.Context, session *HLSSession, videoURL, audioURL string) error {
+	if m.ffmpegPath == "" {
+		return fmt.Errorf("ffmpeg path not configured")
+	}
+
+	playlistPath := filepath.Join(session.OutputDir, "stream.m3u8")
+	segmentPattern := filepath.Join(session.OutputDir, "segment%d.ts")
+	session.mu.RLock()
+	startOffset := session.TranscodingOffset
+	session.mu.RUnlock()
+	args := []string{
+		"-nostdin",
+		"-y",
+		"-loglevel", "error",
+		"-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+		"-probesize", "1000000",
+		"-analyzeduration", "500000",
+		"-fflags", "+genpts+discardcorrupt",
+	}
+	if startOffset > 0 {
+		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", startOffset))
+	}
+	args = append(args,
+		"-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "5",
+		"-i", videoURL,
+	)
+	if startOffset > 0 {
+		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", startOffset))
+	}
+	args = append(args,
+		"-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+		"-reconnect", "1",
+		"-reconnect_streamed", "1",
+		"-reconnect_delay_max", "5",
+		"-i", audioURL,
+		"-map", "0:v:0",
+		"-map", "1:a:0",
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-b:a", "160k",
+		"-hls_time", fmt.Sprintf("%.0f", hlsSegmentDuration),
+		"-hls_list_size", "0",
+		"-hls_flags", "independent_segments",
+		"-hls_segment_filename", segmentPattern,
+		"-f", "hls",
+		playlistPath,
+	)
+
+	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	log.Printf("[hls-youtube] session %s: starting FFmpeg high-quality HLS", session.ID)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	session.mu.Lock()
+	session.FFmpegCmd = cmd
+	session.FFmpegPID = cmd.Process.Pid
+	session.mu.Unlock()
+
+	err := cmd.Wait()
+	if ctx.Err() != nil {
+		session.mu.Lock()
+		if session.FFmpegCmd == cmd {
+			session.FFmpegPID = 0
+		}
+		session.mu.Unlock()
+		return ctx.Err()
+	}
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+
+	highestSegment := -1
+	if files, globErr := filepath.Glob(filepath.Join(session.OutputDir, "segment*.ts")); globErr == nil {
+		for _, file := range files {
+			var segNum int
+			if _, scanErr := fmt.Sscanf(filepath.Base(file), "segment%d.ts", &segNum); scanErr == nil && segNum > highestSegment {
+				highestSegment = segNum
+			}
+		}
+	}
+
+	session.mu.Lock()
+	if session.FFmpegCmd == cmd {
+		session.Completed = true
+		session.FinalSegmentCount = highestSegment
+		session.FFmpegPID = 0
+		if err != nil {
+			session.FatalError = strings.TrimSpace(stderr.String())
+			if session.FatalError == "" {
+				session.FatalError = err.Error()
+			}
+			session.FatalErrorTime = time.Now()
+		}
+	}
+	session.mu.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("ffmpeg exited code=%d: %s", exitCode, strings.TrimSpace(stderr.String()))
+	}
+
+	log.Printf("[hls-youtube] session %s: FFmpeg completed segments=%d", session.ID, highestSegment+1)
+	return nil
 }
 
 // CreateLiveSession creates an HLS session for live TV streams
@@ -3084,6 +3262,9 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 
 	session.mu.RLock()
 	duration := session.Duration
+	playbackTarget := session.PlaybackTarget
+	youtubeVideoURL := session.YouTubeVideoURL
+	youtubeAudioURL := session.YouTubeAudioURL
 	session.mu.RUnlock()
 
 	// Clamp target time to valid range
@@ -3146,15 +3327,32 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	session.Cancel = newCancel
 	session.mu.Unlock()
 
-	// Start transcoding from the new offset in background
-	go func() {
-		if err := m.startTranscoding(newCtx, session, cachedForceAAC); err != nil {
-			log.Printf("[hls] session %s: seek transcoding failed: %v", sessionID, err)
-			session.mu.Lock()
-			session.Completed = true
-			session.mu.Unlock()
-		}
-	}()
+	// Start transcoding from the new offset in background.
+	if playbackTarget == "youtube" && youtubeVideoURL != "" && youtubeAudioURL != "" {
+		go func() {
+			if err := m.startYouTubeTranscoding(newCtx, session, youtubeVideoURL, youtubeAudioURL); err != nil {
+				if errors.Is(err, context.Canceled) {
+					log.Printf("[hls-youtube] session %s: seek transcoding cancelled", sessionID)
+					return
+				}
+				log.Printf("[hls-youtube] session %s: seek transcoding failed: %v", sessionID, err)
+				session.mu.Lock()
+				session.Completed = true
+				session.FatalError = err.Error()
+				session.FatalErrorTime = time.Now()
+				session.mu.Unlock()
+			}
+		}()
+	} else {
+		go func() {
+			if err := m.startTranscoding(newCtx, session, cachedForceAAC); err != nil {
+				log.Printf("[hls] session %s: seek transcoding failed: %v", sessionID, err)
+				session.mu.Lock()
+				session.Completed = true
+				session.mu.Unlock()
+			}
+		}()
+	}
 
 	// Start background keyframe probe for subtitle sync correction
 	// This runs in parallel and updates ActualStartOffset when done

@@ -2987,6 +2987,130 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[video] created HLS session %s (duration=%.2fs)", session.ID, session.Duration)
 }
 
+type youtubeHLSURLs struct {
+	videoURL string
+	audioURL string
+}
+
+// StartYouTubeHLSSession creates an HLS session from high-quality separate YouTube video/audio streams.
+func (h *VideoHandler) StartYouTubeHLSSession(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	videoPageURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if videoPageURL == "" {
+		http.Error(w, "missing url parameter", http.StatusBadRequest)
+		return
+	}
+	if !isYouTubeURL(videoPageURL) {
+		http.Error(w, "only YouTube URLs are supported", http.StatusBadRequest)
+		return
+	}
+
+	streams, err := h.extractYouTubeHLSURLs(r.Context(), videoPageURL)
+	if err != nil {
+		log.Printf("[hls-youtube] extract failed: %v", err)
+		http.Error(w, fmt.Sprintf("failed to extract YouTube streams: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+	session, err := h.hlsManager.CreateYouTubeSession(r.Context(), streams.videoURL, streams.audioURL, videoPageURL, profileID, r.URL.Query().Get("profileName"), getClientIP(r))
+	if err != nil {
+		log.Printf("[hls-youtube] create session failed: %v", err)
+		http.Error(w, fmt.Sprintf("failed to create YouTube HLS session: %v", err), http.StatusInternalServerError)
+		return
+	}
+	session.mu.Lock()
+	session.MediaMetadata = parseStreamMediaMetadata(r)
+	session.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	response := map[string]interface{}{
+		"sessionId":         session.ID,
+		"playlistUrl":       h.hlsManager.buildSessionPlaylistURL(session),
+		"startOffset":       0,
+		"actualStartOffset": 0,
+		"keyframeDelta":     0,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("[hls-youtube] failed to encode response: %v", err)
+	}
+}
+
+func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL string) (youtubeHLSURLs, error) {
+	ytdlpPath := "/usr/local/bin/yt-dlp"
+	if _, err := exec.LookPath(ytdlpPath); err != nil {
+		ytdlpPath = "yt-dlp"
+		if _, err := exec.LookPath(ytdlpPath); err != nil {
+			return youtubeHLSURLs{}, fmt.Errorf("yt-dlp not found")
+		}
+	}
+
+	extractCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-g",
+		"--format", "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio",
+		"--no-warnings",
+		"--no-playlist",
+		"--socket-timeout", "10",
+		"--retries", "0",
+		"--fragment-retries", "0",
+	}
+	if cookiesPath := h.ytdlpCookiesPath(); cookiesPath != "" {
+		args = append(args, "--cookies", cookiesPath)
+	}
+	args = append(args, videoPageURL)
+
+	cmd := exec.CommandContext(extractCtx, ytdlpPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return youtubeHLSURLs{}, fmt.Errorf("yt-dlp failed: %s", errMsg)
+	}
+
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	urls := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			urls = append(urls, line)
+		}
+	}
+	if len(urls) < 2 {
+		return youtubeHLSURLs{}, fmt.Errorf("expected separate video/audio URLs, got %d", len(urls))
+	}
+	return youtubeHLSURLs{videoURL: urls[0], audioURL: urls[1]}, nil
+}
+
+func (h *VideoHandler) ytdlpCookiesPath() string {
+	if h.configManager == nil {
+		return ""
+	}
+	settings, err := h.configManager.Load()
+	if err != nil || strings.TrimSpace(settings.Cache.Directory) == "" {
+		return ""
+	}
+	p := filepath.Join(settings.Cache.Directory, "yt-dlp-cookies.txt")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // StartLiveHLSSession creates a new HLS session for live TV streams
 func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {

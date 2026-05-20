@@ -229,6 +229,8 @@ func Register(
 	protected.HandleFunc("/search", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/youtube/search", metadataHandler.SearchYouTubeVideos).Methods(http.MethodGet)
 	protected.HandleFunc("/youtube/search", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/youtube/hls/start", videoHandler.StartYouTubeHLSSession).Methods(http.MethodGet)
+	protected.HandleFunc("/youtube/hls/start", handleOptions).Methods(http.MethodOptions)
 
 	protected.HandleFunc("/metadata/series/details", metadataHandler.SeriesDetails).Methods(http.MethodGet)
 	protected.HandleFunc("/metadata/series/details", handleOptions).Methods(http.MethodOptions)
