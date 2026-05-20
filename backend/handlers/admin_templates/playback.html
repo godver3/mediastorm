@@ -529,6 +529,28 @@
         padding: 0;
     }
 
+    body.web-player-theater-active .navbar,
+    body.web-player-theater-active .page-header,
+    body.web-player-theater-active .playback-sidebar,
+    body.web-player-theater-active .playback-modebar,
+    body.web-player-theater-active #shelvesPanel,
+    body.web-player-theater-active #iptvPanel,
+    body.web-player-theater-active #detailsPanel,
+    body.web-player-theater-active #playbackPanel > .player-wrap > .details-actions,
+    body.web-player-theater-active #playbackPanel > .player-wrap > .section-label,
+    body.web-player-theater-active #playbackPanel > .player-wrap > .shelf-title,
+    body.web-player-theater-active #playbackPanel > .player-wrap > .media-meta:not(#webPlayerStatus) {
+        display: none !important;
+    }
+
+    body.web-player-theater-active .playback-layout {
+        display: block;
+    }
+
+    body.web-player-theater-active .playback-panel.web-player-theater-panel {
+        margin-left: 0;
+    }
+
     #videoHost.web-player-theater {
         box-sizing: border-box;
         display: grid !important;
@@ -670,7 +692,7 @@
         right: clamp(0.75rem, 3vw, 2rem);
         bottom: clamp(0.75rem, 3vw, 2rem);
         z-index: 4;
-        grid-template-columns: repeat(6, auto) minmax(0, 1fr) auto;
+        grid-template-columns: 2.25rem 2.25rem 2.5rem 2.25rem 2.25rem 2.25rem 2.25rem minmax(0, 1fr) auto;
         gap: 0.5rem;
         padding: 0.5rem;
         margin-top: 0;
@@ -689,19 +711,26 @@
 
     .web-player-controls {
         display: grid;
-        grid-template-columns: repeat(6, auto) minmax(0, 1fr) auto;
+        grid-template-columns: 2.25rem 2.25rem 2.5rem 2.25rem 2.25rem 2.25rem 2.25rem minmax(0, 1fr) auto;
         gap: 0.75rem;
         align-items: center;
         margin-top: 0.75rem;
     }
 
     .web-player-control-btn {
+        width: 2.25rem;
+        height: 2.25rem;
         min-width: 2.25rem;
+        padding: 0;
+        justify-content: center;
+        flex: 0 0 2.25rem;
     }
 
     .web-player-play-button {
-        min-width: 5.25rem;
-        justify-content: center;
+        width: 2.5rem;
+        height: 2.5rem;
+        min-width: 2.5rem;
+        flex-basis: 2.5rem;
     }
 
     .web-player-control-icon {
@@ -720,6 +749,15 @@
     .web-player-theater-exit,
     .web-player-fullscreen-exit {
         display: none;
+    }
+
+    .web-player-controls .web-player-button-label,
+    .web-player-controls .web-player-control-text {
+        display: none;
+    }
+
+    .web-player-controls .web-player-control-icon-only {
+        display: inline-flex;
     }
 
     .web-player-play-button.is-playing .web-player-play-icon {
@@ -783,6 +821,7 @@
         align-items: center;
         justify-content: center;
         position: relative;
+        width: 2.25rem;
         min-width: 2.25rem;
     }
 
@@ -892,6 +931,7 @@
 
     .web-player-controls input[type="range"] {
         width: 100%;
+        min-width: 0;
     }
 
     .web-player-time {
@@ -1021,7 +1061,7 @@
         }
 
         .web-player-controls {
-            grid-template-columns: repeat(4, auto);
+            grid-template-columns: 2.25rem 2.25rem 2.5rem 2.25rem 2.25rem;
         }
 
         .web-player-controls input[type="range"],
@@ -1947,6 +1987,7 @@
         clearDetails();
         const panel = document.getElementById('playbackPanel');
         panel.classList.remove('web-player-theater-panel');
+        document.body.classList.remove('web-player-theater-active');
         panel.style.display = 'block';
         panel.innerHTML = `<div class="empty-inline">Starting ${escapeHtml(channel.name || 'channel')}...</div>`;
         try {
@@ -2046,6 +2087,7 @@
         const panel = document.getElementById('playbackPanel');
         if (panel) {
             panel.classList.remove('web-player-theater-panel');
+            document.body.classList.remove('web-player-theater-active');
             panel.style.display = 'none';
             panel.innerHTML = '';
         }
@@ -2554,6 +2596,7 @@
         }
         const panel = document.getElementById('playbackPanel');
         panel.classList.remove('web-player-theater-panel');
+        document.body.classList.remove('web-player-theater-active');
         const displaySizeBytes = Number(resolvedPlayback?.fileSize || candidate.sizeBytes || 0);
         const size = displaySizeBytes > 0 ? `${(displaySizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
         const displayFilename = playbackDisplayFilename(resolvedPlayback, candidate.title || '');
@@ -3163,6 +3206,7 @@
         }
         const panel = document.getElementById('playbackPanel');
         if (panel) panel.classList.remove('web-player-theater-panel');
+        document.body.classList.remove('web-player-theater-active');
     }
 
     function applyWebPlayerVolume(video) {
@@ -3225,6 +3269,7 @@
         host.classList.toggle('web-player-theater', enable);
         host.classList.toggle('web-player-theater-debug', enable && isWebPlayerTheaterDebugEnabled());
         panel.classList.toggle('web-player-theater-panel', enable);
+        document.body.classList.toggle('web-player-theater-active', enable);
         updateWebPlayerControls();
         if (enable) {
             lockWebPlayerTheaterScroll();
@@ -4113,6 +4158,7 @@
         }
         if (host) host.classList.remove('web-player-theater', 'web-player-theater-debug');
         if (panel) panel.classList.remove('web-player-theater-panel');
+        document.body.classList.remove('web-player-theater-active');
         disableWebPlayerTheaterDimming();
         unlockWebPlayerTheaterScroll(true);
         if (keepaliveTimer) {
