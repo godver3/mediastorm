@@ -508,15 +508,18 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 		t.Fatalf("GetWithDefaults: %v", err)
 	}
 
-	if len(got.HomeShelves.Shelves) != 5 {
-		t.Fatalf("expected 5 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 6 {
+		t.Fatalf("expected 6 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
 	}
 
 	var calendar *models.ShelfConfig
+	var recentlyAired *models.ShelfConfig
 	for i := range got.HomeShelves.Shelves {
 		if got.HomeShelves.Shelves[i].ID == "calendar" {
 			calendar = &got.HomeShelves.Shelves[i]
-			break
+		}
+		if got.HomeShelves.Shelves[i].ID == "my-recently-aired" {
+			recentlyAired = &got.HomeShelves.Shelves[i]
 		}
 	}
 	if calendar == nil {
@@ -530,6 +533,21 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 	}
 	if !calendar.Enabled {
 		t.Fatal("expected calendar shelf to be enabled by default")
+	}
+	if recentlyAired == nil {
+		t.Fatal("expected my recently aired shelf to be backfilled")
+	}
+	if recentlyAired.Order != 3 {
+		t.Fatalf("expected my recently aired shelf order 3, got %d", recentlyAired.Order)
+	}
+	if !models.BoolVal(recentlyAired.CalendarSources.Watchlist, false) {
+		t.Fatal("expected my recently aired shelf to include watchlist by default")
+	}
+	if models.BoolVal(recentlyAired.CalendarSources.History, false) ||
+		models.BoolVal(recentlyAired.CalendarSources.Trending, false) ||
+		models.BoolVal(recentlyAired.CalendarSources.TopTrending, false) ||
+		models.BoolVal(recentlyAired.CalendarSources.MDBLists, false) {
+		t.Fatal("expected my recently aired shelf to default to watchlist only")
 	}
 }
 
@@ -651,15 +669,18 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected migrated settings")
 	}
-	if len(got.HomeShelves.Shelves) != 6 {
-		t.Fatalf("expected 6 shelves after migration, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 7 {
+		t.Fatalf("expected 7 shelves after migration, got %d", len(got.HomeShelves.Shelves))
 	}
 
 	var calendar *models.ShelfConfig
+	var recentlyAired *models.ShelfConfig
 	for i := range got.HomeShelves.Shelves {
 		if got.HomeShelves.Shelves[i].ID == "calendar" {
 			calendar = &got.HomeShelves.Shelves[i]
-			break
+		}
+		if got.HomeShelves.Shelves[i].ID == "my-recently-aired" {
+			recentlyAired = &got.HomeShelves.Shelves[i]
 		}
 	}
 	if calendar == nil {
@@ -667,6 +688,12 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	}
 	if calendar.Order != 2 {
 		t.Fatalf("expected calendar shelf order 2, got %d", calendar.Order)
+	}
+	if recentlyAired == nil {
+		t.Fatal("expected my recently aired shelf to be migrated in")
+	}
+	if recentlyAired.Order != 3 {
+		t.Fatalf("expected my recently aired shelf order 3, got %d", recentlyAired.Order)
 	}
 
 	var watchlist *models.ShelfConfig
@@ -679,7 +706,7 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if watchlist == nil {
 		t.Fatal("expected watchlist shelf to remain after migration")
 	}
-	if watchlist.Order != 3 {
-		t.Fatalf("expected watchlist to shift to order 3, got %d", watchlist.Order)
+	if watchlist.Order != 4 {
+		t.Fatalf("expected watchlist to shift to order 4, got %d", watchlist.Order)
 	}
 }

@@ -20,6 +20,7 @@ const (
 	calendarLiteDaysForward     = 2
 	calendarLiteHistoryLimit    = 25
 	calendarLiteMovieLimit      = 20
+	recentlyAiredDaysWindow     = 90
 )
 
 // MetadataService provides series and movie metadata.
@@ -90,6 +91,7 @@ func (s *buildState) claimItem(key string) bool {
 }
 
 const RecentDaysWindow = 7
+const MaxRecentDaysWindow = recentlyAiredDaysWindow
 
 // Status holds the current state of the calendar background worker.
 type Status struct {
@@ -571,7 +573,7 @@ func (s *Service) buildUserCalendar(userID string) []models.CalendarItem {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	windowStart := todayStart.AddDate(0, 0, -RecentDaysWindow)
+	windowStart := todayStart.AddDate(0, 0, -recentlyAiredDaysWindow)
 	cutoff := todayStart.AddDate(0, 0, s.maxDays)
 	state := newBuildState()
 	sources := s.calendarSourcesEnabled(userID)

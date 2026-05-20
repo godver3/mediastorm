@@ -193,8 +193,19 @@ func configShelvesToModel(shelves []config.ShelfConfig) []models.ShelfConfig {
 			Order:          s.Order,
 			Type:           s.Type,
 			ListURL:        s.ListURL,
+			TraktAccountID: s.TraktAccountID,
+			TraktListType:  s.TraktListType,
+			TraktListID:    s.TraktListID,
 			Limit:          s.Limit,
 			HideUnreleased: s.HideUnreleased,
+			CalendarSources: models.CalendarSettings{
+				Watchlist:      s.CalendarSources.Watchlist,
+				History:        s.CalendarSources.History,
+				Trending:       s.CalendarSources.Trending,
+				TopTrending:    s.CalendarSources.TopTrending,
+				MDBLists:       s.CalendarSources.MDBLists,
+				MDBListShelves: s.CalendarSources.MDBListShelves,
+			},
 		}
 	}
 	return out

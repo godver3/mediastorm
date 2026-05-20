@@ -4078,6 +4078,7 @@
         if (profileShelf.traktAccountId && profileShelf.traktAccountId !== globalShelf.traktAccountId) return false;
         if (profileShelf.traktListType && profileShelf.traktListType !== globalShelf.traktListType) return false;
         if (profileShelf.traktListId && profileShelf.traktListId !== globalShelf.traktListId) return false;
+        if (JSON.stringify(profileShelf.calendarSources || {}) !== JSON.stringify(globalShelf.calendarSources || {})) return false;
         return true;
     }
 
@@ -4444,6 +4445,8 @@
             shelves = currentSettings.homeShelves?.shelves || [];
         }
 
+        shelves = ensureRecentlyAiredShelfConfig(shelves);
+
         if (!shelves.length) return '<p class="form-hint">No shelves configured.</p>';
 
         // Build inheritance badge for section
@@ -4463,23 +4466,27 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
+            const isRecentlyAired = s.id === 'my-recently-aired';
             const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-')));
-            const typeLabel = isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '';
+            const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
+            const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
 
             let actionsHtml = '';
-            if (isCustom) {
-                // Custom lists: edit and delete
+            if (isCustom || isRecentlyAired) {
+                // Custom lists can be edited/deleted; calendar-backed built-ins expose source editing.
                 actionsHtml = '<div class="shelf-actions">'+
-                    '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>'+
-                    '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>'+
+                    (isRecentlyAired
+                        ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sources">Sources</button>'
+                        : '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>')+
+                    (isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '')+
                 '</div>';
             }
 
             // Use display index (i) for drag reordering, store shelf ID for reference
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
-                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+'</span>'+
+                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+'</span>'+
                 actionsHtml+
                 '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
             '</div>';
@@ -4493,8 +4500,10 @@
             '.shelf-row.disabled{opacity:0.5;}'+
             '.shelf-handle{color:#666;margin-right:12px;font-size:16px;cursor:grab;touch-action:none;padding:8px;margin:-8px;margin-right:4px;}'+
             '.shelf-handle:active{cursor:grabbing;}'+
-            '.shelf-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;}'+
-            '.shelf-type-badge{font-size:10px;padding:2px 6px;background:rgba(138,43,226,0.3);border-radius:4px;color:#c9a0dc;font-weight:normal;}'+
+            '.shelf-name{flex:1;font-weight:500;display:flex;align-items:center;gap:8px;min-width:0;}'+
+            '.shelf-type-badge,.shelf-source-badge{display:inline-flex;align-items:center;height:18px;line-height:1;font-size:10px;padding:0 6px;border-radius:4px;font-weight:normal;white-space:nowrap;vertical-align:middle;}'+
+            '.shelf-type-badge{background:rgba(138,43,226,0.3);color:#c9a0dc;}'+
+            '.shelf-source-badge{background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.25);color:#93c5fd;}'+
             '.shelf-filter-badge{font-size:12px;margin-left:4px;opacity:0.8;}'+
             '.shelf-toggle{position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;margin-left:12px;}'+
             '.shelf-toggle input{opacity:0;width:0;height:0;}'+
@@ -4504,13 +4513,18 @@
             '.shelf-toggle input:checked + .toggle-slider:before{transform:translateX(18px);}'+
             '.shelf-edit-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:16px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:8px;}'+
             '.shelf-edit-btn:hover{color:#8a2be2;background:rgba(138,43,226,0.15);}'+
+            '.shelf-source-btn{font-size:12px;color:#dbeafe;min-width:0;min-height:30px;padding:5px 9px;}'+
+            '.shelf-source-btn:hover{color:#fff;background:rgba(59,130,246,0.22);}'+
             '.shelf-delete-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:18px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:4px;}'+
             '.shelf-delete-btn:hover{color:#e94560;background:rgba(233,69,96,0.15);}'+
             '.shelf-actions{display:flex;align-items:center;}'+
             '@media(max-width:768px){'+
-                '.shelf-name{flex-wrap:wrap;}'+
-                '.shelf-type-badge,.shelf-filter-badge{margin-top:4px;}'+
+                '.shelf-row{padding:8px 10px;gap:6px;}'+
+                '.shelf-name{flex-wrap:wrap;gap:6px;line-height:1.25;}'+
+                '.shelf-type-badge,.shelf-source-badge{height:18px;margin-top:0;}'+
+                '.shelf-filter-badge{margin-top:0;}'+
                 '.shelf-edit-btn,.shelf-delete-btn{min-width:44px;min-height:44px;font-size:20px;padding:10px 12px;}'+
+                '.shelf-source-btn{min-width:0;min-height:30px;font-size:11px;padding:5px 8px;}'+
                 '.add-custom-list-form .form-row{flex-wrap:wrap;}'+
                 '.add-custom-list-form .form-group{flex:none !important;width:100%;}'+
                 '.add-custom-list-form button{width:100%;margin-bottom:0;margin-top:4px;}'+
@@ -4701,6 +4715,71 @@
             case 'trakt': return 'Trakt';
             default: return type || 'MDBList';
         }
+    }
+
+    function defaultRecentlyAiredSources() {
+        return { watchlist: true, history: false, topTrending: false, trending: false, mdblists: false };
+    }
+
+    function ensureRecentlyAiredShelfConfig(shelves) {
+        if (!Array.isArray(shelves)) return shelves;
+        if (shelves.some((s) => s.id === 'my-recently-aired')) return shelves;
+
+        const calendarShelf = shelves.find((s) => s.id === 'calendar');
+        const insertOrder = calendarShelf ? (calendarShelf.order || 0) + 1 : 3;
+        shelves.forEach((s) => {
+            if ((s.order || 0) >= insertOrder) s.order = (s.order || 0) + 1;
+        });
+        shelves.push({
+            id: 'my-recently-aired',
+            name: 'My Recently Aired',
+            enabled: true,
+            order: insertOrder,
+            type: 'builtin',
+            calendarSources: defaultRecentlyAiredSources(),
+        });
+        return shelves;
+    }
+
+    function getCalendarSourceSummary(shelf) {
+        const sources = shelf.calendarSources || defaultRecentlyAiredSources();
+        const names = [];
+        if (sources.watchlist !== false) names.push('Watchlist');
+        if (sources.history === true) names.push('Continue');
+        if (sources.topTrending === true) names.push('Top');
+        if (sources.trending === true) names.push('Trending');
+        if (sources.mdblists === true) names.push('MDBList');
+        return names.length ? names.join(', ') : 'No sources';
+    }
+
+    function buildCalendarSourceFields(shelf, prefix) {
+        const sources = shelf.calendarSources || defaultRecentlyAiredSources();
+        const checked = (key, defaultValue) => sources[key] === undefined ? defaultValue : sources[key] !== false;
+        const option = (key, label, defaultValue) => `
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:14px;">
+                <input type="checkbox" id="${prefix}${key}" ${checked(key, defaultValue) ? 'checked' : ''}>
+                <span>${label}</span>
+            </label>`;
+        return `
+            <div style="margin-bottom:12px;">
+                <label class="form-label" style="font-size:12px;margin-bottom:8px;display:block;">Calendar Sources</label>
+                ${option('watchlist', 'Watchlist', true)}
+                ${option('history', 'Continue Watching', false)}
+                ${option('topTrending', 'Top Trending', false)}
+                ${option('trending', 'Trending', false)}
+                ${option('mdblists', 'MDBList Shelves', false)}
+            </div>
+        `;
+    }
+
+    function readCalendarSourceFields(prefix) {
+        return {
+            watchlist: document.getElementById(prefix + 'watchlist')?.checked || false,
+            history: document.getElementById(prefix + 'history')?.checked || false,
+            topTrending: document.getElementById(prefix + 'topTrending')?.checked || false,
+            trending: document.getElementById(prefix + 'trending')?.checked || false,
+            mdblists: document.getElementById(prefix + 'mdblists')?.checked || false,
+        };
     }
 
     function getAvailableTraktAccountsForShelfForm() {
@@ -4992,14 +5071,15 @@
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
             ensureProfileShelves();
-            shelves = userSettings.homeShelves?.shelves || [];
+            shelves = ensureRecentlyAiredShelfConfig(userSettings.homeShelves?.shelves || []);
         } else {
-            shelves = currentSettings.homeShelves?.shelves || [];
+            shelves = ensureRecentlyAiredShelfConfig(currentSettings.homeShelves?.shelves || []);
         }
 
         const shelf = shelves.find(s => s.id === shelfId);
         if (!shelf) return;
 
+        const isRecentlyAiredShelf = shelf.id === 'my-recently-aired';
         const isTraktShelf = shelf.type === 'trakt';
         const traktAccounts = getAvailableTraktAccountsForShelfForm();
         const traktAccountOptions = traktAccounts.map((acc) => {
@@ -5010,7 +5090,7 @@
         const traktListTypeOptions =
             `<option value="watchlist" ${traktListType === 'watchlist' ? 'selected' : ''}>Watchlist</option>` +
             `<option value="custom" ${traktListType === 'custom' ? 'selected' : ''}>Custom List</option>`;
-        const traktSourceFields = isTraktShelf ? `
+        const traktSourceFields = isRecentlyAiredShelf ? buildCalendarSourceFields(shelf, 'editShelfCalendar') : isTraktShelf ? `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Trakt Account</label>
                         <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">${traktAccountOptions}</select>
@@ -5034,13 +5114,13 @@
         const modalHtml = `
             <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
                 <div style="background:#1a1a2e;border-radius:12px;padding:24px;max-width:500px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${getShelfTypeLabel(shelf.type)} List</h3>
+                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${isRecentlyAiredShelf ? 'Recently Aired Shelf' : getShelfTypeLabel(shelf.type) + ' List'}</h3>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
                         <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
                     ${traktSourceFields}
-                    <div style="margin-bottom:12px;">
+                    ${isRecentlyAiredShelf ? '' : `<div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
                         <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
@@ -5050,7 +5130,7 @@
                             <span style="font-size:14px;">Hide Unreleased</span>
                             <span style="font-size:11px;color:#888;margin-left:8px;">(Filter out movies not yet available for home viewing, and upcoming series)</span>
                         </label>
-                    </div>
+                    </div>`}
                     <div style="display:flex;gap:12px;justify-content:flex-end;">
                         <button onclick="closeEditShelfModal()" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:white;cursor:pointer;">Cancel</button>
                         <button onclick="saveEditedShelf('${shelfId}')" style="padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;">Save</button>
@@ -5113,9 +5193,10 @@
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
-            shelves = userSettings.homeShelves?.shelves || [];
+            ensureProfileShelves();
+            shelves = ensureRecentlyAiredShelfConfig(userSettings.homeShelves?.shelves || []);
         } else {
-            shelves = currentSettings.homeShelves?.shelves || [];
+            shelves = ensureRecentlyAiredShelfConfig(currentSettings.homeShelves?.shelves || []);
         }
 
         const shelf = shelves.find(s => s.id === shelfId);
@@ -5126,8 +5207,12 @@
             return;
         }
         shelf.name = name;
-        shelf.limit = limit;
-        shelf.hideUnreleased = hideUnreleased;
+        if (shelf.id === 'my-recently-aired') {
+            shelf.calendarSources = readCalendarSourceFields('editShelfCalendar');
+        } else {
+            shelf.limit = limit;
+            shelf.hideUnreleased = hideUnreleased;
+        }
         if (shelf.type === 'trakt') {
             const accountId = document.getElementById('editShelfTraktAccount')?.value?.trim();
             const listType = document.getElementById('editShelfTraktListType')?.value?.trim() || 'watchlist';
@@ -5143,7 +5228,7 @@
             shelf.traktAccountId = accountId;
             shelf.traktListType = listType;
             shelf.traktListId = listType === 'custom' ? listId : '';
-        } else {
+        } else if (shelf.id !== 'my-recently-aired') {
             const urlInput = document.getElementById('editShelfUrl');
             let url = urlInput?.value?.trim();
             if (!url || !validateShelfUrl(shelf.type, url)) {

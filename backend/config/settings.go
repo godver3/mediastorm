@@ -13,6 +13,7 @@ import (
 )
 
 func floatPtr(v float64) *float64 { return &v }
+func boolPtr(v bool) *bool        { return &v }
 
 // Settings represents the application configuration persisted to disk.
 type Settings struct {
@@ -359,17 +360,28 @@ func (ls *LiveSettings) GetEffectivePlaylistURL() string {
 
 // ShelfConfig represents a configurable home screen shelf.
 type ShelfConfig struct {
-	ID             string `json:"id"`                       // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
-	Name           string `json:"name"`                     // Display name
-	Enabled        bool   `json:"enabled"`                  // Whether the shelf is visible
-	Order          int    `json:"order"`                    // Sort order (lower numbers appear first)
-	Type           string `json:"type,omitempty"`           // "builtin" (default), "mdblist", "trakt", or "local-library"
-	ListURL        string `json:"listUrl,omitempty"`        // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
-	TraktAccountID string `json:"traktAccountId,omitempty"` // Trakt account ID, or "__all__" for master-account global watchlists
-	TraktListType  string `json:"traktListType,omitempty"`  // "watchlist" or "custom"
-	TraktListID    string `json:"traktListId,omitempty"`    // Trakt custom list slug/ID when traktListType == "custom"
-	Limit          int    `json:"limit,omitempty"`          // Optional limit on number of items returned (0 = no limit)
-	HideUnreleased bool   `json:"hideUnreleased,omitempty"` // Filter out unreleased/in-theaters content
+	ID              string                 `json:"id"`                        // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
+	Name            string                 `json:"name"`                      // Display name
+	Enabled         bool                   `json:"enabled"`                   // Whether the shelf is visible
+	Order           int                    `json:"order"`                     // Sort order (lower numbers appear first)
+	Type            string                 `json:"type,omitempty"`            // "builtin" (default), "mdblist", "trakt", or "local-library"
+	ListURL         string                 `json:"listUrl,omitempty"`         // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	TraktAccountID  string                 `json:"traktAccountId,omitempty"`  // Trakt account ID, or "__all__" for master-account global watchlists
+	TraktListType   string                 `json:"traktListType,omitempty"`   // "watchlist" or "custom"
+	TraktListID     string                 `json:"traktListId,omitempty"`     // Trakt custom list slug/ID when traktListType == "custom"
+	Limit           int                    `json:"limit,omitempty"`           // Optional limit on number of items returned (0 = no limit)
+	HideUnreleased  bool                   `json:"hideUnreleased,omitempty"`  // Filter out unreleased/in-theaters content
+	CalendarSources CalendarSourceSettings `json:"calendarSources,omitempty"` // Optional source filter for calendar-backed shelves
+}
+
+// CalendarSourceSettings controls source filters for calendar-backed shelf configs.
+type CalendarSourceSettings struct {
+	Watchlist      *bool           `json:"watchlist,omitempty"`
+	History        *bool           `json:"history,omitempty"`
+	Trending       *bool           `json:"trending,omitempty"`
+	TopTrending    *bool           `json:"topTrending,omitempty"`
+	MDBLists       *bool           `json:"mdblists,omitempty"`
+	MDBListShelves map[string]bool `json:"mdblistShelves,omitempty"`
 }
 
 // ExploreCardPosition determines where the explore card is placed on shelves.
@@ -393,9 +405,10 @@ func DefaultHomeShelfConfigs() []ShelfConfig {
 		{ID: "top-ten", Name: "Top 10 Today", Enabled: true, Order: 0},
 		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 1},
 		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 2},
-		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 3},
-		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 4},
-		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 5},
+		{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 3, CalendarSources: CalendarSourceSettings{Watchlist: boolPtr(true), History: boolPtr(false), Trending: boolPtr(false), TopTrending: boolPtr(false), MDBLists: boolPtr(false)}},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 4},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 5},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 6},
 	}
 }
 
@@ -437,6 +450,36 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 			Name:    "Coming Up",
 			Enabled: true,
 			Order:   insertOrder,
+		})
+		changed = true
+	}
+	if !hasShelf("my-recently-aired") {
+		insertOrder := 3
+		for _, shelf := range nextShelves {
+			if shelf.ID == "calendar" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "my-recently-aired",
+			Name:    "My Recently Aired",
+			Enabled: true,
+			Order:   insertOrder,
+			CalendarSources: CalendarSourceSettings{
+				Watchlist:   boolPtr(true),
+				History:     boolPtr(false),
+				Trending:    boolPtr(false),
+				TopTrending: boolPtr(false),
+				MDBLists:    boolPtr(false),
+			},
 		})
 		changed = true
 	}

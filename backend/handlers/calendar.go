@@ -62,6 +62,19 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		days = 90
 	}
 
+	// Parse recent days (default 7, max 90). The cache may contain a larger
+	// past window so shelves can fill recently-aired rows without changing the
+	// regular calendar default.
+	recentDays := calendar.RecentDaysWindow
+	if recentDaysStr := r.URL.Query().Get("recentDays"); recentDaysStr != "" {
+		if parsed, err := strconv.Atoi(recentDaysStr); err == nil && parsed >= 0 {
+			recentDays = parsed
+		}
+	}
+	if recentDays > calendar.MaxRecentDaysWindow {
+		recentDays = calendar.MaxRecentDaysWindow
+	}
+
 	// Parse optional source filter
 	sourceFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("source")))
 
@@ -81,7 +94,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	// Compute the date window in the user's timezone
 	nowInTZ := time.Now().In(loc)
 	todayStart := time.Date(nowInTZ.Year(), nowInTZ.Month(), nowInTZ.Day(), 0, 0, 0, 0, loc)
-	recentStart := todayStart.AddDate(0, 0, -calendar.RecentDaysWindow)
+	recentStart := todayStart.AddDate(0, 0, -recentDays)
 	cutoff := todayStart.AddDate(0, 0, days)
 
 	// Filter and TZ-adjust items
@@ -129,7 +142,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		Total:       len(result),
 		Timezone:    loc.String(),
 		Days:        days,
-		RecentDays:  calendar.RecentDaysWindow,
+		RecentDays:  recentDays,
 		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
 	})
 }
