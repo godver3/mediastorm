@@ -50,6 +50,19 @@ func TestCleanYouTubeVTTDropsHeaderMetadata(t *testing.T) {
 	}
 }
 
+func TestCleanYouTubeVTTDropsEmptyTimingOnlyCues(t *testing.T) {
+	input := []byte("WEBVTT\n\n00:00:00.000 --> 00:00:01.790 align:start position:0%\n\n00:00:01.790 --> 00:00:03.000 align:start position:0%\nhello\n\n")
+
+	cleaned := string(cleanYouTubeVTT(input))
+
+	if strings.Contains(cleaned, "00:00:00.000 --> 00:00:01.790") {
+		t.Fatalf("expected empty first cue to be dropped, got:\n%s", cleaned)
+	}
+	if !strings.Contains(cleaned, "00:00:01.790 --> 00:00:03.000 align:start position:0%") || !strings.Contains(cleaned, "hello") {
+		t.Fatalf("expected non-empty cue to remain, got:\n%s", cleaned)
+	}
+}
+
 func TestYouTubeCaptionFormatIsTranslated(t *testing.T) {
 	if !youtubeCaptionFormatIsTranslated("https://www.youtube.com/api/timedtext?v=test&lang=en&tlang=ar&fmt=vtt") {
 		t.Fatal("expected translated caption URL to be detected")

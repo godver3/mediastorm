@@ -3332,6 +3332,15 @@ func (h *VideoHandler) ProxyYouTubeCaption(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	cleaned := cleanYouTubeVTT(body)
+	rawSample := youtubeCaptionDebugSample(body)
+	cleanedSample := youtubeCaptionDebugSample(cleaned)
+	log.Printf("[hls-youtube] caption proxy sample host=%s lang=%q fmt=%q raw=%q cleaned=%q",
+		host,
+		captionURL.Query().Get("lang"),
+		captionURL.Query().Get("fmt"),
+		rawSample,
+		cleanedSample,
+	)
 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -3370,6 +3379,77 @@ func cleanYouTubeVTT(body []byte) []byte {
 		lines[i] = strings.TrimSpace(cleaned)
 	}
 	return normalizeYouTubeVTTCues(lines)
+}
+
+func youtubeCaptionDebugSample(body []byte) string {
+	const maxSampleRunes = 700
+	const maxSampleLines = 8
+
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	normalized = strings.ToValidUTF8(normalized, "\uFFFD")
+	lines := strings.Split(normalized, "\n")
+
+	sample := make([]string, 0, maxSampleLines)
+	foundTiming := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, "-->") {
+			continue
+		}
+		foundTiming = true
+		if i > 0 {
+			previous := strings.TrimSpace(lines[i-1])
+			if previous != "" &&
+				!strings.HasPrefix(previous, "WEBVTT") &&
+				!strings.HasPrefix(previous, "Kind:") &&
+				!strings.HasPrefix(previous, "Language:") &&
+				!strings.HasPrefix(previous, "NOTE") &&
+				!strings.HasPrefix(previous, "STYLE") &&
+				!strings.HasPrefix(previous, "REGION") {
+				sample = append(sample, previous)
+			}
+		}
+		sample = append(sample, trimmed)
+		for j := i + 1; j < len(lines) && len(sample) < maxSampleLines; j++ {
+			next := strings.TrimSpace(lines[j])
+			if next == "" {
+				break
+			}
+			sample = append(sample, next)
+		}
+		break
+	}
+
+	if !foundTiming {
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" ||
+				strings.HasPrefix(trimmed, "WEBVTT") ||
+				strings.HasPrefix(trimmed, "Kind:") ||
+				strings.HasPrefix(trimmed, "Language:") ||
+				strings.HasPrefix(trimmed, "NOTE") ||
+				strings.HasPrefix(trimmed, "STYLE") ||
+				strings.HasPrefix(trimmed, "REGION") {
+				continue
+			}
+			sample = append(sample, trimmed)
+			if len(sample) >= maxSampleLines {
+				break
+			}
+		}
+	}
+
+	if len(sample) == 0 {
+		return ""
+	}
+
+	out := strings.Join(sample, "\\n")
+	runes := []rune(out)
+	if len(runes) > maxSampleRunes {
+		out = string(runes[:maxSampleRunes]) + "...[truncated]"
+	}
+	return out
 }
 
 type youtubeVTTCue struct {
@@ -3418,12 +3498,17 @@ func normalizeYouTubeVTTCues(lines []string) []byte {
 			i++
 		}
 
+		collapsedText := collapseYouTubeVTTText(text)
+		if len(collapsedText) == 0 {
+			continue
+		}
+
 		cues = append(cues, youtubeVTTCue{
 			prefix: prefix,
 			start:  timingMatch[1],
 			end:    timingMatch[2],
 			suffix: timingMatch[3],
-			text:   collapseYouTubeVTTText(text),
+			text:   collapsedText,
 		})
 	}
 
