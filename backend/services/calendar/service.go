@@ -802,7 +802,18 @@ func (s *Service) collectSeriesFromWatchlist(ctx context.Context, wlItems []mode
 
 	return s.parallelCollect(calendarMetadataConcurrency, len(seriesItems), func(idx int) []models.CalendarItem {
 		wl := seriesItems[idx]
-		return s.fetchUpcomingEpisodes(ctx, wl.Name, wl.Year, wl.ExternalIDs, wl.PosterURL, "watchlist", windowStart, cutoff, state)
+		return s.fetchUpcomingEpisodes(
+			ctx,
+			wl.Name,
+			wl.Year,
+			wl.ExternalIDs,
+			wl.PosterURL,
+			wl.TextPosterURL,
+			"watchlist",
+			windowStart,
+			cutoff,
+			state,
+		)
 	})
 }
 
@@ -826,7 +837,18 @@ func (s *Service) collectFromHistory(ctx context.Context, cwItems []models.Serie
 
 	return s.parallelCollect(calendarMetadataConcurrency, len(seriesItems), func(idx int) []models.CalendarItem {
 		cw := seriesItems[idx]
-		return s.fetchUpcomingEpisodes(ctx, cw.SeriesTitle, cw.Year, cw.ExternalIDs, cw.PosterURL, "history", windowStart, cutoff, state)
+		return s.fetchUpcomingEpisodes(
+			ctx,
+			cw.SeriesTitle,
+			cw.Year,
+			cw.ExternalIDs,
+			cw.PosterURL,
+			cw.TextPosterURL,
+			"history",
+			windowStart,
+			cutoff,
+			state,
+		)
 	})
 }
 
@@ -902,8 +924,20 @@ func (s *Service) collectFromTrending(
 			if ts.Title.Poster != nil {
 				posterURL = ts.Title.Poster.URL
 			}
+			textPosterURL := calendarTextPosterURL(&ts.Title)
 			extIDs := buildExternalIDs(ts.Title.IMDBID, ts.Title.TMDBID, ts.Title.TVDBID)
-			return s.fetchUpcomingEpisodes(ctx, ts.Title.Name, ts.Title.Year, extIDs, posterURL, source, windowStart, cutoff, state)
+			return s.fetchUpcomingEpisodes(
+				ctx,
+				ts.Title.Name,
+				ts.Title.Year,
+				extIDs,
+				posterURL,
+				textPosterURL,
+				source,
+				windowStart,
+				cutoff,
+				state,
+			)
 		})...)
 	}
 
@@ -958,6 +992,7 @@ func (s *Service) collectFromMDBLists(
 			if item.Title.Poster != nil {
 				posterURL = item.Title.Poster.URL
 			}
+			textPosterURL := calendarTextPosterURL(&item.Title)
 			extIDs := buildExternalIDs(item.Title.IMDBID, item.Title.TMDBID, item.Title.TVDBID)
 			return s.fetchUpcomingEpisodes(
 				ctx,
@@ -965,6 +1000,7 @@ func (s *Service) collectFromMDBLists(
 				item.Title.Year,
 				extIDs,
 				posterURL,
+				textPosterURL,
 				"mdblist",
 				windowStart,
 				cutoff,
@@ -1002,6 +1038,7 @@ func collectMovieReleases(title *models.Title, source string, windowStart, cutof
 	if title.Poster != nil {
 		posterURL = title.Poster.URL
 	}
+	textPosterURL := calendarTextPosterURL(title)
 	backdropURL := calendarBackdropURL(title)
 	extIDs := buildExternalIDs(title.IMDBID, title.TMDBID, title.TVDBID)
 
@@ -1048,7 +1085,18 @@ func collectMovieReleases(title *models.Title, source string, windowStart, cutof
 
 	var items []models.CalendarItem
 	for _, rel := range earliestByType {
-		if item, ok := makeMovieReleaseItem(title, rel, posterURL, backdropURL, extIDs, source, windowStart, cutoff, state); ok {
+		if item, ok := makeMovieReleaseItem(
+			title,
+			rel,
+			posterURL,
+			textPosterURL,
+			backdropURL,
+			extIDs,
+			source,
+			windowStart,
+			cutoff,
+			state,
+		); ok {
 			items = append(items, item)
 		}
 	}
@@ -1074,8 +1122,15 @@ func calendarBackdropURL(title *models.Title) string {
 	return ""
 }
 
+func calendarTextPosterURL(title *models.Title) string {
+	if title == nil || title.TextPoster == nil {
+		return ""
+	}
+	return title.TextPoster.URL
+}
+
 // makeMovieReleaseItem creates a CalendarItem from a movie release, if it's in the date window.
-func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, backdropURL string, extIDs map[string]string, source string, windowStart, cutoff time.Time, state *buildState) (models.CalendarItem, bool) {
+func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, textPosterURL, backdropURL string, extIDs map[string]string, source string, windowStart, cutoff time.Time, state *buildState) (models.CalendarItem, bool) {
 	releaseDate, err := parseDate(rel.Date)
 	if err != nil || releaseDate.Before(windowStart) || releaseDate.After(cutoff) {
 		return models.CalendarItem{}, false
@@ -1086,15 +1141,16 @@ func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, b
 	}
 
 	return models.CalendarItem{
-		Title:       title.Name,
-		MediaType:   "movie",
-		AirDate:     releaseDate.Format("2006-01-02"),
-		ReleaseType: rel.Type,
-		PosterURL:   posterURL,
-		BackdropURL: backdropURL,
-		Year:        title.Year,
-		ExternalIDs: extIDs,
-		Source:      source,
+		Title:         title.Name,
+		MediaType:     "movie",
+		AirDate:       releaseDate.Format("2006-01-02"),
+		ReleaseType:   rel.Type,
+		PosterURL:     posterURL,
+		TextPosterURL: textPosterURL,
+		BackdropURL:   backdropURL,
+		Year:          title.Year,
+		ExternalIDs:   extIDs,
+		Source:        source,
 	}, true
 }
 
@@ -1105,6 +1161,7 @@ func (s *Service) fetchUpcomingEpisodes(
 	year int,
 	externalIDs map[string]string,
 	posterURL string,
+	textPosterURL string,
 	source string,
 	windowStart, cutoff time.Time,
 	state *buildState,
@@ -1123,6 +1180,9 @@ func (s *Service) fetchUpcomingEpisodes(
 	// Use poster from metadata if not provided
 	if posterURL == "" && details.Title.Poster != nil {
 		posterURL = details.Title.Poster.URL
+	}
+	if textPosterURL == "" {
+		textPosterURL = calendarTextPosterURL(&details.Title)
 	}
 	backdropURL := calendarBackdropURL(&details.Title)
 
@@ -1166,6 +1226,7 @@ func (s *Service) fetchUpcomingEpisodes(
 				AirTimezone:     airsTimezone,
 				Network:         details.Title.Network,
 				PosterURL:       posterURL,
+				TextPosterURL:   textPosterURL,
 				BackdropURL:     backdropURL,
 				Year:            details.Title.Year,
 				ExternalIDs:     extIDs,
