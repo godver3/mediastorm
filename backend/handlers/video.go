@@ -3,9 +3,11 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"math"
@@ -2992,6 +2994,16 @@ type youtubeHLSURLs struct {
 	audioURL string
 }
 
+type youtubeCaptionTrack struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Language string `json:"language"`
+	Name     string `json:"name,omitempty"`
+	Kind     string `json:"kind"`
+	Ext      string `json:"ext"`
+	URL      string `json:"url"`
+}
+
 // StartYouTubeHLSSession creates an HLS session from high-quality separate YouTube video/audio streams.
 func (h *VideoHandler) StartYouTubeHLSSession(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {
@@ -3014,6 +3026,12 @@ func (h *VideoHandler) StartYouTubeHLSSession(w http.ResponseWriter, r *http.Req
 		log.Printf("[hls-youtube] extract failed: %v", err)
 		http.Error(w, fmt.Sprintf("failed to extract YouTube streams: %v", err), http.StatusBadGateway)
 		return
+	}
+	captionTracks, err := h.extractYouTubeCaptionTracks(r.Context(), videoPageURL)
+	if err != nil {
+		log.Printf("[hls-youtube] caption extract failed: %v", err)
+	} else {
+		log.Printf("[hls-youtube] caption extract found %d tracks for %s", len(captionTracks), videoPageURL)
 	}
 
 	profileID := r.URL.Query().Get("profileId")
@@ -3039,18 +3057,29 @@ func (h *VideoHandler) StartYouTubeHLSSession(w http.ResponseWriter, r *http.Req
 		"actualStartOffset": 0,
 		"keyframeDelta":     0,
 	}
+	if len(captionTracks) > 0 {
+		response["subtitleTracks"] = captionTracks
+	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("[hls-youtube] failed to encode response: %v", err)
 	}
 }
 
-func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL string) (youtubeHLSURLs, error) {
+func (h *VideoHandler) ytdlpPath() (string, error) {
 	ytdlpPath := "/usr/local/bin/yt-dlp"
 	if _, err := exec.LookPath(ytdlpPath); err != nil {
 		ytdlpPath = "yt-dlp"
 		if _, err := exec.LookPath(ytdlpPath); err != nil {
-			return youtubeHLSURLs{}, fmt.Errorf("yt-dlp not found")
+			return "", fmt.Errorf("yt-dlp not found")
 		}
+	}
+	return ytdlpPath, nil
+}
+
+func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL string) (youtubeHLSURLs, error) {
+	ytdlpPath, err := h.ytdlpPath()
+	if err != nil {
+		return youtubeHLSURLs{}, err
 	}
 
 	extractCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -3094,6 +3123,382 @@ func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL s
 		return youtubeHLSURLs{}, fmt.Errorf("expected separate video/audio URLs, got %d", len(urls))
 	}
 	return youtubeHLSURLs{videoURL: urls[0], audioURL: urls[1]}, nil
+}
+
+func (h *VideoHandler) extractYouTubeCaptionTracks(ctx context.Context, videoPageURL string) ([]youtubeCaptionTrack, error) {
+	ytdlpPath, err := h.ytdlpPath()
+	if err != nil {
+		return nil, err
+	}
+
+	extractCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	args := []string{
+		"--dump-json",
+		"--skip-download",
+		"--no-warnings",
+		"--no-playlist",
+		"--socket-timeout", "10",
+		"--retries", "0",
+		"--fragment-retries", "0",
+	}
+	if cookiesPath := h.ytdlpCookiesPath(); cookiesPath != "" {
+		args = append(args, "--cookies", cookiesPath)
+	}
+	args = append(args, videoPageURL)
+
+	cmd := exec.CommandContext(extractCtx, ytdlpPath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return nil, fmt.Errorf("yt-dlp caption metadata failed: %s", errMsg)
+	}
+
+	var metadata struct {
+		Subtitles map[string][]struct {
+			Ext  string `json:"ext"`
+			URL  string `json:"url"`
+			Name string `json:"name"`
+		} `json:"subtitles"`
+		AutomaticCaptions map[string][]struct {
+			Ext  string `json:"ext"`
+			URL  string `json:"url"`
+			Name string `json:"name"`
+		} `json:"automatic_captions"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &metadata); err != nil {
+		return nil, fmt.Errorf("parse yt-dlp caption metadata: %w", err)
+	}
+
+	tracks := make([]youtubeCaptionTrack, 0)
+	seenLanguages := make(map[string]bool)
+	appendTracks := func(kind string, source map[string][]struct {
+		Ext  string `json:"ext"`
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}) {
+		languages := make([]string, 0, len(source))
+		for language := range source {
+			languages = append(languages, language)
+		}
+		sort.SliceStable(languages, func(i, j int) bool {
+			priority := func(language string) int {
+				normalized := strings.ToLower(strings.TrimSpace(language))
+				switch {
+				case normalized == "en" || normalized == "en-us" || normalized == "en-gb":
+					return 0
+				case strings.HasPrefix(normalized, "en-"):
+					return 1
+				case !strings.Contains(normalized, "-"):
+					return 2
+				default:
+					return 3
+				}
+			}
+			if priority(languages[i]) != priority(languages[j]) {
+				return priority(languages[i]) < priority(languages[j])
+			}
+			return languages[i] < languages[j]
+		})
+
+		for _, language := range languages {
+			if len(tracks) >= 20 {
+				return
+			}
+			normalizedLanguage := strings.TrimSpace(strings.ToLower(language))
+			if normalizedLanguage == "" || normalizedLanguage == "live_chat" {
+				continue
+			}
+			if seenLanguages[normalizedLanguage] {
+				continue
+			}
+
+			var selected *struct {
+				Ext  string `json:"ext"`
+				URL  string `json:"url"`
+				Name string `json:"name"`
+			}
+			for i := range source[language] {
+				format := &source[language][i]
+				if strings.TrimSpace(format.URL) == "" {
+					continue
+				}
+				if kind == "automatic" && youtubeCaptionFormatIsTranslated(format.URL) {
+					continue
+				}
+				if strings.EqualFold(format.Ext, "vtt") {
+					selected = format
+					break
+				}
+				if selected == nil {
+					selected = format
+				}
+			}
+			if selected == nil || strings.TrimSpace(selected.URL) == "" {
+				continue
+			}
+
+			seenLanguages[normalizedLanguage] = true
+			name := strings.TrimSpace(selected.Name)
+			label := language
+			if name != "" && !strings.EqualFold(name, language) {
+				label = fmt.Sprintf("%s - %s", language, name)
+			}
+			if kind == "automatic" {
+				label = fmt.Sprintf("%s (auto)", label)
+			}
+			proxyURL := "/youtube/captions?captionUrl=" + base64.RawURLEncoding.EncodeToString([]byte(selected.URL))
+			tracks = append(tracks, youtubeCaptionTrack{
+				ID:       fmt.Sprintf("youtube-%s-%s", kind, normalizedLanguage),
+				Label:    label,
+				Language: language,
+				Name:     name,
+				Kind:     kind,
+				Ext:      strings.TrimSpace(selected.Ext),
+				URL:      proxyURL,
+			})
+		}
+	}
+
+	appendTracks("subtitles", metadata.Subtitles)
+	appendTracks("automatic", metadata.AutomaticCaptions)
+	return tracks, nil
+}
+
+func youtubeCaptionFormatIsTranslated(rawURL string) bool {
+	captionURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(captionURL.Query().Get("tlang")) != ""
+}
+
+func (h *VideoHandler) ProxyYouTubeCaption(w http.ResponseWriter, r *http.Request) {
+	rawCaptionURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	encodedCaptionURL := strings.TrimSpace(r.URL.Query().Get("captionUrl"))
+	if encodedCaptionURL != "" {
+		decodedCaptionURL, err := base64.RawURLEncoding.DecodeString(encodedCaptionURL)
+		if err != nil {
+			http.Error(w, "invalid captionUrl parameter", http.StatusBadRequest)
+			return
+		}
+		rawCaptionURL = string(decodedCaptionURL)
+	}
+	if rawCaptionURL == "" {
+		http.Error(w, "missing url parameter", http.StatusBadRequest)
+		return
+	}
+	captionURL, err := url.Parse(rawCaptionURL)
+	if err != nil || (captionURL.Scheme != "http" && captionURL.Scheme != "https") {
+		http.Error(w, "invalid caption url", http.StatusBadRequest)
+		return
+	}
+	host := strings.ToLower(captionURL.Hostname())
+	isYouTubeCaptionHost := host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") || host == "googlevideo.com" || strings.HasSuffix(host, ".googlevideo.com")
+	if !isYouTubeCaptionHost {
+		http.Error(w, "unsupported caption host", http.StatusBadRequest)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, captionURL.String(), nil)
+	if err != nil {
+		http.Error(w, "invalid caption request", http.StatusBadRequest)
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[hls-youtube] caption proxy request failed: %v", err)
+		http.Error(w, "failed to fetch caption", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		http.Error(w, fmt.Sprintf("caption upstream returned %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		log.Printf("[hls-youtube] caption proxy read failed: %v", err)
+		http.Error(w, "failed to read caption", http.StatusBadGateway)
+		return
+	}
+	cleaned := cleanYouTubeVTT(body)
+
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	written, err := w.Write(cleaned)
+	if err != nil {
+		log.Printf("[hls-youtube] caption proxy write failed: %v", err)
+	}
+	log.Printf("[hls-youtube] caption proxy served %d bytes for host=%s raw=%d", written, host, len(body))
+}
+
+var (
+	youtubeVTTInlineTimestampPattern = regexp.MustCompile(`<\d{1,2}:\d{2}(?::\d{2})?\.\d{3}>`)
+	youtubeVTTInlineTagPattern       = regexp.MustCompile(`</?[^>\n]+>`)
+	youtubeVTTWhitespacePattern      = regexp.MustCompile(`[ \t]{2,}`)
+	youtubeVTTCueTimingPattern       = regexp.MustCompile(`^(\d{1,2}:\d{2}(?::\d{2})?\.\d{3})\s+-->\s+(\d{1,2}:\d{2}(?::\d{2})?\.\d{3})(.*)$`)
+)
+
+func cleanYouTubeVTT(body []byte) []byte {
+	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" ||
+			strings.HasPrefix(trimmed, "WEBVTT") ||
+			strings.HasPrefix(trimmed, "NOTE") ||
+			strings.HasPrefix(trimmed, "STYLE") ||
+			strings.HasPrefix(trimmed, "REGION") ||
+			strings.Contains(trimmed, "-->") {
+			continue
+		}
+
+		cleaned := youtubeVTTInlineTimestampPattern.ReplaceAllString(line, "")
+		cleaned = youtubeVTTInlineTagPattern.ReplaceAllString(cleaned, "")
+		cleaned = html.UnescapeString(cleaned)
+		cleaned = youtubeVTTWhitespacePattern.ReplaceAllString(cleaned, " ")
+		lines[i] = strings.TrimSpace(cleaned)
+	}
+	return normalizeYouTubeVTTCues(lines)
+}
+
+type youtubeVTTCue struct {
+	prefix []string
+	start  string
+	end    string
+	suffix string
+	text   []string
+}
+
+func normalizeYouTubeVTTCues(lines []string) []byte {
+	cues := make([]youtubeVTTCue, 0)
+
+	for i := 0; i < len(lines); {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			i++
+			continue
+		}
+
+		timingIndex := i
+		prefix := make([]string, 0, 1)
+		timingMatch := youtubeVTTCueTimingPattern.FindStringSubmatch(line)
+		if timingMatch == nil && i+1 < len(lines) {
+			nextLine := strings.TrimSpace(lines[i+1])
+			if nextMatch := youtubeVTTCueTimingPattern.FindStringSubmatch(nextLine); nextMatch != nil {
+				prefix = append(prefix, line)
+				timingIndex = i + 1
+				timingMatch = nextMatch
+			}
+		}
+
+		if timingMatch == nil {
+			i++
+			continue
+		}
+
+		text := make([]string, 0, 1)
+		i = timingIndex + 1
+		for i < len(lines) {
+			textLine := strings.TrimSpace(lines[i])
+			if textLine == "" {
+				break
+			}
+			text = append(text, textLine)
+			i++
+		}
+
+		cues = append(cues, youtubeVTTCue{
+			prefix: prefix,
+			start:  timingMatch[1],
+			end:    timingMatch[2],
+			suffix: timingMatch[3],
+			text:   collapseYouTubeVTTText(text),
+		})
+	}
+
+	for i := 0; i+1 < len(cues); i++ {
+		nextStart := cues[i+1].start
+		if nextStart != "" && compareVTTTimestamps(nextStart, cues[i].start) > 0 && compareVTTTimestamps(nextStart, cues[i].end) < 0 {
+			cues[i].end = nextStart
+		}
+	}
+
+	out := []string{"WEBVTT", ""}
+	for _, cue := range cues {
+		out = append(out, cue.prefix...)
+		out = append(out, fmt.Sprintf("%s --> %s%s", cue.start, cue.end, cue.suffix))
+		out = append(out, cue.text...)
+		out = append(out, "")
+	}
+	return []byte(strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n")
+}
+
+func collapseYouTubeVTTText(lines []string) []string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return []string{line}
+		}
+	}
+	return nil
+}
+
+func compareVTTTimestamps(a string, b string) int {
+	aMillis, aOK := parseVTTTimestampMillis(a)
+	bMillis, bOK := parseVTTTimestampMillis(b)
+	if !aOK || !bOK {
+		return strings.Compare(a, b)
+	}
+	switch {
+	case aMillis < bMillis:
+		return -1
+	case aMillis > bMillis:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func parseVTTTimestampMillis(value string) (int64, bool) {
+	parts := strings.Split(value, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	secParts := strings.Split(parts[len(parts)-1], ".")
+	if len(secParts) != 2 || len(secParts[1]) != 3 {
+		return 0, false
+	}
+	seconds, err := strconv.ParseInt(secParts[0], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	millis, err := strconv.ParseInt(secParts[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	minutes, err := strconv.ParseInt(parts[len(parts)-2], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	hours := int64(0)
+	if len(parts) == 3 {
+		hours, err = strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+	}
+	return (((hours*60)+minutes)*60+seconds)*1000 + millis, true
 }
 
 func (h *VideoHandler) ytdlpCookiesPath() string {
