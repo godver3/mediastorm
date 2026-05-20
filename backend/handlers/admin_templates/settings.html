@@ -2427,7 +2427,14 @@
                         '<span class="weighted-tag-remove" onclick="removeTagByIndex(\''+basePath+'\', \''+fieldKey+'\', '+idx+')">&times;</span>' +
                         '</div>';
                 }).join('');
+                const restrictedFilesQuickAdd = fieldKey === 'nonPreferredTerms'
+                    ? '<div class="weighted-tag-quick-add" style="display:flex;align-items:flex-start;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">' +
+                        '<button type="button" class="btn btn-sm btn-secondary" onclick="addRestrictedFileNonPreferredTerms(\''+basePath+'\', \''+fieldKey+'\')">Add restricted-file regex</button>' +
+                        '<p class="form-hint" style="margin:0;flex:1 1 260px;">Adds a weight-10 non-preferred regex for filenames commonly blocked by Real Debrid. Useful when Real Debrid is the sole provider to avoid restricted files.</p>' +
+                    '</div>'
+                    : '';
                 return '<div class="weighted-tags-container'+invalidClass+'" id="'+id+'_container">' +
+                    restrictedFilesQuickAdd +
                     wtagsHtml +
                     '<div class="weighted-tag-add"><input type="text" placeholder="Add term (press Enter)..." enterkeyhint="done" onkeydown="handleWeightedTagInput(event, \''+basePath+'\', \''+fieldKey+'\')"></div>' +
                     '</div>';
@@ -2560,6 +2567,25 @@
     function formatWeightedTerm(term, weight) {
         if (weight <= 1) return term;
         return term + '=' + weight;
+    }
+    const restrictedFileNonPreferredTerm = '/(?i)(?:web-dl|webrip|bdrip|hdrip|dvdrip|bluray\\.x264|hdtv\\.(?:x264|xvid)|web\\.(?:x264|h264))/';
+    const restrictedFileNonPreferredWeight = 10;
+    function addRestrictedFileNonPreferredTerms(basePath, fieldKey) {
+        const fullPath = basePath ? basePath+'.'+fieldKey : fieldKey;
+        let tags = [...(getValue(fullPath) || [])];
+        if (!Array.isArray(tags)) tags = [];
+
+        const existingIndex = tags.findIndex(t => parseWeightedTerm(t).term.toLowerCase() === restrictedFileNonPreferredTerm.toLowerCase());
+        const formatted = formatWeightedTerm(restrictedFileNonPreferredTerm, restrictedFileNonPreferredWeight);
+        if (existingIndex >= 0) {
+            tags[existingIndex] = formatted;
+            showToast('Restricted-file regex already existed; weight set to 10.', 'info');
+        } else {
+            tags.push(formatted);
+            showToast('Restricted-file regex added to non-preferred terms.', 'success');
+        }
+        setValue(fullPath, tags);
+        renderSettings();
     }
     function handleWeightedTagInput(event, basePath, fieldKey) {
         if (event.key === 'Enter') {
