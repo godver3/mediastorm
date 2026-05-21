@@ -1327,6 +1327,10 @@
         background: var(--bg-tertiary);
         color: var(--text-muted);
     }
+    .status-badge.warning {
+        background: rgba(245, 158, 11, 0.16);
+        color: var(--warning);
+    }
     /* Toggle switch styling */
     .toggle-option {
         display: flex;
@@ -1814,8 +1818,12 @@
 
     function updatePlexStatusBadge() {
         const badge = document.getElementById('plexStatusBadge');
+        const reconnectCount = plexAccounts.filter(a => a.requiresReconnection).length;
         const connectedCount = plexAccounts.filter(a => a.connected).length;
-        if (connectedCount > 0) {
+        if (reconnectCount > 0) {
+            badge.textContent = `${reconnectCount} Needs Reconnect`;
+            badge.className = 'status-badge warning';
+        } else if (connectedCount > 0) {
             badge.textContent = `${connectedCount} Connected`;
             badge.className = 'status-badge connected';
         } else if (plexAccounts.length > 0) {
@@ -1835,12 +1843,14 @@
         }
 
         container.innerHTML = plexAccounts.map(account => `
-            <div class="plex-account-card" style="padding: 1rem; margin-bottom: 0.75rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden;">
+            <div class="plex-account-card" style="padding: 1rem; margin-bottom: 0.75rem; background: var(--bg-surface); border-radius: 8px; border: 1px solid ${account.requiresReconnection ? 'var(--warning)' : 'var(--border)'}; overflow: hidden;">
                 <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem;">
                     <div style="flex: 1; min-width: 150px;">
                         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
                             <strong style="word-break: break-word;">${escapeHtml(account.name || 'Unnamed Account')}</strong>
-                            ${account.connected ?
+                            ${account.requiresReconnection ?
+                                `<span class="status-badge warning" style="font-size: 0.75rem;">Reconnect Required</span>` :
+                                account.connected ?
                                 `<span class="status-badge connected" style="font-size: 0.75rem;">Connected</span>` :
                                 `<span class="status-badge disconnected" style="font-size: 0.75rem;">Not Connected</span>`
                             }
@@ -1849,9 +1859,14 @@
                             `<div class="text-muted" style="font-size: 0.875rem;">Logged in as ${escapeHtml(account.username)}</div>` :
                             ''
                         }
+                        ${account.requiresReconnection && account.statusMessage ?
+                            `<div style="font-size: 0.875rem; color: var(--warning); margin-top: 0.35rem;">${escapeHtml(account.statusMessage)}</div>` :
+                            ''
+                        }
                     </div>
                     <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; flex-shrink: 0; align-items: center;">
                         ${account.connected ? `
+                            <button class="btn btn-primary btn-sm" onclick="connectPlexAccount('${account.id}')">Reconnect</button>
                             <button class="btn btn-secondary btn-sm" onclick="disconnectPlexAccount('${account.id}')">Disconnect</button>
                         ` : `
                             <button class="btn btn-primary btn-sm" onclick="connectPlexAccount('${account.id}')">Connect</button>

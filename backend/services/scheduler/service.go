@@ -643,14 +643,28 @@ func (s *Service) executePlexWatchlistSync(task config.ScheduledTask) (SyncResul
 
 	switch syncDirection {
 	case "source_to_target":
-		return s.syncPlexToLocal(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, dryRun)
+		result, err := s.syncPlexToLocal(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, dryRun)
+		return result, plexAuthError(err)
 	case "target_to_source":
-		return s.syncLocalToPlex(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, dryRun)
+		result, err := s.syncLocalToPlex(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, dryRun)
+		return result, plexAuthError(err)
 	case "bidirectional":
-		return s.syncBidirectional(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, conflictResolution, dryRun)
+		result, err := s.syncBidirectional(plexAccount.AuthToken, profileID, syncSource, deleteBehavior, conflictResolution, dryRun)
+		return result, plexAuthError(err)
 	default:
 		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", syncDirection)
 	}
+}
+
+func plexAuthError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "401 Unauthorized") || strings.Contains(msg, "Invalid token") || strings.Contains(msg, "could not be authenticated") {
+		return fmt.Errorf("Plex account authentication failed; reconnect the Plex account in Tools before running this task again: %w", err)
+	}
+	return err
 }
 
 // syncPlexToLocal imports items from Plex watchlist to local watchlist

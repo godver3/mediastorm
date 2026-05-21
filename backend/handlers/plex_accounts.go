@@ -36,10 +36,12 @@ func NewPlexAccountsHandler(configManager *config.Manager, plexClient *plex.Clie
 
 // PlexAccountResponse is the JSON response for a Plex account.
 type PlexAccountResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Username  string `json:"username,omitempty"`
-	Connected bool   `json:"connected"`
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	Username             string `json:"username,omitempty"`
+	Connected            bool   `json:"connected"`
+	RequiresReconnection bool   `json:"requiresReconnection,omitempty"`
+	StatusMessage        string `json:"statusMessage,omitempty"`
 }
 
 // ListAccounts returns registered Plex accounts.
@@ -64,15 +66,25 @@ func (h *PlexAccountsHandler) ListAccounts(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	reconnectionByAccount := plexReconnectionStatus(settings.ScheduledTasks.Tasks)
+
 	accounts := make([]PlexAccountResponse, 0, len(settings.Plex.Accounts))
 	for _, acc := range settings.Plex.Accounts {
 		// Master accounts see all; non-master only see their own accounts
 		if isMaster || acc.OwnerAccountID == sessionAccountID {
+			requiresReconnection := reconnectionByAccount[acc.ID]
+			statusMessage := ""
+			if requiresReconnection {
+				statusMessage = "Authentication failed. Reconnect this Plex account."
+			}
+
 			accounts = append(accounts, PlexAccountResponse{
-				ID:        acc.ID,
-				Name:      acc.Name,
-				Username:  acc.Username,
-				Connected: acc.AuthToken != "",
+				ID:                   acc.ID,
+				Name:                 acc.Name,
+				Username:             acc.Username,
+				Connected:            acc.AuthToken != "",
+				RequiresReconnection: requiresReconnection,
+				StatusMessage:        statusMessage,
 			})
 		}
 	}
@@ -81,6 +93,35 @@ func (h *PlexAccountsHandler) ListAccounts(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"accounts": accounts,
 	})
+}
+
+func plexReconnectionStatus(tasks []config.ScheduledTask) map[string]bool {
+	result := make(map[string]bool)
+	for _, task := range tasks {
+		if task.LastStatus != config.ScheduledTaskStatusError {
+			continue
+		}
+		switch task.Type {
+		case config.ScheduledTaskTypePlexWatchlistSync, config.ScheduledTaskTypePlexHistorySync:
+		default:
+			continue
+		}
+		if !isPlexAuthFailure(task.LastError) {
+			continue
+		}
+		if accountID := strings.TrimSpace(task.Config["plexAccountId"]); accountID != "" {
+			result[accountID] = true
+		}
+	}
+	return result
+}
+
+func isPlexAuthFailure(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "plex account authentication failed") ||
+		strings.Contains(message, "401 unauthorized") ||
+		strings.Contains(message, "invalid token") ||
+		strings.Contains(message, "could not be authenticated")
 }
 
 // CreateAccount creates a new Plex account entry.
@@ -443,16 +484,16 @@ func (h *PlexAccountsHandler) GetHomeUsers(w http.ResponseWriter, r *http.Reques
 
 // PlexHistoryItemResponse is the JSON response for a Plex watch history item.
 type PlexHistoryItemResponse struct {
-	RatingKey       string            `json:"ratingKey"`
-	Title           string            `json:"title"`
-	Type            string            `json:"type"` // "movie" or "episode"
-	Year            int               `json:"year,omitempty"`
-	SeriesTitle     string            `json:"seriesTitle,omitempty"`
-	Season          int               `json:"season,omitempty"`
-	Episode         int               `json:"episode,omitempty"`
-	ViewedAt        int64             `json:"viewedAt"`
-	ExternalIDs     map[string]string `json:"externalIds,omitempty"`
-	ServerName      string            `json:"serverName,omitempty"`
+	RatingKey   string            `json:"ratingKey"`
+	Title       string            `json:"title"`
+	Type        string            `json:"type"` // "movie" or "episode"
+	Year        int               `json:"year,omitempty"`
+	SeriesTitle string            `json:"seriesTitle,omitempty"`
+	Season      int               `json:"season,omitempty"`
+	Episode     int               `json:"episode,omitempty"`
+	ViewedAt    int64             `json:"viewedAt"`
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	ServerName  string            `json:"serverName,omitempty"`
 }
 
 // GetHistory fetches watch history from connected Plex servers.
