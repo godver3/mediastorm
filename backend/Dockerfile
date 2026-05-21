@@ -36,6 +36,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan1 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
+RUN ln -sf "$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -n 1)" /usr/share/vulkan/icd.d/lavapipe_icd.json
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lavapipe_icd.json
+
 # Create Python virtual environment and install dependencies
 RUN python3 -m venv /.venv && \
     /.venv/bin/pip install --no-cache-dir parsett subliminal
@@ -58,12 +62,13 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # Thumbnail HDR/DV tone mapping requires libplacebo for DV profile 5 and zscale
 # as the high-quality software fallback for HDR10/DV profile 7/8.
 RUN ffmpeg -hide_banner -filters | grep -Eq '(^|[[:space:]])libplacebo([[:space:]]|$)' \
-    && ffmpeg -hide_banner -filters | grep -Eq '(^|[[:space:]])zscale([[:space:]]|$)' \
-    && ffmpeg -hide_banner -loglevel error \
+    && ffmpeg -hide_banner -filters | grep -Eq '(^|[[:space:]])zscale([[:space:]]|$)'
+RUN ffmpeg -hide_banner -loglevel error \
         -f lavfi -i color=c=black:s=16x16:d=0.1 \
         -frames:v 1 \
         -vf "libplacebo=w=16:h=16:colorspace=bt709:color_primaries=bt709:color_trc=bt709,format=yuv420p" \
-        -f null -
+        -f null - \
+    || echo "warning: libplacebo runtime probe failed during image build; application runtime probe will select fallback"
 
 # Install yt-dlp nightly (required for YouTube trailer support, handles SABR streaming)
 RUN wget -q "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp" -O /usr/local/bin/yt-dlp \
