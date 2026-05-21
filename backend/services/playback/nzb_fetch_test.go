@@ -28,8 +28,8 @@ func TestFetchNZBSetsDownloadHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchNZB returned error: %v", err)
 	}
-	if receivedUserAgent != httpheaders.UserAgent {
-		t.Fatalf("User-Agent = %q, want %q", receivedUserAgent, httpheaders.UserAgent)
+	if receivedUserAgent != httpheaders.NZBDownloadUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", receivedUserAgent, httpheaders.NZBDownloadUserAgent)
 	}
 	if receivedAccept == "" {
 		t.Fatal("expected Accept header to be set")
