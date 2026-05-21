@@ -26,21 +26,35 @@ const (
 	thumbnailDefaultIntervalSec = 60
 	thumbnailMinIntervalSec     = 30
 	thumbnailMaxCount           = 120
-	thumbnailInitialPassCount   = 24
-	thumbnailSecondPassCount    = 60
-	thumbnailWorkerCount        = 2
+	thumbnailPreviewLODPasses   = 6
+	thumbnailWorkerCount        = 3
 	thumbnailWidth              = 240
 	thumbnailFrameTimeout       = 45 * time.Second
-	thumbnailFilterVersion      = 6
+	thumbnailFilterVersion      = 14
+	thumbnailMinJPEGBytes       = 800
+	thumbnailLibplaceboRuntime  = "libplacebo_runtime"
 )
 
 type ThumbnailManager struct {
 	baseDir    string
 	ffmpegPath string
 
-	mu       sync.Mutex
-	inFlight map[string]struct{}
+	mu            sync.Mutex
+	inFlight      map[string]struct{}
+	filterOnce    sync.Once
+	filterCaps    map[string]bool
+	filterCapsErr error
 }
+
+type thumbnailToneMapMode string
+
+const (
+	thumbnailToneMapNone        thumbnailToneMapMode = "none"
+	thumbnailToneMapLibplacebo  thumbnailToneMapMode = "libplacebo"
+	thumbnailToneMapZscale      thumbnailToneMapMode = "zscale"
+	thumbnailToneMapFFmpeg      thumbnailToneMapMode = "ffmpeg"
+	thumbnailToneMapUnsupported thumbnailToneMapMode = "unsupported"
+)
 
 type thumbnailManifest struct {
 	Key         string             `json:"key"`
@@ -53,6 +67,7 @@ type thumbnailManifest struct {
 	UpdatedAt   time.Time          `json:"updatedAt"`
 	Error       string             `json:"error,omitempty"`
 	ToneMapped  bool               `json:"toneMapped,omitempty"`
+	ToneMapMode string             `json:"toneMapMode,omitempty"`
 	DVProfile   string             `json:"dvProfile,omitempty"`
 	FilterVer   int                `json:"filterVersion,omitempty"`
 	Thumbnails  []thumbnailDetails `json:"thumbnails"`
@@ -73,6 +88,7 @@ type thumbnailStatusResponse struct {
 	UpdatedAt   time.Time          `json:"updatedAt"`
 	Error       string             `json:"error,omitempty"`
 	ToneMapped  bool               `json:"toneMapped,omitempty"`
+	ToneMapMode string             `json:"toneMapMode,omitempty"`
 	DVProfile   string             `json:"dvProfile,omitempty"`
 	FilterVer   int                `json:"filterVersion,omitempty"`
 	Thumbnails  []thumbnailURLItem `json:"thumbnails"`
@@ -159,6 +175,25 @@ func (m *ThumbnailManager) writeManifest(manifest *thumbnailManifest) error {
 	return os.Rename(tmp, filepath.Join(dir, "manifest.json"))
 }
 
+func thumbnailOutputUsable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() >= thumbnailMinJPEGBytes
+}
+
+func (m *ThumbnailManager) manifestFilesComplete(manifest *thumbnailManifest) bool {
+	if manifest == nil || manifest.Generated == 0 || len(manifest.Thumbnails) == 0 {
+		return false
+	}
+	dir := filepath.Join(m.baseDir, manifest.Key)
+	usable := 0
+	for _, thumb := range manifest.Thumbnails {
+		if thumbnailOutputUsable(filepath.Join(dir, filepath.Base(thumb.File))) {
+			usable++
+		}
+	}
+	return usable == manifest.Generated
+}
+
 func thumbnailTimes(durationSec float64, requestedInterval int) (int, []float64) {
 	if durationSec <= 0 || math.IsNaN(durationSec) || math.IsInf(durationSec, 0) {
 		return thumbnailDefaultIntervalSec, nil
@@ -189,39 +224,51 @@ func thumbnailTimes(durationSec float64, requestedInterval int) (int, []float64)
 }
 
 func thumbnailGenerationOrder(count int) []int {
+	passes := thumbnailGenerationPasses(count)
+	order := make([]int, 0, count)
+	for _, pass := range passes {
+		order = append(order, pass...)
+	}
+	return order
+}
+
+func thumbnailGenerationPasses(count int) [][]int {
 	if count <= 0 {
 		return nil
 	}
 	seen := make([]bool, count)
-	order := make([]int, 0, count)
-	add := func(idx int) {
-		if idx < 0 || idx >= count || seen[idx] {
-			return
+	passes := make([][]int, 0, thumbnailPreviewLODPasses+1)
+	addPass := func(indices []int) {
+		pass := make([]int, 0, len(indices))
+		for _, idx := range indices {
+			if idx < 0 || idx >= count || seen[idx] {
+				continue
+			}
+			seen[idx] = true
+			pass = append(pass, idx)
 		}
-		seen[idx] = true
-		order = append(order, idx)
-	}
-	addSpread := func(target int) {
-		if target <= 0 {
-			return
-		}
-		if target > count {
-			target = count
-		}
-		if target == 1 {
-			add(0)
-			return
-		}
-		for i := 0; i < target; i++ {
-			idx := int(math.Round(float64(i) * float64(count-1) / float64(target-1)))
-			add(idx)
+		if len(pass) > 0 {
+			passes = append(passes, pass)
 		}
 	}
 
-	addSpread(thumbnailInitialPassCount)
-	addSpread(thumbnailSecondPassCount)
-	addSpread(count)
-	return order
+	for lod := 1; lod <= thumbnailPreviewLODPasses; lod++ {
+		items := 1 << (lod - 1)
+		denominator := 1 << lod
+		indices := make([]int, 0, items)
+		for i := 0; i < items; i++ {
+			fraction := (1 / float64(denominator)) + (float64(i) / float64(items))
+			indices = append(indices, int(math.Round(fraction*float64(count-1))))
+		}
+		addPass(indices)
+	}
+
+	remaining := make([]int, 0, count)
+	for idx := 0; idx < count; idx++ {
+		remaining = append(remaining, idx)
+	}
+	addPass(remaining)
+	return passes
 }
 
 func thumbnailNeedsToneMap(metadata *videoMetadataResponse) bool {
@@ -245,10 +292,7 @@ func parseThumbnailDVProfile(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("dvProfile"))
 }
 
-func parseThumbnailToneMapHint(r *http.Request, dvProfile string) bool {
-	if isDolbyVisionProfile5(dvProfile) {
-		return false
-	}
+func parseThumbnailToneMapHint(r *http.Request, _ string) bool {
 	q := r.URL.Query()
 	return parseBoolQuery(q.Get("toneMap")) || parseBoolQuery(q.Get("hdr")) || parseBoolQuery(q.Get("dv"))
 }
@@ -262,11 +306,101 @@ func parseBoolQuery(value string) bool {
 	}
 }
 
-func thumbnailFilter(toneMap bool) string {
+func detectFFmpegVideoFilters(ctx context.Context, ffmpegPath string) (map[string]bool, error) {
+	path := strings.TrimSpace(ffmpegPath)
+	if path == "" {
+		path = "ffmpeg"
+	}
+	cmd := exec.CommandContext(ctx, path, "-hide_banner", "-filters")
+	output, err := cmd.CombinedOutput()
+	caps := make(map[string]bool)
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			caps[fields[1]] = true
+		}
+	}
+	if err == nil && caps["libplacebo"] {
+		if probeErr := probeFFmpegLibplacebo(ctx, path); probeErr == nil {
+			caps[thumbnailLibplaceboRuntime] = true
+		} else {
+			log.Printf("[thumbnails] ffmpeg libplacebo filter present but runtime probe failed: %v", probeErr)
+		}
+	}
+	return caps, err
+}
+
+func probeFFmpegLibplacebo(ctx context.Context, ffmpegPath string) error {
+	cmd := exec.CommandContext(
+		ctx,
+		ffmpegPath,
+		"-hide_banner",
+		"-loglevel", "error",
+		"-f", "lavfi",
+		"-i", "color=c=black:s=16x16:d=0.1",
+		"-frames:v", "1",
+		"-vf", "libplacebo=w=16:h=16:colorspace=bt709:color_primaries=bt709:color_trc=bt709,format=yuv420p",
+		"-f", "null",
+		"-",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (m *ThumbnailManager) ffmpegFilterCaps() map[string]bool {
+	m.filterOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		m.filterCaps, m.filterCapsErr = detectFFmpegVideoFilters(ctx, m.ffmpegPath)
+		if m.filterCapsErr != nil {
+			log.Printf("[thumbnails] unable to inspect ffmpeg filters: %v", m.filterCapsErr)
+		}
+	})
+	if m.filterCaps == nil {
+		return map[string]bool{}
+	}
+	return m.filterCaps
+}
+
+func (m *ThumbnailManager) thumbnailToneMapMode(toneMap bool, dvProfile string) thumbnailToneMapMode {
 	if !toneMap {
+		return thumbnailToneMapNone
+	}
+	caps := m.ffmpegFilterCaps()
+	libplaceboUsable := caps["libplacebo"] && caps[thumbnailLibplaceboRuntime]
+	if isDolbyVisionProfile5(dvProfile) {
+		if libplaceboUsable {
+			return thumbnailToneMapLibplacebo
+		}
+		return thumbnailToneMapUnsupported
+	}
+	if caps["zscale"] {
+		return thumbnailToneMapZscale
+	}
+	if libplaceboUsable {
+		return thumbnailToneMapLibplacebo
+	}
+	if caps["tonemap"] {
+		return thumbnailToneMapFFmpeg
+	}
+	return thumbnailToneMapUnsupported
+}
+
+func thumbnailFilter(mode thumbnailToneMapMode) string {
+	if mode == thumbnailToneMapNone {
 		return fmt.Sprintf("scale=%d:-2:flags=lanczos,format=yuvj420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=full", thumbnailWidth)
 	}
-	return fmt.Sprintf("format=gbrpf32le,tonemap=tonemap=mobius:param=0.35:desat=0:peak=1000,eq=brightness=0.18:contrast=1.38:saturation=2.15:gamma=0.85,scale=%d:-2:flags=lanczos,format=yuvj420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=full", thumbnailWidth)
+	switch mode {
+	case thumbnailToneMapLibplacebo:
+		return fmt.Sprintf("libplacebo=w=%d:h=-2:tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv,format=yuvj420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=full", thumbnailWidth)
+	case thumbnailToneMapZscale:
+		return fmt.Sprintf("setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,zscale=t=linear:npl=100,format=gbrpf32le,tonemap=tonemap=mobius:param=0.35:desat=0:peak=1000,zscale=t=bt709:m=bt709:p=bt709:r=tv,eq=brightness=0.03:contrast=1.08:saturation=1.15:gamma=0.98,scale=%d:-2:flags=lanczos,format=yuvj420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=full", thumbnailWidth)
+	default:
+		return fmt.Sprintf("format=gbrpf32le,tonemap=tonemap=mobius:param=0.35:desat=0:peak=1000,eq=brightness=0.18:contrast=1.38:saturation=2.15:gamma=0.85,scale=%d:-2:flags=lanczos,format=yuvj420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=full", thumbnailWidth)
+	}
 }
 
 func thumbnailInputUnavailable(output []byte) bool {
@@ -295,6 +429,7 @@ func (m *ThumbnailManager) markUnsupported(cleanPath string, durationSec float64
 		Total:       len(times),
 		Error:       reason,
 		ToneMapped:  false,
+		ToneMapMode: string(thumbnailToneMapUnsupported),
 		DVProfile:   strings.TrimSpace(dvProfile),
 		FilterVer:   thumbnailFilterVersion,
 		Thumbnails:  []thumbnailDetails{},
@@ -305,17 +440,25 @@ func (m *ThumbnailManager) markUnsupported(cleanPath string, durationSec float64
 	return key, nil
 }
 
-func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float64, intervalSec int, toneMap bool, dvProfile string) (string, bool, error) {
+func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float64, intervalSec int, toneMapMode thumbnailToneMapMode, dvProfile string) (string, bool, error) {
 	if m == nil {
 		return "", false, fmt.Errorf("thumbnail manager unavailable")
 	}
 	key := thumbnailKey(cleanPath)
 	if manifest, err := m.readManifest(key); err == nil {
-		compatible := (!toneMap || manifest.ToneMapped) && strings.EqualFold(strings.TrimSpace(manifest.DVProfile), strings.TrimSpace(dvProfile)) && manifest.FilterVer == thumbnailFilterVersion
-		if compatible && manifest.Status == "ready" && manifest.Generated > 0 {
+		manifestMode := thumbnailToneMapMode(strings.TrimSpace(manifest.ToneMapMode))
+		if manifestMode == "" {
+			if manifest.ToneMapped {
+				manifestMode = thumbnailToneMapFFmpeg
+			} else {
+				manifestMode = thumbnailToneMapNone
+			}
+		}
+		compatible := manifestMode == toneMapMode && strings.EqualFold(strings.TrimSpace(manifest.DVProfile), strings.TrimSpace(dvProfile)) && manifest.FilterVer == thumbnailFilterVersion
+		if compatible && manifest.Status == "ready" && m.manifestFilesComplete(manifest) {
 			return key, false, nil
 		}
-		if !compatible || manifest.Status == "failed" {
+		if !compatible || manifest.Status == "failed" || manifest.Status == "ready" {
 			if err := os.RemoveAll(filepath.Join(m.baseDir, key)); err != nil {
 				return "", false, fmt.Errorf("failed to clear stale thumbnail cache for regeneration: %w", err)
 			}
@@ -340,13 +483,13 @@ func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float6
 			delete(m.inFlight, key)
 			m.mu.Unlock()
 		}()
-		m.generate(key, cleanPath, sourceURL, durationSec, intervalSec, toneMap, dvProfile)
+		m.generate(key, cleanPath, sourceURL, durationSec, intervalSec, toneMapMode, dvProfile)
 	}()
 
 	return key, true, nil
 }
 
-func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSec float64, requestedInterval int, toneMap bool, dvProfile string) {
+func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSec float64, requestedInterval int, toneMapMode thumbnailToneMapMode, dvProfile string) {
 	interval, times := thumbnailTimes(durationSec, requestedInterval)
 	manifest := &thumbnailManifest{
 		Key:         key,
@@ -355,7 +498,8 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 		DurationSec: durationSec,
 		IntervalSec: interval,
 		Total:       len(times),
-		ToneMapped:  toneMap,
+		ToneMapped:  toneMapMode != thumbnailToneMapNone,
+		ToneMapMode: string(toneMapMode),
 		DVProfile:   strings.TrimSpace(dvProfile),
 		FilterVer:   thumbnailFilterVersion,
 		Thumbnails:  []thumbnailDetails{},
@@ -370,32 +514,42 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 		_ = m.writeManifest(manifest)
 		return
 	}
-	if toneMap {
-		log.Printf("[thumbnails] tone-map enabled key=%s path=%q", key, cleanPath)
-	} else if isDolbyVisionProfile5(dvProfile) {
-		log.Printf("[thumbnails] generating DV profile 5 thumbnails without tone-map key=%s path=%q", key, cleanPath)
+	if toneMapMode == thumbnailToneMapUnsupported {
+		manifest.Status = "failed"
+		manifest.Error = "thumbnail tone mapping unsupported by configured ffmpeg"
+		_ = m.writeManifest(manifest)
+		log.Printf("[thumbnails] unsupported tone-map mode key=%s path=%q dvProfile=%q", key, cleanPath, dvProfile)
+		return
+	}
+	if toneMapMode != thumbnailToneMapNone {
+		log.Printf("[thumbnails] tone-map enabled key=%s mode=%s path=%q", key, toneMapMode, cleanPath)
 	}
 
 	dir := filepath.Join(m.baseDir, key)
-	order := thumbnailGenerationOrder(len(times))
-	jobs := make(chan thumbnailJob)
-	results := make(chan thumbnailResult)
-	workerCount := thumbnailWorkerCount
-	if len(order) < workerCount {
-		workerCount = len(order)
-	}
+	for passIndex, pass := range thumbnailGenerationPasses(len(times)) {
+		if len(pass) == 0 {
+			continue
+		}
+		log.Printf("[thumbnails] pass start key=%s pass=%d jobs=%d generated=%d/%d", key, passIndex+1, len(pass), manifest.Generated, manifest.Total)
+		results := make(chan thumbnailResult, len(pass))
+		jobs := make(chan thumbnailJob)
+		workerCount := thumbnailWorkerCount
+		if len(pass) < workerCount {
+			workerCount = len(pass)
+		}
 
-	for worker := 0; worker < workerCount; worker++ {
-		go func() {
-			for job := range jobs {
-				results <- m.generateFrame(job, key, cleanPath, sourceURL, toneMap)
-			}
-		}()
-	}
+		var wg sync.WaitGroup
+		wg.Add(workerCount)
+		for worker := 0; worker < workerCount; worker++ {
+			go func() {
+				defer wg.Done()
+				for job := range jobs {
+					results <- m.generateFrame(job, key, cleanPath, sourceURL, toneMapMode, dvProfile)
+				}
+			}()
+		}
 
-	go func() {
-		defer close(jobs)
-		for _, idx := range order {
+		for _, idx := range pass {
 			t := times[idx]
 			fileName := fmt.Sprintf("thumb-%04d.jpg", idx+1)
 			jobs <- thumbnailJob{
@@ -404,16 +558,19 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 				OutputPath: filepath.Join(dir, fileName),
 			}
 		}
-	}()
+		close(jobs)
+		wg.Wait()
+		close(results)
 
-	for range order {
-		result := <-results
-		if !result.OK {
-			continue
+		for result := range results {
+			if !result.OK {
+				continue
+			}
+			manifest.Thumbnails = append(manifest.Thumbnails, result.Details)
+			manifest.Generated = len(manifest.Thumbnails)
+			_ = m.writeManifest(manifest)
 		}
-		manifest.Thumbnails = append(manifest.Thumbnails, result.Details)
-		manifest.Generated = len(manifest.Thumbnails)
-		_ = m.writeManifest(manifest)
+		log.Printf("[thumbnails] pass complete key=%s pass=%d generated=%d/%d", key, passIndex+1, manifest.Generated, manifest.Total)
 	}
 
 	if manifest.Generated == 0 {
@@ -426,16 +583,17 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 	log.Printf("[thumbnails] complete key=%s path=%q generated=%d/%d", key, cleanPath, manifest.Generated, manifest.Total)
 }
 
-func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMap bool) thumbnailResult {
+func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string) thumbnailResult {
 	details := thumbnailDetails{TimeSec: job.TimeSec, File: job.FileName}
-	if _, err := os.Stat(job.OutputPath); err == nil {
+	if thumbnailOutputUsable(job.OutputPath) {
 		return thumbnailResult{Details: details, OK: true}
 	}
+	_ = os.Remove(job.OutputPath)
 
-	output, err := m.runFrameCommand(job, sourceURL, thumbnailFilter(toneMap))
-	if err != nil && toneMap && !thumbnailInputUnavailable(output) {
+	output, err := m.runFrameCommand(job, sourceURL, thumbnailFilter(toneMapMode))
+	if err != nil && toneMapMode != thumbnailToneMapNone && !isDolbyVisionProfile5(dvProfile) && !thumbnailInputUnavailable(output) {
 		log.Printf("[thumbnails] tone-map frame failed key=%s time=%.1f path=%q err=%v output=%s; retrying without tone map", key, job.TimeSec, cleanPath, err, strings.TrimSpace(string(output)))
-		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(false))
+		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(thumbnailToneMapNone))
 	}
 	if err != nil {
 		if thumbnailInputUnavailable(output) {
@@ -443,6 +601,15 @@ func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourc
 		} else {
 			log.Printf("[thumbnails] frame failed key=%s time=%.1f path=%q err=%v output=%s", key, job.TimeSec, cleanPath, err, strings.TrimSpace(string(output)))
 		}
+		return thumbnailResult{}
+	}
+	if !thumbnailOutputUsable(job.OutputPath) {
+		size := int64(-1)
+		if info, statErr := os.Stat(job.OutputPath); statErr == nil {
+			size = info.Size()
+		}
+		log.Printf("[thumbnails] frame unusable key=%s time=%.1f path=%q file=%s size=%d", key, job.TimeSec, cleanPath, job.OutputPath, size)
+		_ = os.Remove(job.OutputPath)
 		return thumbnailResult{}
 	}
 	return thumbnailResult{Details: details, OK: true}
@@ -495,21 +662,23 @@ func (h *VideoHandler) StartThumbnails(w http.ResponseWriter, r *http.Request) {
 	intervalSec, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("interval")))
 	dvProfile := parseThumbnailDVProfile(r)
 
-	sourceURL := h.buildLocalVideoStreamURL(cleanPath)
-	if sourceURL != "" {
-		log.Printf("[thumbnails] using local stream proxy key=%s path=%q", thumbnailKey(cleanPath), cleanPath)
+	sourceURL, err := h.resolveSeekableURL(r.Context(), cleanPath)
+	if err == nil && sourceURL != "" {
+		log.Printf("[thumbnails] using seekable direct URL key=%s path=%q", thumbnailKey(cleanPath), cleanPath)
 	} else {
-		var err error
-		sourceURL, err = h.resolveSeekableURL(r.Context(), cleanPath)
-		if err != nil || sourceURL == "" {
+		sourceURL = h.buildLocalVideoStreamURL(cleanPath)
+		if sourceURL != "" {
+			log.Printf("[thumbnails] using local stream proxy key=%s path=%q", thumbnailKey(cleanPath), cleanPath)
+		} else {
 			log.Printf("[thumbnails] no seekable URL for %q: %v", cleanPath, err)
 			http.Error(w, "no seekable URL available", http.StatusNotImplemented)
 			return
 		}
 	}
 
-	toneMap := parseThumbnailToneMapHint(r, dvProfile) || (!isDolbyVisionProfile5(dvProfile) && thumbnailNeedsToneMap(h.getCachedMetadata(cleanPath)))
-	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, durationSec, intervalSec, toneMap, dvProfile)
+	toneMap := parseThumbnailToneMapHint(r, dvProfile) || thumbnailNeedsToneMap(h.getCachedMetadata(cleanPath))
+	toneMapMode := h.thumbnailManager.thumbnailToneMapMode(toneMap, dvProfile)
+	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, durationSec, intervalSec, toneMapMode, dvProfile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -613,13 +782,19 @@ func (h *VideoHandler) thumbnailStatusResponse(r *http.Request, key string) (*th
 		UpdatedAt:   manifest.UpdatedAt,
 		Error:       manifest.Error,
 		ToneMapped:  manifest.ToneMapped,
+		ToneMapMode: manifest.ToneMapMode,
 		DVProfile:   manifest.DVProfile,
 		FilterVer:   manifest.FilterVer,
 		Thumbnails:  make([]thumbnailURLItem, 0, len(manifest.Thumbnails)),
 	}
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	dir := filepath.Join(h.thumbnailManager.baseDir, key)
 	for _, thumb := range manifest.Thumbnails {
-		u := fmt.Sprintf("/api/video/thumbnails/image/%s/%s", key, thumb.File)
+		file := filepath.Base(thumb.File)
+		if !thumbnailOutputUsable(filepath.Join(dir, file)) {
+			continue
+		}
+		u := fmt.Sprintf("/api/video/thumbnails/image/%s/%s", key, file)
 		if token != "" {
 			u += "?token=" + url.QueryEscape(token)
 		}
@@ -628,5 +803,6 @@ func (h *VideoHandler) thumbnailStatusResponse(r *http.Request, key string) (*th
 	sort.Slice(resp.Thumbnails, func(i, j int) bool {
 		return resp.Thumbnails[i].TimeSec < resp.Thumbnails[j].TimeSec
 	})
+	resp.Generated = len(resp.Thumbnails)
 	return resp, nil
 }

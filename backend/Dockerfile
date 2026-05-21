@@ -29,9 +29,11 @@ RUN GOTOOLCHAIN=auto CGO_ENABLED=1 go build -o mediastorm .
 # Final stage
 FROM debian:bookworm-slim
 
-# Install ca-certificates, download tools, and Python for title parsing
+# Install ca-certificates, download tools, Python for title parsing, and
+# software Vulkan so libplacebo DV5 thumbnails do not require GPU passthrough.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget xz-utils python3 python3-venv python3-pip \
+    libvulkan1 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 # Create Python virtual environment and install dependencies
@@ -52,6 +54,16 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     && mv "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl/bin/ffprobe" /usr/local/bin/ \
     && rm -rf "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl" "ffmpeg-master-latest-${FFMPEG_ARCH}-gpl.tar.xz" \
     && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+
+# Thumbnail HDR/DV tone mapping requires libplacebo for DV profile 5 and zscale
+# as the high-quality software fallback for HDR10/DV profile 7/8.
+RUN ffmpeg -hide_banner -filters | grep -Eq '(^|[[:space:]])libplacebo([[:space:]]|$)' \
+    && ffmpeg -hide_banner -filters | grep -Eq '(^|[[:space:]])zscale([[:space:]]|$)' \
+    && ffmpeg -hide_banner -loglevel error \
+        -f lavfi -i color=c=black:s=16x16:d=0.1 \
+        -frames:v 1 \
+        -vf "libplacebo=w=16:h=16:colorspace=bt709:color_primaries=bt709:color_trc=bt709,format=yuv420p" \
+        -f null -
 
 # Install yt-dlp nightly (required for YouTube trailer support, handles SABR streaming)
 RUN wget -q "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp" -O /usr/local/bin/yt-dlp \
@@ -90,4 +102,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Run the application
 CMD ["./mediastorm"]
-
