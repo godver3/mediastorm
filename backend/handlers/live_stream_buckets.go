@@ -30,6 +30,7 @@ func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
 	return models.ResolvedLiveSource{
 		Mode:                    settings.Live.Mode,
 		PlaylistURL:             settings.Live.PlaylistURL,
+		ProxyURL:                settings.Live.ProxyURL,
 		Sources:                 configPlaylistSourcesToModel(settings.Live.Sources),
 		PlaylistSources:         configPlaylistSourcesToModel(settings.Live.PlaylistSources),
 		XtreamHost:              settings.Live.XtreamHost,
@@ -61,6 +62,7 @@ func configPlaylistSourcesToModel(sources []config.LivePlaylistSource) []models.
 			Name:                  src.Name,
 			Mode:                  src.Mode,
 			PlaylistURL:           src.PlaylistURL,
+			ProxyURL:              src.ProxyURL,
 			XtreamHost:            src.XtreamHost,
 			XtreamUsername:        src.XtreamUsername,
 			XtreamPassword:        src.XtreamPassword,

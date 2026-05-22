@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/netproxy"
 	"novastream/models"
 )
 
@@ -274,6 +275,16 @@ func (s *Service) fetchXtreamEPG(ctx context.Context, settings *config.Settings,
 
 // fetchXMLTV fetches and parses XMLTV data from a URL.
 func (s *Service) fetchXMLTV(ctx context.Context, xmltvURL string, schedule *models.EPGSchedule) error {
+	proxyURL := ""
+	if s.cfgManager != nil {
+		if settings, err := s.cfgManager.Load(); err == nil {
+			proxyURL = strings.TrimSpace(settings.Live.ProxyURL)
+		}
+	}
+	return s.fetchXMLTVWithProxy(ctx, xmltvURL, proxyURL, schedule)
+}
+
+func (s *Service) fetchXMLTVWithProxy(ctx context.Context, xmltvURL, proxyURL string, schedule *models.EPGSchedule) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, xmltvURL, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -282,7 +293,7 @@ func (s *Service) fetchXMLTV(ctx context.Context, xmltvURL string, schedule *mod
 	// Add Accept-Encoding for gzip
 	req.Header.Set("Accept-Encoding", "gzip")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.httpClient(proxyURL).Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch EPG: %w", err)
 	}
@@ -309,29 +320,41 @@ func (s *Service) fetchXMLTV(ctx context.Context, xmltvURL string, schedule *mod
 	return s.parseXMLTV(limited, schedule)
 }
 
+func (s *Service) httpClient(proxyURL string) *http.Client {
+	if strings.TrimSpace(proxyURL) == "" {
+		return s.client
+	}
+	client, err := netproxy.NewHTTPClient(defaultHTTPTimeout, proxyURL)
+	if err != nil {
+		log.Printf("[epg] invalid proxy URL %q: %v", proxyURL, err)
+		return s.client
+	}
+	return client
+}
+
 // XMLTV structures for parsing
 type xmltvTV struct {
-	XMLName    xml.Name          `xml:"tv"`
-	Channels   []xmltvChannel    `xml:"channel"`
-	Programmes []xmltvProgramme  `xml:"programme"`
+	XMLName    xml.Name         `xml:"tv"`
+	Channels   []xmltvChannel   `xml:"channel"`
+	Programmes []xmltvProgramme `xml:"programme"`
 }
 
 type xmltvChannel struct {
-	ID          string        `xml:"id,attr"`
-	DisplayName []xmltvLang   `xml:"display-name"`
-	Icon        []xmltvIcon   `xml:"icon"`
+	ID          string      `xml:"id,attr"`
+	DisplayName []xmltvLang `xml:"display-name"`
+	Icon        []xmltvIcon `xml:"icon"`
 }
 
 type xmltvProgramme struct {
-	Start    string          `xml:"start,attr"`
-	Stop     string          `xml:"stop,attr"`
-	Channel  string          `xml:"channel,attr"`
-	Title    []xmltvLang     `xml:"title"`
-	Desc     []xmltvLang     `xml:"desc"`
-	Category []xmltvLang     `xml:"category"`
-	EpNum    []xmltvEpisode  `xml:"episode-num"`
-	Icon     []xmltvIcon     `xml:"icon"`
-	Rating   []xmltvRating   `xml:"rating"`
+	Start    string         `xml:"start,attr"`
+	Stop     string         `xml:"stop,attr"`
+	Channel  string         `xml:"channel,attr"`
+	Title    []xmltvLang    `xml:"title"`
+	Desc     []xmltvLang    `xml:"desc"`
+	Category []xmltvLang    `xml:"category"`
+	EpNum    []xmltvEpisode `xml:"episode-num"`
+	Icon     []xmltvIcon    `xml:"icon"`
+	Rating   []xmltvRating  `xml:"rating"`
 }
 
 type xmltvLang struct {

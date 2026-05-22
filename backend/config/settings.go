@@ -294,6 +294,7 @@ type LivePlaylistSource struct {
 	Name                  string               `json:"name"`
 	Mode                  string               `json:"mode,omitempty"`
 	PlaylistURL           string               `json:"playlistUrl"`
+	ProxyURL              string               `json:"proxyUrl,omitempty"`
 	XtreamHost            string               `json:"xtreamHost,omitempty"`
 	XtreamUsername        string               `json:"xtreamUsername,omitempty"`
 	XtreamPassword        string               `json:"xtreamPassword,omitempty"`
@@ -332,6 +333,7 @@ type EPGSettings struct {
 type LiveSettings struct {
 	Mode                  string               `json:"mode"`        // "m3u" or "xtream" - how to source the playlist
 	PlaylistURL           string               `json:"playlistUrl"` // M3U playlist URL (used when mode is "m3u")
+	ProxyURL              string               `json:"proxyUrl,omitempty"`
 	Sources               []LivePlaylistSource `json:"sources,omitempty"`
 	PlaylistSources       []LivePlaylistSource `json:"playlistSources,omitempty"`
 	XtreamHost            string               `json:"xtreamHost"`     // Xtream Codes server URL (e.g., "http://example.com:8080")
@@ -1682,6 +1684,7 @@ func migrateLiveSourcesRaw(raw map[string]interface{}) {
 	for _, key := range []string{
 		"mode",
 		"playlistUrl",
+		"proxyUrl",
 		"xtreamHost",
 		"xtreamUsername",
 		"xtreamPassword",
@@ -1701,6 +1704,7 @@ func migrateLiveSourcesRaw(raw map[string]interface{}) {
 func liveHasLegacySourceConfig(liveRaw map[string]interface{}) bool {
 	for _, key := range []string{
 		"playlistUrl",
+		"proxyUrl",
 		"xtreamHost",
 		"xtreamUsername",
 		"xtreamPassword",

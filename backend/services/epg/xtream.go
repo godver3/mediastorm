@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/netproxy"
 	"novastream/models"
 )
 
@@ -146,7 +147,7 @@ func (s *Service) fetchXtreamStreams(ctx context.Context, settings *config.Setti
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := s.xtreamHTTPClient(settings).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch streams: %w", err)
 	}
@@ -183,7 +184,7 @@ func (s *Service) fetchChannelEPG(ctx context.Context, settings *config.Settings
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := s.xtreamHTTPClient(settings).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch channel EPG: %w", err)
 	}
@@ -246,6 +247,18 @@ func (s *Service) fetchChannelEPG(ctx context.Context, settings *config.Settings
 	})
 
 	return programs, nil
+}
+
+func (s *Service) xtreamHTTPClient(settings *config.Settings) *http.Client {
+	if settings == nil || strings.TrimSpace(settings.Live.ProxyURL) == "" {
+		return s.client
+	}
+	client, err := netproxy.NewHTTPClient(defaultHTTPTimeout, settings.Live.ProxyURL)
+	if err != nil {
+		log.Printf("[epg] invalid Xtream proxy URL %q: %v", settings.Live.ProxyURL, err)
+		return s.client
+	}
+	return client
 }
 
 // mergePrograms merges per-channel EPG data into existing programmes.

@@ -29,6 +29,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/auth"
+	"novastream/internal/netproxy"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -419,6 +420,7 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source the IPTV playlist", "order": 0},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 1},
+			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for Live TV provider requests (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 2},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 2},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 3},
 			"xtreamPassword":              map[string]interface{}{"type": "password", "label": "Password", "description": "Xtream Codes password", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 4},
@@ -451,6 +453,7 @@ var SettingsSchema = map[string]interface{}{
 			"name":                        map[string]interface{}{"type": "text", "label": "Name", "description": "Display name shown in the apps.", "order": 1},
 			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source this IPTV provider.", "order": 2},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL.", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 3},
+			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for this Live TV source (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 4},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 4},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 5},
 			"xtreamPassword":              map[string]interface{}{"type": "password", "label": "Password", "description": "Xtream Codes password", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 6},
@@ -948,6 +951,13 @@ var SettingsSchema = map[string]interface{}{
 				"order":       1,
 				"showWhen":    map[string]interface{}{"field": "mode", "value": "m3u"},
 			},
+			"proxyUrl": map[string]interface{}{
+				"type":        "text",
+				"label":       "Proxy URL",
+				"description": "Optional proxy for this profile's Live TV requests (for example socks5://127.0.0.1:18080).",
+				"placeholder": "socks5://127.0.0.1:18080",
+				"order":       2,
+			},
 			"xtreamHost": map[string]interface{}{
 				"type":        "text",
 				"label":       "Server URL",
@@ -1071,6 +1081,7 @@ var SettingsSchema = map[string]interface{}{
 			"name":                        map[string]interface{}{"type": "text", "label": "Name", "description": "Display name shown in the apps.", "order": 1},
 			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source this IPTV provider.", "order": 2},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL.", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 3},
+			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for this Live TV source (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 4},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 4},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 5},
 			"xtreamPassword":              map[string]interface{}{"type": "password", "label": "Password", "description": "Xtream Codes password", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 6},
@@ -6049,6 +6060,7 @@ func (h *AdminUIHandler) DisconnectSimklAccount(w http.ResponseWriter, r *http.R
 type TestLiveTVRequest struct {
 	Mode           string `json:"mode"`
 	PlaylistURL    string `json:"playlistUrl"`
+	ProxyURL       string `json:"proxyUrl"`
 	XtreamHost     string `json:"xtreamHost"`
 	XtreamUsername string `json:"xtreamUsername"`
 	XtreamPassword string `json:"xtreamPassword"`
@@ -6064,7 +6076,14 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client, err := netproxy.NewHTTPClient(15*time.Second, req.ProxyURL)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Invalid proxy URL: %v", err),
+		})
+		return
+	}
 
 	switch req.Mode {
 	case "m3u":

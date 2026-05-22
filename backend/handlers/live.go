@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/netproxy"
 	"novastream/models"
 )
 
@@ -281,6 +282,11 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), liveStreamTimeout)
 	defer cancel()
 
+	if proxyURL := h.resolveProxyURLForStream(r, targetURL); proxyURL != "" {
+		h.proxyStreamWithHTTPClient(w, r, ctx, targetURL, proxyURL)
+		return
+	}
+
 	// Build FFmpeg args with optional buffering settings
 	args := []string{
 		"-hide_banner",
@@ -398,6 +404,103 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[live] ffmpeg exited with error for %q: %v", targetURL.String(), err)
 		}
 	}
+}
+
+func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.Request, ctx context.Context, targetURL *url.URL, proxyURL string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
+	if err != nil {
+		http.Error(w, "failed to prepare live stream", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+
+	resp, err := h.liveHTTPClient(proxyURL).Do(req)
+	if err != nil {
+		log.Printf("[live] proxied stream request failed for %q via %q: %v", targetURL.String(), proxyURL, err)
+		http.Error(w, "failed to open proxied live stream", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		http.Error(w, fmt.Sprintf("live stream returned status %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "video/mp2t"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("Accept-Ranges", "none")
+	w.WriteHeader(http.StatusOK)
+
+	tracker := GetStreamTracker()
+	streamID, bytesCounter, activityCounter := tracker.StartStream(r, targetURL.String(), 0, 0, 0)
+	defer tracker.EndStream(streamID)
+
+	buf := make([]byte, 256*1024)
+	var total int64
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				if !errors.Is(writeErr, context.Canceled) && !errors.Is(writeErr, io.EOF) && !isConnectionError(writeErr) {
+					log.Printf("[live] proxied stream writer error for %q: %v", targetURL.String(), writeErr)
+				}
+				return
+			}
+			total += int64(n)
+			atomic.StoreInt64(bytesCounter, total)
+			atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) && !errors.Is(readErr, context.Canceled) {
+				log.Printf("[live] proxied stream reader error for %q: %v", targetURL.String(), readErr)
+			}
+			return
+		}
+	}
+}
+
+func (h *LiveHandler) resolveProxyURLForStream(r *http.Request, targetURL *url.URL) string {
+	if h.cfgManager == nil {
+		return ""
+	}
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		log.Printf("[live] failed to load settings for stream proxy resolution: %v", err)
+		return ""
+	}
+	src := h.resolveProfileLiveSource(r, settings)
+	targetHost := normalizeHost(targetURL.Scheme + "://" + targetURL.Host)
+	for _, source := range resolvedLiveSources(src) {
+		if strings.TrimSpace(source.ProxyURL) == "" {
+			continue
+		}
+		if liveSourceMatchesStreamHost(source, targetHost) {
+			return source.ProxyURL
+		}
+	}
+	return strings.TrimSpace(src.ProxyURL)
+}
+
+func liveSourceMatchesStreamHost(source resolvedM3USource, targetHost string) bool {
+	for _, rawURL := range []string{source.XtreamHost, source.PlaylistURL} {
+		if strings.TrimSpace(rawURL) == "" {
+			continue
+		}
+		if normalizeHost(rawURL) == targetHost {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *LiveHandler) parseRemoteURL(raw string) (*url.URL, error) {
@@ -639,6 +742,7 @@ type resolvedM3USource struct {
 	Name           string
 	Mode           string
 	PlaylistURL    string
+	ProxyURL       string
 	XtreamHost     string
 	XtreamUsername string
 	XtreamPassword string
@@ -679,6 +783,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			Name:           name,
 			Mode:           mode,
 			PlaylistURL:    strings.TrimSpace(candidate.PlaylistURL),
+			ProxyURL:       strings.TrimSpace(candidate.ProxyURL),
 			XtreamHost:     strings.TrimSpace(candidate.XtreamHost),
 			XtreamUsername: strings.TrimSpace(candidate.XtreamUsername),
 			XtreamPassword: strings.TrimSpace(candidate.XtreamPassword),
@@ -696,6 +801,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			Name:        "Default",
 			Mode:        "m3u",
 			PlaylistURL: strings.TrimSpace(src.PlaylistURL),
+			ProxyURL:    strings.TrimSpace(src.ProxyURL),
 		})
 	}
 	if len(sources) == 0 &&
@@ -707,6 +813,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			ID:             "default",
 			Name:           "Default",
 			Mode:           "xtream",
+			ProxyURL:       strings.TrimSpace(src.ProxyURL),
 			XtreamHost:     strings.TrimSpace(src.XtreamHost),
 			XtreamUsername: strings.TrimSpace(src.XtreamUsername),
 			XtreamPassword: strings.TrimSpace(src.XtreamPassword),
@@ -855,7 +962,7 @@ func filterChannels(channels []LiveChannel, filter config.LiveTVFilterSettings) 
 }
 
 // fetchPlaylistContents fetches the M3U playlist from the given URL.
-func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL string) (string, error) {
+func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL, proxyURL string) (string, error) {
 	if strings.TrimSpace(playlistURL) == "" {
 		return "", errors.New("no playlist URL configured")
 	}
@@ -880,7 +987,7 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL str
 		return "", fmt.Errorf("failed to construct playlist request: %w", err)
 	}
 
-	resp, err := h.client.Do(req)
+	resp, err := h.liveHTTPClient(proxyURL).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to download playlist: %w", err)
 	}
@@ -912,8 +1019,21 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL str
 	return string(body), nil
 }
 
+func (h *LiveHandler) liveHTTPClient(proxyURL string) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return h.client
+	}
+	client, err := netproxy.NewHTTPClient(defaultPlaylistTimeout, proxyURL)
+	if err != nil {
+		log.Printf("[live] invalid proxy URL %q: %v", proxyURL, err)
+		return h.client
+	}
+	return client
+}
+
 // fetchXtreamChannels fetches live channels from the Xtream Codes API.
-func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, password string) ([]LiveChannel, error) {
+func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, password, proxyURL string) ([]LiveChannel, error) {
 	host = strings.TrimRight(host, "/")
 
 	// Fetch categories first to build a category ID -> name map
@@ -927,7 +1047,8 @@ func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, p
 		return nil, fmt.Errorf("failed to create categories request: %w", err)
 	}
 
-	catResp, err := h.client.Do(catReq)
+	client := h.liveHTTPClient(proxyURL)
+	catResp, err := client.Do(catReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch categories: %w", err)
 	}
@@ -959,7 +1080,7 @@ func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, p
 		return nil, fmt.Errorf("failed to create streams request: %w", err)
 	}
 
-	streamResp, err := h.client.Do(streamReq)
+	streamResp, err := client.Do(streamReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch streams: %w", err)
 	}
@@ -1028,6 +1149,7 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 		XtreamHost:              globalSettings.Live.XtreamHost,
 		XtreamUsername:          globalSettings.Live.XtreamUsername,
 		XtreamPassword:          globalSettings.Live.XtreamPassword,
+		ProxyURL:                globalSettings.Live.ProxyURL,
 		MaxStreams:              globalSettings.Live.MaxStreams,
 		PlaylistCacheTTLHours:   globalSettings.Live.PlaylistCacheTTLHours,
 		ProbeSizeMB:             globalSettings.Live.ProbeSizeMB,
@@ -1087,7 +1209,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 	includeSourceInID := len(sources) > 1
 	for _, liveSource := range selectedSources {
 		if liveSource.Mode == "xtream" {
-			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword)
+			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
 			if err != nil {
 				log.Printf("[live] GetChannels Xtream error for source %q: %v", liveSource.ID, err)
 				http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
@@ -1096,7 +1218,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 			allChannels = append(allChannels, tagChannelsWithSource(channels, liveSource, includeSourceInID)...)
 			continue
 		}
-		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL)
+		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
 		if err != nil {
 			log.Printf("[live] GetChannels error for source %q: %v", liveSource.ID, err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
@@ -1158,7 +1280,7 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 	includeSourceInID := len(sources) > 1
 	for _, liveSource := range selectedSources {
 		if liveSource.Mode == "xtream" {
-			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword)
+			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
 			if err != nil {
 				log.Printf("[live] GetCategories Xtream error for source %q: %v", liveSource.ID, err)
 				http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
@@ -1167,7 +1289,7 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 			allChannels = append(allChannels, tagChannelsWithSource(channels, liveSource, includeSourceInID)...)
 			continue
 		}
-		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL)
+		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
 		if err != nil {
 			log.Printf("[live] GetCategories error for source %q: %v", liveSource.ID, err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
