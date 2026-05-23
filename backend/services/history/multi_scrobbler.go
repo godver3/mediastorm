@@ -31,10 +31,10 @@ func (m *MultiScrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID
 	return firstErr
 }
 
-func (m *MultiScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (m *MultiScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	var firstErr error
 	for _, s := range m.scrobblers {
-		if err := s.ScrobbleEpisode(userID, showTVDBID, season, episode, watchedAt); err != nil {
+		if err := s.ScrobbleEpisode(userID, showTVDBID, season, episode, watchedAt, externalIDs); err != nil {
 			log.Printf("[multi-scrobbler] episode scrobble error: %v", err)
 			if firstErr == nil {
 				firstErr = err
@@ -82,5 +82,11 @@ func (m *MultiRealTimeScrobbler) HandleProgressUpdate(userID string, update mode
 func (m *MultiRealTimeScrobbler) StopSession(userID string, update models.PlaybackProgressUpdate, percentWatched float64) {
 	for _, s := range m.scrobblers {
 		s.StopSession(userID, update, percentWatched)
+	}
+}
+
+func (m *MultiRealTimeScrobbler) ClearSession(userID string, update models.PlaybackProgressUpdate) {
+	for _, s := range m.scrobblers {
+		s.ClearSession(userID, update)
 	}
 }

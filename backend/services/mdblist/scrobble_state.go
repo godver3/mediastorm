@@ -164,6 +164,16 @@ func (t *ScrobbleStateTracker) StopSession(userID string, update models.Playback
 	}
 }
 
+// ClearSession removes a local realtime scrobble session without sending
+// scrobble/stop. Use this when another path is already writing watched history.
+func (t *ScrobbleStateTracker) ClearSession(userID string, update models.PlaybackProgressUpdate) {
+	key := mdblistSessionKey(userID, update.MediaType, update.ItemID)
+
+	t.mu.Lock()
+	delete(t.sessions, key)
+	t.mu.Unlock()
+}
+
 // StartCleanup starts a goroutine that removes stale sessions.
 func (t *ScrobbleStateTracker) StartCleanup(ctx context.Context) {
 	ticker := time.NewTicker(t.refreshInterval)

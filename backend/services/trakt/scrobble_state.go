@@ -2,6 +2,7 @@ package trakt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -98,7 +99,9 @@ func (t *ScrobbleStateTracker) HandleProgressUpdate(userID string, update models
 	if update.IsPaused {
 		// Transition to paused
 		if sess.state == stateWatching {
-			if _, err := t.client.ScrobblePause(accessToken, req); err != nil {
+			if _, err := scrobbleWithAbsoluteEpisodeFallback("pause", req, func(scrobbleReq ScrobbleRequest) (*ScrobbleResponse, error) {
+				return t.client.ScrobblePause(accessToken, scrobbleReq)
+			}); err != nil {
 				log.Printf("[trakt-scrobble] pause failed for %s: %v", key, err)
 			} else {
 				sess.state = statePaused
@@ -112,7 +115,9 @@ func (t *ScrobbleStateTracker) HandleProgressUpdate(userID string, update models
 	switch sess.state {
 	case stateIdle, statePaused:
 		// Start or resume
-		if _, err := t.client.ScrobbleStart(accessToken, req); err != nil {
+		if _, err := scrobbleWithAbsoluteEpisodeFallback("start", req, func(scrobbleReq ScrobbleRequest) (*ScrobbleResponse, error) {
+			return t.client.ScrobbleStart(accessToken, scrobbleReq)
+		}); err != nil {
 			log.Printf("[trakt-scrobble] start failed for %s: %v", key, err)
 		} else {
 			sess.state = stateWatching
@@ -121,7 +126,9 @@ func (t *ScrobbleStateTracker) HandleProgressUpdate(userID string, update models
 	case stateWatching:
 		// Re-send start periodically to keep "now watching" active
 		if now.Sub(sess.lastTraktCall) >= t.refreshInterval {
-			if _, err := t.client.ScrobbleStart(accessToken, req); err != nil {
+			if _, err := scrobbleWithAbsoluteEpisodeFallback("refresh", req, func(scrobbleReq ScrobbleRequest) (*ScrobbleResponse, error) {
+				return t.client.ScrobbleStart(accessToken, scrobbleReq)
+			}); err != nil {
 				log.Printf("[trakt-scrobble] refresh failed for %s: %v", key, err)
 			} else {
 				sess.lastTraktCall = now
@@ -159,9 +166,21 @@ func (t *ScrobbleStateTracker) StopSession(userID string, update models.Playback
 	}
 
 	req := buildScrobbleRequest(update, percentWatched)
-	if _, err := t.client.ScrobbleStop(accessToken, req); err != nil {
+	if _, err := scrobbleWithAbsoluteEpisodeFallback("stop", req, func(scrobbleReq ScrobbleRequest) (*ScrobbleResponse, error) {
+		return t.client.ScrobbleStop(accessToken, scrobbleReq)
+	}); err != nil {
 		log.Printf("[trakt-scrobble] stop failed for %s: %v", key, err)
 	}
+}
+
+// ClearSession removes a local realtime scrobble session without sending
+// scrobble/stop. Use this when another path is already writing watched history.
+func (t *ScrobbleStateTracker) ClearSession(userID string, update models.PlaybackProgressUpdate) {
+	key := sessionKey(userID, update.MediaType, update.ItemID)
+
+	t.mu.Lock()
+	delete(t.sessions, key)
+	t.mu.Unlock()
 }
 
 // StartCleanup starts a goroutine that removes stale sessions (no update for staleTimeout).
@@ -206,9 +225,11 @@ func buildScrobbleRequest(update models.PlaybackProgressUpdate, percentWatched f
 		}
 	} else if update.MediaType == "episode" {
 		req.Episode = &ScrobbleEpisode{
-			Season: update.SeasonNumber,
-			Number: update.EpisodeNumber,
-			Title:  update.EpisodeName,
+			Season:    update.SeasonNumber,
+			Number:    update.EpisodeNumber,
+			NumberAbs: absoluteEpisodeNumber(update.ExternalIDs),
+			Title:     update.EpisodeName,
+			IDs:       episodeIDsToSyncIDs(update.ExternalIDs),
 		}
 		req.Show = &ScrobbleShow{
 			Title: update.SeriesName,
@@ -217,6 +238,46 @@ func buildScrobbleRequest(update models.PlaybackProgressUpdate, percentWatched f
 	}
 
 	return req
+}
+
+func scrobbleWithAbsoluteEpisodeFallback(action string, req ScrobbleRequest, call func(ScrobbleRequest) (*ScrobbleResponse, error)) (*ScrobbleResponse, error) {
+	resp, err := call(req)
+	if !errors.Is(err, ErrNotFound) {
+		return resp, err
+	}
+
+	fallbackReq, ok := scrobbleAbsoluteEpisodeRequest(req)
+	if !ok {
+		return resp, err
+	}
+
+	resp, fallbackErr := call(fallbackReq)
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("%w; absolute episode fallback failed: %v", err, fallbackErr)
+	}
+
+	log.Printf("[trakt-scrobble] %s matched using absolute episode number %d", action, fallbackReq.Episode.Number)
+	return resp, nil
+}
+
+func scrobbleAbsoluteEpisodeRequest(req ScrobbleRequest) (ScrobbleRequest, bool) {
+	if req.Episode == nil || req.Episode.NumberAbs <= 0 || req.Episode.NumberAbs == req.Episode.Number {
+		return ScrobbleRequest{}, false
+	}
+
+	fallbackReq := req
+	episode := *req.Episode
+	episode.Number = episode.NumberAbs
+	fallbackReq.Episode = &episode
+	return fallbackReq, true
+}
+
+func absoluteEpisodeNumber(extIDs map[string]string) int {
+	if extIDs == nil {
+		return 0
+	}
+	number, _ := strconv.Atoi(extIDs["absoluteEpisode"])
+	return number
 }
 
 // externalIDsToSyncIDs converts the map[string]string external IDs to SyncIDs.
@@ -230,6 +291,27 @@ func externalIDsToSyncIDs(extIDs map[string]string) SyncIDs {
 	}
 	if v, ok := extIDs["tvdb"]; ok {
 		ids.TVDB, _ = strconv.Atoi(v)
+	}
+	return ids
+}
+
+// episodeIDsToSyncIDs extracts episode-level IDs from a progress update.
+func episodeIDsToSyncIDs(extIDs map[string]string) SyncIDs {
+	ids := SyncIDs{}
+	if extIDs == nil {
+		return ids
+	}
+	if v, ok := extIDs["episodeTvdb"]; ok {
+		ids.TVDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["episodeTmdb"]; ok {
+		ids.TMDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["episodeImdb"]; ok {
+		ids.IMDB = v
+	}
+	if v, ok := extIDs["episodeTrakt"]; ok {
+		ids.Trakt, _ = strconv.Atoi(v)
 	}
 	return ids
 }

@@ -2,6 +2,7 @@ package trakt
 
 import (
 	"log"
+	"strconv"
 	"time"
 
 	"novastream/config"
@@ -105,7 +106,7 @@ func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID stri
 }
 
 // ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode for the given user.
-func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	if !s.IsEnabledForUser(userID) {
 		log.Printf("[trakt] scrobbling not enabled for user %s", userID)
 		return nil
@@ -123,7 +124,7 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 	}
 
 	watchedAtStr := watchedAt.UTC().Format(time.RFC3339)
-	return s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, episode, watchedAtStr)
+	return s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, traktHistoryEpisodeNumber(episode, externalIDs), watchedAtStr, episodeSyncIDs(externalIDs))
 }
 
 // ScrobbleMovieLegacy is for backward compatibility - scrobbles without user context.
@@ -159,9 +160,39 @@ func (s *Scrobbler) ScrobbleEpisodeLegacy(showTVDBID, season, episode int, watch
 		if account.ScrobblingEnabled && account.AccessToken != "" {
 			s.client.UpdateCredentials(account.ClientID, account.ClientSecret)
 			watchedAtStr := watchedAt.UTC().Format(time.RFC3339)
-			return s.client.AddEpisodeToHistory(account.AccessToken, showTVDBID, season, episode, watchedAtStr)
+			return s.client.AddEpisodeToHistory(account.AccessToken, showTVDBID, season, episode, watchedAtStr, SyncIDs{})
 		}
 	}
 
 	return nil
+}
+
+func traktHistoryEpisodeNumber(localEpisode int, externalIDs map[string]string) int {
+	if externalIDs == nil {
+		return localEpisode
+	}
+	if absolute, err := strconv.Atoi(externalIDs["absoluteEpisode"]); err == nil && absolute > 0 {
+		return absolute
+	}
+	return localEpisode
+}
+
+func episodeSyncIDs(externalIDs map[string]string) SyncIDs {
+	ids := SyncIDs{}
+	if externalIDs == nil {
+		return ids
+	}
+	if v, err := strconv.Atoi(externalIDs["episodeTvdb"]); err == nil && v > 0 {
+		ids.TVDB = v
+	}
+	if v, err := strconv.Atoi(externalIDs["episodeTmdb"]); err == nil && v > 0 {
+		ids.TMDB = v
+	}
+	if v, err := strconv.Atoi(externalIDs["episodeTrakt"]); err == nil && v > 0 {
+		ids.Trakt = v
+	}
+	if imdb := externalIDs["episodeImdb"]; imdb != "" {
+		ids.IMDB = imdb
+	}
+	return ids
 }

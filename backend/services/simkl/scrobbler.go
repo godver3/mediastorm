@@ -94,7 +94,7 @@ func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID stri
 	return s.client.SyncHistory(account.ClientID, account.AccessToken, req)
 }
 
-func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	account := s.getAccountForUser(userID)
 	if account == nil || account.ClientID == "" || account.AccessToken == "" {
 		return nil

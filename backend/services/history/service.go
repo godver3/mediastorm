@@ -47,7 +47,7 @@ type TraktScrobbler interface {
 	// ScrobbleMovie syncs a watched movie to Trakt for a specific user.
 	ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error
 	// ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode for a specific user.
-	ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error
+	ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error
 	// IsEnabled returns whether scrobbling is enabled for any account.
 	IsEnabled() bool
 	// IsEnabledForUser returns whether scrobbling is enabled for a specific user.
@@ -58,6 +58,7 @@ type TraktScrobbler interface {
 type TraktRealTimeScrobbler interface {
 	HandleProgressUpdate(userID string, update models.PlaybackProgressUpdate, percentWatched float64)
 	StopSession(userID string, update models.PlaybackProgressUpdate, percentWatched float64)
+	ClearSession(userID string, update models.PlaybackProgressUpdate)
 }
 
 // cachedSeriesMetadata holds cached series details with expiration.
@@ -266,7 +267,7 @@ func (s *Service) doScrobble(scrobbler TraktScrobbler, userID string, item model
 			episode := item.EpisodeNumber
 			seriesName := item.SeriesName
 			go func() {
-				if err := scrobbler.ScrobbleEpisode(userID, tvdbID, season, episode, watchedAt); err != nil {
+				if err := scrobbler.ScrobbleEpisode(userID, tvdbID, season, episode, watchedAt, item.ExternalIDs); err != nil {
 					log.Printf("[trakt] failed to scrobble episode %s S%02dE%02d for user %s: %v", seriesName, season, episode, userID, err)
 				} else {
 					log.Printf("[trakt] scrobbled episode: %s S%02dE%02d for user %s", seriesName, season, episode, userID)
@@ -3123,9 +3124,10 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 
 	// Auto-mark as watched if >= 90% complete
 	if percentWatched >= 90 {
-		// Send scrobble/stop before marking as watched
+		// Local watched-history sync below writes the Trakt watched event. Clear
+		// any active realtime session so we don't also create a scrobble event.
 		if rtScrobbler != nil && allowRealtimeScrobble {
-			go rtScrobbler.StopSession(userID, update, percentWatched)
+			rtScrobbler.ClearSession(userID, update)
 		}
 
 		s.mu.Unlock() // Unlock before calling other methods

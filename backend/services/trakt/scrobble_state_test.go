@@ -517,3 +517,85 @@ func TestBuildScrobbleRequest_Episode(t *testing.T) {
 		t.Error("expected no movie for episode scrobble")
 	}
 }
+
+func TestBuildScrobbleRequest_EpisodeIncludesEpisodeIDs(t *testing.T) {
+	update := models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		SeasonNumber:  23,
+		EpisodeNumber: 7,
+		EpisodeName:   "Adventure in Elbaph",
+		SeriesName:    "One Piece",
+		SeriesID:      "tvdb:series:81797",
+		ExternalIDs: map[string]string{
+			"tvdb":        "81797",
+			"episodeTvdb": "1111111",
+		},
+	}
+
+	req := buildScrobbleRequest(update, 42.0)
+
+	if req.Episode == nil {
+		t.Fatal("expected episode in request")
+	}
+	if req.Episode.IDs.TVDB != 1111111 {
+		t.Fatalf("expected episode TVDB ID 1111111, got %d", req.Episode.IDs.TVDB)
+	}
+	if req.Show == nil || req.Show.IDs.TVDB != 81797 {
+		t.Fatalf("expected show TVDB ID 81797, got %+v", req.Show)
+	}
+}
+
+func TestBuildScrobbleRequest_EpisodeIncludesAbsoluteNumber(t *testing.T) {
+	update := models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		SeasonNumber:  23,
+		EpisodeNumber: 7,
+		EpisodeName:   "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+		SeriesName:    "One Piece",
+		SeriesID:      "tvdb:series:81797",
+		ExternalIDs: map[string]string{
+			"tvdb":            "81797",
+			"episodeTvdb":     "11700059",
+			"absoluteEpisode": "1162",
+		},
+	}
+
+	req := buildScrobbleRequest(update, 42.0)
+
+	if req.Episode == nil {
+		t.Fatal("expected episode in request")
+	}
+	if req.Episode.NumberAbs != 1162 {
+		t.Fatalf("expected absolute episode 1162, got %d", req.Episode.NumberAbs)
+	}
+	if req.Episode.Season != 23 || req.Episode.Number != 7 {
+		t.Fatalf("expected canonical S23E07 to remain, got S%02dE%02d", req.Episode.Season, req.Episode.Number)
+	}
+}
+
+func TestScrobbleAbsoluteEpisodeRequestUsesAbsoluteNumber(t *testing.T) {
+	req := ScrobbleRequest{
+		Progress: 42.0,
+		Show: &ScrobbleShow{
+			Title: "One Piece",
+			IDs:   SyncIDs{TVDB: 81797},
+		},
+		Episode: &ScrobbleEpisode{
+			Season:    23,
+			Number:    7,
+			NumberAbs: 1162,
+			IDs:       SyncIDs{TVDB: 11700059},
+		},
+	}
+
+	fallbackReq, ok := scrobbleAbsoluteEpisodeRequest(req)
+	if !ok {
+		t.Fatal("expected absolute episode fallback request")
+	}
+	if fallbackReq.Episode.Number != 1162 {
+		t.Fatalf("expected fallback episode number 1162, got %d", fallbackReq.Episode.Number)
+	}
+	if req.Episode.Number != 7 {
+		t.Fatalf("expected original request to remain unchanged, got %d", req.Episode.Number)
+	}
+}

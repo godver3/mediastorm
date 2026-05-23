@@ -79,7 +79,6 @@ type SyncResult struct {
 }
 
 const (
-	traktPlaybackStopThreshold    = 80.0
 	traktPlaybackWatchedThreshold = 90.0
 )
 
@@ -1961,7 +1960,7 @@ func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult
 			return result, err
 		}
 		if !dryRun {
-			if err := s.syncPlaybackFromTrakt(traktAccount, profileID, nil); err != nil {
+			if _, err := s.syncPlaybackFromTrakt(traktAccount, profileID, nil); err != nil {
 				log.Printf("[scheduler] Warning: sync playback from Trakt failed: %v", err)
 			}
 		}
@@ -1972,7 +1971,7 @@ func (s *Service) executeTraktHistorySync(task config.ScheduledTask) (SyncResult
 			return result, err
 		}
 		if !dryRun {
-			if _, err := s.syncPlaybackToTrakt(traktAccount, profileID); err != nil {
+			if _, err := s.syncPlaybackToTrakt(traktAccount, profileID, nil); err != nil {
 				log.Printf("[scheduler] Warning: sync playback to Trakt failed: %v", err)
 			}
 		}
@@ -2131,7 +2130,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	type showKey struct {
 		tvdbID int
 	}
-	showEpisodes := make(map[showKey][]trakt.SyncEpisode)
+	showEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	showIDs := make(map[showKey]trakt.SyncIDs)
 	var movies []trakt.SyncMovie
 	exported := 0
@@ -2212,9 +2211,14 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 			}
 
 			sk := showKey{tvdbID: tvdbID}
-			showEpisodes[sk] = append(showEpisodes[sk], trakt.SyncEpisode{
-				Number:    item.EpisodeNumber,
+			seasonNumber, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
+			if showEpisodes[sk] == nil {
+				showEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
+			}
+			showEpisodes[sk][seasonNumber] = append(showEpisodes[sk][seasonNumber], trakt.SyncEpisode{
+				Number:    episodeNumber,
 				WatchedAt: item.WatchedAt.UTC().Format(time.RFC3339),
+				IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 			})
 			if _, exists := showIDs[sk]; !exists {
 				showIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
@@ -2232,26 +2236,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 
 	// Build SyncShow batch structure
 	var shows []trakt.SyncShow
-	for sk, episodes := range showEpisodes {
-		// Group episodes by season
-		seasonEps := make(map[int][]trakt.SyncEpisode)
-		for _, ep := range episodes {
-			// Find the season number from the local items
-			for _, item := range items {
-				if item.MediaType == "episode" && item.EpisodeNumber == ep.Number {
-					if item.ExternalIDs != nil {
-						if id, ok := item.ExternalIDs["tvdb"]; ok {
-							tvdbID, _ := strconv.Atoi(id)
-							if tvdbID == sk.tvdbID {
-								seasonEps[item.SeasonNumber] = append(seasonEps[item.SeasonNumber], ep)
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-
+	for sk, seasonEps := range showEpisodes {
 		var seasons []trakt.SyncSeason
 		for seasonNum, eps := range seasonEps {
 			seasons = append(seasons, trakt.SyncSeason{
@@ -2307,15 +2292,15 @@ func (s *Service) syncHistoryBidirectional(task config.ScheduledTask, traktAccou
 	}
 
 	// Sync playback positions in both directions for bidirectional tasks too.
-	// Push first, then pull — passing exported keys so the pull skips items
-	// we just pushed (their Trakt paused_at is artificially fresh).
+	// Pull first so external-player progress on Trakt wins over stale local
+	// progress; then skip exporting those same items back in this cycle.
 	if !dryRun {
-		justExported, err := s.syncPlaybackToTrakt(traktAccount, profileID)
+		justImported, err := s.syncPlaybackFromTrakt(traktAccount, profileID, nil)
 		if err != nil {
-			log.Printf("[scheduler] Warning: sync playback to Trakt failed: %v", err)
-		}
-		if err := s.syncPlaybackFromTrakt(traktAccount, profileID, justExported); err != nil {
 			log.Printf("[scheduler] Warning: sync playback from Trakt failed: %v", err)
+		}
+		if _, err := s.syncPlaybackToTrakt(traktAccount, profileID, justImported); err != nil {
+			log.Printf("[scheduler] Warning: sync playback to Trakt failed: %v", err)
 		}
 	}
 
@@ -2686,11 +2671,12 @@ func intFromAny(value interface{}) int {
 
 // syncPlaybackToTrakt exports playback progress to Trakt.
 // Partial progress below the watched threshold remains incomplete locally.
-// Trakt requires scrobble/stop for higher in-progress percentages, so:
-// 1-79% uses pause, 80-89% uses stop, and 90%+ becomes watched history.
+// Scheduled sync always uses scrobble/pause for incomplete progress; scrobble/stop
+// creates watched history entries on Trakt and would be repeated on every sync.
+// 90%+ is exported through the explicit watched-history path.
 // Returns the set of exported item keys (mediaType:itemID) so the caller can
 // exclude them from a subsequent pull to avoid the push→pull timestamp round-trip.
-func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profileID string) (map[string]bool, error) {
+func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profileID string, skipExport map[string]bool) (map[string]bool, error) {
 	exported := make(map[string]bool)
 	if s.historyService == nil {
 		return exported, nil
@@ -2713,6 +2699,18 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 	showIDsToHistory := make(map[playbackShowKey]trakt.SyncIDs)
 
 	for _, item := range items {
+		itemIDs := alternateItemIDs(item.MediaType, item.ItemID, item.ExternalIDs)
+		skipItem := false
+		for _, id := range itemIDs {
+			if skipExport[strings.ToLower(item.MediaType)+":"+strings.ToLower(id)] {
+				skipItem = true
+				break
+			}
+		}
+		if skipItem {
+			continue
+		}
+
 		if item.HiddenFromContinueWatching {
 			continue
 		}
@@ -2745,9 +2743,11 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 				if showSeasonsToHistory[sk] == nil {
 					showSeasonsToHistory[sk] = make(map[int][]trakt.SyncEpisode)
 				}
-				showSeasonsToHistory[sk][item.SeasonNumber] = append(showSeasonsToHistory[sk][item.SeasonNumber], trakt.SyncEpisode{
-					Number:    item.EpisodeNumber,
+				seasonNumber, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
+				showSeasonsToHistory[sk][seasonNumber] = append(showSeasonsToHistory[sk][seasonNumber], trakt.SyncEpisode{
+					Number:    episodeNumber,
 					WatchedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
+					IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 				})
 				showIDsToHistory[sk] = ids
 			}
@@ -2770,10 +2770,13 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 				IDs:   externalIDsToSyncIDs(item.ExternalIDs),
 			}
 		} else if item.MediaType == "episode" {
+			_, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
 			req.Episode = &trakt.ScrobbleEpisode{
-				Season: item.SeasonNumber,
-				Number: item.EpisodeNumber,
-				Title:  item.EpisodeName,
+				Season:    item.SeasonNumber,
+				Number:    item.EpisodeNumber,
+				NumberAbs: episodeNumber,
+				Title:     item.EpisodeName,
+				IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 			}
 			req.Show = &trakt.ScrobbleShow{
 				Title: item.SeriesName,
@@ -2783,12 +2786,17 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 			continue
 		}
 
-		var syncErr error
-		if playbackPercentNeedsStop(item.PercentWatched) {
-			_, syncErr = s.traktClient.ScrobbleStop(accessToken, req)
-		} else {
-			// ScrobblePause saves the position on Trakt without triggering "now watching"
-			_, syncErr = s.traktClient.ScrobblePause(accessToken, req)
+		// ScrobblePause saves the position on Trakt without adding a watched event.
+		_, syncErr := s.traktClient.ScrobblePause(accessToken, req)
+		if errors.Is(syncErr, trakt.ErrNotFound) && req.Episode != nil && req.Episode.NumberAbs > 0 && req.Episode.NumberAbs != req.Episode.Number {
+			fallbackReq := req
+			episode := *req.Episode
+			episode.Number = episode.NumberAbs
+			fallbackReq.Episode = &episode
+			_, syncErr = s.traktClient.ScrobblePause(accessToken, fallbackReq)
+			if syncErr == nil {
+				log.Printf("[scheduler] Synced playback for %s using Trakt absolute episode number %d", item.ItemID, episode.Number)
+			}
 		}
 		if syncErr != nil {
 			if errors.Is(syncErr, trakt.ErrNotFound) {
@@ -2836,9 +2844,10 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 // syncPlaybackFromTrakt imports partial playback progress from Trakt to local storage.
 // justExported contains item keys that were just pushed to Trakt in this sync cycle;
 // those are skipped to avoid the push→pull round-trip that would bump all timestamps to "now".
-func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profileID string, justExported map[string]bool) error {
+func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profileID string, justExported map[string]bool) (map[string]bool, error) {
+	importedKeys := make(map[string]bool)
 	if s.historyService == nil {
-		return nil
+		return importedKeys, nil
 	}
 
 	s.traktClient.UpdateCredentials(traktAccount.ClientID, traktAccount.ClientSecret)
@@ -2910,6 +2919,20 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				continue
 			}
 
+			hiddenMarker := s.findHiddenPlaybackMarker(profileID, *update)
+			if hiddenMarker != nil && !traktItem.PausedAt.After(hiddenMarker.UpdatedAt) {
+				if traktItem.ID > 0 {
+					if err := s.traktClient.RemovePlaybackItem(accessToken, traktItem.ID); err != nil {
+						log.Printf("[scheduler] Failed to remove hidden Trakt playback item %d for %s %s: %v",
+							traktItem.ID, update.MediaType, update.ItemID, err)
+					} else {
+						log.Printf("[scheduler] Removed hidden Trakt playback item %d for %s %s",
+							traktItem.ID, update.MediaType, update.ItemID)
+					}
+				}
+				continue
+			}
+
 			if playbackPercentCountsAsWatched(traktItem.Progress) {
 				historyUpdate := s.traktPlaybackItemToHistoryUpdate(traktItem)
 				if historyUpdate == nil {
@@ -2941,13 +2964,20 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 					break
 				}
 			}
-			hiddenMarker := s.findHiddenPlaybackMarker(profileID, *update)
-
-			if localProgress == nil && hiddenMarker != nil && !traktItem.PausedAt.After(hiddenMarker.UpdatedAt) {
-				continue
-			}
 
 			if localProgress != nil {
+				if localProgress.HiddenFromContinueWatching && !traktItem.PausedAt.After(localProgress.UpdatedAt) {
+					if traktItem.ID > 0 {
+						if err := s.traktClient.RemovePlaybackItem(accessToken, traktItem.ID); err != nil {
+							log.Printf("[scheduler] Failed to remove hidden Trakt playback item %d for %s %s: %v",
+								traktItem.ID, update.MediaType, update.ItemID, err)
+						} else {
+							log.Printf("[scheduler] Removed hidden Trakt playback item %d for %s %s",
+								traktItem.ID, update.MediaType, update.ItemID)
+						}
+					}
+					continue
+				}
 				if localProgress.HiddenFromContinueWatching && playbackImportPercentDelta(localProgress, traktItem.Progress) < 2.0 {
 					continue
 				}
@@ -3015,6 +3045,9 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				log.Printf("[scheduler] Failed to import Trakt playback for %s: %v", update.ItemID, err)
 				continue
 			}
+			for _, id := range alternateItemIDs(update.MediaType, update.ItemID, update.ExternalIDs) {
+				importedKeys[strings.ToLower(update.MediaType)+":"+strings.ToLower(id)] = true
+			}
 			imported++
 		}
 	}
@@ -3025,7 +3058,7 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 	if watchedImported > 0 {
 		log.Printf("[scheduler] Imported %d Trakt playback items as watched history", watchedImported)
 	}
-	return nil
+	return importedKeys, nil
 }
 
 func playbackImportPercentDelta(localProgress *models.PlaybackProgress, traktPercent float64) float64 {
@@ -3052,21 +3085,38 @@ func playbackImportPercentDelta(localProgress *models.PlaybackProgress, traktPer
 }
 
 func (s *Service) findHiddenPlaybackMarker(profileID string, update models.PlaybackProgressUpdate) *models.PlaybackProgress {
-	if s.historyService == nil || update.MediaType != "episode" {
+	if s.historyService == nil {
 		return nil
 	}
 
-	seriesIDs := alternateSeriesIDs(update.SeriesID, update.ExternalIDs)
-	for _, seriesID := range seriesIDs {
-		marker, err := s.historyService.GetPlaybackProgress(profileID, "episode", seriesID)
-		if err != nil || marker == nil {
-			continue
+	switch update.MediaType {
+	case "movie":
+		for _, itemID := range alternateItemIDs(update.MediaType, update.ItemID, update.ExternalIDs) {
+			marker, err := s.historyService.GetPlaybackProgress(profileID, "movie", itemID)
+			if err != nil || marker == nil {
+				continue
+			}
+			if marker.HiddenFromContinueWatching &&
+				marker.MediaType == "movie" &&
+				marker.ItemID == marker.SeriesID &&
+				marker.SeasonNumber == 0 &&
+				marker.EpisodeNumber == 0 {
+				return marker
+			}
 		}
-		if marker.HiddenFromContinueWatching &&
-			marker.ItemID == marker.SeriesID &&
-			marker.SeasonNumber == 0 &&
-			marker.EpisodeNumber == 0 {
-			return marker
+	case "episode":
+		seriesIDs := alternateSeriesIDs(update.SeriesID, update.ExternalIDs)
+		for _, seriesID := range seriesIDs {
+			marker, err := s.historyService.GetPlaybackProgress(profileID, "episode", seriesID)
+			if err != nil || marker == nil {
+				continue
+			}
+			if marker.HiddenFromContinueWatching &&
+				marker.ItemID == marker.SeriesID &&
+				marker.SeasonNumber == 0 &&
+				marker.EpisodeNumber == 0 {
+				return marker
+			}
 		}
 	}
 
@@ -3142,10 +3192,6 @@ func playbackPercentCountsAsProgress(percent float64) bool {
 	return percent > 1 && percent < traktPlaybackWatchedThreshold
 }
 
-func playbackPercentNeedsStop(percent float64) bool {
-	return percent >= traktPlaybackStopThreshold && percent < traktPlaybackWatchedThreshold
-}
-
 func playbackPercentCountsAsWatched(percent float64) bool {
 	return percent >= traktPlaybackWatchedThreshold
 }
@@ -3179,6 +3225,8 @@ func (s *Service) traktPlaybackItemToUpdate(item trakt.PlaybackItem) *models.Pla
 		update.ExternalIDs = ids
 	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
 		showIDs := trakt.IDsToMap(item.Show.IDs)
+		episodeIDs := trakt.IDsToMap(item.Episode.IDs)
+		addEpisodeExternalIDs(showIDs, episodeIDs, item.Episode.NumberAbs)
 		var seriesID, itemID string
 		if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
 			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
@@ -3301,6 +3349,62 @@ func externalIDsToSyncIDs(extIDs map[string]string) trakt.SyncIDs {
 	return ids
 }
 
+func episodeIDsToSyncIDs(extIDs map[string]string) trakt.SyncIDs {
+	ids := trakt.SyncIDs{}
+	if v, ok := extIDs["episodeTmdb"]; ok {
+		ids.TMDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["episodeImdb"]; ok {
+		ids.IMDB = v
+	}
+	if v, ok := extIDs["episodeTvdb"]; ok {
+		ids.TVDB, _ = strconv.Atoi(v)
+	}
+	if v, ok := extIDs["episodeTrakt"]; ok {
+		ids.Trakt, _ = strconv.Atoi(v)
+	}
+	return ids
+}
+
+func addEpisodeExternalIDs(showIDs map[string]string, episodeIDs map[string]string, absoluteEpisode int) {
+	if showIDs == nil {
+		return
+	}
+	if v := episodeIDs["tmdb"]; v != "" {
+		showIDs["episodeTmdb"] = v
+	}
+	if v := episodeIDs["imdb"]; v != "" {
+		showIDs["episodeImdb"] = v
+	}
+	if v := episodeIDs["tvdb"]; v != "" {
+		showIDs["episodeTvdb"] = v
+	}
+	if v := episodeIDs["trakt"]; v != "" {
+		showIDs["episodeTrakt"] = v
+	}
+	if absoluteEpisode > 0 {
+		showIDs["absoluteEpisode"] = strconv.Itoa(absoluteEpisode)
+	}
+}
+
+func traktHistoryEpisodeNumbers(seasonNumber, episodeNumber int, extIDs map[string]string) (int, int) {
+	if absolute, ok := positiveIntFromMap(extIDs, "absoluteEpisode"); ok {
+		return seasonNumber, absolute
+	}
+	return seasonNumber, episodeNumber
+}
+
+func positiveIntFromMap(values map[string]string, key string) (int, bool) {
+	if values == nil {
+		return 0, false
+	}
+	value, err := strconv.Atoi(values[key])
+	if err != nil || value <= 0 {
+		return 0, false
+	}
+	return value, true
+}
+
 // seriesIDToSyncIDs extracts show IDs from seriesID and external IDs for Trakt.
 func seriesIDToSyncIDs(seriesID string, extIDs map[string]string) trakt.SyncIDs {
 	ids := trakt.SyncIDs{}
@@ -3365,6 +3469,8 @@ func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool
 		update.ExternalIDs = ids
 	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
 		showIDs := trakt.IDsToMap(item.Show.IDs)
+		episodeIDs := trakt.IDsToMap(item.Episode.IDs)
+		addEpisodeExternalIDs(showIDs, episodeIDs, item.Episode.NumberAbs)
 
 		// Build episode-specific composite ID: tvdb:series:SHOWID:s01e02
 		// Prefer TVDB to match the player/details page ID format

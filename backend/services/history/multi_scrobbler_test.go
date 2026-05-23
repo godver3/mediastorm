@@ -21,7 +21,7 @@ func (m *mockScrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID 
 	return m.returnErr
 }
 
-func (m *mockScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (m *mockScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	m.episodeCalls++
 	return m.returnErr
 }
@@ -41,6 +41,7 @@ func (m *mockScrobbler) IsEnabledForUser(userID string) bool {
 type mockRTScrobbler struct {
 	progressCalls int
 	stopCalls     int
+	clearCalls    int
 }
 
 func (m *mockRTScrobbler) HandleProgressUpdate(userID string, update models.PlaybackProgressUpdate, percentWatched float64) {
@@ -49,6 +50,10 @@ func (m *mockRTScrobbler) HandleProgressUpdate(userID string, update models.Play
 
 func (m *mockRTScrobbler) StopSession(userID string, update models.PlaybackProgressUpdate, percentWatched float64) {
 	m.stopCalls++
+}
+
+func (m *mockRTScrobbler) ClearSession(userID string, update models.PlaybackProgressUpdate) {
+	m.clearCalls++
 }
 
 func TestMultiScrobbler_FansOutMovie(t *testing.T) {
@@ -74,7 +79,7 @@ func TestMultiScrobbler_FansOutEpisode(t *testing.T) {
 	s2 := &mockScrobbler{}
 
 	multi := NewMultiScrobbler(s1, s2)
-	err := multi.ScrobbleEpisode("user1", 75897, 2, 5, time.Now())
+	err := multi.ScrobbleEpisode("user1", 75897, 2, 5, time.Now(), nil)
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)

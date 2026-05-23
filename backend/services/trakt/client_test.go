@@ -77,6 +77,49 @@ func TestScrobbleStart(t *testing.T) {
 	}
 }
 
+func TestAddEpisodeToHistoryUsesEpisodeIDsAndAbsoluteNumber(t *testing.T) {
+	var receivedBody SyncHistoryRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sync/history" {
+			t.Errorf("expected path /sync/history, got %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(SyncHistoryResponse{})
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	client := NewClient("test-client-id", "test-secret")
+	err := client.AddEpisodeToHistory("test-token", 81797, 23, 1162, "2026-05-21T18:15:05Z", SyncIDs{
+		TVDB:  11700059,
+		TMDB:  7124432,
+		Trakt: 14100237,
+	})
+	if err != nil {
+		t.Fatalf("AddEpisodeToHistory() error = %v", err)
+	}
+
+	if len(receivedBody.Shows) != 1 || len(receivedBody.Shows[0].Seasons) != 1 || len(receivedBody.Shows[0].Seasons[0].Episodes) != 1 {
+		t.Fatalf("unexpected request body: %+v", receivedBody)
+	}
+	episode := receivedBody.Shows[0].Seasons[0].Episodes[0]
+	if episode.Number != 1162 {
+		t.Fatalf("episode number = %d, want 1162", episode.Number)
+	}
+	if episode.IDs.TVDB != 11700059 || episode.IDs.TMDB != 7124432 || episode.IDs.Trakt != 14100237 {
+		t.Fatalf("episode IDs = %+v", episode.IDs)
+	}
+}
+
 func TestScrobblePause(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/scrobble/pause" {
@@ -97,8 +140,8 @@ func TestScrobblePause(t *testing.T) {
 
 	client := NewClient("id", "secret")
 	resp, err := client.ScrobblePause("token", ScrobbleRequest{
-		Episode: &ScrobbleEpisode{Season: 1, Number: 5},
-		Show:    &ScrobbleShow{IDs: SyncIDs{TVDB: 999}},
+		Episode:  &ScrobbleEpisode{Season: 1, Number: 5},
+		Show:     &ScrobbleShow{IDs: SyncIDs{TVDB: 999}},
 		Progress: 50.0,
 	})
 	if err != nil {

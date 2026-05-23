@@ -110,10 +110,11 @@ type Show struct {
 
 // Episode represents a Trakt episode
 type Episode struct {
-	Season int    `json:"season"`
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	IDs    IDs    `json:"ids"`
+	Season    int    `json:"season"`
+	Number    int    `json:"number"`
+	NumberAbs int    `json:"number_abs,omitempty"`
+	Title     string `json:"title"`
+	IDs       IDs    `json:"ids"`
 }
 
 // WatchlistItem represents an item from the Trakt watchlist
@@ -645,8 +646,9 @@ type SyncSeason struct {
 
 // SyncEpisode represents an episode to add to history
 type SyncEpisode struct {
-	Number    int    `json:"number"`
-	WatchedAt string `json:"watched_at,omitempty"` // ISO 8601 format
+	Number    int     `json:"number"`
+	WatchedAt string  `json:"watched_at,omitempty"` // ISO 8601 format
+	IDs       SyncIDs `json:"ids,omitempty"`
 }
 
 // SyncIDs holds IDs for sync operations
@@ -723,7 +725,7 @@ func (c *Client) AddMovieToHistory(accessToken string, tmdbID, tvdbID int, imdbI
 
 // AddEpisodeToHistory adds a single episode to the user's Trakt watch history
 // using the show's TVDB ID and season/episode numbers
-func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, episode int, watchedAt string) error {
+func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, episode int, watchedAt string, episodeIDs SyncIDs) error {
 	request := SyncHistoryRequest{
 		Shows: []SyncShow{
 			{
@@ -737,6 +739,7 @@ func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, epi
 							{
 								Number:    episode,
 								WatchedAt: watchedAt,
+								IDs:       episodeIDs,
 							},
 						},
 					},
@@ -745,8 +748,14 @@ func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, epi
 		},
 	}
 
-	_, err := c.AddToHistory(accessToken, request)
-	return err
+	resp, err := c.AddToHistory(accessToken, request)
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Added.Episodes == 0 && len(resp.NotFound.Shows) > 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CollectionItem represents an item from the Trakt collection
@@ -1066,10 +1075,11 @@ type ScrobbleShow struct {
 
 // ScrobbleEpisode identifies an episode in a scrobble request
 type ScrobbleEpisode struct {
-	Season int     `json:"season"`
-	Number int     `json:"number"`
-	Title  string  `json:"title,omitempty"`
-	IDs    SyncIDs `json:"ids,omitempty"`
+	Season    int     `json:"season"`
+	Number    int     `json:"number"`
+	NumberAbs int     `json:"number_abs,omitempty"`
+	Title     string  `json:"title,omitempty"`
+	IDs       SyncIDs `json:"ids,omitempty"`
 }
 
 // ScrobbleResponse represents the response from /scrobble/{action}

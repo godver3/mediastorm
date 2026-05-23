@@ -106,7 +106,7 @@ func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID stri
 // ExternalIDs may contain TMDB/IMDB which are extracted upstream, but this
 // sync/watched path receives only the show's TVDB ID from the history service.
 // We log a warning if we have no usable IDs.
-func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	account := s.getAccountForUser(userID)
 	if account == nil || account.APIKey == "" {
 		return nil
@@ -175,7 +175,7 @@ func seriesIDToScrobbleIDs(seriesID string, extIDs map[string]string) ScrobbleID
 				ids.TMDB, _ = strconv.Atoi(numericID)
 			case "imdb":
 				ids.IMDB = "tt" + numericID
-			// Note: TVDB not supported by MDBList — skip
+				// Note: TVDB not supported by MDBList — skip
 			}
 		}
 	}

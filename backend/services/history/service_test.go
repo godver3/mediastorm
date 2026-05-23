@@ -23,12 +23,14 @@ type mockMetadataService struct {
 type captureRealTimeScrobbler struct {
 	handleCalls chan models.PlaybackProgressUpdate
 	stopCalls   chan models.PlaybackProgressUpdate
+	clearCalls  chan models.PlaybackProgressUpdate
 }
 
 func newCaptureRealTimeScrobbler() *captureRealTimeScrobbler {
 	return &captureRealTimeScrobbler{
 		handleCalls: make(chan models.PlaybackProgressUpdate, 1),
 		stopCalls:   make(chan models.PlaybackProgressUpdate, 1),
+		clearCalls:  make(chan models.PlaybackProgressUpdate, 1),
 	}
 }
 
@@ -38,6 +40,10 @@ func (c *captureRealTimeScrobbler) HandleProgressUpdate(_ string, update models.
 
 func (c *captureRealTimeScrobbler) StopSession(_ string, update models.PlaybackProgressUpdate, _ float64) {
 	c.stopCalls <- update
+}
+
+func (c *captureRealTimeScrobbler) ClearSession(_ string, update models.PlaybackProgressUpdate) {
+	c.clearCalls <- update
 }
 
 func (m *mockMetadataService) SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
@@ -949,7 +955,7 @@ func (m *mockTraktScrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, im
 	return nil
 }
 
-func (m *mockTraktScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time) error {
+func (m *mockTraktScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	m.episodeCalls++
 	return nil
 }
@@ -3331,6 +3337,43 @@ func TestUpdatePlaybackProgress_RealtimeScrobblesNormalMovie(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected normal movie progress to trigger real-time scrobble")
+	}
+}
+
+func TestUpdatePlaybackProgress_AutoWatchedClearsRealtimeSessionWithoutStop(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	scrobbler := newCaptureRealTimeScrobbler()
+	svc.SetTraktRealTimeScrobbler(scrobbler)
+
+	if _, err := svc.UpdatePlaybackProgress("movie-user", models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:809137",
+		MovieName:   "Sand Dollar Cove",
+		Position:    3240,
+		Duration:    3600,
+		IsPaused:    true,
+		ExternalIDs: map[string]string{"imdb": "tt14549712"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	select {
+	case update := <-scrobbler.clearCalls:
+		if update.ItemID != "tmdb:movie:809137" {
+			t.Fatalf("clear session itemID = %q, want tmdb:movie:809137", update.ItemID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected auto-watched progress to clear realtime session")
+	}
+
+	select {
+	case update := <-scrobbler.stopCalls:
+		t.Fatalf("expected no realtime stop for auto-watched progress, got itemID %q", update.ItemID)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

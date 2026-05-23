@@ -137,6 +137,16 @@ func (t *ScrobbleStateTracker) StopSession(userID string, update models.Playback
 	t.scrobbler.noteRecentStop(userID, update)
 }
 
+// ClearSession removes a local realtime scrobble session without sending
+// scrobble/stop. Use this when another path is already writing watched history.
+func (t *ScrobbleStateTracker) ClearSession(userID string, update models.PlaybackProgressUpdate) {
+	key := sessionKey(userID, update.MediaType, update.ItemID)
+
+	t.mu.Lock()
+	delete(t.sessions, key)
+	t.mu.Unlock()
+}
+
 func (t *ScrobbleStateTracker) StartCleanup(ctx context.Context) {
 	ticker := time.NewTicker(t.refreshInterval)
 	defer ticker.Stop()
