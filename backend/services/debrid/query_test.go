@@ -102,6 +102,15 @@ func TestParseQuery(t *testing.T) {
 			wantEpisode: 1,
 			wantType:    MediaTypeSeries,
 		},
+		{
+			name:        "series continue watching episode label",
+			query:       "One Piece • S23E1162 – A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph S23E07",
+			wantTitle:   "One Piece",
+			wantYear:    0,
+			wantSeason:  23,
+			wantEpisode: 7,
+			wantType:    MediaTypeSeries,
+		},
 	}
 
 	for _, tt := range tests {

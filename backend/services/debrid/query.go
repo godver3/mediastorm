@@ -21,6 +21,7 @@ var (
 	reSeasonOnly         = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
 	reSeasonEpisodeWords = regexp.MustCompile(`(?i)\bseason\s+(\d{1,2})\s*(?:episode|ep)\s*(\d{1,3})\b`)
 	reYear               = regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	reEpisodeLabelCode   = regexp.MustCompile(`(?i)\bS\d{1,4}E\d{1,5}\b`)
 	stopTokens           = map[string]struct{}{
 		"1080p":  {},
 		"2160p":  {},
@@ -139,6 +140,10 @@ func ParseQuery(raw string) ParsedQuery {
 		}
 	}
 
+	if parsed.MediaType == MediaTypeSeries {
+		candidate = stripDecorativeEpisodeLabel(candidate)
+	}
+
 	tokens := strings.Fields(candidate)
 	filtered := make([]string, 0, len(tokens))
 	for _, token := range tokens {
@@ -167,6 +172,21 @@ func ParseQuery(raw string) ParsedQuery {
 	}
 
 	return parsed
+}
+
+func stripDecorativeEpisodeLabel(input string) string {
+	match := reEpisodeLabelCode.FindStringIndex(input)
+	if len(match) != 2 || match[0] == 0 {
+		return input
+	}
+
+	prefix := strings.TrimSpace(input[:match[0]])
+	prefix = strings.TrimRight(prefix, " -_.,:;•–—")
+	if prefix == "" {
+		return input
+	}
+
+	return prefix
 }
 
 func removeSubstring(input, toRemove string) string {
