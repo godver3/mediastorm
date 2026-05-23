@@ -41,6 +41,7 @@ type Service struct {
 	epgService        *epg.Service
 	backupService     *backup.Service
 	historyService    *history.Service
+	metadataService   schedulerMetadataService
 	prewarmService    *prewarm.Service
 	localMediaService localMediaScanner
 
@@ -66,6 +67,10 @@ type schedulerUsersProvider interface {
 type localMediaScanner interface {
 	ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error)
 	StartScan(ctx context.Context, libraryID string) (models.LocalMediaScanSummary, error)
+}
+
+type schedulerMetadataService interface {
+	SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 }
 
 // SyncResult contains the result of a sync operation including dry run details
@@ -512,6 +517,13 @@ func (s *Service) SetHistoryService(historyService *history.Service) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.historyService = historyService
+}
+
+// SetMetadataService sets the metadata service for scheduled history sync tasks.
+func (s *Service) SetMetadataService(metadataService schedulerMetadataService) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metadataService = metadataService
 }
 
 // SetSimklClient sets the Simkl client for scheduled Simkl sync tasks.
@@ -2387,7 +2399,7 @@ func (s *Service) executeSimklHistorySync(task config.ScheduledTask) (SyncResult
 	var updates []models.WatchHistoryUpdate
 	result := SyncResult{DryRun: dryRun}
 	for _, resp := range responses {
-		for _, update := range simklAllItemsToWatchHistory(resp, &watched) {
+		for _, update := range s.simklAllItemsToWatchHistory(resp, &watched) {
 			key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(update.ItemID)
 			if seen[key] {
 				continue
@@ -2443,6 +2455,10 @@ func latestTimeInSimklActivity(activity simkl.ActivityResponse) time.Time {
 }
 
 func simklAllItemsToWatchHistory(resp *simkl.AllItemsResponse, watched *bool) []models.WatchHistoryUpdate {
+	return (&Service{}).simklAllItemsToWatchHistory(resp, watched)
+}
+
+func (s *Service) simklAllItemsToWatchHistory(resp *simkl.AllItemsResponse, watched *bool) []models.WatchHistoryUpdate {
 	if resp == nil {
 		return nil
 	}
@@ -2453,10 +2469,10 @@ func simklAllItemsToWatchHistory(resp *simkl.AllItemsResponse, watched *bool) []
 		}
 	}
 	for _, raw := range resp.Shows {
-		updates = append(updates, simklShowToUpdates(raw, watched)...)
+		updates = append(updates, s.simklShowToUpdates(raw, watched)...)
 	}
 	for _, raw := range resp.Anime {
-		updates = append(updates, simklShowToUpdates(raw, watched)...)
+		updates = append(updates, s.simklShowToUpdates(raw, watched)...)
 	}
 	return updates
 }
@@ -2490,6 +2506,10 @@ func simklMovieToUpdate(raw json.RawMessage, watched *bool) *models.WatchHistory
 }
 
 func simklShowToUpdates(raw json.RawMessage, watched *bool) []models.WatchHistoryUpdate {
+	return (&Service{}).simklShowToUpdates(raw, watched)
+}
+
+func (s *Service) simklShowToUpdates(raw json.RawMessage, watched *bool) []models.WatchHistoryUpdate {
 	obj := decodeJSONObject(raw)
 	if len(obj) == 0 || !simklItemIsWatched(obj) {
 		return nil
@@ -2523,22 +2543,31 @@ func simklShowToUpdates(raw json.RawMessage, watched *bool) []models.WatchHistor
 			if seasonNumber == 0 || episodeNumber == 0 {
 				continue
 			}
+			episodeIDs := cloneStringMap(ids)
+			absoluteEpisode := 0
+			if episodeNumber >= 1000 {
+				absoluteEpisode = episodeNumber
+			}
+			localSeason, localEpisode, localAbsolute, episodeTitle := s.canonicalizeProviderEpisode("simkl", ids, nil, seasonNumber, episodeNumber, absoluteEpisode, stringFromAny(episodeObj["title"]))
+			if localAbsolute > 0 {
+				episodeIDs["absoluteEpisode"] = strconv.Itoa(localAbsolute)
+			}
 			watchedAt := simklFirstTime(episodeObj, "watched_at", "last_watched_at", "completed_at", "last_watched")
 			if watchedAt.IsZero() {
 				watchedAt = simklFirstTime(obj, "watched_at", "last_watched_at", "completed_at", "last_watched")
 			}
 			updates = append(updates, models.WatchHistoryUpdate{
 				MediaType:     "episode",
-				ItemID:        fmt.Sprintf("%s:s%02de%02d", seriesID, seasonNumber, episodeNumber),
-				Name:          stringFromAny(episodeObj["title"]),
+				ItemID:        fmt.Sprintf("%s:s%02de%02d", seriesID, localSeason, localEpisode),
+				Name:          episodeTitle,
 				Year:          showYear,
 				Watched:       watched,
 				WatchedAt:     watchedAt,
-				ExternalIDs:   ids,
+				ExternalIDs:   episodeIDs,
 				SeriesID:      seriesID,
 				SeriesName:    showTitle,
-				SeasonNumber:  seasonNumber,
-				EpisodeNumber: episodeNumber,
+				SeasonNumber:  localSeason,
+				EpisodeNumber: localEpisode,
 			})
 		}
 	}
@@ -3387,6 +3416,120 @@ func addEpisodeExternalIDs(showIDs map[string]string, episodeIDs map[string]stri
 	}
 }
 
+func (s *Service) canonicalizeTraktEpisode(showIDs map[string]string, episodeIDs map[string]string, episode trakt.Episode) (int, int, int, string) {
+	return s.canonicalizeProviderEpisode("trakt", showIDs, episodeIDs, episode.Season, episode.Number, episode.NumberAbs, episode.Title)
+}
+
+func (s *Service) canonicalizeProviderEpisode(provider string, showIDs map[string]string, episodeIDs map[string]string, seasonNumber, episodeNumber, absoluteEpisode int, episodeTitle string) (int, int, int, string) {
+	originalSeason := seasonNumber
+	originalEpisode := episodeNumber
+
+	s.mu.RLock()
+	metadataSvc := s.metadataService
+	s.mu.RUnlock()
+	if metadataSvc == nil {
+		return seasonNumber, episodeNumber, absoluteEpisode, episodeTitle
+	}
+
+	var query models.SeriesDetailsQuery
+	if tvdbID, ok := positiveIntFromMap(showIDs, "tvdb"); ok {
+		query.TVDBID = int64(tvdbID)
+		query.TitleID = fmt.Sprintf("tvdb:series:%d", tvdbID)
+	} else if tmdbID, ok := positiveIntFromMap(showIDs, "tmdb"); ok {
+		query.TMDBID = int64(tmdbID)
+		query.TitleID = fmt.Sprintf("tmdb:tv:%d", tmdbID)
+	} else if imdbID := strings.TrimSpace(showIDs["imdb"]); imdbID != "" {
+		query.IMDBID = imdbID
+		query.TitleID = fmt.Sprintf("imdb:%s", imdbID)
+	}
+	if query.TVDBID == 0 && query.TMDBID == 0 && query.IMDBID == "" && query.TitleID == "" {
+		return seasonNumber, episodeNumber, absoluteEpisode, episodeTitle
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	details, err := metadataSvc.SeriesDetailsLite(ctx, query)
+	if err != nil || details == nil {
+		if err != nil {
+			log.Printf("[scheduler] %s import: unable to resolve canonical episode for %s S%02dE%02d: %v",
+				provider, query.TitleID, originalSeason, originalEpisode, err)
+		}
+		return seasonNumber, episodeNumber, absoluteEpisode, episodeTitle
+	}
+
+	episodeTVDBID, hasEpisodeTVDBID := positiveIntFromMap(episodeIDs, "tvdb")
+	episodeTMDBID, hasEpisodeTMDBID := positiveIntFromMap(episodeIDs, "tmdb")
+	var absoluteMatch *models.SeriesEpisode
+	for _, season := range details.Seasons {
+		for _, localEpisode := range season.Episodes {
+			if localEpisode.SeasonNumber == originalSeason && localEpisode.EpisodeNumber == originalEpisode {
+				if localEpisode.AbsoluteEpisodeNumber > 0 {
+					absoluteEpisode = localEpisode.AbsoluteEpisodeNumber
+				}
+				if strings.TrimSpace(localEpisode.Name) != "" {
+					episodeTitle = localEpisode.Name
+				}
+				return localEpisode.SeasonNumber, localEpisode.EpisodeNumber, absoluteEpisode, episodeTitle
+			}
+
+			matchesEpisodeID := false
+			if hasEpisodeTVDBID && localEpisode.TVDBID == int64(episodeTVDBID) {
+				matchesEpisodeID = true
+			}
+			if !matchesEpisodeID && hasEpisodeTMDBID && strings.TrimSpace(localEpisode.ID) == fmt.Sprintf("tmdb:episode:%d", episodeTMDBID) {
+				matchesEpisodeID = true
+			}
+			matchesAbsolute := absoluteEpisode > 0 && localEpisode.AbsoluteEpisodeNumber == absoluteEpisode
+			if !matchesEpisodeID && !matchesAbsolute {
+				continue
+			}
+			if !matchesEpisodeID && matchesAbsolute {
+				episodeCopy := localEpisode
+				absoluteMatch = &episodeCopy
+				continue
+			}
+
+			if localEpisode.AbsoluteEpisodeNumber > 0 {
+				absoluteEpisode = localEpisode.AbsoluteEpisodeNumber
+			}
+			if strings.TrimSpace(localEpisode.Name) != "" {
+				episodeTitle = localEpisode.Name
+			}
+			if localEpisode.SeasonNumber != originalSeason || localEpisode.EpisodeNumber != originalEpisode {
+				log.Printf("[scheduler] %s import: canonicalized episode %s S%02dE%02d abs=%d -> S%02dE%02d",
+					provider, query.TitleID, originalSeason, originalEpisode, absoluteEpisode, localEpisode.SeasonNumber, localEpisode.EpisodeNumber)
+			}
+			return localEpisode.SeasonNumber, localEpisode.EpisodeNumber, absoluteEpisode, episodeTitle
+		}
+	}
+	if absoluteMatch != nil {
+		if absoluteMatch.AbsoluteEpisodeNumber > 0 {
+			absoluteEpisode = absoluteMatch.AbsoluteEpisodeNumber
+		}
+		if strings.TrimSpace(absoluteMatch.Name) != "" {
+			episodeTitle = absoluteMatch.Name
+		}
+		if absoluteMatch.SeasonNumber != originalSeason || absoluteMatch.EpisodeNumber != originalEpisode {
+			log.Printf("[scheduler] %s import: canonicalized episode %s S%02dE%02d abs=%d -> S%02dE%02d",
+				provider, query.TitleID, originalSeason, originalEpisode, absoluteEpisode, absoluteMatch.SeasonNumber, absoluteMatch.EpisodeNumber)
+		}
+		return absoluteMatch.SeasonNumber, absoluteMatch.EpisodeNumber, absoluteEpisode, episodeTitle
+	}
+
+	return seasonNumber, episodeNumber, absoluteEpisode, episodeTitle
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
 func traktHistoryEpisodeNumbers(seasonNumber, episodeNumber int, extIDs map[string]string) (int, int) {
 	if absolute, ok := positiveIntFromMap(extIDs, "absoluteEpisode"); ok {
 		return seasonNumber, absolute
@@ -3470,20 +3613,21 @@ func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool
 	} else if item.Type == "episode" && item.Episode != nil && item.Show != nil {
 		showIDs := trakt.IDsToMap(item.Show.IDs)
 		episodeIDs := trakt.IDsToMap(item.Episode.IDs)
-		addEpisodeExternalIDs(showIDs, episodeIDs, item.Episode.NumberAbs)
+		seasonNumber, episodeNumber, absoluteEpisode, episodeTitle := s.canonicalizeTraktEpisode(showIDs, episodeIDs, *item.Episode)
+		addEpisodeExternalIDs(showIDs, episodeIDs, absoluteEpisode)
 
 		// Build episode-specific composite ID: tvdb:series:SHOWID:s01e02
 		// Prefer TVDB to match the player/details page ID format
 		var seriesID, itemID string
 		if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
 			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
-			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
+			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, seasonNumber, episodeNumber)
 		} else if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
 			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
-			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
+			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, seasonNumber, episodeNumber)
 		} else if imdbID, ok := showIDs["imdb"]; ok && imdbID != "" {
 			seriesID = fmt.Sprintf("imdb:%s", imdbID)
-			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Episode.Season, item.Episode.Number)
+			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, seasonNumber, episodeNumber)
 		}
 		if itemID == "" {
 			return nil
@@ -3491,13 +3635,13 @@ func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool
 
 		update.MediaType = "episode"
 		update.ItemID = itemID
-		update.Name = item.Episode.Title
+		update.Name = episodeTitle
 		update.Year = item.Show.Year
 		update.ExternalIDs = showIDs
 		update.SeriesID = seriesID
 		update.SeriesName = item.Show.Title
-		update.SeasonNumber = item.Episode.Season
-		update.EpisodeNumber = item.Episode.Number
+		update.SeasonNumber = seasonNumber
+		update.EpisodeNumber = episodeNumber
 	} else {
 		return nil
 	}

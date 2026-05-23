@@ -57,6 +57,14 @@ func (f *fakeSchedulerUsersProvider) ListAll() []models.User {
 	return result
 }
 
+type fakeSchedulerMetadataService struct {
+	details *models.SeriesDetails
+}
+
+func (f *fakeSchedulerMetadataService) SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return f.details, nil
+}
+
 func TestSimklAllItemsToWatchHistoryParsesMoviesAndEpisodes(t *testing.T) {
 	watched := true
 	resp := &simkl.AllItemsResponse{
@@ -100,6 +108,119 @@ func TestEpisodeIDsToSyncIDsUsesEpisodeScopedIDs(t *testing.T) {
 
 	if ids.TVDB != 11700059 || ids.TMDB != 7124432 || ids.Trakt != 14100237 {
 		t.Fatalf("unexpected episode ids: %+v", ids)
+	}
+}
+
+func TestTraktHistoryItemToUpdateCanonicalizesAbsoluteAnimeEpisode(t *testing.T) {
+	watchedAt := time.Date(2026, 5, 23, 3, 45, 0, 0, time.UTC)
+	watched := true
+	svc := &Service{
+		metadataService: &fakeSchedulerMetadataService{
+			details: &models.SeriesDetails{
+				Seasons: []models.SeriesSeason{
+					{
+						Number: 23,
+						Episodes: []models.SeriesEpisode{
+							{
+								TVDBID:                11700059,
+								Name:                  "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+								SeasonNumber:          23,
+								EpisodeNumber:         7,
+								AbsoluteEpisodeNumber: 1162,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	update := svc.traktHistoryItemToUpdate(trakt.HistoryItem{
+		WatchedAt: watchedAt,
+		Type:      "episode",
+		Show: &trakt.Show{
+			Title: "One Piece",
+			Year:  1999,
+			IDs: trakt.IDs{
+				TVDB: 81797,
+				IMDB: "tt0388629",
+				TMDB: 37854,
+			},
+		},
+		Episode: &trakt.Episode{
+			Season:    23,
+			Number:    1162,
+			NumberAbs: 1162,
+			Title:     "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+			IDs: trakt.IDs{
+				TVDB:  11700059,
+				TMDB:  7124432,
+				Trakt: 14100237,
+			},
+		},
+	}, &watched)
+
+	if update == nil {
+		t.Fatal("expected update")
+	}
+	if update.ItemID != "tvdb:series:81797:s23e07" {
+		t.Fatalf("expected canonical item ID, got %q", update.ItemID)
+	}
+	if update.SeasonNumber != 23 || update.EpisodeNumber != 7 {
+		t.Fatalf("expected canonical S23E07, got S%02dE%02d", update.SeasonNumber, update.EpisodeNumber)
+	}
+	if update.ExternalIDs["absoluteEpisode"] != "1162" {
+		t.Fatalf("expected absoluteEpisode to be preserved, got %q", update.ExternalIDs["absoluteEpisode"])
+	}
+	if update.ExternalIDs["episodeTvdb"] != "11700059" {
+		t.Fatalf("expected episodeTvdb to be preserved, got %q", update.ExternalIDs["episodeTvdb"])
+	}
+}
+
+func TestSimklAllItemsToWatchHistoryCanonicalizesAbsoluteAnimeEpisode(t *testing.T) {
+	watched := true
+	svc := &Service{
+		metadataService: &fakeSchedulerMetadataService{
+			details: &models.SeriesDetails{
+				Seasons: []models.SeriesSeason{
+					{
+						Number: 23,
+						Episodes: []models.SeriesEpisode{
+							{
+								TVDBID:                11700059,
+								Name:                  "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+								SeasonNumber:          23,
+								EpisodeNumber:         7,
+								AbsoluteEpisodeNumber: 1162,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	updates := svc.simklAllItemsToWatchHistory(&simkl.AllItemsResponse{
+		Anime: []json.RawMessage{
+			json.RawMessage(`{"status":"completed","anime":{"title":"One Piece","year":1999,"ids":{"simkl":38636,"imdb":"tt0388629","tmdb":37854,"tvdb":81797}},"seasons":[{"number":1,"episodes":[{"number":1162,"title":"A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph","watched_at":"2026-05-21T18:15:05Z"}]}]}`),
+		},
+	}, &watched)
+
+	if len(updates) != 1 {
+		t.Fatalf("updates len = %d, want 1", len(updates))
+	}
+	update := updates[0]
+	if update.ItemID != "tvdb:series:81797:s23e07" {
+		t.Fatalf("expected canonical item ID, got %q", update.ItemID)
+	}
+	if update.SeasonNumber != 23 || update.EpisodeNumber != 7 {
+		t.Fatalf("expected canonical S23E07, got S%02dE%02d", update.SeasonNumber, update.EpisodeNumber)
+	}
+	if update.ExternalIDs["absoluteEpisode"] != "1162" {
+		t.Fatalf("expected absoluteEpisode to be preserved, got %q", update.ExternalIDs["absoluteEpisode"])
+	}
+	if update.ExternalIDs["simkl"] != "38636" {
+		t.Fatalf("expected simkl show id to be preserved, got %q", update.ExternalIDs["simkl"])
 	}
 }
 

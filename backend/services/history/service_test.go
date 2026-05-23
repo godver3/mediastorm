@@ -2968,6 +2968,81 @@ func TestImportWatchHistory_CrossProviderEpisodeDedup(t *testing.T) {
 	}
 }
 
+func TestImportWatchHistory_EpisodeScopedDedupPreservesCanonicalLocalNumber(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+	unwatched := false
+
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:81797:s23e07",
+			Name:          "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+			Watched:       &unwatched,
+			WatchedAt:     time.Date(2026, 5, 23, 3, 44, 0, 0, time.UTC),
+			SeriesID:      "tvdb:series:81797",
+			SeriesName:    "One Piece",
+			SeasonNumber:  23,
+			EpisodeNumber: 7,
+			ExternalIDs: map[string]string{
+				"tvdb":            "81797",
+				"episodeTvdb":     "11700059",
+				"absoluteEpisode": "1162",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	_, err = svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{
+		{
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:81797:s23e1162",
+			Name:          "A Gargantuan Wave of Emotion - The Dreamlike Scenery of Elbaph",
+			Watched:       &watched,
+			WatchedAt:     time.Date(2026, 5, 23, 3, 45, 0, 0, time.UTC),
+			SeriesID:      "tvdb:series:81797",
+			SeriesName:    "One Piece",
+			SeasonNumber:  23,
+			EpisodeNumber: 1162,
+			ExternalIDs: map[string]string{
+				"tvdb":            "81797",
+				"episodeTvdb":     "11700059",
+				"episodeTrakt":    "14100237",
+				"absoluteEpisode": "1162",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+
+	items, err := svc.ListWatchHistory(userID)
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 episode entry, got %d: %+v", len(items), items)
+	}
+	item := items[0]
+	if item.ItemID != "tvdb:series:81797:s23e07" || item.SeasonNumber != 23 || item.EpisodeNumber != 7 {
+		t.Fatalf("expected canonical S23E07 item to be preserved, got itemID=%q S%02dE%02d", item.ItemID, item.SeasonNumber, item.EpisodeNumber)
+	}
+	if !item.Watched {
+		t.Fatal("expected newer Trakt watch to update watched state")
+	}
+	if item.ExternalIDs["episodeTrakt"] != "14100237" {
+		t.Fatalf("expected episodeTrakt to be merged, got %q", item.ExternalIDs["episodeTrakt"])
+	}
+}
+
 func TestBuildCanonicalSeriesIDMap_TMDBMerge(t *testing.T) {
 	items := []models.WatchHistoryItem{
 		{

@@ -725,6 +725,7 @@ func main() {
 	schedulerService := scheduler.NewService(cfgManager, plexClient, traktClient, watchlistService)
 	schedulerService.SetEPGService(epgService)
 	schedulerService.SetHistoryService(historyService)
+	schedulerService.SetMetadataService(metadataService)
 	schedulerService.SetSimklClient(simklClient)
 	schedulerService.SetUsersService(userService)
 	schedulerService.SetJellyfinClient(jellyfinClient)

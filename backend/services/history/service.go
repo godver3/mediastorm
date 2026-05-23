@@ -2554,6 +2554,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		watchKey string
 	}
 	crossProviderIndex := make(map[string]episodeIndex)
+	episodeScopedIDIndex := make(map[string]episodeIndex)
 	for key, item := range perUser {
 		if item.MediaType != "episode" || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
 			continue
@@ -2565,6 +2566,9 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			}
 			indexKey := epKey + ":" + idType + ":" + idValue
 			crossProviderIndex[indexKey] = episodeIndex{watchKey: key}
+		}
+		for _, indexKey := range episodeScopedIndexKeys(item.ExternalIDs) {
+			episodeScopedIDIndex[indexKey] = episodeIndex{watchKey: key}
 		}
 	}
 
@@ -2602,8 +2606,36 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 						oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
 						delete(crossProviderIndex, oldIndexKey)
 					}
+					for _, oldIndexKey := range episodeScopedIndexKeys(existing.ExternalIDs) {
+						delete(episodeScopedIDIndex, oldIndexKey)
+					}
 					log.Printf("[history] import: DEDUP cross-provider %s %q (old key %s -> new key %s)",
 						update.MediaType, update.Name, idx.watchKey, key)
+					break
+				}
+			}
+		}
+
+		// Absolute-numbered anime imports can refer to the same episode using
+		// SxxE<absolute> while local history uses the aired-order SxxEyy. If an
+		// episode-scoped provider ID matches an existing local item, preserve the
+		// local canonical season/episode/key instead of re-keying to the absolute
+		// Trakt number.
+		if !exists && update.MediaType == "episode" && len(update.ExternalIDs) > 0 {
+			for _, indexKey := range episodeScopedIndexKeys(update.ExternalIDs) {
+				if idx, found := episodeScopedIDIndex[indexKey]; found && idx.watchKey != key {
+					existing = perUser[idx.watchKey]
+					exists = true
+					crossProviderRekeyed = false
+					normalizedItemID = existing.ItemID
+					key = idx.watchKey
+					update.SeasonNumber = existing.SeasonNumber
+					update.EpisodeNumber = existing.EpisodeNumber
+					if update.SeriesID == "" {
+						update.SeriesID = existing.SeriesID
+					}
+					log.Printf("[history] import: DEDUP episode-scoped ID %s %q (preserving canonical key %s)",
+						update.MediaType, update.Name, key)
 					break
 				}
 			}
@@ -2768,6 +2800,9 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				}
 				crossProviderIndex[epKey+":"+idType+":"+idValue] = episodeIndex{watchKey: key}
 			}
+			for _, indexKey := range episodeScopedIndexKeys(item.ExternalIDs) {
+				episodeScopedIDIndex[indexKey] = episodeIndex{watchKey: key}
+			}
 		}
 
 		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
@@ -2810,6 +2845,19 @@ func (s *Service) ensureWatchHistoryUserLocked(userID string) map[string]models.
 		s.watchHistory[userID] = perUser
 	}
 	return perUser
+}
+
+func episodeScopedIndexKeys(externalIDs map[string]string) []string {
+	if len(externalIDs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, 4)
+	for _, idType := range []string{"episodeTvdb", "episodeTmdb", "episodeImdb", "episodeTrakt"} {
+		if idValue := strings.TrimSpace(externalIDs[idType]); idValue != "" {
+			keys = append(keys, strings.ToLower(idType)+":"+strings.ToLower(idValue))
+		}
+	}
+	return keys
 }
 
 func (s *Service) loadWatchHistory() error {
