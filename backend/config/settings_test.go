@@ -26,6 +26,23 @@ func TestLoadMigratesCreditsDetectionToCreditsAutoSkip(t *testing.T) {
 	}
 }
 
+func TestLoadMigratesYouTubeProxyURLFromMetadataToPlayback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"metadata":{"youtubeProxyUrl":"http://gluetun:8888"},"playback":{"preferredPlayer":"native"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Playback.YouTubeProxyURL != "http://gluetun:8888" {
+		t.Fatalf("Playback.YouTubeProxyURL = %q, want migrated proxy", settings.Playback.YouTubeProxyURL)
+	}
+}
+
 func TestLoadBackfillsUnknownTrackPolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"filtering":{"unknownTrackPolicy":"invalid"}}`)

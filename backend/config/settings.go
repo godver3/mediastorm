@@ -244,6 +244,7 @@ type PlaybackSettings struct {
 	CreditsDetection          bool    `json:"creditsDetection"`             // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams      int     `json:"maxConcurrentStreams"`         // Global max concurrent VOD streams across all accounts (0 = unlimited)
 	MaxResultsPerResolution   int     `json:"maxResultsPerResolution"`      // Maximum number of results per resolution tier (0 = no limit)
+	YouTubeProxyURL           string  `json:"youtubeProxyUrl,omitempty"`    // Optional proxy URL passed to yt-dlp for YouTube extraction/downloads
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
@@ -1313,6 +1314,14 @@ func (m *Manager) Load() (Settings, error) {
 		raw["playback"] = map[string]interface{}{}
 	}
 	if playbackRaw, ok := raw["playback"].(map[string]interface{}); ok {
+		if metadataRaw, ok := raw["metadata"].(map[string]interface{}); ok {
+			if _, alreadySet := playbackRaw["youtubeProxyUrl"]; !alreadySet {
+				if proxyURL, hasLegacy := metadataRaw["youtubeProxyUrl"]; hasLegacy {
+					playbackRaw["youtubeProxyUrl"] = proxyURL
+				}
+			}
+			delete(metadataRaw, "youtubeProxyUrl")
+		}
 		if _, hasAutoSkip := playbackRaw["creditsAutoSkip"]; !hasAutoSkip {
 			if legacyCreditsDetection, hasLegacy := playbackRaw["creditsDetection"]; hasLegacy {
 				playbackRaw["creditsAutoSkip"] = legacyCreditsDetection

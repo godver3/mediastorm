@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/ytdlp"
 	"novastream/models"
 )
 
@@ -112,6 +113,7 @@ func (s *Service) SearchYouTubeVideos(ctx context.Context, query string, limit i
 			args = append(args, "--cookies", cookiesPath)
 		}
 	}
+	args = ytdlp.AppendProxyArgs(args, s.ytdlpProxyURL())
 	args = append(args, fmt.Sprintf("ytsearch%d:%s", limit, query))
 
 	cmd := exec.CommandContext(searchCtx, ytdlpPath, args...)

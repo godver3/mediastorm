@@ -418,6 +418,7 @@ func redactSettings(s *config.Settings) {
 	mask(&s.Metadata.TVDBAPIKey)
 	mask(&s.Metadata.TMDBAPIKey)
 	mask(&s.Metadata.GeminiAPIKey)
+	mask(&s.Playback.YouTubeProxyURL)
 
 	// WebDAV
 	mask(&s.WebDAV.Password)
@@ -516,6 +517,7 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 	restore(&incoming.Metadata.TVDBAPIKey, existing.Metadata.TVDBAPIKey)
 	restore(&incoming.Metadata.TMDBAPIKey, existing.Metadata.TMDBAPIKey)
 	restore(&incoming.Metadata.GeminiAPIKey, existing.Metadata.GeminiAPIKey)
+	restore(&incoming.Playback.YouTubeProxyURL, existing.Playback.YouTubeProxyURL)
 
 	// WebDAV
 	restore(&incoming.WebDAV.Password, existing.WebDAV.Password)
@@ -855,6 +857,7 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 
 	// Reload metadata service with new API keys
 	if h.MetadataService != nil {
+		h.MetadataService.SetYTDLPProxyURL(s.Playback.YouTubeProxyURL)
 		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language, s.Metadata.GeminiAPIKey)
 		log.Printf("[settings] reloaded metadata service API keys")
 

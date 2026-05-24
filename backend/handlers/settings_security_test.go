@@ -27,6 +27,9 @@ func TestRedactSettings(t *testing.T) {
 			TMDBAPIKey:   "tmdb-key",
 			GeminiAPIKey: "gemini-key",
 		},
+		Playback: config.PlaybackSettings{
+			YouTubeProxyURL: "http://user:pass@gluetun:8888",
+		},
 		MDBList: config.MDBListSettings{
 			APIKey: "mdblist-key",
 		},
@@ -75,6 +78,9 @@ func TestRedactSettings(t *testing.T) {
 	}
 	if s.Metadata.GeminiAPIKey != redacted {
 		t.Errorf("GeminiAPIKey not redacted: %q", s.Metadata.GeminiAPIKey)
+	}
+	if s.Playback.YouTubeProxyURL != redacted {
+		t.Errorf("YouTubeProxyURL not redacted: %q", s.Playback.YouTubeProxyURL)
 	}
 	if s.MDBList.APIKey != redacted {
 		t.Errorf("MDBList APIKey not redacted: %q", s.MDBList.APIKey)
@@ -126,6 +132,9 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 			TMDBAPIKey:   "real-tmdb-key",
 			GeminiAPIKey: "real-gemini-key",
 		},
+		Playback: config.PlaybackSettings{
+			YouTubeProxyURL: "http://real-proxy:8888",
+		},
 		Usenet: []config.UsenetSettings{
 			{Name: "provider1", Password: "real-password"},
 		},
@@ -161,6 +170,9 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 			TVDBAPIKey:   redactedPlaceholder,
 			TMDBAPIKey:   redactedPlaceholder,
 			GeminiAPIKey: redactedPlaceholder,
+		},
+		Playback: config.PlaybackSettings{
+			YouTubeProxyURL: redactedPlaceholder,
 		},
 		Usenet: []config.UsenetSettings{
 			{Name: "provider1", Password: redactedPlaceholder},
@@ -199,6 +211,9 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 	}
 	if incoming.Metadata.TMDBAPIKey != "real-tmdb-key" {
 		t.Errorf("TMDBAPIKey not restored: got %q", incoming.Metadata.TMDBAPIKey)
+	}
+	if incoming.Playback.YouTubeProxyURL != "http://real-proxy:8888" {
+		t.Errorf("YouTubeProxyURL not restored: got %q", incoming.Playback.YouTubeProxyURL)
 	}
 	if incoming.Usenet[0].Password != "real-password" {
 		t.Errorf("Usenet password not restored: got %q", incoming.Usenet[0].Password)

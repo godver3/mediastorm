@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"novastream/internal/ytdlp"
 	"novastream/models"
 	"novastream/services/calendar"
 )
@@ -51,6 +52,9 @@ type Service struct {
 
 	// Cache directory (used to locate yt-dlp cookies file)
 	cacheDir string
+
+	ytdlpProxyMu sync.RWMutex
+	ytdlpProxy   string
 
 	// Background cache manager
 	cacheStopCh          chan struct{}
@@ -186,6 +190,23 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		progressTasks:    make(map[string]*ProgressTask),
 		cacheDir:         cacheDir,
 	}
+}
+
+// SetYTDLPProxyURL updates the proxy URL passed to yt-dlp for YouTube requests.
+func (s *Service) SetYTDLPProxyURL(proxyURL string) {
+	proxyURL = strings.TrimSpace(proxyURL)
+	s.ytdlpProxyMu.Lock()
+	s.ytdlpProxy = proxyURL
+	s.ytdlpProxyMu.Unlock()
+	if s.trailerPrequeue != nil {
+		s.trailerPrequeue.SetYTDLPProxyURL(proxyURL)
+	}
+}
+
+func (s *Service) ytdlpProxyURL() string {
+	s.ytdlpProxyMu.RLock()
+	defer s.ytdlpProxyMu.RUnlock()
+	return s.ytdlpProxy
 }
 
 // startProgressTask registers a new progress task and returns a cleanup function
@@ -7251,6 +7272,7 @@ func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) 
 	if cookiesPath := s.ytdlpCookiesPath(); cookiesPath != "" {
 		args = append(args, "--cookies", cookiesPath)
 	}
+	args = ytdlp.AppendProxyArgs(args, s.ytdlpProxyURL())
 	args = append(args, videoURL)
 
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
@@ -7258,7 +7280,7 @@ func (s *Service) ExtractTrailerStreamURL(ctx context.Context, videoURL string) 
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Printf("[metadata] extracting trailer stream URL: %s %v", ytdlpPath, args)
+	log.Printf("[metadata] extracting trailer stream URL with yt-dlp")
 
 	if err := cmd.Run(); err != nil {
 		stderrStr := strings.TrimSpace(stderr.String())

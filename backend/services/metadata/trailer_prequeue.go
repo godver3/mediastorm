@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"novastream/internal/ytdlp"
 )
 
 // TrailerStatus represents the current state of a prequeued trailer download
@@ -48,6 +50,8 @@ type TrailerPrequeueManager struct {
 	maxAge        time.Duration // Max age for failed/pending items before cleanup
 	cleanupC      chan struct{} // Signal to stop cleanup
 	cleanupActive bool          // Whether cleanup goroutine is running
+	proxyMu       sync.RWMutex
+	ytdlpProxyURL string
 }
 
 // NewTrailerPrequeueManager creates a new prequeue manager
@@ -66,6 +70,19 @@ func NewTrailerPrequeueManager(tempDir, cacheDir string) (*TrailerPrequeueManage
 
 	log.Printf("[trailer-prequeue] initialized manager (temp dir: %s)", tempDir)
 	return mgr, nil
+}
+
+// SetYTDLPProxyURL updates the proxy URL passed to yt-dlp for trailer downloads.
+func (m *TrailerPrequeueManager) SetYTDLPProxyURL(proxyURL string) {
+	m.proxyMu.Lock()
+	m.ytdlpProxyURL = strings.TrimSpace(proxyURL)
+	m.proxyMu.Unlock()
+}
+
+func (m *TrailerPrequeueManager) getYTDLPProxyURL() string {
+	m.proxyMu.RLock()
+	defer m.proxyMu.RUnlock()
+	return m.ytdlpProxyURL
 }
 
 // generateID creates a unique ID for a video URL
@@ -215,6 +232,7 @@ func (m *TrailerPrequeueManager) downloadTrailer(id, videoURL string) {
 			args = append(args, "--cookies", cookiesPath)
 		}
 	}
+	args = ytdlp.AppendProxyArgs(args, m.getYTDLPProxyURL())
 	args = append(args, videoURL)
 
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)

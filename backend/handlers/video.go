@@ -30,6 +30,7 @@ import (
 	"novastream/config"
 	"novastream/internal/integration"
 	"novastream/internal/liveusage"
+	"novastream/internal/ytdlp"
 	"novastream/models"
 	"novastream/services/credits"
 	"novastream/services/streaming"
@@ -3091,6 +3092,18 @@ func (h *VideoHandler) ytdlpPath() (string, error) {
 	return ytdlpPath, nil
 }
 
+func (h *VideoHandler) ytdlpProxyURL() string {
+	if h.configManager == nil {
+		return ""
+	}
+	settings, err := h.configManager.Load()
+	if err != nil {
+		log.Printf("[hls-youtube] failed to load yt-dlp proxy setting: %v", err)
+		return ""
+	}
+	return settings.Playback.YouTubeProxyURL
+}
+
 func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL string) (youtubeHLSURLs, error) {
 	ytdlpPath, err := h.ytdlpPath()
 	if err != nil {
@@ -3112,6 +3125,7 @@ func (h *VideoHandler) extractYouTubeHLSURLs(ctx context.Context, videoPageURL s
 	if cookiesPath := h.ytdlpCookiesPath(); cookiesPath != "" {
 		args = append(args, "--cookies", cookiesPath)
 	}
+	args = ytdlp.AppendProxyArgs(args, h.ytdlpProxyURL())
 	args = append(args, videoPageURL)
 
 	cmd := exec.CommandContext(extractCtx, ytdlpPath, args...)
@@ -3161,6 +3175,7 @@ func (h *VideoHandler) extractYouTubeCaptionTracks(ctx context.Context, videoPag
 	if cookiesPath := h.ytdlpCookiesPath(); cookiesPath != "" {
 		args = append(args, "--cookies", cookiesPath)
 	}
+	args = ytdlp.AppendProxyArgs(args, h.ytdlpProxyURL())
 	args = append(args, videoPageURL)
 
 	cmd := exec.CommandContext(extractCtx, ytdlpPath, args...)
