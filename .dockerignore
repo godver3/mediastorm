@@ -3,7 +3,14 @@
 !backend/**
 
 backend/.git/
+backend/.cache/
+backend/.gocache/
+backend/.tmp/
+backend/__pycache__/
+backend/bin/
 backend/cache/
 backend/mediastorm
+backend/novastream
+backend/server.log
 backend/*.log
 backend/*.tmp

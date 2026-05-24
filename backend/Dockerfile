@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # mediastorm Backend Dockerfile
 
 # Build stage
@@ -18,14 +19,22 @@ COPY backend/go.mod backend/go.sum ./
 # dependency resolution.
 ENV GOTOOLCHAIN=local
 
-# Download dependencies
-RUN go mod download
+# Download dependencies. The retry handles transient Go proxy TLS timeouts
+# during multi-platform buildx runs.
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    for attempt in 1 2 3; do \
+        go mod download && break; \
+        if [ "$attempt" = "3" ]; then exit 1; fi; \
+        sleep $((attempt * 5)); \
+    done
 
 # Copy source code
 COPY backend/ .
 
 # Build the application (CGO required for rapidyenc)
-RUN CGO_ENABLED=1 go build -o mediastorm .
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=1 go build -o mediastorm .
 
 # Final stage
 FROM debian:bookworm-slim
