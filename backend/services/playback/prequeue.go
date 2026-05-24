@@ -198,6 +198,15 @@ type PrequeueStore struct {
 	store       *datastore.DataStore
 }
 
+// DeletedPrequeueEntry describes an entry removed from the prequeue store.
+type DeletedPrequeueEntry struct {
+	ID         string
+	TitleID    string
+	TitleName  string
+	UserID     string
+	StreamPath string
+}
+
 // useDB returns true when the store is backed by PostgreSQL.
 func (s *PrequeueStore) useDB() bool { return s.store != nil }
 
@@ -624,7 +633,57 @@ func (s *PrequeueStore) Delete(id string) {
 		if err := s.store.Prequeue().Delete(context.Background(), id); err != nil {
 			log.Printf("[prequeue] Warning: failed to delete entry %s from DB: %v", id, err)
 		}
+	} else {
+		s.saveToDisk()
 	}
+}
+
+// DeleteByStreamPath removes ready entries that point at the given stream path.
+func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueEntry {
+	streamPath = strings.TrimSpace(streamPath)
+	if streamPath == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var removed []DeletedPrequeueEntry
+	for id, entry := range s.entries {
+		if strings.TrimSpace(entry.StreamPath) != streamPath {
+			continue
+		}
+
+		if entry.cancelFunc != nil {
+			entry.cancelFunc()
+		}
+
+		key := titleUserKey(entry.TitleID, entry.UserID)
+		if s.byTitleUser[key] == id {
+			delete(s.byTitleUser, key)
+		}
+
+		removed = append(removed, DeletedPrequeueEntry{
+			ID:         id,
+			TitleID:    entry.TitleID,
+			TitleName:  entry.TitleName,
+			UserID:     entry.UserID,
+			StreamPath: entry.StreamPath,
+		})
+		delete(s.entries, id)
+
+		if s.useDB() {
+			if err := s.store.Prequeue().Delete(context.Background(), id); err != nil {
+				log.Printf("[prequeue] Warning: failed to delete stream-path entry %s from DB: %v", id, err)
+			}
+		}
+	}
+
+	if len(removed) > 0 && !s.useDB() {
+		s.saveToDisk()
+	}
+
+	return removed
 }
 
 // DeleteAll removes all prequeue entries

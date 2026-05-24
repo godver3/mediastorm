@@ -2571,7 +2571,7 @@ func (s *Service) resolveSeriesTVDBID(ctx context.Context, req models.SeriesDeta
 	}
 
 	// Deduplicate concurrent requests for the same series
-	requestKey := cacheKey("resolve", "series", name, fmt.Sprintf("%d", req.Year), fmt.Sprintf("%d", req.TMDBID))
+	requestKey := cacheKey("resolve", "series", name, fmt.Sprintf("%d", req.Year), fmt.Sprintf("%d", req.TMDBID), strings.TrimSpace(req.IMDBID))
 
 	s.inflightMu.Lock()
 	if inflight, exists := s.inflightRequests[requestKey]; exists {
@@ -2664,7 +2664,17 @@ func (s *Service) resolveSeriesTVDBIDActual(ctx context.Context, req models.Seri
 		return 0, fmt.Errorf("series name required to resolve tvdb id")
 	}
 
-	results, err := s.searchTVDBSeries(name, req.Year, "")
+	var results []tvdbSearchResult
+	var err error
+	if imdbID := strings.TrimSpace(req.IMDBID); imdbID != "" {
+		results, err = s.searchTVDBSeries(name, 0, imdbID)
+		if err != nil {
+			log.Printf("[metadata] tvdb imdb series search failed imdbId=%s name=%q err=%v", imdbID, name, err)
+		}
+	}
+	if len(results) == 0 {
+		results, err = s.searchTVDBSeries(name, req.Year, "")
+	}
 	if err != nil {
 		return 0, err
 	}

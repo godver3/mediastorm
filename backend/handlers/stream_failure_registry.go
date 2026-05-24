@@ -121,6 +121,9 @@ func missingArticleFailureReason(err error) (string, bool) {
 	if debrid.IsBlockedContentError(err) {
 		return "provider_blocked_content", true
 	}
+	if debrid.IsProviderUnavailableError(err) {
+		return "provider_unavailable", true
+	}
 
 	return "", false
 }

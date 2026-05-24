@@ -197,6 +197,35 @@ func (s *Service) UpdateFromPrequeue(prequeueID string) {
 	log.Printf("[prewarm] Updated warm entry %s from ready prequeue %s", key, prequeueID)
 }
 
+// InvalidatePrequeue removes warm references to a prequeue that has been proven bad.
+func (s *Service) InvalidatePrequeue(prequeueID string) {
+	prequeueID = strings.TrimSpace(prequeueID)
+	if prequeueID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := 0
+	for key, entry := range s.entries {
+		if entry.PrequeueID != prequeueID {
+			continue
+		}
+		delete(s.entries, key)
+		removed++
+	}
+
+	if removed == 0 {
+		return
+	}
+
+	if err := s.saveLocked(); err != nil {
+		log.Printf("[prewarm] Warning: failed to persist invalidation for prequeue %s: %v", prequeueID, err)
+	}
+	log.Printf("[prewarm] Invalidated %d warm entrie(s) for prequeue %s", removed, prequeueID)
+}
+
 // RestorePrequeueEntries re-creates PrequeueStore entries from persisted warm data.
 // Call this after wiring all dependencies and before starting the service.
 func (s *Service) RestorePrequeueEntries() {

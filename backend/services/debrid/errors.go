@@ -3,6 +3,7 @@ package debrid
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -48,4 +49,27 @@ func IsBlockedContentError(err error) bool {
 	return strings.Contains(msg, "status 451") ||
 		strings.Contains(msg, "infringing_file") ||
 		strings.Contains(msg, "error_code\": 35")
+}
+
+// IsProviderUnavailableError reports transient provider-side failures where the
+// selected item may be unusable right now, but another source can still work.
+func IsProviderUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) {
+		if providerErr.StatusCode == http.StatusTooManyRequests || providerErr.StatusCode >= http.StatusInternalServerError {
+			return true
+		}
+		msg := strings.ToLower(providerErr.Message + " " + providerErr.Body)
+		return strings.Contains(msg, "database_error") ||
+			strings.Contains(msg, "try again later") ||
+			strings.Contains(msg, "temporarily unavailable")
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database_error") ||
+		strings.Contains(msg, "try again later") ||
+		strings.Contains(msg, "temporarily unavailable") ||
+		strings.Contains(msg, "no download url returned")
 }

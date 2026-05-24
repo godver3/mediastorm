@@ -37,6 +37,23 @@ func TestStreamFailureRegistryRecordsMissingArticleFailures(t *testing.T) {
 	}
 }
 
+func TestStreamFailureRegistryRecordsProviderUnavailableFailures(t *testing.T) {
+	registry := &streamFailureRegistry{records: make(map[string]streamFailureRecord)}
+	err := errors.New("get torrent info failed: There was an error processing your request. Please try again later. (error: DATABASE_ERROR)")
+
+	if !registry.recordIfMissingArticles("/debrid/torbox/123/file/0/title.mkv", err) {
+		t.Fatal("recordIfMissingArticles returned false")
+	}
+
+	record, ok := registry.confirmedRecent("debrid/torbox/123/file/0/title.mkv", time.Minute)
+	if !ok {
+		t.Fatal("confirmedRecent returned false")
+	}
+	if record.Reason != "provider_unavailable" {
+		t.Fatalf("reason = %q, want provider_unavailable", record.Reason)
+	}
+}
+
 func TestMigrateStreamRejectsUnconfirmedFailures(t *testing.T) {
 	handler := &PrequeueHandler{
 		failures: &streamFailureRegistry{records: make(map[string]streamFailureRecord)},

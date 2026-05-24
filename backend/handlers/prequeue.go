@@ -39,6 +39,7 @@ type PrewarmService interface {
 	GetWarm(titleID, userID string) *playback.WarmRef
 	AdoptEntry(prequeueID string)
 	UpdateFromPrequeue(prequeueID string)
+	InvalidatePrequeue(prequeueID string)
 }
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
@@ -1360,9 +1361,40 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 			EpisodeNumber: req.EpisodeNumber,
 		}
 	}
+	mediaType := strings.ToLower(strings.TrimSpace(req.MediaType))
+	if mediaType == "" {
+		mediaType = "movie"
+	}
+	if mediaType == "episode" || targetEpisode != nil {
+		mediaType = "series"
+	}
+
+	var episodeResolver *filter.SeriesEpisodeResolver
+	var isDaily bool
+	var isAnime bool
+	var targetAirDate string
+	var episodeAirYear int
+	var absoluteEpisodeNumber int
+	if mediaType == "series" && targetEpisode != nil {
+		seriesMeta := h.createEpisodeResolverAndLookupAbsoluteEp(ctx, req.TitleID, req.TitleName, req.Year, req.IMDBID, targetEpisode)
+		if seriesMeta != nil {
+			episodeResolver = seriesMeta.EpisodeResolver
+			targetEpisode = seriesMeta.TargetEpisode
+			isDaily = seriesMeta.IsDaily
+			isAnime = seriesMeta.IsAnime
+			targetAirDate = seriesMeta.TargetAirDate
+			episodeAirYear = seriesMeta.EpisodeAirYear
+			if req.Year == 0 && seriesMeta.Year > 0 {
+				req.Year = seriesMeta.Year
+			}
+			if targetEpisode != nil {
+				absoluteEpisodeNumber = targetEpisode.AbsoluteEpisodeNumber
+			}
+		}
+	}
 
 	// Build search query (same logic as prequeue worker)
-	query := h.buildSearchQuery(req.TitleName, req.MediaType, targetEpisode)
+	query := h.buildSearchQuery(req.TitleName, mediaType, targetEpisode)
 	if query == "" {
 		http.Error(w, "failed to build search query", http.StatusBadRequest)
 		return
@@ -1372,12 +1404,18 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 
 	// Search for results
 	searchOpts := indexer.SearchOptions{
-		Query:      query,
-		MaxResults: 50,
-		MediaType:  req.MediaType,
-		IMDBID:     req.IMDBID,
-		Year:       req.Year,
-		UserID:     req.UserID,
+		Query:                 query,
+		MaxResults:            50,
+		MediaType:             mediaType,
+		IMDBID:                req.IMDBID,
+		Year:                  req.Year,
+		UserID:                req.UserID,
+		EpisodeResolver:       episodeResolver,
+		IsDaily:               isDaily,
+		IsAnime:               isAnime,
+		TargetAirDate:         targetAirDate,
+		EpisodeAirYear:        episodeAirYear,
+		AbsoluteEpisodeNumber: absoluteEpisodeNumber,
 	}
 
 	allResults, searchErr := h.indexerSvc.Search(ctx, searchOpts)
@@ -1392,6 +1430,7 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 	// Iterate through results, skip the one matching the failed path
 	var resolution *models.PlaybackResolution
 	var selectedResult *models.NZBResult
+	var duration float64
 
 	for i, result := range allResults {
 		resolution, _ = h.playbackSvc.Resolve(ctx, result)
@@ -1400,10 +1439,25 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Skip if this resolves to the same path that failed
-		if resolution.WebDAVPath == req.FailedStreamPath {
+		if normalizeStreamFailurePath(resolution.WebDAVPath) == normalizeStreamFailurePath(req.FailedStreamPath) {
 			log.Printf("[stream-migration] Skipping result [%d] — same as failed path: %s", i, result.Title)
 			resolution = nil
 			continue
+		}
+
+		if h.fullProber != nil {
+			fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
+			if err != nil {
+				log.Printf("[stream-migration] Skipping result [%d] — probe failed: %s -> %v", i, result.Title, err)
+				if failures.recordIfMissingArticles(resolution.WebDAVPath, err) {
+					log.Printf("[stream-migration] recorded failed alternative path=%q err=%v", resolution.WebDAVPath, err)
+				}
+				resolution = nil
+				continue
+			}
+			if fullResult != nil {
+				duration = fullResult.Duration
+			}
 		}
 
 		log.Printf("[stream-migration] Resolved alternative [%d]: %s -> %s", i, result.Title, resolution.WebDAVPath)
@@ -1417,15 +1471,6 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Probe for duration
-	var duration float64
-	if h.fullProber != nil {
-		fullResult, err := h.fullProber.ProbeVideoFull(ctx, resolution.WebDAVPath)
-		if err == nil && fullResult != nil {
-			duration = fullResult.Duration
-		}
-	}
-
 	resp := MigrateStreamResponse{
 		StreamPath: resolution.WebDAVPath,
 		FileSize:   resolution.FileSize,
@@ -1433,6 +1478,13 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 	}
 
 	log.Printf("[stream-migration] Migration successful: %s (%.0fs duration)", resp.StreamPath, resp.Duration)
+	for _, removed := range h.store.DeleteByStreamPath(failedPath) {
+		log.Printf("[stream-migration] Removed failed prequeue %s for title=%s user=%s path=%q",
+			removed.ID, removed.TitleID, removed.UserID, removed.StreamPath)
+		if h.prewarmSvc != nil {
+			h.prewarmSvc.InvalidatePrequeue(removed.ID)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
