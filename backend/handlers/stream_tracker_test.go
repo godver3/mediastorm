@@ -16,7 +16,8 @@ func newTestTracker() *StreamTracker {
 func startTestStream(t *testing.T, tracker *StreamTracker, profileID, accountID string) string {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/video/stream?profileId="+profileID, nil)
-	id, _, _ := tracker.StartStreamWithAccount(r, "/test/file.mkv", 1000, 0, 0, accountID)
+	path := "/test/file-" + string(rune('a'+tracker.Count())) + ".mkv"
+	id, _, _ := tracker.StartStreamWithAccount(r, path, 1000, 0, 0, accountID)
 	return id
 }
 
@@ -122,5 +123,51 @@ func TestStreamUsageCrossAccount(t *testing.T) {
 	usage2 := tracker.GetAccountStreamUsage("acct2", 2)
 	if usage2.CurrentStreams != 1 || usage2.AtLimit {
 		t.Fatalf("acct2 expected 1/2 not at limit, got %+v", usage2)
+	}
+}
+
+func TestStreamUsageCollapsesRangeRequestsForSamePlayback(t *testing.T) {
+	tracker := newTestTracker()
+
+	req1 := httptest.NewRequest(http.MethodGet, "/video/stream?profileId=p1&profileName=User&mediaType=episode&itemId=tvdb:series:1:s01e01", nil)
+	req1.Header.Set("Range", "bytes=0-4194303")
+	id1, _, _ := tracker.StartStreamWithAccount(req1, "/test/file.mkv", 4194304, 0, 4194303, "acct1")
+	defer tracker.EndStream(id1)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/video/stream?profileId=p1&profileName=User&mediaType=episode&itemId=tvdb:series:1:s01e01", nil)
+	req2.Header.Set("Range", "bytes=4194304-8388607")
+	id2, _, _ := tracker.StartStreamWithAccount(req2, "/test/file.mkv", 4194304, 4194304, 8388607, "acct1")
+	defer tracker.EndStream(id2)
+
+	accountUsage := tracker.GetAccountStreamUsage("acct1", 1)
+	if accountUsage.CurrentStreams != 1 || !accountUsage.AtLimit {
+		t.Fatalf("same playback should count as one account slot at 1/1, got %+v", accountUsage)
+	}
+
+	profileUsage := tracker.GetProfileStreamUsage("p1", 1)
+	if profileUsage.CurrentStreams != 1 || !profileUsage.AtLimit {
+		t.Fatalf("same playback should count as one profile slot at 1/1, got %+v", profileUsage)
+	}
+
+	_, exceeds := tracker.WouldExceedAccountLimit(req2, "/test/file.mkv", "acct1", 1)
+	if exceeds {
+		t.Fatal("same playback range request should not exceed account limit")
+	}
+}
+
+func TestStreamUsageRejectsNewPlaybackWhenSlotLimitReached(t *testing.T) {
+	tracker := newTestTracker()
+
+	activeReq := httptest.NewRequest(http.MethodGet, "/video/stream?profileId=p1&mediaType=episode&itemId=tvdb:series:1:s01e01", nil)
+	activeID, _, _ := tracker.StartStreamWithAccount(activeReq, "/test/file1.mkv", 1000, 0, 999, "acct1")
+	defer tracker.EndStream(activeID)
+
+	nextReq := httptest.NewRequest(http.MethodGet, "/video/stream?profileId=p1&mediaType=episode&itemId=tvdb:series:1:s01e02", nil)
+	usage, exceeds := tracker.WouldExceedAccountLimit(nextReq, "/test/file2.mkv", "acct1", 1)
+	if !exceeds {
+		t.Fatal("different playback should exceed account limit")
+	}
+	if usage.CurrentStreams != 1 || usage.MaxStreams != 1 || !usage.AtLimit {
+		t.Fatalf("expected 1/1 at limit, got %+v", usage)
 	}
 }

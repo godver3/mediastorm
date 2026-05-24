@@ -514,15 +514,15 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && h.configManager != nil {
 		if globalSettings, err := h.configManager.Load(); err == nil && globalSettings.Playback.MaxConcurrentStreams > 0 {
 			tracker := GetStreamTracker()
-			totalActive := tracker.Count()
-			if totalActive >= globalSettings.Playback.MaxConcurrentStreams {
+			usage, exceeds := tracker.WouldExceedGlobalLimit(r, cleanPath, globalSettings.Playback.MaxConcurrentStreams)
+			if exceeds {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"code":           "STREAM_LIMIT_REACHED",
-					"message":        fmt.Sprintf("Server stream limit reached (%d/%d)", totalActive, globalSettings.Playback.MaxConcurrentStreams),
-					"currentStreams": totalActive,
-					"maxStreams":     globalSettings.Playback.MaxConcurrentStreams,
+					"message":        fmt.Sprintf("Server stream limit reached (%d/%d)", usage.CurrentStreams, usage.MaxStreams),
+					"currentStreams": usage.CurrentStreams,
+					"maxStreams":     usage.MaxStreams,
 					"scope":          "global",
 				})
 				return
@@ -544,8 +544,8 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 					if settings, err := h.userSettingsSvc.Get(profileID); err == nil && settings != nil {
 						if settings.Playback.MaxConcurrentStreams != nil && *settings.Playback.MaxConcurrentStreams > 0 {
 							tracker := GetStreamTracker()
-							usage := tracker.GetProfileStreamUsage(profileID, *settings.Playback.MaxConcurrentStreams)
-							if usage.AtLimit {
+							usage, exceeds := tracker.WouldExceedProfileLimit(r, cleanPath, profileID, *settings.Playback.MaxConcurrentStreams)
+							if exceeds {
 								w.Header().Set("Content-Type", "application/json")
 								w.WriteHeader(http.StatusTooManyRequests)
 								_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -563,8 +563,8 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 				// Check per-account limit
 				if account, ok := h.accountsSvc.Get(user.AccountID); ok && account.MaxStreams > 0 {
 					tracker := GetStreamTracker()
-					usage := tracker.GetAccountStreamUsage(user.AccountID, account.MaxStreams)
-					if usage.AtLimit {
+					usage, exceeds := tracker.WouldExceedAccountLimit(r, cleanPath, user.AccountID, account.MaxStreams)
+					if exceeds {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusTooManyRequests)
 						_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -3788,7 +3788,7 @@ func (h *VideoHandler) GetStreamUsage(w http.ResponseWriter, r *http.Request) {
 	// Try global limit
 	if h.configManager != nil {
 		if globalSettings, err := h.configManager.Load(); err == nil && globalSettings.Playback.MaxConcurrentStreams > 0 {
-			total := tracker.Count()
+			total := tracker.CountPlaybackSlots()
 			max := globalSettings.Playback.MaxConcurrentStreams
 			available := max - total
 			if available < 0 {

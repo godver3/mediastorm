@@ -181,6 +181,44 @@ func streamPlaybackControlKeys(stream *TrackedStream) []string {
 	return keys
 }
 
+func trackedStreamSlotKey(stream *TrackedStream) string {
+	if stream == nil {
+		return ""
+	}
+	return streamSlotKey(stream.ProfileID, stream.ProfileName, stream.ClientIP, stream.MediaMetadata.MediaType, stream.MediaMetadata.ItemID, stream.Path)
+}
+
+func requestStreamSlotKey(r *http.Request, path string) string {
+	profileID := r.URL.Query().Get("profileId")
+	if profileID == "" {
+		profileID = r.URL.Query().Get("userId")
+	}
+	metadata := parseStreamMediaMetadata(r)
+	return streamSlotKey(profileID, r.URL.Query().Get("profileName"), getClientIP(r), metadata.MediaType, metadata.ItemID, path)
+}
+
+func streamSlotKey(profileID, profileName, clientIP, mediaType, itemID, path string) string {
+	profile := strings.ToLower(strings.TrimSpace(profileID))
+	if profile == "" {
+		profile = strings.ToLower(strings.TrimSpace(profileName))
+	}
+	if profile == "" {
+		profile = "ip:" + strings.ToLower(strings.TrimSpace(clientIP))
+	}
+
+	mediaKey := strings.ToLower(strings.TrimSpace(itemID))
+	if mediaKey != "" {
+		mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+		if mediaType != "" {
+			mediaKey = mediaType + ":" + mediaKey
+		}
+	} else {
+		mediaKey = "path:" + strings.ToLower(strings.TrimSpace(path))
+	}
+
+	return profile + "|" + mediaKey
+}
+
 // MarkStopPlaybackForProfileMedia marks a profile/media pair as disallowed on heartbeat.
 func (t *StreamTracker) MarkStopPlaybackForProfileMedia(profileID, profileName, mediaType, itemID string) bool {
 	if strings.TrimSpace(itemID) == "" {
@@ -378,30 +416,144 @@ func (t *StreamTracker) Count() int {
 	return len(t.streams)
 }
 
+// CountPlaybackSlots returns the number of distinct playbacks represented by
+// the active stream requests. A single player often opens multiple byte-range
+// requests for one media item; those should consume one stream-limit slot.
+func (t *StreamTracker) CountPlaybackSlots() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return countPlaybackSlotsLocked(t.streams, nil)
+}
+
 // CountForAccount returns the number of active streams for the given account.
 func (t *StreamTracker) CountForAccount(accountID string) int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	count := 0
-	for _, s := range t.streams {
-		if s.AccountID == accountID {
-			count++
-		}
-	}
-	return count
+	return countPlaybackSlotsLocked(t.streams, func(s *TrackedStream) bool {
+		return s.AccountID == accountID
+	})
 }
 
 // CountForProfile returns the number of active streams for the given profile.
 func (t *StreamTracker) CountForProfile(profileID string) int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	count := 0
+	return countPlaybackSlotsLocked(t.streams, func(s *TrackedStream) bool {
+		return s.ProfileID == profileID
+	})
+}
+
+func countPlaybackSlotsLocked(streams map[string]*TrackedStream, include func(*TrackedStream) bool) int {
+	seen := make(map[string]struct{})
+	for _, s := range streams {
+		if include != nil && !include(s) {
+			continue
+		}
+		key := trackedStreamSlotKey(s)
+		if key == "" {
+			key = s.ID
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen)
+}
+
+func (t *StreamTracker) hasPlaybackSlotLocked(include func(*TrackedStream) bool, slotKey string) bool {
+	if slotKey == "" {
+		return false
+	}
 	for _, s := range t.streams {
-		if s.ProfileID == profileID {
-			count++
+		if include != nil && !include(s) {
+			continue
+		}
+		if trackedStreamSlotKey(s) == slotKey {
+			return true
 		}
 	}
-	return count
+	return false
+}
+
+// WouldExceedGlobalLimit reports whether starting this request would create a
+// new playback slot beyond the global limit.
+func (t *StreamTracker) WouldExceedGlobalLimit(r *http.Request, path string, maxStreams int) (StreamUsageSummary, bool) {
+	if maxStreams <= 0 {
+		return StreamUsageSummary{MaxStreams: maxStreams}, false
+	}
+
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	current := countPlaybackSlotsLocked(t.streams, nil)
+	available := maxStreams - current
+	if available < 0 {
+		available = 0
+	}
+	usage := StreamUsageSummary{
+		CurrentStreams:   current,
+		MaxStreams:       maxStreams,
+		AvailableStreams: available,
+		AtLimit:          current >= maxStreams,
+	}
+	if current < maxStreams {
+		return usage, false
+	}
+	return usage, !t.hasPlaybackSlotLocked(nil, requestStreamSlotKey(r, path))
+}
+
+// WouldExceedAccountLimit reports whether starting this request would create a
+// new account playback slot beyond the account limit.
+func (t *StreamTracker) WouldExceedAccountLimit(r *http.Request, path, accountID string, maxStreams int) (StreamUsageSummary, bool) {
+	if maxStreams <= 0 {
+		return StreamUsageSummary{MaxStreams: maxStreams}, false
+	}
+
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	include := func(s *TrackedStream) bool { return s.AccountID == accountID }
+	current := countPlaybackSlotsLocked(t.streams, include)
+	available := maxStreams - current
+	if available < 0 {
+		available = 0
+	}
+	usage := StreamUsageSummary{
+		CurrentStreams:   current,
+		MaxStreams:       maxStreams,
+		AvailableStreams: available,
+		AtLimit:          current >= maxStreams,
+	}
+	if current < maxStreams {
+		return usage, false
+	}
+	return usage, !t.hasPlaybackSlotLocked(include, requestStreamSlotKey(r, path))
+}
+
+// WouldExceedProfileLimit reports whether starting this request would create a
+// new profile playback slot beyond the profile limit.
+func (t *StreamTracker) WouldExceedProfileLimit(r *http.Request, path, profileID string, maxStreams int) (StreamUsageSummary, bool) {
+	if maxStreams <= 0 {
+		return StreamUsageSummary{MaxStreams: maxStreams}, false
+	}
+
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	include := func(s *TrackedStream) bool { return s.ProfileID == profileID }
+	current := countPlaybackSlotsLocked(t.streams, include)
+	available := maxStreams - current
+	if available < 0 {
+		available = 0
+	}
+	usage := StreamUsageSummary{
+		CurrentStreams:   current,
+		MaxStreams:       maxStreams,
+		AvailableStreams: available,
+		AtLimit:          current >= maxStreams,
+	}
+	if current < maxStreams {
+		return usage, false
+	}
+	return usage, !t.hasPlaybackSlotLocked(include, requestStreamSlotKey(r, path))
 }
 
 // GetAccountStreamUsage returns a usage summary for the given account.

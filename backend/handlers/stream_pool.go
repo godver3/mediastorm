@@ -167,6 +167,10 @@ func (p *streamPool) serve(
 	ctx := r.Context()
 	requestStartedAt := time.Now()
 	rangeHeader := r.Header.Get("Range")
+	reqEnd := int64(-1)
+	if start, end, ok := parseByteRange(rangeHeader); ok && start == reqStart {
+		reqEnd = end
+	}
 
 	// Wait for initial data to be available at the requested position
 	slot.mu.Lock()
@@ -257,9 +261,16 @@ dataReady:
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
+	responseEnd := totalSize - 1
+	if reqEnd >= reqStart && (responseEnd < 0 || reqEnd < responseEnd) {
+		responseEnd = reqEnd
+	}
 	if totalSize > 0 && reqStart < totalSize {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", reqStart, totalSize-1, totalSize))
-		w.Header().Set("Content-Length", strconv.FormatInt(totalSize-reqStart, 10))
+		if responseEnd >= totalSize {
+			responseEnd = totalSize - 1
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", reqStart, responseEnd, totalSize))
+		w.Header().Set("Content-Length", strconv.FormatInt(responseEnd-reqStart+1, 10))
 	}
 
 	// Set filename headers for external players
@@ -309,11 +320,19 @@ dataReady:
 	flusher, _ := w.(http.Flusher)
 	pos := reqStart
 	var totalWritten int64
+	maxWritten := int64(-1)
+	if reqEnd >= reqStart {
+		maxWritten = reqEnd - reqStart + 1
+	}
 
 	log.Printf("[stream-pool] serving: path=%q range=%q reqStart=%d slotStart=%d buffered=%d slotTotalRead=%d readers=%d",
 		path, rangeHeader, reqStart, slot.startByte, endPos-slot.startByte, slotTotalRead, atomic.LoadInt32(&slot.readers))
 
 	for {
+		if maxWritten >= 0 && totalWritten >= maxWritten {
+			break
+		}
+
 		slot.mu.Lock()
 		// Check if the buffer has been trimmed past our read position
 		if pos < slot.startByte {
@@ -361,6 +380,16 @@ dataReady:
 		n := int(available)
 		if n > maxWriteSize {
 			n = maxWriteSize
+		}
+		if maxWritten >= 0 {
+			remaining := maxWritten - totalWritten
+			if remaining <= 0 {
+				slot.mu.Unlock()
+				break
+			}
+			if int64(n) > remaining {
+				n = int(remaining)
+			}
 		}
 		chunk := make([]byte, n)
 		copy(chunk, slot.data[offset:offset+int64(n)])

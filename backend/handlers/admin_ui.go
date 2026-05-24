@@ -2035,7 +2035,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			globalVODLimit = cfg.Playback.MaxConcurrentStreams
 		}
 	}
-	globalVODCurrent := tracker.Count()
+	globalVODCurrent := tracker.CountPlaybackSlots()
 
 	return json.Marshal(map[string]interface{}{
 		"streams":           streams,
