@@ -16,8 +16,22 @@ import (
 // NewHTTPClient returns an HTTP client that optionally routes requests through
 // an HTTP(S) or SOCKS5 proxy URL.
 func NewHTTPClient(timeout time.Duration, rawProxyURL string) (*http.Client, error) {
+	return NewHTTPClientWithOptions(HTTPClientOptions{Timeout: timeout}, rawProxyURL)
+}
+
+// HTTPClientOptions controls request-level and transport-level timeouts for
+// proxied HTTP clients.
+type HTTPClientOptions struct {
+	Timeout               time.Duration
+	ResponseHeaderTimeout time.Duration
+}
+
+// NewHTTPClientWithOptions returns an HTTP client that optionally routes
+// requests through an HTTP(S) or SOCKS5 proxy URL.
+func NewHTTPClientWithOptions(options HTTPClientOptions, rawProxyURL string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 
 	proxyURL := strings.TrimSpace(rawProxyURL)
 	if proxyURL != "" {
@@ -27,7 +41,7 @@ func NewHTTPClient(timeout time.Duration, rawProxyURL string) (*http.Client, err
 	}
 
 	return &http.Client{
-		Timeout:   timeout,
+		Timeout:   options.Timeout,
 		Transport: transport,
 	}, nil
 }

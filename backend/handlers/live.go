@@ -28,6 +28,7 @@ import (
 
 const (
 	defaultPlaylistTimeout   = 15 * time.Second
+	defaultStreamOpenTimeout = 15 * time.Second
 	defaultMaxPlaylistSize   = 50 * 1024 * 1024 // 50 MiB
 	playlistContentTypePlain = "text/plain; charset=utf-8"
 	liveStreamTimeout        = 30 * time.Minute
@@ -414,7 +415,7 @@ func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.R
 	}
 	req.Header.Set("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
 
-	resp, err := h.liveHTTPClient(proxyURL).Do(req)
+	resp, err := h.liveStreamHTTPClient(proxyURL).Do(req)
 	if err != nil {
 		log.Printf("[live] proxied stream request failed for %q via %q: %v", targetURL.String(), proxyURL, err)
 		http.Error(w, "failed to open proxied live stream", http.StatusBadGateway)
@@ -423,6 +424,7 @@ func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.R
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("[live] proxied stream returned status %d for %q via %q", resp.StatusCode, targetURL.String(), proxyURL)
 		http.Error(w, fmt.Sprintf("live stream returned status %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
@@ -1028,6 +1030,19 @@ func (h *LiveHandler) liveHTTPClient(proxyURL string) *http.Client {
 	if err != nil {
 		log.Printf("[live] invalid proxy URL %q: %v", proxyURL, err)
 		return h.client
+	}
+	return client
+}
+
+func (h *LiveHandler) liveStreamHTTPClient(proxyURL string) *http.Client {
+	client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+		ResponseHeaderTimeout: defaultStreamOpenTimeout,
+	}, proxyURL)
+	if err != nil {
+		log.Printf("[live] invalid stream proxy URL %q: %v", proxyURL, err)
+		client, _ = netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+			ResponseHeaderTimeout: defaultStreamOpenTimeout,
+		}, "")
 	}
 	return client
 }

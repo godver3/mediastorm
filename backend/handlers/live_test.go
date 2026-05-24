@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"novastream/config"
 	"novastream/models"
@@ -433,5 +434,25 @@ func TestResolveProfileLiveSource_NilProvider(t *testing.T) {
 
 	if src.Mode != "xtream" {
 		t.Errorf("Mode = %q, want %q (should fall back to global with nil provider)", src.Mode, "xtream")
+	}
+}
+
+func TestLiveStreamHTTPClientDoesNotUseBodyTimeout(t *testing.T) {
+	h := NewLiveHandler(nil, false, "", 24, 0, 0, false, nil, nil)
+
+	client := h.liveStreamHTTPClient("")
+	if client.Timeout != 0 {
+		t.Fatalf("client.Timeout = %v, want 0 for live stream bodies", client.Timeout)
+	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != defaultStreamOpenTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, defaultStreamOpenTimeout)
+	}
+	if transport.ResponseHeaderTimeout >= 30*time.Second {
+		t.Fatalf("ResponseHeaderTimeout = %v, want an open timeout rather than a stream body timeout", transport.ResponseHeaderTimeout)
 	}
 }
