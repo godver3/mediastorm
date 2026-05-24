@@ -172,9 +172,10 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             shelves,
-			ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
-			ItemCap:             globalSettings.HomeShelves.ItemCap,
+			Shelves:                         shelves,
+			ExploreCardPosition:             string(globalSettings.HomeShelves.ExploreCardPosition),
+			ItemCap:                         globalSettings.HomeShelves.ItemCap,
+			DisableTvLandscapeCardExpansion: models.BoolPtr(globalSettings.HomeShelves.DisableTvLandscapeCardExpansion),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),

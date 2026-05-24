@@ -548,8 +548,9 @@ var SettingsSchema = map[string]interface{}{
 		"group": "experience",
 		"order": 1,
 		"fields": map[string]interface{}{
-			"exploreCardPosition": map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
-			"itemCap":             map[string]interface{}{"type": "number", "label": "Shelf Item Cap", "description": "Max items shown per home shelf before the Explore card (default 20)", "order": 2, "step": 1, "min": 1, "max": 100},
+			"exploreCardPosition":             map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
+			"itemCap":                         map[string]interface{}{"type": "number", "label": "Shelf Item Cap", "description": "Max items shown per home shelf before the Explore card (default 20)", "order": 2, "step": 1, "min": 1, "max": 100},
+			"disableTvLandscapeCardExpansion": map[string]interface{}{"type": "boolean", "label": "Disable TV Card Expansion", "description": "Keep portrait shelf cards from expanding into landscape layout when focused on TV home screens.", "order": 3},
 		},
 	},
 	"homeShelves.shelves": map[string]interface{}{

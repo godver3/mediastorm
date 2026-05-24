@@ -4125,8 +4125,12 @@
     // Compare homeShelves sections - uses shelvesEqual for shelves array
     function homeShelvesEqual(profileHomeShelves, globalHomeShelves) {
         if (!profileHomeShelves || !globalHomeShelves) return profileHomeShelves === globalHomeShelves;
-        // Compare shelves using lenient comparison
-        if (!shelvesEqual(profileHomeShelves.shelves, globalHomeShelves.shelves)) return false;
+        // Compare shelves using lenient comparison only when the profile stores its own shelf list.
+        if (Object.prototype.hasOwnProperty.call(profileHomeShelves, 'shelves') && !shelvesEqual(profileHomeShelves.shelves, globalHomeShelves.shelves)) return false;
+        for (const key of Object.keys(profileHomeShelves)) {
+            if (key === 'shelves') continue;
+            if (!deepEqual(normalizeForComparison(profileHomeShelves[key]), normalizeForComparison(globalHomeShelves[key]))) return false;
+        }
         return true;
     }
 

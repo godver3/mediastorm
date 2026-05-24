@@ -171,9 +171,10 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			},
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             configShelvesToModel(g.HomeShelves.Shelves),
-			ExploreCardPosition: string(g.HomeShelves.ExploreCardPosition),
-			ItemCap:             g.HomeShelves.ItemCap,
+			Shelves:                         configShelvesToModel(g.HomeShelves.Shelves),
+			ExploreCardPosition:             string(g.HomeShelves.ExploreCardPosition),
+			ItemCap:                         g.HomeShelves.ItemCap,
+			DisableTvLandscapeCardExpansion: models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion),
 		},
 		Network: models.NetworkSettings{
 			HomeWifiSSID:     g.Network.HomeWifiSSID,
@@ -368,6 +369,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	if eff.HomeShelves.ItemCap <= 0 {
 		eff.HomeShelves.ItemCap = g.HomeShelves.ItemCap
 	}
+	if eff.HomeShelves.DisableTvLandscapeCardExpansion == nil {
+		eff.HomeShelves.DisableTvLandscapeCardExpansion = models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion)
+	}
 
 	// Network
 	if eff.Network.HomeWifiSSID == "" {
@@ -540,6 +544,10 @@ func stripHomeShelves(h *models.HomeShelvesSettings, g config.HomeShelvesSetting
 	}
 	if h.ItemCap != 0 && h.ItemCap == g.ItemCap {
 		h.ItemCap = 0
+		changed = true
+	}
+	if h.DisableTvLandscapeCardExpansion != nil && *h.DisableTvLandscapeCardExpansion == g.DisableTvLandscapeCardExpansion {
+		h.DisableTvLandscapeCardExpansion = nil
 		changed = true
 	}
 	return changed

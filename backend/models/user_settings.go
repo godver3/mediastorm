@@ -329,9 +329,10 @@ type ShelfConfig struct {
 
 // HomeShelvesSettings controls which shelves appear on the home screen and their order.
 type HomeShelvesSettings struct {
-	Shelves             []ShelfConfig `json:"shelves"`
-	ExploreCardPosition string        `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
-	ItemCap             int           `json:"itemCap,omitempty"`             // Max items shown per home shelf before Explore card (default 20)
+	Shelves                         []ShelfConfig `json:"shelves"`
+	ExploreCardPosition             string        `json:"exploreCardPosition,omitempty"`             // "front" (default) or "end"
+	ItemCap                         int           `json:"itemCap,omitempty"`                         // Max items shown per home shelf before Explore card (default 20)
+	DisableTvLandscapeCardExpansion *bool         `json:"disableTvLandscapeCardExpansion,omitempty"` // Keep TV shelf cards in portrait when focused
 }
 
 // DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
@@ -488,9 +489,10 @@ func DefaultUserSettings() UserSettings {
 			SubtitleBackgroundOpacity: FloatPtr(0.6),
 		},
 		HomeShelves: HomeShelvesSettings{
-			Shelves:             DefaultHomeShelfConfigs(),
-			ExploreCardPosition: "front",
-			ItemCap:             20,
+			Shelves:                         DefaultHomeShelfConfigs(),
+			ExploreCardPosition:             "front",
+			ItemCap:                         20,
+			DisableTvLandscapeCardExpansion: BoolPtr(false),
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:   FloatPtr(0),

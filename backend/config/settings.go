@@ -396,9 +396,10 @@ const (
 
 // HomeShelvesSettings controls which shelves appear on the home screen and their order.
 type HomeShelvesSettings struct {
-	Shelves             []ShelfConfig       `json:"shelves"`
-	ExploreCardPosition ExploreCardPosition `json:"exploreCardPosition,omitempty"` // "front" (default) or "end"
-	ItemCap             int                 `json:"itemCap,omitempty"`             // Max items shown per home shelf before Explore card (default 20)
+	Shelves                         []ShelfConfig       `json:"shelves"`
+	ExploreCardPosition             ExploreCardPosition `json:"exploreCardPosition,omitempty"`             // "front" (default) or "end"
+	ItemCap                         int                 `json:"itemCap,omitempty"`                         // Max items shown per home shelf before Explore card (default 20)
+	DisableTvLandscapeCardExpansion bool                `json:"disableTvLandscapeCardExpansion,omitempty"` // Keep TV shelf cards in portrait when focused
 }
 
 // DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
