@@ -115,14 +115,14 @@ func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2:    true,
-		MaxIdleConns:         20,
-		MaxIdleConnsPerHost:  8,
-		MaxConnsPerHost:      0, // unlimited
-		IdleConnTimeout:      5 * time.Minute,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   8,
+		MaxConnsPerHost:       0, // unlimited
+		IdleConnTimeout:       5 * time.Minute,
 		ResponseHeaderTimeout: 15 * time.Second,
-		TLSHandshakeTimeout:  10 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
@@ -173,6 +173,17 @@ func (p *StreamingProvider) setCachedURL(cacheKey, url, filename string, rarOffs
 			delete(p.urlCache, id)
 		}
 	}
+}
+
+func (p *StreamingProvider) evictCachedURL(cacheKey string) bool {
+	p.cacheMux.Lock()
+	defer p.cacheMux.Unlock()
+
+	if _, exists := p.urlCache[cacheKey]; !exists {
+		return false
+	}
+	delete(p.urlCache, cacheKey)
+	return true
 }
 
 // GetDirectURL returns the unrestricted HTTP download URL for the given debrid path.
@@ -316,14 +327,15 @@ func (p *StreamingProvider) Stream(ctx context.Context, req streaming.Request) (
 		return nil, fmt.Errorf("provider %q not registered", providerConfig.Provider)
 	}
 
-	return p.streamWithProvider(ctx, req, client, torrentID, fileID)
+	return p.streamWithProvider(ctx, req, client, torrentID, fileID, true)
 }
 
-func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streaming.Request, client Provider, torrentID, fileID string) (*streaming.Response, error) {
+func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streaming.Request, client Provider, torrentID, fileID string, retryCachedFailure bool) (*streaming.Response, error) {
 	providerName := client.Name()
 	var downloadURL string
 	var filename string
 	var rarOffset, rarSize int64
+	var fromCache bool
 
 	cacheKey := cacheKeyFor(torrentID, fileID)
 
@@ -334,6 +346,7 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 		filename = cachedFilename
 		rarOffset = cachedRarOffset
 		rarSize = cachedRarSize
+		fromCache = true
 	} else {
 		// Cache miss - need to unrestrict the link
 		// Get fresh torrent info to get download links
@@ -435,14 +448,36 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 	// reuse warm TCP+TLS connections to the CDN instead of handshaking each time
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		if fromCache && retryCachedFailure {
+			if p.evictCachedURL(cacheKey) {
+				log.Printf("[debrid-stream] evicted cached URL for torrent %s file %s after request failure: %v", torrentID, fileID, err)
+			}
+			return p.streamWithProvider(ctx, req, client, torrentID, fileID, false)
+		}
+		return nil, &SourceError{
+			Provider: providerName,
+			URL:      downloadURL,
+			Err:      err,
+		}
 	}
 
 	// For failed requests, close and return error
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		resp.Body.Close()
-		return nil, fmt.Errorf("%s request failed: %s: %s", providerName, resp.Status, string(body))
+		if fromCache && retryCachedFailure {
+			if p.evictCachedURL(cacheKey) {
+				log.Printf("[debrid-stream] evicted cached URL for torrent %s file %s after %s response: %s", torrentID, fileID, providerName, resp.Status)
+			}
+			return p.streamWithProvider(ctx, req, client, torrentID, fileID, false)
+		}
+		return nil, &SourceError{
+			Provider:   providerName,
+			URL:        downloadURL,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       string(body),
+		}
 	}
 
 	log.Printf("[debrid-stream] %s response: status=%d content-length=%d range=%q",
@@ -513,8 +548,8 @@ func (d *drainOnCloseBody) Read(p []byte) (int, error) {
 }
 
 const (
-	drainMaxBytes   = 2 * 1024 * 1024 // drain up to 2MB
-	drainTimeout    = 2 * time.Second
+	drainMaxBytes = 2 * 1024 * 1024 // drain up to 2MB
+	drainTimeout  = 2 * time.Second
 )
 
 func (d *drainOnCloseBody) Close() error {

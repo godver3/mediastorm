@@ -18,6 +18,41 @@ type ProviderError struct {
 	Body       string
 }
 
+// SourceError reports a failure while opening or reading the provider's direct
+// CDN/download URL. It means the selected release is not playable from this
+// source right now, so stream migration can try another result.
+type SourceError struct {
+	Provider   string
+	URL        string
+	StatusCode int
+	Status     string
+	Body       string
+	Err        error
+}
+
+func (e *SourceError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Err != nil {
+		return fmt.Sprintf("%s source request failed: %v", e.Provider, e.Err)
+	}
+	if e.Status != "" {
+		return fmt.Sprintf("%s source request failed: %s: %s", e.Provider, e.Status, e.Body)
+	}
+	if e.StatusCode != 0 {
+		return fmt.Sprintf("%s source request failed with status %d: %s", e.Provider, e.StatusCode, e.Body)
+	}
+	return fmt.Sprintf("%s source request failed", e.Provider)
+}
+
+func (e *SourceError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 func (e *ProviderError) Error() string {
 	if e == nil {
 		return ""
@@ -56,6 +91,10 @@ func IsBlockedContentError(err error) bool {
 func IsProviderUnavailableError(err error) bool {
 	if err == nil {
 		return false
+	}
+	var sourceErr *SourceError
+	if errors.As(err, &sourceErr) {
+		return true
 	}
 	var providerErr *ProviderError
 	if errors.As(err, &providerErr) {

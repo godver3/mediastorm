@@ -11,6 +11,7 @@ import (
 
 	nzbfilesystemlegacy "novastream/internal/nzbfilesystem"
 	"novastream/internal/usenet"
+	"novastream/services/debrid"
 )
 
 func TestStreamFailureRegistryRecordsMissingArticleFailures(t *testing.T) {
@@ -46,6 +47,28 @@ func TestStreamFailureRegistryRecordsProviderUnavailableFailures(t *testing.T) {
 	}
 
 	record, ok := registry.confirmedRecent("debrid/torbox/123/file/0/title.mkv", time.Minute)
+	if !ok {
+		t.Fatal("confirmedRecent returned false")
+	}
+	if record.Reason != "provider_unavailable" {
+		t.Fatalf("reason = %q, want provider_unavailable", record.Reason)
+	}
+}
+
+func TestStreamFailureRegistryRecordsDebridSourceFailures(t *testing.T) {
+	registry := &streamFailureRegistry{records: make(map[string]streamFailureRecord)}
+	err := &debrid.SourceError{
+		Provider: "torbox",
+		URL:      "https://nexus-124.wnam.tb-cdn.io/dld/file",
+		Err:      errors.New("dial tcp 89.39.210.32:443: connect: connection refused"),
+	}
+
+	path := "/debrid/torbox/28584716/file/0/Alien3.mkv"
+	if !registry.recordIfMissingArticles(path, err) {
+		t.Fatal("recordIfMissingArticles returned false")
+	}
+
+	record, ok := registry.confirmedRecent("debrid/torbox/28584716/file/0/Alien3.mkv", time.Minute)
 	if !ok {
 		t.Fatal("confirmedRecent returned false")
 	}
