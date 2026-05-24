@@ -322,6 +322,58 @@ http://stream.example/sports`))
 	}
 }
 
+func TestGetChannelsSourceEmptyCategoryFilterOverridesGlobal(t *testing.T) {
+	playlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`#EXTM3U
+#EXTINF:-1 tvg-id="news" tvg-name="News" group-title="News",News
+http://stream.example/news
+#EXTINF:-1 tvg-id="sports" tvg-name="Sports" group-title="Sports",Sports
+http://stream.example/sports`))
+	}))
+	defer playlistServer.Close()
+
+	enabled := true
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(config.Settings{
+		Live: config.LiveSettings{
+			Filtering: config.LiveTVFilterSettings{
+				EnabledCategories: []string{"News"},
+			},
+			Sources: []config.LivePlaylistSource{
+				{
+					ID:          "main",
+					Name:        "Main",
+					Mode:        "m3u",
+					PlaylistURL: playlistServer.URL,
+					Enabled:     &enabled,
+					Filtering: config.LiveTVFilterSettings{
+						EnabledCategories: []string{},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := NewLiveHandler(playlistServer.Client(), false, "", 24, 0, 0, false, mgr, nil)
+	req := httptest.NewRequest(http.MethodGet, "/live/channels", nil)
+	rec := httptest.NewRecorder()
+	h.GetChannels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp LiveChannelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Channels) != 2 {
+		t.Fatalf("channels length = %d, want 2: %+v", len(resp.Channels), resp.Channels)
+	}
+}
+
 // mockUserSettingsProvider is a test mock for LiveUserSettingsProvider.
 type mockUserSettingsProvider struct {
 	settings map[string]*models.UserSettings
