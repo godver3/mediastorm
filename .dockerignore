@@ -1,0 +1,9 @@
+**
+!backend/
+!backend/**
+
+backend/.git/
+backend/cache/
+backend/mediastorm
+backend/*.log
+backend/*.tmp

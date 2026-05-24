@@ -1,7 +1,7 @@
 # mediastorm Backend Dockerfile
 
 # Build stage
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.24.5-bookworm AS builder
 
 # Set working directory
 WORKDIR /app
@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy go mod files
 COPY backend/go.mod backend/go.sum ./
 
-# Allow Go to download newer toolchains if dependencies require it
-ENV GOTOOLCHAIN=auto
+# The builder image matches go.mod, so avoid downloading a toolchain during
+# dependency resolution.
+ENV GOTOOLCHAIN=local
 
 # Download dependencies
 RUN go mod download
@@ -24,7 +25,7 @@ RUN go mod download
 COPY backend/ .
 
 # Build the application (CGO required for rapidyenc)
-RUN GOTOOLCHAIN=auto CGO_ENABLED=1 go build -o mediastorm .
+RUN CGO_ENABLED=1 go build -o mediastorm .
 
 # Final stage
 FROM debian:bookworm-slim
