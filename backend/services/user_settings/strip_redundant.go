@@ -175,6 +175,8 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			ExploreCardPosition:             string(g.HomeShelves.ExploreCardPosition),
 			ItemCap:                         g.HomeShelves.ItemCap,
 			DisableTvLandscapeCardExpansion: models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion),
+			HomeShelfScale:                  models.FloatPtr(g.HomeShelves.HomeShelfScale),
+			HomeHeroScale:                   models.FloatPtr(g.HomeShelves.HomeHeroScale),
 		},
 		Network: models.NetworkSettings{
 			HomeWifiSSID:     g.Network.HomeWifiSSID,
@@ -372,6 +374,26 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	if eff.HomeShelves.DisableTvLandscapeCardExpansion == nil {
 		eff.HomeShelves.DisableTvLandscapeCardExpansion = models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion)
 	}
+	if eff.HomeShelves.HomeShelfScale == nil || *eff.HomeShelves.HomeShelfScale <= 0 {
+		eff.HomeShelves.HomeShelfScale = models.FloatPtr(g.HomeShelves.HomeShelfScale)
+	}
+	if eff.HomeShelves.HomeShelfScale != nil {
+		if *eff.HomeShelves.HomeShelfScale < 0.5 {
+			eff.HomeShelves.HomeShelfScale = models.FloatPtr(0.5)
+		} else if *eff.HomeShelves.HomeShelfScale > 1.0 {
+			eff.HomeShelves.HomeShelfScale = models.FloatPtr(1.0)
+		}
+	}
+	if eff.HomeShelves.HomeHeroScale == nil || *eff.HomeShelves.HomeHeroScale <= 0 {
+		eff.HomeShelves.HomeHeroScale = models.FloatPtr(g.HomeShelves.HomeHeroScale)
+	}
+	if eff.HomeShelves.HomeHeroScale != nil {
+		if *eff.HomeShelves.HomeHeroScale < 0.5 {
+			eff.HomeShelves.HomeHeroScale = models.FloatPtr(0.5)
+		} else if *eff.HomeShelves.HomeHeroScale > 1.0 {
+			eff.HomeShelves.HomeHeroScale = models.FloatPtr(1.0)
+		}
+	}
 
 	// Network
 	if eff.Network.HomeWifiSSID == "" {
@@ -548,6 +570,14 @@ func stripHomeShelves(h *models.HomeShelvesSettings, g config.HomeShelvesSetting
 	}
 	if h.DisableTvLandscapeCardExpansion != nil && *h.DisableTvLandscapeCardExpansion == g.DisableTvLandscapeCardExpansion {
 		h.DisableTvLandscapeCardExpansion = nil
+		changed = true
+	}
+	if h.HomeShelfScale != nil && *h.HomeShelfScale == g.HomeShelfScale {
+		h.HomeShelfScale = nil
+		changed = true
+	}
+	if h.HomeHeroScale != nil && *h.HomeHeroScale == g.HomeHeroScale {
+		h.HomeHeroScale = nil
 		changed = true
 	}
 	return changed

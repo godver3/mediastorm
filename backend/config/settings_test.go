@@ -43,6 +43,41 @@ func TestLoadBackfillsUnknownTrackPolicy(t *testing.T) {
 	}
 }
 
+func TestLoadClampsHomeShelfAndHeroScale(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       string
+		wantShelf float64
+		wantHero  float64
+	}{
+		{name: "missing", raw: `{"homeShelves":{"shelves":[]}}`, wantShelf: 1.0, wantHero: 1.0},
+		{name: "too low", raw: `{"homeShelves":{"shelves":[],"homeShelfScale":0.25,"homeHeroScale":0.25}}`, wantShelf: 0.5, wantHero: 0.5},
+		{name: "too high", raw: `{"homeShelves":{"shelves":[],"homeShelfScale":1.4,"homeHeroScale":1.4}}`, wantShelf: 1.0, wantHero: 1.0},
+		{name: "valid", raw: `{"homeShelves":{"shelves":[],"homeShelfScale":0.75,"homeHeroScale":0.65}}`, wantShelf: 0.75, wantHero: 0.65},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(path, []byte(tt.raw), 0o600); err != nil {
+				t.Fatalf("write settings: %v", err)
+			}
+
+			settings, err := NewManager(path).Load()
+			if err != nil {
+				t.Fatalf("load settings: %v", err)
+			}
+
+			if settings.HomeShelves.HomeShelfScale != tt.wantShelf {
+				t.Fatalf("HomeShelfScale = %v, want %v", settings.HomeShelves.HomeShelfScale, tt.wantShelf)
+			}
+			if settings.HomeShelves.HomeHeroScale != tt.wantHero {
+				t.Fatalf("HomeHeroScale = %v, want %v", settings.HomeShelves.HomeHeroScale, tt.wantHero)
+			}
+		})
+	}
+}
+
 func TestLoadMigratesLegacyLiveSettingsToFirstSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{

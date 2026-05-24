@@ -551,6 +551,8 @@ var SettingsSchema = map[string]interface{}{
 			"exploreCardPosition":             map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
 			"itemCap":                         map[string]interface{}{"type": "number", "label": "Shelf Item Cap", "description": "Max items shown per home shelf before the Explore card (default 20)", "order": 2, "step": 1, "min": 1, "max": 100},
 			"disableTvLandscapeCardExpansion": map[string]interface{}{"type": "boolean", "label": "Disable TV Card Expansion", "description": "Keep portrait shelf cards from expanding into landscape layout when focused on TV home screens.", "order": 3},
+			"homeShelfScale":                  map[string]interface{}{"type": "number", "label": "TV Shelf Scale", "description": "Scale TV home shelf headers, cards, card overlays, and hero text. Lower values fit more shelves on screen.", "order": 4, "step": 0.05, "min": 0.5, "max": 1.0},
+			"homeHeroScale":                   map[string]interface{}{"type": "number", "label": "TV Hero Area Scale", "description": "Scale the upper TV hero region and top-right hero artwork. Lower values move shelves higher.", "order": 5, "step": 0.05, "min": 0.5, "max": 1.0},
 		},
 	},
 	"homeShelves.shelves": map[string]interface{}{
@@ -2402,9 +2404,12 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 		},
 		HomeShelves: models.HomeShelvesSettings{
-			Shelves:             shelves,
-			ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
-			ItemCap:             globalSettings.HomeShelves.ItemCap,
+			Shelves:                         shelves,
+			ExploreCardPosition:             string(globalSettings.HomeShelves.ExploreCardPosition),
+			ItemCap:                         globalSettings.HomeShelves.ItemCap,
+			DisableTvLandscapeCardExpansion: models.BoolPtr(globalSettings.HomeShelves.DisableTvLandscapeCardExpansion),
+			HomeShelfScale:                  models.FloatPtr(globalSettings.HomeShelves.HomeShelfScale),
+			HomeHeroScale:                   models.FloatPtr(globalSettings.HomeShelves.HomeHeroScale),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:     models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),
@@ -2588,9 +2593,12 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						CreditsAutoSkip:           globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 					},
 					HomeShelves: models.HomeShelvesSettings{
-						Shelves:             propagateShelves,
-						ExploreCardPosition: string(globalSettings.HomeShelves.ExploreCardPosition),
-						ItemCap:             globalSettings.HomeShelves.ItemCap,
+						Shelves:                         propagateShelves,
+						ExploreCardPosition:             string(globalSettings.HomeShelves.ExploreCardPosition),
+						ItemCap:                         globalSettings.HomeShelves.ItemCap,
+						DisableTvLandscapeCardExpansion: models.BoolPtr(globalSettings.HomeShelves.DisableTvLandscapeCardExpansion),
+						HomeShelfScale:                  models.FloatPtr(globalSettings.HomeShelves.HomeShelfScale),
+						HomeHeroScale:                   models.FloatPtr(globalSettings.HomeShelves.HomeHeroScale),
 					},
 				}
 			}

@@ -176,6 +176,8 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			ExploreCardPosition:             string(globalSettings.HomeShelves.ExploreCardPosition),
 			ItemCap:                         globalSettings.HomeShelves.ItemCap,
 			DisableTvLandscapeCardExpansion: models.BoolPtr(globalSettings.HomeShelves.DisableTvLandscapeCardExpansion),
+			HomeShelfScale:                  models.FloatPtr(globalSettings.HomeShelves.HomeShelfScale),
+			HomeHeroScale:                   models.FloatPtr(globalSettings.HomeShelves.HomeHeroScale),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(globalSettings.Filtering.MaxSizeMovieGB),

@@ -400,6 +400,8 @@ type HomeShelvesSettings struct {
 	ExploreCardPosition             ExploreCardPosition `json:"exploreCardPosition,omitempty"`             // "front" (default) or "end"
 	ItemCap                         int                 `json:"itemCap,omitempty"`                         // Max items shown per home shelf before Explore card (default 20)
 	DisableTvLandscapeCardExpansion bool                `json:"disableTvLandscapeCardExpansion,omitempty"` // Keep TV shelf cards in portrait when focused
+	HomeShelfScale                  float64             `json:"homeShelfScale,omitempty"`                  // TV home shelf/card scale, 0.5-1.0 (default 1.0)
+	HomeHeroScale                   float64             `json:"homeHeroScale,omitempty"`                   // TV upper hero/art scale, 0.5-1.0 (default 1.0)
 }
 
 // DefaultHomeShelfConfigs returns the built-in home shelves in their default order.
@@ -1039,8 +1041,10 @@ func DefaultSettings() Settings {
 		Playback:  PlaybackSettings{PreferredPlayer: "native", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
-			Shelves: DefaultHomeShelfConfigs(),
-			ItemCap: 20,
+			Shelves:        DefaultHomeShelfConfigs(),
+			ItemCap:        20,
+			HomeShelfScale: 1.0,
+			HomeHeroScale:  1.0,
 		},
 		Filtering: FilterSettings{
 			MaxSizeMovieGB:     0,                       // 0 means no limit
@@ -1521,6 +1525,20 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill ItemCap if empty or invalid (default to 20)
 	if s.HomeShelves.ItemCap <= 0 {
 		s.HomeShelves.ItemCap = 20
+	}
+	if s.HomeShelves.HomeShelfScale <= 0 {
+		s.HomeShelves.HomeShelfScale = 1.0
+	} else if s.HomeShelves.HomeShelfScale < 0.5 {
+		s.HomeShelves.HomeShelfScale = 0.5
+	} else if s.HomeShelves.HomeShelfScale > 1.0 {
+		s.HomeShelves.HomeShelfScale = 1.0
+	}
+	if s.HomeShelves.HomeHeroScale <= 0 {
+		s.HomeShelves.HomeHeroScale = 1.0
+	} else if s.HomeShelves.HomeHeroScale < 0.5 {
+		s.HomeShelves.HomeHeroScale = 0.5
+	} else if s.HomeShelves.HomeHeroScale > 1.0 {
+		s.HomeShelves.HomeHeroScale = 1.0
 	}
 
 	// Backfill Filtering settings

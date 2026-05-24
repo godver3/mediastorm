@@ -267,6 +267,28 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 				settings.HomeShelves.DisableTvLandscapeCardExpansion = models.BoolPtr(false)
 			}
 		}
+		if settings.HomeShelves.HomeShelfScale == nil || *settings.HomeShelves.HomeShelfScale <= 0 {
+			settings.HomeShelves.HomeShelfScale = defaults.HomeShelves.HomeShelfScale
+			if settings.HomeShelves.HomeShelfScale == nil || *settings.HomeShelves.HomeShelfScale <= 0 {
+				settings.HomeShelves.HomeShelfScale = models.FloatPtr(1.0)
+			}
+		}
+		if *settings.HomeShelves.HomeShelfScale < 0.5 {
+			settings.HomeShelves.HomeShelfScale = models.FloatPtr(0.5)
+		} else if *settings.HomeShelves.HomeShelfScale > 1.0 {
+			settings.HomeShelves.HomeShelfScale = models.FloatPtr(1.0)
+		}
+		if settings.HomeShelves.HomeHeroScale == nil || *settings.HomeShelves.HomeHeroScale <= 0 {
+			settings.HomeShelves.HomeHeroScale = defaults.HomeShelves.HomeHeroScale
+			if settings.HomeShelves.HomeHeroScale == nil || *settings.HomeShelves.HomeHeroScale <= 0 {
+				settings.HomeShelves.HomeHeroScale = models.FloatPtr(1.0)
+			}
+		}
+		if *settings.HomeShelves.HomeHeroScale < 0.5 {
+			settings.HomeShelves.HomeHeroScale = models.FloatPtr(0.5)
+		} else if *settings.HomeShelves.HomeHeroScale > 1.0 {
+			settings.HomeShelves.HomeHeroScale = models.FloatPtr(1.0)
+		}
 		// Inject any non-builtin shelves from defaults (e.g. newly-added local library
 		// or mdblist shelves) that are not yet present in the user's saved settings.
 		// We only inject non-builtin types so that built-in shelves the user deliberately
@@ -362,7 +384,9 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	if len(s.HomeShelves.Shelves) > 0 ||
 		s.HomeShelves.ExploreCardPosition != "" ||
 		s.HomeShelves.ItemCap != 0 ||
-		s.HomeShelves.DisableTvLandscapeCardExpansion != nil {
+		s.HomeShelves.DisableTvLandscapeCardExpansion != nil ||
+		s.HomeShelves.HomeShelfScale != nil ||
+		s.HomeShelves.HomeHeroScale != nil {
 		return false
 	}
 
