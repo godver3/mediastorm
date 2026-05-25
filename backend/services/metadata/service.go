@@ -6362,6 +6362,11 @@ type CustomListOptions struct {
 	SuppressProgress bool           // true for background/internal refreshes that should not surface in UI progress
 }
 
+const (
+	foregroundCustomListEnrichConcurrency = 16
+	backgroundCustomListEnrichConcurrency = 4
+)
+
 // GetCustomListForCalendar fetches a custom MDBList with the lighter-weight options calendar needs.
 func (s *Service) GetCustomListForCalendar(ctx context.Context, listURL string, limit int, label string) ([]models.TrendingItem, error) {
 	items, _, _, err := s.GetCustomList(ctx, listURL, CustomListOptions{
@@ -7136,11 +7141,15 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 	log.Printf("[metadata] enriching %d items (filtered=%d, unfiltered=%d, offset=%d, limit=%d)",
 		len(itemsToEnrich), filteredTotal, unfilteredTotal, opts.Offset, opts.Limit)
 
-	// Concurrent enrichment with worker pool
+	// User-facing requests get more enrichment slots; background refreshes stay
+	// quieter so they do not crowd out interactive navigation.
 	if progressID != "" {
 		s.updateProgressPhase(progressID, "enriching", len(itemsToEnrich))
 	}
-	const maxConcurrentEnrich = 10
+	maxConcurrentEnrich := foregroundCustomListEnrichConcurrency
+	if opts.SuppressProgress {
+		maxConcurrentEnrich = backgroundCustomListEnrichConcurrency
+	}
 	sem := make(chan struct{}, maxConcurrentEnrich)
 	var wg sync.WaitGroup
 	results := make([]models.TrendingItem, len(itemsToEnrich))
@@ -7211,9 +7220,7 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 	cleanup := s.startProgressTask(progressID, label, "enriching", len(mdbItems))
 	defer cleanup()
 
-	// Concurrent enrichment with 10-worker pool (same pattern as GetCustomList)
-	const maxConcurrentEnrich = 10
-	sem := make(chan struct{}, maxConcurrentEnrich)
+	sem := make(chan struct{}, foregroundCustomListEnrichConcurrency)
 	var wg sync.WaitGroup
 	results := make([]models.TrendingItem, len(mdbItems))
 

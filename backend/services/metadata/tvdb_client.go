@@ -53,7 +53,7 @@ func newTVDBClient(apiKey, language string, httpc *http.Client, cacheTTLHours in
 		apiKey:              apiKey,
 		language:            language,
 		httpc:               httpc,
-		minInterval:         20 * time.Millisecond,
+		minInterval:         10 * time.Millisecond,
 		translationCacheTTL: time.Duration(cacheTTLHours) * time.Hour,
 	}
 }

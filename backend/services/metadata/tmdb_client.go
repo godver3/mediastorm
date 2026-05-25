@@ -97,7 +97,7 @@ func newTMDBClient(apiKey, language string, httpc *http.Client, cache *fileCache
 		language:    language,
 		httpc:       httpc,
 		cache:       cache,
-		minInterval: 20 * time.Millisecond, // TMDB has generous rate limits
+		minInterval: 5 * time.Millisecond, // TMDB has generous rate limits; retries back off on 429/5xx.
 	}
 }
 
