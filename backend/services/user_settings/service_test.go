@@ -508,19 +508,29 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 		t.Fatalf("GetWithDefaults: %v", err)
 	}
 
-	if len(got.HomeShelves.Shelves) != 6 {
-		t.Fatalf("expected 6 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 7 {
+		t.Fatalf("expected 7 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
 	}
 
+	var topTen *models.ShelfConfig
 	var calendar *models.ShelfConfig
 	var recentlyAired *models.ShelfConfig
 	for i := range got.HomeShelves.Shelves {
+		if got.HomeShelves.Shelves[i].ID == "top-ten" {
+			topTen = &got.HomeShelves.Shelves[i]
+		}
 		if got.HomeShelves.Shelves[i].ID == "calendar" {
 			calendar = &got.HomeShelves.Shelves[i]
 		}
 		if got.HomeShelves.Shelves[i].ID == "my-recently-aired" {
 			recentlyAired = &got.HomeShelves.Shelves[i]
 		}
+	}
+	if topTen == nil {
+		t.Fatal("expected top ten shelf to be backfilled")
+	}
+	if topTen.Order != 0 {
+		t.Fatalf("expected top ten shelf order 0, got %d", topTen.Order)
 	}
 	if calendar == nil {
 		t.Fatal("expected calendar shelf to be backfilled")
@@ -669,19 +679,29 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected migrated settings")
 	}
-	if len(got.HomeShelves.Shelves) != 7 {
-		t.Fatalf("expected 7 shelves after migration, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 8 {
+		t.Fatalf("expected 8 shelves after migration, got %d", len(got.HomeShelves.Shelves))
 	}
 
+	var topTen *models.ShelfConfig
 	var calendar *models.ShelfConfig
 	var recentlyAired *models.ShelfConfig
 	for i := range got.HomeShelves.Shelves {
+		if got.HomeShelves.Shelves[i].ID == "top-ten" {
+			topTen = &got.HomeShelves.Shelves[i]
+		}
 		if got.HomeShelves.Shelves[i].ID == "calendar" {
 			calendar = &got.HomeShelves.Shelves[i]
 		}
 		if got.HomeShelves.Shelves[i].ID == "my-recently-aired" {
 			recentlyAired = &got.HomeShelves.Shelves[i]
 		}
+	}
+	if topTen == nil {
+		t.Fatal("expected top ten shelf to be migrated in")
+	}
+	if topTen.Order != 0 {
+		t.Fatalf("expected top ten shelf order 0, got %d", topTen.Order)
 	}
 	if calendar == nil {
 		t.Fatal("expected calendar shelf to be migrated in")
