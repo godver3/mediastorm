@@ -95,6 +95,42 @@ func TestLoadClampsHomeShelfAndHeroScale(t *testing.T) {
 	}
 }
 
+func TestLoadBackfillsStreamingServicesHomeShelf(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"homeShelves":{"shelves":[
+		{"id":"continue-watching","name":"Continue Watching","enabled":true,"order":1},
+		{"id":"trending-tv","name":"Trending TV Shows","enabled":true,"order":6}
+	]}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	var shelf *ShelfConfig
+	trendingTVOrder := -1
+	for i := range settings.HomeShelves.Shelves {
+		if settings.HomeShelves.Shelves[i].ID == "streaming-services" {
+			shelf = &settings.HomeShelves.Shelves[i]
+		}
+		if settings.HomeShelves.Shelves[i].ID == "trending-tv" {
+			trendingTVOrder = settings.HomeShelves.Shelves[i].Order
+		}
+	}
+	if shelf == nil {
+		t.Fatal("expected streaming-services shelf to be backfilled")
+	}
+	if !shelf.Enabled {
+		t.Fatal("expected streaming-services shelf to default enabled")
+	}
+	if shelf.Order != trendingTVOrder+1 {
+		t.Fatalf("streaming-services order = %d, want after trending-tv order %d", shelf.Order, trendingTVOrder)
+	}
+}
+
 func TestLoadMigratesLegacyLiveSettingsToFirstSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{

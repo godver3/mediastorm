@@ -415,6 +415,7 @@ func DefaultHomeShelfConfigs() []ShelfConfig {
 		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 4},
 		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 5},
 		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 6},
+		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 7},
 	}
 }
 
@@ -501,6 +502,36 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 			Name:    "Top 10 Today",
 			Enabled: true,
 			Order:   0,
+		})
+		changed = true
+	}
+
+	if !hasShelf("streaming-services") {
+		insertOrder := -1
+		for _, shelf := range nextShelves {
+			if shelf.ID == "trending-tv" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+			if shelf.Order > insertOrder {
+				insertOrder = shelf.Order + 1
+			}
+		}
+		if insertOrder < 0 {
+			insertOrder = 0
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "streaming-services",
+			Name:    "Streaming Services",
+			Enabled: true,
+			Order:   insertOrder,
 		})
 		changed = true
 	}
