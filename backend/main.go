@@ -661,6 +661,13 @@ func main() {
 	settingsHandler.SetUserSettingsService(userSettingsService)   // Enable stripping redundant overrides
 	settingsHandler.SetClientsLister(clientsService)              // Enable client→profile mapping
 	settingsHandler.SetClientSettingsBatch(clientSettingsService) // Enable client settings stripping
+	if settingsHandler.EnsureEPGTaskForGuide(&settings, "startup") {
+		if err := cfgManager.Save(settings); err != nil {
+			log.Printf("[main] failed to persist startup EPG refresh task backfill: %v", err)
+		} else {
+			log.Printf("[main] persisted startup EPG refresh task backfill")
+		}
+	}
 
 	// Create subtitles handler for external subtitle search
 	subtitlesHandler := handlers.NewSubtitlesHandlerWithConfig(cfgManager)

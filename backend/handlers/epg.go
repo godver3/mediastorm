@@ -60,12 +60,14 @@ func (h *EPGHandler) resolveEPGEnabled(r *http.Request, fallback bool) bool {
 		return fallback
 	}
 
-	enabled := settings.Live.EPG.Enabled
+	summary := summarizeEPGGuideConfig(&settings)
+	enabled := settings.Live.EPG.Enabled || summary.sourceEPGEnabled > 0
 	profileID := r.URL.Query().Get("profileId")
 	if profileID != "" && h.userSettingsSvc != nil {
 		userSettings, err := h.userSettingsSvc.Get(profileID)
 		if err == nil && userSettings != nil && userSettings.LiveTV.EPG != nil && userSettings.LiveTV.EPG.Enabled != nil {
 			enabled = *userSettings.LiveTV.EPG.Enabled
+			log.Printf("[epg] profile EPG enabled override applied profileId=%s globalEnabled=%v resolvedEnabled=%v", profileID, settings.Live.EPG.Enabled, enabled)
 		}
 	}
 
@@ -108,6 +110,24 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 	// Query with the negative offset so we find the correct programs in stored data,
 	// then shift response times by the positive offset.
 	result := h.epgService.GetNowPlaying(channelIDs, -offset)
+	currentCount := 0
+	nextCount := 0
+	for _, item := range result {
+		if item.Current != nil {
+			currentCount++
+		}
+		if item.Next != nil {
+			nextCount++
+		}
+	}
+	log.Printf("[epg] now query profileId=%q requested=%d returned=%d currentMatches=%d nextMatches=%d offsetMinutes=%d",
+		r.URL.Query().Get("profileId"),
+		len(channelIDs),
+		len(result),
+		currentCount,
+		nextCount,
+		int(offset.Minutes()),
+	)
 
 	if offset != 0 {
 		for i := range result {
@@ -163,6 +183,12 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	end := start.Add(time.Duration(days) * 24 * time.Hour)
 
 	programs := h.epgService.GetSchedule(channelID, start, end)
+	log.Printf("[epg] schedule query profileId=%q channelConfigured=%v programs=%d offsetMinutes=%d",
+		r.URL.Query().Get("profileId"),
+		channelID != "",
+		len(programs),
+		int(offset.Minutes()),
+	)
 
 	if offset != 0 {
 		for i := range programs {
@@ -236,6 +262,23 @@ func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request)
 	end := start.Add(time.Duration(hours) * time.Hour)
 
 	schedules := h.epgService.GetScheduleMultiple(channelIDs, start, end)
+	matchedChannels := 0
+	totalPrograms := 0
+	for _, programs := range schedules {
+		if len(programs) > 0 {
+			matchedChannels++
+			totalPrograms += len(programs)
+		}
+	}
+	log.Printf("[epg] schedule batch profileId=%q requested=%d matchedChannels=%d totalPrograms=%d hours=%d startOffset=%d offsetMinutes=%d",
+		r.URL.Query().Get("profileId"),
+		len(channelIDs),
+		matchedChannels,
+		totalPrograms,
+		hours,
+		startOffset,
+		int(offset.Minutes()),
+	)
 
 	if offset != 0 {
 		for chID, programs := range schedules {
@@ -325,6 +368,29 @@ func (h *EPGHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := h.epgService.GetStatus()
 	status.Enabled = h.resolveEPGEnabled(r, status.Enabled)
+	profileID := r.URL.Query().Get("profileId")
+	if h.cfgManager != nil {
+		if settings, err := h.cfgManager.Load(); err == nil {
+			summary := summarizeEPGGuideConfig(&settings)
+			log.Printf("[epg] status profileId=%q enabled=%v refreshing=%v channels=%d programs=%d sourceCount=%d lastErrorSet=%v globalEnabled=%v globalXMLTVConfigured=%v globalSources=%d globalEnabledSources=%d sourceEPGConfigured=%d sourceEPGEnabled=%d xtreamConfigured=%v epgTaskCount=%d",
+				profileID,
+				status.Enabled,
+				status.Refreshing,
+				status.ChannelCount,
+				status.ProgramCount,
+				status.SourceCount,
+				status.LastError != "",
+				summary.globalEnabled,
+				summary.globalXMLTVConfigured,
+				summary.globalSourceCount,
+				summary.globalEnabledSources,
+				summary.sourceEPGConfigured,
+				summary.sourceEPGEnabled,
+				summary.xtreamConfigured,
+				summary.taskCount,
+			)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(status); err != nil {

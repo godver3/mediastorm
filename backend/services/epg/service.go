@@ -43,6 +43,18 @@ type Service struct {
 	lastError  string
 }
 
+type epgXMLTVSource struct {
+	name     string
+	url      string
+	proxyURL string
+	priority int
+}
+
+type epgXtreamSource struct {
+	name     string
+	settings config.Settings
+}
+
 // NewService creates a new EPG service.
 func NewService(storageDir string, cfgManager *config.Manager) *Service {
 	s := &Service{
@@ -83,6 +95,161 @@ func (s *Service) countPrograms() int {
 	return count
 }
 
+func liveSourceEnabled(source config.LivePlaylistSource) bool {
+	return source.Enabled == nil || *source.Enabled
+}
+
+func configuredLiveSources(settings config.Settings) []config.LivePlaylistSource {
+	if len(settings.Live.Sources) > 0 {
+		return settings.Live.Sources
+	}
+	return settings.Live.PlaylistSources
+}
+
+func isEPGRefreshEnabled(settings config.Settings) bool {
+	if settings.Live.EPG.Enabled {
+		return true
+	}
+	for _, source := range configuredLiveSources(settings) {
+		if liveSourceEnabled(source) && source.EPG.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func appendEPGXMLTVSources(result []epgXMLTVSource, epgSettings config.EPGSettings, namePrefix, proxyURL string, priorityOffset int) []epgXMLTVSource {
+	if strings.TrimSpace(epgSettings.XmltvUrl) != "" {
+		result = append(result, epgXMLTVSource{
+			name:     namePrefix,
+			url:      strings.TrimSpace(epgSettings.XmltvUrl),
+			proxyURL: strings.TrimSpace(proxyURL),
+			priority: priorityOffset,
+		})
+	}
+
+	for _, source := range epgSettings.Sources {
+		if !source.Enabled {
+			continue
+		}
+		if strings.TrimSpace(strings.ToLower(source.Type)) != "xmltv" {
+			log.Printf("[epg] skipping unknown source type: %s", source.Type)
+			continue
+		}
+		if strings.TrimSpace(source.URL) == "" {
+			continue
+		}
+		name := strings.TrimSpace(source.Name)
+		if name == "" {
+			name = fmt.Sprintf("%s source", namePrefix)
+		} else if strings.TrimSpace(namePrefix) != "" {
+			name = namePrefix + ": " + name
+		}
+		result = append(result, epgXMLTVSource{
+			name:     name,
+			url:      strings.TrimSpace(source.URL),
+			proxyURL: strings.TrimSpace(proxyURL),
+			priority: priorityOffset + source.Priority,
+		})
+	}
+
+	return result
+}
+
+func collectXMLTVSources(settings config.Settings) []epgXMLTVSource {
+	var result []epgXMLTVSource
+	if settings.Live.EPG.Enabled {
+		result = appendEPGXMLTVSources(result, settings.Live.EPG, "global EPG", settings.Live.ProxyURL, 0)
+	}
+
+	for i, source := range configuredLiveSources(settings) {
+		if !liveSourceEnabled(source) || !source.EPG.Enabled {
+			continue
+		}
+		name := strings.TrimSpace(source.Name)
+		if name == "" {
+			name = fmt.Sprintf("live source %d", i+1)
+		}
+		proxyURL := source.ProxyURL
+		if strings.TrimSpace(proxyURL) == "" {
+			proxyURL = settings.Live.ProxyURL
+		}
+		result = appendEPGXMLTVSources(result, source.EPG, name, proxyURL, 10000+i*1000)
+	}
+
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].priority < result[j].priority
+	})
+	return result
+}
+
+func countConfiguredXMLTVSources(settings config.Settings) int {
+	return len(collectXMLTVSources(settings))
+}
+
+func configuredSourceModeCounts(settings config.Settings) (m3uCount, xtreamCount int) {
+	for _, source := range configuredLiveSources(settings) {
+		if !liveSourceEnabled(source) {
+			continue
+		}
+		mode := strings.TrimSpace(strings.ToLower(source.Mode))
+		if mode == "" {
+			mode = "m3u"
+		}
+		switch mode {
+		case "xtream":
+			xtreamCount++
+		default:
+			m3uCount++
+		}
+	}
+	return m3uCount, xtreamCount
+}
+
+func collectXtreamSources(settings config.Settings) []epgXtreamSource {
+	var result []epgXtreamSource
+	sources := configuredLiveSources(settings)
+	if len(sources) > 0 {
+		for i, source := range sources {
+			if !liveSourceEnabled(source) || !strings.EqualFold(strings.TrimSpace(source.Mode), "xtream") {
+				continue
+			}
+			if strings.TrimSpace(source.XtreamHost) == "" ||
+				strings.TrimSpace(source.XtreamUsername) == "" ||
+				strings.TrimSpace(source.XtreamPassword) == "" {
+				continue
+			}
+			if !settings.Live.EPG.Enabled && !source.EPG.Enabled {
+				continue
+			}
+			sourceSettings := settings
+			sourceSettings.Live.Mode = "xtream"
+			sourceSettings.Live.ProxyURL = strings.TrimSpace(source.ProxyURL)
+			if sourceSettings.Live.ProxyURL == "" {
+				sourceSettings.Live.ProxyURL = settings.Live.ProxyURL
+			}
+			sourceSettings.Live.XtreamHost = strings.TrimSpace(source.XtreamHost)
+			sourceSettings.Live.XtreamUsername = strings.TrimSpace(source.XtreamUsername)
+			sourceSettings.Live.XtreamPassword = strings.TrimSpace(source.XtreamPassword)
+			name := strings.TrimSpace(source.Name)
+			if name == "" {
+				name = fmt.Sprintf("xtream source %d", i+1)
+			}
+			result = append(result, epgXtreamSource{name: name, settings: sourceSettings})
+		}
+		return result
+	}
+
+	if strings.EqualFold(settings.Live.Mode, "xtream") &&
+		strings.TrimSpace(settings.Live.XtreamHost) != "" &&
+		strings.TrimSpace(settings.Live.XtreamUsername) != "" &&
+		strings.TrimSpace(settings.Live.XtreamPassword) != "" &&
+		settings.Live.EPG.Enabled {
+		result = append(result, epgXtreamSource{name: "global Xtream", settings: settings})
+	}
+	return result
+}
+
 // GetStatus returns the current EPG service status.
 func (s *Service) GetStatus() models.EPGStatus {
 	s.mu.RLock()
@@ -99,7 +266,7 @@ func (s *Service) GetStatus() models.EPGStatus {
 		ProgramCount: s.countPrograms(),
 		Refreshing:   s.refreshing,
 		LastError:    s.lastError,
-		SourceCount:  len(settings.Live.EPG.Sources),
+		SourceCount:  countConfiguredXMLTVSources(settings),
 	}
 
 	if !s.schedule.LastUpdated.IsZero() {
@@ -135,7 +302,31 @@ func (s *Service) Refresh(ctx context.Context) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	if !settings.Live.EPG.Enabled {
+	sourceEPGConfigured := 0
+	sourceEPGEnabled := 0
+	for _, source := range configuredLiveSources(settings) {
+		if strings.TrimSpace(source.EPG.XmltvUrl) != "" || len(source.EPG.Sources) > 0 {
+			sourceEPGConfigured++
+		}
+		if liveSourceEnabled(source) && source.EPG.Enabled {
+			sourceEPGEnabled++
+		}
+	}
+	xtreamSources := collectXtreamSources(settings)
+	m3uSourceCount, xtreamSourceCount := configuredSourceModeCounts(settings)
+	log.Printf("[epg] refresh config: globalEnabled=%v configuredSources=%d m3uSources=%d xtreamSourcesConfigured=%d globalXMLTVConfigured=%v globalEPGSources=%d sourceEPGConfigured=%d sourceEPGEnabled=%d xtreamEPGFetchSources=%d",
+		settings.Live.EPG.Enabled,
+		len(configuredLiveSources(settings)),
+		m3uSourceCount,
+		xtreamSourceCount,
+		strings.TrimSpace(settings.Live.EPG.XmltvUrl) != "",
+		len(settings.Live.EPG.Sources),
+		sourceEPGConfigured,
+		sourceEPGEnabled,
+		len(xtreamSources),
+	)
+
+	if !isEPGRefreshEnabled(settings) {
 		return errors.New("EPG is disabled")
 	}
 
@@ -146,73 +337,56 @@ func (s *Service) Refresh(ctx context.Context) error {
 		LastUpdated: time.Now().UTC(),
 	}
 
-	// Check if we should use Xtream mode
-	if settings.Live.Mode == "xtream" &&
-		settings.Live.XtreamHost != "" &&
-		settings.Live.XtreamUsername != "" &&
-		settings.Live.XtreamPassword != "" {
-		// Fetch EPG from Xtream
-		log.Printf("[epg] fetching EPG from Xtream Codes")
-		if err := s.fetchXtreamEPG(ctx, &settings, newSchedule); err != nil {
-			log.Printf("[epg] Xtream EPG fetch failed: %v", err)
+	for _, source := range xtreamSources {
+		sourceSettings := source.settings
+		log.Printf("[epg] fetching Xtream EPG source name=%q proxyConfigured=%v", source.name, strings.TrimSpace(sourceSettings.Live.ProxyURL) != "")
+		if err := s.fetchXtreamEPG(ctx, &sourceSettings, newSchedule); err != nil {
+			log.Printf("[epg] Xtream EPG fetch failed for source name=%q: %v", source.name, err)
 			s.mu.Lock()
-			s.lastError = fmt.Sprintf("Xtream EPG: %v", err)
+			s.lastError = fmt.Sprintf("%s Xtream EPG: %v", source.name, err)
 			s.mu.Unlock()
 		} else {
 			newSchedule.SourceType = "xtream"
 		}
 	}
 
-	// Fetch from simple XMLTV URL if configured
-	if settings.Live.EPG.XmltvUrl != "" {
-		log.Printf("[epg] fetching EPG from XMLTV URL: %s", settings.Live.EPG.XmltvUrl)
-		if err := s.fetchXMLTV(ctx, settings.Live.EPG.XmltvUrl, newSchedule); err != nil {
-			log.Printf("[epg] failed to fetch XMLTV: %v", err)
+	xmltvSources := collectXMLTVSources(settings)
+	for _, source := range xmltvSources {
+		log.Printf("[epg] fetching XMLTV source name=%q proxyConfigured=%v", source.name, strings.TrimSpace(source.proxyURL) != "")
+		beforeChannels := len(newSchedule.Channels)
+		beforePrograms := 0
+		for _, programs := range newSchedule.Programs {
+			beforePrograms += len(programs)
+		}
+		if err := s.fetchXMLTVWithProxy(ctx, source.url, source.proxyURL, newSchedule); err != nil {
+			log.Printf("[epg] failed to fetch XMLTV source name=%q: %v", source.name, err)
 			s.mu.Lock()
-			s.lastError = fmt.Sprintf("XMLTV URL: %v", err)
+			s.lastError = fmt.Sprintf("%s: %v", source.name, err)
 			s.mu.Unlock()
 		} else if newSchedule.SourceType == "" {
 			newSchedule.SourceType = "xmltv"
 		}
+		afterPrograms := 0
+		for _, programs := range newSchedule.Programs {
+			afterPrograms += len(programs)
+		}
+		log.Printf("[epg] XMLTV source parsed name=%q addedChannels=%d addedPrograms=%d totalChannels=%d totalPrograms=%d",
+			source.name,
+			len(newSchedule.Channels)-beforeChannels,
+			afterPrograms-beforePrograms,
+			len(newSchedule.Channels),
+			afterPrograms,
+		)
 	}
 
-	// Fetch from configured XMLTV sources
-	sources := settings.Live.EPG.Sources
-	// Sort by priority (lower = higher priority)
-	sort.Slice(sources, func(i, j int) bool {
-		return sources[i].Priority < sources[j].Priority
-	})
-
-	for _, source := range sources {
-		if !source.Enabled {
-			continue
-		}
-
-		if source.Type != "xmltv" {
-			log.Printf("[epg] skipping unknown source type: %s", source.Type)
-			continue
-		}
-
-		log.Printf("[epg] fetching EPG from source: %s (%s)", source.Name, source.URL)
-		if err := s.fetchXMLTV(ctx, source.URL, newSchedule); err != nil {
-			log.Printf("[epg] failed to fetch from %s: %v", source.Name, err)
-			s.mu.Lock()
-			s.lastError = fmt.Sprintf("%s: %v", source.Name, err)
-			s.mu.Unlock()
-		}
-	}
-
-	if newSchedule.SourceType == "" && len(sources) > 0 {
+	if newSchedule.SourceType == "" && len(xmltvSources) > 0 {
 		newSchedule.SourceType = "xmltv"
 	}
 
-	// Supplement with per-channel Xtream EPG data (fresher than bulk xmltv.php)
-	if settings.Live.Mode == "xtream" &&
-		settings.Live.XtreamHost != "" &&
-		settings.Live.XtreamUsername != "" &&
-		settings.Live.XtreamPassword != "" {
-		if err := s.supplementWithXtreamPerChannel(ctx, &settings, newSchedule); err != nil {
-			log.Printf("[epg] per-channel supplement failed (non-fatal): %v", err)
+	for _, source := range xtreamSources {
+		sourceSettings := source.settings
+		if err := s.supplementWithXtreamPerChannel(ctx, &sourceSettings, newSchedule); err != nil {
+			log.Printf("[epg] per-channel supplement failed for source name=%q (non-fatal): %v", source.name, err)
 		}
 	}
 
@@ -285,6 +459,11 @@ func (s *Service) fetchXMLTV(ctx context.Context, xmltvURL string, schedule *mod
 }
 
 func (s *Service) fetchXMLTVWithProxy(ctx context.Context, xmltvURL, proxyURL string, schedule *models.EPGSchedule) error {
+	started := time.Now()
+	hostLabel := xmltvHostLabel(xmltvURL)
+	proxyConfigured := strings.TrimSpace(proxyURL) != ""
+	log.Printf("[epg] XMLTV HTTP request start host=%q proxyConfigured=%v", hostLabel, proxyConfigured)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, xmltvURL, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -295,9 +474,18 @@ func (s *Service) fetchXMLTVWithProxy(ctx context.Context, xmltvURL, proxyURL st
 
 	resp, err := s.httpClient(proxyURL).Do(req)
 	if err != nil {
+		log.Printf("[epg] XMLTV HTTP request failed host=%q elapsed=%s error=%v", hostLabel, time.Since(started).Round(time.Millisecond), err)
 		return fmt.Errorf("fetch EPG: %w", err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[epg] XMLTV HTTP response host=%q status=%d contentLength=%d encoding=%q elapsed=%s",
+		hostLabel,
+		resp.StatusCode,
+		resp.ContentLength,
+		resp.Header.Get("Content-Encoding"),
+		time.Since(started).Round(time.Millisecond),
+	)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("EPG fetch returned status %d", resp.StatusCode)
@@ -306,6 +494,7 @@ func (s *Service) fetchXMLTVWithProxy(ctx context.Context, xmltvURL, proxyURL st
 	// Handle gzip compression
 	var reader io.Reader = resp.Body
 	if resp.Header.Get("Content-Encoding") == "gzip" || strings.HasSuffix(xmltvURL, ".gz") {
+		log.Printf("[epg] XMLTV gzip decode start host=%q elapsed=%s", hostLabel, time.Since(started).Round(time.Millisecond))
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return fmt.Errorf("decompress gzip: %w", err)
@@ -317,7 +506,20 @@ func (s *Service) fetchXMLTVWithProxy(ctx context.Context, xmltvURL, proxyURL st
 	// Limit reader size
 	limited := io.LimitReader(reader, maxEPGFileSize+1)
 
-	return s.parseXMLTV(limited, schedule)
+	if err := s.parseXMLTV(limited, schedule); err != nil {
+		log.Printf("[epg] XMLTV parse failed host=%q elapsed=%s error=%v", hostLabel, time.Since(started).Round(time.Millisecond), err)
+		return err
+	}
+	log.Printf("[epg] XMLTV parse finished host=%q elapsed=%s", hostLabel, time.Since(started).Round(time.Millisecond))
+	return nil
+}
+
+func xmltvHostLabel(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "invalid-url"
+	}
+	return u.Host
 }
 
 func (s *Service) httpClient(proxyURL string) *http.Client {
@@ -379,6 +581,10 @@ type xmltvRating struct {
 // parseXMLTV parses XMLTV data using streaming XML parser.
 func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) error {
 	decoder := xml.NewDecoder(reader)
+	started := time.Now()
+	channelCount := 0
+	programCount := 0
+	invalidTimeCount := 0
 
 	for {
 		token, err := decoder.Token()
@@ -407,6 +613,7 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					epgChannel.Icon = ch.Icon[0].Src
 				}
 				schedule.Channels[normalizedID] = epgChannel
+				channelCount++
 
 			case "programme":
 				var prog xmltvProgramme
@@ -417,10 +624,12 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 
 				start, err := parseXMLTVTime(prog.Start)
 				if err != nil {
+					invalidTimeCount++
 					continue
 				}
 				stop, err := parseXMLTVTime(prog.Stop)
 				if err != nil {
+					invalidTimeCount++
 					continue
 				}
 
@@ -463,6 +672,7 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 				}
 
 				schedule.Programs[normalizedChannelID] = append(schedule.Programs[normalizedChannelID], epgProgram)
+				programCount++
 			}
 		}
 	}
@@ -473,6 +683,13 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 			return schedule.Programs[channelID][i].Start.Before(schedule.Programs[channelID][j].Start)
 		})
 	}
+
+	log.Printf("[epg] XMLTV parser summary channels=%d programmes=%d invalidTimes=%d elapsed=%s",
+		channelCount,
+		programCount,
+		invalidTimeCount,
+		time.Since(started).Round(time.Millisecond),
+	)
 
 	return nil
 }

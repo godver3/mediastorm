@@ -290,9 +290,58 @@ func TestSettingsHandler_EPGAutoRefreshOnNewSource(t *testing.T) {
 	if saved.Live.EPG.Sources[0].ID != "test-source-1" {
 		t.Fatalf("unexpected source ID: %s", saved.Live.EPG.Sources[0].ID)
 	}
+	var epgTask *config.ScheduledTask
+	for i := range saved.ScheduledTasks.Tasks {
+		if saved.ScheduledTasks.Tasks[i].Type == config.ScheduledTaskTypeEPGRefresh {
+			epgTask = &saved.ScheduledTasks.Tasks[i]
+			break
+		}
+	}
+	if epgTask == nil {
+		t.Fatal("expected EPG refresh task to be auto-created")
+	}
+	if !epgTask.Enabled {
+		t.Fatal("expected EPG refresh task to be enabled")
+	}
 
 	// Give the background goroutine a moment to start (it will fail because the URL is fake, but that's okay)
 	time.Sleep(100 * time.Millisecond)
+}
+
+func TestSettingsHandler_EnsureEPGTaskForGuide_SourceEPGConfig(t *testing.T) {
+	enabled := true
+	settings := config.Settings{
+		Live: config.LiveSettings{
+			EPG: config.EPGSettings{Enabled: false},
+			Sources: []config.LivePlaylistSource{
+				{
+					ID:          "source-1",
+					Name:        "Source 1",
+					Enabled:     &enabled,
+					PlaylistURL: "http://example.com/live.m3u",
+					EPG: config.EPGSettings{
+						Enabled:  true,
+						XmltvUrl: "http://example.com/epg.xml",
+					},
+				},
+			},
+		},
+	}
+
+	handler := NewSettingsHandler(nil)
+	if !handler.EnsureEPGTaskForGuide(&settings, "test startup") {
+		t.Fatal("expected EPG task helper to report a change")
+	}
+	if len(settings.ScheduledTasks.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(settings.ScheduledTasks.Tasks))
+	}
+	task := settings.ScheduledTasks.Tasks[0]
+	if task.Type != config.ScheduledTaskTypeEPGRefresh {
+		t.Fatalf("expected EPG refresh task, got %s", task.Type)
+	}
+	if !task.Enabled {
+		t.Fatal("expected task to be enabled for source-level EPG config")
+	}
 }
 
 func TestSettingsHandler_ShowParsedBadges_ClearsPrequeue(t *testing.T) {

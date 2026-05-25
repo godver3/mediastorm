@@ -617,7 +617,7 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-create/remove scheduled tasks based on feature settings
-	h.ensureEPGTaskIfEnabled(&s)
+	h.EnsureEPGTaskForGuide(&s, "settings PUT")
 	h.ensurePlaylistTaskIfConfigured(&s)
 
 	if err := h.Manager.Save(s); err != nil {
@@ -904,28 +904,169 @@ func (h *SettingsHandler) ClearMetadataCache(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Metadata and image cache cleared"})
 }
 
-// ensureEPGTaskIfEnabled auto-creates an EPG refresh task when EPG is enabled
-// and no EPG refresh task already exists. Removes auto-created EPG tasks when disabled.
-func (h *SettingsHandler) ensureEPGTaskIfEnabled(s *config.Settings) {
-	if !s.Live.EPG.Enabled {
-		// EPG is disabled - remove any auto-created EPG refresh tasks
+type epgGuideConfigSummary struct {
+	globalEnabled         bool
+	globalXMLTVConfigured bool
+	globalSourceCount     int
+	globalEnabledSources  int
+	sourceEPGConfigured   int
+	sourceEPGEnabled      int
+	xtreamConfigured      bool
+	taskCount             int
+}
+
+func summarizeEPGGuideConfig(s *config.Settings) epgGuideConfigSummary {
+	summary := epgGuideConfigSummary{
+		globalEnabled:         s.Live.EPG.Enabled,
+		globalXMLTVConfigured: strings.TrimSpace(s.Live.EPG.XmltvUrl) != "",
+		globalSourceCount:     len(s.Live.EPG.Sources),
+		xtreamConfigured:      hasEffectiveXtreamEPGConfig(s),
+	}
+	for _, source := range s.Live.EPG.Sources {
+		if source.Enabled {
+			summary.globalEnabledSources++
+		}
+	}
+	for _, source := range configuredLivePlaylistSources(s) {
+		if strings.TrimSpace(source.EPG.XmltvUrl) != "" || len(source.EPG.Sources) > 0 {
+			summary.sourceEPGConfigured++
+		}
+		if livePlaylistSourceEnabled(source) && source.EPG.Enabled {
+			summary.sourceEPGEnabled++
+		}
+	}
+	for _, task := range s.ScheduledTasks.Tasks {
+		if task.Type == config.ScheduledTaskTypeEPGRefresh {
+			summary.taskCount++
+		}
+	}
+	return summary
+}
+
+func (summary epgGuideConfigSummary) hasGuideConfig() bool {
+	return summary.globalEnabled ||
+		summary.globalXMLTVConfigured ||
+		summary.globalSourceCount > 0 ||
+		summary.sourceEPGConfigured > 0 ||
+		summary.sourceEPGEnabled > 0 ||
+		summary.xtreamConfigured
+}
+
+func logEPGGuideConfig(reason string, summary epgGuideConfigSummary) {
+	log.Printf("[settings] EPG guide config (%s): globalEnabled=%v globalXMLTVConfigured=%v globalSources=%d globalEnabledSources=%d sourceEPGConfigured=%d sourceEPGEnabled=%d xtreamConfigured=%v epgTaskCount=%d",
+		reason,
+		summary.globalEnabled,
+		summary.globalXMLTVConfigured,
+		summary.globalSourceCount,
+		summary.globalEnabledSources,
+		summary.sourceEPGConfigured,
+		summary.sourceEPGEnabled,
+		summary.xtreamConfigured,
+		summary.taskCount,
+	)
+}
+
+func epgConfigFingerprint(s config.Settings) string {
+	var b strings.Builder
+	b.WriteString(strconv.FormatBool(s.Live.EPG.Enabled))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(s.Live.EPG.XmltvUrl))
+	for _, source := range s.Live.EPG.Sources {
+		b.WriteString("|g:")
+		b.WriteString(source.ID)
+		b.WriteString(":")
+		b.WriteString(strconv.FormatBool(source.Enabled))
+		b.WriteString(":")
+		b.WriteString(strings.TrimSpace(source.Type))
+		b.WriteString(":")
+		b.WriteString(strings.TrimSpace(source.URL))
+	}
+	for _, source := range configuredLivePlaylistSources(&s) {
+		b.WriteString("|s:")
+		b.WriteString(source.ID)
+		b.WriteString(":")
+		b.WriteString(strconv.FormatBool(livePlaylistSourceEnabled(source)))
+		b.WriteString(":")
+		b.WriteString(strconv.FormatBool(source.EPG.Enabled))
+		b.WriteString(":")
+		b.WriteString(strings.TrimSpace(source.EPG.XmltvUrl))
+		for _, epgSource := range source.EPG.Sources {
+			b.WriteString(":")
+			b.WriteString(epgSource.ID)
+			b.WriteString(":")
+			b.WriteString(strconv.FormatBool(epgSource.Enabled))
+			b.WriteString(":")
+			b.WriteString(strings.TrimSpace(epgSource.Type))
+			b.WriteString(":")
+			b.WriteString(strings.TrimSpace(epgSource.URL))
+		}
+	}
+	return b.String()
+}
+
+func livePlaylistSourceEnabled(source config.LivePlaylistSource) bool {
+	return source.Enabled == nil || *source.Enabled
+}
+
+func configuredLivePlaylistSources(s *config.Settings) []config.LivePlaylistSource {
+	if len(s.Live.Sources) > 0 {
+		return s.Live.Sources
+	}
+	return s.Live.PlaylistSources
+}
+
+func hasEffectiveXtreamEPGConfig(s *config.Settings) bool {
+	sources := configuredLivePlaylistSources(s)
+	if len(sources) > 0 {
+		for _, source := range sources {
+			if !livePlaylistSourceEnabled(source) || !strings.EqualFold(strings.TrimSpace(source.Mode), "xtream") {
+				continue
+			}
+			if strings.TrimSpace(source.XtreamHost) == "" ||
+				strings.TrimSpace(source.XtreamUsername) == "" ||
+				strings.TrimSpace(source.XtreamPassword) == "" {
+				continue
+			}
+			if s.Live.EPG.Enabled || source.EPG.Enabled {
+				return true
+			}
+		}
+		return false
+	}
+	return s.Live.EPG.Enabled &&
+		strings.EqualFold(strings.TrimSpace(s.Live.Mode), "xtream") &&
+		strings.TrimSpace(s.Live.XtreamHost) != "" &&
+		strings.TrimSpace(s.Live.XtreamUsername) != "" &&
+		strings.TrimSpace(s.Live.XtreamPassword) != ""
+}
+
+// EnsureEPGTaskForGuide auto-creates an EPG refresh task when guide/EPG
+// configuration exists and no EPG refresh task already exists. It also removes
+// auto-created EPG tasks when all guide configuration is absent.
+func (h *SettingsHandler) EnsureEPGTaskForGuide(s *config.Settings, reason string) bool {
+	summary := summarizeEPGGuideConfig(s)
+	logEPGGuideConfig(reason, summary)
+
+	if !summary.hasGuideConfig() {
+		changed := false
 		filtered := s.ScheduledTasks.Tasks[:0]
 		for _, task := range s.ScheduledTasks.Tasks {
-			// Only remove auto-created EPG tasks (ID contains "auto")
 			if task.Type == config.ScheduledTaskTypeEPGRefresh && strings.Contains(task.ID, "auto") {
-				log.Printf("[settings] removing auto-created EPG refresh task (id=%s) because EPG is disabled", task.ID)
+				log.Printf("[settings] removing auto-created EPG refresh task (id=%s) because no guide/EPG config is present", task.ID)
+				changed = true
 				continue
 			}
 			filtered = append(filtered, task)
 		}
 		s.ScheduledTasks.Tasks = filtered
-		return
+		return changed
 	}
 
 	// Check if an EPG refresh task already exists
 	for _, task := range s.ScheduledTasks.Tasks {
 		if task.Type == config.ScheduledTaskTypeEPGRefresh {
-			return // Task already exists
+			log.Printf("[settings] EPG refresh task already present (reason=%s id=%s enabled=%v frequency=%s status=%s)", reason, task.ID, task.Enabled, task.Frequency, task.LastStatus)
+			return false
 		}
 	}
 
@@ -934,14 +1075,15 @@ func (h *SettingsHandler) ensureEPGTaskIfEnabled(s *config.Settings) {
 		ID:         "auto-epg-refresh",
 		Type:       config.ScheduledTaskTypeEPGRefresh,
 		Name:       "EPG Refresh",
-		Enabled:    true,
+		Enabled:    summary.globalEnabled || summary.sourceEPGEnabled > 0,
 		Frequency:  config.ScheduledTaskFrequency12Hours,
 		Config:     map[string]string{},
 		LastStatus: config.ScheduledTaskStatusPending,
 		CreatedAt:  time.Now(),
 	}
 	s.ScheduledTasks.Tasks = append(s.ScheduledTasks.Tasks, epgTask)
-	log.Printf("[settings] auto-created EPG refresh task because EPG is enabled")
+	log.Printf("[settings] auto-created EPG refresh task (reason=%s enabled=%v)", reason, epgTask.Enabled)
+	return true
 }
 
 // ensurePlaylistTaskIfConfigured auto-creates a playlist refresh task when Live TV is configured
@@ -1015,8 +1157,13 @@ func (h *SettingsHandler) ensurePlaylistTaskIfConfigured(s *config.Settings) {
 // triggerEPGRefreshIfNewSources triggers an immediate EPG refresh if new sources were added.
 // This provides a better UX so users don't have to wait for the scheduled task to run.
 func (h *SettingsHandler) triggerEPGRefreshIfNewSources(oldSettings config.Settings, newSettings config.Settings) {
-	// Skip if EPG service not available or EPG not enabled
-	if h.EPGService == nil || !newSettings.Live.EPG.Enabled {
+	if h.EPGService == nil {
+		return
+	}
+
+	newSummary := summarizeEPGGuideConfig(&newSettings)
+	if !newSummary.globalEnabled && newSummary.sourceEPGEnabled == 0 {
+		log.Printf("[settings] skipping immediate EPG refresh because no enabled guide/EPG config is present")
 		return
 	}
 
@@ -1039,9 +1186,11 @@ func (h *SettingsHandler) triggerEPGRefreshIfNewSources(oldSettings config.Setti
 	// Also check if EPG was just enabled (and has sources or a simple URL configured)
 	epgJustEnabled := !oldSettings.Live.EPG.Enabled && newSettings.Live.EPG.Enabled
 	hasEPGConfig := len(newSettings.Live.EPG.Sources) > 0 || newSettings.Live.EPG.XmltvUrl != "" ||
-		(newSettings.Live.Mode == "xtream" && newSettings.Live.XtreamHost != "")
+		newSummary.xtreamConfigured ||
+		newSummary.sourceEPGConfigured > 0
+	epgConfigChanged := epgConfigFingerprint(oldSettings) != epgConfigFingerprint(newSettings)
 
-	if hasNewSources || (epgJustEnabled && hasEPGConfig) {
+	if hasNewSources || (epgJustEnabled && hasEPGConfig) || epgConfigChanged {
 		log.Printf("[settings] triggering immediate EPG refresh due to new configuration")
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
