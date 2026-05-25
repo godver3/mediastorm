@@ -553,22 +553,22 @@ func tvdbGenreNames(genres []tvdbGenre) []string {
 }
 
 type tvdbSeriesExtendedData struct {
-	ID              int64              `json:"id"`
-	Name            string             `json:"name"`
-	Overview        string             `json:"overview"`
-	Year            tvdbYear           `json:"year"`
-	Network         string             `json:"network"`
-	AirsTime        string             `json:"airsTime"`        // e.g. "21:00"
-	AirsDays        json.RawMessage    `json:"airsDays"`        // varies: object or array
+	ID              int64               `json:"id"`
+	Name            string              `json:"name"`
+	Overview        string              `json:"overview"`
+	Year            tvdbYear            `json:"year"`
+	Network         string              `json:"network"`
+	AirsTime        string              `json:"airsTime"`        // e.g. "21:00"
+	AirsDays        json.RawMessage     `json:"airsDays"`        // varies: object or array
 	OriginalNetwork tvdbOriginalNetwork `json:"originalNetwork"` // includes name and country code
-	Image           string             `json:"image"`
-	Poster          string             `json:"poster"`
-	Fanart          string             `json:"fanart"`
-	Seasons         []tvdbSeason       `json:"seasons"`
-	Episodes        []tvdbEpisode      `json:"episodes"`
-	Trailers        []tvdbTrailer      `json:"trailers"`
-	Artworks        []tvdbArtwork      `json:"artworks"`
-	Genres          []tvdbGenre        `json:"genres"`
+	Image           string              `json:"image"`
+	Poster          string              `json:"poster"`
+	Fanart          string              `json:"fanart"`
+	Seasons         []tvdbSeason        `json:"seasons"`
+	Episodes        []tvdbEpisode       `json:"episodes"`
+	Trailers        []tvdbTrailer       `json:"trailers"`
+	Artworks        []tvdbArtwork       `json:"artworks"`
+	Genres          []tvdbGenre         `json:"genres"`
 	RemoteIDs       []struct {
 		ID         string `json:"id"`
 		Type       int    `json:"type"`
@@ -579,9 +579,9 @@ type tvdbSeriesExtendedData struct {
 	} `json:"status"`
 	// Type indicates the series type from TVDB (e.g., "scripted", "reality", "documentary", "talk_show", "news", "game_show")
 	// Used to detect daily shows that use date-based episode naming in scene releases
-	Type            string          `json:"type"`
-	Tags            []tvdbTag       `json:"tags"`
-	OriginalCountry string          `json:"originalCountry"`
+	Type            string    `json:"type"`
+	Tags            []tvdbTag `json:"tags"`
+	OriginalCountry string    `json:"originalCountry"`
 }
 
 type tvdbMovieExtendedData struct {
@@ -605,7 +605,7 @@ type tvdbMovieExtendedData struct {
 // Tag categories: 1=descriptors, 3=format, 4=era, 7=feel/tone, 11=setting, 13=creatures
 type tvdbTag struct {
 	ID   int64  `json:"id"`
-	Tag  int    `json:"tag"`  // category ID
+	Tag  int    `json:"tag"` // category ID
 	Name string `json:"name"`
 }
 
