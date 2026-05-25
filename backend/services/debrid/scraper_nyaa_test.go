@@ -364,6 +364,31 @@ func TestNyaaSearchErrorHandling(t *testing.T) {
 	}
 }
 
+func TestNyaaSearchRateLimitReturnsEmptyResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte("Too Many Requests"))
+	}))
+	defer server.Close()
+
+	scraper := NewNyaaScraper(server.URL, "Nyaa", "1_2", "0", nil)
+
+	req := SearchRequest{
+		Query: "Test",
+		Parsed: ParsedQuery{
+			Title: "Test",
+		},
+	}
+
+	results, err := scraper.Search(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected 429 to degrade to empty results, got error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no results for 429 response, got %d", len(results))
+	}
+}
+
 func TestNyaaDefaultConfiguration(t *testing.T) {
 	// Test that defaults are applied correctly
 	scraper := NewNyaaScraper("", "", "", "", nil)

@@ -178,7 +178,12 @@ func (n *NyaaScraper) searchRSS(ctx context.Context, query string) ([]ScrapeResu
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("nyaa returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		bodyText := strings.TrimSpace(string(body))
+		if resp.StatusCode == http.StatusTooManyRequests {
+			log.Printf("[nyaa] rate limited by upstream status=%d body=%q", resp.StatusCode, bodyText)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("nyaa returned status %d: %s", resp.StatusCode, bodyText)
 	}
 
 	body, err := io.ReadAll(resp.Body)
