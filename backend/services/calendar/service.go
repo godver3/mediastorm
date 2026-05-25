@@ -1108,9 +1108,6 @@ func calendarBackdropURL(title *models.Title) string {
 	if title == nil {
 		return ""
 	}
-	if title.TextBackdrop != nil && title.TextBackdrop.URL != "" {
-		return title.TextBackdrop.URL
-	}
 	if title.Backdrop != nil && title.Backdrop.URL != "" {
 		return title.Backdrop.URL
 	}
@@ -1118,6 +1115,9 @@ func calendarBackdropURL(title *models.Title) string {
 		if backdrop.URL != "" {
 			return backdrop.URL
 		}
+	}
+	if title.TextBackdrop != nil && title.TextBackdrop.URL != "" {
+		return title.TextBackdrop.URL
 	}
 	return ""
 }
