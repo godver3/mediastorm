@@ -2,6 +2,7 @@ package trakt
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/models"
 )
 
 func TestScrobbleStart(t *testing.T) {
@@ -77,7 +79,7 @@ func TestScrobbleStart(t *testing.T) {
 	}
 }
 
-func TestAddEpisodeToHistoryUsesEpisodeIDsAndAbsoluteNumber(t *testing.T) {
+func TestAddEpisodeToHistoryUsesSeasonEpisodeNumberAndEpisodeIDs(t *testing.T) {
 	var receivedBody SyncHistoryRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sync/history" {
@@ -90,7 +92,9 @@ func TestAddEpisodeToHistoryUsesEpisodeIDsAndAbsoluteNumber(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(SyncHistoryResponse{})
+		resp := SyncHistoryResponse{}
+		resp.Added.Episodes = 1
+		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -99,7 +103,7 @@ func TestAddEpisodeToHistoryUsesEpisodeIDsAndAbsoluteNumber(t *testing.T) {
 	setBaseURL(server.URL)
 
 	client := NewClient("test-client-id", "test-secret")
-	err := client.AddEpisodeToHistory("test-token", 81797, 23, 1162, "2026-05-21T18:15:05Z", SyncIDs{
+	err := client.AddEpisodeToHistory("test-token", 448176, 2, 13, "2026-05-25T03:46:31Z", SyncIDs{
 		TVDB:  11700059,
 		TMDB:  7124432,
 		Trakt: 14100237,
@@ -112,11 +116,158 @@ func TestAddEpisodeToHistoryUsesEpisodeIDsAndAbsoluteNumber(t *testing.T) {
 		t.Fatalf("unexpected request body: %+v", receivedBody)
 	}
 	episode := receivedBody.Shows[0].Seasons[0].Episodes[0]
-	if episode.Number != 1162 {
-		t.Fatalf("episode number = %d, want 1162", episode.Number)
+	if receivedBody.Shows[0].IDs.TVDB != 448176 {
+		t.Fatalf("show TVDB ID = %d, want 448176", receivedBody.Shows[0].IDs.TVDB)
+	}
+	if receivedBody.Shows[0].Seasons[0].Number != 2 {
+		t.Fatalf("season number = %d, want 2", receivedBody.Shows[0].Seasons[0].Number)
+	}
+	if episode.Number != 13 {
+		t.Fatalf("episode number = %d, want 13", episode.Number)
 	}
 	if episode.IDs.TVDB != 11700059 || episode.IDs.TMDB != 7124432 || episode.IDs.Trakt != 14100237 {
 		t.Fatalf("episode IDs = %+v", episode.IDs)
+	}
+}
+
+func TestAddEpisodeToHistoryReturnsErrNotFoundWhenNothingAdded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(SyncHistoryResponse{})
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	client := NewClient("test-client-id", "test-secret")
+	err := client.AddEpisodeToHistory("test-token", 448176, 2, 13, "2026-05-25T03:46:31Z", SyncIDs{})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AddEpisodeToHistory() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestScrobbleEpisodeUsesSeasonEpisodeNumberWhenAbsoluteEpisodeIDExists(t *testing.T) {
+	var receivedBody SyncHistoryRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sync/history" {
+			t.Errorf("expected path /sync/history, got %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		resp := SyncHistoryResponse{}
+		resp.Added.Episodes = 1
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	cfgMgr := newTestConfigManager(t, config.Settings{
+		Trakt: config.TraktSettings{
+			Accounts: []config.TraktAccount{
+				{
+					ID:                "acct1",
+					ClientID:          "test-client-id",
+					ClientSecret:      "test-secret",
+					AccessToken:       "test-token",
+					ScrobblingEnabled: true,
+					ExpiresAt:         time.Now().Add(24 * time.Hour).Unix(),
+				},
+			},
+		},
+	})
+
+	client := NewClient("test-client-id", "test-secret")
+	scrobbler := NewScrobbler(client, cfgMgr)
+	scrobbler.SetUserService(&mockTraktUserService{
+		users: map[string]models.User{
+			"user1": {ID: "user1", TraktAccountID: "acct1"},
+		},
+	})
+
+	err := scrobbler.ScrobbleEpisode("user1", 448176, 2, 13, time.Date(2026, 5, 25, 3, 46, 31, 0, time.UTC), map[string]string{
+		"absoluteEpisode": "28",
+		"episodeTvdb":     "11532947",
+	})
+	if err != nil {
+		t.Fatalf("ScrobbleEpisode() error = %v", err)
+	}
+	if len(receivedBody.Shows) != 1 || len(receivedBody.Shows[0].Seasons) != 1 || len(receivedBody.Shows[0].Seasons[0].Episodes) != 1 {
+		t.Fatalf("unexpected request body: %+v", receivedBody)
+	}
+	episode := receivedBody.Shows[0].Seasons[0].Episodes[0]
+	if episode.Number != 13 {
+		t.Fatalf("episode number = %d, want 13", episode.Number)
+	}
+	if episode.IDs.TVDB != 11532947 {
+		t.Fatalf("episode TVDB ID = %d, want 11532947", episode.IDs.TVDB)
+	}
+}
+
+func TestScrobbleEpisodeRetriesAbsoluteEpisodeWhenCanonicalNotAdded(t *testing.T) {
+	var receivedEpisodes []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body SyncHistoryRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Shows) != 1 || len(body.Shows[0].Seasons) != 1 || len(body.Shows[0].Seasons[0].Episodes) != 1 {
+			t.Fatalf("unexpected request body: %+v", body)
+		}
+		episodeNumber := body.Shows[0].Seasons[0].Episodes[0].Number
+		receivedEpisodes = append(receivedEpisodes, episodeNumber)
+
+		w.WriteHeader(http.StatusCreated)
+		resp := SyncHistoryResponse{}
+		if episodeNumber == 1162 {
+			resp.Added.Episodes = 1
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	origURL := traktAPIBaseURL
+	defer func() { setBaseURL(origURL) }()
+	setBaseURL(server.URL)
+
+	cfgMgr := newTestConfigManager(t, config.Settings{
+		Trakt: config.TraktSettings{
+			Accounts: []config.TraktAccount{
+				{
+					ID:                "acct1",
+					ClientID:          "test-client-id",
+					ClientSecret:      "test-secret",
+					AccessToken:       "test-token",
+					ScrobblingEnabled: true,
+					ExpiresAt:         time.Now().Add(24 * time.Hour).Unix(),
+				},
+			},
+		},
+	})
+
+	client := NewClient("test-client-id", "test-secret")
+	scrobbler := NewScrobbler(client, cfgMgr)
+	scrobbler.SetUserService(&mockTraktUserService{
+		users: map[string]models.User{
+			"user1": {ID: "user1", TraktAccountID: "acct1"},
+		},
+	})
+
+	err := scrobbler.ScrobbleEpisode("user1", 81797, 23, 7, time.Date(2026, 5, 25, 3, 46, 31, 0, time.UTC), map[string]string{
+		"absoluteEpisode": "1162",
+		"episodeTvdb":     "11700059",
+	})
+	if err != nil {
+		t.Fatalf("ScrobbleEpisode() error = %v", err)
+	}
+	if len(receivedEpisodes) != 2 || receivedEpisodes[0] != 7 || receivedEpisodes[1] != 1162 {
+		t.Fatalf("received episode numbers = %v, want [7 1162]", receivedEpisodes)
 	}
 }
 

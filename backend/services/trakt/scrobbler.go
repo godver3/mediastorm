@@ -1,6 +1,7 @@
 package trakt
 
 import (
+	"errors"
 	"log"
 	"strconv"
 	"time"
@@ -124,7 +125,18 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 	}
 
 	watchedAtStr := watchedAt.UTC().Format(time.RFC3339)
-	return s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, traktHistoryEpisodeNumber(episode, externalIDs), watchedAtStr, episodeSyncIDs(externalIDs))
+	episodeIDs := episodeSyncIDs(externalIDs)
+	err = s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, episode, watchedAtStr, episodeIDs)
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+
+	absoluteEpisode := traktAbsoluteEpisodeNumber(episode, externalIDs)
+	if absoluteEpisode == episode {
+		return err
+	}
+	log.Printf("[trakt] canonical history scrobble failed for S%02dE%02d; retrying absolute episode %d", season, episode, absoluteEpisode)
+	return s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, absoluteEpisode, watchedAtStr, episodeIDs)
 }
 
 // ScrobbleMovieLegacy is for backward compatibility - scrobbles without user context.
@@ -167,16 +179,6 @@ func (s *Scrobbler) ScrobbleEpisodeLegacy(showTVDBID, season, episode int, watch
 	return nil
 }
 
-func traktHistoryEpisodeNumber(localEpisode int, externalIDs map[string]string) int {
-	if externalIDs == nil {
-		return localEpisode
-	}
-	if absolute, err := strconv.Atoi(externalIDs["absoluteEpisode"]); err == nil && absolute > 0 {
-		return absolute
-	}
-	return localEpisode
-}
-
 func episodeSyncIDs(externalIDs map[string]string) SyncIDs {
 	ids := SyncIDs{}
 	if externalIDs == nil {
@@ -195,4 +197,14 @@ func episodeSyncIDs(externalIDs map[string]string) SyncIDs {
 		ids.IMDB = imdb
 	}
 	return ids
+}
+
+func traktAbsoluteEpisodeNumber(localEpisode int, externalIDs map[string]string) int {
+	if externalIDs == nil {
+		return localEpisode
+	}
+	if absolute, err := strconv.Atoi(externalIDs["absoluteEpisode"]); err == nil && absolute > 0 {
+		return absolute
+	}
+	return localEpisode
 }

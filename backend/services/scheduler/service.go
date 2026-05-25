@@ -2143,10 +2143,12 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		tvdbID int
 	}
 	showEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
+	absoluteShowEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	showIDs := make(map[showKey]trakt.SyncIDs)
 	var movies []trakt.SyncMovie
 	exported := 0
 	skipped := 0
+	expectedEpisodes := 0
 
 	for _, item := range items {
 		if !item.Watched {
@@ -2223,18 +2225,28 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 			}
 
 			sk := showKey{tvdbID: tvdbID}
-			seasonNumber, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
 			if showEpisodes[sk] == nil {
 				showEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
 			}
-			showEpisodes[sk][seasonNumber] = append(showEpisodes[sk][seasonNumber], trakt.SyncEpisode{
-				Number:    episodeNumber,
+			showEpisodes[sk][item.SeasonNumber] = append(showEpisodes[sk][item.SeasonNumber], trakt.SyncEpisode{
+				Number:    item.EpisodeNumber,
 				WatchedAt: item.WatchedAt.UTC().Format(time.RFC3339),
 				IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 			})
+			if absoluteEpisode := traktAbsoluteEpisodeNumber(item.EpisodeNumber, item.ExternalIDs); absoluteEpisode != item.EpisodeNumber {
+				if absoluteShowEpisodes[sk] == nil {
+					absoluteShowEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
+				}
+				absoluteShowEpisodes[sk][item.SeasonNumber] = append(absoluteShowEpisodes[sk][item.SeasonNumber], trakt.SyncEpisode{
+					Number:    absoluteEpisode,
+					WatchedAt: item.WatchedAt.UTC().Format(time.RFC3339),
+					IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
+				})
+			}
 			if _, exists := showIDs[sk]; !exists {
 				showIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
 			}
+			expectedEpisodes++
 			exported++
 		}
 	}
@@ -2247,21 +2259,26 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	}
 
 	// Build SyncShow batch structure
-	var shows []trakt.SyncShow
-	for sk, seasonEps := range showEpisodes {
-		var seasons []trakt.SyncSeason
-		for seasonNum, eps := range seasonEps {
-			seasons = append(seasons, trakt.SyncSeason{
-				Number:   seasonNum,
-				Episodes: eps,
+	buildShows := func(grouped map[showKey]map[int][]trakt.SyncEpisode) []trakt.SyncShow {
+		var shows []trakt.SyncShow
+		for sk, seasonEps := range grouped {
+			var seasons []trakt.SyncSeason
+			for seasonNum, eps := range seasonEps {
+				seasons = append(seasons, trakt.SyncSeason{
+					Number:   seasonNum,
+					Episodes: eps,
+				})
+			}
+
+			shows = append(shows, trakt.SyncShow{
+				IDs:     showIDs[sk],
+				Seasons: seasons,
 			})
 		}
-
-		shows = append(shows, trakt.SyncShow{
-			IDs:     showIDs[sk],
-			Seasons: seasons,
-		})
+		return shows
 	}
+
+	shows := buildShows(showEpisodes)
 
 	if len(movies) > 0 || len(shows) > 0 {
 		syncReq := trakt.SyncHistoryRequest{
@@ -2273,6 +2290,17 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 			return result, fmt.Errorf("add to trakt history: %w", err)
 		}
 		log.Printf("[scheduler] Synced to Trakt: %d movies, %d episodes added", resp.Added.Movies, resp.Added.Episodes)
+
+		if resp.Added.Episodes < expectedEpisodes && len(absoluteShowEpisodes) > 0 {
+			absoluteShows := buildShows(absoluteShowEpisodes)
+			retryReq := trakt.SyncHistoryRequest{Shows: absoluteShows}
+			retryResp, retryErr := s.traktClient.AddToHistory(traktAccount.AccessToken, retryReq)
+			if retryErr != nil {
+				log.Printf("[scheduler] Trakt absolute episode retry failed: %v", retryErr)
+			} else {
+				log.Printf("[scheduler] Trakt absolute episode retry added %d episodes", retryResp.Added.Episodes)
+			}
+		}
 	}
 
 	result.Count = exported
@@ -2772,9 +2800,8 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 				if showSeasonsToHistory[sk] == nil {
 					showSeasonsToHistory[sk] = make(map[int][]trakt.SyncEpisode)
 				}
-				seasonNumber, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
-				showSeasonsToHistory[sk][seasonNumber] = append(showSeasonsToHistory[sk][seasonNumber], trakt.SyncEpisode{
-					Number:    episodeNumber,
+				showSeasonsToHistory[sk][item.SeasonNumber] = append(showSeasonsToHistory[sk][item.SeasonNumber], trakt.SyncEpisode{
+					Number:    item.EpisodeNumber,
 					WatchedAt: item.UpdatedAt.UTC().Format(time.RFC3339),
 					IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 				})
@@ -2799,11 +2826,10 @@ func (s *Service) syncPlaybackToTrakt(traktAccount *config.TraktAccount, profile
 				IDs:   externalIDsToSyncIDs(item.ExternalIDs),
 			}
 		} else if item.MediaType == "episode" {
-			_, episodeNumber := traktHistoryEpisodeNumbers(item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs)
 			req.Episode = &trakt.ScrobbleEpisode{
 				Season:    item.SeasonNumber,
 				Number:    item.EpisodeNumber,
-				NumberAbs: episodeNumber,
+				NumberAbs: traktAbsoluteEpisodeNumber(item.EpisodeNumber, item.ExternalIDs),
 				Title:     item.EpisodeName,
 				IDs:       episodeIDsToSyncIDs(item.ExternalIDs),
 			}
@@ -3530,11 +3556,11 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return clone
 }
 
-func traktHistoryEpisodeNumbers(seasonNumber, episodeNumber int, extIDs map[string]string) (int, int) {
+func traktAbsoluteEpisodeNumber(episodeNumber int, extIDs map[string]string) int {
 	if absolute, ok := positiveIntFromMap(extIDs, "absoluteEpisode"); ok {
-		return seasonNumber, absolute
+		return absolute
 	}
-	return seasonNumber, episodeNumber
+	return episodeNumber
 }
 
 func positiveIntFromMap(values map[string]string, key string) (int, bool) {

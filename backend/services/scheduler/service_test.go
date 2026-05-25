@@ -88,13 +88,13 @@ func TestSimklAllItemsToWatchHistoryParsesMoviesAndEpisodes(t *testing.T) {
 	}
 }
 
-func TestTraktHistoryEpisodeNumbersUsesAbsoluteEpisode(t *testing.T) {
-	season, episode := traktHistoryEpisodeNumbers(23, 7, map[string]string{
+func TestTraktAbsoluteEpisodeNumberUsesAbsoluteEpisode(t *testing.T) {
+	episode := traktAbsoluteEpisodeNumber(7, map[string]string{
 		"absoluteEpisode": "1162",
 	})
 
-	if season != 23 || episode != 1162 {
-		t.Fatalf("expected S23E1162 for Trakt, got S%02dE%02d", season, episode)
+	if episode != 1162 {
+		t.Fatalf("expected absolute episode 1162, got %d", episode)
 	}
 }
 

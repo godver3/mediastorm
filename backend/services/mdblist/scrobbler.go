@@ -102,10 +102,8 @@ func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID stri
 }
 
 // ScrobbleEpisode syncs a watched episode to MDBList for the given user.
-// Note: showTVDBID is not usable with MDBList (no TVDB support). The caller's
-// ExternalIDs may contain TMDB/IMDB which are extracted upstream, but this
-// sync/watched path receives only the show's TVDB ID from the history service.
-// We log a warning if we have no usable IDs.
+// Note: showTVDBID is not usable with MDBList (no TVDB support), so the show
+// must be identified by IMDB/TMDB IDs from externalIDs.
 func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	account := s.getAccountForUser(userID)
 	if account == nil || account.APIKey == "" {
@@ -114,13 +112,33 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 
 	s.client.UpdateAPIKey(account.APIKey)
 
-	// The history service only passes showTVDBID for episodes, but MDBList
-	// doesn't support TVDB. We have no IMDB/TMDB for the show here.
-	// Log and skip — the real-time scrobble path has access to ExternalIDs
-	// and will handle episode scrobbling when the user is actually watching.
-	log.Printf("[mdblist-scrobble] episode sync/watched skipped for user %s (s%02de%02d) — only TVDB ID available (tvdb=%d), MDBList requires IMDB/TMDB",
-		userID, season, episode, showTVDBID)
-	return nil
+	ids := externalIDsToScrobbleIDs(externalIDs)
+	if ids.IMDB == "" && ids.TMDB == 0 {
+		log.Printf("[mdblist-scrobble] episode sync/watched skipped for user %s (s%02de%02d) — no MDBList-compatible show IDs (tvdb=%d)",
+			userID, season, episode, showTVDBID)
+		return nil
+	}
+
+	item := SyncWatchedShowItem{
+		IDs: ids,
+		Seasons: []SyncWatchedSeason{
+			{
+				Number: season,
+				Episodes: []SyncWatchedEpisode{
+					{
+						Number:    episode,
+						WatchedAt: watchedAt.UTC().Format(time.RFC3339),
+					},
+				},
+			},
+		},
+	}
+
+	log.Printf("[mdblist-scrobble] syncing watched episode for user %s (imdb=%s tmdb=%d s%02de%02d)",
+		userID, ids.IMDB, ids.TMDB, season, episode)
+	return s.client.SyncWatched(SyncWatchedRequest{
+		Shows: []SyncWatchedShowItem{item},
+	})
 }
 
 // BuildScrobbleRequest converts a PlaybackProgressUpdate to an MDBList ScrobbleRequest.

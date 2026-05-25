@@ -752,7 +752,7 @@ func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, epi
 	if err != nil {
 		return err
 	}
-	if resp != nil && resp.Added.Episodes == 0 && len(resp.NotFound.Shows) > 0 {
+	if resp != nil && resp.Added.Episodes == 0 {
 		return ErrNotFound
 	}
 	return nil
