@@ -394,12 +394,12 @@ func (s *Service) GetCacheManagerStatus() CacheManagerStatus {
 	if s.client != nil {
 		lang = s.client.language
 	}
-	movieKey := cacheKey("mdblist", "trending", "movie", "v6", lang)
+	movieKey := cacheKey("mdblist", "trending", "movie", "v7", lang)
 	var movies []models.TrendingItem
 	if ok, _ := s.cache.get(movieKey, &movies); ok {
 		status.MoviesCached = len(movies)
 	}
-	seriesKey := cacheKey("mdblist", "trending", "series", "v6", lang)
+	seriesKey := cacheKey("mdblist", "trending", "series", "v7", lang)
 	var series []models.TrendingItem
 	if ok, _ := s.cache.get(seriesKey, &series); ok {
 		status.SeriesCached = len(series)
@@ -409,10 +409,13 @@ func (s *Service) GetCacheManagerStatus() CacheManagerStatus {
 		infos := s.customListInfoFn()
 		cached := 0
 		for _, info := range infos {
-			k := cacheKey("mdblist", "custom", "v5", info.URL, lang)
 			var items []models.TrendingItem
-			if ok, _ := s.cache.get(k, &items); ok && len(items) > 0 {
-				cached++
+			for _, version := range []string{"v6", "v5"} {
+				k := cacheKey("mdblist", "custom", version, info.URL, lang)
+				if ok, _ := s.cache.get(k, &items); ok && len(items) > 0 {
+					cached++
+					break
+				}
 			}
 		}
 		status.CustomListsCached = cached
@@ -437,8 +440,8 @@ func (s *Service) RefreshTrendingCache() {
 		if s.client != nil {
 			lang = s.client.language
 		}
-		_ = s.cache.set(cacheKey("mdblist", "trending", "movie", "v6", lang), []models.TrendingItem{})
-		_ = s.cache.set(cacheKey("mdblist", "trending", "series", "v6", lang), []models.TrendingItem{})
+		_ = s.cache.set(cacheKey("mdblist", "trending", "movie", "v7", lang), []models.TrendingItem{})
+		_ = s.cache.set(cacheKey("mdblist", "trending", "series", "v7", lang), []models.TrendingItem{})
 
 		s.warmTrendingCache()
 		elapsed := time.Since(start)
@@ -578,7 +581,7 @@ func topTenCacheKey(mediaType string, customListURLs []string, language string) 
 	}
 	sort.Strings(trimmed)
 
-	parts := []string{"topten", "v1", normalized, language}
+	parts := []string{"topten", "v2", normalized, language}
 	parts = append(parts, trimmed...)
 	return cacheKey(parts...)
 }
@@ -607,7 +610,7 @@ type cachedFetchInflightResult struct {
 }
 
 func topTenListSourceCacheKey(listURL string, limit int, language string) string {
-	return cacheKey("topten", "source-list", "v1", listURL, strconv.Itoa(limit), language)
+	return cacheKey("topten", "source-list", "v2", listURL, strconv.Itoa(limit), language)
 }
 
 func (s *Service) getTopTenListSource(ctx context.Context, listURL string, limit int) ([]models.TrendingItem, error) {
@@ -1146,7 +1149,7 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 	}
 
 	// v6: added genre hydration from TVDB
-	key := cacheKey("mdblist", "trending", label, "v6", s.client.language)
+	key := cacheKey("mdblist", "trending", label, "v7", s.client.language)
 	// Use a detached context for enrichment so work completes even if the
 	// HTTP client disconnects — results are cached for future requests.
 	enrichCtx := context.Background()
@@ -1201,6 +1204,7 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 	} else {
 		// Enrich TV shows with content ratings
 		s.enrichTrendingTVContentRatings(enrichCtx, items)
+		s.enrichShelfArtwork(enrichCtx, items, 40)
 	}
 	if len(items) > 0 {
 		_ = s.cache.set(key, items)
@@ -1370,6 +1374,7 @@ func (s *Service) enrichTrendingMovieReleases(ctx context.Context, items []model
 	if enrichedCount > 0 {
 		log.Printf("[metadata] enriched %d/%d trending movies with release/runtime data (limit %d)", enrichedCount, queued, enrichLimit)
 	}
+	s.enrichShelfArtwork(ctx, items, 40)
 }
 
 // enrichTrendingTVContentRatings fetches TV content ratings for trending TV shows
@@ -3645,6 +3650,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 				seriesTitle.Backdrop = images.TextlessBackdrop
 				log.Printf("[metadata] textless backdrop applied to series tmdbId=%d", seriesTitle.TMDBID)
 			}
+			seriesTitle.Backdrops = mergeRankedBackdrops(seriesTitle.Backdrops, images.Backdrops, seriesTitle.Backdrop, seriesTitle.TextBackdrop)
 			details.Title = seriesTitle // Update the details with images
 		} else if err != nil {
 			log.Printf("[metadata] failed to fetch images for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
@@ -4176,6 +4182,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 				}
 				seriesTitle.Backdrop = images.TextlessBackdrop
 			}
+			seriesTitle.Backdrops = mergeRankedBackdrops(seriesTitle.Backdrops, images.Backdrops, seriesTitle.Backdrop, seriesTitle.TextBackdrop)
 			details.Title = seriesTitle
 		} else if err != nil {
 			log.Printf("[metadata] lite: failed to fetch images for series tmdbId=%d: %v", tmdbIDForEnrichment, err)
@@ -4808,6 +4815,7 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 		if limit > 0 && limit < len(items) {
 			items = items[:limit]
 		}
+		s.enrichShelfArtwork(ctx, items, len(items))
 		log.Printf(
 			"[metadata] discover genre complete type=%s genreId=%d page=%d source=cache count=%d total=%d duration=%s",
 			normalizedType,
@@ -4853,6 +4861,7 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 	if limit > 0 && limit < len(items) {
 		items = items[:limit]
 	}
+	s.enrichShelfArtwork(ctx, items, len(items))
 
 	log.Printf("[metadata] discover genre success type=%s genreId=%d page=%d count=%d total=%d", normalizedType, genreID, page, len(items), total)
 	log.Printf(
@@ -5530,6 +5539,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 					movieTitle.Backdrop = images.TextlessBackdrop
 					log.Printf("[metadata] textless backdrop applied to movie tmdbId=%d", tmdbIDForEnrichment)
 				}
+				movieTitle.Backdrops = mergeRankedBackdrops(movieTitle.Backdrops, images.Backdrops, movieTitle.Backdrop, movieTitle.TextBackdrop)
 			} else if err != nil {
 				log.Printf("[metadata] failed to fetch images for movie tmdbId=%d: %v", tmdbIDForEnrichment, err)
 			}
@@ -6490,7 +6500,7 @@ func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbI
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "images", "v3", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "images", "v4", mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached tmdbImagesResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil
@@ -6514,6 +6524,157 @@ func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbI
 	}
 	result, _ := value.(*tmdbImagesResult)
 	return result, nil
+}
+
+func (s *Service) applyCachedTMDBImages(ctx context.Context, title *models.Title, mediaType string, tmdbID int64) bool {
+	if title == nil || tmdbID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return false
+	}
+	images, err := s.cachedFetchImages(ctx, mediaType, tmdbID)
+	if err != nil || images == nil {
+		if err != nil {
+			log.Printf("[metadata] failed to fetch images for %s tmdbId=%d: %v", mediaType, tmdbID, err)
+		}
+		return false
+	}
+
+	updated := false
+	if images.Logo != nil {
+		title.Logo = images.Logo
+		updated = true
+	}
+	if images.TextPoster != nil {
+		title.TextPoster = images.TextPoster
+		updated = true
+	}
+	if images.TextlessPoster != nil {
+		if title.TextPoster == nil {
+			title.TextPoster = title.Poster
+		}
+		title.Poster = images.TextlessPoster
+		updated = true
+	}
+	if images.TextBackdrop != nil {
+		title.TextBackdrop = images.TextBackdrop
+		updated = true
+	}
+	if images.TextlessBackdrop != nil {
+		if title.TextBackdrop == nil {
+			title.TextBackdrop = title.Backdrop
+		}
+		title.Backdrop = images.TextlessBackdrop
+		updated = true
+	}
+	merged := mergeRankedBackdrops(title.Backdrops, images.Backdrops, title.Backdrop, title.TextBackdrop)
+	if len(merged) > 0 {
+		title.Backdrops = merged
+		updated = true
+	}
+	return updated
+}
+
+func (s *Service) enrichShelfArtwork(ctx context.Context, items []models.TrendingItem, limit int) {
+	if len(items) == 0 || limit == 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return
+	}
+	if limit < 0 || limit > len(items) {
+		limit = len(items)
+	}
+
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for i := 0; i < limit; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			title := &items[idx].Title
+			tmdbID := title.TMDBID
+			mediaType := shelfArtworkMediaType(title.MediaType)
+			if tmdbID <= 0 && title.IMDBID != "" {
+				if mediaType == "movie" {
+					tmdbID = s.getTMDBIDForIMDB(ctx, title.IMDBID)
+				} else {
+					tmdbID = s.getTMDBIDForIMDBTV(ctx, title.IMDBID)
+				}
+				if tmdbID > 0 {
+					title.TMDBID = tmdbID
+				}
+			}
+			if tmdbID <= 0 {
+				return
+			}
+			s.applyCachedTMDBImages(ctx, title, mediaType, tmdbID)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func shelfArtworkMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "movie", "movies", "film", "films":
+		return "movie"
+	default:
+		return "series"
+	}
+}
+
+func mergeRankedBackdrops(existing, ranked []models.Image, primary, textBackdrop *models.Image) []models.Image {
+	const maxBackdrops = 5
+	if len(ranked) == 0 && len(existing) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	addSeen := func(img *models.Image) {
+		if img == nil {
+			return
+		}
+		if key := comparableArtworkURL(img.URL); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	addSeen(primary)
+	addSeen(textBackdrop)
+
+	merged := make([]models.Image, 0, maxBackdrops)
+	add := func(img models.Image) {
+		if len(merged) >= maxBackdrops {
+			return
+		}
+		key := comparableArtworkURL(img.URL)
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, img)
+	}
+
+	for _, img := range ranked {
+		add(img)
+	}
+	for _, img := range existing {
+		add(img)
+	}
+	return merged
+}
+
+func comparableArtworkURL(imageURL string) string {
+	if imageURL == "" {
+		return ""
+	}
+	withoutQuery := strings.Split(imageURL, "?")[0]
+	withoutQuery = strings.ReplaceAll(withoutQuery, "/original/", "/")
+	for _, size := range []string{"/w92/", "/w154/", "/w185/", "/w300/", "/w342/", "/w500/", "/w780/", "/w1280/"} {
+		withoutQuery = strings.ReplaceAll(withoutQuery, size, "/")
+	}
+	return withoutQuery
 }
 
 // cachedMovieTranslations fetches TVDB movie translations with file caching.
@@ -7061,7 +7222,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 // TVDB lookups. Returns (items, filteredTotal, unfilteredTotal, error).
 func (s *Service) GetCustomList(ctx context.Context, listURL string, opts CustomListOptions) ([]models.TrendingItem, int, int, error) {
 	// Check full-list cache first (only populated when no filtering was applied)
-	cacheID := cacheKey("mdblist", "custom", "v5", listURL, s.client.language)
+	cacheID := cacheKey("mdblist", "custom", "v6", listURL, s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] custom list cache hit for %s (%d items)", listURL, len(cached))
@@ -7077,6 +7238,7 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		if opts.Limit > 0 && opts.Limit < len(result) {
 			result = result[:opts.Limit]
 		}
+		s.enrichShelfArtwork(ctx, result, len(result))
 		return result, total, total, nil
 	}
 
@@ -7167,6 +7329,7 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		}(i, item)
 	}
 	wg.Wait()
+	s.enrichShelfArtwork(ctx, results, len(results))
 
 	// Only cache full-list results when no filtering was applied
 	if !opts.HideWatched && !opts.HideUnreleased && opts.Offset == 0 &&
@@ -7207,11 +7370,12 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 	// Build a deterministic cache key from sorted IMDB IDs + language
 	sort.Strings(ids)
 	sortedImdbIds := strings.Join(ids, ",")
-	cacheID := cacheKey("curated", "v1", sortedImdbIds, s.client.language)
+	cacheID := cacheKey("curated", "v2", sortedImdbIds, s.client.language)
 
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] curated list cache hit for %q (%d items)", label, len(cached))
+		s.enrichShelfArtwork(ctx, cached, len(cached))
 		return cached, nil
 	}
 
@@ -7235,6 +7399,7 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 		}(i, item)
 	}
 	wg.Wait()
+	s.enrichShelfArtwork(ctx, results, len(results))
 
 	// Cache results
 	if len(results) > 0 {
@@ -7664,6 +7829,7 @@ func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, custo
 		results = results[:topTenLimit]
 		debugList = debugList[:topTenLimit]
 	}
+	s.enrichShelfArtwork(ctx, results, len(results))
 	for i := range results {
 		results[i].Rank = i + 1
 	}

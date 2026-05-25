@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"sort"
 	"testing"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 func TestNormalizeLanguage(t *testing.T) {
@@ -52,6 +54,62 @@ func TestParseTMDBYear(t *testing.T) {
 	}
 	if year := parseTMDBYear("199", ""); year != 0 {
 		t.Fatalf("expected 0 for invalid date, got %d", year)
+	}
+}
+
+func TestBackdropVisualDiversityScore(t *testing.T) {
+	makeImage := func(left, right color.Color) image.Image {
+		img := image.NewRGBA(image.Rect(0, 0, 160, 90))
+		for y := 0; y < 90; y++ {
+			for x := 0; x < 160; x++ {
+				if x < 80 {
+					img.Set(x, y, left)
+				} else {
+					img.Set(x, y, right)
+				}
+			}
+		}
+		return img
+	}
+
+	primary := computeBackdropVisualSignature(makeImage(color.NRGBA{R: 220, G: 40, B: 40, A: 255}, color.NRGBA{R: 30, G: 40, B: 220, A: 255}))
+	similar := computeBackdropVisualSignature(makeImage(color.NRGBA{R: 210, G: 45, B: 45, A: 255}, color.NRGBA{R: 35, G: 45, B: 210, A: 255}))
+	different := computeBackdropVisualSignature(makeImage(color.NRGBA{R: 20, G: 180, B: 80, A: 255}, color.NRGBA{R: 230, G: 220, B: 40, A: 255}))
+
+	similarScore := backdropVisualDiversityScore(primary, similar)
+	differentScore := backdropVisualDiversityScore(primary, different)
+	if differentScore <= similarScore {
+		t.Fatalf("different score = %f, similar score = %f; want different higher", differentScore, similarScore)
+	}
+	if similarScore >= 0 {
+		t.Fatalf("similar score = %f, want duplicate-like candidate penalized below zero", similarScore)
+	}
+
+	keyArt := image.NewRGBA(image.Rect(0, 0, 220, 124))
+	for y := 0; y < 124; y++ {
+		for x := 0; x < 220; x++ {
+			switch {
+			case x < 80:
+				keyArt.Set(x, y, color.NRGBA{R: 190, G: 20, B: 30, A: 255})
+			case y < 52:
+				keyArt.Set(x, y, color.NRGBA{R: 20, G: 20, B: 30, A: 255})
+			case x > 150:
+				keyArt.Set(x, y, color.NRGBA{R: 20, G: 70, B: 190, A: 255})
+			default:
+				keyArt.Set(x, y, color.NRGBA{R: 230, G: 180, B: 60, A: 255})
+			}
+		}
+	}
+	croppedKeyArt := image.NewRGBA(image.Rect(0, 0, 220, 124))
+	xdraw.ApproxBiLinear.Scale(croppedKeyArt, croppedKeyArt.Bounds(), keyArt, image.Rect(0, 12, 185, 124), xdraw.Over, nil)
+
+	primaryKeyArt := computeBackdropVisualSignature(keyArt)
+	croppedKeyArtSig := computeBackdropVisualSignature(croppedKeyArt)
+	if cropAlignedDuplicateScore(primaryKeyArt, croppedKeyArtSig) < 28 {
+		t.Fatalf("crop-aligned duplicate score = %f, want duplicate crop above threshold", cropAlignedDuplicateScore(primaryKeyArt, croppedKeyArtSig))
+	}
+	if score := backdropVisualDiversityScore(primaryKeyArt, croppedKeyArtSig); score >= 0 {
+		t.Fatalf("cropped key-art score = %f, want duplicate-like candidate penalized below zero", score)
 	}
 }
 

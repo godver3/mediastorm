@@ -413,19 +413,22 @@ func slimTitles(titles []models.Title) []models.Title {
 	slim := make([]models.Title, len(titles))
 	for i, t := range titles {
 		slim[i] = models.Title{
-			ID:          t.ID,
-			Name:        t.Name,
-			Overview:    t.Overview,
-			Year:        t.Year,
-			Poster:      t.Poster,
-			Backdrop:    t.Backdrop,
-			MediaType:   t.MediaType,
-			TVDBID:      t.TVDBID,
-			IMDBID:      t.IMDBID,
-			TMDBID:      t.TMDBID,
-			Theatrical:  t.Theatrical,
-			HomeRelease: t.HomeRelease,
-			Genres:      t.Genres,
+			ID:           t.ID,
+			Name:         t.Name,
+			Overview:     t.Overview,
+			Year:         t.Year,
+			Poster:       t.Poster,
+			TextPoster:   t.TextPoster,
+			Backdrop:     t.Backdrop,
+			TextBackdrop: t.TextBackdrop,
+			Backdrops:    t.Backdrops,
+			MediaType:    t.MediaType,
+			TVDBID:       t.TVDBID,
+			IMDBID:       t.IMDBID,
+			TMDBID:       t.TMDBID,
+			Theatrical:   t.Theatrical,
+			HomeRelease:  t.HomeRelease,
+			Genres:       t.Genres,
 		}
 	}
 	return slim

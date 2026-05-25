@@ -1,17 +1,21 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +23,8 @@ import (
 	"time"
 
 	"novastream/models"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 const (
@@ -34,6 +40,10 @@ const (
 	tmdbProfileSize  = "w185"
 	tmdbLogoSize     = "w500"
 	tmdbStillSize    = "original"
+
+	tmdbBackdropAnalysisSize  = "w300"
+	maxTMDBBackdropCandidates = 10
+	maxTMDBAlternateBackdrops = 5
 )
 
 // TMDB genre ID → name maps (standard IDs that rarely change)
@@ -50,6 +60,8 @@ var tmdbTVGenres = map[int]string{
 	10763: "News", 10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap",
 	10767: "Talk", 10768: "War & Politics", 37: "Western",
 }
+
+var regexpTMDBImageSize = regexp.MustCompile(`/t/p/(?:original|w\d+)/`)
 
 // resolveGenreIDs maps TMDB genre IDs to genre names.
 func resolveGenreIDs(ids []int, mediaType string) []string {
@@ -284,6 +296,13 @@ func minInt(a, b int) int {
 	return b
 }
 
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func buildTMDBImage(imagePath, size, imageType string) *models.Image {
 	trimmed := strings.TrimSpace(imagePath)
 	if trimmed == "" {
@@ -320,6 +339,7 @@ type tmdbImagesResult struct {
 	TextPoster       *models.Image // Best poster with title text (has language tag)
 	TextlessBackdrop *models.Image
 	TextBackdrop     *models.Image // Best backdrop with language tag when available
+	Backdrops        []models.Image
 }
 
 // fetchImages retrieves logo and textless poster for a movie or TV show from TMDB
@@ -436,6 +456,7 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 				result.TextBackdrop.IsFallbackLanguage = withText[0].ISO6391 != preferredLang
 			}
 		}
+		result.Backdrops = c.rankAlternateBackdrops(ctx, append(append([]tmdbImageItem{}, textless...), withText...), result.TextlessBackdrop, result.TextBackdrop)
 	}
 
 	// Find best textless poster (no language = textless) and best text poster (has language tag)
@@ -485,6 +506,397 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 	}
 
 	return result, nil
+}
+
+type backdropVisualSignature struct {
+	dHash uint64
+	rgb   []float64
+	gray  []float64
+	edge  []float64
+	crops []backdropCropSignature
+}
+
+type backdropCropSignature struct {
+	rgb  []float64
+	gray []float64
+	edge []float64
+	hist []float64
+}
+
+type rankedBackdropCandidate struct {
+	image *models.Image
+	score float64
+}
+
+func (c *tmdbClient) rankAlternateBackdrops(ctx context.Context, items []tmdbImageItem, primary, textBackdrop *models.Image) []models.Image {
+	if len(items) == 0 {
+		return nil
+	}
+
+	primaryKey := comparableTMDBImageURL("")
+	if primary != nil {
+		primaryKey = comparableTMDBImageURL(primary.URL)
+	}
+	textKey := ""
+	if textBackdrop != nil {
+		textKey = comparableTMDBImageURL(textBackdrop.URL)
+	}
+
+	seen := make(map[string]struct{})
+	var candidates []tmdbImageItem
+	for _, item := range items {
+		img := buildTMDBImage(item.FilePath, tmdbBackdropSize, "backdrop")
+		if img == nil {
+			continue
+		}
+		key := comparableTMDBImageURL(img.URL)
+		if key == "" {
+			continue
+		}
+		if key == primaryKey || key == textKey {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, item)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].VoteAverage > candidates[j].VoteAverage
+	})
+	if len(candidates) > maxTMDBBackdropCandidates {
+		candidates = candidates[:maxTMDBBackdropCandidates]
+	}
+
+	var primarySig *backdropVisualSignature
+	if primary != nil {
+		if sig, err := c.fetchBackdropVisualSignature(ctx, primary.URL); err == nil {
+			primarySig = sig
+		} else {
+			log.Printf("[metadata] backdrop visual signature: primary fetch failed: %v", err)
+		}
+	}
+
+	ranked := make([]rankedBackdropCandidate, 0, len(candidates))
+	for _, item := range candidates {
+		img := buildTMDBImage(item.FilePath, tmdbBackdropSize, "backdrop")
+		if img == nil {
+			continue
+		}
+		score := item.VoteAverage * 0.25
+		if primarySig != nil {
+			if sig, err := c.fetchBackdropVisualSignature(ctx, img.URL); err == nil {
+				score += backdropVisualDiversityScore(primarySig, sig)
+			} else {
+				log.Printf("[metadata] backdrop visual signature: candidate fetch failed path=%s err=%v", item.FilePath, err)
+			}
+		}
+		ranked = append(ranked, rankedBackdropCandidate{image: img, score: score})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].score > ranked[j].score
+	})
+
+	limit := maxTMDBAlternateBackdrops
+	if len(ranked) < limit {
+		limit = len(ranked)
+	}
+	result := make([]models.Image, 0, limit)
+	for i := 0; i < limit; i++ {
+		result = append(result, *ranked[i].image)
+	}
+	return result
+}
+
+func (c *tmdbClient) fetchBackdropVisualSignature(ctx context.Context, imageURL string) (*backdropVisualSignature, error) {
+	analysisURL := strings.Replace(imageURL, "/original/", "/"+tmdbBackdropAnalysisSize+"/", 1)
+	if analysisURL == imageURL {
+		analysisURL = strings.Replace(imageURL, "/w780/", "/"+tmdbBackdropAnalysisSize+"/", 1)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, analysisURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch returned %d", resp.StatusCode)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(io.LimitReader(resp.Body, 2*1024*1024)); err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return nil, err
+	}
+	return computeBackdropVisualSignature(img), nil
+}
+
+func computeBackdropVisualSignature(img image.Image) *backdropVisualSignature {
+	return &backdropVisualSignature{
+		dHash: computeDHash(img),
+		rgb:   sampleRGBLayout(img, 16, 9),
+		gray:  sampleGrayLayout(img, 32, 18),
+		edge:  sampleEdgeLayout(img, 32, 18),
+		crops: sampleBackdropCropSignatures(img),
+	}
+}
+
+func backdropVisualDiversityScore(primary, candidate *backdropVisualSignature) float64 {
+	if primary == nil || candidate == nil {
+		return 0
+	}
+	dHashDistance := float64(bitsSet64(primary.dHash ^ candidate.dHash))
+	colorRMSE := normalizedRMSE(primary.rgb, candidate.rgb)
+	grayCorr := correlation(primary.gray, candidate.gray)
+	edgeCorr := correlation(primary.edge, candidate.edge)
+
+	score := colorRMSE*70 + (1-grayCorr)*18 + (1-edgeCorr)*8 + (dHashDistance/64)*10
+	if dHashDistance <= 10 || (grayCorr >= 0.72 && edgeCorr >= 0.45 && colorRMSE <= 0.42) {
+		score -= 80
+	}
+	if cropAlignedDuplicateScore(primary, candidate) >= 28 {
+		score -= 80
+	}
+	return score
+}
+
+func cropAlignedDuplicateScore(primary, candidate *backdropVisualSignature) float64 {
+	if primary == nil || candidate == nil || len(primary.crops) == 0 || len(candidate.crops) == 0 {
+		return 0
+	}
+	best := 0.0
+	for _, a := range primary.crops {
+		for _, b := range candidate.crops {
+			grayCorr := correlation(a.gray, b.gray)
+			edgeCorr := correlation(a.edge, b.edge)
+			colorRMSE := normalizedRMSE(a.rgb, b.rgb)
+			histSimilarity := histogramIntersection(a.hist, b.hist)
+			score := grayCorr*35 + edgeCorr*15 + histSimilarity*20 - colorRMSE*25
+			if score > best {
+				best = score
+			}
+		}
+	}
+	return best
+}
+
+func computeDHash(img image.Image) uint64 {
+	gray := resizeGray(img, 9, 8)
+	var hash uint64
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			hash <<= 1
+			if gray[y*9+x] > gray[y*9+x+1] {
+				hash |= 1
+			}
+		}
+	}
+	return hash
+}
+
+func sampleRGBLayout(img image.Image, width, height int) []float64 {
+	return sampleRGBLayoutRect(img, img.Bounds(), width, height)
+}
+
+func sampleRGBLayoutRect(img image.Image, src image.Rectangle, width, height int) []float64 {
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, src, xdraw.Over, nil)
+	out := make([]float64, 0, width*height*3)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			r, g, b, _ := dst.At(x, y).RGBA()
+			out = append(out, float64(r>>8)/255, float64(g>>8)/255, float64(b>>8)/255)
+		}
+	}
+	return out
+}
+
+func sampleGrayLayout(img image.Image, width, height int) []float64 {
+	gray := resizeGrayRect(img, img.Bounds(), width, height)
+	out := make([]float64, len(gray))
+	for i, v := range gray {
+		out[i] = float64(v) / 255
+	}
+	return out
+}
+
+func sampleEdgeLayout(img image.Image, width, height int) []float64 {
+	return sampleEdgeLayoutRect(img, img.Bounds(), width, height)
+}
+
+func sampleEdgeLayoutRect(img image.Image, src image.Rectangle, width, height int) []float64 {
+	gray := resizeGrayRect(img, src, width, height)
+	out := make([]float64, len(gray))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			left := gray[y*width+maxInt(0, x-1)]
+			right := gray[y*width+minInt(width-1, x+1)]
+			up := gray[maxInt(0, y-1)*width+x]
+			down := gray[minInt(height-1, y+1)*width+x]
+			dx := int(right) - int(left)
+			dy := int(down) - int(up)
+			out[y*width+x] = math.Min(1, math.Sqrt(float64(dx*dx+dy*dy))/255)
+		}
+	}
+	return out
+}
+
+func resizeGray(img image.Image, width, height int) []uint8 {
+	return resizeGrayRect(img, img.Bounds(), width, height)
+}
+
+func resizeGrayRect(img image.Image, src image.Rectangle, width, height int) []uint8 {
+	dst := image.NewGray(image.Rect(0, 0, width, height))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, src, xdraw.Over, nil)
+	out := make([]uint8, width*height)
+	copy(out, dst.Pix[:width*height])
+	return out
+}
+
+func sampleBackdropCropSignatures(img image.Image) []backdropCropSignature {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	rects := []image.Rectangle{
+		bounds,
+		image.Rect(bounds.Min.X+width*8/100, bounds.Min.Y+height*8/100, bounds.Min.X+width*92/100, bounds.Min.Y+height*92/100),
+		image.Rect(bounds.Min.X, bounds.Min.Y+height*8/100, bounds.Min.X+width*84/100, bounds.Min.Y+height*92/100),
+		image.Rect(bounds.Min.X+width*16/100, bounds.Min.Y+height*8/100, bounds.Min.X+width, bounds.Min.Y+height*92/100),
+		image.Rect(bounds.Min.X+width*8/100, bounds.Min.Y, bounds.Min.X+width*92/100, bounds.Min.Y+height*84/100),
+		image.Rect(bounds.Min.X+width*8/100, bounds.Min.Y+height*16/100, bounds.Min.X+width*92/100, bounds.Min.Y+height),
+		image.Rect(bounds.Min.X+width*16/100, bounds.Min.Y, bounds.Min.X+width*84/100, bounds.Min.Y+height),
+	}
+	out := make([]backdropCropSignature, 0, len(rects))
+	for _, rect := range rects {
+		rect = rect.Intersect(bounds)
+		if rect.Dx() <= 0 || rect.Dy() <= 0 {
+			continue
+		}
+		out = append(out, backdropCropSignature{
+			rgb:  sampleRGBLayoutRect(img, rect, 64, 36),
+			gray: sampleGrayLayoutRect(img, rect, 64, 36),
+			edge: sampleEdgeLayoutRect(img, rect, 64, 36),
+			hist: sampleRGBHistogramRect(img, rect, 16),
+		})
+	}
+	return out
+}
+
+func sampleGrayLayoutRect(img image.Image, src image.Rectangle, width, height int) []float64 {
+	gray := resizeGrayRect(img, src, width, height)
+	out := make([]float64, len(gray))
+	for i, v := range gray {
+		out[i] = float64(v) / 255
+	}
+	return out
+}
+
+func sampleRGBHistogramRect(img image.Image, src image.Rectangle, bins int) []float64 {
+	if bins <= 0 {
+		return nil
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, 64, 36))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, src, xdraw.Over, nil)
+	out := make([]float64, bins*3)
+	total := 0.0
+	for y := 0; y < dst.Bounds().Dy(); y++ {
+		for x := 0; x < dst.Bounds().Dx(); x++ {
+			r, g, b, _ := dst.At(x, y).RGBA()
+			out[minInt(bins-1, int((r>>8)*uint32(bins)/256))]++
+			out[bins+minInt(bins-1, int((g>>8)*uint32(bins)/256))]++
+			out[bins*2+minInt(bins-1, int((b>>8)*uint32(bins)/256))]++
+			total += 3
+		}
+	}
+	if total == 0 {
+		return out
+	}
+	for i := range out {
+		out[i] /= total
+	}
+	return out
+}
+
+func histogramIntersection(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	total := 0.0
+	for i := range a {
+		total += math.Min(a[i], b[i])
+	}
+	return total
+}
+
+func normalizedRMSE(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 1
+	}
+	var total float64
+	for i := range a {
+		diff := a[i] - b[i]
+		total += diff * diff
+	}
+	return math.Sqrt(total / float64(len(a)))
+}
+
+func correlation(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var meanA, meanB float64
+	for i := range a {
+		meanA += a[i]
+		meanB += b[i]
+	}
+	meanA /= float64(len(a))
+	meanB /= float64(len(b))
+
+	var num, denA, denB float64
+	for i := range a {
+		da := a[i] - meanA
+		db := b[i] - meanB
+		num += da * db
+		denA += da * da
+		denB += db * db
+	}
+	if denA == 0 || denB == 0 {
+		return 0
+	}
+	return num / math.Sqrt(denA*denB)
+}
+
+func bitsSet64(v uint64) int {
+	count := 0
+	for v != 0 {
+		v &= v - 1
+		count++
+	}
+	return count
+}
+
+func comparableTMDBImageURL(imageURL string) string {
+	if imageURL == "" {
+		return ""
+	}
+	withoutQuery := strings.Split(imageURL, "?")[0]
+	return regexpTMDBImageSize.ReplaceAllString(withoutQuery, "/")
 }
 
 // isImageDark fetches a small thumbnail of the logo and checks if the non-transparent
