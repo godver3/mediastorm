@@ -72,6 +72,26 @@ func hasTrackMetadata(entry *playback.PrequeueEntry) bool {
 	return len(entry.AudioTracks) > 0 || len(entry.SubtitleTracks) > 0
 }
 
+func prequeueEpisodeMatches(requested, existing *models.EpisodeReference) bool {
+	if requested == nil || existing == nil {
+		return requested == nil && existing == nil
+	}
+	return requested.SeasonNumber == existing.SeasonNumber &&
+		requested.EpisodeNumber == existing.EpisodeNumber
+}
+
+func isPrequeueInProgress(status playback.PrequeueStatus) bool {
+	switch status {
+	case playback.PrequeueStatusQueued,
+		playback.PrequeueStatusSearching,
+		playback.PrequeueStatusResolving,
+		playback.PrequeueStatusProbing:
+		return true
+	default:
+		return false
+	}
+}
+
 func isExternalStreamPath(path string) bool {
 	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
@@ -527,38 +547,46 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for existing ready entry in the store (covers both prewarm and regular prequeues)
-	if existing, ok := h.store.GetByTitleUser(req.TitleID, req.UserID); ok && existing.Status == playback.PrequeueStatusReady && existing.StreamPath != "" && hasTrackMetadata(existing) {
-		if err := h.validateReadyEntryForReuse(r.Context(), existing); err != nil {
-			log.Printf("[prequeue] Discarding ready entry %s: stale external stream (%v), resolving fresh",
-				existing.ID, err)
-			h.store.Delete(existing.ID)
-		} else {
-			episodeMatch := true
-			if targetEpisode != nil && existing.TargetEpisode != nil {
-				if targetEpisode.SeasonNumber != existing.TargetEpisode.SeasonNumber ||
-					targetEpisode.EpisodeNumber != existing.TargetEpisode.EpisodeNumber {
-					episodeMatch = false
-				}
-			} else if (targetEpisode == nil) != (existing.TargetEpisode == nil) {
-				episodeMatch = false
-			}
-			if episodeMatch {
-				log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
-				resp := playback.PrequeueResponse{
-					PrequeueID:    existing.ID,
-					TargetEpisode: existing.TargetEpisode,
-					Status:        playback.PrequeueStatusReady,
-				}
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
-				return
-			}
-			log.Printf("[prequeue] Existing ready entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
+	// Check for existing entry in the store (covers both prewarm and regular prequeues).
+	if existing, ok := h.store.GetByTitleUser(req.TitleID, req.UserID); ok {
+		episodeMatch := prequeueEpisodeMatches(targetEpisode, existing.TargetEpisode)
+		if !episodeMatch {
+			log.Printf("[prequeue] Existing entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
 				existing.ID, existing.TargetEpisode, targetEpisode)
+		} else if existing.Status == playback.PrequeueStatusReady {
+			if existing.StreamPath != "" && hasTrackMetadata(existing) {
+				if err := h.validateReadyEntryForReuse(r.Context(), existing); err != nil {
+					log.Printf("[prequeue] Discarding ready entry %s: stale external stream (%v), resolving fresh",
+						existing.ID, err)
+					h.store.Delete(existing.ID)
+				} else {
+					log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
+					resp := playback.PrequeueResponse{
+						PrequeueID:    existing.ID,
+						TargetEpisode: existing.TargetEpisode,
+						Status:        playback.PrequeueStatusReady,
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(resp)
+					return
+				}
+			} else {
+				log.Printf("[prequeue] Existing ready entry %s missing stream path or track metadata, resolving fresh", existing.ID)
+			}
+		} else if isPrequeueInProgress(existing.Status) {
+			log.Printf("[prequeue] Reusing existing in-progress entry %s status=%s for title=%s user=%s",
+				existing.ID, existing.Status, req.TitleID, req.UserID)
+			resp := playback.PrequeueResponse{
+				PrequeueID:    existing.ID,
+				TargetEpisode: existing.TargetEpisode,
+				Status:        existing.Status,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
+		} else {
+			log.Printf("[prequeue] Existing entry %s status=%s not reusable, resolving fresh", existing.ID, existing.Status)
 		}
-	} else if ok {
-		log.Printf("[prequeue] Existing ready entry %s missing track metadata, resolving fresh", existing.ID)
 	}
 
 	// Create prequeue entry

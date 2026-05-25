@@ -2040,7 +2040,7 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 	if s.cfg != nil {
 		if settings, err := s.cfg.Load(); err == nil && settings.Streaming.IndexerTimeoutSec > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(settings.Streaming.IndexerTimeoutSec)*time.Second)
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(settings.Streaming.IndexerTimeoutSec*float64(time.Second)))
 			defer cancel()
 		}
 	}

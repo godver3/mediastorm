@@ -143,7 +143,7 @@ type StreamingSettings struct {
 	DebridProviders            []DebridProviderSettings `json:"debridProviders,omitempty"`
 	MultiProviderMode          MultiProviderMode        `json:"multiProviderMode,omitempty"` // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec int                      `json:"usenetResolutionTimeoutSec"`  // Timeout for usenet content resolution in seconds (0 = no limit)
-	IndexerTimeoutSec          int                      `json:"indexerTimeoutSec"`           // Timeout for indexer/scraper searches in seconds (default: 5)
+	IndexerTimeoutSec          float64                  `json:"indexerTimeoutSec"`           // Timeout for indexer/scraper searches in seconds (default: 5)
 	MaxAlternateTitleSearches  int                      `json:"maxAlternateTitleSearches"`   // Max alternate/international titles to search per item (0 = unlimited)
 }
 

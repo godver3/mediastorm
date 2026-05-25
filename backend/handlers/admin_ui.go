@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"html/template"
@@ -269,6 +270,9 @@ var SettingsSchema = map[string]interface{}{
 				"type":        "number",
 				"label":       "Search Timeout (seconds)",
 				"description": "Maximum time to wait for indexer/scraper searches (default: 5). Increase if using Aiostreams, which may need more time to respond.",
+				"min":         0.1,
+				"max":         120,
+				"step":        0.1,
 			},
 			"maxAlternateTitleSearches": map[string]interface{}{
 				"type":        "number",
@@ -1142,6 +1146,7 @@ type AdminUIHandler struct {
 	traktClient           *trakt.Client
 	configManager         *config.Manager
 	metadataService       MetadataService
+	debridSearchService   *debrid.SearchService
 	localMediaService     *localmedia.Service
 	calendarService       *calendar.Service
 	clientsService        clientsService
@@ -1164,6 +1169,11 @@ type MetadataService interface {
 // SetMetadataService sets the metadata service for cache clearing and overview fetching
 func (h *AdminUIHandler) SetMetadataService(ms MetadataService) {
 	h.metadataService = ms
+}
+
+// SetDebridSearchService sets the debrid search service for scraper hot reloads.
+func (h *AdminUIHandler) SetDebridSearchService(ds *debrid.SearchService) {
+	h.debridSearchService = ds
 }
 
 // SetHistoryService sets the history service for watch history data
@@ -3095,6 +3105,277 @@ func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Indexer is reachable and responding",
+	})
+}
+
+type SearchDiagnosticsRequest struct {
+	Query     string `json:"query"`
+	MediaType string `json:"mediaType"`
+	IMDBID    string `json:"imdbId"`
+	Year      int    `json:"year"`
+}
+
+type SearchDiagnosticSourceResult struct {
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Group      string `json:"group"`
+	Success    bool   `json:"success"`
+	Count      int    `json:"count"`
+	DurationMS int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
+}
+
+type SearchDiagnosticsResponse struct {
+	Query             string                         `json:"query"`
+	MediaType         string                         `json:"mediaType"`
+	TotalResults      int                            `json:"totalResults"`
+	DurationMS        int64                          `json:"durationMs"`
+	TimeoutSec        float64                        `json:"timeoutSec"`
+	DiagnosticTimeout int                            `json:"diagnosticTimeoutSec"`
+	Sources           []SearchDiagnosticSourceResult `json:"sources"`
+}
+
+type diagnosticsRSSFeed struct {
+	Channel struct {
+		Items []struct{} `xml:"item"`
+	} `xml:"channel"`
+}
+
+func (h *AdminUIHandler) RunSearchDiagnostics(w http.ResponseWriter, r *http.Request) {
+	var req SearchDiagnosticsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		writeJSONError(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		query = "The Matrix"
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(req.MediaType))
+	if mediaType == "" {
+		mediaType = "movie"
+	}
+	imdbID := strings.TrimSpace(req.IMDBID)
+	if imdbID == "" && strings.EqualFold(query, "The Matrix") {
+		imdbID = "tt0133093"
+	}
+	year := req.Year
+	if year == 0 && strings.EqualFold(query, "The Matrix") {
+		year = 1999
+	}
+	const diagnosticTimeoutSec = 10
+
+	startedAt := time.Now()
+	resp := SearchDiagnosticsResponse{
+		Query:             query,
+		MediaType:         mediaType,
+		TimeoutSec:        settings.Streaming.IndexerTimeoutSec,
+		DiagnosticTimeout: diagnosticTimeoutSec,
+		Sources:           []SearchDiagnosticSourceResult{},
+	}
+	if resp.TimeoutSec <= 0 {
+		resp.TimeoutSec = 5
+	}
+
+	for _, idx := range settings.Indexers {
+		if !idx.Enabled {
+			continue
+		}
+		result := h.runIndexerSearchDiagnostic(r.Context(), idx, query, diagnosticTimeoutSec)
+		resp.TotalResults += result.Count
+		resp.Sources = append(resp.Sources, result)
+	}
+
+	for _, scraper := range settings.TorrentScrapers {
+		if !scraper.Enabled {
+			continue
+		}
+		result := h.runScraperSearchDiagnostic(r.Context(), settings, scraper, query, mediaType, imdbID, year, diagnosticTimeoutSec)
+		resp.TotalResults += result.Count
+		resp.Sources = append(resp.Sources, result)
+	}
+
+	resp.DurationMS = time.Since(startedAt).Milliseconds()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *AdminUIHandler) runIndexerSearchDiagnostic(ctx context.Context, idx config.IndexerConfig, query string, timeout float64) SearchDiagnosticSourceResult {
+	startedAt := time.Now()
+	result := SearchDiagnosticSourceResult{
+		Name:  displayName(idx.Name, "Indexer"),
+		Type:  displayName(idx.Type, "newznab"),
+		Group: "usenet",
+	}
+
+	if timeout <= 0 {
+		timeout = 5
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
+	defer cancel()
+
+	endpoint := strings.TrimSpace(idx.URL)
+	if endpoint == "" {
+		result.Error = "missing URL"
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	if !strings.HasSuffix(strings.ToLower(strings.TrimRight(endpoint, "/")), "/api") {
+		endpoint = strings.TrimRight(endpoint, "/") + "/api"
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		result.Error = "invalid URL: " + err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	params := url.Values{}
+	params.Set("apikey", idx.APIKey)
+	params.Set("t", "search")
+	params.Set("q", query)
+	if cats := strings.TrimSpace(idx.Categories); cats != "" {
+		params.Set("cat", cats)
+	}
+	u.RawQuery = params.Encode()
+
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	addBrowserHeaders(httpReq)
+
+	httpClient := &http.Client{Timeout: time.Duration(timeout * float64(time.Second))}
+	httpResp, err := httpClient.Do(httpReq)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
+		result.Error = fmt.Sprintf("%s: %s", httpResp.Status, strings.TrimSpace(string(body)))
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+
+	var feed diagnosticsRSSFeed
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		result.Error = "decode response: " + err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	result.Success = true
+	result.Count = len(feed.Channel.Items)
+	result.DurationMS = time.Since(startedAt).Milliseconds()
+	return result
+}
+
+func (h *AdminUIHandler) runScraperSearchDiagnostic(ctx context.Context, settings config.Settings, scraper config.TorrentScraperConfig, query, mediaType, imdbID string, year int, timeout float64) SearchDiagnosticSourceResult {
+	startedAt := time.Now()
+	result := SearchDiagnosticSourceResult{
+		Name:  displayName(scraper.Name, "Torrent Source"),
+		Type:  displayName(scraper.Type, "torrentio"),
+		Group: "torrent",
+	}
+
+	tmp, err := os.CreateTemp("", "strmr-search-diagnostic-*.json")
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpPath)
+
+	testSettings := settings
+	testSettings.TorrentScrapers = []config.TorrentScraperConfig{scraper}
+	testSettings.Streaming.IndexerTimeoutSec = timeout
+	mgr := config.NewManager(tmpPath)
+	if err := mgr.Save(testSettings); err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+
+	searchSvc := debrid.NewSearchService(mgr)
+	if timeout <= 0 {
+		timeout = 5
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
+	defer cancel()
+
+	results, err := searchSvc.Search(reqCtx, debrid.SearchOptions{
+		Query:      query,
+		MaxResults: 100,
+		IMDBID:     imdbID,
+		MediaType:  mediaType,
+		Year:       year,
+		SkipFilter: true,
+	})
+	if err != nil {
+		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+
+	result.Success = true
+	result.Count = len(results)
+	result.DurationMS = time.Since(startedAt).Milliseconds()
+	return result
+}
+
+type SearchTimeoutRequest struct {
+	TimeoutSec float64 `json:"timeoutSec"`
+}
+
+func (h *AdminUIHandler) SaveSearchTimeout(w http.ResponseWriter, r *http.Request) {
+	var req SearchTimeoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.TimeoutSec < 0.1 || req.TimeoutSec > 120 {
+		writeJSONError(w, "Timeout must be between 0.1 and 120 seconds", http.StatusBadRequest)
+		return
+	}
+
+	settings, err := h.configManager.Load()
+	if err != nil {
+		writeJSONError(w, "Failed to load settings", http.StatusInternalServerError)
+		return
+	}
+	settings.Streaming.IndexerTimeoutSec = req.TimeoutSec
+	if err := h.configManager.Save(settings); err != nil {
+		writeJSONError(w, "Failed to save settings", http.StatusInternalServerError)
+		return
+	}
+	if h.debridSearchService != nil {
+		h.debridSearchService.ReloadScrapers()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"timeoutSec": req.TimeoutSec,
 	})
 }
 

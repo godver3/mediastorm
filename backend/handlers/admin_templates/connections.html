@@ -12,12 +12,90 @@
     </button>
 </div>
 
+<div class="search-diagnostics">
+    <div class="search-diagnostics-header">
+        <div>
+            <h2>Search Diagnostics</h2>
+            <p>Run a real search against enabled indexers and torrent sources to tune search timeout.</p>
+        </div>
+        <div class="search-diagnostics-actions">
+            <button class="btn btn-secondary" id="save-timeout-btn" onclick="saveSearchTimeout()">Save Timeout</button>
+            <button class="btn btn-primary" id="run-search-diagnostics-btn" onclick="runSearchDiagnostics()">Run Search Test</button>
+        </div>
+    </div>
+    <div class="search-diagnostics-controls">
+        <label>
+            <span>Query</span>
+            <input type="text" id="diag-query" value="The Matrix" autocomplete="off">
+        </label>
+        <label>
+            <span>IMDb ID</span>
+            <input type="text" id="diag-imdb" value="tt0133093" autocomplete="off">
+        </label>
+        <label>
+            <span>Year</span>
+            <input type="number" id="diag-year" value="1999" min="1900" max="2100">
+        </label>
+        <label>
+            <span>Type</span>
+            <select id="diag-media-type">
+                <option value="movie" selected>Movie</option>
+                <option value="series">Series</option>
+            </select>
+        </label>
+        <label>
+            <span>Timeout</span>
+            <input type="number" id="diag-timeout" min="0.1" max="120" step="0.1" value="{{.Settings.Streaming.IndexerTimeoutSec}}">
+        </label>
+    </div>
+    <div id="search-diagnostics-summary" class="search-diagnostics-summary">Not run yet.</div>
+    <div id="search-timeout-recommendation" class="search-timeout-recommendation"></div>
+    <div class="search-diagnostics-table-wrap">
+        <table class="search-diagnostics-table">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Kind</th>
+                    <th>Results</th>
+                    <th>Time</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="search-diagnostics-results">
+                <tr><td colspan="5" class="empty-row">Run a search test to compare enabled sources.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <div id="connections-grid" class="connections-grid"></div>
 
 <style>
 .page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 .page-header h1 { margin: 0; }
 .page-header p { margin: 0; color: var(--text-secondary, #888); flex: 1; }
+.search-diagnostics { background: var(--card-bg, #1a1a2e); border: 1px solid var(--border-color, #333); border-radius: 8px; padding: 16px; margin-bottom: 24px; display: flex; flex-direction: column; gap: 14px; }
+.search-diagnostics-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.search-diagnostics-header h2 { margin: 0 0 4px 0; font-size: 18px; }
+.search-diagnostics-header p { margin: 0; color: var(--text-secondary, #888); font-size: 13px; }
+.search-diagnostics-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.search-diagnostics-controls { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(120px, 1fr) 96px 110px 110px; gap: 10px; align-items: end; }
+.search-diagnostics-controls label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-secondary, #888); }
+.search-diagnostics-controls input,
+.search-diagnostics-controls select { width: 100%; min-height: 36px; border: 1px solid var(--border-color, #333); border-radius: 6px; background: var(--input-bg, #111827); color: var(--text-primary, #fff); padding: 7px 9px; font: inherit; }
+.search-diagnostics-summary { font-size: 13px; color: var(--text-secondary, #888); min-height: 20px; }
+.search-timeout-recommendation { display: none; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--text-primary, #fff); }
+.search-timeout-recommendation.active { display: flex; }
+.search-timeout-recommendation button { min-height: 30px; padding: 4px 10px; }
+.search-diagnostics-table-wrap { overflow-x: auto; }
+.search-diagnostics-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.search-diagnostics-table th,
+.search-diagnostics-table td { text-align: left; padding: 9px 8px; border-top: 1px solid var(--border-color, #333); white-space: nowrap; }
+.search-diagnostics-table th { color: var(--text-secondary, #888); font-weight: 600; }
+.search-diagnostics-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.search-diagnostics-table .empty-row { color: var(--text-secondary, #888); text-align: center; }
+.diag-status-pass { color: var(--success-color, #4caf50); }
+.diag-status-fail { color: var(--error-color, #f44336); max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .connections-grid { display: flex; flex-direction: column; gap: 24px; }
 .conn-group h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary, #888); margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid var(--border-color, #333); }
 .conn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
@@ -43,11 +121,16 @@
 .conn-card-message { font-size: 12px; color: var(--text-secondary, #888); word-break: break-word; }
 .conn-card-time { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@media (max-width: 760px) {
+    .search-diagnostics-controls { grid-template-columns: 1fr 1fr; }
+    .search-diagnostics-controls label:first-child { grid-column: 1 / -1; }
+}
 </style>
 
 <script>
 let settings = {{json .Settings}};
 let testCards = [];
+let latestSearchDiagnostics = null;
 
 function createCard(group, name, badgeHtml, key, payload) {
     return { group, name, badgeHtml, key, payload, status: 'pending', message: '', durationMs: null };
@@ -78,6 +161,79 @@ function formatDuration(durationMs) {
     if (durationMs == null || Number.isNaN(durationMs)) return '';
     if (durationMs < 1000) return `${Math.round(durationMs)} ms`;
     return `${(durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1)} s`;
+}
+
+function getTimeoutProjection(timeoutSec) {
+    const sources = Array.isArray(latestSearchDiagnostics?.sources) ? latestSearchDiagnostics.sources : [];
+    const cutoffMs = timeoutSec * 1000;
+    const included = sources.filter(source => source.success && Number(source.durationMs || 0) <= cutoffMs);
+    return {
+        sourceCount: included.length,
+        totalSources: sources.length,
+        resultCount: included.reduce((sum, source) => sum + Number(source.count || 0), 0),
+    };
+}
+
+function getRecommendedTimeout() {
+    const sources = Array.isArray(latestSearchDiagnostics?.sources) ? latestSearchDiagnostics.sources : [];
+    const successful = sources
+        .filter(source => source.success && Number(source.count || 0) > 0)
+        .map(source => ({
+            count: Number(source.count || 0),
+            durationMs: Math.max(1, Number(source.durationMs || 0)),
+        }))
+        .sort((a, b) => a.durationMs - b.durationMs);
+
+    const totalResults = successful.reduce((sum, source) => sum + source.count, 0);
+    if (totalResults <= 0) return null;
+
+    const target = Math.ceil(totalResults / 2);
+    let running = 0;
+    for (const source of successful) {
+        running += source.count;
+        if (running >= target) {
+            const timeoutSec = Math.max(0.1, Math.ceil(source.durationMs / 100) / 10);
+            return {
+                timeoutSec,
+                resultCount: running,
+                totalResults,
+            };
+        }
+    }
+    return null;
+}
+
+function renderTimeoutRecommendation() {
+    const el = document.getElementById('search-timeout-recommendation');
+    if (!el) return;
+    const rec = getRecommendedTimeout();
+    if (!rec) {
+        el.className = 'search-timeout-recommendation';
+        el.innerHTML = '';
+        return;
+    }
+    el.className = 'search-timeout-recommendation active';
+    el.innerHTML = `
+        <span>Suggested timeout: <strong>${rec.timeoutSec.toFixed(1)}s</strong> captures at least half this run (${rec.resultCount}/${rec.totalResults} results).</span>
+        <button class="btn btn-secondary" type="button" onclick="applyRecommendedTimeout(${rec.timeoutSec})">Use ${rec.timeoutSec}s</button>
+    `;
+}
+
+function applyRecommendedTimeout(timeoutSec) {
+    const input = document.getElementById('diag-timeout');
+    if (!input) return;
+    input.value = timeoutSec;
+    updateSearchTimeoutProjection();
+}
+
+function updateSearchTimeoutProjection() {
+    if (!latestSearchDiagnostics) return;
+    const timeoutSec = Number(document.getElementById('diag-timeout')?.value || 0);
+    if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) return;
+    const projection = getTimeoutProjection(timeoutSec);
+    const summary = document.getElementById('search-diagnostics-summary');
+    const cap = latestSearchDiagnostics.diagnosticTimeoutSec || 10;
+    summary.textContent = `At ${timeoutSec.toFixed(1)}s, this run would have returned ${projection.resultCount} result${projection.resultCount === 1 ? '' : 's'} from ${projection.sourceCount}/${projection.totalSources} source${projection.totalSources === 1 ? '' : 's'}. Observed with a ${cap}s diagnostic cap.`;
 }
 
 function getScraperBadges(item) {
@@ -271,6 +427,78 @@ async function testPost(endpoint, payload) {
     return resp.json();
 }
 
+async function runSearchDiagnostics() {
+    const btn = document.getElementById('run-search-diagnostics-btn');
+    const summary = document.getElementById('search-diagnostics-summary');
+    const tbody = document.getElementById('search-diagnostics-results');
+    btn.disabled = true;
+    summary.textContent = 'Searching enabled sources...';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">Searching...</td></tr>';
+
+    const startedAt = performance.now();
+    try {
+        const result = await testPost(basePath + '/api/connections/search-diagnostics', {
+            query: document.getElementById('diag-query').value.trim(),
+            imdbId: document.getElementById('diag-imdb').value.trim(),
+            year: Number(document.getElementById('diag-year').value) || 0,
+            mediaType: document.getElementById('diag-media-type').value
+        });
+        if (result.error) throw new Error(result.error);
+
+        const sources = Array.isArray(result.sources) ? result.sources : [];
+        latestSearchDiagnostics = result;
+        if (document.getElementById('diag-timeout')) {
+            document.getElementById('diag-timeout').value = result.timeoutSec || settings.streaming?.indexerTimeoutSec || 5;
+        }
+        summary.textContent = `${result.totalResults || 0} total result${result.totalResults === 1 ? '' : 's'} across ${sources.length} source${sources.length === 1 ? '' : 's'} in ${formatDuration(result.durationMs ?? (performance.now() - startedAt))}. Observed with a ${result.diagnosticTimeoutSec || 10}s diagnostic cap.`;
+        if (!sources.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No enabled search sources found.</td></tr>';
+        } else {
+            const sorted = sources.slice().sort((a, b) => (b.count || 0) - (a.count || 0) || (a.durationMs || 0) - (b.durationMs || 0));
+            tbody.innerHTML = sorted.map(source => `
+                <tr>
+                    <td>${escapeHtml(source.name || 'Source')}</td>
+                    <td>${escapeHtml((source.group || '') + (source.type ? ' / ' + source.type : ''))}</td>
+                    <td class="num">${Number(source.count || 0).toLocaleString()}</td>
+                    <td class="num">${formatDuration(source.durationMs || 0)}</td>
+                    <td class="${source.success ? 'diag-status-pass' : 'diag-status-fail'}">${source.success ? 'OK' : escapeHtml(source.error || 'Failed')}</td>
+                </tr>
+            `).join('');
+            renderTimeoutRecommendation();
+            updateSearchTimeoutProjection();
+        }
+    } catch (err) {
+        latestSearchDiagnostics = null;
+        renderTimeoutRecommendation();
+        summary.textContent = 'Search diagnostics failed: ' + err.message;
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-row">Search diagnostics failed.</td></tr>';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function saveSearchTimeout() {
+    const btn = document.getElementById('save-timeout-btn');
+    const summary = document.getElementById('search-diagnostics-summary');
+    const timeoutSec = Number(document.getElementById('diag-timeout').value);
+    if (!Number.isFinite(timeoutSec) || timeoutSec < 0.1 || timeoutSec > 120) {
+        summary.textContent = 'Timeout must be between 0.1 and 120 seconds.';
+        return;
+    }
+    btn.disabled = true;
+    try {
+        const result = await testPost(basePath + '/api/connections/search-timeout', { timeoutSec });
+        if (!result.success) throw new Error(result.error || 'Failed to save timeout');
+        settings.streaming = settings.streaming || {};
+        settings.streaming.indexerTimeoutSec = result.timeoutSec;
+        summary.textContent = `Search timeout saved at ${result.timeoutSec}s.`;
+    } catch (err) {
+        summary.textContent = 'Failed to save timeout: ' + err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function runAllTests() {
     const btn = document.getElementById('retest-all-btn');
     btn.disabled = true;
@@ -366,6 +594,14 @@ async function runAllTests() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const timeoutInput = document.getElementById('diag-timeout');
+    if (timeoutInput && Number(timeoutInput.value) <= 0) {
+        timeoutInput.value = settings.streaming?.indexerTimeoutSec || 5;
+    }
+    if (timeoutInput) {
+        timeoutInput.addEventListener('input', updateSearchTimeoutProjection);
+        timeoutInput.addEventListener('change', updateSearchTimeoutProjection);
+    }
     buildCards();
     renderCards();
     runAllTests();

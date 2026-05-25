@@ -92,8 +92,8 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 	if timeout <= 0 {
 		timeout = 5 // Default to 5 seconds
 	}
-	httpClient := &http.Client{Timeout: time.Duration(timeout) * time.Second}
-	log.Printf("[debrid] Using indexer timeout: %ds", timeout)
+	httpClient := &http.Client{Timeout: time.Duration(timeout * float64(time.Second))}
+	log.Printf("[debrid] Using indexer timeout: %.1fs", timeout)
 
 	var scrapers []Scraper
 	for _, scraperCfg := range settings.TorrentScrapers {

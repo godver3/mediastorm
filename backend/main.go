@@ -745,6 +745,7 @@ func main() {
 
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, settings.Log.File, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
+	adminUIHandler.SetDebridSearchService(debridSearchService)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)
 	adminUIHandler.SetWatchlistService(watchlistService)
@@ -840,6 +841,8 @@ func main() {
 	r.HandleFunc("/admin/api/test/metadata", adminUIHandler.RequireAuth(adminUIHandler.TestMetadata)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/mdblist", adminUIHandler.RequireAuth(adminUIHandler.TestMDBList)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/live", adminUIHandler.RequireAuth(adminUIHandler.TestLiveTV)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/connections/search-diagnostics", adminUIHandler.RequireMasterAuth(adminUIHandler.RunSearchDiagnostics)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/connections/search-timeout", adminUIHandler.RequireMasterAuth(adminUIHandler.SaveSearchTimeout)).Methods(http.MethodPost)
 
 	// Profile management endpoints
 	r.HandleFunc("/admin/api/profiles", adminUIHandler.RequireAuth(adminUIHandler.GetProfiles)).Methods(http.MethodGet)
