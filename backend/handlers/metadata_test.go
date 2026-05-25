@@ -240,6 +240,14 @@ func (f *fakeMetadataService) GetTextPosterURL(_ string, _ int64, _ int64) strin
 	return ""
 }
 
+func (f *fakeMetadataService) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
+	return "", "", nil
+}
+
+func (f *fakeMetadataService) GetCachedOverview(_ string, _ int64, _ int64) string {
+	return ""
+}
+
 func (f *fakeMetadataService) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
 	return f.trendingResp, f.trendingErr
 }

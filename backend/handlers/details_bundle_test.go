@@ -137,6 +137,14 @@ func (m *mockMetadataServiceDetailsBundle) GetTextPosterURL(_ string, _ int64, _
 	return ""
 }
 
+func (m *mockMetadataServiceDetailsBundle) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
+	return "", "", nil
+}
+
+func (m *mockMetadataServiceDetailsBundle) GetCachedOverview(_ string, _ int64, _ int64) string {
+	return ""
+}
+
 func (m *mockMetadataServiceDetailsBundle) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
 	return nil, nil
 }

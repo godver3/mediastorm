@@ -248,6 +248,14 @@ func (m *mockMetadataServiceStartup) GetTextPosterURL(_ string, _ int64, _ int64
 	return ""
 }
 
+func (m *mockMetadataServiceStartup) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
+	return "", "", nil
+}
+
+func (m *mockMetadataServiceStartup) GetCachedOverview(_ string, _ int64, _ int64) string {
+	return ""
+}
+
 func (m *mockMetadataServiceStartup) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
 	return nil, nil
 }

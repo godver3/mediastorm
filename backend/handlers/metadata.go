@@ -56,6 +56,8 @@ type metadataService interface {
 	GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating
 	// Poster helpers
 	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
+	GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID int64) (string, string, []string)
+	GetCachedOverview(mediaType string, tmdbID int64, tvdbID int64) string
 	// Top Ten aggregated ranking
 	GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error)
 }

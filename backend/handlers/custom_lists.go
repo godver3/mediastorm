@@ -190,8 +190,8 @@ func (h *CustomListsHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	// Enrich with MDBList ratings for sort-by-rating support
 	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
 
-	// Enrich with text poster URLs from metadata cache
-	enrichWatchlistTextPosters(items, h.MetadataService)
+	// Enrich with artwork URLs from metadata cache
+	enrichWatchlistArtwork(items, h.MetadataService)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(items)

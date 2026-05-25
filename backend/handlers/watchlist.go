@@ -76,8 +76,8 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Enrich with MDBList ratings for sort-by-rating support
 	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
 
-	// Enrich with text poster URLs from metadata cache
-	enrichWatchlistTextPosters(items, h.MetadataService)
+	// Enrich with artwork URLs from metadata cache
+	enrichWatchlistArtwork(items, h.MetadataService)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
@@ -259,10 +259,10 @@ func (h *WatchlistHandler) BackfillTextPosters(userIDs []string) {
 	}
 }
 
-// enrichWatchlistTextPosters refreshes TextPosterURL from the metadata cache
-// when available, falling back to the persisted value in the DB record.
-// This is a fast, cache-only operation with no API calls.
-func enrichWatchlistTextPosters(items []models.WatchlistItem, meta metadataService) {
+// enrichWatchlistArtwork refreshes artwork URLs from the metadata cache when
+// available, falling back to persisted values in the DB record. This is a fast,
+// cache-only operation with no API calls.
+func enrichWatchlistArtwork(items []models.WatchlistItem, meta metadataService) {
 	if meta == nil {
 		return
 	}
@@ -279,10 +279,36 @@ func enrichWatchlistTextPosters(items []models.WatchlistItem, meta metadataServi
 			}
 		}
 		if tmdbID > 0 || tvdbID > 0 {
-			if url := meta.GetTextPosterURL(items[i].MediaType, tmdbID, tvdbID); url != "" {
-				items[i].TextPosterURL = url
+			if isPlaceholderOverview(items[i].Overview) {
+				if overview := cleanCachedOverview(meta.GetCachedOverview(items[i].MediaType, tmdbID, tvdbID)); overview != "" {
+					items[i].Overview = overview
+				}
+			}
+
+			textPosterURL, textBackdropURL, backdropURLs := meta.GetCachedArtworkURLs(items[i].MediaType, tmdbID, tvdbID)
+			if textPosterURL != "" {
+				items[i].TextPosterURL = textPosterURL
+			}
+			if textBackdropURL != "" {
+				items[i].TextBackdropURL = textBackdropURL
+			}
+			if len(backdropURLs) > 0 {
+				items[i].BackdropURLs = backdropURLs
 			}
 		}
-		// If cache miss, the persisted TextPosterURL from the DB record is kept as-is
+		// If cache misses, persisted artwork URLs from the DB record are kept as-is.
 	}
+}
+
+func isPlaceholderOverview(overview string) bool {
+	trimmed := strings.TrimSpace(overview)
+	return trimmed == "" || strings.EqualFold(trimmed, "No description available")
+}
+
+func cleanCachedOverview(overview string) string {
+	trimmed := strings.TrimSpace(overview)
+	if trimmed == "" || strings.EqualFold(trimmed, "No description available") {
+		return ""
+	}
+	return trimmed
 }
