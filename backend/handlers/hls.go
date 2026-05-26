@@ -401,6 +401,7 @@ type HLSSession struct {
 	// YouTube HLS sessions are assembled from separate direct video/audio URLs.
 	YouTubeVideoURL string
 	YouTubeAudioURL string
+	YouTubeProxyURL string
 }
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
@@ -1101,7 +1102,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 }
 
 // CreateYouTubeSession starts an HLS session from separate YouTube video/audio URLs.
-func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioURL, originalURL, profileID, profileName, clientIP string) (*HLSSession, error) {
+func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioURL, originalURL, proxyURL, profileID, profileName, clientIP string) (*HLSSession, error) {
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -1135,6 +1136,7 @@ func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioUR
 		PlaybackTarget:          "youtube",
 		YouTubeVideoURL:         videoURL,
 		YouTubeAudioURL:         audioURL,
+		YouTubeProxyURL:         strings.TrimSpace(proxyURL),
 	}
 
 	m.mu.Lock()
@@ -1142,7 +1144,7 @@ func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioUR
 	m.mu.Unlock()
 
 	go func() {
-		if err := m.startYouTubeTranscoding(bgCtx, session, videoURL, audioURL); err != nil {
+		if err := m.startYouTubeTranscoding(bgCtx, session, videoURL, audioURL, proxyURL); err != nil {
 			if errors.Is(err, context.Canceled) {
 				log.Printf("[hls-youtube] session %s transcoding cancelled", sessionID)
 				return
@@ -1160,7 +1162,24 @@ func (m *HLSManager) CreateYouTubeSession(ctx context.Context, videoURL, audioUR
 	return session, nil
 }
 
-func (m *HLSManager) startYouTubeTranscoding(ctx context.Context, session *HLSSession, videoURL, audioURL string) error {
+func ffmpegHTTPProxyArgs(proxyURL string) []string {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return []string{"-http_proxy", proxyURL}
+	default:
+		return nil
+	}
+}
+
+func (m *HLSManager) startYouTubeTranscoding(ctx context.Context, session *HLSSession, videoURL, audioURL, proxyURL string) error {
 	if m.ffmpegPath == "" {
 		return fmt.Errorf("ffmpeg path not configured")
 	}
@@ -1182,6 +1201,7 @@ func (m *HLSManager) startYouTubeTranscoding(ctx context.Context, session *HLSSe
 	if startOffset > 0 {
 		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", startOffset))
 	}
+	args = append(args, ffmpegHTTPProxyArgs(proxyURL)...)
 	args = append(args,
 		"-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 		"-reconnect", "1",
@@ -1192,6 +1212,7 @@ func (m *HLSManager) startYouTubeTranscoding(ctx context.Context, session *HLSSe
 	if startOffset > 0 {
 		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", startOffset))
 	}
+	args = append(args, ffmpegHTTPProxyArgs(proxyURL)...)
 	args = append(args,
 		"-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 		"-reconnect", "1",
@@ -3265,6 +3286,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	playbackTarget := session.PlaybackTarget
 	youtubeVideoURL := session.YouTubeVideoURL
 	youtubeAudioURL := session.YouTubeAudioURL
+	youtubeProxyURL := session.YouTubeProxyURL
 	session.mu.RUnlock()
 
 	// Clamp target time to valid range
@@ -3330,7 +3352,7 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	// Start transcoding from the new offset in background.
 	if playbackTarget == "youtube" && youtubeVideoURL != "" && youtubeAudioURL != "" {
 		go func() {
-			if err := m.startYouTubeTranscoding(newCtx, session, youtubeVideoURL, youtubeAudioURL); err != nil {
+			if err := m.startYouTubeTranscoding(newCtx, session, youtubeVideoURL, youtubeAudioURL, youtubeProxyURL); err != nil {
 				if errors.Is(err, context.Canceled) {
 					log.Printf("[hls-youtube] session %s: seek transcoding cancelled", sessionID)
 					return

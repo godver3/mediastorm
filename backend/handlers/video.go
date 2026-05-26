@@ -3054,7 +3054,7 @@ func (h *VideoHandler) StartYouTubeHLSSession(w http.ResponseWriter, r *http.Req
 	if profileID == "" {
 		profileID = r.URL.Query().Get("userId")
 	}
-	session, err := h.hlsManager.CreateYouTubeSession(r.Context(), streams.videoURL, streams.audioURL, videoPageURL, profileID, r.URL.Query().Get("profileName"), getClientIP(r))
+	session, err := h.hlsManager.CreateYouTubeSession(r.Context(), streams.videoURL, streams.audioURL, videoPageURL, h.ytdlpProxyURL(), profileID, r.URL.Query().Get("profileName"), getClientIP(r))
 	if err != nil {
 		log.Printf("[hls-youtube] create session failed: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create YouTube HLS session: %v", err), http.StatusInternalServerError)

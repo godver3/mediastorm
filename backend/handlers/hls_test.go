@@ -44,6 +44,29 @@ func TestGenerateSessionID_Format(t *testing.T) {
 	}
 }
 
+func TestFFmpegHTTPProxyArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		proxyURL string
+		expected []string
+	}{
+		{name: "empty", proxyURL: "", expected: nil},
+		{name: "trimmed http", proxyURL: " http://gluetun:8888 ", expected: []string{"-http_proxy", "http://gluetun:8888"}},
+		{name: "https", proxyURL: "https://proxy.example:8443", expected: []string{"-http_proxy", "https://proxy.example:8443"}},
+		{name: "socks unsupported by ffmpeg http proxy", proxyURL: "socks5://gluetun:1080", expected: nil},
+		{name: "invalid", proxyURL: "://bad", expected: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ffmpegHTTPProxyArgs(tc.proxyURL)
+			if strings.Join(got, "\x00") != strings.Join(tc.expected, "\x00") {
+				t.Fatalf("ffmpegHTTPProxyArgs(%q) = %#v, want %#v", tc.proxyURL, got, tc.expected)
+			}
+		})
+	}
+}
+
 // --- isMatroskaPath tests ---
 
 func TestIsMatroskaPath(t *testing.T) {
