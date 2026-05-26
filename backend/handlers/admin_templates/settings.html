@@ -2124,13 +2124,14 @@
             return;
         }
 
-        // Otherwise update global settings
+        // Otherwise update global settings, respecting UI aliases like liveTV -> live.
+        const globalKeys = getGlobalPath(path).split('.');
         let obj = currentSettings;
-        for (let i = 0; i < keys.length - 1; i++) {
-            if (obj[keys[i]] === undefined) obj[keys[i]] = {};
-            obj = obj[keys[i]];
+        for (let i = 0; i < globalKeys.length - 1; i++) {
+            if (obj[globalKeys[i]] === undefined) obj[globalKeys[i]] = {};
+            obj = obj[globalKeys[i]];
         }
-        obj[keys[keys.length - 1]] = value;
+        obj[globalKeys[globalKeys.length - 1]] = value;
     }
 
     function ensureProfileLiveSourceOverride() {
@@ -3142,16 +3143,18 @@
         const sectionDef = schema[sectionKey];
         const parentKey = sectionDef.parent;
         const isPerUserSection = perUserSections.includes(sectionKey) || (parentKey && perUserSections.includes(parentKey));
-        const targetSettings = (selectedUserId && userSettings && isPerUserSection) ? userSettings : currentSettings;
+        const isUserTarget = selectedUserId && userSettings && isPerUserSection;
+        const targetSettings = isUserTarget ? userSettings : currentSettings;
 
         let arr;
         if (sectionDef.parent) {
             if (sectionKey === 'liveTV.sources' && selectedUserId && userSettings) {
                 arr = ensureProfileLiveSourceOverride();
             } else {
-            if (!targetSettings[sectionDef.parent]) targetSettings[sectionDef.parent] = {};
-            arr = targetSettings[sectionDef.parent][sectionDef.key] || [];
-            targetSettings[sectionDef.parent][sectionDef.key] = arr;
+                const parentPath = isUserTarget ? sectionDef.parent : getGlobalPath(sectionDef.parent);
+                if (!targetSettings[parentPath]) targetSettings[parentPath] = {};
+                arr = targetSettings[parentPath][sectionDef.key] || [];
+                targetSettings[parentPath][sectionDef.key] = arr;
             }
         } else {
             arr = targetSettings[sectionKey] || [];
@@ -3197,13 +3200,15 @@
         const sectionDef = schema[sectionKey];
         const parentKey = sectionDef.parent;
         const isPerUserSection = perUserSections.includes(sectionKey) || (parentKey && perUserSections.includes(parentKey));
-        const targetSettings = (selectedUserId && userSettings && isPerUserSection) ? userSettings : currentSettings;
+        const isUserTarget = selectedUserId && userSettings && isPerUserSection;
+        const targetSettings = isUserTarget ? userSettings : currentSettings;
 
         let arr;
         if (sectionKey === 'liveTV.sources' && selectedUserId && userSettings) {
             arr = ensureProfileLiveSourceOverride();
         } else {
-            arr = sectionDef.parent ? targetSettings[sectionDef.parent]?.[sectionDef.key] : targetSettings[sectionKey];
+            const parentPath = sectionDef.parent && !isUserTarget ? getGlobalPath(sectionDef.parent) : sectionDef.parent;
+            arr = sectionDef.parent ? targetSettings[parentPath]?.[sectionDef.key] : targetSettings[sectionKey];
         }
         if (arr && arr.length > index) { arr.splice(index, 1); renderSettings(); }
     }
@@ -4226,12 +4231,14 @@
         } else {
             // Compare global settings
             if (sectionDef.parent) {
-                const currentVal = currentSettings[sectionDef.parent]?.[sectionDef.key];
-                const originalVal = originalSettings[sectionDef.parent]?.[sectionDef.key];
+                const globalParentPath = getGlobalPath(sectionDef.parent);
+                const currentVal = getAtPath(currentSettings, globalParentPath)?.[sectionDef.key];
+                const originalVal = getAtPath(originalSettings, globalParentPath)?.[sectionDef.key];
                 hasDirectChanges = !deepEqual(currentVal, originalVal);
             } else {
-                const currentVal = currentSettings[sectionKey];
-                const originalVal = originalSettings[sectionKey];
+                const globalSectionPath = getGlobalPath(sectionKey);
+                const currentVal = getAtPath(currentSettings, globalSectionPath);
+                const originalVal = getAtPath(originalSettings, globalSectionPath);
                 hasDirectChanges = !deepEqual(currentVal, originalVal);
             }
         }

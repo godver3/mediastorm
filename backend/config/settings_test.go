@@ -185,3 +185,37 @@ func TestLoadMigratesLegacyLiveSettingsToFirstSource(t *testing.T) {
 		t.Fatalf("source EPG not migrated: %+v", src.EPG)
 	}
 }
+
+func TestSavePreservesClearedLiveSourceProxyURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	manager := NewManager(path)
+
+	enabled := true
+	settings := DefaultSettings()
+	settings.Live.ProxyURL = "socks5://127.0.0.1:18080"
+	settings.Live.Sources = []LivePlaylistSource{
+		{
+			ID:          "default",
+			Name:        "Default",
+			Mode:        "m3u",
+			PlaylistURL: "http://example.com/live.m3u",
+			ProxyURL:    "",
+			Enabled:     &enabled,
+		},
+	}
+
+	if err := manager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	loaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if len(loaded.Live.Sources) != 1 {
+		t.Fatalf("Live.Sources length = %d, want 1", len(loaded.Live.Sources))
+	}
+	if loaded.Live.Sources[0].ProxyURL != "" {
+		t.Fatalf("Live.Sources[0].ProxyURL = %q, want cleared value", loaded.Live.Sources[0].ProxyURL)
+	}
+}

@@ -296,7 +296,7 @@ type LivePlaylistSource struct {
 	Name                  string               `json:"name"`
 	Mode                  string               `json:"mode,omitempty"`
 	PlaylistURL           string               `json:"playlistUrl"`
-	ProxyURL              string               `json:"proxyUrl,omitempty"`
+	ProxyURL              string               `json:"proxyUrl"`
 	XtreamHost            string               `json:"xtreamHost,omitempty"`
 	XtreamUsername        string               `json:"xtreamUsername,omitempty"`
 	XtreamPassword        string               `json:"xtreamPassword,omitempty"`
