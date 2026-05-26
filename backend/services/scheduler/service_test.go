@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,16 @@ type fakeLocalMediaScanner struct {
 	scanned   []string
 }
 
+type fakeLivePlaylistWarmer struct {
+	calls int
+	count int
+}
+
+func (f *fakeLivePlaylistWarmer) WarmPlaylistCache(ctx context.Context) (int, error) {
+	f.calls++
+	return f.count, nil
+}
+
 func (f *fakeLocalMediaScanner) ListLibraries(ctx context.Context) ([]models.LocalMediaLibrary, error) {
 	return append([]models.LocalMediaLibrary(nil), f.libraries...), nil
 }
@@ -63,6 +74,45 @@ type fakeSchedulerMetadataService struct {
 
 func (f *fakeSchedulerMetadataService) SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
 	return f.details, nil
+}
+
+func TestExecutePlaylistRefreshClearsAndWarmsCache(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll("cache/live", 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile("cache/live/source.m3u", []byte("#EXTM3U\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(m3u) error = %v", err)
+	}
+	if err := os.WriteFile("cache/live/source.meta", []byte("{}"), 0644); err != nil {
+		t.Fatalf("WriteFile(meta) error = %v", err)
+	}
+	if err := os.WriteFile("cache/live/keep.txt", []byte("keep"), 0644); err != nil {
+		t.Fatalf("WriteFile(txt) error = %v", err)
+	}
+
+	warmer := &fakeLivePlaylistWarmer{count: 42}
+	svc := &Service{livePlaylistWarmer: warmer}
+
+	result, err := svc.executePlaylistRefresh(config.ScheduledTask{Type: config.ScheduledTaskTypePlaylistRefresh})
+	if err != nil {
+		t.Fatalf("executePlaylistRefresh() error = %v", err)
+	}
+	if result.Count != 42 {
+		t.Fatalf("result.Count = %d, want warmed channel count 42", result.Count)
+	}
+	if warmer.calls != 1 {
+		t.Fatalf("warmer.calls = %d, want 1", warmer.calls)
+	}
+	if _, err := os.Stat("cache/live/source.m3u"); !os.IsNotExist(err) {
+		t.Fatalf("source.m3u still exists or unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat("cache/live/source.meta"); !os.IsNotExist(err) {
+		t.Fatalf("source.meta still exists or unexpected stat error: %v", err)
+	}
+	if _, err := os.Stat("cache/live/keep.txt"); err != nil {
+		t.Fatalf("keep.txt stat error = %v", err)
+	}
 }
 
 func TestSimklAllItemsToWatchHistoryParsesMoviesAndEpisodes(t *testing.T) {

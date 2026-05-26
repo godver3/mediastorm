@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -506,5 +507,69 @@ func TestLiveStreamHTTPClientDoesNotUseBodyTimeout(t *testing.T) {
 	}
 	if transport.ResponseHeaderTimeout >= 30*time.Second {
 		t.Fatalf("ResponseHeaderTimeout = %v, want an open timeout rather than a stream body timeout", transport.ResponseHeaderTimeout)
+	}
+}
+
+func TestLivePlaylistHTTPClientUsesLongBodyTimeout(t *testing.T) {
+	h := NewLiveHandler(nil, false, "", 24, 0, 0, false, nil, nil)
+
+	if h.client.Timeout != defaultPlaylistTimeout {
+		t.Fatalf("client.Timeout = %v, want %v", h.client.Timeout, defaultPlaylistTimeout)
+	}
+	if h.client.Timeout < time.Minute {
+		t.Fatalf("client.Timeout = %v, want enough time for slow IPTV playlist bodies", h.client.Timeout)
+	}
+
+	proxyClient := h.liveHTTPClient("")
+	if proxyClient.Timeout != defaultPlaylistTimeout {
+		t.Fatalf("proxyClient.Timeout = %v, want %v", proxyClient.Timeout, defaultPlaylistTimeout)
+	}
+}
+
+func TestLivePlaylistScanHTTPClientDoesNotUseBodyTimeout(t *testing.T) {
+	h := NewLiveHandler(nil, false, "", 24, 0, 0, false, nil, nil)
+
+	client := h.livePlaylistScanHTTPClient("")
+	if client.Timeout != 0 {
+		t.Fatalf("client.Timeout = %v, want 0 for category scans over huge playlist bodies", client.Timeout)
+	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != defaultPlaylistTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, defaultPlaylistTimeout)
+	}
+}
+
+func TestFetchM3UCategoriesIgnoresPlaylistBodyLimit(t *testing.T) {
+	playlistServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", playlistContentTypePlain)
+		_, _ = w.Write([]byte("#EXTM3U\n"))
+		_, _ = w.Write([]byte(`#EXTINF:-1 group-title="News",News 1` + "\nhttp://example.test/news1.ts\n"))
+		_, _ = w.Write([]byte(`#EXTINF:-1 group-title="Sports",Sports 1` + "\nhttp://example.test/sports1.ts\n"))
+		_, _ = w.Write([]byte(strings.Repeat("#EXTVLCOPT:http-user-agent=test\n", 128)))
+	}))
+	defer playlistServer.Close()
+
+	h := NewLiveHandler(playlistServer.Client(), false, "", 24, 0, 0, false, nil, nil)
+	h.maxSize = 64
+
+	categories, err := h.fetchM3UCategories(t.Context(), playlistServer.URL, "")
+	if err != nil {
+		t.Fatalf("fetchM3UCategories() error = %v", err)
+	}
+
+	got := map[string]int{}
+	for _, category := range categories {
+		got[category.Name] = category.ChannelCount
+	}
+	if got["News"] != 1 || got["Sports"] != 1 {
+		t.Fatalf("categories = %+v, want News=1 and Sports=1", categories)
+	}
+
+	if _, err := h.fetchPlaylistContents(t.Context(), playlistServer.URL, ""); err == nil {
+		t.Fatalf("fetchPlaylistContents() error = nil, want playlist size limit error")
 	}
 }

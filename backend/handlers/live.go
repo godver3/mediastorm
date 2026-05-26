@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,7 +28,7 @@ import (
 )
 
 const (
-	defaultPlaylistTimeout   = 15 * time.Second
+	defaultPlaylistTimeout   = 2 * time.Minute
 	defaultStreamOpenTimeout = 15 * time.Second
 	defaultMaxPlaylistSize   = 50 * 1024 * 1024 // 50 MiB
 	playlistContentTypePlain = "text/plain; charset=utf-8"
@@ -930,6 +931,10 @@ func extractCategories(channels []LiveChannel) []CategoryInfo {
 		}
 	}
 
+	return categoryInfosFromCounts(categoryMap)
+}
+
+func categoryInfosFromCounts(categoryMap map[string]int) []CategoryInfo {
 	categories := make([]CategoryInfo, 0, len(categoryMap))
 	for name, count := range categoryMap {
 		categories = append(categories, CategoryInfo{
@@ -938,7 +943,6 @@ func extractCategories(channels []LiveChannel) []CategoryInfo {
 		})
 	}
 
-	// Sort alphabetically by name
 	sort.Slice(categories, func(i, j int) bool {
 		return categories[i].Name < categories[j].Name
 	})
@@ -1034,6 +1038,76 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL, pr
 	return string(body), nil
 }
 
+func (h *LiveHandler) fetchM3UCategories(ctx context.Context, playlistURL, proxyURL string) ([]CategoryInfo, error) {
+	if strings.TrimSpace(playlistURL) == "" {
+		return nil, errors.New("no playlist URL configured")
+	}
+
+	targetURL, err := h.parseRemoteURL(playlistURL)
+	if err != nil {
+		return nil, err
+	}
+
+	cacheKey := h.getCacheKey(targetURL.String())
+	if cachedData, _, err := h.getFromCache(cacheKey); err == nil && cachedData != nil {
+		return extractCategories(parseM3UPlaylist(string(cachedData))), nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct playlist request: %w", err)
+	}
+
+	resp, err := h.livePlaylistScanHTTPClient(proxyURL).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download playlist: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("playlist fetch returned status %d", resp.StatusCode)
+	}
+
+	counts := make(map[string]int)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	pendingGroup := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#EXTINF") {
+			pendingGroup = ""
+			parts := strings.SplitN(line, "#EXTINF:", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			metadataPart, _ := splitM3ULine(parts[1])
+			matches := attributeRegex.FindAllStringSubmatch(metadataPart, -1)
+			for _, match := range matches {
+				if len(match) == 3 && strings.EqualFold(match[1], "group-title") {
+					pendingGroup = strings.TrimSpace(match[2])
+					break
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if pendingGroup != "" {
+			counts[pendingGroup]++
+			pendingGroup = ""
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read playlist categories: %w", err)
+	}
+
+	return categoryInfosFromCounts(counts), nil
+}
+
 func (h *LiveHandler) liveHTTPClient(proxyURL string) *http.Client {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
@@ -1043,6 +1117,19 @@ func (h *LiveHandler) liveHTTPClient(proxyURL string) *http.Client {
 	if err != nil {
 		log.Printf("[live] invalid proxy URL %q: %v", proxyURL, err)
 		return h.client
+	}
+	return client
+}
+
+func (h *LiveHandler) livePlaylistScanHTTPClient(proxyURL string) *http.Client {
+	client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+		ResponseHeaderTimeout: defaultPlaylistTimeout,
+	}, proxyURL)
+	if err != nil {
+		log.Printf("[live] invalid playlist scan proxy URL %q: %v", proxyURL, err)
+		client, _ = netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+			ResponseHeaderTimeout: defaultPlaylistTimeout,
+		}, "")
 	}
 	return client
 }
@@ -1058,6 +1145,55 @@ func (h *LiveHandler) liveStreamHTTPClient(proxyURL string) *http.Client {
 		}, "")
 	}
 	return client
+}
+
+// WarmPlaylistCache fetches configured Live TV sources so later category/channel
+// requests can use the backend playlist cache.
+func (h *LiveHandler) WarmPlaylistCache(ctx context.Context) (int, error) {
+	if h.cfgManager == nil {
+		return 0, errors.New("settings manager not configured")
+	}
+
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return 0, fmt.Errorf("failed to load settings: %w", err)
+	}
+
+	src := models.ResolvedLiveSource{
+		Mode:            settings.Live.Mode,
+		PlaylistURL:     settings.Live.PlaylistURL,
+		ProxyURL:        settings.Live.ProxyURL,
+		XtreamHost:      settings.Live.XtreamHost,
+		XtreamUsername:  settings.Live.XtreamUsername,
+		XtreamPassword:  settings.Live.XtreamPassword,
+		PlaylistSources: configPlaylistSourcesToModel(settings.Live.PlaylistSources),
+		Sources:         configPlaylistSourcesToModel(settings.Live.Sources),
+	}
+
+	sources := resolvedLiveSources(src)
+	if len(sources) == 0 {
+		return 0, errors.New("no Live TV source configured")
+	}
+
+	totalChannels := 0
+	for _, liveSource := range sources {
+		if liveSource.Mode == "xtream" {
+			channels, err := h.fetchXtreamChannels(ctx, liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
+			if err != nil {
+				return totalChannels, fmt.Errorf("failed to warm Xtream source %q: %w", liveSource.ID, err)
+			}
+			totalChannels += len(channels)
+			continue
+		}
+
+		contents, err := h.fetchPlaylistContents(ctx, liveSource.PlaylistURL, liveSource.ProxyURL)
+		if err != nil {
+			return totalChannels, fmt.Errorf("failed to warm M3U source %q: %w", liveSource.ID, err)
+		}
+		totalChannels += len(parseM3UPlaylist(contents))
+	}
+
+	return totalChannels, nil
 }
 
 // fetchXtreamChannels fetches live channels from the Xtream Codes API.
@@ -1290,7 +1426,7 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 
 // GetCategories returns all available categories from the configured playlist.
 func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
-	var allChannels []LiveChannel
+	categoryCounts := make(map[string]int)
 
 	settings, err := h.cfgManager.Load()
 	if err != nil {
@@ -1312,7 +1448,6 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unknown source"}`, http.StatusBadRequest)
 		return
 	}
-	includeSourceInID := len(sources) > 1
 	for _, liveSource := range selectedSources {
 		if liveSource.Mode == "xtream" {
 			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
@@ -1321,22 +1456,24 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
 				return
 			}
-			allChannels = append(allChannels, tagChannelsWithSource(channels, liveSource, includeSourceInID)...)
+			for _, category := range extractCategories(channels) {
+				categoryCounts[category.Name] += category.ChannelCount
+			}
 			continue
 		}
-		contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
+		categories, err := h.fetchM3UCategories(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
 		if err != nil {
 			log.Printf("[live] GetCategories error for source %q: %v", liveSource.ID, err)
 			http.Error(w, `{"error":"failed to fetch playlist"}`, http.StatusBadGateway)
 			return
 		}
-		allChannels = append(allChannels, tagChannelsWithSource(parseM3UPlaylist(contents), liveSource, includeSourceInID)...)
+		for _, category := range categories {
+			categoryCounts[category.Name] += category.ChannelCount
+		}
 	}
 
-	categories := extractCategories(allChannels)
-
 	response := CategoriesResponse{
-		Categories: categories,
+		Categories: categoryInfosFromCounts(categoryCounts),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

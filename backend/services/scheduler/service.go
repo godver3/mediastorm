@@ -31,19 +31,20 @@ import (
 
 // Service manages scheduled task execution
 type Service struct {
-	configManager     *config.Manager
-	plexClient        *plex.Client
-	traktClient       *trakt.Client
-	simklClient       *simkl.Client
-	jellyfinClient    *jellyfin.Client
-	usersService      schedulerUsersProvider
-	watchlistService  *watchlist.Service
-	epgService        *epg.Service
-	backupService     *backup.Service
-	historyService    *history.Service
-	metadataService   schedulerMetadataService
-	prewarmService    *prewarm.Service
-	localMediaService localMediaScanner
+	configManager      *config.Manager
+	plexClient         *plex.Client
+	traktClient        *trakt.Client
+	simklClient        *simkl.Client
+	jellyfinClient     *jellyfin.Client
+	usersService       schedulerUsersProvider
+	watchlistService   *watchlist.Service
+	epgService         *epg.Service
+	backupService      *backup.Service
+	historyService     *history.Service
+	metadataService    schedulerMetadataService
+	prewarmService     *prewarm.Service
+	localMediaService  localMediaScanner
+	livePlaylistWarmer livePlaylistWarmer
 
 	// Runtime state
 	mu      sync.RWMutex
@@ -71,6 +72,10 @@ type localMediaScanner interface {
 
 type schedulerMetadataService interface {
 	SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+}
+
+type livePlaylistWarmer interface {
+	WarmPlaylistCache(ctx context.Context) (int, error)
 }
 
 // SyncResult contains the result of a sync operation including dry run details
@@ -265,6 +270,12 @@ func (s *Service) getInterval(taskType config.ScheduledTaskType, freq config.Sch
 
 func (s *Service) SetLocalMediaService(ls *localmedia.Service) {
 	s.localMediaService = ls
+}
+
+func (s *Service) SetLivePlaylistWarmer(warmer livePlaylistWarmer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.livePlaylistWarmer = warmer
 }
 
 // executeTask runs a task and updates its status
@@ -1826,7 +1837,7 @@ func (s *Service) executeEPGRefresh(task config.ScheduledTask) (SyncResult, erro
 	}, nil
 }
 
-// executePlaylistRefresh clears the cached Live TV playlist to force a fresh fetch.
+// executePlaylistRefresh clears the cached Live TV playlist and warms it again.
 func (s *Service) executePlaylistRefresh(task config.ScheduledTask) (SyncResult, error) {
 	cacheDir := "cache/live"
 
@@ -1858,7 +1869,26 @@ func (s *Service) executePlaylistRefresh(task config.ScheduledTask) (SyncResult,
 	}
 
 	log.Printf("[scheduler] cleared %d cached playlist files", cleared)
-	return SyncResult{Count: cleared}, nil
+
+	s.mu.RLock()
+	warmer := s.livePlaylistWarmer
+	s.mu.RUnlock()
+	if warmer == nil {
+		return SyncResult{Count: cleared, Message: "Cleared playlist cache; no warmer configured"}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	channelCount, err := warmer.WarmPlaylistCache(ctx)
+	if err != nil {
+		return SyncResult{Count: cleared}, fmt.Errorf("playlist cache cleared but warm failed: %w", err)
+	}
+
+	return SyncResult{
+		Count:   channelCount,
+		Message: fmt.Sprintf("Cleared %d cache files and warmed %d channels", cleared, channelCount),
+	}, nil
 }
 
 // executeBackup creates a system backup and runs cleanup based on retention settings.
