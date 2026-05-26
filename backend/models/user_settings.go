@@ -510,6 +510,7 @@ func DefaultUserSettings() UserSettings {
 	return UserSettings{
 		Playback: PlaybackSettings{
 			PreferredPlayer:            "native",
+			PreferredAudioLanguage:     "eng",
 			PauseWhenAppInactive:       false,
 			UseLoadingScreen:           false,
 			SubtitleSize:               1.0,

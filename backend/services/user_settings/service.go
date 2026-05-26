@@ -76,6 +76,14 @@ func sanitizeLanguageCode(code string) string {
 	return code
 }
 
+func defaultPreferredAudioLanguage(code string) string {
+	code = sanitizeLanguageCode(code)
+	if code == "" {
+		return "eng"
+	}
+	return code
+}
+
 // normalizeSubtitleMode maps legacy subtitle mode values to canonical ones.
 func normalizeSubtitleMode(mode string) string {
 	switch mode {
@@ -161,7 +169,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 			settings.Playback.PreferredPlayer = defaults.Playback.PreferredPlayer
 		}
 		if settings.Playback.PreferredAudioLanguage == "" {
-			settings.Playback.PreferredAudioLanguage = sanitizeLanguageCode(defaults.Playback.PreferredAudioLanguage)
+			settings.Playback.PreferredAudioLanguage = defaultPreferredAudioLanguage(defaults.Playback.PreferredAudioLanguage)
 		}
 		if settings.Playback.PreferredSubtitleLanguage == "" {
 			settings.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(defaults.Playback.PreferredSubtitleLanguage)
@@ -321,7 +329,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	}
 
 	// Sanitize defaults too
-	defaults.Playback.PreferredAudioLanguage = sanitizeLanguageCode(defaults.Playback.PreferredAudioLanguage)
+	defaults.Playback.PreferredAudioLanguage = defaultPreferredAudioLanguage(defaults.Playback.PreferredAudioLanguage)
 	defaults.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(defaults.Playback.PreferredSubtitleLanguage)
 	return defaults, nil
 }

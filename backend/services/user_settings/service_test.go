@@ -101,6 +101,38 @@ func TestGetWithDefaults_SanitizesDefaultsFallback(t *testing.T) {
 	}
 }
 
+func TestGetWithDefaults_DefaultsBlankAudioLanguageToEnglish(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	got, err := svc.GetWithDefaults("no-settings-user", models.UserSettings{})
+	if err != nil {
+		t.Fatalf("GetWithDefaults: %v", err)
+	}
+	if got.Playback.PreferredAudioLanguage != "eng" {
+		t.Errorf("audioLang = %q, want %q", got.Playback.PreferredAudioLanguage, "eng")
+	}
+
+	if err := svc.Update("user1", models.UserSettings{
+		Playback: models.PlaybackSettings{
+			PreferredSubtitleLanguage: "eng",
+		},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err = svc.GetWithDefaults("user1", models.UserSettings{})
+	if err != nil {
+		t.Fatalf("GetWithDefaults user1: %v", err)
+	}
+	if got.Playback.PreferredAudioLanguage != "eng" {
+		t.Errorf("user audioLang = %q, want %q", got.Playback.PreferredAudioLanguage, "eng")
+	}
+}
+
 func TestGetWithDefaults_DisplayAppLanguageFallsBackToGlobal(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
