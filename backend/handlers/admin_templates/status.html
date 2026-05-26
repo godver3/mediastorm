@@ -55,7 +55,7 @@
 </div>
 
 <!-- Live Stream Limits -->
-<div class="card" style="margin-bottom: 1.5rem;">
+<div class="card live-limits-card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
         <h2>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -67,8 +67,8 @@
         </h2>
     </div>
     <div class="card-body">
-        <div class="table-container">
-            <table>
+        <div class="table-container live-limits-table-container">
+            <table class="live-limits-table">
                 <thead>
                     <tr>
                         <th>Bucket</th>
@@ -510,6 +510,41 @@
     }
     .view-toggle-btn.active svg {
         stroke: white;
+    }
+
+    .live-limits-table td:last-child {
+        max-width: 320px;
+        white-space: normal;
+    }
+
+    @media (max-width: 640px) {
+        .live-limits-card .card-header {
+            padding: 1rem 1.25rem;
+        }
+
+        .live-limits-card .card-body {
+            padding: 1rem;
+        }
+
+        .live-limits-table {
+            min-width: 560px;
+        }
+
+        .live-limits-table th,
+        .live-limits-table td {
+            padding: 0.625rem 0.75rem;
+            font-size: 0.8125rem;
+            line-height: 1.3;
+        }
+
+        .live-limits-table th {
+            font-size: 0.6875rem;
+        }
+
+        .live-limits-table td:last-child {
+            max-width: 220px;
+            white-space: normal;
+        }
     }
 
     /* Media card grid */
