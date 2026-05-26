@@ -222,9 +222,29 @@
         return sources.get(source).color;
     }
 
-    function resetSourceFilters() {
-        sources = new Map();
-        colorIndex = 0;
+    function syncSourceFilters(entries) {
+        const nextSources = new Map();
+        const seen = new Set();
+
+        entries.forEach(entry => {
+            const parsed = parseLogLine(entry.line || '');
+            const source = parsed.source;
+            if (!source || seen.has(source)) return;
+
+            const existing = sources.get(source);
+            if (existing) {
+                nextSources.set(source, existing);
+            } else {
+                nextSources.set(source, {
+                    color: sourceColors[colorIndex % sourceColors.length],
+                    enabled: true
+                });
+                colorIndex++;
+            }
+            seen.add(source);
+        });
+
+        sources = nextSources;
         updateLegend();
     }
 
@@ -457,11 +477,7 @@
             frontendClients = data.frontendClients || [];
             updateClientFilterOptions(data.clientId || clientId);
 
-            resetSourceFilters();
-            rawLogEntries.forEach(entry => {
-                const parsed = parseLogLine(entry.line || '');
-                getSourceColor(parsed.source);
-            });
+            syncSourceFilters(rawLogEntries);
 
             updateMetaBar(source);
             renderLogs();
