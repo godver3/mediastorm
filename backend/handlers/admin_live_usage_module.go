@@ -40,7 +40,7 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 	}
 	global := buildGlobalLiveSource(settings)
 
-	targetByProfile := map[string]liveStreamTarget{}
+	targetByProfile := map[string][]liveStreamTarget{}
 	userNameByProfile := map[string]string{}
 	bucketUsers := map[string][]string{}
 	for _, user := range scopedUsers {
@@ -50,10 +50,12 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 				userSettings = us
 			}
 		}
-		target := resolveLiveStreamTarget(global, userSettings)
-		targetByProfile[user.ID] = target
+		targets := resolveLiveStreamTargets(global, userSettings)
+		targetByProfile[user.ID] = targets
 		userNameByProfile[user.ID] = user.Name
-		bucketUsers[target.BucketKey] = append(bucketUsers[target.BucketKey], user.Name)
+		for _, target := range targets {
+			bucketUsers[target.BucketKey] = append(bucketUsers[target.BucketKey], user.Name)
+		}
 	}
 
 	bucketCurrent := map[string]int{}
@@ -88,8 +90,13 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 
 			bucketCurrent[bucketID]++
 			bucketProvider[bucketID] = provider
-			if target, ok := targetByProfile[profileID]; ok {
-				bucketLabel[bucketID] = target.BucketName
+			if targets, ok := targetByProfile[profileID]; ok {
+				for _, target := range targets {
+					if target.BucketKey == bucketID {
+						bucketLabel[bucketID] = target.BucketName
+						break
+					}
+				}
 			}
 			if profileName != "" && profileID != "" {
 				userNameByProfile[profileID] = profileName
@@ -107,10 +114,11 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 			continue
 		}
 
-		target, ok := targetByProfile[profileID]
-		if !ok {
+		targets, ok := targetByProfile[profileID]
+		if !ok || len(targets) == 0 {
 			continue
 		}
+		target := targets[0]
 		bucketID := strings.TrimSpace(target.BucketKey)
 		if bucketID == "" {
 			bucketID = normalizeLiveProvider(target.Provider) + ":default"
@@ -122,32 +130,51 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 
 	byUser := make([]liveUsageByUserRow, 0, len(scopedUsers))
 	for _, user := range scopedUsers {
-		target, ok := targetByProfile[user.ID]
-		if !ok {
-			target = resolveLiveStreamTarget(global, nil)
+		targets, ok := targetByProfile[user.ID]
+		if !ok || len(targets) == 0 {
+			targets = resolveLiveStreamTargets(global, nil)
 		}
-		current := bucketCurrent[target.BucketKey]
-		available := 0
-		if target.MaxStreams > 0 {
-			available = target.MaxStreams - current
-			if available < 0 {
-				available = 0
+		for _, target := range targets {
+			current := bucketCurrent[target.BucketKey]
+			available := 0
+			if target.MaxStreams > 0 {
+				available = target.MaxStreams - current
+				if available < 0 {
+					available = 0
+				}
 			}
+			byUser = append(byUser, liveUsageByUserRow{
+				ProfileID: user.ID,
+				User:      user.Name,
+				Provider:  target.Provider,
+				Bucket:    target.BucketName,
+				Current:   current,
+				Max:       target.MaxStreams,
+				Available: available,
+				AtLimit:   target.MaxStreams > 0 && current >= target.MaxStreams,
+			})
 		}
-		byUser = append(byUser, liveUsageByUserRow{
-			ProfileID: user.ID,
-			User:      user.Name,
-			Provider:  target.Provider,
-			Bucket:    target.BucketName,
-			Current:   current,
-			Max:       target.MaxStreams,
-			Available: available,
-			AtLimit:   target.MaxStreams > 0 && current >= target.MaxStreams,
-		})
 	}
 
-	bucketRows := make([]liveUsageBucketRow, 0, len(bucketCurrent))
-	for bucketID, current := range bucketCurrent {
+	configuredBuckets := map[string]bool{}
+	for _, targets := range targetByProfile {
+		for _, target := range targets {
+			configuredBuckets[target.BucketKey] = true
+			if bucketProvider[target.BucketKey] == "" {
+				bucketProvider[target.BucketKey] = target.Provider
+			}
+			if bucketLabel[target.BucketKey] == "" {
+				bucketLabel[target.BucketKey] = target.BucketName
+			}
+		}
+	}
+	for bucketID := range bucketCurrent {
+		configuredBuckets[bucketID] = true
+	}
+
+	bucketRows := make([]liveUsageBucketRow, 0, len(configuredBuckets))
+	for bucketID := range configuredBuckets {
+		current := bucketCurrent[bucketID]
 		maxStreams := 0
 		provider := bucketProvider[bucketID]
 		label := bucketLabel[bucketID]
@@ -158,16 +185,18 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 				label = "M3U shared"
 			}
 		}
-		for profileID, target := range targetByProfile {
-			if target.BucketKey != bucketID {
-				continue
-			}
-			provider = target.Provider
-			if maxStreams == 0 || (target.MaxStreams > 0 && target.MaxStreams < maxStreams) {
-				maxStreams = target.MaxStreams
-			}
-			if _, ok := userNameByProfile[profileID]; !ok {
-				userNameByProfile[profileID] = profileID
+		for profileID, targets := range targetByProfile {
+			for _, target := range targets {
+				if target.BucketKey != bucketID {
+					continue
+				}
+				provider = target.Provider
+				if maxStreams == 0 || (target.MaxStreams > 0 && target.MaxStreams < maxStreams) {
+					maxStreams = target.MaxStreams
+				}
+				if _, ok := userNameByProfile[profileID]; !ok {
+					userNameByProfile[profileID] = profileID
+				}
 			}
 		}
 

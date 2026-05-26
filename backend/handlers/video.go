@@ -3658,7 +3658,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	mediaMetadata := parseStreamMediaMetadata(r)
-	target := h.resolveLiveStreamTarget(profileID)
+	target := h.resolveLiveStreamTargetForSource(profileID, r.URL.Query().Get("sourceId"))
 
 	if target.MaxStreams > 0 {
 		usage := h.buildLiveUsageSummary(target)
@@ -3752,7 +3752,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 func (h *VideoHandler) GetLiveUsage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
-	target := h.resolveLiveStreamTarget(profileID)
+	target := h.resolveLiveStreamTargetForSource(profileID, r.URL.Query().Get("sourceId"))
 	usage := h.buildLiveUsageSummary(target)
 	_ = json.NewEncoder(w).Encode(usage)
 }
@@ -4163,6 +4163,10 @@ func (h *VideoHandler) GetStreamPoolStats() PoolStats {
 }
 
 func (h *VideoHandler) resolveLiveStreamTarget(profileID string) liveStreamTarget {
+	return h.resolveLiveStreamTargetForSource(profileID, "")
+}
+
+func (h *VideoHandler) resolveLiveStreamTargetForSource(profileID, sourceID string) liveStreamTarget {
 	if h == nil || h.configManager == nil {
 		return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
 	}
@@ -4179,7 +4183,7 @@ func (h *VideoHandler) resolveLiveStreamTarget(profileID string) liveStreamTarge
 			userSettings = us
 		}
 	}
-	return resolveLiveStreamTarget(global, userSettings)
+	return resolveLiveStreamTargetForSource(global, userSettings, sourceID)
 }
 
 func (h *VideoHandler) buildLiveUsageSummary(target liveStreamTarget) LiveUsageSummary {

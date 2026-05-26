@@ -90,6 +90,53 @@ func TestGetLiveUsageCountsActiveRecordings(t *testing.T) {
 	}
 }
 
+func TestGetLiveUsageUsesSelectedLiveSourceLimit(t *testing.T) {
+	handler := NewVideoHandler(false, "", "")
+	handler.SetConfigManager(fakeLiveUsageConfigProvider{
+		settings: config.Settings{
+			Live: config.LiveSettings{
+				Sources: []config.LivePlaylistSource{
+					{
+						ID:          "source-a",
+						Name:        "Source A",
+						Mode:        "m3u",
+						PlaylistURL: "http://example.com/a.m3u",
+						MaxStreams:  1,
+					},
+					{
+						ID:          "source-b",
+						Name:        "Source B",
+						Mode:        "m3u",
+						PlaylistURL: "http://example.com/b.m3u",
+						MaxStreams:  4,
+					},
+				},
+			},
+		},
+	})
+	handler.SetUserSettingsService(fakeLiveUsageUserSettingsProvider{
+		settings: map[string]*models.UserSettings{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/live/usage?profileId=profile-1&sourceId=source-b", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetLiveUsage(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var usage LiveUsageSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &usage); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if usage.MaxStreams != 4 {
+		t.Fatalf("maxStreams = %d, want selected source limit 4", usage.MaxStreams)
+	}
+}
+
 func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 	handler := NewVideoHandlerWithProvider(true, "/bin/echo", "/bin/echo", t.TempDir(), nil)
 	handler.SetConfigManager(fakeLiveUsageConfigProvider{

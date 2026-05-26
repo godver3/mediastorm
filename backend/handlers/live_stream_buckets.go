@@ -13,6 +13,7 @@ import (
 
 type liveStreamTarget struct {
 	Provider           string
+	SourceID           string
 	MaxStreams         int
 	BucketKey          string
 	BucketName         string
@@ -85,21 +86,67 @@ func configPlaylistSourcesToModel(sources []config.LivePlaylistSource) []models.
 }
 
 func resolveLiveStreamTarget(global models.ResolvedLiveSource, profile *models.UserSettings) liveStreamTarget {
+	targets := resolveLiveStreamTargets(global, profile)
+	if len(targets) > 0 {
+		return targets[0]
+	}
+	return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
+}
+
+func resolveLiveStreamTargetForSource(global models.ResolvedLiveSource, profile *models.UserSettings, sourceID string) liveStreamTarget {
+	sourceID = strings.TrimSpace(sourceID)
+	targets := resolveLiveStreamTargets(global, profile)
+	if sourceID != "" && sourceID != "all" {
+		for _, target := range targets {
+			if target.SourceID == sourceID {
+				return target
+			}
+		}
+	}
+	if len(targets) > 0 {
+		return targets[0]
+	}
+	return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
+}
+
+func resolveLiveStreamTargets(global models.ResolvedLiveSource, profile *models.UserSettings) []liveStreamTarget {
 	resolved := global
 	if profile != nil {
 		resolved = models.ResolveLiveSource(&profile.LiveTV, &global)
 	}
 
-	provider := "m3u"
-	if strings.EqualFold(strings.TrimSpace(resolved.Mode), "xtream") {
-		provider = "xtream"
+	sources := resolvedLiveSources(resolved)
+	if len(sources) > 0 {
+		targets := make([]liveStreamTarget, 0, len(sources))
+		for _, source := range sources {
+			provider := normalizeLiveProvider(source.Mode)
+			maxStreams := source.MaxStreams
+			if maxStreams < 0 {
+				maxStreams = 0
+			}
+			bucketKey, bucketName := deriveLiveSourceBucket(provider, source)
+			targets = append(targets, liveStreamTarget{
+				Provider:           provider,
+				SourceID:           source.ID,
+				MaxStreams:         maxStreams,
+				BucketKey:          bucketKey,
+				BucketName:         bucketName,
+				StreamFormat:       resolved.StreamFormat,
+				ProbeSizeMB:        resolved.ProbeSizeMB,
+				AnalyzeDurationSec: resolved.AnalyzeDurationSec,
+				LowLatency:         resolved.LowLatency,
+			})
+		}
+		return targets
 	}
+
+	provider := normalizeLiveProvider(resolved.Mode)
 	maxStreams := resolved.MaxStreams
 	if maxStreams < 0 {
 		maxStreams = 0
 	}
 	bucketKey, bucketName := deriveLiveBucket(provider, resolved)
-	return liveStreamTarget{
+	return []liveStreamTarget{{
 		Provider:           provider,
 		MaxStreams:         maxStreams,
 		BucketKey:          bucketKey,
@@ -108,7 +155,23 @@ func resolveLiveStreamTarget(global models.ResolvedLiveSource, profile *models.U
 		ProbeSizeMB:        resolved.ProbeSizeMB,
 		AnalyzeDurationSec: resolved.AnalyzeDurationSec,
 		LowLatency:         resolved.LowLatency,
+	}}
+}
+
+func deriveLiveSourceBucket(provider string, source resolvedM3USource) (string, string) {
+	resolved := models.ResolvedLiveSource{
+		Mode:           source.Mode,
+		PlaylistURL:    source.PlaylistURL,
+		XtreamHost:     source.XtreamHost,
+		XtreamUsername: source.XtreamUsername,
+		XtreamPassword: source.XtreamPassword,
 	}
+	key, label := deriveLiveBucket(provider, resolved)
+	name := strings.TrimSpace(source.Name)
+	if name != "" {
+		label = name
+	}
+	return key, label
 }
 
 func deriveLiveBucket(provider string, src models.ResolvedLiveSource) (string, string) {

@@ -749,6 +749,7 @@ type resolvedM3USource struct {
 	XtreamHost        string
 	XtreamUsername    string
 	XtreamPassword    string
+	MaxStreams        int
 	HasFilterOverride bool
 	Filter            config.LiveTVFilterSettings
 }
@@ -807,6 +808,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			XtreamHost:        strings.TrimSpace(candidate.XtreamHost),
 			XtreamUsername:    strings.TrimSpace(candidate.XtreamUsername),
 			XtreamPassword:    strings.TrimSpace(candidate.XtreamPassword),
+			MaxStreams:        candidate.MaxStreams,
 			HasFilterOverride: hasFilterOverride,
 			Filter:            filter,
 		})
@@ -818,6 +820,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			Mode:        "m3u",
 			PlaylistURL: strings.TrimSpace(src.PlaylistURL),
 			ProxyURL:    strings.TrimSpace(src.ProxyURL),
+			MaxStreams:  src.MaxStreams,
 		})
 	}
 	if len(sources) == 0 &&
@@ -833,6 +836,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			XtreamHost:     strings.TrimSpace(src.XtreamHost),
 			XtreamUsername: strings.TrimSpace(src.XtreamUsername),
 			XtreamPassword: strings.TrimSpace(src.XtreamPassword),
+			MaxStreams:     src.MaxStreams,
 		})
 	}
 	return sources
