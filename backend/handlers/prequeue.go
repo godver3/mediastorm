@@ -76,8 +76,20 @@ func prequeueEpisodeMatches(requested, existing *models.EpisodeReference) bool {
 	if requested == nil || existing == nil {
 		return requested == nil && existing == nil
 	}
-	return requested.SeasonNumber == existing.SeasonNumber &&
-		requested.EpisodeNumber == existing.EpisodeNumber
+	if requested.AbsoluteEpisodeNumber > 0 && existing.AbsoluteEpisodeNumber > 0 {
+		return requested.AbsoluteEpisodeNumber == existing.AbsoluteEpisodeNumber
+	}
+	if requested.SeasonNumber == existing.SeasonNumber &&
+		requested.EpisodeNumber == existing.EpisodeNumber {
+		return true
+	}
+	if requested.AbsoluteEpisodeNumber > 0 && existing.AbsoluteEpisodeNumber == 0 {
+		return requested.AbsoluteEpisodeNumber == existing.EpisodeNumber
+	}
+	if existing.AbsoluteEpisodeNumber > 0 && requested.AbsoluteEpisodeNumber == 0 {
+		return existing.AbsoluteEpisodeNumber == requested.EpisodeNumber
+	}
+	return false
 }
 
 func isPrequeueInProgress(status playback.PrequeueStatus) bool {
@@ -510,18 +522,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 						warm.PrequeueID, err)
 					h.store.Delete(warm.PrequeueID)
 				} else {
-					// Verify the target episode matches (for series)
-					episodeMatch := true
-					if targetEpisode != nil && warmEntry.TargetEpisode != nil {
-						if targetEpisode.SeasonNumber != warmEntry.TargetEpisode.SeasonNumber ||
-							targetEpisode.EpisodeNumber != warmEntry.TargetEpisode.EpisodeNumber {
-							episodeMatch = false
-						}
-					} else if (targetEpisode == nil) != (warmEntry.TargetEpisode == nil) {
-						episodeMatch = false
-					}
-
-					if episodeMatch {
+					if prequeueEpisodeMatches(targetEpisode, warmEntry.TargetEpisode) {
 						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
 						resp := playback.PrequeueResponse{
 							PrequeueID:    warm.PrequeueID,
@@ -683,15 +684,6 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		e.Status = playback.PrequeueStatusSearching
 	})
 
-	// Build search query using the title name (like the frontend does)
-	query := h.buildSearchQuery(titleName, mediaType, targetEpisode)
-	if query == "" {
-		h.failPrequeue(prequeueID, "failed to build search query")
-		return
-	}
-
-	log.Printf("[prequeue] TIMING: search starting with query: %q (elapsed: %v)", query, time.Since(workerStart))
-
 	// Create episode resolver for TV shows to enable accurate pack size filtering
 	// Also lookup absolute episode number, daily show info, and anime detection if not provided
 	var episodeResolver *filter.SeriesEpisodeResolver
@@ -711,6 +703,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			year = seriesMeta.Year
 			log.Printf("[prequeue] Populated year %d from series metadata", year)
 		}
+		h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+			e.TargetEpisode = targetEpisode
+			e.Year = year
+		})
 		if episodeResolver != nil {
 			log.Printf("[prequeue] Episode resolver created: %d total episodes, %d seasons", episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
 		}
@@ -719,6 +715,16 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 				targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, targetEpisode.AbsoluteEpisodeNumber)
 		}
 	}
+
+	// Build the search query after metadata normalization. This keeps anime absolute-number
+	// requests like S23E1162 from being treated as literal season/episode query text.
+	query := h.buildSearchQuery(titleName, mediaType, targetEpisode)
+	if query == "" {
+		h.failPrequeue(prequeueID, "failed to build search query")
+		return
+	}
+
+	log.Printf("[prequeue] TIMING: search starting with query: %q (elapsed: %v)", query, time.Since(workerStart))
 
 	// For movies, check if the movie is anime by looking at genres
 	if mediaType == "movie" && h.movieMetadataSvc != nil {
@@ -1720,6 +1726,7 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	seasonCounts := make(map[int]int)
 	var foundAbsoluteEp int
 	var foundAirDate string
+	var foundCanonicalEpisode *models.SeriesEpisode
 	for _, season := range details.Seasons {
 		// Skip specials (season 0) unless explicitly included
 		if season.Number > 0 {
@@ -1735,6 +1742,8 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 		if targetEpisode != nil && season.Number == targetEpisode.SeasonNumber {
 			for _, ep := range season.Episodes {
 				if ep.EpisodeNumber == targetEpisode.EpisodeNumber {
+					epCopy := ep
+					foundCanonicalEpisode = &epCopy
 					// Get absolute episode number if not set
 					if targetEpisode.AbsoluteEpisodeNumber == 0 && ep.AbsoluteEpisodeNumber > 0 {
 						foundAbsoluteEp = ep.AbsoluteEpisodeNumber
@@ -1753,20 +1762,42 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 		}
 	}
 
-	// Update targetEpisode with absolute number if found
-	if foundAbsoluteEp > 0 && targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber == 0 {
+	if targetEpisode != nil && foundCanonicalEpisode == nil && targetEpisode.AbsoluteEpisodeNumber == 0 && targetEpisode.EpisodeNumber > 0 {
+		for _, season := range details.Seasons {
+			for _, ep := range season.Episodes {
+				if ep.AbsoluteEpisodeNumber == targetEpisode.EpisodeNumber {
+					epCopy := ep
+					foundCanonicalEpisode = &epCopy
+					foundAbsoluteEp = ep.AbsoluteEpisodeNumber
+					foundAirDate = ep.AiredDate
+					log.Printf("[prequeue] Normalized legacy absolute episode S%02dE%02d to S%02dE%02d (abs: %d) from TVDB",
+						targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber, ep.SeasonNumber, ep.EpisodeNumber, ep.AbsoluteEpisodeNumber)
+					break
+				}
+			}
+			if foundCanonicalEpisode != nil {
+				break
+			}
+		}
+	}
+
+	// Update targetEpisode with canonical season/episode and absolute number if found
+	if foundCanonicalEpisode != nil && targetEpisode != nil {
 		// Create a copy to avoid modifying the original
 		updatedEpisode := &models.EpisodeReference{
-			SeasonNumber:          targetEpisode.SeasonNumber,
-			EpisodeNumber:         targetEpisode.EpisodeNumber,
+			SeasonNumber:          foundCanonicalEpisode.SeasonNumber,
+			EpisodeNumber:         foundCanonicalEpisode.EpisodeNumber,
 			AbsoluteEpisodeNumber: foundAbsoluteEp,
-			EpisodeID:             targetEpisode.EpisodeID,
-			TvdbID:                targetEpisode.TvdbID,
-			Title:                 targetEpisode.Title,
-			Overview:              targetEpisode.Overview,
-			RuntimeMinutes:        targetEpisode.RuntimeMinutes,
-			AirDate:               targetEpisode.AirDate,
+			EpisodeID:             foundCanonicalEpisode.ID,
+			TvdbID:                strconv.FormatInt(foundCanonicalEpisode.TVDBID, 10),
+			Title:                 foundCanonicalEpisode.Name,
+			Overview:              foundCanonicalEpisode.Overview,
+			RuntimeMinutes:        foundCanonicalEpisode.Runtime,
+			AirDate:               foundCanonicalEpisode.AiredDate,
 			WatchedAt:             targetEpisode.WatchedAt,
+		}
+		if updatedEpisode.AbsoluteEpisodeNumber == 0 {
+			updatedEpisode.AbsoluteEpisodeNumber = targetEpisode.AbsoluteEpisodeNumber
 		}
 		result.TargetEpisode = updatedEpisode
 	}

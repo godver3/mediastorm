@@ -105,6 +105,73 @@ func TestUnknownTrackPolicyRejects(t *testing.T) {
 	}
 }
 
+func TestPrequeueEpisodeMatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested *models.EpisodeReference
+		existing  *models.EpisodeReference
+		want      bool
+	}{
+		{
+			name:      "both nil",
+			requested: nil,
+			existing:  nil,
+			want:      true,
+		},
+		{
+			name:      "one nil",
+			requested: &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1},
+			existing:  nil,
+			want:      false,
+		},
+		{
+			name:      "season and episode match",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7},
+			want:      true,
+		},
+		{
+			name:      "same absolute episode allows different numbering",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 1162, AbsoluteEpisodeNumber: 1162},
+			want:      true,
+		},
+		{
+			name:      "legacy request episode can match existing absolute episode",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 1162},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162},
+			want:      true,
+		},
+		{
+			name:      "legacy cached episode can match requested absolute episode",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 1162},
+			want:      true,
+		},
+		{
+			name:      "different absolute episodes do not match",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 8, AbsoluteEpisodeNumber: 1163},
+			want:      false,
+		},
+		{
+			name:      "falls back to season episode when absolute missing",
+			requested: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162},
+			existing:  &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 7},
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prequeueEpisodeMatches(tt.requested, tt.existing)
+			if got != tt.want {
+				t.Fatalf("prequeueEpisodeMatches() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPrequeueMovieAnimeDetection(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -254,6 +321,59 @@ func TestCreateEpisodeResolverPopulatesEpisodeAirYear(t *testing.T) {
 	}
 	if got.EpisodeAirYear != 2026 {
 		t.Fatalf("EpisodeAirYear = %d, want 2026", got.EpisodeAirYear)
+	}
+}
+
+func TestCreateEpisodeResolverNormalizesLegacyAbsoluteEpisode(t *testing.T) {
+	handler := &PrequeueHandler{
+		metadataSvc: &mockSeriesDetailsProvider{
+			details: &models.SeriesDetails{
+				Title: models.Title{Name: "One Piece", Year: 1999},
+				Seasons: []models.SeriesSeason{
+					{
+						Number:       23,
+						EpisodeCount: 13,
+						Episodes: []models.SeriesEpisode{
+							{
+								ID:                    "tvdb:episode:11700059",
+								TVDBID:                11700059,
+								Name:                  "A Gargantuan Wave of Emotion",
+								SeasonNumber:          23,
+								EpisodeNumber:         7,
+								AbsoluteEpisodeNumber: 1162,
+								AiredDate:             "2026-05-24",
+								Runtime:               24,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := handler.createEpisodeResolverAndLookupAbsoluteEp(
+		context.Background(),
+		"tvdb:series:81797",
+		"One Piece",
+		1999,
+		"tt0388629",
+		&models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 1162},
+	)
+
+	if got.TargetEpisode == nil {
+		t.Fatal("TargetEpisode is nil")
+	}
+	if got.TargetEpisode.SeasonNumber != 23 || got.TargetEpisode.EpisodeNumber != 7 {
+		t.Fatalf("TargetEpisode = S%02dE%02d, want S23E07", got.TargetEpisode.SeasonNumber, got.TargetEpisode.EpisodeNumber)
+	}
+	if got.TargetEpisode.AbsoluteEpisodeNumber != 1162 {
+		t.Fatalf("AbsoluteEpisodeNumber = %d, want 1162", got.TargetEpisode.AbsoluteEpisodeNumber)
+	}
+	if got.TargetAirDate != "2026-05-24" {
+		t.Fatalf("TargetAirDate = %q, want 2026-05-24", got.TargetAirDate)
+	}
+	if query := handler.buildSearchQuery("One Piece", "series", got.TargetEpisode); query != "One Piece S23E07" {
+		t.Fatalf("buildSearchQuery = %q, want One Piece S23E07", query)
 	}
 }
 

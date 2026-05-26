@@ -1558,14 +1558,15 @@ func (s *Service) findNextUnwatchedEpisode(
 			}
 
 			ref := &models.EpisodeReference{
-				SeasonNumber:   ep.details.SeasonNumber,
-				EpisodeNumber:  ep.details.EpisodeNumber,
-				EpisodeID:      ep.details.ID,
-				Title:          ep.details.Name,
-				Overview:       ep.details.Overview,
-				RuntimeMinutes: ep.details.Runtime,
-				AirDate:        ep.details.AiredDate,
-				Image:          ep.details.Image,
+				SeasonNumber:          ep.details.SeasonNumber,
+				EpisodeNumber:         ep.details.EpisodeNumber,
+				AbsoluteEpisodeNumber: ep.details.AbsoluteEpisodeNumber,
+				EpisodeID:             ep.details.ID,
+				Title:                 ep.details.Name,
+				Overview:              ep.details.Overview,
+				RuntimeMinutes:        ep.details.Runtime,
+				AirDate:               ep.details.AiredDate,
+				Image:                 ep.details.Image,
 			}
 			if ep.details.AiredDate != "" {
 				utc := calendar.ParseAirDateTime(ep.details.AiredDate, seriesDetails.Title.AirsTime, seriesDetails.Title.AirsTimezone)
@@ -1626,25 +1627,24 @@ func (s *Service) enrichEpisodeFromMetadata(episodeRef *models.EpisodeReference,
 		if season.Number == episodeRef.SeasonNumber {
 			for _, episode := range season.Episodes {
 				if episode.EpisodeNumber == episodeRef.EpisodeNumber {
-					// Enrich with metadata
-					if episodeRef.Title == "" {
-						episodeRef.Title = episode.Name
-					}
-					episodeRef.Overview = episode.Overview
-					episodeRef.AirDate = episode.AiredDate
-					episodeRef.RuntimeMinutes = episode.Runtime
-					if episodeRef.Image == nil && episode.Image != nil {
-						episodeRef.Image = episode.Image
-					}
-					if episode.TVDBID > 0 {
-						episodeRef.TvdbID = fmt.Sprintf("%d", episode.TVDBID)
-					}
-					if episodeRef.EpisodeID == "" && episode.ID != "" {
-						episodeRef.EpisodeID = episode.ID
-					}
+					applyEpisodeMetadata(episodeRef, episode)
 					return
 				}
 			}
+		}
+	}
+
+	if episodeRef.AbsoluteEpisodeNumber > 0 {
+		if episode, ok := findEpisodeByAbsoluteNumber(seriesDetails, episodeRef.AbsoluteEpisodeNumber); ok {
+			applyEpisodeMetadata(episodeRef, episode)
+		}
+		return
+	}
+	if episodeRef.EpisodeNumber > 0 {
+		if episode, ok := findEpisodeByAbsoluteNumber(seriesDetails, episodeRef.EpisodeNumber); ok {
+			log.Printf("[history] normalized legacy absolute episode S%02dE%02d to S%02dE%02d (abs: %d)",
+				episodeRef.SeasonNumber, episodeRef.EpisodeNumber, episode.SeasonNumber, episode.EpisodeNumber, episode.AbsoluteEpisodeNumber)
+			applyEpisodeMetadata(episodeRef, episode)
 		}
 	}
 }
@@ -1859,27 +1859,69 @@ func enrichEpisodeFromMetadata(ref *models.EpisodeReference, details *models.Ser
 	for _, season := range details.Seasons {
 		for _, ep := range season.Episodes {
 			if ep.SeasonNumber == ref.SeasonNumber && ep.EpisodeNumber == ref.EpisodeNumber {
-				if ref.Title == "" {
-					ref.Title = ep.Name
-				}
-				if ref.Overview == "" {
-					ref.Overview = ep.Overview
-				}
-				if ref.RuntimeMinutes == 0 && ep.Runtime > 0 {
-					ref.RuntimeMinutes = ep.Runtime
-				}
-				if ref.AirDate == "" {
-					ref.AirDate = ep.AiredDate
-				}
-				if ref.Image == nil && ep.Image != nil {
-					ref.Image = ep.Image
-				}
-				if ref.EpisodeID == "" {
-					ref.EpisodeID = ep.ID
-				}
+				applyEpisodeMetadata(ref, ep)
 				return
 			}
 		}
+	}
+	if ref.AbsoluteEpisodeNumber > 0 {
+		if ep, ok := findEpisodeByAbsoluteNumber(details, ref.AbsoluteEpisodeNumber); ok {
+			applyEpisodeMetadata(ref, ep)
+		}
+		return
+	}
+	if ref.EpisodeNumber > 0 {
+		if ep, ok := findEpisodeByAbsoluteNumber(details, ref.EpisodeNumber); ok {
+			log.Printf("[history] normalized legacy absolute episode S%02dE%02d to S%02dE%02d (abs: %d)",
+				ref.SeasonNumber, ref.EpisodeNumber, ep.SeasonNumber, ep.EpisodeNumber, ep.AbsoluteEpisodeNumber)
+			applyEpisodeMetadata(ref, ep)
+		}
+	}
+}
+
+func findEpisodeByAbsoluteNumber(details *models.SeriesDetails, absoluteEpisodeNumber int) (models.SeriesEpisode, bool) {
+	if details == nil || absoluteEpisodeNumber <= 0 {
+		return models.SeriesEpisode{}, false
+	}
+	for _, season := range details.Seasons {
+		for _, ep := range season.Episodes {
+			if ep.AbsoluteEpisodeNumber == absoluteEpisodeNumber {
+				return ep, true
+			}
+		}
+	}
+	return models.SeriesEpisode{}, false
+}
+
+func applyEpisodeMetadata(ref *models.EpisodeReference, ep models.SeriesEpisode) {
+	if ref == nil {
+		return
+	}
+	ref.SeasonNumber = ep.SeasonNumber
+	ref.EpisodeNumber = ep.EpisodeNumber
+	if ep.AbsoluteEpisodeNumber > 0 {
+		ref.AbsoluteEpisodeNumber = ep.AbsoluteEpisodeNumber
+	}
+	if ref.Title == "" {
+		ref.Title = ep.Name
+	}
+	if ref.Overview == "" {
+		ref.Overview = ep.Overview
+	}
+	if ref.RuntimeMinutes == 0 && ep.Runtime > 0 {
+		ref.RuntimeMinutes = ep.Runtime
+	}
+	if ref.AirDate == "" {
+		ref.AirDate = ep.AiredDate
+	}
+	if ref.Image == nil && ep.Image != nil {
+		ref.Image = ep.Image
+	}
+	if ep.TVDBID > 0 {
+		ref.TvdbID = fmt.Sprintf("%d", ep.TVDBID)
+	}
+	if ref.EpisodeID == "" {
+		ref.EpisodeID = ep.ID
 	}
 }
 

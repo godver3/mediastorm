@@ -2159,6 +2159,81 @@ func TestEpisodeState_ContinueWatchingSkipsWatchedInProgress(t *testing.T) {
 	t.Fatal("Test Show not found in continue watching")
 }
 
+func TestContinueWatchingNormalizesLegacyAbsoluteNextEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:81797"
+	userID := "user-one-piece"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{
+				ID:     seriesID,
+				Name:   "One Piece",
+				TVDBID: 81797,
+				Year:   1999,
+			},
+			Seasons: []models.SeriesSeason{{
+				Number: 23,
+				Episodes: []models.SeriesEpisode{
+					{
+						ID:                    "tvdb:episode:11700059",
+						TVDBID:                11700059,
+						Name:                  "A Gargantuan Wave of Emotion",
+						SeasonNumber:          23,
+						EpisodeNumber:         7,
+						AbsoluteEpisodeNumber: 1162,
+						AiredDate:             "2026-05-24",
+						Runtime:               24,
+					},
+				},
+			}},
+		},
+	})
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s23e1162",
+		Position:      600,
+		Duration:      1200,
+		SeriesID:      seriesID,
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 1162,
+		ExternalIDs:   map[string]string{"tvdb": "81797"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 continue watching item, got %d", len(items))
+	}
+	next := items[0].NextEpisode
+	if next == nil {
+		t.Fatal("expected next episode")
+	}
+	if next.SeasonNumber != 23 || next.EpisodeNumber != 7 {
+		t.Fatalf("NextEpisode = S%02dE%02d, want S23E07", next.SeasonNumber, next.EpisodeNumber)
+	}
+	if next.AbsoluteEpisodeNumber != 1162 {
+		t.Fatalf("AbsoluteEpisodeNumber = %d, want 1162", next.AbsoluteEpisodeNumber)
+	}
+	if next.Title != "A Gargantuan Wave of Emotion" {
+		t.Fatalf("Title = %q, want metadata title", next.Title)
+	}
+	if items[0].LastWatched.SeasonNumber != 23 || items[0].LastWatched.EpisodeNumber != 7 {
+		t.Fatalf("LastWatched = S%02dE%02d, want S23E07", items[0].LastWatched.SeasonNumber, items[0].LastWatched.EpisodeNumber)
+	}
+}
+
 func TestEpisodeState_ContinueWatchingSkipsStaleBehindLatestWatchedInProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
