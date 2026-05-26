@@ -408,6 +408,18 @@ function renderSettings() {
                         </select>
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Ignore Dolby Vision Compatibility Check</h4>
+                        <p>Always pass Dolby Vision to Android playback, even when the display does not report Dolby Vision support</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="ignoreDolbyVisionCompatibilityCheck" ${s.playback.ignoreDolbyVisionCompatibilityCheck ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <div class="settings-subgroup">
                     <div class="settings-subgroup-title">
                         <h3>Subtitle Appearance</h3>
@@ -678,6 +690,7 @@ function collectSettings() {
             subtitleBackgroundColor: document.getElementById('subtitleBackgroundColor').value || '#000000',
             subtitleBackgroundOpacity: Number.isFinite(subtitleBackgroundOpacity) ? subtitleBackgroundOpacity : 0.6,
             pauseWhenAppInactive: document.getElementById('pauseWhenAppInactive').checked,
+            ignoreDolbyVisionCompatibilityCheck: document.getElementById('ignoreDolbyVisionCompatibilityCheck').checked,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },
         homeShelves: currentSettings.homeShelves || { shelves: [] },

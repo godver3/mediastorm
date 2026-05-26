@@ -217,34 +217,35 @@ type AltMountSettings struct {
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
-	PreferredPlayer           string  `json:"preferredPlayer"`
-	PreferredAudioLanguage    string  `json:"preferredAudioLanguage,omitempty"`
-	PreferredSubtitleLanguage string  `json:"preferredSubtitleLanguage,omitempty"`
-	PreferredSubtitleMode     string  `json:"preferredSubtitleMode,omitempty"`
-	PauseWhenAppInactive      bool    `json:"pauseWhenAppInactive"` // Pause playback when the app becomes inactive or backgrounded
-	UseLoadingScreen          bool    `json:"useLoadingScreen,omitempty"`
-	SubtitleSize              float64 `json:"subtitleSize,omitempty"`       // Scaling factor for subtitle size (1.0 = default)
-	SubtitleColor             string  `json:"subtitleColor,omitempty"`      // Text color as #RRGGBB
-	SubtitleOpacity           float64 `json:"subtitleOpacity,omitempty"`    // Text opacity (0.0-1.0)
-	SubtitleFont              string  `json:"subtitleFont,omitempty"`       // SRT/VTT subtitle font family
-	SubtitleOutlineEnabled    bool    `json:"subtitleOutlineEnabled"`       // Show text outline around subtitles
-	SubtitleOutlineColor      string  `json:"subtitleOutlineColor"`         // Outline color as #RRGGBB
-	SubtitleOutlineWeight     float64 `json:"subtitleOutlineWeight"`        // Outline weight (0.0-1.0)
-	SubtitleBackgroundEnabled bool    `json:"subtitleBackgroundEnabled"`    // Show subtitle background box
-	SubtitleBackgroundColor   string  `json:"subtitleBackgroundColor"`      // Background color as #RRGGBB
-	SubtitleBackgroundOpacity float64 `json:"subtitleBackgroundOpacity"`    // Background opacity (0.0-1.0)
-	SeekForwardSeconds        int     `json:"seekForwardSeconds"`           // Seconds to skip forward (default 30)
-	SeekBackwardSeconds       int     `json:"seekBackwardSeconds"`          // Seconds to skip backward (default 10)
-	ForceAACTranscoding       bool    `json:"forceAacTranscoding"`          // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
-	AutoPlayTrailersTV        bool    `json:"autoPlayTrailersTV,omitempty"` // Auto-play trailers in backdrop on TV details pages
-	RewindOnResumeFromPause   int     `json:"rewindOnResumeFromPause"`      // Seconds to rewind when unpausing (default 0)
-	RewindOnPlaybackStart     int     `json:"rewindOnPlaybackStart"`        // Seconds to rewind when resuming from saved progress (default 0)
-	DisablePrequeue           bool    `json:"disablePrequeue"`              // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
-	CreditsAutoSkip           bool    `json:"creditsAutoSkip"`              // Automatically play the next episode when credits are detected
-	CreditsDetection          bool    `json:"creditsDetection"`             // Legacy name for creditsAutoSkip
-	MaxConcurrentStreams      int     `json:"maxConcurrentStreams"`         // Global max concurrent VOD streams across all accounts (0 = unlimited)
-	MaxResultsPerResolution   int     `json:"maxResultsPerResolution"`      // Maximum number of results per resolution tier (0 = no limit)
-	YouTubeProxyURL           string  `json:"youtubeProxyUrl,omitempty"`    // Optional proxy URL passed to yt-dlp for YouTube extraction/downloads
+	PreferredPlayer            string  `json:"preferredPlayer"`
+	PreferredAudioLanguage     string  `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage  string  `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode      string  `json:"preferredSubtitleMode,omitempty"`
+	PauseWhenAppInactive       bool    `json:"pauseWhenAppInactive"` // Pause playback when the app becomes inactive or backgrounded
+	UseLoadingScreen           bool    `json:"useLoadingScreen,omitempty"`
+	SubtitleSize               float64 `json:"subtitleSize,omitempty"`              // Scaling factor for subtitle size (1.0 = default)
+	SubtitleColor              string  `json:"subtitleColor,omitempty"`             // Text color as #RRGGBB
+	SubtitleOpacity            float64 `json:"subtitleOpacity,omitempty"`           // Text opacity (0.0-1.0)
+	SubtitleFont               string  `json:"subtitleFont,omitempty"`              // SRT/VTT subtitle font family
+	SubtitleOutlineEnabled     bool    `json:"subtitleOutlineEnabled"`              // Show text outline around subtitles
+	SubtitleOutlineColor       string  `json:"subtitleOutlineColor"`                // Outline color as #RRGGBB
+	SubtitleOutlineWeight      float64 `json:"subtitleOutlineWeight"`               // Outline weight (0.0-1.0)
+	SubtitleBackgroundEnabled  bool    `json:"subtitleBackgroundEnabled"`           // Show subtitle background box
+	SubtitleBackgroundColor    string  `json:"subtitleBackgroundColor"`             // Background color as #RRGGBB
+	SubtitleBackgroundOpacity  float64 `json:"subtitleBackgroundOpacity"`           // Background opacity (0.0-1.0)
+	SeekForwardSeconds         int     `json:"seekForwardSeconds"`                  // Seconds to skip forward (default 30)
+	SeekBackwardSeconds        int     `json:"seekBackwardSeconds"`                 // Seconds to skip backward (default 10)
+	ForceAACTranscoding        bool    `json:"forceAacTranscoding"`                 // Force transcoding of AC3/EAC3/DTS audio to AAC for Bluetooth compatibility
+	AutoPlayTrailersTV         bool    `json:"autoPlayTrailersTV,omitempty"`        // Auto-play trailers in backdrop on TV details pages
+	RewindOnResumeFromPause    int     `json:"rewindOnResumeFromPause"`             // Seconds to rewind when unpausing (default 0)
+	RewindOnPlaybackStart      int     `json:"rewindOnPlaybackStart"`               // Seconds to rewind when resuming from saved progress (default 0)
+	DisablePrequeue            bool    `json:"disablePrequeue"`                     // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
+	IgnoreDVCompatibilityCheck bool    `json:"ignoreDolbyVisionCompatibilityCheck"` // Skip Android display DV capability check before playback
+	CreditsAutoSkip            bool    `json:"creditsAutoSkip"`                     // Automatically play the next episode when credits are detected
+	CreditsDetection           bool    `json:"creditsDetection"`                    // Legacy name for creditsAutoSkip
+	MaxConcurrentStreams       int     `json:"maxConcurrentStreams"`                // Global max concurrent VOD streams across all accounts (0 = unlimited)
+	MaxResultsPerResolution    int     `json:"maxResultsPerResolution"`             // Maximum number of results per resolution tier (0 = no limit)
+	YouTubeProxyURL            string  `json:"youtubeProxyUrl,omitempty"`           // Optional proxy URL passed to yt-dlp for YouTube extraction/downloads
 }
 
 // LiveTVFilterSettings controls backend-side filtering for Live TV channels.
