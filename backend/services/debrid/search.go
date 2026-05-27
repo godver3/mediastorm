@@ -205,7 +205,7 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 		if !s.Enabled {
 			continue
 		}
-		if strings.ToLower(s.Type) == "aiostreams" {
+		if strings.ToLower(strings.TrimSpace(s.Type)) == "aiostreams" {
 			aioEnabled = true
 		} else {
 			otherEnabled = true
@@ -452,7 +452,9 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	}
 
 	// Check if filtering should be bypassed for AIOStreams-only mode
-	bypassFiltering := bypassForAIO && isOnlyAIOStreamsEnabled(settings.TorrentScrapers)
+	bypassFiltering := bypassForAIO &&
+		!shouldUseUsenet(settings.Streaming.ServiceMode) &&
+		isOnlyAIOStreamsEnabled(settings.TorrentScrapers)
 	if bypassFiltering {
 		log.Printf("[debrid] Bypassing mediastorm filtering - AIOStreams is the only enabled scraper and bypass setting is enabled")
 	}
@@ -517,6 +519,15 @@ func hasActiveDirectStreamScrapers(scrapers []config.TorrentScraperConfig) bool 
 		}
 	}
 	return false
+}
+
+func shouldUseUsenet(mode config.StreamingServiceMode) bool {
+	switch strings.TrimSpace(string(mode)) {
+	case "", string(config.StreamingServiceModeUsenet), string(config.StreamingServiceModeHybrid):
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeScrapeResult(res ScrapeResult) models.NZBResult {

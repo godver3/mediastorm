@@ -743,9 +743,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 
 	// Check if ranking should be bypassed for AIOStreams-only mode
 	// Only bypass when: setting is enabled, AIOStreams is the only scraper, and no usenet results are mixed in
-	bypassRanking := models.BoolVal(filterOverrides.BypassFilteringForAIOStreamsOnly, false) &&
-		isOnlyAIOStreamsEnabled(settings.TorrentScrapers) &&
-		!includeUsenet
+	bypassRanking := shouldBypassAIOStreamsRanking(settings, filterOverrides, includeUsenet)
 
 	var scoringCtx *ScoringContext
 	if bypassRanking {
@@ -846,6 +844,17 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 	}
 
 	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	if shouldBypassAIOStreamsRanking(settings, filterOverrides, shouldUseUsenet(settings.Streaming.ServiceMode)) {
+		log.Printf("[indexer] Bypassing mediastorm filtering/ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
+		scored := make([]models.ScoredNZBResult, len(rawResults))
+		for i, r := range rawResults {
+			scored[i] = models.ScoredNZBResult{
+				NZBResult:    r,
+				FilterStatus: "passed",
+			}
+		}
+		return scored, nil
+	}
 	filterOpts := s.buildFilterOptions(rawOpts, filterSettings)
 
 	detailed := filter.ResultsWithDetails(rawResults, filterOpts)
@@ -916,7 +925,20 @@ func (s *Service) SearchTest(ctx context.Context, opts SearchOptions) ([]models.
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 
-	filterSettings, animeSettings, _ := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	if shouldBypassAIOStreamsRanking(settings, filterOverrides, shouldUseUsenet(settings.Streaming.ServiceMode)) {
+		log.Printf("[indexer] Bypassing mediastorm filtering/ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
+		scored := make([]models.ScoredNZBResult, len(rawResults))
+		for i, r := range rawResults {
+			scored[i] = models.ScoredNZBResult{
+				NZBResult:    r,
+				FilterStatus: "passed",
+			}
+		}
+		log.Printf("[indexer] SearchTest complete: %d total (%d passed, %d filtered) in %v",
+			len(scored), len(scored), 0, time.Since(searchStart))
+		return scored, nil
+	}
 
 	// Inject anime language filter-out terms
 	if opts.IsAnime && models.BoolVal(animeSettings.AnimeLanguageEnabled, false) {
@@ -1280,7 +1302,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		return debridOut, usenetOut
 	}
 
-	filterSettings, animeSettings2, _ := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	filterSettings, animeSettings2, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 
 	// Inject anime language filter-out terms early (before search/filter calls)
 	if opts.IsAnime && models.BoolVal(animeSettings2.AnimeLanguageEnabled, false) {
@@ -1304,6 +1326,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
+	bypassAIOStreamsRanking := shouldBypassAIOStreamsRanking(settings, filterOverrides, includeUsenet)
 
 	scoringCtx := s.buildScoringContext(opts, settings, filterSettings, animeSettings2)
 
@@ -1328,6 +1351,10 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	// Helper to apply ranking sort to results
 	applyRanking := func(results []models.NZBResult) {
 		if len(results) == 0 {
+			return
+		}
+		if bypassAIOStreamsRanking {
+			log.Printf("[indexer] Bypassing mediastorm ranking - AIOStreams is the only enabled scraper and bypass setting is enabled")
 			return
 		}
 		s.sortResultsByScore(results, scoringCtx)
@@ -2283,7 +2310,7 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 		if !s.Enabled {
 			continue
 		}
-		if strings.ToLower(s.Type) == "aiostreams" {
+		if strings.ToLower(strings.TrimSpace(s.Type)) == "aiostreams" {
 			aioEnabled = true
 		} else {
 			otherEnabled = true
@@ -2291,4 +2318,10 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 	}
 
 	return aioEnabled && !otherEnabled
+}
+
+func shouldBypassAIOStreamsRanking(settings config.Settings, overrides effectiveOverrides, includeUsenet bool) bool {
+	return models.BoolVal(overrides.BypassFilteringForAIOStreamsOnly, false) &&
+		isOnlyAIOStreamsEnabled(settings.TorrentScrapers) &&
+		!includeUsenet
 }

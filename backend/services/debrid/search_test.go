@@ -144,6 +144,63 @@ func TestSearchAllowsDirectStreamScrapersWithoutDebridProviders(t *testing.T) {
 	}
 }
 
+func TestSearchBypassesFilteringForAIOStreamsOnlyDebridMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	cfgManager := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	for i := range settings.Streaming.DebridProviders {
+		settings.Streaming.DebridProviders[i].Enabled = false
+		settings.Streaming.DebridProviders[i].APIKey = ""
+	}
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{
+			Name:    "AIOStreams",
+			Type:    "aiostreams ",
+			URL:     "https://example.test/manifest.json",
+			Enabled: true,
+		},
+	}
+	settings.Display.BypassFilteringForAIOStreamsOnly = true
+	settings.Filtering.RequiredTerms = []string{"MULTI"}
+
+	if err := cfgManager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewSearchService(cfgManager, stubScraper{
+		name: "AIOStreams",
+		results: []ScrapeResult{
+			{
+				Title:      "Moana.2016.1080p.WEB-DL",
+				Indexer:    "AIOStreams",
+				TorrentURL: "https://example.test/playback/moana-en",
+			},
+			{
+				Title:      "Moana.2016.MULTI.1080p.WEB-DL",
+				Indexer:    "AIOStreams",
+				TorrentURL: "https://example.test/playback/moana-multi",
+			},
+		},
+	})
+
+	results, err := svc.Search(t.Context(), SearchOptions{
+		Query:     "Moana 2016",
+		MediaType: "movie",
+		Year:      2016,
+	})
+	if err != nil {
+		t.Fatalf("search returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected filtering bypass to keep both AIOStreams results, got %d", len(results))
+	}
+	if got := results[0].Title; got != "Moana.2016.1080p.WEB-DL" {
+		t.Fatalf("expected original AIOStreams order to be preserved, got first title %q", got)
+	}
+}
+
 func TestSearchAppliesRequiredTerms(t *testing.T) {
 	tests := []struct {
 		name          string

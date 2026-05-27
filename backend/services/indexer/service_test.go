@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,15 @@ import (
 	"novastream/models"
 	"novastream/services/debrid"
 )
+
+type stubDebridSearchService struct {
+	results []models.NZBResult
+	err     error
+}
+
+func (s stubDebridSearchService) Search(context.Context, debrid.SearchOptions) ([]models.NZBResult, error) {
+	return append([]models.NZBResult(nil), s.results...), s.err
+}
 
 func TestSearchTorznab_IndexerCategories(t *testing.T) {
 	// Track the categories received by the mock server
@@ -254,6 +264,125 @@ func TestFetchUsenetResults_PartialIndexerFailureWithEmptySuccess(t *testing.T) 
 	}
 	if len(results) != 0 {
 		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestSearchBypassesRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.Display.BypassFilteringForAIOStreamsOnly = true
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{Name: "AIOStreams", Type: "aiostreams", URL: "https://example.test/manifest.json", Enabled: true},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewService(mgr, nil, stubDebridSearchService{
+		results: []models.NZBResult{
+			{Title: "Movie.720p.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+			{Title: "Movie.2160p.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+		},
+	})
+
+	results, err := svc.Search(t.Context(), SearchOptions{Query: "Movie 2024", MediaType: "movie", Year: 2024})
+	if err != nil {
+		t.Fatalf("search returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if got := results[0].Title; got != "Movie.720p.WEB-DL" {
+		t.Fatalf("expected AIOStreams order to bypass ranking, got first title %q", got)
+	}
+}
+
+func TestSearchSplitBypassesRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.Display.BypassFilteringForAIOStreamsOnly = true
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{Name: "AIOStreams", Type: "aiostreams", URL: "https://example.test/manifest.json", Enabled: true},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewService(mgr, nil, stubDebridSearchService{
+		results: []models.NZBResult{
+			{Title: "Movie.720p.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+			{Title: "Movie.2160p.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+		},
+	})
+
+	debridChan, usenetChan := svc.SearchSplit(t.Context(), SearchOptions{Query: "Movie 2024", MediaType: "movie", Year: 2024})
+	debridResult, ok := <-debridChan
+	if !ok {
+		t.Fatal("expected debrid split result")
+	}
+	for range usenetChan {
+	}
+	if debridResult.Err != nil {
+		t.Fatalf("split debrid returned error: %v", debridResult.Err)
+	}
+	if len(debridResult.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(debridResult.Results))
+	}
+	if got := debridResult.Results[0].Title; got != "Movie.720p.WEB-DL" {
+		t.Fatalf("expected split AIOStreams order to bypass ranking, got first title %q", got)
+	}
+}
+
+func TestSearchWithScoringBypassesFilteringAndRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.Display.BypassFilteringForAIOStreamsOnly = true
+	settings.Filtering.RequiredTerms = []string{"MULTI"}
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{Name: "AIOStreams", Type: "aiostreams", URL: "https://example.test/manifest.json", Enabled: true},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewService(mgr, nil, stubDebridSearchService{
+		results: []models.NZBResult{
+			{Title: "Movie.720p.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+			{Title: "Movie.2160p.MULTI.WEB-DL", Indexer: "AIOStreams", ServiceType: models.ServiceTypeDebrid},
+		},
+	})
+
+	results, err := svc.SearchWithScoring(t.Context(), SearchOptions{
+		Query:           "Movie 2024",
+		MediaType:       "movie",
+		Year:            2024,
+		IncludeFiltered: true,
+	})
+	if err != nil {
+		t.Fatalf("search with scoring returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected both AIOStreams results to pass, got %d", len(results))
+	}
+	if got := results[0].Title; got != "Movie.720p.WEB-DL" {
+		t.Fatalf("expected AIOStreams order to bypass scoring sort, got first title %q", got)
+	}
+	for _, result := range results {
+		if result.FilterStatus != "passed" {
+			t.Fatalf("expected all results to be marked passed, got %q for %q", result.FilterStatus, result.Title)
+		}
+		if result.FilterReason != "" {
+			t.Fatalf("expected no filter reason for bypassed result %q, got %q", result.Title, result.FilterReason)
+		}
 	}
 }
 
