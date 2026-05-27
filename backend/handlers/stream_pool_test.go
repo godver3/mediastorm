@@ -136,6 +136,30 @@ func TestParseTotalSizeFromContentRange(t *testing.T) {
 	}
 }
 
+func TestInitialPreBufferTargetNearEOF(t *testing.T) {
+	totalSize := int64(530588444)
+	reqStart := totalSize - 12
+
+	got := initialPreBufferTarget(reqStart, -1, totalSize)
+	if got != 12 {
+		t.Fatalf("initialPreBufferTarget near EOF = %d, want 12", got)
+	}
+}
+
+func TestInitialPreBufferTargetCapsExplicitSmallRange(t *testing.T) {
+	got := initialPreBufferTarget(1000, 1999, 100*1024*1024)
+	if got != 1000 {
+		t.Fatalf("initialPreBufferTarget explicit small range = %d, want 1000", got)
+	}
+}
+
+func TestInitialPreBufferTargetUsesMinimumForOpenEndedRange(t *testing.T) {
+	got := initialPreBufferTarget(0, -1, 100*1024*1024)
+	if got != poolMinPreBuffer {
+		t.Fatalf("initialPreBufferTarget open-ended range = %d, want %d", got, poolMinPreBuffer)
+	}
+}
+
 func TestStreamPoolNewSlotCreation(t *testing.T) {
 	pool := newStreamPool(nil)
 	defer pool.close()

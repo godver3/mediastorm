@@ -28,6 +28,21 @@ const (
 	poolMinPreBuffer    = 4 * 1024 * 1024   // 4MB minimum buffer before serving starts (prevents stalls on 4K)
 )
 
+func initialPreBufferTarget(reqStart, reqEnd, totalSize int64) int64 {
+	target := int64(poolMinPreBuffer)
+	if reqEnd >= reqStart {
+		if requested := reqEnd - reqStart + 1; requested > 0 && requested < target {
+			target = requested
+		}
+	}
+	if totalSize > 0 && reqStart < totalSize {
+		if remaining := totalSize - reqStart; remaining > 0 && remaining < target {
+			target = remaining
+		}
+	}
+	return target
+}
+
 // streamPool maintains persistent CDN connections that survive client disconnects.
 // This prevents seek storms when players (e.g., KSPlayer) alternate between audio
 // and video track positions in non-interleaved MP4 files. Instead of creating a
@@ -197,7 +212,8 @@ func (p *streamPool) serve(
 	// client has enough data to start playing without immediately stalling
 	// (especially important for high-bitrate 4K content over slower connections).
 	buffered := endPos - reqStart
-	needsWait := reqStart >= endPos || buffered < poolMinPreBuffer
+	preBufferTarget := initialPreBufferTarget(reqStart, reqEnd, totalSize)
+	needsWait := reqStart >= endPos || buffered < preBufferTarget
 	if needsWait {
 		gap := reqStart - endPos
 		if gap < 0 {
@@ -205,7 +221,7 @@ func (p *streamPool) serve(
 		}
 		waitStart := time.Now()
 		log.Printf("[stream-pool] WAIT-START: path=%q range=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v preBuffer=%d/%d slotTotalRead=%d slotAge=%v sinceLastRead=%v readers=%d",
-			path, rangeHeader, reqStart, endPos, gap, slot.startByte, false, buffered, poolMinPreBuffer,
+			path, rangeHeader, reqStart, endPos, gap, slot.startByte, false, buffered, preBufferTarget,
 			slotTotalRead, time.Since(slotReadStartedAt).Round(time.Millisecond), time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 		waitDeadline := time.After(poolWaitTimeout)
 		for {
@@ -219,7 +235,7 @@ func (p *streamPool) serve(
 				ch = slot.signal
 				slot.mu.Unlock()
 				buffered = endPos - reqStart
-				if reqStart < endPos && (buffered >= poolMinPreBuffer || done) {
+				if reqStart < endPos && (buffered >= preBufferTarget || done) {
 					log.Printf("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d preBuffer=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
 						path, time.Since(waitStart).Round(time.Millisecond), gap, endPos, buffered, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					goto dataReady
@@ -240,7 +256,7 @@ func (p *streamPool) serve(
 				if buffered > 0 {
 					// Timeout but we have some data — serve what we have rather than failing
 					log.Printf("[stream-pool] WAIT-PARTIAL: path=%q waited=%v preBuffer=%d/%d slotTotalRead=%d sinceLastRead=%v readers=%d (serving with partial buffer)",
-						path, time.Since(waitStart).Round(time.Millisecond), buffered, poolMinPreBuffer, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
+						path, time.Since(waitStart).Round(time.Millisecond), buffered, preBufferTarget, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					endPos = currentEnd
 					goto dataReady
 				}
