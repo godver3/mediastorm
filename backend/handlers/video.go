@@ -3698,6 +3698,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		if profileName != "" {
 			proxyParams.Set("profileName", profileName)
 		}
+		if targetParam := strings.TrimSpace(r.URL.Query().Get("target")); targetParam != "" {
+			proxyParams.Set("target", targetParam)
+		}
 		addStreamMediaMetadataParams(proxyParams, mediaMetadata)
 		directURL := fmt.Sprintf("/live/stream?%s", proxyParams.Encode())
 

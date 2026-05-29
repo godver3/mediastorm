@@ -157,7 +157,7 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&profileId=profile-1&mediaType=channel&itemId=tvg-1&title=Evening%20News", nil)
+	req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&profileId=profile-1&target=web&mediaType=channel&itemId=tvg-1&title=Evening%20News", nil)
 	rec := httptest.NewRecorder()
 
 	handler.StartLiveHLSSession(rec, req)
@@ -187,6 +187,9 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 	}
 	if got := values.Get("profileName"); got != "Living Room" {
 		t.Fatalf("profileName = %q, want Living Room", got)
+	}
+	if got := values.Get("target"); got != "web" {
+		t.Fatalf("target = %q, want web", got)
 	}
 	if got := values.Get("mediaType"); got != "channel" {
 		t.Fatalf("mediaType = %q, want channel", got)

@@ -284,7 +284,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), liveStreamTimeout)
 	defer cancel()
 
-	if proxyURL := h.resolveProxyURLForStream(r, targetURL); proxyURL != "" {
+	if proxyURL := h.resolveProxyURLForStream(r, targetURL); proxyURL != "" && !isWebLiveStreamRequest(r) {
 		h.proxyStreamWithHTTPClient(w, r, ctx, targetURL, proxyURL)
 		return
 	}
@@ -470,6 +470,12 @@ func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+}
+
+func isWebLiveStreamRequest(r *http.Request) bool {
+	target := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	return target == "web" || format == "mp4"
 }
 
 func (h *LiveHandler) resolveProxyURLForStream(r *http.Request, targetURL *url.URL) string {
