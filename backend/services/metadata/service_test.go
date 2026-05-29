@@ -899,6 +899,45 @@ func TestAggregateTopTen_CrossListBonus(t *testing.T) {
 	}
 }
 
+func TestAggregateTopTen_DailyPopularitySourceSurfacesProviderGap(t *testing.T) {
+	currentYear := time.Now().Year()
+	spiderNoir := models.TrendingItem{Rank: 3, Title: models.Title{
+		Name: "Spider-Noir", MediaType: "series", IMDBID: "tt30460310", Year: currentYear,
+	}}
+	providerLeader := models.TrendingItem{Rank: 1, Title: models.Title{
+		Name: "Catalog Provider Leader", MediaType: "series", IMDBID: "tt3000001", Year: currentYear - 8,
+	}}
+
+	sources := []topTenSource{
+		{name: "justwatch-us-shows", weight: 8.0, items: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{Name: "Daily 1", MediaType: "series", IMDBID: "tt3000002", Year: currentYear - 8}},
+			{Rank: 2, Title: models.Title{Name: "Daily 2", MediaType: "series", IMDBID: "tt3000003", Year: currentYear - 8}},
+			spiderNoir,
+		}},
+		{name: "provider-shows", weight: 5.0, items: []models.TrendingItem{providerLeader}},
+	}
+
+	results := aggregateTopTen(sources, 10)
+	if len(results) < 2 {
+		t.Fatalf("expected multiple results, got %d", len(results))
+	}
+	var spiderRank, providerRank int
+	for i, item := range results {
+		switch item.Title.IMDBID {
+		case "tt30460310":
+			spiderRank = i + 1
+		case "tt3000001":
+			providerRank = i + 1
+		}
+	}
+	if spiderRank == 0 || providerRank == 0 {
+		t.Fatalf("expected both target items in results, got spiderRank=%d providerRank=%d", spiderRank, providerRank)
+	}
+	if spiderRank >= providerRank {
+		t.Fatalf("expected current daily-popularity show to outrank one-list provider item, got spiderRank=%d providerRank=%d", spiderRank, providerRank)
+	}
+}
+
 func TestTopTenTVEpisodeRecencyMultiplier_RecentEpisodeWins(t *testing.T) {
 	now := time.Now()
 	details := models.SeriesDetails{

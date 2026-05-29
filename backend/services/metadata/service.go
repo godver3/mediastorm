@@ -7755,6 +7755,17 @@ var topTenNetworkLists = []struct {
 	{"hulu-shows", "https://mdblist.com/lists/snoak/top-tv-shows-hulu/json"},
 }
 
+// topTenDailyPopularityLists are broad daily popularity charts. They catch
+// titles that are hot across providers, including services without a dedicated
+// provider top-10 source in topTenNetworkLists.
+var topTenDailyPopularityLists = []struct {
+	name string
+	url  string
+}{
+	{"justwatch-us-movies", "https://mdblist.com/lists/snoak/todays-most-popular-movies-in-the-us/json"},
+	{"justwatch-us-shows", "https://mdblist.com/lists/snoak/todays-most-popular-shows-in-the-us/json"},
+}
+
 // topTenSource groups a fetched item list with its source weight.
 type topTenSource struct {
 	name   string
@@ -7833,6 +7844,7 @@ func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, custo
 		topTenPreliminaryLimit    = 40
 		topTenTrendingWeight      = 0.75
 		topTenNetworkWeight       = 5.0
+		topTenDailyPopularWeight  = 8.0
 		topTenCustomWeight        = 4.0
 		topTenGenreDiscoverWeight = 1.5
 	)
@@ -7878,6 +7890,21 @@ func (s *Service) getTopTenUncached(ctx context.Context, mediaType string, custo
 		}
 		add(nl.name, topTenNetworkWeight, func() ([]models.TrendingItem, error) {
 			return s.getTopTenListSource(ctx, nl.url, 10)
+		})
+	}
+
+	// Broad daily popularity charts are a strong "today" signal and also cover
+	// provider gaps, for example MGM+ titles that do not appear in the built-in
+	// Netflix/Disney/Amazon/Apple/Paramount/HBO/Hulu provider lists.
+	for _, dl := range topTenDailyPopularityLists {
+		dl := dl
+		isTV := strings.HasSuffix(dl.name, "-shows")
+		isMovie := strings.HasSuffix(dl.name, "-movies")
+		if (normalized == "tv" && isMovie) || (normalized == "movie" && isTV) {
+			continue
+		}
+		add(dl.name, topTenDailyPopularWeight, func() ([]models.TrendingItem, error) {
+			return s.getTopTenListSource(ctx, dl.url, 20)
 		})
 	}
 
