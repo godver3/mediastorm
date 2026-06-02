@@ -74,6 +74,25 @@ func TestResults_TVShowFiltering(t *testing.T) {
 	}
 }
 
+func TestResults_TVShowFiltering_UnescapesHTMLEntities(t *testing.T) {
+	results := []models.NZBResult{
+		{Title: "Your.Friends.&amp;.Neighbors.S02E09.Propaganda.from.the.Cowardly.2160p.ATVP.WEB-DL.DD+5.1.Atmos.H.265-playWEB"},
+	}
+
+	opts := Options{
+		ExpectedTitle: "Your Friends & Neighbors",
+		ExpectedYear:  2025,
+		IsMovie:       false,
+		TargetSeason:  2,
+		TargetEpisode: 9,
+	}
+
+	filtered := Results(results, opts)
+	if len(filtered) != 1 {
+		t.Fatalf("expected HTML-escaped ampersand title to pass, got %d results", len(filtered))
+	}
+}
+
 func TestResults_TVSpecialEpisodeFiltering(t *testing.T) {
 	results := []models.NZBResult{
 		{Title: "The.Bear.S00E01.Gary.2160p.DSNP.WEB-DL.H.265-FLUX"}, // Target special

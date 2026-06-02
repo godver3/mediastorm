@@ -2,6 +2,7 @@ package filter
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"regexp"
 	"strconv"
@@ -641,7 +642,7 @@ func normalizeCandidateTitles(primary string, alternates []string) []string {
 	seen := make(map[string]struct{})
 	var titles []string
 	add := func(value string) {
-		trimmed := strings.TrimSpace(value)
+		trimmed := strings.TrimSpace(html.UnescapeString(value))
 		if trimmed == "" {
 			return
 		}
@@ -750,7 +751,7 @@ func parsedTitleVariants(title string) []string {
 	seen := make(map[string]struct{})
 	var variants []string
 	add := func(value string) {
-		value = strings.TrimSpace(value)
+		value = strings.TrimSpace(html.UnescapeString(value))
 		if value == "" {
 			return
 		}
@@ -902,6 +903,7 @@ func formulaOneEventTermsMatch(title string, expectedTerms []string) bool {
 // normalizeForContainment normalizes a title for containment comparison.
 // Converts to lowercase, replaces separators with spaces, and collapses whitespace.
 func normalizeForContainment(s string) string {
+	s = html.UnescapeString(s)
 	s = strings.ToLower(s)
 	// Replace common separators with spaces
 	s = strings.ReplaceAll(s, ".", " ")
