@@ -48,6 +48,7 @@ import (
 	"novastream/services/plex"
 	"novastream/services/prewarm"
 	"novastream/services/recordings"
+	"novastream/services/remoteaccess"
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
 	"novastream/services/simkl"
@@ -369,6 +370,22 @@ func main() {
 	}
 	if err != nil {
 		log.Fatalf("failed to initialise invitations: %v", err)
+	}
+	var remoteAccessHandler *handlers.RemoteAccessHandler
+	var remoteAccessHost *remoteaccess.IrohHostManager
+	var remoteAccessService *remoteaccess.Service
+	if store != nil {
+		remoteAccessHost = remoteaccess.NewIrohHostManager("")
+		remoteAccessService = remoteaccess.NewService(store.RemoteAccessInvites(), remoteAccessHost)
+		remoteAccessHandler = handlers.NewRemoteAccessHandler(remoteAccessService)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := remoteAccessHost.Stop(ctx); err != nil {
+				log.Printf("failed to stop remote access host: %v", err)
+			}
+		}()
+		go superviseRemoteAccess(remoteAccessService)
 	}
 
 	// Background cleanup of expired temporary accounts
@@ -711,6 +728,7 @@ func main() {
 		startupHandler,
 		detailsBundleHandler,
 		calendarHandler,
+		remoteAccessHandler,
 		accountsService,
 		sessionsService,
 		userService,
@@ -912,6 +930,12 @@ func main() {
 	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.ListInvitations)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.CreateInvitation)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/invitations", adminUIHandler.RequireMasterAuth(adminUIHandler.DeleteInvitation)).Methods(http.MethodDelete)
+	if remoteAccessHandler != nil {
+		r.HandleFunc("/admin/api/remote-access/status", adminUIHandler.RequireMasterAuth(remoteAccessHandler.Status)).Methods(http.MethodGet)
+		r.HandleFunc("/admin/api/remote-access/invites", adminUIHandler.RequireMasterAuth(remoteAccessHandler.ListInvites)).Methods(http.MethodGet)
+		r.HandleFunc("/admin/api/remote-access/invites", adminUIHandler.RequireMasterAuth(remoteAccessHandler.CreateInvite)).Methods(http.MethodPost)
+		r.HandleFunc("/admin/api/remote-access/invites/{inviteID}", adminUIHandler.RequireMasterAuth(remoteAccessHandler.RevokeInvite)).Methods(http.MethodDelete)
+	}
 
 	// Public registration endpoints (no auth required)
 	r.HandleFunc("/register", adminUIHandler.RegisterPage).Methods(http.MethodGet)
@@ -1466,6 +1490,30 @@ func main() {
 	}
 
 	log.Println("✅ Shutdown complete")
+}
+
+func superviseRemoteAccess(service *remoteaccess.Service) {
+	if service == nil {
+		return
+	}
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		summary, err := service.Supervise(ctx)
+		if err != nil {
+			log.Printf("[remote-access] supervise failed: %v", err)
+			return
+		}
+		if summary.Started || summary.Stopped || summary.Updated > 0 {
+			log.Printf("[remote-access] supervise active=%d started=%t stopped=%t updated=%d", summary.Active, summary.Started, summary.Stopped, summary.Updated)
+		}
+	}
+	run()
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		run()
+	}
 }
 
 type countingWriter struct {

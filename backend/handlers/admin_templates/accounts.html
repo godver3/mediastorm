@@ -15,7 +15,8 @@
 <div class="tabs" style="margin-bottom: 1.5rem;">
     <button class="tab active" onclick="switchTab('profiles')" id="tab-profiles">Profiles</button>
     <button class="tab" onclick="switchTab('accounts')" id="tab-accounts">Accounts</button>
-    <button class="tab" onclick="switchTab('invitations')" id="tab-invitations">Invitations</button>
+    <button class="tab" onclick="switchTab('invitations')" id="tab-invitations">Account Invites</button>
+    <button class="tab" onclick="switchTab('connections')" id="tab-connections">Connection Invites</button>
 </div>
 {{end}}
 
@@ -35,10 +36,22 @@
 .profile-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .account-badge { display: inline-flex; align-items: center; gap: 0.25rem; background: var(--bg-tertiary); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; color: var(--text-secondary); }
 .account-badge.none { background: var(--danger); color: white; opacity: 0.7; }
+.connection-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.connection-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem; }
+.connection-header-row > div { flex: 1; min-width: 0; }
+.remote-access-warning { margin-top: 0.75rem; padding: 0.65rem 0.75rem; border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 6px; background: rgba(245, 158, 11, 0.08); color: var(--text-secondary); font-size: 0.8rem; }
+.remote-access-status-line { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; overflow-wrap: anywhere; }
+.remote-access-status-error { margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
 @media (max-width: 600px) {
+    .tabs { overflow-x: auto; padding-bottom: 0.25rem; -webkit-overflow-scrolling: touch; }
+    .tab { flex: 0 0 auto; padding: 0.75rem 0.85rem; white-space: nowrap; }
     .profile-row { padding: 0.75rem; gap: 0.75rem; }
     .profile-avatar { width: 40px; height: 40px; font-size: 1rem; }
     .profile-actions { width: 100%; justify-content: flex-start; margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+    .connection-header-row { align-items: stretch; }
+    .connection-header-row .btn { width: 100%; justify-content: center; }
+    .connection-actions { width: 100%; }
+    .connection-actions .btn { flex: 1 1 120px; justify-content: center; }
 }
 </style>
 
@@ -97,7 +110,7 @@
         <div>
             <span id="invitations-count" style="color: var(--text-muted);"></span>
             <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 0.25rem;">
-                Invitation links allow users to create their own accounts
+                Invitation links allow users to create their own accounts.
             </p>
         </div>
         <button class="btn btn-primary" onclick="showCreateInvitationModal()">
@@ -108,6 +121,35 @@
         </button>
     </div>
     <div id="invitations-list"></div>
+</div>
+
+<!-- Connection Invitations Tab (admin only) -->
+<div id="content-connections" class="tab-content">
+    <div class="card" style="margin-bottom: 1rem;">
+        <div class="card-body">
+            <div style="font-weight: 600; font-size: 0.875rem;">Iroh Remote Access Host</div>
+            <div id="remote-access-status" class="remote-access-status-line">Checking...</div>
+            <div class="remote-access-warning">
+                Remote access through Iroh may be slower than direct LAN or local network connections, especially for high-bitrate video.
+            </div>
+        </div>
+    </div>
+    <div class="connection-header-row">
+        <div>
+            <span id="connection-invites-count" style="color: var(--text-muted);"></span>
+            <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 0.25rem;">
+                Connection invites start the shared Iroh host while at least one invite is active. Revoking or expiry of the last active invite stops it.
+            </p>
+        </div>
+        <button class="btn btn-primary" onclick="showCreateConnectionInviteModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+            Create Connection Invite
+        </button>
+    </div>
+    <div id="connection-invites-list"></div>
 </div>
 {{end}}
 
@@ -122,6 +164,8 @@
 let accounts = [];
 let profiles = [];
 let invitations = [];
+let connectionInvites = [];
+let remoteAccessStatus = null;
 let hasDefaultPassword = false;
 const isAdmin = {{json .IsAdmin}};
 const accountId = {{json .AccountID}}; // For non-admin, auto-assign profiles to this account
@@ -162,16 +206,20 @@ function switchTab(tab) {
 async function loadData() {
     try {
         if (isAdmin) {
-            const [accountsRes, profilesRes, defaultPwdRes, invitationsRes] = await Promise.all([
+            const [accountsRes, profilesRes, defaultPwdRes, invitationsRes, connectionInvitesRes, remoteAccessStatusRes] = await Promise.all([
                 fetch(basePath + '/api/accounts').then(r => r.json()),
                 fetch(basePath + '/api/profiles').then(r => r.json()),
                 fetch(basePath + '/api/accounts/default-password').then(r => r.json()),
-                fetch(basePath + '/api/invitations').then(r => r.json())
+                fetch(basePath + '/api/invitations').then(r => r.json()),
+                fetch(basePath + '/api/remote-access/invites').then(r => r.ok ? r.json() : []),
+                fetch(basePath + '/api/remote-access/status').then(r => r.ok ? r.json() : null)
             ]);
             accounts = accountsRes.accounts || [];
             profiles = profilesRes || [];
             hasDefaultPassword = defaultPwdRes.hasDefaultPassword || false;
             invitations = invitationsRes.invitations || [];
+            connectionInvites = Array.isArray(connectionInvitesRes) ? connectionInvitesRes : [];
+            remoteAccessStatus = remoteAccessStatusRes;
 
             // Enrich profiles with per-profile stream limits
             await Promise.all(profiles.map(async p => {
@@ -194,6 +242,7 @@ async function loadData() {
             renderProfiles();
             renderAccounts();
             renderInvitations();
+            renderConnectionInvites();
         } else {
             // Non-admin: only load profiles (already scoped to their account)
             const profilesRes = await fetch(basePath + '/api/profiles').then(r => r.json());
@@ -1205,6 +1254,157 @@ async function deleteInvitation(invitationId) {
         const res = await fetch(basePath + '/api/invitations?invitationId=' + invitationId, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         showToast('Invitation deleted');
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    }
+}
+
+function formatConnectionDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+}
+
+function renderConnectionInvites() {
+    const statusEl = document.getElementById('remote-access-status');
+    if (statusEl) {
+        if (!remoteAccessStatus) {
+            statusEl.textContent = 'Remote access status unavailable';
+        } else {
+            const state = remoteAccessStatus.state || 'unknown';
+            const activeInvites = remoteAccessStatus.activeInvites || 0;
+            const running = remoteAccessStatus.running ? 'running' : 'stopped';
+            const lastError = remoteAccessStatus.lastError || '';
+            const error = lastError ? `<div class="remote-access-status-error">Last host message: ${escapeHtml(lastError)}</div>` : '';
+            statusEl.innerHTML = `
+                ${escapeHtml(remoteAccessStatus.provider || 'iroh')}: ${running}, ${escapeHtml(state)}, ${activeInvites} active invite${activeInvites !== 1 ? 's' : ''}
+                ${error}
+            `;
+        }
+    }
+
+    const container = document.getElementById('connection-invites-list');
+    const countEl = document.getElementById('connection-invites-count');
+    if (!container || !countEl) return;
+
+    const activeInvites = connectionInvites.filter(inv => !inv.revokedAt && (inv.usedAt || new Date(inv.expiresAt) > new Date()));
+    countEl.textContent = activeInvites.length + ' active connection invite' + (activeInvites.length !== 1 ? 's' : '');
+
+    if (connectionInvites.length === 0) {
+        container.innerHTML = `<div class="card"><div class="card-body" style="text-align: center; color: var(--text-muted);">No connection invitations yet.</div></div>`;
+        return;
+    }
+
+    function inviteState(inv) {
+        if (inv.revokedAt) return { label: 'Revoked', cls: 'warning' };
+        if (inv.usedAt) return { label: 'Claimed', cls: 'online' };
+        if (new Date(inv.expiresAt) <= new Date()) return { label: 'Expired', cls: 'warning' };
+        return { label: 'Waiting', cls: 'online' };
+    }
+
+    container.innerHTML = connectionInvites.map(inv => {
+        const state = inviteState(inv);
+        const inactive = state.label === 'Revoked' || state.label === 'Expired';
+        return `
+            <div class="card" style="margin-bottom: 0.75rem; ${inactive ? 'opacity: 0.6;' : ''}">
+                <div class="card-body" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 220px;">
+                        <div style="font-weight: 600; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                            ${escapeHtml(inv.peerName || 'Connection invite')}
+                            <span class="status-badge ${state.cls}" style="font-size: 0.65rem;">${state.label}</span>
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+                            Created: ${formatConnectionDate(inv.createdAt)}
+                            ${inv.usedAt ? ' | Claimed: ' + formatConnectionDate(inv.usedAt) : ' | Expires if unused: ' + formatConnectionDate(inv.expiresAt)}
+                        </div>
+                        ${!inactive && !inv.usedAt && inv.connectionCode ? `
+                            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.35rem; overflow-wrap: anywhere;">
+                                Invite code: <code style="font-size: 0.75rem;">${escapeHtml(inv.connectionCode)}</code>
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="connection-actions">
+                        ${!inactive && !inv.usedAt && inv.connectionCode ? `<button class="btn btn-secondary btn-sm" onclick="copyInvitationLink('${inv.connectionCode}')">Copy Code</button>` : ''}
+                        ${!inactive ? `<button class="btn btn-danger btn-sm" onclick="revokeConnectionInvite('${inv.id}')">Revoke</button>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function showCreateConnectionInviteModal() {
+    showModal(`
+        <div class="card-header"><h2>Create Connection Invite</h2></div>
+        <div class="card-body">
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label class="form-label">Device Label</label>
+                <input type="text" id="connPeerName" class="form-input" placeholder="iPhone" autofocus>
+            </div>
+            <div class="form-group" style="margin-bottom: 1rem;">
+                <label class="form-label">Invite Expiry</label>
+                <select id="connExpiry" class="form-input">
+                    <option value="1">1 hour</option>
+                    <option value="6">6 hours</option>
+                    <option value="24" selected>1 day</option>
+                    <option value="72">3 days</option>
+                    <option value="168">7 days</option>
+                </select>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">
+                The shared Iroh host runs only while at least one connection invite is active.
+            </p>
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+                <button class="btn btn-secondary" onclick="hideModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createConnectionInvite()">Create</button>
+            </div>
+        </div>
+    `);
+}
+
+let creatingConnectionInvite = false;
+async function createConnectionInvite() {
+    if (creatingConnectionInvite) return;
+    creatingConnectionInvite = true;
+    const peerName = document.getElementById('connPeerName').value.trim();
+    const expiresInHours = parseInt(document.getElementById('connExpiry').value) || 24;
+    try {
+        const res = await fetch(basePath + '/api/remote-access/invites', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ peerName, expiresInHours })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const inv = await res.json();
+        showModal(`
+            <div class="card-header"><h2>Connection Invite Created</h2></div>
+            <div class="card-body">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                    Paste this code into the app join screen.
+                </p>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <input type="text" class="form-input" value="${inv.connectionCode || ''}" readonly style="flex: 1;">
+                    <button class="btn btn-primary" onclick="copyInvitationLink('${inv.connectionCode || ''}')">Copy</button>
+                </div>
+                <div style="display: flex; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button class="btn btn-secondary" onclick="hideModal()">Close</button>
+                </div>
+            </div>
+        `);
+        loadData();
+    } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+    } finally {
+        creatingConnectionInvite = false;
+    }
+}
+
+async function revokeConnectionInvite(inviteId) {
+    if (!confirm('Revoke this connection invitation?')) return;
+    try {
+        const res = await fetch(basePath + '/api/remote-access/invites/' + inviteId, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Connection invite revoked');
         loadData();
     } catch (err) {
         showToast('Error: ' + err.message, 'error');

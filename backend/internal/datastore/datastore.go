@@ -78,7 +78,10 @@ func (ds *DataStore) Accounts() AccountRepository       { return &pgAccountRepo{
 func (ds *DataStore) Users() UserRepository             { return &pgUserRepo{pool: ds.pool} }
 func (ds *DataStore) Sessions() SessionRepository       { return &pgSessionRepo{pool: ds.pool} }
 func (ds *DataStore) Invitations() InvitationRepository { return &pgInvitationRepo{pool: ds.pool} }
-func (ds *DataStore) Clients() ClientRepository         { return &pgClientRepo{pool: ds.pool} }
+func (ds *DataStore) RemoteAccessInvites() RemoteAccessInviteRepository {
+	return &pgRemoteAccessInviteRepo{pool: ds.pool}
+}
+func (ds *DataStore) Clients() ClientRepository { return &pgClientRepo{pool: ds.pool} }
 func (ds *DataStore) ClientSettings() ClientSettingsRepository {
 	return &pgClientSettingsRepo{pool: ds.pool}
 }
@@ -123,10 +126,13 @@ func (ds *DataStore) WithTx(ctx context.Context, fn func(tx *Tx) error) error {
 	return pgxTx.Commit(ctx)
 }
 
-func (t *Tx) Accounts() AccountRepository              { return &pgAccountRepo{pool: t.tx} }
-func (t *Tx) Users() UserRepository                    { return &pgUserRepo{pool: t.tx} }
-func (t *Tx) Sessions() SessionRepository              { return &pgSessionRepo{pool: t.tx} }
-func (t *Tx) Invitations() InvitationRepository        { return &pgInvitationRepo{pool: t.tx} }
+func (t *Tx) Accounts() AccountRepository       { return &pgAccountRepo{pool: t.tx} }
+func (t *Tx) Users() UserRepository             { return &pgUserRepo{pool: t.tx} }
+func (t *Tx) Sessions() SessionRepository       { return &pgSessionRepo{pool: t.tx} }
+func (t *Tx) Invitations() InvitationRepository { return &pgInvitationRepo{pool: t.tx} }
+func (t *Tx) RemoteAccessInvites() RemoteAccessInviteRepository {
+	return &pgRemoteAccessInviteRepo{pool: t.tx}
+}
 func (t *Tx) Clients() ClientRepository                { return &pgClientRepo{pool: t.tx} }
 func (t *Tx) ClientSettings() ClientSettingsRepository { return &pgClientSettingsRepo{pool: t.tx} }
 func (t *Tx) UserSettings() UserSettingsRepository     { return &pgUserSettingsRepo{pool: t.tx} }

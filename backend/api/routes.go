@@ -117,6 +117,7 @@ func Register(
 	startupHandler *handlers.StartupHandler,
 	detailsBundleHandler *handlers.DetailsBundleHandler,
 	calendarHandler *handlers.CalendarHandler,
+	remoteAccessHandler *handlers.RemoteAccessHandler,
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
@@ -155,6 +156,8 @@ func Register(
 	// Must be registered before protected routes to avoid auth middleware
 	api.HandleFunc("/users/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/icon", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/debug/speed-test", handlers.ServeSpeedTest).Methods(http.MethodGet, http.MethodHead)
+	api.HandleFunc("/debug/speed-test", handleOptions).Methods(http.MethodOptions)
 	if videoHandler != nil {
 		api.Handle("/video/internal-stream", localhostOnlyMiddleware(http.HandlerFunc(videoHandler.StreamVideo))).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	}
@@ -166,6 +169,26 @@ func Register(
 	// Logout requires a valid session to prevent unauthenticated session revocation
 	protected.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
 	protected.HandleFunc("/auth/logout", authHandler.Options).Methods(http.MethodOptions)
+
+	if remoteAccessHandler != nil {
+		api.HandleFunc("/remote-access/invites/resolve", remoteAccessHandler.ResolveInvite).Methods(http.MethodPost)
+		api.HandleFunc("/remote-access/invites/resolve", remoteAccessHandler.Options).Methods(http.MethodOptions)
+		api.HandleFunc("/remote-access/invites/claim", remoteAccessHandler.ClaimInvite).Methods(http.MethodPost)
+		api.HandleFunc("/remote-access/invites/claim", remoteAccessHandler.Options).Methods(http.MethodOptions)
+
+		protected.HandleFunc("/remote-access/status", remoteAccessHandler.Status).Methods(http.MethodGet)
+		protected.HandleFunc("/remote-access/status", remoteAccessHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/remote-access/invites/claimed", remoteAccessHandler.ResolveClaimedInvite).Methods(http.MethodGet)
+		protected.HandleFunc("/remote-access/invites/claimed", remoteAccessHandler.Options).Methods(http.MethodOptions)
+
+		remoteAccessMaster := protected.PathPrefix("/remote-access").Subrouter()
+		remoteAccessMaster.Use(MasterOnlyMiddleware())
+		remoteAccessMaster.HandleFunc("/invites", remoteAccessHandler.ListInvites).Methods(http.MethodGet)
+		remoteAccessMaster.HandleFunc("/invites", remoteAccessHandler.CreateInvite).Methods(http.MethodPost)
+		remoteAccessMaster.HandleFunc("/invites", remoteAccessHandler.Options).Methods(http.MethodOptions)
+		remoteAccessMaster.HandleFunc("/invites/{inviteID}", remoteAccessHandler.RevokeInvite).Methods(http.MethodDelete)
+		remoteAccessMaster.HandleFunc("/invites/{inviteID}", remoteAccessHandler.Options).Methods(http.MethodOptions)
+	}
 
 	// Account management routes (master only)
 	masterOnly := protected.PathPrefix("/accounts").Subrouter()

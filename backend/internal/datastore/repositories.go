@@ -53,6 +53,17 @@ type InvitationRepository interface {
 	Count(ctx context.Context) (int64, error)
 }
 
+type RemoteAccessInviteRepository interface {
+	Get(ctx context.Context, id string) (*models.RemoteAccessInvite, error)
+	GetByTokenHash(ctx context.Context, tokenHash string) (*models.RemoteAccessInvite, error)
+	List(ctx context.Context) ([]models.RemoteAccessInvite, error)
+	Create(ctx context.Context, inv *models.RemoteAccessInvite) error
+	ClaimByTokenHash(ctx context.Context, tokenHash string, peerID string, now time.Time) (*models.RemoteAccessInvite, error)
+	Update(ctx context.Context, inv *models.RemoteAccessInvite) error
+	Delete(ctx context.Context, id string) error
+	Count(ctx context.Context) (int64, error)
+}
+
 // ClientRepository manages client/device persistence.
 type ClientRepository interface {
 	Get(ctx context.Context, id string) (*models.Client, error)
