@@ -3,9 +3,11 @@ package usenet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,9 +18,10 @@ import (
 
 // Global usenet memory tracking for diagnostics
 var (
-	activeReaders    int64 // number of active usenet readers
-	activeSegments   int64 // total segments across all active readers
-	estimatedMemory  int64 // estimated total bytes in usenet pipelines
+	activeReaders   int64 // number of active usenet readers
+	activeSegments  int64 // total segments across all active readers
+	estimatedMemory int64 // estimated total bytes in usenet pipelines
+	readerIDCounter int64
 )
 
 const defaultDownloadWorkers = 15
@@ -46,6 +49,7 @@ func (e *ArticleNotFoundError) Unwrap() error {
 }
 
 type usenetReader struct {
+	id                 int64
 	log                *slog.Logger
 	wg                 sync.WaitGroup
 	cancel             context.CancelFunc
@@ -54,6 +58,9 @@ type usenetReader struct {
 	init               chan any
 	initDownload       sync.Once
 	totalBytesRead     int64
+	readStartedAt      time.Time
+	lastReadLogAt      time.Time
+	lastReadLogBytes   int64
 	mu                 sync.Mutex
 	closeOnce          sync.Once
 	// Sliding window state for memory-efficient streaming
@@ -70,6 +77,7 @@ func NewUsenetReader(
 	maxCacheSizeMB ...int, // Optional parameter for compatibility
 ) (io.ReadCloser, error) {
 	log := slog.Default()
+	readerID := atomic.AddInt64(&readerIDCounter, 1)
 
 	// Calculate memory usage estimate
 	var totalSegmentSize int64
@@ -85,15 +93,18 @@ func NewUsenetReader(
 	runtime.ReadMemStats(&m)
 
 	log.InfoContext(ctx, "usenet.reader.init",
+		"reader_id", readerID,
 		"segments", len(rg.segments),
 		"range_start", rg.start,
 		"range_end", rg.end,
+		"range_bytes", rg.end-rg.start+1,
 		"max_download_workers", maxDownloadWorkers,
 		"est_segment_bytes_mb", totalSegmentSize/1024/1024,
 		"global_active_readers", readers,
 		"global_active_segments", segs,
 		"global_est_memory_mb", estMem/1024/1024,
 		"heap_alloc_mb", m.HeapAlloc/1024/1024,
+		"pool", summarizePoolSnapshot(cp),
 	)
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -107,6 +118,7 @@ func NewUsenetReader(
 	}
 
 	ur := &usenetReader{
+		id:                 readerID,
 		log:                log,
 		cancel:             cancel,
 		rg:                 rg,
@@ -138,11 +150,22 @@ func (b *usenetReader) Close() error {
 		segs := atomic.AddInt64(&activeSegments, -int64(len(b.rg.segments)))
 		estMem := atomic.AddInt64(&estimatedMemory, -totalSegSize)
 
+		b.mu.Lock()
+		totalBytesRead := b.totalBytesRead
+		readStartedAt := b.readStartedAt
+		b.mu.Unlock()
+		var avgDeliveryMBps float64
+		if !readStartedAt.IsZero() {
+			avgDeliveryMBps = mbps(totalBytesRead, time.Since(readStartedAt))
+		}
+
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 
 		b.log.Info("usenet.reader.closing",
-			"total_bytes_read", b.totalBytesRead,
+			"reader_id", b.id,
+			"total_bytes_read", totalBytesRead,
+			"avg_delivery_mbps", avgDeliveryMBps,
 			"segments_count", len(b.rg.segments),
 			"freed_est_mb", totalSegSize/1024/1024,
 			"global_active_readers", readers,
@@ -168,6 +191,7 @@ func (b *usenetReader) Close() error {
 				// Normal cleanup path
 			case <-time.After(30 * time.Second):
 				b.log.Warn("usenet.reader.cleanup_timeout",
+					"reader_id", b.id,
 					"total_bytes_read", b.totalBytesRead,
 					"segments_count", len(b.rg.segments),
 				)
@@ -193,7 +217,18 @@ func (b *usenetReader) Read(p []byte) (int, error) {
 	}
 
 	b.initDownload.Do(func() {
-		b.log.Debug("usenet.reader.start_download")
+		b.mu.Lock()
+		b.readStartedAt = time.Now()
+		b.lastReadLogAt = b.readStartedAt
+		b.mu.Unlock()
+		b.log.Info("usenet.reader.start_download",
+			"reader_id", b.id,
+			"segments", len(b.rg.segments),
+			"range_start", b.rg.start,
+			"range_end", b.rg.end,
+			"range_bytes", b.rg.end-b.rg.start+1,
+			"max_download_workers", b.maxDownloadWorkers,
+		)
 		b.init <- struct{}{}
 	})
 
@@ -245,6 +280,7 @@ func (b *usenetReader) Read(p []byte) (int, error) {
 
 		if nn > 0 {
 			b.log.Debug("usenet.reader.bytes_read",
+				"reader_id", b.id,
 				"segment_id", s.Id,
 				"chunk_bytes", nn,
 				"segment_bytes_read", s.BytesRead(),
@@ -252,6 +288,7 @@ func (b *usenetReader) Read(p []byte) (int, error) {
 				"reader_total_bytes", totalRead,
 				"buffer_size", len(p),
 			)
+			b.maybeLogReadThroughput(totalRead)
 		}
 
 		if err != nil {
@@ -346,6 +383,39 @@ func (b *usenetReader) isArticleNotFoundError(err error) bool {
 	return errors.Is(err, nntppool.ErrArticleNotFoundInProviders)
 }
 
+func (b *usenetReader) maybeLogReadThroughput(totalRead int64) {
+	now := time.Now()
+
+	b.mu.Lock()
+	startedAt := b.readStartedAt
+	lastAt := b.lastReadLogAt
+	lastBytes := b.lastReadLogBytes
+	if startedAt.IsZero() {
+		b.mu.Unlock()
+		return
+	}
+	if now.Sub(lastAt) < 15*time.Second && totalRead-lastBytes < 64*1024*1024 {
+		b.mu.Unlock()
+		return
+	}
+	b.lastReadLogAt = now
+	b.lastReadLogBytes = totalRead
+	currentSegment := b.rg.current
+	segmentCount := len(b.rg.segments)
+	b.mu.Unlock()
+
+	b.log.Info("usenet.reader.throughput",
+		"reader_id", b.id,
+		"delivered_bytes", totalRead,
+		"delivered_mb", totalRead/1024/1024,
+		"avg_delivery_mbps", mbps(totalRead, now.Sub(startedAt)),
+		"recent_delivery_mbps", mbps(totalRead-lastBytes, now.Sub(lastAt)),
+		"segment_index", currentSegment,
+		"segments", segmentCount,
+		"elapsed", now.Sub(startedAt).String(),
+	)
+}
+
 func (b *usenetReader) downloadManager(
 	ctx context.Context,
 	cp nntppool.UsenetConnectionPool,
@@ -365,11 +435,21 @@ func (b *usenetReader) downloadManager(
 			WithMaxGoroutines(downloadWorkers).
 			WithContext(ctx)
 
+		var activeDownloads int64
+		var completedDownloads int64
+		var failedDownloads int64
+		var downloadedBytes int64
+
 		// Log concurrent download setup
 		b.log.InfoContext(ctx, "usenet.download_manager.starting",
+			"reader_id", b.id,
 			"total_segments", len(b.rg.segments),
 			"max_workers", downloadWorkers,
+			"pool", summarizePoolSnapshot(cp),
 		)
+
+		progressDone := make(chan struct{})
+		go b.logDownloadProgress(ctx, cp, progressDone, &activeDownloads, &completedDownloads, &failedDownloads, &downloadedBytes)
 
 		// Download all segments in the range (now limited at segment range level)
 		for _, seg := range b.rg.segments {
@@ -381,30 +461,70 @@ func (b *usenetReader) downloadManager(
 			segmentID := s.Id
 			pool.Go(func(c context.Context) error {
 				w := s.writer
+				startedAt := time.Now()
+				active := atomic.AddInt64(&activeDownloads, 1)
 				b.log.DebugContext(ctx, "usenet.segment.download_starting",
+					"reader_id", b.id,
 					"segment_id", segmentID,
 					"segment_size", s.SegmentSize,
+					"active_downloads", active,
 				)
+				defer atomic.AddInt64(&activeDownloads, -1)
 
 				// Set the item ready to read with retry logic for incomplete downloads
-				_, err := cp.Body(ctx, segmentID, s.Writer(), s.groups)
+				bytesFetched, err := cp.Body(ctx, segmentID, s.Writer(), s.groups)
+				duration := time.Since(startedAt)
+				if bytesFetched > 0 {
+					atomic.AddInt64(&downloadedBytes, bytesFetched)
+				}
 				if !errors.Is(err, context.Canceled) {
 					cErr := w.CloseWithError(err)
 					if cErr != nil {
-						b.log.ErrorContext(ctx, "Error closing segment buffer:", "error", cErr)
+						b.log.ErrorContext(ctx, "Error closing segment buffer:",
+							"reader_id", b.id,
+							"segment_id", segmentID,
+							"error", cErr,
+						)
 					}
 
 					if err != nil && !errors.Is(err, context.Canceled) {
-						b.log.WarnContext(ctx, "usenet segment fetch error", "segment_id", segmentID, "error", err)
+						atomic.AddInt64(&failedDownloads, 1)
+						b.log.WarnContext(ctx, "usenet.segment.fetch_error",
+							"reader_id", b.id,
+							"segment_id", segmentID,
+							"segment_size", s.SegmentSize,
+							"bytes_fetched", bytesFetched,
+							"duration", duration.String(),
+							"download_mbps", mbps(bytesFetched, duration),
+							"active_downloads", atomic.LoadInt64(&activeDownloads),
+							"error", err,
+							"pool", summarizePoolSnapshot(cp),
+						)
 						return err
 					}
 
+					completed := atomic.AddInt64(&completedDownloads, 1)
+					b.log.DebugContext(ctx, "usenet.segment.fetch_complete",
+						"reader_id", b.id,
+						"segment_id", segmentID,
+						"segment_size", s.SegmentSize,
+						"bytes_fetched", bytesFetched,
+						"duration", duration.String(),
+						"download_mbps", mbps(bytesFetched, duration),
+						"completed_segments", completed,
+						"total_segments", len(b.rg.segments),
+						"active_downloads", atomic.LoadInt64(&activeDownloads),
+					)
 					return nil
 				}
 
 				err = w.Close()
 				if err != nil {
-					b.log.ErrorContext(ctx, "Error closing segment writer:", "error", err)
+					b.log.ErrorContext(ctx, "Error closing segment writer:",
+						"reader_id", b.id,
+						"segment_id", segmentID,
+						"error", err,
+					)
 				}
 
 				return nil
@@ -412,11 +532,71 @@ func (b *usenetReader) downloadManager(
 		}
 
 		if err := pool.Wait(); err != nil {
-			b.log.DebugContext(ctx, "Error downloading segments:", "error", err)
+			close(progressDone)
+			b.log.DebugContext(ctx, "Error downloading segments:",
+				"reader_id", b.id,
+				"error", err,
+				"pool", summarizePoolSnapshot(cp),
+			)
 			return
 		}
+		close(progressDone)
+		b.log.InfoContext(ctx, "usenet.download_manager.complete",
+			"reader_id", b.id,
+			"total_segments", len(b.rg.segments),
+			"completed_segments", atomic.LoadInt64(&completedDownloads),
+			"failed_segments", atomic.LoadInt64(&failedDownloads),
+			"downloaded_mb", atomic.LoadInt64(&downloadedBytes)/1024/1024,
+			"pool", summarizePoolSnapshot(cp),
+		)
 	case <-ctx.Done():
 		return
+	}
+}
+
+func (b *usenetReader) logDownloadProgress(
+	ctx context.Context,
+	cp nntppool.UsenetConnectionPool,
+	done <-chan struct{},
+	activeDownloads, completedDownloads, failedDownloads, downloadedBytes *int64,
+) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	startedAt := time.Now()
+	var lastBytes int64
+	var lastAt = startedAt
+
+	for {
+		select {
+		case <-ticker.C:
+			now := time.Now()
+			currentBytes := atomic.LoadInt64(downloadedBytes)
+			b.mu.Lock()
+			deliveredBytes := b.totalBytesRead
+			currentSegment := b.rg.current
+			b.mu.Unlock()
+			b.log.InfoContext(ctx, "usenet.download_manager.progress",
+				"reader_id", b.id,
+				"active_downloads", atomic.LoadInt64(activeDownloads),
+				"completed_segments", atomic.LoadInt64(completedDownloads),
+				"failed_segments", atomic.LoadInt64(failedDownloads),
+				"total_segments", len(b.rg.segments),
+				"downloaded_mb", currentBytes/1024/1024,
+				"delivered_mb", deliveredBytes/1024/1024,
+				"avg_download_mbps", mbps(currentBytes, now.Sub(startedAt)),
+				"recent_download_mbps", mbps(currentBytes-lastBytes, now.Sub(lastAt)),
+				"avg_delivery_mbps", mbps(deliveredBytes, now.Sub(startedAt)),
+				"segment_index", currentSegment,
+				"pool", summarizePoolSnapshot(cp),
+			)
+			lastBytes = currentBytes
+			lastAt = now
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -425,4 +605,53 @@ func GlobalReaderStats() (readers, segments, estMemoryMB int64) {
 	return atomic.LoadInt64(&activeReaders),
 		atomic.LoadInt64(&activeSegments),
 		atomic.LoadInt64(&estimatedMemory) / 1024 / 1024
+}
+
+func mbps(bytes int64, duration time.Duration) float64 {
+	if bytes <= 0 || duration <= 0 {
+		return 0
+	}
+	return float64(bytes) / 1024 / 1024 / duration.Seconds()
+}
+
+func summarizePoolSnapshot(cp nntppool.UsenetConnectionPool) string {
+	if cp == nil {
+		return "unavailable"
+	}
+
+	snapshot := cp.GetMetricsSnapshot()
+	providers := make([]string, 0, len(snapshot.ProviderMetrics))
+	for _, p := range snapshot.ProviderMetrics {
+		providers = append(providers, fmt.Sprintf(
+			"%s state=%v conn=%d/%d acquired=%d idle=%d constructing=%d empty_acquires=%d empty_wait=%s bytes_down_mb=%d articles=%d success=%.1f%%",
+			p.ProviderID,
+			p.State,
+			p.TotalConnections,
+			p.MaxConnections,
+			p.AcquiredConnections,
+			p.IdleConnections,
+			p.ConstructingConnections,
+			p.EmptyAcquireCount,
+			p.EmptyAcquireWaitTime,
+			p.TotalBytesDownloaded/1024/1024,
+			p.TotalArticlesRetrieved,
+			p.SuccessRate,
+		))
+	}
+
+	return fmt.Sprintf(
+		"conn=%d acquired=%d idle=%d active=%d acquires=%d releases=%d avg_wait=%s recent_down=%.2fMBps historical_down=%.2fMBps errors=%d retries=%d providers=[%s]",
+		snapshot.TotalConnections,
+		snapshot.AcquiredConnections,
+		snapshot.IdleConnections,
+		snapshot.ActiveConnections,
+		snapshot.TotalAcquires,
+		snapshot.TotalReleases,
+		snapshot.AverageAcquireWaitTime,
+		snapshot.DownloadSpeed/1024/1024,
+		snapshot.HistoricalDownloadSpeed/1024/1024,
+		snapshot.TotalErrors,
+		snapshot.TotalRetries,
+		strings.Join(providers, "; "),
+	)
 }
