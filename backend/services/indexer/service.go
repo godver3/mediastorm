@@ -46,6 +46,17 @@ var (
 	resolution480Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
 )
 
+var sportsEventSideContentFilterTerms = []string{
+	`/\bearly[\s._-]*prelims?\b/`,
+	`/\bprelims?\b/`,
+	`/\bembedded\b/`,
+	`/\bvlog\b/`,
+	`/\bweigh[\s._-]*ins?\b/`,
+	`/\bpress[\s._-]*conference\b/`,
+	`/\bpost[\s._-]*fight\b/`,
+	`/\bcountdown\b/`,
+}
+
 // sanitizeXMLAmpersands escapes unescaped ampersands in XML that aren't part of valid entity references.
 // This fixes malformed XML from indexers that don't properly escape titles like "Tom & Jerry".
 func sanitizeXMLAmpersands(data []byte) ([]byte, int) {
@@ -1600,6 +1611,10 @@ func buildSearchQueries(opts SearchOptions, parsed debrid.ParsedQuery, alternate
 		}
 	}
 
+	if eventQuery := sportsEventSearchQuery(parsed.Title); eventQuery != "" {
+		addQuery(eventQuery)
+	}
+
 	// Add the original query
 	addQuery(opts.Query)
 
@@ -1620,6 +1635,32 @@ func buildSearchQueries(opts SearchOptions, parsed debrid.ParsedQuery, alternate
 	}
 
 	return queries
+}
+
+func sportsEventSearchQuery(title string) string {
+	normalized := strings.TrimSpace(strings.ReplaceAll(title, "：", ":"))
+	upper := strings.ToUpper(normalized)
+	if !strings.HasPrefix(upper, "UFC ") {
+		return ""
+	}
+
+	rest := strings.TrimSpace(normalized[4:])
+	if rest == "" {
+		return ""
+	}
+
+	var digits strings.Builder
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			break
+		}
+		digits.WriteRune(r)
+	}
+	if digits.Len() == 0 {
+		return ""
+	}
+
+	return "UFC " + digits.String()
 }
 
 func composeQueryForSearch(title string, opts SearchOptions, parsed debrid.ParsedQuery) string {
@@ -1946,6 +1987,11 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 	expectedTitle := strings.TrimSpace(baseParsed.Title)
 	if expectedTitle == "" {
 		expectedTitle = strings.TrimSpace(queryParsed.Title)
+	}
+	if eventQuery := sportsEventSearchQuery(expectedTitle); eventQuery != "" {
+		expectedTitle = eventQuery
+		alternateTitles = append([]string{eventQuery}, alternateTitles...)
+		filterSettings.FilterOutTerms = append(append([]string{}, filterSettings.FilterOutTerms...), sportsEventSideContentFilterTerms...)
 	}
 
 	expectedYear := opts.Year

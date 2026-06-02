@@ -15,6 +15,17 @@ import (
 	"novastream/utils/filter"
 )
 
+var sportsEventSideContentFilterTerms = []string{
+	`/\bearly[\s._-]*prelims?\b/`,
+	`/\bprelims?\b/`,
+	`/\bembedded\b/`,
+	`/\bvlog\b/`,
+	`/\bweigh[\s._-]*ins?\b/`,
+	`/\bpress[\s._-]*conference\b/`,
+	`/\bpost[\s._-]*fight\b/`,
+	`/\bcountdown\b/`,
+}
+
 // userSettingsProvider retrieves per-user settings.
 type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
@@ -462,10 +473,17 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// Apply parsed-based filtering if appropriate (using per-user filter settings)
 	if !bypassFiltering && !opts.SkipFilter && ShouldFilter(parsed) {
 		hasResolver := opts.EpisodeResolver != nil
+		expectedTitle := parsed.Title
+		alternateTitles := opts.AlternateTitles
+		if eventQuery := sportsEventSearchQuery(expectedTitle); eventQuery != "" {
+			expectedTitle = eventQuery
+			alternateTitles = append([]string{eventQuery}, alternateTitles...)
+			filterSettings.FilterOutTerms = append(append([]string{}, filterSettings.FilterOutTerms...), sportsEventSideContentFilterTerms...)
+		}
 		log.Printf("[debrid] Applying filter with title=%q, year=%d, mediaType=%s, hasEpisodeResolver=%v, targetS%02dE%02d, absoluteEp=%d",
-			parsed.Title, parsed.Year, parsed.MediaType, hasResolver, parsed.Season, parsed.Episode, opts.AbsoluteEpisodeNumber)
+			expectedTitle, parsed.Year, parsed.MediaType, hasResolver, parsed.Season, parsed.Episode, opts.AbsoluteEpisodeNumber)
 		filterOpts := FilterOptions{
-			ExpectedTitle:         parsed.Title,
+			ExpectedTitle:         expectedTitle,
 			ExpectedYear:          parsed.Year,
 			EpisodeAirYear:        opts.EpisodeAirYear,
 			MediaType:             parsed.MediaType,
@@ -473,7 +491,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			MaxSizeEpisodeGB:      models.FloatVal(filterSettings.MaxSizeEpisodeGB, 0),
 			MaxResolution:         filterSettings.MaxResolution,
 			HDRDVPolicy:           filter.HDRDVPolicy(filterSettings.HDRDVPolicy),
-			AlternateTitles:       opts.AlternateTitles,
+			AlternateTitles:       alternateTitles,
 			RequiredTerms:         filterSettings.RequiredTerms,
 			FilterOutTerms:        filterSettings.FilterOutTerms,
 			TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,

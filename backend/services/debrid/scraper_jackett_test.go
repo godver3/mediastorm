@@ -306,6 +306,136 @@ func TestProwlarrSearchUsesProvidedTorznabEndpoint(t *testing.T) {
 	}
 }
 
+func TestJackettSearchUFCMovieUsesGenericEventQuery(t *testing.T) {
+	var requests []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		requests = append(requests, query.Get("t")+"|"+query.Get("q"))
+
+		if query.Get("t") != "search" || query.Get("q") != "UFC 322" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Fatalf("unexpected request t=%q q=%q", query.Get("t"), query.Get("q"))
+		}
+
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>UFC.322.Della.Maddalena.vs.Makhachev.PPV.1080p.WEB.h264-VERUM</title>
+      <guid>magnet:?xt=urn:btih:2222222222222222222222222222222222222222</guid>
+      <size>8000000000</size>
+      <torznab:attr name="infohash" value="2222222222222222222222222222222222222222"/>
+      <torznab:attr name="seeders" value="77"/>
+    </item>
+  </channel>
+</rss>`))
+	}))
+	defer server.Close()
+
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
+	results, err := scraper.Search(context.Background(), SearchRequest{
+		Query: "UFC 322: Della Maddalena vs Makhachev 2025",
+		Parsed: ParsedQuery{
+			Title:     "UFC 322: Della Maddalena vs Makhachev",
+			Year:      2025,
+			MediaType: MediaTypeMovie,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(requests) != 1 {
+		t.Fatalf("expected only generic event search, got %v", requests)
+	}
+	if requests[0] != "search|UFC 322" {
+		t.Fatalf("request = %q", requests[0])
+	}
+}
+
+func TestJackettSearchUFCMovieFallsBackToMovieWhenGenericEmpty(t *testing.T) {
+	var requests []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		requests = append(requests, query.Get("t")+"|"+query.Get("q"))
+
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		if query.Get("t") == "search" {
+			w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel></channel></rss>`))
+			return
+		}
+		if query.Get("t") != "movie" {
+			t.Fatalf("unexpected request t=%q q=%q", query.Get("t"), query.Get("q"))
+		}
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>UFC.322.Movie.Fallback.1080p</title>
+      <guid>magnet:?xt=urn:btih:3333333333333333333333333333333333333333</guid>
+      <size>8000000000</size>
+      <torznab:attr name="infohash" value="3333333333333333333333333333333333333333"/>
+    </item>
+  </channel>
+</rss>`))
+	}))
+	defer server.Close()
+
+	scraper := NewJackettScraper(server.URL, "testkey", "Jackett", nil)
+	results, err := scraper.Search(context.Background(), SearchRequest{
+		Query: "UFC 322: Della Maddalena vs Makhachev 2025",
+		Parsed: ParsedQuery{
+			Title:     "UFC 322: Della Maddalena vs Makhachev",
+			Year:      2025,
+			MediaType: MediaTypeMovie,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	expected := []string{
+		"search|UFC 322",
+		"movie|UFC 322: Della Maddalena vs Makhachev 2025",
+	}
+	if len(requests) != len(expected) {
+		t.Fatalf("requests = %v, want %v", requests, expected)
+	}
+	for i := range expected {
+		if requests[i] != expected[i] {
+			t.Fatalf("requests = %v, want %v", requests, expected)
+		}
+	}
+}
+
+func TestSportsEventSearchQuery(t *testing.T) {
+	tests := []struct {
+		title string
+		want  string
+	}{
+		{title: "UFC 322: Della Maddalena vs Makhachev", want: "UFC 322"},
+		{title: "UFC 322 Della Maddalena vs Makhachev", want: "UFC 322"},
+		{title: "ufc 322: Della Maddalena vs Makhachev", want: "UFC 322"},
+		{title: "UFC Fight Night", want: ""},
+		{title: "The Matrix", want: ""},
+	}
+
+	for _, tc := range tests {
+		if got := sportsEventSearchQuery(tc.title); got != tc.want {
+			t.Fatalf("sportsEventSearchQuery(%q) = %q, want %q", tc.title, got, tc.want)
+		}
+	}
+}
+
 func TestJackettSearchTV(t *testing.T) {
 	// Create a test server that returns mock Jackett response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

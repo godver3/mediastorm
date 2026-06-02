@@ -410,6 +410,20 @@ func TestBuildSearchQueries_AnimeAbsoluteEpisode(t *testing.T) {
 	}
 }
 
+func TestBuildSearchQueries_UFCEventAddsShortEventQuery(t *testing.T) {
+	opts := SearchOptions{
+		Query:     "UFC 322: Della Maddalena vs Makhachev",
+		MediaType: "movie",
+		Year:      2025,
+	}
+
+	queries := buildSearchQueries(opts, debrid.ParseQuery(opts.Query), nil)
+
+	if len(queries) == 0 || queries[0] != "UFC 322" {
+		t.Fatalf("expected UFC 322 to be first query, got %v", queries)
+	}
+}
+
 // Verify categories string parsing handles various formats
 func TestCategoriesStringParsing(t *testing.T) {
 	tests := []struct {

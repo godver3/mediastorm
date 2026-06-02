@@ -201,6 +201,61 @@ func TestSearchBypassesFilteringForAIOStreamsOnlyDebridMode(t *testing.T) {
 	}
 }
 
+func TestSearchFiltersUFCEventSideContent(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	cfgManager := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.Streaming.DebridProviders = []config.DebridProviderSettings{
+		{Name: "RealDebrid", Enabled: true, APIKey: "test-key"},
+	}
+	settings.TorrentScrapers = []config.TorrentScraperConfig{
+		{Name: "Jackett", Type: "jackett", URL: "http://example.test", APIKey: "jackett-key", Enabled: true},
+	}
+	settings.Display.BypassFilteringForAIOStreamsOnly = false
+
+	if err := cfgManager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewSearchService(cfgManager, stubScraper{
+		name: "Jackett",
+		results: []ScrapeResult{
+			{
+				Title:    "UFC.322.Della.Maddalena.vs.Makhachev.PPV.1080p.WEB.h264-VERUM",
+				Indexer:  "Jackett",
+				InfoHash: "1111111111111111111111111111111111111111",
+			},
+			{
+				Title:    "UFC.322.Della.Maddalena.vs.Makhachev.Prelims.1080p.WEB.h264-VERUM",
+				Indexer:  "Jackett",
+				InfoHash: "2222222222222222222222222222222222222222",
+			},
+			{
+				Title:    "UFC.322.Embedded-Vlog.Series-Episode.6.1080p.WEBRip.h264-TJ",
+				Indexer:  "Jackett",
+				InfoHash: "3333333333333333333333333333333333333333",
+			},
+		},
+	})
+
+	results, err := svc.Search(t.Context(), SearchOptions{
+		Query:     "UFC 322: Della Maddalena vs Makhachev",
+		MediaType: "movie",
+		Year:      2025,
+	})
+	if err != nil {
+		t.Fatalf("search returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected only main event result, got %d: %+v", len(results), results)
+	}
+	if !strings.Contains(results[0].Title, "PPV") {
+		t.Fatalf("expected PPV main card result, got %q", results[0].Title)
+	}
+}
+
 func TestSearchAppliesRequiredTerms(t *testing.T) {
 	tests := []struct {
 		name          string

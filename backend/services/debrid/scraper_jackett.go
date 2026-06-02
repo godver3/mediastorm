@@ -123,8 +123,17 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 		// TV show search: title + SxxExx
 		results, err = j.searchTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode)
 	} else if req.Parsed.MediaType == MediaTypeMovie || req.Parsed.Year > 0 {
-		// Movie search: title + year
-		results, err = j.searchMovie(ctx, cleanTitle, req.Parsed.Year)
+		if eventQuery := sportsEventSearchQuery(cleanTitle); eventQuery != "" {
+			results, err = j.searchGeneric(ctx, eventQuery)
+			if err == nil && len(results) > 0 {
+				log.Printf("[%s] Sports event generic search returned %d results for %q", strings.ToLower(j.Name()), len(results), eventQuery)
+			} else {
+				log.Printf("[%s] Sports event generic search for %q returned %d results, falling back to movie search", strings.ToLower(j.Name()), eventQuery, len(results))
+				results, err = j.searchMovie(ctx, cleanTitle, req.Parsed.Year)
+			}
+		} else {
+			results, err = j.searchMovie(ctx, cleanTitle, req.Parsed.Year)
+		}
 	} else {
 		// Generic search - try both approaches
 		log.Printf("[jackett] MediaType unknown, performing generic search for %q", cleanTitle)
@@ -146,6 +155,32 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 
 	log.Printf("[%s] Returning %d results for %q", strings.ToLower(j.Name()), len(results), cleanTitle)
 	return results, nil
+}
+
+func sportsEventSearchQuery(title string) string {
+	normalized := strings.TrimSpace(strings.ReplaceAll(title, "：", ":"))
+	upper := strings.ToUpper(normalized)
+	if !strings.HasPrefix(upper, "UFC ") {
+		return ""
+	}
+
+	rest := strings.TrimSpace(normalized[4:])
+	if rest == "" {
+		return ""
+	}
+
+	var digits strings.Builder
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			break
+		}
+		digits.WriteRune(r)
+	}
+	if digits.Len() == 0 {
+		return ""
+	}
+
+	return "UFC " + digits.String()
 }
 
 // searchMovie performs a movie search using t=movie with title and year.
