@@ -319,6 +319,12 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			reject(result, reason)
 			continue
 		}
+		if !opts.IsMovie && isSeriesPrefixExtensionMismatch(parsed.Title, matchedTitle) {
+			reason := fmt.Sprintf("parsed title %q extends expected title %q", parsed.Title, matchedTitle)
+			log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+			reject(result, reason)
+			continue
+		}
 		if len(expectedFormulaOneTerms) > 0 && !formulaOneEventTermsMatch(result.Title, expectedFormulaOneTerms) {
 			reason := fmt.Sprintf("missing Formula 1 event terms %v", expectedFormulaOneTerms)
 			log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
@@ -975,6 +981,26 @@ func titleContainmentScore(parsedTitle, candidate string) float64 {
 	}
 
 	return 0
+}
+
+func isSeriesPrefixExtensionMismatch(parsedTitle, matchedTitle string) bool {
+	parsed := normalizeForContainment(parsedTitle)
+	expected := normalizeForContainment(matchedTitle)
+	if parsed == "" || expected == "" || parsed == expected {
+		return false
+	}
+	if !strings.HasPrefix(parsed, expected) {
+		return false
+	}
+	endIdx := len(expected)
+	if endIdx >= len(parsed) || parsed[endIdx] != ' ' {
+		return false
+	}
+	if formulaOneTitleIdentity(expected) != "" {
+		return false
+	}
+	extraWords := strings.Fields(strings.TrimSpace(parsed[endIdx:]))
+	return len(extraWords) == 1
 }
 
 func containsDigit(value string) bool {

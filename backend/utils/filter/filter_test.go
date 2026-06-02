@@ -834,7 +834,7 @@ func TestTitleContainmentScore(t *testing.T) {
 		},
 		{
 			// Prefix match — parsed starts with candidate
-			name:        "prefix match - Show Name Extended vs Show Name",
+			name:        "prefix match still scores high at containment level - Show Name Extended vs Show Name",
 			parsedTitle: "show name extended edition",
 			candidate:   "show name",
 			wantHigh:    true,
@@ -849,6 +849,61 @@ func TestTitleContainmentScore(t *testing.T) {
 			}
 			if !tt.wantHigh && score >= 0.90 {
 				t.Errorf("titleContainmentScore(%q, %q) = %.2f, want < 0.90", tt.parsedTitle, tt.candidate, score)
+			}
+		})
+	}
+}
+
+func TestSeriesPrefixExtensionMismatch(t *testing.T) {
+	tests := []struct {
+		name         string
+		parsedTitle  string
+		matchedTitle string
+		wantMismatch bool
+	}{
+		{
+			name:         "spinoff title extends expected title",
+			parsedTitle:  "The Rookie Feds",
+			matchedTitle: "The Rookie",
+			wantMismatch: true,
+		},
+		{
+			name:         "exact title is not a mismatch",
+			parsedTitle:  "The Rookie",
+			matchedTitle: "The Rookie",
+			wantMismatch: false,
+		},
+		{
+			name:         "different prefix is handled by similarity",
+			parsedTitle:  "After the First 48",
+			matchedTitle: "The First 48",
+			wantMismatch: false,
+		},
+		{
+			name:         "formula one short title exception",
+			parsedTitle:  "F1 The Movie",
+			matchedTitle: "F1",
+			wantMismatch: false,
+		},
+		{
+			name:         "formula one expanded title exception",
+			parsedTitle:  "Formula 1 Drive to Survive",
+			matchedTitle: "Formula 1",
+			wantMismatch: false,
+		},
+		{
+			name:         "multi-word season subtitle is not a mismatch",
+			parsedTitle:  "Dr Stone New World",
+			matchedTitle: "Dr Stone",
+			wantMismatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSeriesPrefixExtensionMismatch(tt.parsedTitle, tt.matchedTitle)
+			if got != tt.wantMismatch {
+				t.Fatalf("isSeriesPrefixExtensionMismatch(%q, %q) = %v, want %v", tt.parsedTitle, tt.matchedTitle, got, tt.wantMismatch)
 			}
 		})
 	}
@@ -1128,6 +1183,30 @@ func TestResults_SpinoffTitleRejection(t *testing.T) {
 			if r.Title != "The.First.48.S10E01.WS.DSR.XviD-CRiMSON" {
 				t.Errorf("Unexpected result passed filter: %s", r.Title)
 			}
+		}
+	})
+
+	t.Run("The Rookie Feds rejected when searching The Rookie", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "The.Rookie.S01E01.Pilot.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb"},
+			{Title: "The.Rookie.Feds.S01E01.Day.One.1080p.AMZN.WEB-DL.DDP5.1.HEVC-Vyndros"},
+			{Title: "The.Rookie-Feds-S01E01-Day.One.WEBDL-1080p"},
+		}
+
+		opts := Options{
+			ExpectedTitle: "The Rookie",
+			ExpectedYear:  2018,
+			IsMovie:       false,
+			TargetSeason:  1,
+			TargetEpisode: 1,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 1 {
+			t.Fatalf("expected only The Rookie result, got %d", len(filtered))
+		}
+		if filtered[0].Title != results[0].Title {
+			t.Fatalf("filtered title = %q, want %q", filtered[0].Title, results[0].Title)
 		}
 	})
 }
