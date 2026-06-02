@@ -1,0 +1,13 @@
+[package]
+name = "iroh-ios-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "iroh_ios_bridge"
+crate-type = ["staticlib"]
+
+[dependencies]
+iroh = "0.98.2"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+

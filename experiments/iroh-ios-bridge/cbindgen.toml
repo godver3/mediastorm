@@ -1,0 +1,4 @@
+language = "C"
+pragma_once = true
+include_guard = "IROH_IOS_BRIDGE_H"
+
