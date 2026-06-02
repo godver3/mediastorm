@@ -132,13 +132,18 @@ func (s *Service) Start(ctx context.Context) error {
 // Stop gracefully stops the scheduler
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.running {
-		return nil
+	wasRunning := s.running
+	cancel := s.cancel
+	if wasRunning {
+		s.running = false
+		s.ctx = nil
+		s.cancel = nil
 	}
+	s.mu.Unlock()
 
-	s.cancel()
+	if wasRunning && cancel != nil {
+		cancel()
+	}
 
 	// Wait for all tasks to complete with timeout
 	done := make(chan struct{})
@@ -149,12 +154,13 @@ func (s *Service) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		log.Println("[scheduler] Scheduler service stopped gracefully")
+		if wasRunning {
+			log.Println("[scheduler] Scheduler service stopped gracefully")
+		}
 	case <-ctx.Done():
 		log.Println("[scheduler] Scheduler service stopped (timeout)")
 	}
 
-	s.running = false
 	return nil
 }
 

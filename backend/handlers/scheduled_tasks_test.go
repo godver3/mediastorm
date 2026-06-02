@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,13 @@ func newTestScheduledTasksHandler(t *testing.T) *ScheduledTasksHandler {
 		t.Fatalf("save initial settings: %v", err)
 	}
 	svc := scheduler.NewService(mgr, nil, nil, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := svc.Stop(ctx); err != nil {
+			t.Errorf("stop scheduler service: %v", err)
+		}
+	})
 	users := &fakeScheduledTaskUsersProvider{
 		users: map[string]models.User{
 			"prof-1": {ID: "prof-1", Name: models.DefaultUserName},

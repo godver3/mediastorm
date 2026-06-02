@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -244,9 +245,9 @@ func (h *ScheduledTasksHandler) CreateTask(w http.ResponseWriter, r *http.Reques
 
 	// Auto-trigger "once" tasks immediately
 	if task.Frequency == config.ScheduledTaskFrequencyOnce && task.Enabled {
-		go func() {
-			_ = h.schedulerService.RunTaskNow(task.ID)
-		}()
+		if err := h.schedulerService.RunTaskNow(task.ID); err != nil {
+			log.Printf("[scheduler] Failed to auto-trigger one-time task %s: %v", task.ID, err)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
