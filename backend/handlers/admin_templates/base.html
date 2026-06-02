@@ -386,15 +386,15 @@
         }
 
         .grid-2 {
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .grid-3 {
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
         .grid-4 {
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
         }
 
         .status-badge {
@@ -431,6 +431,7 @@
 
         .form-group {
             margin-bottom: 1rem;
+            min-width: 0;
         }
 
         .form-group:last-child {
@@ -450,6 +451,7 @@
 
         .form-label > span:first-child {
             flex: 1;
+            min-width: 0;
         }
 
         /* Inheritance indicators */
@@ -539,11 +541,13 @@
             font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 0.25rem;
+            overflow-wrap: anywhere;
         }
 
         .form-input,
         .form-select {
             width: 100%;
+            min-width: 0;
             padding: 0.625rem 0.875rem;
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
@@ -1072,6 +1076,8 @@
             border: 1px solid var(--border);
             border-radius: var(--radius);
             min-height: 42px;
+            min-width: 0;
+            max-width: 100%;
         }
 
         .weighted-tag-row {
@@ -1082,10 +1088,13 @@
             background: rgba(138, 43, 226, 0.1);
             border: 1px solid rgba(138, 43, 226, 0.2);
             border-radius: 4px;
+            min-width: 0;
+            max-width: 100%;
         }
 
         .weighted-tag-term {
             flex: 1;
+            min-width: 0;
             font-size: 0.8125rem;
             color: var(--text-primary);
             overflow: hidden;
@@ -1095,6 +1104,7 @@
 
         .weighted-tag-weight {
             width: 50px;
+            flex: 0 0 50px;
             padding: 0.15rem 0.3rem;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -1134,7 +1144,7 @@
 
         .weighted-tag-add input {
             flex: 1;
-            min-width: 100px;
+            min-width: 0;
             background: transparent;
             border: none;
             color: var(--text-primary);
@@ -1754,7 +1764,7 @@
             .grid-2,
             .grid-3,
             .grid-4 {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
             }
 
             .main-content {
