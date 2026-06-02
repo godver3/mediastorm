@@ -576,6 +576,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			SubtitleColor:             globalSettings.Playback.SubtitleColor,
 			SubtitleOpacity:           models.FloatPtr(globalSettings.Playback.SubtitleOpacity),
 			SubtitleFont:              globalSettings.Playback.SubtitleFont,
+			SubtitleBold:              models.BoolPtr(globalSettings.Playback.SubtitleBold),
 			SubtitleOutlineEnabled:    models.BoolPtr(globalSettings.Playback.SubtitleOutlineEnabled),
 			SubtitleOutlineColor:      globalSettings.Playback.SubtitleOutlineColor,
 			SubtitleOutlineWeight:     models.FloatPtr(globalSettings.Playback.SubtitleOutlineWeight),

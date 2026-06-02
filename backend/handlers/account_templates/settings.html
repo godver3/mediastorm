@@ -497,6 +497,18 @@ function renderSettings() {
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
+                            <h4>Bold Subtitles</h4>
+                            <p>Use a bold typeface for SRT/VTT subtitles</p>
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="subtitleBold" ${(s.playback.subtitleBold ?? false) ? 'checked' : ''} onchange="markChanged()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <h4>Subtitle Outline</h4>
                             <p>Optional outline color and weight for text subtitles</p>
                         </div>
@@ -683,6 +695,7 @@ function collectSettings() {
             subtitleColor: document.getElementById('subtitleColor').value || '#FFFFFF',
             subtitleOpacity: Number.isFinite(subtitleOpacity) ? subtitleOpacity : 1.0,
             subtitleFont: document.getElementById('subtitleFont').value,
+            subtitleBold: document.getElementById('subtitleBold').checked,
             subtitleOutlineEnabled: document.getElementById('subtitleOutlineEnabled').checked,
             subtitleOutlineColor: document.getElementById('subtitleOutlineColor').value || '#000000',
             subtitleOutlineWeight: Number.isFinite(subtitleOutlineWeight) ? subtitleOutlineWeight : 0.35,

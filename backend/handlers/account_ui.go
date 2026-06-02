@@ -406,6 +406,7 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 			if globalSettings.Playback.SubtitleFont != "" {
 				defaults.Playback.SubtitleFont = globalSettings.Playback.SubtitleFont
 			}
+			defaults.Playback.SubtitleBold = models.BoolPtr(globalSettings.Playback.SubtitleBold)
 			defaults.Playback.SubtitleOutlineEnabled = models.BoolPtr(globalSettings.Playback.SubtitleOutlineEnabled)
 			if globalSettings.Playback.SubtitleOutlineColor != "" {
 				defaults.Playback.SubtitleOutlineColor = globalSettings.Playback.SubtitleOutlineColor

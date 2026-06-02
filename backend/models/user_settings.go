@@ -297,6 +297,7 @@ type PlaybackSettings struct {
 	SubtitleColor              string   `json:"subtitleColor,omitempty"`                       // Text color as #RRGGBB
 	SubtitleOpacity            *float64 `json:"subtitleOpacity,omitempty"`                     // Text opacity (0.0-1.0)
 	SubtitleFont               string   `json:"subtitleFont,omitempty"`                        // SRT/VTT subtitle font family
+	SubtitleBold               *bool    `json:"subtitleBold,omitempty"`                        // Render SRT/VTT subtitle text in bold
 	SubtitleOutlineEnabled     *bool    `json:"subtitleOutlineEnabled,omitempty"`              // Show text outline around subtitles
 	SubtitleOutlineColor       string   `json:"subtitleOutlineColor,omitempty"`                // Outline color as #RRGGBB
 	SubtitleOutlineWeight      *float64 `json:"subtitleOutlineWeight,omitempty"`               // Outline weight (0.0-1.0)
@@ -516,6 +517,7 @@ func DefaultUserSettings() UserSettings {
 			SubtitleSize:               1.0,
 			SubtitleColor:              "#FFFFFF",
 			SubtitleOpacity:            FloatPtr(1.0),
+			SubtitleBold:               BoolPtr(false),
 			SubtitleOutlineEnabled:     BoolPtr(false),
 			SubtitleOutlineColor:       "#000000",
 			SubtitleOutlineWeight:      FloatPtr(0.35),

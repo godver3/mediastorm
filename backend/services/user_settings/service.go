@@ -192,6 +192,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.SubtitleFont == "" {
 			settings.Playback.SubtitleFont = defaults.Playback.SubtitleFont
 		}
+		if settings.Playback.SubtitleBold == nil {
+			settings.Playback.SubtitleBold = defaults.Playback.SubtitleBold
+		}
 		if settings.Playback.SubtitleOutlineEnabled == nil {
 			settings.Playback.SubtitleOutlineEnabled = defaults.Playback.SubtitleOutlineEnabled
 		}
@@ -379,6 +382,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.SubtitleColor != "" ||
 		s.Playback.SubtitleOpacity != nil ||
 		s.Playback.SubtitleFont != "" ||
+		s.Playback.SubtitleBold != nil ||
 		s.Playback.SubtitleOutlineEnabled != nil ||
 		s.Playback.SubtitleOutlineColor != "" ||
 		s.Playback.SubtitleOutlineWeight != nil ||

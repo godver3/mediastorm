@@ -125,6 +125,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			SubtitleColor:             g.Playback.SubtitleColor,
 			SubtitleOpacity:           models.FloatPtr(g.Playback.SubtitleOpacity),
 			SubtitleFont:              g.Playback.SubtitleFont,
+			SubtitleBold:              models.BoolPtr(g.Playback.SubtitleBold),
 			SubtitleOutlineEnabled:    models.BoolPtr(g.Playback.SubtitleOutlineEnabled),
 			SubtitleOutlineColor:      g.Playback.SubtitleOutlineColor,
 			SubtitleOutlineWeight:     models.FloatPtr(g.Playback.SubtitleOutlineWeight),
@@ -245,6 +246,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.SubtitleFont == "" {
 		eff.Playback.SubtitleFont = g.Playback.SubtitleFont
+	}
+	if eff.Playback.SubtitleBold == nil {
+		eff.Playback.SubtitleBold = models.BoolPtr(g.Playback.SubtitleBold)
 	}
 	if eff.Playback.SubtitleOutlineEnabled == nil {
 		eff.Playback.SubtitleOutlineEnabled = models.BoolPtr(g.Playback.SubtitleOutlineEnabled)
@@ -461,6 +465,10 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.SubtitleFont != "" && p.SubtitleFont == g.SubtitleFont {
 		p.SubtitleFont = ""
+		changed = true
+	}
+	if p.SubtitleBold != nil && *p.SubtitleBold == g.SubtitleBold {
+		p.SubtitleBold = nil
 		changed = true
 	}
 	if p.SubtitleOutlineEnabled != nil && *p.SubtitleOutlineEnabled == g.SubtitleOutlineEnabled {
