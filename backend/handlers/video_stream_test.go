@@ -6,8 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
+	"novastream/models"
+	"novastream/services/playback"
 	"novastream/services/streaming"
 )
 
@@ -53,5 +57,65 @@ func TestVideoHandlerStreamsFromMetadataProvider(t *testing.T) {
 	}
 	if !bytes.Equal(body, data) {
 		t.Fatalf("body = %q, want %q", body, data)
+	}
+}
+
+type failingProvider struct {
+	err error
+}
+
+func (p failingProvider) Stream(ctx context.Context, req streaming.Request) (*streaming.Response, error) {
+	return nil, p.err
+}
+
+type invalidationPrewarmMock struct {
+	invalidated []string
+}
+
+func (m *invalidationPrewarmMock) GetWarm(titleID, userID string) *playback.WarmRef {
+	return nil
+}
+
+func (m *invalidationPrewarmMock) GetWarmScoped(titleID, userID, settingsScopeKey string) *playback.WarmRef {
+	return nil
+}
+
+func (m *invalidationPrewarmMock) AdoptEntry(prequeueID string) {}
+
+func (m *invalidationPrewarmMock) UpdateFromPrequeue(prequeueID string) {}
+
+func (m *invalidationPrewarmMock) InvalidatePrequeue(prequeueID string) {
+	m.invalidated = append(m.invalidated, prequeueID)
+}
+
+func TestVideoHandlerInvalidatesPrequeueOnRecoverableOpenFailure(t *testing.T) {
+	streamPath := "/webdav/bad/title.mkv"
+	cleanPath := "/bad/title.mkv"
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	entry, _ := store.Create("title1", "Title", "user1", "series", 0,
+		&models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1}, "prewarm")
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = streamPath
+	})
+
+	prewarm := &invalidationPrewarmMock{}
+	handler := NewVideoHandlerWithProvider(false, "", "", "", failingProvider{err: streaming.ErrNotFound})
+	handler.SetPrequeueStore(store)
+	handler.SetPrewarmService(prewarm)
+
+	req := httptest.NewRequest(http.MethodGet, "/video/stream?path="+url.QueryEscape(streamPath), nil)
+	rr := httptest.NewRecorder()
+
+	handler.StreamVideo(rr, req)
+
+	if _, ok := store.Get(entry.ID); ok {
+		t.Fatal("expected failed prequeue to be removed")
+	}
+	if len(prewarm.invalidated) != 1 || prewarm.invalidated[0] != entry.ID {
+		t.Fatalf("expected prewarm invalidation for %s, got %#v", entry.ID, prewarm.invalidated)
+	}
+	if _, confirmed := handler.failures.confirmedRecent(cleanPath, streamFailureConfirmationTTL); !confirmed {
+		t.Fatal("expected stream failure to be recorded")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	nzbfilesystemlegacy "novastream/internal/nzbfilesystem"
 	"novastream/internal/usenet"
 	"novastream/services/debrid"
+	"novastream/services/streaming"
 )
 
 const streamFailureConfirmationTTL = 2 * time.Minute
@@ -89,6 +90,10 @@ func (r *streamFailureRegistry) pruneLocked(now time.Time) {
 }
 
 func missingArticleFailureReason(err error) (string, bool) {
+	if errors.Is(err, streaming.ErrNotFound) {
+		return "stream_not_found", true
+	}
+
 	var articleErr *usenet.ArticleNotFoundError
 	if errors.As(err, &articleErr) {
 		return "article_not_found", true

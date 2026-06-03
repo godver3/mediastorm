@@ -12,6 +12,7 @@ import (
 	nzbfilesystemlegacy "novastream/internal/nzbfilesystem"
 	"novastream/internal/usenet"
 	"novastream/services/debrid"
+	"novastream/services/streaming"
 )
 
 func TestStreamFailureRegistryRecordsMissingArticleFailures(t *testing.T) {
@@ -74,6 +75,22 @@ func TestStreamFailureRegistryRecordsDebridSourceFailures(t *testing.T) {
 	}
 	if record.Reason != "provider_unavailable" {
 		t.Fatalf("reason = %q, want provider_unavailable", record.Reason)
+	}
+}
+
+func TestStreamFailureRegistryRecordsMissingStreamFailures(t *testing.T) {
+	registry := &streamFailureRegistry{records: make(map[string]streamFailureRecord)}
+
+	if !registry.recordIfMissingArticles("/webdav/stale/path/title.mkv", streaming.ErrNotFound) {
+		t.Fatal("recordIfMissingArticles returned false")
+	}
+
+	record, ok := registry.confirmedRecent("stale/path/title.mkv", time.Minute)
+	if !ok {
+		t.Fatal("confirmedRecent returned false")
+	}
+	if record.Reason != "stream_not_found" {
+		t.Fatalf("reason = %q, want stream_not_found", record.Reason)
 	}
 }
 

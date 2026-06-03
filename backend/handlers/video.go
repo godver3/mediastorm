@@ -33,6 +33,7 @@ import (
 	"novastream/internal/ytdlp"
 	"novastream/models"
 	"novastream/services/credits"
+	"novastream/services/playback"
 	"novastream/services/streaming"
 
 	"github.com/gorilla/mux"
@@ -72,12 +73,14 @@ const providerProbeSampleBytes int64 = 16 * 1024 * 1024
 
 // VideoHandler handles video streaming requests using the local stream provider.
 type VideoHandler struct {
-	transmux    bool
-	ffmpegPath  string
-	ffprobePath string
-	streamer    streaming.Provider
-	hlsManager  *HLSManager
-	failures    *streamFailureRegistry
+	transmux      bool
+	ffmpegPath    string
+	ffprobePath   string
+	streamer      streaming.Provider
+	hlsManager    *HLSManager
+	failures      *streamFailureRegistry
+	prequeueStore *playback.PrequeueStore
+	prewarmSvc    PrewarmService
 
 	// Subtitle extraction for non-HLS streams
 	subtitleExtractManager *SubtitleExtractManager
@@ -356,6 +359,29 @@ func (h *VideoHandler) SetUsersService(svc UsersProvider) {
 // SetAccountsService sets the accounts service for looking up stream limits.
 func (h *VideoHandler) SetAccountsService(svc AccountsProvider) {
 	h.accountsSvc = svc
+}
+
+// SetPrequeueStore lets playback failures invalidate ready prequeue entries.
+func (h *VideoHandler) SetPrequeueStore(store *playback.PrequeueStore) {
+	h.prequeueStore = store
+}
+
+// SetPrewarmService lets playback failures put warm entries into retry backoff.
+func (h *VideoHandler) SetPrewarmService(svc PrewarmService) {
+	h.prewarmSvc = svc
+}
+
+func (h *VideoHandler) invalidatePrequeuesForFailedPath(streamPath string) {
+	if h == nil || h.prequeueStore == nil {
+		return
+	}
+	for _, removed := range h.prequeueStore.DeleteByStreamPath(streamPath) {
+		log.Printf("[video] Removed failed prequeue %s for title=%s user=%s path=%q",
+			removed.ID, removed.TitleID, removed.UserID, removed.StreamPath)
+		if h.prewarmSvc != nil {
+			h.prewarmSvc.InvalidatePrequeue(removed.ID)
+		}
+	}
 }
 
 // SetCreditsDetector sets the credits detection service.
@@ -806,6 +832,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		log.Printf("[video] provider stream failed path=%q range=%q err=%v", cleanPath, rangeHeader, err)
 		if h.failures != nil && h.failures.recordIfMissingArticles(cleanPath, err) {
 			log.Printf("[stream-migration] confirmed recoverable stream failure during open path=%q range=%q err=%v", cleanPath, rangeHeader, err)
+			h.invalidatePrequeuesForFailedPath(cleanPath)
 		}
 		if errors.Is(err, streaming.ErrNotFound) {
 			return false, nil
@@ -989,6 +1016,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 					log.Printf("[video] SEEK ERROR: provider read error path=%q total=%d range=%q err=%v", cleanPath, total, rangeHeader, readErr)
 					if h.failures != nil && h.failures.recordIfMissingArticles(cleanPath, readErr) {
 						log.Printf("[stream-migration] confirmed missing-article stream failure during read path=%q range=%q total=%d err=%v", cleanPath, rangeHeader, total, readErr)
+						h.invalidatePrequeuesForFailedPath(cleanPath)
 					}
 					return true, readErr
 				}

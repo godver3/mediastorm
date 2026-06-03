@@ -205,6 +205,101 @@ func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
 	}
 }
 
+func TestRunOnce_AdoptingExistingPrequeueExtendsTTL(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	users := []models.User{
+		{ID: "user1", Name: "Alice"},
+	}
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {
+			{
+				SeriesID:    "title1",
+				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
+				Year:        2008,
+				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
+			},
+		},
+	}
+
+	entry, _ := store.Create("title1", "Breaking Bad", "user1", "series", 2008,
+		&models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3}, "details")
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = "/webdav/title1.mkv"
+		e.AudioTracks = []playback.AudioTrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
+	})
+	store.ForceExpiry(entry.ID, time.Now().Add(5*time.Minute))
+
+	workerCalls := 0
+	workerFn := func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+		workerCalls++
+		return "", nil
+	}
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(workerFn)
+
+	result, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+	if workerCalls != 0 {
+		t.Fatalf("expected existing prequeue adoption without worker call, got %d", workerCalls)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("expected 1 skipped adoption, got %d", result.Skipped)
+	}
+
+	updated, ok := store.Get(entry.ID)
+	if !ok {
+		t.Fatal("expected adopted prequeue to remain available")
+	}
+	if time.Until(updated.ExpiresAt) < 11*time.Hour {
+		t.Fatalf("expected adopted prequeue TTL to be extended near prewarm max age, expires in %s", time.Until(updated.ExpiresAt))
+	}
+	warm := svc.GetWarm("title1", "user1")
+	if warm == nil || warm.PrequeueID != entry.ID {
+		t.Fatalf("expected warm entry to reference adopted prequeue, got %#v", warm)
+	}
+}
+
+func TestInvalidatePrequeueBacksOffInsteadOfDeletingWarmEntry(t *testing.T) {
+	svc := NewService(nil, "")
+	svc.entries[entryKey("title1", "user1")] = &WarmEntry{
+		TitleID:    "title1",
+		TitleName:  "Breaking Bad",
+		UserID:     "user1",
+		MediaType:  "series",
+		PrequeueID: "pq_bad",
+		StreamPath: "/webdav/bad.mkv",
+		ExpiresAt:  time.Now().Add(12 * time.Hour),
+	}
+
+	svc.InvalidatePrequeue("pq_bad")
+
+	entry := svc.entries[entryKey("title1", "user1")]
+	if entry == nil {
+		t.Fatal("expected invalidated warm entry to remain for retry backoff")
+	}
+	if entry.Error == "" {
+		t.Fatal("expected invalidated warm entry to record an error")
+	}
+	if entry.PrequeueID != "" || entry.StreamPath != "" {
+		t.Fatalf("expected invalidated warm entry to clear stream reference, got prequeue=%q path=%q", entry.PrequeueID, entry.StreamPath)
+	}
+	if time.Until(entry.ExpiresAt) < 55*time.Minute {
+		t.Fatalf("expected invalidated warm entry to back off retries, expires in %s", time.Until(entry.ExpiresAt))
+	}
+	if warm := svc.GetWarm("title1", "user1"); warm != nil {
+		t.Fatalf("expected invalidated warm entry to be hidden from GetWarm, got %#v", warm)
+	}
+}
+
 func TestRunOnce_RemovesStaleEntries(t *testing.T) {
 	store := playback.NewPrequeueStore(30 * time.Minute)
 

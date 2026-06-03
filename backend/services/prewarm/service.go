@@ -70,6 +70,7 @@ type SyncResult struct {
 }
 
 const continueWatchingPrewarmMaxAge = 14 * 24 * time.Hour
+const invalidatedPrequeueRetryDelay = time.Hour
 
 // Service manages pre-warming of continue watching items
 type Service struct {
@@ -227,6 +228,20 @@ func (s *Service) warmContinueWatchingScope(
 
 	if hasExisting && existing.PrequeueID != "" {
 		if entry, ok := s.prequeueStore.Get(existing.PrequeueID); ok && entry.Status == playback.PrequeueStatusReady && hasTrackMetadata(entry) {
+			expiresAt := time.Now().Add(maxAge)
+			s.extendPrequeueExpiry(existing.PrequeueID, expiresAt)
+			s.mu.Lock()
+			if current, ok := s.entries[key]; ok {
+				current.Error = ""
+				if current.StreamPath == "" {
+					current.StreamPath = entry.StreamPath
+				}
+				if current.ExpiresAt.Before(expiresAt) {
+					current.ExpiresAt = expiresAt
+				}
+				current.LastRefresh = time.Now()
+			}
+			s.mu.Unlock()
 			result.Skipped++
 			return nil
 		}
@@ -239,6 +254,8 @@ func (s *Service) warmContinueWatchingScope(
 	}
 
 	if pqEntry, ok := s.prequeueStore.GetByTitleUserScope(state.SeriesID, user.ID, settingsScopeKey); ok && pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) {
+		expiresAt := time.Now().Add(maxAge)
+		s.extendPrequeueExpiry(pqEntry.ID, expiresAt)
 		s.mu.Lock()
 		s.entries[key] = &WarmEntry{
 			TitleID:          state.SeriesID,
@@ -253,7 +270,7 @@ func (s *Service) warmContinueWatchingScope(
 			StreamPath:       pqEntry.StreamPath,
 			LastResolve:      pqEntry.CreatedAt,
 			LastRefresh:      time.Now(),
-			ExpiresAt:        pqEntry.ExpiresAt,
+			ExpiresAt:        expiresAt,
 		}
 		s.mu.Unlock()
 		log.Printf("[prewarm] Adopted existing prequeue entry %s for %q scope=%s (skipping resolve)", pqEntry.ID, state.SeriesTitle, settingsScopeKey)
@@ -327,6 +344,17 @@ func (s *Service) warmContinueWatchingScope(
 	return nil
 }
 
+func (s *Service) extendPrequeueExpiry(prequeueID string, expiresAt time.Time) {
+	if s.prequeueStore == nil || strings.TrimSpace(prequeueID) == "" || expiresAt.IsZero() {
+		return
+	}
+	s.prequeueStore.Update(prequeueID, func(e *playback.PrequeueEntry) {
+		if e.ExpiresAt.Before(expiresAt) {
+			e.ExpiresAt = expiresAt
+		}
+	})
+}
+
 // AdoptEntry registers an ad-hoc prequeue entry with prewarm so it stays alive.
 // Called by the prequeue handler after creating an ad-hoc entry.
 func (s *Service) AdoptEntry(prequeueID string) {
@@ -379,7 +407,7 @@ func (s *Service) UpdateFromPrequeue(prequeueID string) {
 	log.Printf("[prewarm] Updated warm entry %s from ready prequeue %s", key, prequeueID)
 }
 
-// InvalidatePrequeue removes warm references to a prequeue that has been proven bad.
+// InvalidatePrequeue puts warm references to a proven-bad prequeue into retry backoff.
 func (s *Service) InvalidatePrequeue(prequeueID string) {
 	prequeueID = strings.TrimSpace(prequeueID)
 	if prequeueID == "" {
@@ -389,23 +417,29 @@ func (s *Service) InvalidatePrequeue(prequeueID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	removed := 0
+	invalidated := 0
+	retryAt := time.Now().Add(invalidatedPrequeueRetryDelay)
 	for key, entry := range s.entries {
 		if entry.PrequeueID != prequeueID {
 			continue
 		}
-		delete(s.entries, key)
-		removed++
+		entry.Error = "prequeue invalidated after playback failure"
+		entry.PrequeueID = ""
+		entry.StreamPath = ""
+		entry.LastRefresh = time.Now()
+		entry.ExpiresAt = retryAt
+		s.entries[key] = entry
+		invalidated++
 	}
 
-	if removed == 0 {
+	if invalidated == 0 {
 		return
 	}
 
 	if err := s.saveLocked(); err != nil {
 		log.Printf("[prewarm] Warning: failed to persist invalidation for prequeue %s: %v", prequeueID, err)
 	}
-	log.Printf("[prewarm] Invalidated %d warm entrie(s) for prequeue %s", removed, prequeueID)
+	log.Printf("[prewarm] Invalidated %d warm entrie(s) for prequeue %s (retry after %s)", invalidated, prequeueID, retryAt.Format(time.RFC3339))
 }
 
 // RestorePrequeueEntries re-creates PrequeueStore entries from persisted warm data.

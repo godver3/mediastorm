@@ -52,6 +52,7 @@ import (
 	"novastream/services/scheduler"
 	"novastream/services/sessions"
 	"novastream/services/simkl"
+	"novastream/services/streaming"
 	"novastream/services/trakt"
 	"novastream/services/usenet"
 	user_settings "novastream/services/user_settings"
@@ -601,6 +602,29 @@ func main() {
 	// Create composite streaming provider that handles both usenet and debrid
 	debridStreamingProvider := debrid.NewStreamingProvider(cfgManager)
 	compositeProvider := debrid.NewCompositeProvider(localMediaProvider, debridStreamingProvider, nzbSystem)
+	prequeueHandler.GetStore().SetStreamPathValidator(func(ctx context.Context, streamPath string) error {
+		cleanPath := strings.TrimSpace(streamPath)
+		if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
+			return nil
+		}
+		if strings.HasPrefix(cleanPath, "/webdav/") {
+			cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
+		} else if strings.HasPrefix(cleanPath, "webdav/") {
+			cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
+		}
+		if cleanPath == "" {
+			return fmt.Errorf("empty stream path")
+		}
+		resp, err := compositeProvider.Stream(ctx, streaming.Request{
+			Path:        cleanPath,
+			RangeHeader: "bytes=0-0",
+			Method:      http.MethodGet,
+		})
+		if resp != nil {
+			_ = resp.Close()
+		}
+		return err
+	})
 
 	// Create video handler with composite provider
 	videoHandler := handlers.NewVideoHandlerWithProvider(
@@ -611,6 +635,7 @@ func main() {
 		compositeProvider,
 	)
 	videoHandler.SetThumbnailCacheDir(settings.Cache.Directory)
+	videoHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	localBaseURL := fmt.Sprintf("http://127.0.0.1:%d", settings.Server.Port)
 	videoHandler.SetLocalBaseURL(localBaseURL)
 
@@ -1095,6 +1120,9 @@ func main() {
 	prewarmService.SetScopeKeyFunc(prequeueHandler.PrequeueSettingsScopeKey)
 	schedulerService.SetPrewarmService(prewarmService)
 	prequeueHandler.SetPrewarmService(prewarmService)
+	if videoHandler != nil {
+		videoHandler.SetPrewarmService(prewarmService)
+	}
 	prewarmService.RestorePrequeueEntries()
 
 	// Admin prequeue viewer endpoint

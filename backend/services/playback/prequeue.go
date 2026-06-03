@@ -29,6 +29,8 @@ const (
 	PrequeueStatusExpired   PrequeueStatus = "expired"
 )
 
+const readyStreamValidationTTL = 5 * time.Minute
+
 // WarmRef is a lightweight reference to a pre-warmed prequeue entry
 type WarmRef struct {
 	PrequeueID string
@@ -192,6 +194,18 @@ type PrequeueEntry struct {
 	cancelFunc context.CancelFunc `json:"-"`
 }
 
+// StreamPathValidator checks whether a ready prequeue stream path is still usable.
+type StreamPathValidator func(ctx context.Context, streamPath string) error
+
+type readyValidationSnapshot struct {
+	ID                string
+	TitleID           string
+	UserID            string
+	Status            PrequeueStatus
+	StreamPath        string
+	RecentlyValidated bool
+}
+
 // PrequeueStore manages prequeue entries with TTL
 type PrequeueStore struct {
 	mu      sync.RWMutex
@@ -201,6 +215,9 @@ type PrequeueStore struct {
 	defaultTTL  time.Duration
 	storagePath string // If set, ready entries are persisted to this file
 	store       *datastore.DataStore
+
+	streamPathValidator StreamPathValidator
+	streamPathValidated map[string]time.Time
 }
 
 // DeletedPrequeueEntry describes an entry removed from the prequeue store.
@@ -221,12 +238,20 @@ func (s *PrequeueStore) SetDataStore(store *datastore.DataStore) {
 	s.store = store
 }
 
+// SetStreamPathValidator enables lazy validation for restored ready entries.
+func (s *PrequeueStore) SetStreamPathValidator(validator StreamPathValidator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamPathValidator = validator
+}
+
 // NewPrequeueStore creates a new prequeue store with the specified default TTL
 func NewPrequeueStore(ttl time.Duration) *PrequeueStore {
 	store := &PrequeueStore{
-		entries:     make(map[string]*PrequeueEntry),
-		byTitleUser: make(map[string]string),
-		defaultTTL:  ttl,
+		entries:             make(map[string]*PrequeueEntry),
+		byTitleUser:         make(map[string]string),
+		defaultTTL:          ttl,
+		streamPathValidated: make(map[string]time.Time),
 	}
 
 	// Start cleanup goroutine
@@ -551,15 +576,31 @@ func (s *PrequeueStore) CreateScoped(titleID, titleName, userID, mediaType strin
 // Get retrieves a prequeue entry by ID
 func (s *PrequeueStore) Get(id string) (*PrequeueEntry, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	entry, exists := s.entries[id]
 	if !exists {
+		s.mu.RUnlock()
 		return nil, false
 	}
 
 	// Check if expired
 	if time.Now().After(entry.ExpiresAt) {
+		s.mu.RUnlock()
+		return nil, false
+	}
+
+	validator := s.streamPathValidator
+	snapshot := readyValidationSnapshot{
+		ID:                id,
+		TitleID:           entry.TitleID,
+		UserID:            entry.UserID,
+		Status:            entry.Status,
+		StreamPath:        entry.StreamPath,
+		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entry.StreamPath, time.Now()),
+	}
+	s.mu.RUnlock()
+
+	if !s.validateReadyEntry(snapshot, validator) {
 		return nil, false
 	}
 
@@ -574,25 +615,92 @@ func (s *PrequeueStore) GetByTitleUser(titleID, userID string) (*PrequeueEntry, 
 // GetByTitleUserScope retrieves a prequeue entry by title+user+effective settings scope.
 func (s *PrequeueStore) GetByTitleUserScope(titleID, userID, settingsScopeKey string) (*PrequeueEntry, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	key := titleUserKey(titleID, userID, settingsScopeKey)
 	id, exists := s.byTitleUser[key]
 	if !exists {
+		s.mu.RUnlock()
 		return nil, false
 	}
 
 	entry, exists := s.entries[id]
 	if !exists {
+		s.mu.RUnlock()
 		return nil, false
 	}
 
 	// Check if expired
 	if time.Now().After(entry.ExpiresAt) {
+		s.mu.RUnlock()
+		return nil, false
+	}
+
+	validator := s.streamPathValidator
+	snapshot := readyValidationSnapshot{
+		ID:                id,
+		TitleID:           entry.TitleID,
+		UserID:            entry.UserID,
+		Status:            entry.Status,
+		StreamPath:        entry.StreamPath,
+		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entry.StreamPath, time.Now()),
+	}
+	s.mu.RUnlock()
+
+	if !s.validateReadyEntry(snapshot, validator) {
 		return nil, false
 	}
 
 	return entry, true
+}
+
+func (s *PrequeueStore) validateReadyEntry(entry readyValidationSnapshot, validator StreamPathValidator) bool {
+	if validator == nil || entry.Status != PrequeueStatusReady || strings.TrimSpace(entry.StreamPath) == "" {
+		return true
+	}
+	if entry.RecentlyValidated {
+		return true
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := validator(ctx, entry.StreamPath); err != nil {
+		log.Printf("[prequeue] Removing stale ready entry %s for title=%s user=%s path=%q: %v",
+			entry.ID, entry.TitleID, entry.UserID, entry.StreamPath, err)
+		s.Delete(entry.ID)
+		return false
+	}
+
+	s.markStreamPathValidated(entry.ID, entry.StreamPath)
+	return true
+}
+
+func streamPathValidationKey(id, streamPath string) string {
+	return id + "\x00" + strings.TrimSpace(streamPath)
+}
+
+func (s *PrequeueStore) streamPathRecentlyValidatedLocked(id, streamPath string, now time.Time) bool {
+	if s.streamPathValidated == nil {
+		return false
+	}
+	validatedAt, ok := s.streamPathValidated[streamPathValidationKey(id, streamPath)]
+	return ok && now.Sub(validatedAt) < readyStreamValidationTTL
+}
+
+func (s *PrequeueStore) markStreamPathValidated(id, streamPath string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streamPathValidated == nil {
+		s.streamPathValidated = make(map[string]time.Time)
+	}
+	s.streamPathValidated[streamPathValidationKey(id, streamPath)] = time.Now()
+}
+
+func (s *PrequeueStore) removeStreamPathValidationsLocked(id string) {
+	for key := range s.streamPathValidated {
+		if strings.HasPrefix(key, id+"\x00") {
+			delete(s.streamPathValidated, key)
+		}
+	}
 }
 
 // Update updates a prequeue entry
@@ -605,10 +713,20 @@ func (s *PrequeueStore) Update(id string, updateFn func(*PrequeueEntry)) bool {
 		return false
 	}
 
+	oldValidationKey := streamPathValidationKey(id, entry.StreamPath)
 	updateFn(entry)
+	if streamPathValidationKey(id, entry.StreamPath) != oldValidationKey {
+		delete(s.streamPathValidated, oldValidationKey)
+	}
 
 	// Extend TTL when status becomes ready (only if not already set further out)
 	if entry.Status == PrequeueStatusReady {
+		if strings.TrimSpace(entry.StreamPath) != "" {
+			if s.streamPathValidated == nil {
+				s.streamPathValidated = make(map[string]time.Time)
+			}
+			s.streamPathValidated[streamPathValidationKey(id, entry.StreamPath)] = time.Now()
+		}
 		dynTTL := entry.DynamicTTL()
 		if dynTTL <= 0 {
 			dynTTL = s.defaultTTL
@@ -653,6 +771,7 @@ func (s *PrequeueStore) Delete(id string) {
 	if s.byTitleUser[key] == id {
 		delete(s.byTitleUser, key)
 	}
+	s.removeStreamPathValidationsLocked(id)
 
 	delete(s.entries, id)
 
@@ -672,13 +791,14 @@ func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueE
 	if streamPath == "" {
 		return nil
 	}
+	normalizedStreamPath := normalizePrequeueStreamPath(streamPath)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var removed []DeletedPrequeueEntry
 	for id, entry := range s.entries {
-		if strings.TrimSpace(entry.StreamPath) != streamPath {
+		if strings.TrimSpace(entry.StreamPath) != streamPath && normalizePrequeueStreamPath(entry.StreamPath) != normalizedStreamPath {
 			continue
 		}
 
@@ -690,6 +810,7 @@ func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueE
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}
+		s.removeStreamPathValidationsLocked(id)
 
 		removed = append(removed, DeletedPrequeueEntry{
 			ID:         id,
@@ -712,6 +833,13 @@ func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueE
 	}
 
 	return removed
+}
+
+func normalizePrequeueStreamPath(streamPath string) string {
+	p := strings.TrimSpace(streamPath)
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimPrefix(p, "webdav/")
+	return strings.TrimPrefix(p, "/")
 }
 
 // DeleteAll removes all prequeue entries
