@@ -37,6 +37,10 @@ type WarmRef struct {
 // PrequeueWorkerFunc is the function signature for the prequeue worker callable by the prewarm service
 type PrequeueWorkerFunc func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error)
 
+// ScopedPrequeueWorkerFunc is used by scheduled prewarm when a profile/client
+// requires a distinct effective settings scope.
+type ScopedPrequeueWorkerFunc func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error)
+
 // PrequeueRequest represents an incoming prequeue request
 type PrequeueRequest struct {
 	TitleID   string `json:"titleId"`
@@ -133,14 +137,15 @@ type PrequeueStatusResponse struct {
 
 // PrequeueEntry is the internal state of a prequeue item
 type PrequeueEntry struct {
-	ID            string                   `json:"id"`
-	TitleID       string                   `json:"titleId"`
-	TitleName     string                   `json:"titleName"`
-	Year          int                      `json:"year,omitempty"`
-	UserID        string                   `json:"userId"`
-	MediaType     string                   `json:"mediaType"`
-	TargetEpisode *models.EpisodeReference `json:"targetEpisode,omitempty"`
-	Reason        string                   `json:"reason"`
+	ID               string                   `json:"id"`
+	TitleID          string                   `json:"titleId"`
+	TitleName        string                   `json:"titleName"`
+	Year             int                      `json:"year,omitempty"`
+	UserID           string                   `json:"userId"`
+	SettingsScopeKey string                   `json:"settingsScopeKey,omitempty"`
+	MediaType        string                   `json:"mediaType"`
+	TargetEpisode    *models.EpisodeReference `json:"targetEpisode,omitempty"`
+	Reason           string                   `json:"reason"`
 
 	Status       PrequeueStatus `json:"status"`
 	StreamPath   string         `json:"streamPath,omitempty"`
@@ -191,7 +196,7 @@ type PrequeueEntry struct {
 type PrequeueStore struct {
 	mu      sync.RWMutex
 	entries map[string]*PrequeueEntry
-	// Secondary index: titleId+userId -> prequeueId (to find/replace existing prequeue)
+	// Secondary index: titleId+userId+settingsScopeKey -> prequeueId (to find/replace existing prequeue)
 	byTitleUser map[string]string
 	defaultTTL  time.Duration
 	storagePath string // If set, ready entries are persisted to this file
@@ -317,7 +322,7 @@ func (s *PrequeueStore) loadFromDisk() error {
 			continue
 		}
 		s.entries[e.ID] = e
-		key := titleUserKey(e.TitleID, e.UserID)
+		key := titleUserKey(e.TitleID, e.UserID, e.SettingsScopeKey)
 		s.byTitleUser[key] = e.ID
 		restored++
 	}
@@ -362,7 +367,7 @@ func (s *PrequeueStore) loadFromDB() error {
 			continue
 		}
 
-		key := titleUserKey(e.TitleID, e.UserID)
+		key := titleUserKey(e.TitleID, e.UserID, e.SettingsScopeKey)
 		// If we already have an entry for this title+user, the new one (later in created_at order) supersedes it
 		if prevID, exists := s.byTitleUser[key]; exists {
 			delete(s.entries, prevID)
@@ -459,18 +464,35 @@ func generateID() string {
 }
 
 // titleUserKey creates a key for the secondary index
-func titleUserKey(titleID, userID string) string {
-	return fmt.Sprintf("%s:%s", titleID, userID)
+const DefaultPrequeueSettingsScopeKey = "global"
+
+func normalizeSettingsScopeKey(scopeKey string) string {
+	scopeKey = strings.TrimSpace(scopeKey)
+	if scopeKey == "" {
+		return DefaultPrequeueSettingsScopeKey
+	}
+	return scopeKey
+}
+
+// titleUserKey creates a key for the secondary index.
+func titleUserKey(titleID, userID, settingsScopeKey string) string {
+	return fmt.Sprintf("%s:%s:%s", titleID, userID, normalizeSettingsScopeKey(settingsScopeKey))
 }
 
 // Create creates a new prequeue entry and returns its ID
 // If an entry already exists for this title+user, it's cancelled and replaced
 // reason should be "details" (details page prequeue) or "next_episode" (auto-queue for next episode)
 func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason string) (*PrequeueEntry, bool) {
+	return s.CreateScoped(titleID, titleName, userID, mediaType, year, targetEpisode, reason, DefaultPrequeueSettingsScopeKey)
+}
+
+// CreateScoped creates a prequeue entry for a specific effective settings scope.
+func (s *PrequeueStore) CreateScoped(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason, settingsScopeKey string) (*PrequeueEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := titleUserKey(titleID, userID)
+	settingsScopeKey = normalizeSettingsScopeKey(settingsScopeKey)
+	key := titleUserKey(titleID, userID, settingsScopeKey)
 
 	// Check if there's an existing entry for this title+user
 	if existingID, exists := s.byTitleUser[key]; exists {
@@ -486,7 +508,7 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 					log.Printf("[prequeue] Warning: failed to delete old DB entry %s: %v", existingID, err)
 				}
 			}
-			log.Printf("[prequeue] Replaced existing prequeue %s for title=%s user=%s", existingID, titleID, userID)
+			log.Printf("[prequeue] Replaced existing prequeue %s for title=%s user=%s scope=%s", existingID, titleID, userID, settingsScopeKey)
 		}
 	}
 
@@ -502,6 +524,7 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 		TitleName:             titleName,
 		Year:                  year,
 		UserID:                userID,
+		SettingsScopeKey:      settingsScopeKey,
 		MediaType:             mediaType,
 		TargetEpisode:         targetEpisode,
 		Reason:                reason,
@@ -520,7 +543,7 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 	s.entries[id] = entry
 	s.byTitleUser[key] = id
 
-	log.Printf("[prequeue] Created prequeue %s for title=%s user=%s mediaType=%s", id, titleID, userID, mediaType)
+	log.Printf("[prequeue] Created prequeue %s for title=%s user=%s scope=%s mediaType=%s", id, titleID, userID, settingsScopeKey, mediaType)
 
 	return entry, true
 }
@@ -545,10 +568,15 @@ func (s *PrequeueStore) Get(id string) (*PrequeueEntry, bool) {
 
 // GetByTitleUser retrieves a prequeue entry by title+user
 func (s *PrequeueStore) GetByTitleUser(titleID, userID string) (*PrequeueEntry, bool) {
+	return s.GetByTitleUserScope(titleID, userID, DefaultPrequeueSettingsScopeKey)
+}
+
+// GetByTitleUserScope retrieves a prequeue entry by title+user+effective settings scope.
+func (s *PrequeueStore) GetByTitleUserScope(titleID, userID, settingsScopeKey string) (*PrequeueEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := titleUserKey(titleID, userID)
+	key := titleUserKey(titleID, userID, settingsScopeKey)
 	id, exists := s.byTitleUser[key]
 	if !exists {
 		return nil, false
@@ -621,7 +649,7 @@ func (s *PrequeueStore) Delete(id string) {
 	}
 
 	// Remove from secondary index
-	key := titleUserKey(entry.TitleID, entry.UserID)
+	key := titleUserKey(entry.TitleID, entry.UserID, entry.SettingsScopeKey)
 	if s.byTitleUser[key] == id {
 		delete(s.byTitleUser, key)
 	}
@@ -658,7 +686,7 @@ func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueE
 			entry.cancelFunc()
 		}
 
-		key := titleUserKey(entry.TitleID, entry.UserID)
+		key := titleUserKey(entry.TitleID, entry.UserID, entry.SettingsScopeKey)
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}
@@ -720,7 +748,7 @@ func (s *PrequeueStore) DeleteByUser(userID string) {
 			entry.cancelFunc()
 		}
 
-		key := titleUserKey(entry.TitleID, entry.UserID)
+		key := titleUserKey(entry.TitleID, entry.UserID, entry.SettingsScopeKey)
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}
@@ -774,7 +802,7 @@ func (s *PrequeueStore) cleanup() {
 		}
 
 		// Remove from secondary index
-		key := titleUserKey(entry.TitleID, entry.UserID)
+		key := titleUserKey(entry.TitleID, entry.UserID, entry.SettingsScopeKey)
 		if s.byTitleUser[key] == id {
 			delete(s.byTitleUser, key)
 		}

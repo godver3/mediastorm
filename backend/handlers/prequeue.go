@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +40,7 @@ type MovieDetailsProvider interface {
 // PrewarmService interface for checking pre-warmed entries and adopting ad-hoc prequeues
 type PrewarmService interface {
 	GetWarm(titleID, userID string) *playback.WarmRef
+	GetWarmScoped(titleID, userID, settingsScopeKey string) *playback.WarmRef
 	AdoptEntry(prequeueID string)
 	UpdateFromPrequeue(prequeueID string)
 	InvalidatePrequeue(prequeueID string)
@@ -226,6 +230,196 @@ type ClientSettingsProvider interface {
 	Get(clientID string) (*models.ClientFilterSettings, error)
 }
 
+type prequeueScopePlayback struct {
+	PreferredAudioLanguage     string `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage  string `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode      string `json:"preferredSubtitleMode,omitempty"`
+	ForceAACTranscoding        bool   `json:"forceAacTranscoding,omitempty"`
+	IgnoreDVCompatibilityCheck *bool  `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"`
+	MaxResultsPerResolution    *int   `json:"maxResultsPerResolution,omitempty"`
+}
+
+type prequeueScopeSignature struct {
+	Filtering         models.FilterSettings            `json:"filtering"`
+	AnimeFiltering    models.AnimeFilteringSettings    `json:"animeFiltering"`
+	Ranking           *models.UserRankingSettings      `json:"ranking,omitempty"`
+	ClientRanking     *[]models.ClientRankingCriterion `json:"clientRanking,omitempty"`
+	Playback          prequeueScopePlayback            `json:"playback"`
+	ContentPreference *models.ContentPreference        `json:"contentPreference,omitempty"`
+}
+
+func configFilterToUserFilter(f config.FilterSettings) models.FilterSettings {
+	return models.FilterSettings{
+		MaxSizeMovieGB:         models.FloatPtr(f.MaxSizeMovieGB),
+		MaxSizeEpisodeGB:       models.FloatPtr(f.MaxSizeEpisodeGB),
+		MaxResolution:          f.MaxResolution,
+		HDRDVPolicy:            models.HDRDVPolicy(f.HDRDVPolicy),
+		RequiredTerms:          append([]string(nil), f.RequiredTerms...),
+		FilterOutTerms:         append([]string(nil), f.FilterOutTerms...),
+		PreferredTerms:         append([]string(nil), f.PreferredTerms...),
+		NonPreferredTerms:      append([]string(nil), f.NonPreferredTerms...),
+		DownloadPreferredTerms: append([]string(nil), f.DownloadPreferredTerms...),
+		UnknownTrackPolicy:     string(f.UnknownTrackPolicy),
+	}
+}
+
+func configAnimeToUserAnime(a config.AnimeFilteringSettings) models.AnimeFilteringSettings {
+	return models.AnimeFilteringSettings{
+		AnimeLanguageEnabled:   models.BoolPtr(a.AnimeLanguageEnabled),
+		AnimePreferredLanguage: models.StringPtr(a.AnimePreferredLanguage),
+	}
+}
+
+func configPlaybackToUserPlayback(p config.PlaybackSettings) models.PlaybackSettings {
+	return models.PlaybackSettings{
+		PreferredAudioLanguage:     p.PreferredAudioLanguage,
+		PreferredSubtitleLanguage:  p.PreferredSubtitleLanguage,
+		PreferredSubtitleMode:      p.PreferredSubtitleMode,
+		ForceAACTranscoding:        p.ForceAACTranscoding,
+		IgnoreDVCompatibilityCheck: models.BoolPtr(p.IgnoreDVCompatibilityCheck),
+		MaxResultsPerResolution:    models.IntPtr(p.MaxResultsPerResolution),
+	}
+}
+
+func applyClientScopeOverrides(sig *prequeueScopeSignature, clientSettings *models.ClientFilterSettings) {
+	if sig == nil || clientSettings == nil {
+		return
+	}
+	if clientSettings.MaxSizeMovieGB != nil {
+		sig.Filtering.MaxSizeMovieGB = clientSettings.MaxSizeMovieGB
+	}
+	if clientSettings.MaxSizeEpisodeGB != nil {
+		sig.Filtering.MaxSizeEpisodeGB = clientSettings.MaxSizeEpisodeGB
+	}
+	if clientSettings.MaxResolution != nil {
+		sig.Filtering.MaxResolution = *clientSettings.MaxResolution
+	}
+	if clientSettings.HDRDVPolicy != nil {
+		sig.Filtering.HDRDVPolicy = *clientSettings.HDRDVPolicy
+	}
+	if clientSettings.RequiredTerms != nil {
+		sig.Filtering.RequiredTerms = append([]string(nil), (*clientSettings.RequiredTerms)...)
+	}
+	if clientSettings.FilterOutTerms != nil {
+		sig.Filtering.FilterOutTerms = append([]string(nil), (*clientSettings.FilterOutTerms)...)
+	}
+	if clientSettings.PreferredTerms != nil {
+		sig.Filtering.PreferredTerms = append([]string(nil), (*clientSettings.PreferredTerms)...)
+	}
+	if clientSettings.NonPreferredTerms != nil {
+		sig.Filtering.NonPreferredTerms = append([]string(nil), (*clientSettings.NonPreferredTerms)...)
+	}
+	if clientSettings.DownloadPreferredTerms != nil {
+		sig.Filtering.DownloadPreferredTerms = append([]string(nil), (*clientSettings.DownloadPreferredTerms)...)
+	}
+	if clientSettings.UnknownTrackPolicy != nil {
+		sig.Filtering.UnknownTrackPolicy = *clientSettings.UnknownTrackPolicy
+	}
+	if clientSettings.AnimeLanguageEnabled != nil {
+		sig.AnimeFiltering.AnimeLanguageEnabled = clientSettings.AnimeLanguageEnabled
+	}
+	if clientSettings.AnimePreferredLanguage != nil {
+		sig.AnimeFiltering.AnimePreferredLanguage = clientSettings.AnimePreferredLanguage
+	}
+	if clientSettings.PreferredAudioLanguage != nil {
+		sig.Playback.PreferredAudioLanguage = *clientSettings.PreferredAudioLanguage
+	}
+	if clientSettings.PreferredSubtitleLanguage != nil {
+		sig.Playback.PreferredSubtitleLanguage = *clientSettings.PreferredSubtitleLanguage
+	}
+	if clientSettings.PreferredSubtitleMode != nil {
+		sig.Playback.PreferredSubtitleMode = *clientSettings.PreferredSubtitleMode
+	}
+	if clientSettings.ForceAACTranscoding != nil {
+		sig.Playback.ForceAACTranscoding = *clientSettings.ForceAACTranscoding
+	}
+	if clientSettings.IgnoreDVCompatibilityCheck != nil {
+		sig.Playback.IgnoreDVCompatibilityCheck = clientSettings.IgnoreDVCompatibilityCheck
+	}
+	if clientSettings.MaxResultsPerResolution != nil {
+		sig.Playback.MaxResultsPerResolution = clientSettings.MaxResultsPerResolution
+	}
+	if clientSettings.RankingCriteria != nil {
+		sig.ClientRanking = clientSettings.RankingCriteria
+	}
+}
+
+func prequeueScopeHash(sig prequeueScopeSignature) string {
+	data, err := json.Marshal(sig)
+	if err != nil {
+		return playback.DefaultPrequeueSettingsScopeKey
+	}
+	sum := sha256.Sum256(data)
+	return "scope_" + hex.EncodeToString(sum[:])[:16]
+}
+
+func (h *PrequeueHandler) prequeueSettingsScopeKey(userID, clientID, titleID string) string {
+	var global prequeueScopeSignature
+	defaults := models.UserSettings{}
+	if h.configManager != nil {
+		if globalSettings, err := h.configManager.Load(); err == nil {
+			defaults.Filtering = configFilterToUserFilter(globalSettings.Filtering)
+			defaults.AnimeFiltering = configAnimeToUserAnime(globalSettings.AnimeFiltering)
+			defaults.Playback = configPlaybackToUserPlayback(globalSettings.Playback)
+			global.Filtering = defaults.Filtering
+			global.AnimeFiltering = defaults.AnimeFiltering
+			global.Playback = prequeueScopePlayback{
+				PreferredAudioLanguage:     defaults.Playback.PreferredAudioLanguage,
+				PreferredSubtitleLanguage:  defaults.Playback.PreferredSubtitleLanguage,
+				PreferredSubtitleMode:      defaults.Playback.PreferredSubtitleMode,
+				ForceAACTranscoding:        defaults.Playback.ForceAACTranscoding,
+				IgnoreDVCompatibilityCheck: defaults.Playback.IgnoreDVCompatibilityCheck,
+				MaxResultsPerResolution:    defaults.Playback.MaxResultsPerResolution,
+			}
+		}
+	}
+
+	effective := global
+	if h.userSettingsSvc != nil {
+		if userSettings, err := h.userSettingsSvc.GetWithDefaults(userID, defaults); err == nil {
+			effective.Filtering = userSettings.Filtering
+			effective.AnimeFiltering = userSettings.AnimeFiltering
+			effective.Ranking = userSettings.Ranking
+			effective.Playback = prequeueScopePlayback{
+				PreferredAudioLanguage:     userSettings.Playback.PreferredAudioLanguage,
+				PreferredSubtitleLanguage:  userSettings.Playback.PreferredSubtitleLanguage,
+				PreferredSubtitleMode:      userSettings.Playback.PreferredSubtitleMode,
+				ForceAACTranscoding:        userSettings.Playback.ForceAACTranscoding,
+				IgnoreDVCompatibilityCheck: userSettings.Playback.IgnoreDVCompatibilityCheck,
+				MaxResultsPerResolution:    userSettings.Playback.MaxResultsPerResolution,
+			}
+		} else if err != nil {
+			log.Printf("[prequeue] Failed to build profile prequeue settings scope (using global): %v", err)
+		}
+	}
+
+	if clientID != "" && h.clientSettingsSvc != nil {
+		if clientSettings, err := h.clientSettingsSvc.Get(clientID); err == nil {
+			applyClientScopeOverrides(&effective, clientSettings)
+		} else {
+			log.Printf("[prequeue] Failed to build client prequeue settings scope (using profile/global): %v", err)
+		}
+	}
+
+	if h.contentPreferencesSvc != nil && userID != "" && titleID != "" {
+		if pref, err := h.contentPreferencesSvc.Get(userID, titleID); err == nil && pref != nil {
+			effective.ContentPreference = pref
+		} else if err != nil {
+			log.Printf("[prequeue] Failed to include content preference in prequeue scope (non-fatal): %v", err)
+		}
+	}
+
+	if reflect.DeepEqual(effective, global) {
+		return playback.DefaultPrequeueSettingsScopeKey
+	}
+	return prequeueScopeHash(effective)
+}
+
+// PrequeueSettingsScopeKey returns the effective prequeue settings scope for a profile/client/title.
+func (h *PrequeueHandler) PrequeueSettingsScopeKey(userID, clientID, titleID string) string {
+	return h.prequeueSettingsScopeKey(userID, clientID, titleID)
+}
+
 // VideoProber interface for probing video metadata
 type VideoProber interface {
 	ProbeVideoPath(ctx context.Context, path string) (*VideoProbeResult, error)
@@ -404,11 +598,17 @@ func (h *PrequeueHandler) GetStore() *playback.PrequeueStore {
 // RunWorkerSync runs the prequeue worker synchronously and returns the prequeue ID.
 // Used by the prewarm service to pre-resolve continue watching items.
 func (h *PrequeueHandler) RunWorkerSync(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+	settingsScopeKey := h.prequeueSettingsScopeKey(userID, "", titleID)
+	return h.RunWorkerSyncScoped(ctx, titleID, titleName, imdbID, mediaType, year, userID, "", settingsScopeKey, targetEpisode)
+}
+
+// RunWorkerSyncScoped runs the prequeue worker synchronously for an explicit settings scope.
+func (h *PrequeueHandler) RunWorkerSyncScoped(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error) {
 	// Create prequeue entry with a long TTL (inherits store TTL, prewarm service will extend)
-	entry, _ := h.store.Create(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm")
+	entry, _ := h.store.CreateScoped(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm", settingsScopeKey)
 
 	// Run worker synchronously (blocking)
-	h.runPrequeueWorker(entry.ID, titleID, titleName, imdbID, mediaType, year, userID, "", targetEpisode, 0, true)
+	h.runPrequeueWorker(entry.ID, titleID, titleName, imdbID, mediaType, year, userID, clientID, targetEpisode, 0, true)
 
 	// Check result
 	result, exists := h.store.Get(entry.ID)
@@ -513,9 +713,12 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	settingsScopeKey := h.prequeueSettingsScopeKey(req.UserID, clientID, req.TitleID)
+	log.Printf("[prequeue] Effective settings scope for title=%s user=%s client=%s: %s", req.TitleID, req.UserID, clientID, settingsScopeKey)
+
 	// Check for pre-warmed entry before creating a new one
 	if h.prewarmSvc != nil {
-		if warm := h.prewarmSvc.GetWarm(req.TitleID, req.UserID); warm != nil && warm.PrequeueID != "" {
+		if warm := h.prewarmSvc.GetWarmScoped(req.TitleID, req.UserID, settingsScopeKey); warm != nil && warm.PrequeueID != "" {
 			if warmEntry, ok := h.store.Get(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(warmEntry) {
 				if err := h.validateReadyEntryForReuse(r.Context(), warmEntry); err != nil {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: stale external stream (%v), resolving fresh",
@@ -523,7 +726,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 					h.store.Delete(warm.PrequeueID)
 				} else {
 					if prequeueEpisodeMatches(targetEpisode, warmEntry.TargetEpisode) {
-						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s", warm.PrequeueID, req.TitleID, req.UserID)
+						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s scope=%s", warm.PrequeueID, req.TitleID, req.UserID, settingsScopeKey)
 						resp := playback.PrequeueResponse{
 							PrequeueID:    warm.PrequeueID,
 							TargetEpisode: warmEntry.TargetEpisode,
@@ -549,7 +752,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing entry in the store (covers both prewarm and regular prequeues).
-	if existing, ok := h.store.GetByTitleUser(req.TitleID, req.UserID); ok {
+	if existing, ok := h.store.GetByTitleUserScope(req.TitleID, req.UserID, settingsScopeKey); ok {
 		episodeMatch := prequeueEpisodeMatches(targetEpisode, existing.TargetEpisode)
 		if !episodeMatch {
 			log.Printf("[prequeue] Existing entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
@@ -561,7 +764,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 						existing.ID, err)
 					h.store.Delete(existing.ID)
 				} else {
-					log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s", existing.ID, req.TitleID, req.UserID)
+					log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s scope=%s", existing.ID, req.TitleID, req.UserID, settingsScopeKey)
 					resp := playback.PrequeueResponse{
 						PrequeueID:    existing.ID,
 						TargetEpisode: existing.TargetEpisode,
@@ -575,8 +778,8 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[prequeue] Existing ready entry %s missing stream path or track metadata, resolving fresh", existing.ID)
 			}
 		} else if isPrequeueInProgress(existing.Status) {
-			log.Printf("[prequeue] Reusing existing in-progress entry %s status=%s for title=%s user=%s",
-				existing.ID, existing.Status, req.TitleID, req.UserID)
+			log.Printf("[prequeue] Reusing existing in-progress entry %s status=%s for title=%s user=%s scope=%s",
+				existing.ID, existing.Status, req.TitleID, req.UserID, settingsScopeKey)
 			resp := playback.PrequeueResponse{
 				PrequeueID:    existing.ID,
 				TargetEpisode: existing.TargetEpisode,
@@ -591,7 +794,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create prequeue entry
-	entry, _ := h.store.Create(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason)
+	entry, _ := h.store.CreateScoped(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason, settingsScopeKey)
 
 	// Register with prewarm so it keeps the entry alive via dynamic TTL
 	if h.prewarmSvc != nil {
@@ -1041,6 +1244,26 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			userSettings.Playback.PreferredAudioLanguage,
 			userSettings.Playback.PreferredSubtitleLanguage,
 			userSettings.Playback.PreferredSubtitleMode)
+
+		if clientID != "" && h.clientSettingsSvc != nil {
+			if clientSettings, err := h.clientSettingsSvc.Get(clientID); err == nil && clientSettings != nil {
+				if clientSettings.PreferredAudioLanguage != nil {
+					userSettings.Playback.PreferredAudioLanguage = *clientSettings.PreferredAudioLanguage
+				}
+				if clientSettings.PreferredSubtitleLanguage != nil {
+					userSettings.Playback.PreferredSubtitleLanguage = *clientSettings.PreferredSubtitleLanguage
+				}
+				if clientSettings.PreferredSubtitleMode != nil {
+					userSettings.Playback.PreferredSubtitleMode = *clientSettings.PreferredSubtitleMode
+				}
+				log.Printf("[prequeue] After client settings merge: audioLang=%q, subLang=%q, subMode=%q",
+					userSettings.Playback.PreferredAudioLanguage,
+					userSettings.Playback.PreferredSubtitleLanguage,
+					userSettings.Playback.PreferredSubtitleMode)
+			} else if err != nil {
+				log.Printf("[prequeue] Failed to get client settings (non-fatal): %v", err)
+			}
+		}
 
 		// Check for per-content language preferences (overrides user settings)
 		if h.contentPreferencesSvc != nil {

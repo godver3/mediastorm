@@ -29,7 +29,33 @@ type ClientFilterSettings struct {
 	Appearance                       *AppearanceSettings `json:"appearance,omitempty"`
 
 	// Playback overrides
-	MaxResultsPerResolution *int `json:"maxResultsPerResolution,omitempty"`
+	PreferredPlayer            *string  `json:"preferredPlayer,omitempty"`
+	PreferredAudioLanguage     *string  `json:"preferredAudioLanguage,omitempty"`
+	PreferredSubtitleLanguage  *string  `json:"preferredSubtitleLanguage,omitempty"`
+	PreferredSubtitleMode      *string  `json:"preferredSubtitleMode,omitempty"`
+	PauseWhenAppInactive       *bool    `json:"pauseWhenAppInactive,omitempty"`
+	UseLoadingScreen           *bool    `json:"useLoadingScreen,omitempty"`
+	SubtitleSize               *float64 `json:"subtitleSize,omitempty"`
+	SubtitleColor              *string  `json:"subtitleColor,omitempty"`
+	SubtitleOpacity            *float64 `json:"subtitleOpacity,omitempty"`
+	SubtitleFont               *string  `json:"subtitleFont,omitempty"`
+	SubtitleBold               *bool    `json:"subtitleBold,omitempty"`
+	SubtitleOutlineEnabled     *bool    `json:"subtitleOutlineEnabled,omitempty"`
+	SubtitleOutlineColor       *string  `json:"subtitleOutlineColor,omitempty"`
+	SubtitleOutlineWeight      *float64 `json:"subtitleOutlineWeight,omitempty"`
+	SubtitleBackgroundEnabled  *bool    `json:"subtitleBackgroundEnabled,omitempty"`
+	SubtitleBackgroundColor    *string  `json:"subtitleBackgroundColor,omitempty"`
+	SubtitleBackgroundOpacity  *float64 `json:"subtitleBackgroundOpacity,omitempty"`
+	SeekForwardSeconds         *int     `json:"seekForwardSeconds,omitempty"`
+	SeekBackwardSeconds        *int     `json:"seekBackwardSeconds,omitempty"`
+	ForceAACTranscoding        *bool    `json:"forceAacTranscoding,omitempty"`
+	AutoPlayTrailersTV         *bool    `json:"autoPlayTrailersTV,omitempty"`
+	RewindOnResumeFromPause    *int     `json:"rewindOnResumeFromPause,omitempty"`
+	RewindOnPlaybackStart      *int     `json:"rewindOnPlaybackStart,omitempty"`
+	DisablePrequeue            *bool    `json:"disablePrequeue,omitempty"`
+	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"`
+	CreditsAutoSkip            *bool    `json:"creditsAutoSkip,omitempty"`
+	MaxResultsPerResolution    *int     `json:"maxResultsPerResolution,omitempty"`
 
 	// Ranking criteria overrides
 	RankingCriteria *[]ClientRankingCriterion `json:"rankingCriteria,omitempty"`
@@ -52,6 +78,32 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.BypassFilteringForAIOStreamsOnly == nil &&
 		c.NavigationTabVisibility == nil &&
 		c.Appearance == nil &&
+		c.PreferredPlayer == nil &&
+		c.PreferredAudioLanguage == nil &&
+		c.PreferredSubtitleLanguage == nil &&
+		c.PreferredSubtitleMode == nil &&
+		c.PauseWhenAppInactive == nil &&
+		c.UseLoadingScreen == nil &&
+		c.SubtitleSize == nil &&
+		c.SubtitleColor == nil &&
+		c.SubtitleOpacity == nil &&
+		c.SubtitleFont == nil &&
+		c.SubtitleBold == nil &&
+		c.SubtitleOutlineEnabled == nil &&
+		c.SubtitleOutlineColor == nil &&
+		c.SubtitleOutlineWeight == nil &&
+		c.SubtitleBackgroundEnabled == nil &&
+		c.SubtitleBackgroundColor == nil &&
+		c.SubtitleBackgroundOpacity == nil &&
+		c.SeekForwardSeconds == nil &&
+		c.SeekBackwardSeconds == nil &&
+		c.ForceAACTranscoding == nil &&
+		c.AutoPlayTrailersTV == nil &&
+		c.RewindOnResumeFromPause == nil &&
+		c.RewindOnPlaybackStart == nil &&
+		c.DisablePrequeue == nil &&
+		c.IgnoreDVCompatibilityCheck == nil &&
+		c.CreditsAutoSkip == nil &&
 		c.MaxResultsPerResolution == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&

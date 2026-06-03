@@ -426,6 +426,44 @@ func TestStripClientFieldDiffers(t *testing.T) {
 	}
 }
 
+func TestStripClientPlaybackFields(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+
+	clientsSvc := &mockClientSettingsBatch{
+		settings: map[string]models.ClientFilterSettings{
+			"client1": {
+				PreferredAudioLanguage:    models.StringPtr("eng"), // Matches global
+				PreferredSubtitleLanguage: models.StringPtr("spa"), // Differs from global
+				PreferredSubtitleMode:     models.StringPtr("off"), // Matches global
+				SubtitleSize:              models.FloatPtr(1.0),    // Matches global
+			},
+		},
+	}
+	clientsLister := &mockClientsLister{
+		clients: []models.Client{{ID: "client1", UserID: "user1"}},
+	}
+
+	svc.StripRedundantOverrides(g, clientsLister, clientsSvc)
+
+	cs, ok := clientsSvc.settings["client1"]
+	if !ok {
+		t.Fatal("expected differing playback setting to keep client entry")
+	}
+	if cs.PreferredAudioLanguage != nil {
+		t.Error("expected matching PreferredAudioLanguage to be stripped")
+	}
+	if cs.PreferredSubtitleMode != nil {
+		t.Error("expected matching PreferredSubtitleMode to be stripped")
+	}
+	if cs.SubtitleSize != nil {
+		t.Error("expected matching SubtitleSize to be stripped")
+	}
+	if cs.PreferredSubtitleLanguage == nil || *cs.PreferredSubtitleLanguage != "spa" {
+		t.Error("expected differing PreferredSubtitleLanguage to be preserved")
+	}
+}
+
 func TestStripClientFieldAlreadyNil(t *testing.T) {
 	svc := tempService(t)
 	g := globalDefaults()

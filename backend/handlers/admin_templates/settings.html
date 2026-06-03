@@ -917,6 +917,29 @@
                             }
                         }
                     }
+                    if (!hasActualOverrides) {
+                        for (const key of clientPlaybackFields) {
+                            const clientVal = settings[key];
+                            if (normalizeForComparison(clientVal) === null) continue;
+                            const globalVal = currentSettings.playback ? currentSettings.playback[key] : undefined;
+                            let inheritedVal;
+                            if (selectedUserId && userSettings && userSettings.playback) {
+                                const profileVal = userSettings.playback[key];
+                                if (profileVal !== undefined && profileVal !== null &&
+                                    !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                                    inheritedVal = profileVal;
+                                } else {
+                                    inheritedVal = globalVal;
+                                }
+                            } else {
+                                inheritedVal = globalVal;
+                            }
+                            if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                                hasActualOverrides = true;
+                                break;
+                            }
+                        }
+                    }
                     client.hasOverrides = hasActualOverrides;
                 }
             } catch (e) {
@@ -1333,7 +1356,12 @@
                 'playback.preferredSubtitleMode',
                 'playback.ignoreDolbyVisionCompatibilityCheck',
             ],
-            clientPaths: [],
+            clientPaths: [
+                'preferredAudioLanguage',
+                'preferredSubtitleLanguage',
+                'preferredSubtitleMode',
+                'ignoreDolbyVisionCompatibilityCheck',
+            ],
         },
         {
             key: 'contentFiltering',
@@ -1929,6 +1957,31 @@
             }
         }
 
+        // Check playback fields
+        if (!hasActualOverrides) {
+            for (const key of clientPlaybackFields) {
+                const clientVal = clientSettings[key];
+                if (normalizeForComparison(clientVal) === null) continue;
+                const globalVal = currentSettings.playback ? currentSettings.playback[key] : undefined;
+                let inheritedVal;
+                if (selectedUserId && userSettings && userSettings.playback) {
+                    const profileVal = userSettings.playback[key];
+                    if (profileVal !== undefined && profileVal !== null &&
+                        !deepEqual(normalizeForComparison(profileVal), normalizeForComparison(globalVal))) {
+                        inheritedVal = profileVal;
+                    } else {
+                        inheritedVal = globalVal;
+                    }
+                } else {
+                    inheritedVal = globalVal;
+                }
+                if (!deepEqual(normalizeForComparison(clientVal), normalizeForComparison(inheritedVal))) {
+                    hasActualOverrides = true;
+                    break;
+                }
+            }
+        }
+
         client.hasOverrides = hasActualOverrides;
     }
 
@@ -1978,7 +2031,35 @@
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'unknownTrackPolicy'];
     const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
-    const clientPlaybackFields = ['maxResultsPerResolution'];
+    const clientPlaybackFields = [
+        'preferredPlayer',
+        'preferredAudioLanguage',
+        'preferredSubtitleLanguage',
+        'preferredSubtitleMode',
+        'pauseWhenAppInactive',
+        'useLoadingScreen',
+        'subtitleSize',
+        'subtitleColor',
+        'subtitleOpacity',
+        'subtitleFont',
+        'subtitleBold',
+        'subtitleOutlineEnabled',
+        'subtitleOutlineColor',
+        'subtitleOutlineWeight',
+        'subtitleBackgroundEnabled',
+        'subtitleBackgroundColor',
+        'subtitleBackgroundOpacity',
+        'seekForwardSeconds',
+        'seekBackwardSeconds',
+        'forceAacTranscoding',
+        'autoPlayTrailersTV',
+        'rewindOnResumeFromPause',
+        'rewindOnPlaybackStart',
+        'disablePrequeue',
+        'ignoreDolbyVisionCompatibilityCheck',
+        'creditsAutoSkip',
+        'maxResultsPerResolution',
+    ];
     const clientAnimeFilterFields = ['animeLanguageEnabled', 'animePreferredLanguage'];
     // Map network field paths to client settings keys
     const clientNetworkFields = ['homeWifiSSID', 'homeBackendUrl', 'remoteBackendUrl'];
@@ -7024,7 +7105,7 @@
         let html = bannerHtml;
 
         // Sections that can be configured per-client (subset of perUserSections)
-        const clientSections = ['filtering', 'animeFiltering', 'network', 'display'];
+        const clientSections = ['filtering', 'animeFiltering', 'network', 'display', 'playback'];
 
         let totalMatchingSections = 0;
 

@@ -1087,9 +1087,12 @@ func main() {
 	}
 	prewarmService.SetHistoryService(historyService)
 	prewarmService.SetUsersService(userService)
+	prewarmService.SetClientsService(clientsService)
 	prewarmService.SetPrequeueStore(prequeueHandler.GetStore())
 	prewarmService.SetDebridStreaming(debridStreamingProvider)
 	prewarmService.SetWorkerFunc(prequeueHandler.RunWorkerSync)
+	prewarmService.SetScopedWorkerFunc(prequeueHandler.RunWorkerSyncScoped)
+	prewarmService.SetScopeKeyFunc(prequeueHandler.PrequeueSettingsScopeKey)
 	schedulerService.SetPrewarmService(prewarmService)
 	prequeueHandler.SetPrewarmService(prewarmService)
 	prewarmService.RestorePrequeueEntries()

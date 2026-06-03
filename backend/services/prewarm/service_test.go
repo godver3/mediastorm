@@ -55,6 +55,7 @@ func TestRunOnce_WarmsItems(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				Year:        2008,
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
 				ExternalIDs: map[string]string{"imdbId": "tt0903747"},
@@ -93,6 +94,57 @@ func TestRunOnce_WarmsItems(t *testing.T) {
 	}
 }
 
+func TestRunOnce_SkipsItemsWithoutRecentActivity(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	users := []models.User{
+		{ID: "user1", Name: "Alice"},
+	}
+
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {
+			{
+				SeriesID:    "old-title",
+				SeriesTitle: "Old Show",
+				UpdatedAt:   time.Now().UTC().Add(-(continueWatchingPrewarmMaxAge + time.Hour)),
+				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
+			},
+			{
+				SeriesID:    "missing-activity",
+				SeriesTitle: "Missing Activity",
+				NextEpisode: &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1},
+			},
+		},
+	}
+
+	workerCalls := 0
+	workerFn := func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+		workerCalls++
+		return "", nil
+	}
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(workerFn)
+
+	result, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+
+	if result.Warmed != 0 {
+		t.Errorf("expected 0 warmed, got %d", result.Warmed)
+	}
+	if result.Skipped != 2 {
+		t.Errorf("expected 2 skipped, got %d", result.Skipped)
+	}
+	if workerCalls != 0 {
+		t.Errorf("expected 0 worker calls, got %d", workerCalls)
+	}
+}
+
 func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
 	store := playback.NewPrequeueStore(30 * time.Minute)
 
@@ -105,6 +157,7 @@ func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
 			},
 		},
@@ -206,6 +259,7 @@ func TestRunOnce_HandlesWorkerFailure(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1},
 			},
 		},
@@ -391,11 +445,13 @@ func TestRunOnce_MultipleUsersMultipleItems(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1},
 			},
 			{
 				SeriesID:    "movie1",
 				SeriesTitle: "Inception",
+				UpdatedAt:   time.Now().UTC(),
 				Year:        2010,
 			},
 		},
@@ -403,6 +459,7 @@ func TestRunOnce_MultipleUsersMultipleItems(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 3, EpisodeNumber: 5},
 			},
 		},
@@ -765,6 +822,7 @@ func TestRunOnce_DeduplicatesSameTitleUser(t *testing.T) {
 			{
 				SeriesID:    "title1",
 				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
 				Year:        2008,
 				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
 			},

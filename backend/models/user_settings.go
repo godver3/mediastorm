@@ -304,8 +304,13 @@ type PlaybackSettings struct {
 	SubtitleBackgroundEnabled  *bool    `json:"subtitleBackgroundEnabled,omitempty"`           // Show subtitle background box
 	SubtitleBackgroundColor    string   `json:"subtitleBackgroundColor,omitempty"`             // Background color as #RRGGBB
 	SubtitleBackgroundOpacity  *float64 `json:"subtitleBackgroundOpacity,omitempty"`           // Background opacity (0.0-1.0)
+	SeekForwardSeconds         int      `json:"seekForwardSeconds,omitempty"`                  // Seconds to skip forward (default 30)
+	SeekBackwardSeconds        int      `json:"seekBackwardSeconds,omitempty"`                 // Seconds to skip backward (default 10)
+	ForceAACTranscoding        bool     `json:"forceAacTranscoding,omitempty"`                 // Force AC3/EAC3/DTS audio to AAC
+	AutoPlayTrailersTV         bool     `json:"autoPlayTrailersTV,omitempty"`                  // Auto-play trailers on TV details pages
 	RewindOnResumeFromPause    int      `json:"rewindOnResumeFromPause,omitempty"`             // Seconds to rewind when unpausing (default 0)
 	RewindOnPlaybackStart      int      `json:"rewindOnPlaybackStart,omitempty"`               // Seconds to rewind when resuming from saved progress (default 0)
+	DisablePrequeue            bool     `json:"disablePrequeue,omitempty"`                     // Disable automatic stream pre-loading
 	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"` // Skip Android display DV capability check before playback
 	CreditsAutoSkip            bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode when credits are detected
 	CreditsDetection           bool     `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
@@ -524,6 +529,8 @@ func DefaultUserSettings() UserSettings {
 			SubtitleBackgroundEnabled:  BoolPtr(true),
 			SubtitleBackgroundColor:    "#000000",
 			SubtitleBackgroundOpacity:  FloatPtr(0.6),
+			SeekForwardSeconds:         30,
+			SeekBackwardSeconds:        10,
 			IgnoreDVCompatibilityCheck: BoolPtr(false),
 		},
 		HomeShelves: HomeShelvesSettings{

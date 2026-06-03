@@ -30,6 +30,14 @@ type UsersProvider interface {
 	ListAll() []models.User
 }
 
+// ClientsProvider provides the known clients associated with a profile.
+type ClientsProvider interface {
+	ListByUser(userID string) []models.Client
+}
+
+// ScopeKeyFunc returns the effective prequeue settings scope for a profile/client.
+type ScopeKeyFunc func(userID, clientID, titleID string) string
+
 // DebridURLRefresher refreshes debrid direct URLs to keep them alive
 type DebridURLRefresher interface {
 	GetDirectURL(ctx context.Context, path string) (string, error)
@@ -37,19 +45,20 @@ type DebridURLRefresher interface {
 
 // WarmEntry represents a pre-warmed continue watching item
 type WarmEntry struct {
-	TitleID       string                   `json:"titleId"`
-	TitleName     string                   `json:"titleName"`
-	UserID        string                   `json:"userId"`
-	MediaType     string                   `json:"mediaType"`
-	Year          int                      `json:"year,omitempty"`
-	ImdbID        string                   `json:"imdbId,omitempty"`
-	TargetEpisode *models.EpisodeReference `json:"targetEpisode,omitempty"`
-	PrequeueID    string                   `json:"prequeueId"`
-	StreamPath    string                   `json:"streamPath,omitempty"`
-	LastRefresh   time.Time                `json:"lastRefresh"`
-	LastResolve   time.Time                `json:"lastResolve"`
-	Error         string                   `json:"error,omitempty"`
-	ExpiresAt     time.Time                `json:"expiresAt"`
+	TitleID          string                   `json:"titleId"`
+	TitleName        string                   `json:"titleName"`
+	UserID           string                   `json:"userId"`
+	SettingsScopeKey string                   `json:"settingsScopeKey,omitempty"`
+	MediaType        string                   `json:"mediaType"`
+	Year             int                      `json:"year,omitempty"`
+	ImdbID           string                   `json:"imdbId,omitempty"`
+	TargetEpisode    *models.EpisodeReference `json:"targetEpisode,omitempty"`
+	PrequeueID       string                   `json:"prequeueId"`
+	StreamPath       string                   `json:"streamPath,omitempty"`
+	LastRefresh      time.Time                `json:"lastRefresh"`
+	LastResolve      time.Time                `json:"lastResolve"`
+	Error            string                   `json:"error,omitempty"`
+	ExpiresAt        time.Time                `json:"expiresAt"`
 }
 
 // SyncResult contains the result of a prewarm cycle
@@ -59,6 +68,8 @@ type SyncResult struct {
 	Failed  int
 	Removed int
 }
+
+const continueWatchingPrewarmMaxAge = 14 * 24 * time.Hour
 
 // Service manages pre-warming of continue watching items
 type Service struct {
@@ -73,10 +84,13 @@ type Service struct {
 
 	historySvc      HistoryProvider
 	usersSvc        UsersProvider
+	clientsSvc      ClientsProvider
 	prequeueStore   *playback.PrequeueStore
 	debridStreaming DebridURLRefresher
 	configManager   *config.Manager
 	workerFn        playback.PrequeueWorkerFunc
+	scopedWorkerFn  playback.ScopedPrequeueWorkerFunc
+	scopeKeyFn      ScopeKeyFunc
 	jitterFn        func() time.Duration // override inter-item jitter (for testing)
 
 	ctx    context.Context
@@ -88,6 +102,19 @@ func hasTrackMetadata(entry *playback.PrequeueEntry) bool {
 		return false
 	}
 	return len(entry.AudioTracks) > 0 || len(entry.SubtitleTracks) > 0
+}
+
+func continueWatchingActivityAt(state models.SeriesWatchState) time.Time {
+	activityAt := state.UpdatedAt
+	if state.LastWatched.WatchedAt.After(activityAt) {
+		activityAt = state.LastWatched.WatchedAt
+	}
+	return activityAt.UTC()
+}
+
+func isRecentContinueWatchingActivity(state models.SeriesWatchState, cutoff time.Time) bool {
+	activityAt := continueWatchingActivityAt(state)
+	return !activityAt.IsZero() && !activityAt.Before(cutoff)
 }
 
 // NewService creates a new prewarm service. If storageDir is provided, warm entries
@@ -119,6 +146,11 @@ func (s *Service) SetUsersService(svc UsersProvider) {
 	s.usersSvc = svc
 }
 
+// SetClientsService sets the clients provider used for client-scoped prewarm.
+func (s *Service) SetClientsService(svc ClientsProvider) {
+	s.clientsSvc = svc
+}
+
 // SetPrequeueStore sets the prequeue store for creating prequeue entries
 func (s *Service) SetPrequeueStore(store *playback.PrequeueStore) {
 	s.prequeueStore = store
@@ -134,6 +166,16 @@ func (s *Service) SetWorkerFunc(fn playback.PrequeueWorkerFunc) {
 	s.workerFn = fn
 }
 
+// SetScopedWorkerFunc sets the worker used for scoped profile/client prewarm entries.
+func (s *Service) SetScopedWorkerFunc(fn playback.ScopedPrequeueWorkerFunc) {
+	s.scopedWorkerFn = fn
+}
+
+// SetScopeKeyFunc sets the resolver used to decide whether a profile/client needs its own prequeue.
+func (s *Service) SetScopeKeyFunc(fn ScopeKeyFunc) {
+	s.scopeKeyFn = fn
+}
+
 // SetDataStore sets the PostgreSQL backing store for persistence.
 // If entries were already loaded from JSON, they are discarded and reloaded from the database.
 func (s *Service) SetDataStore(store *datastore.DataStore) {
@@ -145,6 +187,145 @@ func (s *Service) SetDataStore(store *datastore.DataStore) {
 
 // useDB returns true when the service is backed by PostgreSQL.
 func (s *Service) useDB() bool { return s.store != nil }
+
+func (s *Service) scopeKey(userID, clientID, titleID string) string {
+	if s.scopeKeyFn == nil {
+		return playback.DefaultPrequeueSettingsScopeKey
+	}
+	scopeKey := strings.TrimSpace(s.scopeKeyFn(userID, clientID, titleID))
+	if scopeKey == "" {
+		return playback.DefaultPrequeueSettingsScopeKey
+	}
+	return scopeKey
+}
+
+func (s *Service) runWorker(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error) {
+	if s.scopedWorkerFn != nil {
+		return s.scopedWorkerFn(ctx, titleID, titleName, imdbID, mediaType, year, userID, clientID, settingsScopeKey, targetEpisode)
+	}
+	return s.workerFn(ctx, titleID, titleName, imdbID, mediaType, year, userID, targetEpisode)
+}
+
+func (s *Service) warmContinueWatchingScope(
+	ctx context.Context,
+	state models.SeriesWatchState,
+	user models.User,
+	mediaType string,
+	imdbID string,
+	targetEpisode *models.EpisodeReference,
+	settingsScopeKey string,
+	clientID string,
+	maxAge time.Duration,
+	resolveCount *int,
+	result *SyncResult,
+) error {
+	key := entryKey(state.SeriesID, user.ID, settingsScopeKey)
+
+	s.mu.RLock()
+	existing, hasExisting := s.entries[key]
+	s.mu.RUnlock()
+
+	if hasExisting && existing.PrequeueID != "" {
+		if entry, ok := s.prequeueStore.Get(existing.PrequeueID); ok && entry.Status == playback.PrequeueStatusReady && hasTrackMetadata(entry) {
+			result.Skipped++
+			return nil
+		}
+		if existing.Error != "" && time.Now().Before(existing.ExpiresAt) {
+			result.Skipped++
+			return nil
+		}
+		log.Printf("[prewarm] Re-warming %q for user %s scope=%s: existing prequeue missing track metadata or not ready",
+			state.SeriesTitle, user.Name, settingsScopeKey)
+	}
+
+	if pqEntry, ok := s.prequeueStore.GetByTitleUserScope(state.SeriesID, user.ID, settingsScopeKey); ok && pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) {
+		s.mu.Lock()
+		s.entries[key] = &WarmEntry{
+			TitleID:          state.SeriesID,
+			TitleName:        state.SeriesTitle,
+			UserID:           user.ID,
+			SettingsScopeKey: settingsScopeKey,
+			MediaType:        mediaType,
+			Year:             state.Year,
+			ImdbID:           imdbID,
+			TargetEpisode:    targetEpisode,
+			PrequeueID:       pqEntry.ID,
+			StreamPath:       pqEntry.StreamPath,
+			LastResolve:      pqEntry.CreatedAt,
+			LastRefresh:      time.Now(),
+			ExpiresAt:        pqEntry.ExpiresAt,
+		}
+		s.mu.Unlock()
+		log.Printf("[prewarm] Adopted existing prequeue entry %s for %q scope=%s (skipping resolve)", pqEntry.ID, state.SeriesTitle, settingsScopeKey)
+		result.Skipped++
+		return nil
+	}
+
+	if *resolveCount > 0 {
+		var jitter time.Duration
+		if s.jitterFn != nil {
+			jitter = s.jitterFn()
+		} else {
+			jitter = time.Duration(30+rand.Intn(91)) * time.Second
+		}
+		if jitter > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(jitter):
+			}
+		}
+	}
+
+	log.Printf("[prewarm] Warming: %q (%s) for user %s client=%s scope=%s", state.SeriesTitle, mediaType, user.Name, clientID, settingsScopeKey)
+	(*resolveCount)++
+
+	prequeueID, err := s.runWorker(ctx, state.SeriesID, state.SeriesTitle, imdbID, mediaType, state.Year, user.ID, clientID, settingsScopeKey, targetEpisode)
+
+	warmEntry := &WarmEntry{
+		TitleID:          state.SeriesID,
+		TitleName:        state.SeriesTitle,
+		UserID:           user.ID,
+		SettingsScopeKey: settingsScopeKey,
+		MediaType:        mediaType,
+		Year:             state.Year,
+		ImdbID:           imdbID,
+		TargetEpisode:    targetEpisode,
+		PrequeueID:       prequeueID,
+		LastResolve:      time.Now(),
+		ExpiresAt:        time.Now().Add(maxAge),
+	}
+
+	if err != nil {
+		warmEntry.Error = err.Error()
+		warmEntry.ExpiresAt = time.Now().Add(playback.DynamicTTL(
+			targetEpisodeAirDate(targetEpisode),
+			targetEpisodeAirDateTimeUTC(targetEpisode),
+			state.Year, mediaType,
+		))
+		result.Failed++
+		log.Printf("[prewarm] Failed to warm %q for user %s client=%s scope=%s (retry after %v): %v",
+			state.SeriesTitle, user.Name, clientID, settingsScopeKey, time.Until(warmEntry.ExpiresAt).Round(time.Minute), err)
+	} else {
+		if pqEntry, ok := s.prequeueStore.Get(prequeueID); ok {
+			warmEntry.StreamPath = pqEntry.StreamPath
+			warmEntry.LastRefresh = time.Now()
+			s.prequeueStore.Update(prequeueID, func(e *playback.PrequeueEntry) {
+				e.ExpiresAt = warmEntry.ExpiresAt
+			})
+		}
+		result.Warmed++
+		log.Printf("[prewarm] Warmed: %q for user %s client=%s scope=%s (prequeueID=%s)", state.SeriesTitle, user.Name, clientID, settingsScopeKey, prequeueID)
+	}
+
+	s.mu.Lock()
+	s.entries[key] = warmEntry
+	if err := s.saveLocked(); err != nil {
+		log.Printf("[prewarm] Warning: failed to persist after warming %q: %v", state.SeriesTitle, err)
+	}
+	s.mu.Unlock()
+	return nil
+}
 
 // AdoptEntry registers an ad-hoc prequeue entry with prewarm so it stays alive.
 // Called by the prequeue handler after creating an ad-hoc entry.
@@ -167,7 +348,7 @@ func (s *Service) UpdateFromPrequeue(prequeueID string) {
 		return
 	}
 
-	key := entryKey(pqEntry.TitleID, pqEntry.UserID)
+	key := entryKey(pqEntry.TitleID, pqEntry.UserID, pqEntry.SettingsScopeKey)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -179,6 +360,7 @@ func (s *Service) UpdateFromPrequeue(prequeueID string) {
 	warmEntry.TitleID = pqEntry.TitleID
 	warmEntry.TitleName = pqEntry.TitleName
 	warmEntry.UserID = pqEntry.UserID
+	warmEntry.SettingsScopeKey = pqEntry.SettingsScopeKey
 	warmEntry.MediaType = pqEntry.MediaType
 	warmEntry.Year = pqEntry.Year
 	warmEntry.TargetEpisode = pqEntry.TargetEpisode
@@ -274,7 +456,7 @@ func (s *Service) RestorePrequeueEntries() {
 
 		// Check if the prequeue store already has a valid entry for this title+user
 		// (loaded from prequeue.json which contains full track data)
-		if existing, ok := s.prequeueStore.GetByTitleUser(entry.TitleID, entry.UserID); ok && existing.Status == playback.PrequeueStatusReady {
+		if existing, ok := s.prequeueStore.GetByTitleUserScope(entry.TitleID, entry.UserID, entry.SettingsScopeKey); ok && existing.Status == playback.PrequeueStatusReady {
 			entry.PrequeueID = existing.ID
 			restored++
 			log.Printf("[prewarm] Reused existing prequeue entry %s for %s (from prequeue.json)", existing.ID, entry.TitleName)
@@ -345,6 +527,7 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 	}
 
 	maxAge := s.getMaxAge()
+	activityCutoff := time.Now().UTC().Add(-continueWatchingPrewarmMaxAge)
 
 	// Track which entries are still valid (in continue watching)
 	activeKeys := make(map[string]bool)
@@ -362,8 +545,17 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 
 		resolveCount := 0
 		for _, state := range states {
-			key := entryKey(state.SeriesID, user.ID)
+			if !isRecentContinueWatchingActivity(state, activityCutoff) {
+				log.Printf("[prewarm] Skipping stale continue-watching item: %q user=%s activity=%s cutoff=%s",
+					state.SeriesTitle, user.Name, continueWatchingActivityAt(state).Format(time.RFC3339), activityCutoff.Format(time.RFC3339))
+				result.Skipped++
+				continue
+			}
+
+			profileScopeKey := s.scopeKey(user.ID, "", state.SeriesID)
+			key := entryKey(state.SeriesID, user.ID, profileScopeKey)
 			activeKeys[key] = true
+			activeKeys[entryKey(state.SeriesID, user.ID)] = true
 
 			// Skip if we already processed this title+user in this cycle
 			if processedKeys[key] {
@@ -371,49 +563,7 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 				result.Skipped++
 				continue
 			}
-
-			// Check if we already have a warm entry that's ready
-			s.mu.RLock()
-			existing, hasExisting := s.entries[key]
-			s.mu.RUnlock()
-
-			if hasExisting && existing.PrequeueID != "" {
-				// Check if the prequeue entry is still valid
-				if entry, ok := s.prequeueStore.Get(existing.PrequeueID); ok && entry.Status == playback.PrequeueStatusReady && hasTrackMetadata(entry) {
-					result.Skipped++
-					continue
-				}
-				// If the entry failed, respect its TTL before retrying
-				if existing.Error != "" && time.Now().Before(existing.ExpiresAt) {
-					result.Skipped++
-					continue
-				}
-				log.Printf("[prewarm] Re-warming %q for user %s: existing prequeue missing track metadata or not ready",
-					state.SeriesTitle, user.Name)
-			}
-
-			// Check the prequeue store directly — there may be a valid ready entry
-			// from a previous session that wasn't tracked in prewarm
-			if pqEntry, ok := s.prequeueStore.GetByTitleUser(state.SeriesID, user.ID); ok && pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) {
-				// Adopt this prequeue entry into prewarm (batch save after loop)
-				s.mu.Lock()
-				s.entries[key] = &WarmEntry{
-					TitleID:     state.SeriesID,
-					TitleName:   state.SeriesTitle,
-					UserID:      user.ID,
-					MediaType:   "series",
-					Year:        state.Year,
-					PrequeueID:  pqEntry.ID,
-					StreamPath:  pqEntry.StreamPath,
-					LastResolve: pqEntry.CreatedAt,
-					LastRefresh: time.Now(),
-					ExpiresAt:   pqEntry.ExpiresAt,
-				}
-				s.mu.Unlock()
-				log.Printf("[prewarm] Adopted existing prequeue entry %s for %q (skipping resolve)", pqEntry.ID, state.SeriesTitle)
-				result.Skipped++
-				continue
-			}
+			processedKeys[key] = true
 
 			// Determine target episode
 			var targetEpisode *models.EpisodeReference
@@ -428,79 +578,33 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 				continue
 			}
 
-			// Random jitter between resolve calls to avoid interfering with concurrent usage
-			if resolveCount > 0 {
-				var jitter time.Duration
-				if s.jitterFn != nil {
-					jitter = s.jitterFn()
-				} else {
-					jitter = time.Duration(30+rand.Intn(91)) * time.Second // 30s-2min
-				}
-				if jitter > 0 {
-					select {
-					case <-ctx.Done():
-						return result, ctx.Err()
-					case <-time.After(jitter):
-					}
-				}
-			}
-
 			// Get IMDB ID from external IDs
 			imdbID := ""
 			if state.ExternalIDs != nil {
 				imdbID = state.ExternalIDs["imdbId"]
 			}
 
-			log.Printf("[prewarm] Warming: %q (%s) for user %s", state.SeriesTitle, mediaType, user.Name)
-			processedKeys[key] = true
-			resolveCount++
-
-			// Run the prequeue worker synchronously
-			prequeueID, err := s.workerFn(ctx, state.SeriesID, state.SeriesTitle, imdbID, mediaType, state.Year, user.ID, targetEpisode)
-
-			warmEntry := &WarmEntry{
-				TitleID:       state.SeriesID,
-				TitleName:     state.SeriesTitle,
-				UserID:        user.ID,
-				MediaType:     mediaType,
-				Year:          state.Year,
-				ImdbID:        imdbID,
-				TargetEpisode: targetEpisode,
-				PrequeueID:    prequeueID,
-				LastResolve:   time.Now(),
-				ExpiresAt:     time.Now().Add(maxAge),
+			if err := s.warmContinueWatchingScope(ctx, state, user, mediaType, imdbID, targetEpisode, profileScopeKey, "", maxAge, &resolveCount, &result); err != nil {
+				return result, err
 			}
 
-			if err != nil {
-				warmEntry.Error = err.Error()
-				// Use dynamic TTL for retry — near-release content retries sooner
-				warmEntry.ExpiresAt = time.Now().Add(playback.DynamicTTL(
-					targetEpisodeAirDate(targetEpisode),
-					targetEpisodeAirDateTimeUTC(targetEpisode),
-					state.Year, mediaType,
-				))
-				result.Failed++
-				log.Printf("[prewarm] Failed to warm %q for user %s (retry after %v): %v",
-					state.SeriesTitle, user.Name, time.Until(warmEntry.ExpiresAt).Round(time.Minute), err)
-			} else {
-				// Get stream path from prequeue entry for URL refresh and extend its TTL
-				if pqEntry, ok := s.prequeueStore.Get(prequeueID); ok {
-					warmEntry.StreamPath = pqEntry.StreamPath
-					warmEntry.LastRefresh = time.Now()
-					s.prequeueStore.Update(prequeueID, func(e *playback.PrequeueEntry) {
-						e.ExpiresAt = warmEntry.ExpiresAt
-					})
+			if s.clientsSvc == nil {
+				continue
+			}
+			seenScopes := map[string]bool{profileScopeKey: true}
+			for _, client := range s.clientsSvc.ListByUser(user.ID) {
+				clientScopeKey := s.scopeKey(user.ID, client.ID, state.SeriesID)
+				if seenScopes[clientScopeKey] {
+					continue
 				}
-				result.Warmed++
-				log.Printf("[prewarm] Warmed: %q for user %s (prequeueID=%s)", state.SeriesTitle, user.Name, prequeueID)
+				seenScopes[clientScopeKey] = true
+				clientKey := entryKey(state.SeriesID, user.ID, clientScopeKey)
+				activeKeys[clientKey] = true
+				processedKeys[clientKey] = true
+				if err := s.warmContinueWatchingScope(ctx, state, user, mediaType, imdbID, targetEpisode, clientScopeKey, client.ID, maxAge, &resolveCount, &result); err != nil {
+					return result, err
+				}
 			}
-
-			s.mu.Lock()
-			s.entries[key] = warmEntry
-			if err := s.saveLocked(); err != nil {
-				log.Printf("[prewarm] Warning: failed to persist after warming %q: %v", state.SeriesTitle, err)
-			}
-			s.mu.Unlock()
 		}
 	}
 
@@ -588,10 +692,15 @@ func (s *Service) RefreshURLs(ctx context.Context) error {
 
 // GetWarm returns a warm entry for the given title+user, or nil if not found
 func (s *Service) GetWarm(titleID, userID string) *playback.WarmRef {
+	return s.GetWarmScoped(titleID, userID, playback.DefaultPrequeueSettingsScopeKey)
+}
+
+// GetWarmScoped returns a warm entry for the given title+user+settings scope.
+func (s *Service) GetWarmScoped(titleID, userID, settingsScopeKey string) *playback.WarmRef {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entry, ok := s.entries[entryKey(titleID, userID)]
+	entry, ok := s.entries[entryKey(titleID, userID, settingsScopeKey)]
 	if !ok || entry.Error != "" || entry.PrequeueID == "" {
 		return nil
 	}
@@ -631,7 +740,7 @@ func (s *Service) load() error {
 				log.Printf("[prewarm] Warning: failed to unmarshal db entry: %v", err)
 				continue
 			}
-			s.entries[entryKey(e.TitleID, e.UserID)] = &e
+			s.entries[entryKey(e.TitleID, e.UserID, e.SettingsScopeKey)] = &e
 		}
 		log.Printf("[prewarm] Loaded %d warm entries from database", len(s.entries))
 		return nil
@@ -653,7 +762,7 @@ func (s *Service) load() error {
 
 	s.entries = make(map[string]*WarmEntry, len(stored))
 	for _, e := range stored {
-		s.entries[entryKey(e.TitleID, e.UserID)] = e
+		s.entries[entryKey(e.TitleID, e.UserID, e.SettingsScopeKey)] = e
 	}
 	log.Printf("[prewarm] Loaded %d warm entries from disk", len(stored))
 	return nil
@@ -732,7 +841,7 @@ func (s *Service) syncToDB() error {
 		if err := json.Unmarshal(data, &e); err != nil {
 			continue
 		}
-		key := entryKey(e.TitleID, e.UserID)
+		key := entryKey(e.TitleID, e.UserID, e.SettingsScopeKey)
 		if !memKeys[key] {
 			_ = repo.Delete(ctx, key)
 		}
@@ -817,7 +926,7 @@ func (s *Service) reResolveExpired(ctx context.Context) int {
 		}
 
 		// Update warm entry if we have one
-		key := entryKey(entry.TitleID, entry.UserID)
+		key := entryKey(entry.TitleID, entry.UserID, entry.SettingsScopeKey)
 		s.mu.Lock()
 		if warmEntry, ok := s.entries[key]; ok {
 			warmEntry.PrequeueID = newPqID
@@ -887,8 +996,15 @@ func (s *Service) isAdoptedEntry(entry *WarmEntry) bool {
 	return adopted
 }
 
-func entryKey(titleID, userID string) string {
-	return titleID + ":" + userID
+func entryKey(titleID, userID string, settingsScopeKey ...string) string {
+	scopeKey := playback.DefaultPrequeueSettingsScopeKey
+	if len(settingsScopeKey) > 0 {
+		scopeKey = strings.TrimSpace(settingsScopeKey[0])
+		if scopeKey == "" {
+			scopeKey = playback.DefaultPrequeueSettingsScopeKey
+		}
+	}
+	return titleID + ":" + userID + ":" + scopeKey
 }
 
 func targetEpisodeAirDate(ep *models.EpisodeReference) string {

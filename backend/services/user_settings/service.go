@@ -213,6 +213,21 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.SubtitleBackgroundOpacity == nil {
 			settings.Playback.SubtitleBackgroundOpacity = defaults.Playback.SubtitleBackgroundOpacity
 		}
+		if settings.Playback.SeekForwardSeconds == 0 {
+			settings.Playback.SeekForwardSeconds = defaults.Playback.SeekForwardSeconds
+		}
+		if settings.Playback.SeekBackwardSeconds == 0 {
+			settings.Playback.SeekBackwardSeconds = defaults.Playback.SeekBackwardSeconds
+		}
+		if !settings.Playback.ForceAACTranscoding {
+			settings.Playback.ForceAACTranscoding = defaults.Playback.ForceAACTranscoding
+		}
+		if !settings.Playback.AutoPlayTrailersTV {
+			settings.Playback.AutoPlayTrailersTV = defaults.Playback.AutoPlayTrailersTV
+		}
+		if !settings.Playback.DisablePrequeue {
+			settings.Playback.DisablePrequeue = defaults.Playback.DisablePrequeue
+		}
 
 		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
 		if settings.Display.BadgeVisibility == nil {
@@ -388,7 +403,12 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.SubtitleOutlineWeight != nil ||
 		s.Playback.SubtitleBackgroundEnabled != nil ||
 		s.Playback.SubtitleBackgroundColor != "" ||
-		s.Playback.SubtitleBackgroundOpacity != nil {
+		s.Playback.SubtitleBackgroundOpacity != nil ||
+		s.Playback.SeekForwardSeconds != 0 ||
+		s.Playback.SeekBackwardSeconds != 0 ||
+		s.Playback.ForceAACTranscoding ||
+		s.Playback.AutoPlayTrailersTV ||
+		s.Playback.DisablePrequeue {
 		return false
 	}
 
