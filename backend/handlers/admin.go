@@ -188,6 +188,7 @@ type StreamInfo struct {
 	SeasonNumber  int               `json:"season_number,omitempty"`  // Season number (for episodes)
 	EpisodeNumber int               `json:"episode_number,omitempty"` // Episode number (for episodes)
 	EpisodeName   string            `json:"episode_name,omitempty"`   // Episode title (for episodes)
+	PosterURL     string            `json:"posterUrl,omitempty"`      // Poster already known by the player/search result
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"`    // tmdbId, tvdbId, imdbId
 	// Pause detection
 	IsPaused    bool      `json:"is_paused,omitempty"`    // True if no recent activity (likely paused)
@@ -395,6 +396,7 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 				SeasonNumber:  session.MediaMetadata.SeasonNumber,
 				EpisodeNumber: session.MediaMetadata.EpisodeNumber,
 				EpisodeName:   session.MediaMetadata.EpisodeName,
+				PosterURL:     session.MediaMetadata.PosterURL,
 				ExternalIDs:   session.MediaMetadata.ExternalIDs,
 			}
 
@@ -437,6 +439,7 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			SeasonNumber:  stream.MediaMetadata.SeasonNumber,
 			EpisodeNumber: stream.MediaMetadata.EpisodeNumber,
 			EpisodeName:   stream.MediaMetadata.EpisodeName,
+			PosterURL:     stream.MediaMetadata.PosterURL,
 			ExternalIDs:   stream.MediaMetadata.ExternalIDs,
 		}
 		rawStreams = append(rawStreams, rawStream{info: info, streamID: stream.ID})
@@ -539,7 +542,11 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 				existing.SeasonNumber = info.SeasonNumber
 				existing.EpisodeNumber = info.EpisodeNumber
 				existing.EpisodeName = info.EpisodeName
+				existing.PosterURL = info.PosterURL
 				existing.ExternalIDs = info.ExternalIDs
+			}
+			if existing.PosterURL == "" && info.PosterURL != "" {
+				existing.PosterURL = info.PosterURL
 			}
 		} else {
 			// New entry - initialize with this profile

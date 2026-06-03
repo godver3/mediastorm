@@ -911,6 +911,7 @@
                         ? `S${stream.season_number}E${stream.episode_number} - ${stream.episode_name}`
                         : `Season ${stream.season_number}, Episode ${stream.episode_number}`,
                     type: 'series',
+                    posterUrl: stream.posterUrl || '',
                     externalIds: stream.externalIds
                 };
             } else {
@@ -918,6 +919,7 @@
                     title: stream.title,
                     subtitle: stream.year ? String(stream.year) : '',
                     type: 'movie',
+                    posterUrl: stream.posterUrl || '',
                     externalIds: stream.externalIds
                 };
             }
@@ -926,7 +928,7 @@
         // Fallback: clean up filename for display only
         const filename = stream.filename || '';
         const name = filename.replace(/\.[^/.]+$/, '').replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
-        return { title: name || 'Unknown', subtitle: '', type: 'unknown', externalIds: null };
+        return { title: name || 'Unknown', subtitle: '', type: 'unknown', posterUrl: stream.posterUrl || '', externalIds: null };
     }
 
     // Fetch poster using external IDs (tvdbId/tmdbId) directly
@@ -1082,12 +1084,19 @@
             const streamId = stream.id || streams.indexOf(stream);
             const posterEl = document.getElementById(`poster-${streamId}`);
 
-            // Skip if no external IDs available (can't fetch poster without them)
-            if (!posterEl || !mediaInfo.externalIds) continue;
+            if (!posterEl) continue;
+
+            if (mediaInfo.posterUrl) {
+                posterEl.innerHTML = `<img class="stream-card-poster" src="${escapeHtml(mediaInfo.posterUrl)}" alt="${escapeHtml(mediaInfo.title)}" onerror="this.parentElement.innerHTML='<div class=\\'stream-card-poster-placeholder\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><polygon points=\\'5 3 19 12 5 21 5 3\\'/></svg></div>'">`;
+                continue;
+            }
+
+            // Skip metadata fetch if no external IDs are available.
+            if (!mediaInfo.externalIds) continue;
 
             const poster = await fetchPoster(mediaInfo);
             if (poster) {
-                posterEl.innerHTML = `<img class="stream-card-poster" src="${poster}" alt="${mediaInfo.title}" onerror="this.parentElement.innerHTML='<div class=\\'stream-card-poster-placeholder\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><polygon points=\\'5 3 19 12 5 21 5 3\\'/></svg></div>'">`;
+                posterEl.innerHTML = `<img class="stream-card-poster" src="${escapeHtml(poster)}" alt="${escapeHtml(mediaInfo.title)}" onerror="this.parentElement.innerHTML='<div class=\\'stream-card-poster-placeholder\\'><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><polygon points=\\'5 3 19 12 5 21 5 3\\'/></svg></div>'">`;
             }
         }
     }

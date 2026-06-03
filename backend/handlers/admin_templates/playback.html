@@ -2709,6 +2709,7 @@
             if (selectedItem.imdbId) params.set('imdb', selectedItem.imdbId);
             if (selectedItem.tmdbId) params.set('tmdb', selectedItem.tmdbId);
             if (selectedItem.tvdbId) params.set('tvdb', selectedItem.tvdbId);
+            if (selectedItem.posterUrl) params.set('posterUrl', selectedItem.posterUrl);
             if (selectedItem.mediaType === 'series') {
                 params.set('seasonNumber', String(selectedEpisode?.seasonNumber || 1));
                 params.set('episodeNumber', String(selectedEpisode?.episodeNumber || 1));

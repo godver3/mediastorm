@@ -20,6 +20,7 @@ type StreamMediaMetadata struct {
 	SeriesID      string
 	SeriesName    string
 	MovieName     string
+	PosterURL     string
 	ExternalIDs   map[string]string
 }
 
@@ -33,6 +34,7 @@ func parseStreamMediaMetadata(r *http.Request) StreamMediaMetadata {
 		SeriesID:    strings.TrimSpace(q.Get("seriesId")),
 		SeriesName:  strings.TrimSpace(q.Get("seriesName")),
 		MovieName:   strings.TrimSpace(q.Get("movieName")),
+		PosterURL:   strings.TrimSpace(q.Get("posterUrl")),
 	}
 
 	if meta.Title == "" {
@@ -81,6 +83,9 @@ func addStreamMediaMetadataParams(values url.Values, meta StreamMediaMetadata) {
 	}
 	if meta.MovieName != "" {
 		values.Set("movieName", meta.MovieName)
+	}
+	if meta.PosterURL != "" {
+		values.Set("posterUrl", meta.PosterURL)
 	}
 	if meta.Year > 0 {
 		values.Set("year", strconv.Itoa(meta.Year))

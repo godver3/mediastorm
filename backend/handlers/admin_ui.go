@@ -1895,7 +1895,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			seasonNumber := session.MediaMetadata.SeasonNumber
 			episodeNumber := session.MediaMetadata.EpisodeNumber
 			year := session.MediaMetadata.Year
-			externalIDs := session.MediaMetadata.ExternalIDs
+			posterURL := session.MediaMetadata.PosterURL
+			externalIDs := streamExternalIDs(session.MediaMetadata.ItemID, session.MediaMetadata.ExternalIDs)
 
 			if matchedProgress != nil {
 				position = matchedProgress.Position
@@ -1905,7 +1906,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				}
 				// Media identification
 				mediaType = matchedProgress.MediaType
-				externalIDs = matchedProgress.ExternalIDs
+				externalIDs = streamExternalIDs(matchedProgress.ItemID, matchedProgress.ExternalIDs)
 				if matchedProgress.MediaType == "episode" {
 					title = matchedProgress.SeriesName
 					seasonNumber = matchedProgress.SeasonNumber
@@ -1944,6 +1945,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"season_number":  seasonNumber,
 				"episode_number": episodeNumber,
 				"episode_name":   episodeName,
+				"posterUrl":      posterURL,
 				"externalIds":    externalIDs,
 			}
 			if matchedProgress != nil {
@@ -1992,7 +1994,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		seasonNumber := stream.MediaMetadata.SeasonNumber
 		episodeNumber := stream.MediaMetadata.EpisodeNumber
 		year := stream.MediaMetadata.Year
-		externalIDs := stream.MediaMetadata.ExternalIDs
+		posterURL := stream.MediaMetadata.PosterURL
+		externalIDs := streamExternalIDs(stream.MediaMetadata.ItemID, stream.MediaMetadata.ExternalIDs)
 
 		if matchedProgress != nil {
 			position = matchedProgress.Position
@@ -2000,7 +2003,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			duration = matchedProgress.Duration
 			// Media identification
 			mediaType = matchedProgress.MediaType
-			externalIDs = matchedProgress.ExternalIDs
+			externalIDs = streamExternalIDs(matchedProgress.ItemID, matchedProgress.ExternalIDs)
 			if matchedProgress.MediaType == "episode" {
 				title = matchedProgress.SeriesName
 				seasonNumber = matchedProgress.SeasonNumber
@@ -2036,6 +2039,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"season_number":  seasonNumber,
 			"episode_number": episodeNumber,
 			"episode_name":   episodeName,
+			"posterUrl":      posterURL,
 			"externalIds":    externalIDs,
 		}
 		if matchedProgress != nil {
@@ -2085,6 +2089,40 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		"globalVODLimit":    globalVODLimit,
 		"globalVODCurrent":  globalVODCurrent,
 	})
+}
+
+func streamExternalIDs(itemID string, ids map[string]string) map[string]string {
+	merged := make(map[string]string)
+	for key, value := range ids {
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			merged[key] = value
+		}
+	}
+
+	trimmedItemID := strings.TrimSpace(itemID)
+	parts := strings.Split(strings.ToLower(trimmedItemID), ":")
+	if len(parts) >= 3 {
+		switch parts[0] {
+		case "tmdb":
+			if merged["tmdb"] == "" {
+				merged["tmdb"] = parts[len(parts)-1]
+			}
+		case "tvdb":
+			if merged["tvdb"] == "" {
+				merged["tvdb"] = parts[len(parts)-1]
+			}
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(trimmedItemID), "tt") && merged["imdb"] == "" {
+		merged["imdb"] = trimmedItemID
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 // GetStreams returns active streams as JSON
