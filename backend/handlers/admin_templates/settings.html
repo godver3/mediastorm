@@ -831,14 +831,17 @@
             });
             if (response.ok) {
                 clientsForUser = await response.json() || [];
+                clientOverrideGroupsById = {};
                 // Recalculate hasOverrides for each client by loading their settings
                 await recalculateAllClientOverrides();
             } else {
                 clientsForUser = [];
+                clientOverrideGroupsById = {};
             }
         } catch (e) {
             console.warn('Failed to load clients:', e);
             clientsForUser = [];
+            clientOverrideGroupsById = {};
         }
     }
 
@@ -918,6 +921,14 @@
                         }
                     }
                     if (!hasActualOverrides) {
+                        for (const key of clientDisplayFields) {
+                            if (clientFieldDiffersFromInherited(settings, 'display', key)) {
+                                hasActualOverrides = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasActualOverrides) {
                         for (const key of clientPlaybackFields) {
                             const clientVal = settings[key];
                             if (normalizeForComparison(clientVal) === null) continue;
@@ -941,15 +952,22 @@
                         }
                     }
                     client.hasOverrides = hasActualOverrides;
+                    clientOverrideGroupsById[client.id] = propagationGroupsForClientSettings(settings);
+                } else {
+                    client.hasOverrides = false;
+                    clientOverrideGroupsById[client.id] = [];
                 }
             } catch (e) {
                 console.warn('Failed to load settings for client', client.id, e);
+                client.hasOverrides = false;
+                clientOverrideGroupsById[client.id] = [];
             }
         }
     }
 
     // Per-profile override details: { userId: { sectionLabel: [fieldLabel, ...] } }
     let userOverrideDetails = {};
+    let clientOverrideGroupsById = {};
 
     // Sections to check for overrides and their global mapping
     const overrideSections = [
@@ -972,6 +990,30 @@
         const fieldDef = sectionDef.fields[fieldKey];
         if (!fieldDef) return fieldKey;
         return fieldDef.label || fieldKey;
+    }
+
+    function getClientPropagationFieldLabel(fieldKey) {
+        const section = getClientFieldSection(fieldKey);
+        if (section === 'display' && fieldKey.startsWith('appearance.')) return 'appearance';
+        return getFieldLabel(section, fieldKey.split('.')[0]);
+    }
+
+    function propagationGroupsForClientSettings(settings) {
+        if (!settings) return [];
+        return propagationGroups.map(group => {
+            const fields = [];
+            for (const path of group.clientPaths) {
+                const section = getClientFieldSection(path);
+                if (clientFieldDiffersFromInherited(settings, section, path)) {
+                    fields.push(getClientPropagationFieldLabel(path));
+                }
+            }
+            if (fields.length === 0) return null;
+            return {
+                ...group,
+                description: Array.from(new Set(fields)).join(', '),
+            };
+        }).filter(Boolean);
     }
 
     // Recalculate overrides for all users — fetches each profile's stored settings
@@ -1347,58 +1389,70 @@
         {
             key: 'playback',
             label: 'Playback',
-            description: 'Audio Language, Subtitle Language, Subtitle Mode, Dolby Vision Compatibility Check',
+            description: 'Audio Language, Subtitle Language, Subtitle Mode, Pause When App Inactive, Dolby Vision Compatibility Check',
             detailSection: 'Playback',
-            detailFields: ['Audio Language', 'Subtitle Language', 'Subtitle Mode', 'Dolby Vision Compatibility Check'],
+            detailFields: ['Audio Language', 'Subtitle Language', 'Subtitle Mode', 'Pause When App Inactive', 'Pause When Covered', 'Dolby Vision Compatibility Check'],
             userPaths: [
                 'playback.preferredAudioLanguage',
                 'playback.preferredSubtitleLanguage',
                 'playback.preferredSubtitleMode',
+                'playback.pauseWhenAppInactive',
                 'playback.ignoreDolbyVisionCompatibilityCheck',
             ],
             clientPaths: [
                 'preferredAudioLanguage',
                 'preferredSubtitleLanguage',
                 'preferredSubtitleMode',
+                'pauseWhenAppInactive',
                 'ignoreDolbyVisionCompatibilityCheck',
             ],
         },
         {
             key: 'contentFiltering',
             label: 'Content Filtering',
-            description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, Unknown Track Preference, Filter Out Terms, Preferred Terms, Non-Preferred Terms',
+            description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, HDR/DV Policy, Unknown Track Preference, Required Terms, Filter Out Terms, Preferred Terms, Non-Preferred Terms, Download Preferred Terms',
             detailSection: 'Content Filtering',
-            detailFields: ['Max Movie Size (GB)', 'Max Episode Size (GB)', 'Max Resolution', 'Unknown Track Preference', 'Filter Out Terms', 'Preferred Terms', 'Non-Preferred Terms'],
+            detailFields: ['Max Movie Size (GB)', 'Max Episode Size (GB)', 'Max Resolution', 'HDR/DV Policy', 'Unknown Track Preference', 'Required Terms', 'Filter Out Terms', 'Preferred Terms', 'Non-Preferred Terms', 'Download Preferred Terms'],
             userPaths: [
                 'filtering.maxSizeMovieGb',
                 'filtering.maxSizeEpisodeGb',
                 'filtering.maxResolution',
+                'filtering.hdrDvPolicy',
                 'filtering.unknownTrackPolicy',
+                'filtering.requiredTerms',
                 'filtering.filterOutTerms',
                 'filtering.preferredTerms',
                 'filtering.nonPreferredTerms',
+                'filtering.downloadPreferredTerms',
             ],
             clientPaths: [
                 'maxSizeMovieGb',
                 'maxSizeEpisodeGb',
                 'maxResolution',
+                'hdrDvPolicy',
                 'unknownTrackPolicy',
+                'requiredTerms',
                 'filterOutTerms',
                 'preferredTerms',
                 'nonPreferredTerms',
+                'downloadPreferredTerms',
             ],
         },
         {
             key: 'display',
             label: 'Display',
-            description: 'Badge Icon Style, appearance',
+            description: 'Badge Icon Style, navigation tabs, filtering bypass, appearance',
             detailSection: 'Display',
-            detailFields: ['Badge Icon Style', 'appearance'],
+            detailFields: ['Badge Icon Style', 'Navigation Tabs', 'Bypass Filtering for AIOStreams Only', 'appearance'],
             userPaths: [
                 'display.watchStateIconStyle',
+                'display.navigationTabVisibility',
+                'display.bypassFilteringForAioStreamsOnly',
                 'display.appearance',
             ],
             clientPaths: [
+                'navigationTabVisibility',
+                'bypassFilteringForAioStreamsOnly',
                 'appearance',
             ],
         },
@@ -1607,7 +1661,9 @@
         // Reload clients and recalculate their override status
         await loadClientsForUser(selectedUserId);
 
-        const clientsWithOverrides = clientsForUser.filter(c => c.hasOverrides);
+        const clientsWithOverrides = clientsForUser
+            .map(c => ({ ...c, propagationGroups: clientOverrideGroupsById[c.id] || [] }))
+            .filter(c => c.hasOverrides && c.propagationGroups.length > 0);
         if (clientsWithOverrides.length === 0) return;
 
         // Configure modal for profile→clients propagation
@@ -1626,7 +1682,7 @@
                     <input type="checkbox" class="propagate-check" value="${c.id}" onchange="syncPropagateTargetGroups(this.value)" style="margin-top: 0.2rem; flex-shrink: 0;">
                     <span style="min-width: 0;">
                         <span style="display: block; font-weight: 500;">${c.name || c.deviceType || c.id}</span>
-                        <span style="display: grid; gap: 0.4rem; margin-top: 0.55rem;">${renderPropagationGroupToggles(c.id, propagationGroups.filter(group => group.clientPaths.length > 0))}</span>
+                        <span style="display: grid; gap: 0.4rem; margin-top: 0.55rem;">${renderPropagationGroupToggles(c.id, c.propagationGroups)}</span>
                     </span>
                 </div>
             </li>`
@@ -1750,6 +1806,10 @@
                         });
                         if (response.ok) {
                             const client = clientsForUser.find(c => c.id === clientId);
+                            if (selectedClientId === clientId) {
+                                clientSettings = targetSettings;
+                                originalClientSettings = JSON.parse(JSON.stringify(targetSettings));
+                            }
                             if (client) recalculateClientOverrides(clientId);
                             successCount++;
                         } else {
@@ -1938,8 +1998,7 @@
         // Check display fields
         if (!hasActualOverrides) {
             for (const key of clientDisplayFields) {
-                const clientVal = getAtPath(clientSettings, key);
-                if (normalizeForComparison(clientVal) !== null) {
+                if (clientFieldDiffersFromInherited(clientSettings, 'display', key)) {
                     hasActualOverrides = true;
                     break;
                 }
@@ -1983,6 +2042,7 @@
         }
 
         client.hasOverrides = hasActualOverrides;
+        clientOverrideGroupsById[clientId] = propagationGroupsForClientSettings(clientSettings);
     }
 
     const icons = {
@@ -2240,6 +2300,33 @@
         if (clientAnimeFilterFields.includes(fieldKey)) return 'animeFiltering';
         if (clientNetworkFields.includes(fieldKey)) return 'network';
         return 'filtering'; // fallback
+    }
+
+    function getClientFieldSettingsPath(section, fieldKey) {
+        return section + '.' + fieldKey;
+    }
+
+    function clientFieldDiffersFromInherited(settings, section, fieldKey) {
+        if (!settings) return false;
+        const clientVal = getAtPath(settings, fieldKey);
+        const leafKey = fieldKey.split('.').pop();
+        const normClient = normalizeForComparisonForField(section, leafKey, clientVal);
+        if (normClient === null) return false;
+
+        const settingsPath = getClientFieldSettingsPath(section, fieldKey);
+        const globalVal = getGlobalValue(settingsPath);
+        const normGlobal = normalizeForComparisonForField(section, leafKey, globalVal);
+        let inheritedVal = globalVal;
+
+        if (selectedUserId && userSettings && userSettings[section]) {
+            const profileVal = getAtPath(userSettings, settingsPath);
+            const normProfile = normalizeForComparisonForField(section, leafKey, profileVal);
+            if (normProfile !== null && !deepEqual(normProfile, normGlobal)) {
+                inheritedVal = profileVal;
+            }
+        }
+
+        return !deepEqual(normClient, normalizeForComparisonForField(section, leafKey, inheritedVal));
     }
 
     // Check if a client value is actually different from what it would inherit
