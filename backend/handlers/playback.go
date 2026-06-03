@@ -48,6 +48,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Result      models.NZBResult `json:"result"`
 		StartOffset float64          `json:"startOffset,omitempty"` // Seek position in seconds for subtitle extraction
+		ProfileID   string           `json:"profileId,omitempty"`
 	}
 
 	dec := json.NewDecoder(r.Body)
@@ -60,6 +61,13 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[playback-handler] TIMING: Received resolve request: Title=%q, GUID=%q, ServiceType=%q, titleId=%q, titleName=%q, startOffset=%.2f",
 		request.Result.Title, request.Result.GUID, request.Result.ServiceType,
 		request.Result.Attributes["titleId"], request.Result.Attributes["titleName"], request.StartOffset)
+
+	if request.ProfileID != "" {
+		if request.Result.Attributes == nil {
+			request.Result.Attributes = map[string]string{}
+		}
+		request.Result.Attributes["profileId"] = request.ProfileID
+	}
 
 	resolution, err := h.Service.Resolve(r.Context(), request.Result)
 	if err != nil {
@@ -82,7 +90,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 // ResolveBatch performs a single set of provider API calls and resolves all episodes from a pack.
 func (h *PlaybackHandler) ResolveBatch(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Result   models.NZBResult           `json:"result"`
+		Result   models.NZBResult            `json:"result"`
 		Episodes []models.BatchEpisodeTarget `json:"episodes"`
 	}
 

@@ -328,6 +328,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(result.Attributes["profileId"]))
 
 	// Determine provider - use attribute if specified, otherwise use first enabled provider
 	provider := strings.TrimSpace(result.Attributes["provider"])

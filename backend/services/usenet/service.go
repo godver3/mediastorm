@@ -74,6 +74,7 @@ func (s *Service) CheckHealth(ctx context.Context, candidate models.NZBResult) (
 	if err != nil {
 		return nil, err
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
 
 	nzbBytes, fileName, err := s.fetchNZB(ctx, downloadURL, candidate)
 	if err != nil {
@@ -95,6 +96,7 @@ func (s *Service) CheckHealthWithNZB(ctx context.Context, candidate models.NZBRe
 	if err != nil {
 		return nil, err
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
 
 	if len(nzbBytes) == 0 {
 		return nil, fmt.Errorf("nzb payload is empty")

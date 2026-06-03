@@ -66,6 +66,7 @@ type SearchOptions struct {
 type SearchService struct {
 	cfg            *config.Manager
 	scrapers       []Scraper
+	customScrapers bool
 	userSettings   userSettingsProvider
 	clientSettings clientSettingsProvider
 	imdbResolver   imdbResolver
@@ -74,6 +75,7 @@ type SearchService struct {
 // NewSearchService constructs a new debrid search service.
 // If no scrapers are provided, it builds them from config settings.
 func NewSearchService(cfg *config.Manager, scrapers ...Scraper) *SearchService {
+	customScrapers := len(scrapers) > 0
 	if len(scrapers) == 0 {
 		scrapers = buildScrapersFromConfig(cfg)
 	}
@@ -82,8 +84,9 @@ func NewSearchService(cfg *config.Manager, scrapers ...Scraper) *SearchService {
 		scrapers = []Scraper{NewTorrentioScraper(nil, "", "", "")}
 	}
 	return &SearchService{
-		cfg:      cfg,
-		scrapers: scrapers,
+		cfg:            cfg,
+		scrapers:       scrapers,
+		customScrapers: customScrapers,
 	}
 }
 
@@ -97,7 +100,10 @@ func buildScrapersFromConfig(cfg *config.Manager) []Scraper {
 		log.Printf("[debrid] failed to load config for scrapers: %v", err)
 		return nil
 	}
+	return buildScrapersFromSettings(settings)
+}
 
+func buildScrapersFromSettings(settings config.Settings) []Scraper {
 	// Create HTTP client with configured timeout (default 5s)
 	timeout := settings.Streaming.IndexerTimeoutSec
 	if timeout <= 0 {
@@ -330,6 +336,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	// Get effective filtering settings (cascade: global -> profile -> client)
 	filterSettings, bypassForAIO := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
@@ -381,11 +388,15 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	}
 
 	// Run all scrapers in parallel
+	scrapers := s.scrapers
+	if !s.customScrapers {
+		scrapers = buildScrapersFromSettings(settings)
+	}
 	var wg sync.WaitGroup
-	resultsChan := make(chan scraperResult, len(s.scrapers))
+	resultsChan := make(chan scraperResult, len(scrapers))
 	scraperCount := 0
 
-	for _, scraper := range s.scrapers {
+	for _, scraper := range scrapers {
 		if scraper == nil {
 			continue
 		}

@@ -1071,6 +1071,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			}
 		}
 
+		annotateResultProfile(&result, userID)
 		resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
 		if lastErr != nil || resolution == nil || resolution.WebDAVPath == "" {
 			if debrid.IsBlockedContentError(lastErr) {
@@ -1690,6 +1691,7 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 	var duration float64
 
 	for i, result := range allResults {
+		annotateResultProfile(&result, req.UserID)
 		resolution, _ = h.playbackSvc.Resolve(ctx, result)
 		if resolution == nil || resolution.WebDAVPath == "" {
 			continue
@@ -1745,6 +1747,17 @@ func (h *PrequeueHandler) MigrateStream(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func annotateResultProfile(result *models.NZBResult, userID string) {
+	userID = strings.TrimSpace(userID)
+	if result == nil || userID == "" {
+		return
+	}
+	if result.Attributes == nil {
+		result.Attributes = map[string]string{}
+	}
+	result.Attributes["profileId"] = userID
 }
 
 // StartSubtitlesRequest is the request body for starting subtitle extraction

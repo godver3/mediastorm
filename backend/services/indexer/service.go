@@ -623,6 +623,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	// Get effective filtering settings (cascade: global -> profile -> client)
 	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
@@ -857,6 +858,7 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 	if shouldBypassAIOStreamsRanking(settings, filterOverrides, shouldUseUsenet(settings.Streaming.ServiceMode)) {
@@ -939,6 +941,7 @@ func (s *Service) SearchTest(ctx context.Context, opts SearchOptions) ([]models.
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	filterSettings, animeSettings, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 	if shouldBypassAIOStreamsRanking(settings, filterOverrides, shouldUseUsenet(settings.Streaming.ServiceMode)) {
@@ -1018,6 +1021,7 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
@@ -1316,6 +1320,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		close(usenetOut)
 		return debridOut, usenetOut
 	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	filterSettings, animeSettings2, filterOverrides := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
 

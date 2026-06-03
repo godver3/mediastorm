@@ -120,6 +120,7 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
 
 	// Check if provider is explicitly specified in the result
 	explicitProvider := strings.TrimSpace(candidate.Attributes["provider"])
@@ -815,6 +816,7 @@ func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZB
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
 
 	explicitProvider := strings.TrimSpace(candidate.Attributes["provider"])
 	var providerConfig *config.DebridProviderSettings

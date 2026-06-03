@@ -58,33 +58,36 @@ type ServerSettings struct {
 }
 
 type UsenetSettings struct {
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	SSL         bool   `json:"ssl"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	Connections int    `json:"connections"`
-	Enabled     bool   `json:"enabled"`
+	Name            string   `json:"name"`
+	Host            string   `json:"host"`
+	Port            int      `json:"port"`
+	SSL             bool     `json:"ssl"`
+	Username        string   `json:"username"`
+	Password        string   `json:"password"`
+	Connections     int      `json:"connections"`
+	Enabled         bool     `json:"enabled"`
+	AllowedProfiles []string `json:"allowedProfiles,omitempty"`
 }
 
 type IndexerConfig struct {
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	APIKey     string `json:"apiKey"`
-	Type       string `json:"type"`       // newznab | torznab
-	Categories string `json:"categories"` // Comma-separated newznab category IDs (e.g., "2000,2010,2020" for movies, "5000,5010,5020" for TV)
-	Enabled    bool   `json:"enabled"`
+	Name            string   `json:"name"`
+	URL             string   `json:"url"`
+	APIKey          string   `json:"apiKey"`
+	Type            string   `json:"type"`       // newznab | torznab
+	Categories      string   `json:"categories"` // Comma-separated newznab category IDs (e.g., "2000,2010,2020" for movies, "5000,5010,5020" for TV)
+	Enabled         bool     `json:"enabled"`
+	AllowedProfiles []string `json:"allowedProfiles,omitempty"`
 }
 
 type TorrentScraperConfig struct {
-	Name    string            `json:"name"`    // "Torrentio", "Prowlarr", "Jackett", "Zilean", "AIOStreams", "Nyaa", "Comet", "MediaFusion"
-	Type    string            `json:"type"`    // "torrentio", "prowlarr", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"
-	URL     string            `json:"url"`     // For Prowlarr/Jackett/Zilean/AIOStreams/Nyaa/Comet/MediaFusion (full URL with config token if needed)
-	APIKey  string            `json:"apiKey"`  // For Prowlarr/Jackett
-	Options string            `json:"options"` // For Torrentio: URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
-	Enabled bool              `json:"enabled"`
-	Config  map[string]string `json:"config,omitempty"` // Scraper-specific config
+	Name            string            `json:"name"`    // "Torrentio", "Prowlarr", "Jackett", "Zilean", "AIOStreams", "Nyaa", "Comet", "MediaFusion"
+	Type            string            `json:"type"`    // "torrentio", "prowlarr", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"
+	URL             string            `json:"url"`     // For Prowlarr/Jackett/Zilean/AIOStreams/Nyaa/Comet/MediaFusion (full URL with config token if needed)
+	APIKey          string            `json:"apiKey"`  // For Prowlarr/Jackett
+	Options         string            `json:"options"` // For Torrentio: URL path options (e.g., "sort=qualitysize|qualityfilter=480p,scr,cam")
+	Enabled         bool              `json:"enabled"`
+	Config          map[string]string `json:"config,omitempty"` // Scraper-specific config
+	AllowedProfiles []string          `json:"allowedProfiles,omitempty"`
 }
 
 type MetadataSettings struct {
@@ -175,11 +178,12 @@ const (
 )
 
 type DebridProviderSettings struct {
-	Name     string            `json:"name"`
-	Provider string            `json:"provider"`
-	APIKey   string            `json:"apiKey"`
-	Enabled  bool              `json:"enabled"`
-	Config   map[string]string `json:"config,omitempty"` // Provider-specific settings (e.g., "autoClearQueue": "true" for Torbox)
+	Name            string            `json:"name"`
+	Provider        string            `json:"provider"`
+	APIKey          string            `json:"apiKey"`
+	Enabled         bool              `json:"enabled"`
+	Config          map[string]string `json:"config,omitempty"` // Provider-specific settings (e.g., "autoClearQueue": "true" for Torbox)
+	AllowedProfiles []string          `json:"allowedProfiles,omitempty"`
 }
 
 // MultiProviderMode determines how multiple debrid providers are used
@@ -311,6 +315,7 @@ type LivePlaylistSource struct {
 	Filtering             LiveTVFilterSettings `json:"filtering,omitempty"`
 	EPG                   EPGSettings          `json:"epg,omitempty"`
 	Enabled               *bool                `json:"enabled,omitempty"`
+	AllowedProfiles       []string             `json:"allowedProfiles,omitempty"`
 }
 
 // EPGSource represents a single EPG data source.

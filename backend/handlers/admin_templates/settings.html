@@ -2627,10 +2627,13 @@
                 return '<div class="checkboxes-group'+invalidClass+'" id="'+id+'_container">'+checkboxesHtml+'</div>';
             case 'multiselect':
                 const msSelected = Array.isArray(value) ? value : [];
-                const msTagsHtml = msSelected.map(v => '<span class="tag" title="'+escapeHtml(v).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(v)+'</span></span>').join('');
+                const msTagsHtml = msSelected.length === 0 && fieldDef.optionsFrom === 'profiles'
+                    ? '<span class="tag"><span class="tag-text">All profiles</span></span>'
+                    : msSelected.map(v => '<span class="tag" title="'+escapeHtml(v).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(resolveMultiselectValueLabel(fieldDef, v))+'</span></span>').join('');
                 const endpoint = fieldDef.optionsEndpoint || '';
+                const optionsFrom = fieldDef.optionsFrom || '';
                 return '<div class="multiselect-container'+invalidClass+'" id="'+id+'_container">' + msTagsHtml +
-                    '<button type="button" class="multiselect-btn" onclick="openMultiselectModal(\''+basePath+'\', \''+fieldKey+'\', \''+endpoint+'\', \''+fieldDef.label+'\')">Select...</button></div>';
+                    '<button type="button" class="multiselect-btn" onclick="openMultiselectModal(\''+basePath+'\', \''+fieldKey+'\', \''+endpoint+'\', \''+fieldDef.label+'\', \''+optionsFrom+'\')">Select...</button></div>';
             case 'file_upload':
                 const uploadEndpoint = fieldDef.endpoint || '';
                 const acceptTypes = fieldDef.accept || '';
@@ -2812,7 +2815,15 @@
         searchTerm: ''
     };
 
-    async function openMultiselectModal(sectionPath, fieldKey, endpoint, label) {
+    function resolveMultiselectValueLabel(fieldDef, value) {
+        if (fieldDef?.optionsFrom === 'profiles') {
+            const profile = profilesData.find(p => p.id === value);
+            return profile?.name || value;
+        }
+        return value;
+    }
+
+    async function openMultiselectModal(sectionPath, fieldKey, endpoint, label, optionsFrom) {
         multiselectState.basePath = sectionPath;
         multiselectState.fieldKey = fieldKey;
         const fullPath = sectionPath ? sectionPath+'.'+fieldKey : fieldKey;
@@ -2850,7 +2861,16 @@
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
         // Fetch options from endpoint (use admin API with global basePath for session-based auth)
-        if (endpoint) {
+        if (optionsFrom === 'profiles') {
+            if (!Array.isArray(profilesData) || profilesData.length === 0) {
+                await loadProfiles();
+            }
+            multiselectState.options = (profilesData || []).map(profile => ({
+                value: profile.id,
+                label: profile.name || profile.id
+            }));
+            renderMultiselectOptions();
+        } else if (endpoint) {
             try {
                 const apiUrl = basePath + '/api' + endpoint;  // basePath is the global admin path ("/admin")
                 const response = await fetch(apiUrl, { credentials: 'include' });

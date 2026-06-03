@@ -52,6 +52,7 @@ func (s *MultiProviderService) CheckCacheAcrossProviders(
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
+	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
 
 	// Collect enabled providers with their priority (index = priority)
 	var enabledProviders []providerEntry

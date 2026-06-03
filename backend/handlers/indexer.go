@@ -159,6 +159,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 				scored[i].Indexer = "Demo"
 			}
 		}
+		annotateScoredResultsProfile(scored, userID)
 
 		// Ensure we return [] instead of null for empty results
 		if scored == nil {
@@ -192,9 +193,36 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			results[i].Indexer = "Demo"
 		}
 	}
+	annotateResultsProfile(results, userID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func annotateResultsProfile(results []models.NZBResult, userID string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	for i := range results {
+		if results[i].Attributes == nil {
+			results[i].Attributes = map[string]string{}
+		}
+		results[i].Attributes["profileId"] = userID
+	}
+}
+
+func annotateScoredResultsProfile(results []models.ScoredNZBResult, userID string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	for i := range results {
+		if results[i].Attributes == nil {
+			results[i].Attributes = map[string]string{}
+		}
+		results[i].Attributes["profileId"] = userID
+	}
 }
 
 // SearchTest handles the admin search test endpoint with full scoring breakdown.

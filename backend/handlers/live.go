@@ -1315,6 +1315,8 @@ func (h *LiveHandler) isXtreamMode() bool {
 // If a profileId query parameter is provided and the profile has per-profile
 // IPTV overrides, those are merged with the global settings.
 func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings config.Settings) models.ResolvedLiveSource {
+	profileID := r.URL.Query().Get("profileId")
+	globalSettings = config.FilterSettingsForProfile(globalSettings, profileID)
 	global := models.ResolvedLiveSource{
 		Mode:                    globalSettings.Live.Mode,
 		PlaylistURL:             globalSettings.Live.PlaylistURL,
@@ -1339,7 +1341,6 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 		EPGTimeOffsetMinutes:    globalSettings.Live.EPG.TimeOffsetMinutes,
 	}
 
-	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" || h.userSettingsSvc == nil {
 		return global
 	}

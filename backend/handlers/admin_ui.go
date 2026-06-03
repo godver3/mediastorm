@@ -475,6 +475,13 @@ var SettingsSchema = map[string]interface{}{
 			"epg.retentionDays":           map[string]interface{}{"type": "number", "label": "EPG Retention (days)", "description": "How many days of EPG data to keep (default: 7)", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 18},
 			"epg.timeOffsetMinutes":       map[string]interface{}{"type": "number", "label": "EPG Time Offset (minutes)", "description": "Shift EPG program times by this many minutes. Use positive values to move programs forward, negative to move them backward.", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 19},
 			"enabled":                     map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Include this source in Live TV.", "order": 20},
+			"allowedProfiles": map[string]interface{}{
+				"type":        "multiselect",
+				"label":       "Allowed Profiles",
+				"description": "Profiles allowed to use this Live TV source. Leave empty for all profiles.",
+				"optionsFrom": "profiles",
+				"order":       21,
+			},
 		},
 	},
 	"indexers": map[string]interface{}{
@@ -490,6 +497,13 @@ var SettingsSchema = map[string]interface{}{
 			"type":       map[string]interface{}{"type": "select", "label": "Type", "options": []string{"newznab", "prowlarr"}, "description": "Indexer type. Choose Prowlarr to discover enabled usenet indexers from a base Prowlarr URL.", "order": 3},
 			"categories": map[string]interface{}{"type": "text", "label": "Categories", "description": "Comma-separated newznab category IDs to filter results (e.g., 2000,2010,2020 for movies, 5000,5010,5020 for TV). Leave empty to search all categories.", "placeholder": "2000,5000", "order": 4},
 			"enabled":    map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this indexer", "order": 5},
+			"allowedProfiles": map[string]interface{}{
+				"type":        "multiselect",
+				"label":       "Allowed Profiles",
+				"description": "Profiles allowed to search this indexer. Leave empty for all profiles.",
+				"optionsFrom": "profiles",
+				"order":       6,
+			},
 		},
 	},
 	"torrentScrapers": map[string]interface{}{
@@ -509,6 +523,13 @@ var SettingsSchema = map[string]interface{}{
 			"config.category":          map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
 			"config.filter":            map[string]interface{}{"type": "select", "label": "Filter", "options": []string{"0", "1", "2"}, "description": "Nyaa filter (0=All, 1=No remakes, 2=Trusted only)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 7},
 			"enabled":                  map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this scraper", "order": 8},
+			"allowedProfiles": map[string]interface{}{
+				"type":        "multiselect",
+				"label":       "Allowed Profiles",
+				"description": "Profiles allowed to use this source. Leave empty for all profiles.",
+				"optionsFrom": "profiles",
+				"order":       9,
+			},
 		},
 	},
 	"playback": map[string]interface{}{

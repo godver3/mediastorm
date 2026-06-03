@@ -4230,6 +4230,7 @@ func (h *VideoHandler) resolveLiveStreamTargetForSource(profileID, sourceID stri
 	if err != nil {
 		return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
 	}
+	settings = config.FilterSettingsForProfile(settings, profileID)
 
 	global := buildGlobalLiveSource(settings)
 	var userSettings *models.UserSettings
