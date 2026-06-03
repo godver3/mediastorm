@@ -312,7 +312,7 @@ type PlaybackSettings struct {
 	RewindOnPlaybackStart      int      `json:"rewindOnPlaybackStart,omitempty"`               // Seconds to rewind when resuming from saved progress (default 0)
 	DisablePrequeue            bool     `json:"disablePrequeue,omitempty"`                     // Disable automatic stream pre-loading
 	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"` // Skip Android display DV capability check before playback
-	CreditsAutoSkip            bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode when credits are detected
+	CreditsAutoSkip            bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	CreditsDetection           bool     `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams       *int     `json:"maxConcurrentStreams,omitempty"`                // Per-profile concurrent stream limit (nil = use account limit)
 	MaxResultsPerResolution    *int     `json:"maxResultsPerResolution,omitempty"`             // Maximum number of results per resolution tier (0 = no limit)
