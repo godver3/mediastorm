@@ -141,6 +141,19 @@ type inflightRequest struct {
 
 const tvdbArtworkBaseURL = "https://artworks.thetvdb.com"
 
+var debugMetadataLogs = metadataEnvFlag("STRMR_METADATA_LOGS")
+
+func metadataEnvFlag(name string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+
+func metadataTracef(format string, args ...any) {
+	if debugMetadataLogs {
+		log.Printf(format, args...)
+	}
+}
+
 // RatingItem represents a title that needs ratings, provided by external services.
 type RatingItem struct {
 	ImdbID    string // e.g. "tt1234567"
@@ -1856,7 +1869,7 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 	cacheID := cacheKey("tmdb", "movie", "details", "v3", s.client.language, strconv.FormatInt(req.TMDBID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
-		log.Printf("[metadata] movie details cache hit (TMDB) tmdbId=%d lang=%s", req.TMDBID, s.client.language)
+		metadataTracef("[metadata] movie details cache hit (TMDB) tmdbId=%d lang=%s", req.TMDBID, s.client.language)
 		return &cached, nil
 	}
 
@@ -1893,13 +1906,13 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 		req.TMDBID, movieTitle.Name, movieTitle.Poster != nil, movieTitle.Backdrop != nil)
 
 	if s.enrichMovieReleases(ctx, &movieTitle, movieTitle.TMDBID) && len(movieTitle.Releases) > 0 {
-		log.Printf("[metadata] movie release windows set via TMDB tmdbId=%d releases=%d", movieTitle.TMDBID, len(movieTitle.Releases))
+		metadataTracef("[metadata] movie release windows set via TMDB tmdbId=%d releases=%d", movieTitle.TMDBID, len(movieTitle.Releases))
 	}
 
 	// Fetch cast credits from TMDB
 	if credits, err := s.cachedFetchCredits(ctx, "movie", req.TMDBID); err == nil && credits != nil && len(credits.Cast) > 0 {
 		movieTitle.Credits = credits
-		log.Printf("[metadata] fetched %d cast members for movie (TMDB) tmdbId=%d", len(credits.Cast), req.TMDBID)
+		metadataTracef("[metadata] fetched %d cast members for movie (TMDB) tmdbId=%d", len(credits.Cast), req.TMDBID)
 	} else if err != nil {
 		log.Printf("[metadata] failed to fetch credits for movie (TMDB) tmdbId=%d: %v", req.TMDBID, err)
 	}
@@ -1922,7 +1935,7 @@ func (s *Service) searchTVDBMovie(title string, year int, remoteID string) ([]tv
 	// Check cache first
 	var cached []tvdbSearchResult
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
-		log.Printf("[tvdb] movie search cache hit query=%q year=%d remoteId=%q", title, year, remoteID)
+		metadataTracef("[tvdb] movie search cache hit query=%q year=%d remoteId=%q", title, year, remoteID)
 		return cached, nil
 	}
 
@@ -1948,7 +1961,7 @@ func (s *Service) searchTVDBMovie(title string, year int, remoteID string) ([]tv
 		params.Set("year", fmt.Sprintf("%d", year))
 	}
 
-	log.Printf("[tvdb] GET .../search?query=%s&type=movie&year=%d&remote_id=%s", title, year, remoteID)
+	metadataTracef("[tvdb] GET .../search?query=%s&type=movie&year=%d&remote_id=%s", title, year, remoteID)
 	if err := s.client.doGET("https://api4.thetvdb.com/v4/search", params, &resp); err != nil {
 		return nil, err
 	}
@@ -1987,7 +2000,7 @@ func (s *Service) searchTVDBSeries(title string, year int, remoteID string) ([]t
 	// Check cache first
 	var cached []tvdbSearchResult
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
-		log.Printf("[tvdb] series search cache hit query=%q year=%d remoteId=%q", title, year, remoteID)
+		metadataTracef("[tvdb] series search cache hit query=%q year=%d remoteId=%q", title, year, remoteID)
 		return cached, nil
 	}
 
@@ -2013,7 +2026,7 @@ func (s *Service) searchTVDBSeries(title string, year int, remoteID string) ([]t
 		params.Set("year", fmt.Sprintf("%d", year))
 	}
 
-	log.Printf("[tvdb] GET .../search?query=%s&type=series&year=%d&remote_id=%s", title, year, remoteID)
+	metadataTracef("[tvdb] GET .../search?query=%s&type=series&year=%d&remote_id=%s", title, year, remoteID)
 	if err := s.client.doGET("https://api4.thetvdb.com/v4/search", params, &resp); err != nil {
 		return nil, err
 	}
@@ -3119,7 +3132,7 @@ func (s *Service) tmdbSeriesDetailsFallback(ctx context.Context, req models.Seri
 	if details.Seasons == nil {
 		details.Seasons = []models.SeriesSeason{}
 	}
-	log.Printf("[metadata] using TMDB series details fallback tmdbId=%d name=%q seasons=%d cause=%v", req.TMDBID, details.Title.Name, len(details.Seasons), cause)
+	metadataTracef("[metadata] using TMDB series details fallback tmdbId=%d name=%q seasons=%d cause=%v", req.TMDBID, details.Title.Name, len(details.Seasons), cause)
 	_ = s.cache.set(cacheID, *details)
 	return details, nil
 }
@@ -3129,7 +3142,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return nil, fmt.Errorf("tvdb client not configured")
 	}
 
-	log.Printf("[metadata] series details request titleId=%q name=%q year=%d tvdbId=%d",
+	metadataTracef("[metadata] series details request titleId=%q name=%q year=%d tvdbId=%d",
 
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID)
 
@@ -3164,7 +3177,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	cacheID := cacheKey("tvdb", "series", "details", "v10", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
-		log.Printf("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
+		metadataTracef("[metadata] series details cache hit tvdbId=%d lang=%s seasons=%d hasPoster=%v hasBackdrop=%v",
 			tvdbID, s.client.language, len(cached.Seasons), cached.Title.Poster != nil, cached.Title.Backdrop != nil)
 
 		if req.TMDBID > 0 && cached.Title.TMDBID > 0 && cached.Title.TMDBID != req.TMDBID {
@@ -3784,7 +3797,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if ratings, err := s.mdblist.GetRatings(ratingCtx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
 			seriesTitle.Ratings = ratings
 			details.Title = seriesTitle // Update the details with ratings
-			log.Printf("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
+			metadataTracef("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
 		}
 		ratingCancel()
 	}
@@ -3794,7 +3807,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if credits, err := s.cachedFetchCredits(ctx, "series", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
 			seriesTitle.Credits = credits
 			details.Title = seriesTitle // Update the details with credits
-			log.Printf("[metadata] fetched %d cast members for series tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
+			metadataTracef("[metadata] fetched %d cast members for series tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
 		} else if err != nil {
 			log.Printf("[metadata] failed to fetch credits for series tmdbId=%d: %v", tmdbIDForEnrichment, err)
 		}
@@ -3805,7 +3818,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		if images, err := s.cachedFetchImages(ctx, "series", tmdbIDForEnrichment); err == nil && images != nil {
 			if images.Logo != nil {
 				seriesTitle.Logo = images.Logo
-				log.Printf("[metadata] fetched logo for series tmdbId=%d", seriesTitle.TMDBID)
+				metadataTracef("[metadata] fetched logo for series tmdbId=%d", seriesTitle.TMDBID)
 			}
 			if images.TextPoster != nil {
 				seriesTitle.TextPoster = images.TextPoster
@@ -3815,7 +3828,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 					seriesTitle.TextPoster = seriesTitle.Poster // Fallback: preserve original
 				}
 				seriesTitle.Poster = images.TextlessPoster
-				log.Printf("[metadata] textless poster applied to series tmdbId=%d", seriesTitle.TMDBID)
+				metadataTracef("[metadata] textless poster applied to series tmdbId=%d", seriesTitle.TMDBID)
 			}
 			if images.TextBackdrop != nil {
 				seriesTitle.TextBackdrop = images.TextBackdrop
@@ -3825,7 +3838,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 					seriesTitle.TextBackdrop = seriesTitle.Backdrop // Fallback: preserve original
 				}
 				seriesTitle.Backdrop = images.TextlessBackdrop
-				log.Printf("[metadata] textless backdrop applied to series tmdbId=%d", seriesTitle.TMDBID)
+				metadataTracef("[metadata] textless backdrop applied to series tmdbId=%d", seriesTitle.TMDBID)
 			}
 			seriesTitle.Backdrops = mergeRankedBackdrops(seriesTitle.Backdrops, images.Backdrops, seriesTitle.Backdrop, seriesTitle.TextBackdrop)
 			details.Title = seriesTitle // Update the details with images
@@ -3885,7 +3898,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 
 	_ = s.cache.set(cacheID, details)
 
-	log.Printf("[metadata] series details complete tvdbId=%d seasons=%d", tvdbID, len(seasons))
+	metadataTracef("[metadata] series details complete tvdbId=%d seasons=%d", tvdbID, len(seasons))
 
 	return &details, nil
 }
@@ -4550,7 +4563,7 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 	}
 
 	if len(tasksToFetch) == 0 {
-		log.Printf("[metadata] batch series fields all cached count=%d fields=%v", len(queries), fields)
+		metadataTracef("[metadata] batch series fields all cached count=%d fields=%v", len(queries), fields)
 		return results
 	}
 
@@ -4647,7 +4660,7 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 	}
 
 	if len(tasksToFetch) == 0 {
-		log.Printf("[metadata] batch movie releases complete (all cached) total=%d", len(queries))
+		metadataTracef("[metadata] batch movie releases complete (all cached) total=%d", len(queries))
 		return results
 	}
 
@@ -4680,7 +4693,7 @@ func (s *Service) BatchMovieReleases(ctx context.Context, queries []models.Batch
 	}
 
 	wg.Wait()
-	log.Printf("[metadata] batch movie releases complete total=%d fetched=%d", len(queries), len(tasksToFetch))
+	metadataTracef("[metadata] batch movie releases complete total=%d fetched=%d", len(queries), len(tasksToFetch))
 	return results
 }
 
@@ -5376,7 +5389,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		return nil, fmt.Errorf("tvdb client not configured")
 	}
 
-	log.Printf("[metadata] movie details request titleId=%q name=%q year=%d tvdbId=%d tmdbId=%d imdbId=%s",
+	metadataTracef("[metadata] movie details request titleId=%q name=%q year=%d tvdbId=%d tmdbId=%d imdbId=%s",
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID, req.TMDBID, strings.TrimSpace(req.IMDBID))
 
 	// Try to resolve TVDB ID
@@ -5395,14 +5408,14 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			var cachedTVDBID int64
 			if ok, _ := s.cache.get(cacheID, &cachedTVDBID); ok && cachedTVDBID > 0 {
 				tvdbID = cachedTVDBID
-				log.Printf("[metadata] movie tmdb→tvdb resolution cache hit tmdbId=%d → tvdbId=%d", req.TMDBID, tvdbID)
+				metadataTracef("[metadata] movie tmdb→tvdb resolution cache hit tmdbId=%d → tvdbId=%d", req.TMDBID, tvdbID)
 			}
 		}
 
 		if tvdbID <= 0 && req.TMDBID > 0 {
 			// Try to find TVDB ID from TMDB ID via search
 			// This is a fallback - we'll just use what we have
-			log.Printf("[metadata] movie has TMDB ID but no TVDB ID, will attempt search tmdbId=%d", req.TMDBID)
+			metadataTracef("[metadata] movie has TMDB ID but no TVDB ID, will attempt search tmdbId=%d", req.TMDBID)
 		}
 
 		// Try search if we have a name
@@ -5411,15 +5424,15 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			if err != nil {
 				log.Printf("[metadata] movie tvdb search error name=%q year=%d err=%v", req.Name, req.Year, err)
 			} else if len(results) == 0 {
-				log.Printf("[metadata] movie tvdb search returned 0 results name=%q year=%d", req.Name, req.Year)
+				metadataTracef("[metadata] movie tvdb search returned 0 results name=%q year=%d", req.Name, req.Year)
 				// Fallback: retry without year constraint
 				if req.Year > 0 {
-					log.Printf("[metadata] movie tvdb search retrying without year name=%q", req.Name)
+					metadataTracef("[metadata] movie tvdb search retrying without year name=%q", req.Name)
 					results, err = s.searchTVDBMovie(req.Name, 0, "")
 					if err != nil {
 						log.Printf("[metadata] movie tvdb search (no year) error name=%q err=%v", req.Name, err)
 					} else if len(results) > 0 {
-						log.Printf("[metadata] movie tvdb search (no year) found %d results name=%q", len(results), req.Name)
+						metadataTracef("[metadata] movie tvdb search (no year) found %d results name=%q", len(results), req.Name)
 					}
 				}
 			}
@@ -5431,7 +5444,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 					log.Printf("[metadata] movie tvdb search result has invalid tvdb_id name=%q year=%d tvdbId=%q err=%v", req.Name, req.Year, results[0].TVDBID, err)
 				} else {
 					tvdbID = id
-					log.Printf("[metadata] movie search found tvdbId=%d name=%q year=%d", tvdbID, req.Name, req.Year)
+					metadataTracef("[metadata] movie search found tvdbId=%d name=%q year=%d", tvdbID, req.Name, req.Year)
 
 					// Cache the TMDB→TVDB ID mapping if we have a TMDB ID
 					if req.TMDBID > 0 {
@@ -5444,11 +5457,11 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	}
 
 	if tvdbID <= 0 {
-		log.Printf("[metadata] movie details unable to resolve tvdb id titleId=%q name=%q year=%d", req.TitleID, req.Name, req.Year)
+		metadataTracef("[metadata] movie details unable to resolve tvdb id titleId=%q name=%q year=%d", req.TitleID, req.Name, req.Year)
 
 		// If we have a TMDB ID but no TVDB ID, try to use TMDB directly as a fallback
 		if req.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-			log.Printf("[metadata] attempting to use TMDB directly for movie details tmdbId=%d", req.TMDBID)
+			metadataTracef("[metadata] attempting to use TMDB directly for movie details tmdbId=%d", req.TMDBID)
 			return s.getMovieDetailsFromTMDB(ctx, req)
 		}
 
@@ -5459,7 +5472,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	cacheID := cacheKey("tvdb", "movie", "details", "v5", s.client.language, strconv.FormatInt(tvdbID, 10))
 	var cached models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
-		log.Printf("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)
+		metadataTracef("[metadata] movie details cache hit tvdbId=%d lang=%s", tvdbID, s.client.language)
 
 		// Older cache entries may predate TMDB artwork/runtime hydration. Refresh them on the fly.
 		if (cached.Poster == nil || cached.Backdrop == nil || cached.RuntimeMinutes == 0) && s.maybeHydrateMovieArtworkFromTMDB(ctx, &cached, req) {
@@ -5479,7 +5492,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		if cached.Credits == nil && tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
 				cached.Credits = credits
-				log.Printf("[metadata] credits added to cached movie: %d cast members tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
+				metadataTracef("[metadata] credits added to cached movie: %d cast members tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
 				_ = s.cache.set(cacheID, cached)
 			}
 		}
@@ -5494,7 +5507,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			if images, err := s.cachedFetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
 				if images.Logo != nil {
 					cached.Logo = images.Logo
-					log.Printf("[metadata] logo added to cached movie tmdbId=%d", tmdbIDForImages)
+					metadataTracef("[metadata] logo added to cached movie tmdbId=%d", tmdbIDForImages)
 					_ = s.cache.set(cacheID, cached)
 				}
 			}
@@ -5506,7 +5519,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		return &cached, nil
 	}
 
-	log.Printf("[metadata] movie details fetch tvdbId=%d", tvdbID)
+	metadataTracef("[metadata] movie details fetch tvdbId=%d", tvdbID)
 
 	// Fetch movie details from TVDB
 	base, err := s.getTVDBMovieDetails(tvdbID)
@@ -5516,7 +5529,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		// If TVDB fails for this movie but we have a TMDB identifier configured,
 		// fall back to TMDB so continue watching cards still get imagery.
 		if req.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-			log.Printf("[metadata] using TMDB fallback for movie tvdbId=%d tmdbId=%d", tvdbID, req.TMDBID)
+			metadataTracef("[metadata] using TMDB fallback for movie tvdbId=%d tmdbId=%d", tvdbID, req.TMDBID)
 			return s.getMovieDetailsFromTMDB(ctx, req)
 		}
 
@@ -5531,7 +5544,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	if translation, err := s.cachedMovieTranslations(tvdbID, s.client.language); err == nil && translation != nil {
 		if strings.TrimSpace(translation.Name) != "" {
 			translatedName = translation.Name
-			log.Printf("[metadata] using translated movie name tvdbId=%d lang=%s name=%q", tvdbID, s.client.language, translation.Name)
+			metadataTracef("[metadata] using translated movie name tvdbId=%d lang=%s name=%q", tvdbID, s.client.language, translation.Name)
 		}
 		if strings.TrimSpace(translation.Overview) != "" {
 			translatedOverview = translation.Overview
@@ -5551,7 +5564,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		} else {
 			if tmdbMovie, err := s.tmdb.movieDetails(ctx, tmdbIDForOverview); err == nil && tmdbMovie != nil && strings.TrimSpace(tmdbMovie.Overview) != "" {
 				translatedOverview = tmdbMovie.Overview
-				log.Printf("[metadata] using TMDB overview fallback for movie tvdbId=%d tmdbId=%d lang=%s", tvdbID, tmdbIDForOverview, s.tmdb.language)
+				metadataTracef("[metadata] using TMDB overview fallback for movie tvdbId=%d tmdbId=%d lang=%s", tvdbID, tmdbIDForOverview, s.tmdb.language)
 			}
 		}
 	}
@@ -5569,17 +5582,17 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		TVDBID:    tvdbID,
 	}
 
-	log.Printf("[metadata] movie title constructed tvdbId=%d finalName=%q translatedName=%q baseName=%q", tvdbID, finalName, translatedName, base.Name)
+	metadataTracef("[metadata] movie title constructed tvdbId=%d finalName=%q translatedName=%q baseName=%q", tvdbID, finalName, translatedName, base.Name)
 
 	var extended *tvdbMovieExtendedData
 	if ext, err := s.cachedMovieExtended(tvdbID, []string{"artwork"}); err == nil {
 		extended = &ext
 		applyTVDBArtworks(&movieTitle, ext.Artworks)
 		if movieTitle.Backdrop == nil {
-			log.Printf("[metadata] no movie backdrop from TVDB artworks tvdbId=%d name=%q", tvdbID, finalName)
+			metadataTracef("[metadata] no movie backdrop from TVDB artworks tvdbId=%d name=%q", tvdbID, finalName)
 		}
 		if movieTitle.Poster == nil {
-			log.Printf("[metadata] no movie poster from TVDB artworks tvdbId=%d name=%q", tvdbID, finalName)
+			metadataTracef("[metadata] no movie poster from TVDB artworks tvdbId=%d name=%q", tvdbID, finalName)
 		}
 	} else {
 		log.Printf("[metadata] movie artworks fetch failed from TVDB tvdbId=%d err=%v, will try TMDB", tvdbID, err)
@@ -5604,7 +5617,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			switch {
 			case strings.Contains(lower, "imdb"):
 				movieTitle.IMDBID = id
-				log.Printf("[metadata] movie imdb id found tvdbId=%d imdbId=%s", tvdbID, id)
+				metadataTracef("[metadata] movie imdb id found tvdbId=%d imdbId=%s", tvdbID, id)
 			case strings.Contains(lower, "themoviedb") || strings.Contains(lower, "tmdb"):
 				if tmdbID, err := strconv.ParseInt(id, 10, 64); err == nil {
 					movieTitle.TMDBID = tmdbID
@@ -5625,7 +5638,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	if !gotTranslatedOverview && tmdbIDForOverview <= 0 && movieTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 		if tmdbMovie, err := s.tmdb.movieDetails(ctx, movieTitle.TMDBID); err == nil && tmdbMovie != nil && strings.TrimSpace(tmdbMovie.Overview) != "" {
 			movieTitle.Overview = tmdbMovie.Overview
-			log.Printf("[metadata] using TMDB overview fallback (late resolve) for movie tvdbId=%d tmdbId=%d", tvdbID, movieTitle.TMDBID)
+			metadataTracef("[metadata] using TMDB overview fallback (late resolve) for movie tvdbId=%d tmdbId=%d", tvdbID, movieTitle.TMDBID)
 		}
 	}
 
@@ -5652,7 +5665,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	go func() {
 		defer enrichWg.Done()
 		if s.enrichMovieReleases(ctx, &movieTitle, tmdbIDForEnrichment) && len(movieTitle.Releases) > 0 {
-			log.Printf("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForEnrichment, len(movieTitle.Releases))
+			metadataTracef("[metadata] movie release windows set tvdbId=%d tmdbId=%d releases=%d", tvdbID, tmdbIDForEnrichment, len(movieTitle.Releases))
 		}
 	}()
 
@@ -5667,7 +5680,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 				log.Printf("[metadata] error fetching ratings for movie imdbId=%s: %v", imdbIDForRatings, err)
 			} else if len(ratings) > 0 {
 				movieTitle.Ratings = ratings
-				log.Printf("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
+				metadataTracef("[metadata] fetched %d ratings for movie imdbId=%s", len(ratings), imdbIDForRatings)
 			}
 		}()
 	}
@@ -5679,7 +5692,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			defer enrichWg.Done()
 			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForEnrichment); err == nil && credits != nil && len(credits.Cast) > 0 {
 				movieTitle.Credits = credits
-				log.Printf("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
+				metadataTracef("[metadata] fetched %d cast members for movie tmdbId=%d", len(credits.Cast), tmdbIDForEnrichment)
 			} else if err != nil {
 				log.Printf("[metadata] failed to fetch credits for movie tmdbId=%d: %v", tmdbIDForEnrichment, err)
 			}
@@ -5694,7 +5707,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			if images, err := s.cachedFetchImages(ctx, "movie", tmdbIDForEnrichment); err == nil && images != nil {
 				if images.Logo != nil {
 					movieTitle.Logo = images.Logo
-					log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForEnrichment)
+					metadataTracef("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForEnrichment)
 				}
 				if images.TextPoster != nil {
 					movieTitle.TextPoster = images.TextPoster
@@ -5704,7 +5717,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 						movieTitle.TextPoster = movieTitle.Poster // Fallback: preserve original
 					}
 					movieTitle.Poster = images.TextlessPoster
-					log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForEnrichment)
+					metadataTracef("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForEnrichment)
 				}
 				if images.TextBackdrop != nil {
 					movieTitle.TextBackdrop = images.TextBackdrop
@@ -5714,7 +5727,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 						movieTitle.TextBackdrop = movieTitle.Backdrop // Fallback: preserve original
 					}
 					movieTitle.Backdrop = images.TextlessBackdrop
-					log.Printf("[metadata] textless backdrop applied to movie tmdbId=%d", tmdbIDForEnrichment)
+					metadataTracef("[metadata] textless backdrop applied to movie tmdbId=%d", tmdbIDForEnrichment)
 				}
 				movieTitle.Backdrops = mergeRankedBackdrops(movieTitle.Backdrops, images.Backdrops, movieTitle.Backdrop, movieTitle.TextBackdrop)
 			} else if err != nil {
@@ -5728,7 +5741,7 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 	// Cache the result
 	_ = s.cache.set(cacheID, movieTitle)
 
-	log.Printf("[metadata] movie details complete tvdbId=%d name=%q", tvdbID, finalName)
+	metadataTracef("[metadata] movie details complete tvdbId=%d name=%q", tvdbID, finalName)
 
 	return &movieTitle, nil
 }
@@ -5746,7 +5759,7 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 		return false
 	}
 
-	log.Printf("[metadata] fetching movie images from TMDB as fallback tmdbId=%d", tmdbID)
+	metadataTracef("[metadata] fetching movie images from TMDB as fallback tmdbId=%d", tmdbID)
 
 	tmdbMovie, err := s.tmdb.movieDetails(ctx, tmdbID)
 	if err != nil || tmdbMovie == nil {
@@ -5757,17 +5770,17 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	updated := false
 	if title.Poster == nil && tmdbMovie.Poster != nil {
 		title.Poster = tmdbMovie.Poster
-		log.Printf("[metadata] using TMDB poster for movie tmdbId=%d", tmdbID)
+		metadataTracef("[metadata] using TMDB poster for movie tmdbId=%d", tmdbID)
 		updated = true
 	}
 	if title.Backdrop == nil && tmdbMovie.Backdrop != nil {
 		title.Backdrop = tmdbMovie.Backdrop
-		log.Printf("[metadata] using TMDB backdrop for movie tmdbId=%d", tmdbID)
+		metadataTracef("[metadata] using TMDB backdrop for movie tmdbId=%d", tmdbID)
 		updated = true
 	}
 	if title.IMDBID == "" && tmdbMovie.IMDBID != "" {
 		title.IMDBID = tmdbMovie.IMDBID
-		log.Printf("[metadata] using TMDB IMDB ID for movie tmdbId=%d imdbId=%s", tmdbID, tmdbMovie.IMDBID)
+		metadataTracef("[metadata] using TMDB IMDB ID for movie tmdbId=%d imdbId=%s", tmdbID, tmdbMovie.IMDBID)
 		updated = true
 	}
 	if title.Name == "" && tmdbMovie.Name != "" {
@@ -5784,17 +5797,17 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	}
 	if title.RuntimeMinutes == 0 && tmdbMovie.RuntimeMinutes > 0 {
 		title.RuntimeMinutes = tmdbMovie.RuntimeMinutes
-		log.Printf("[metadata] using TMDB runtime for movie tmdbId=%d runtime=%d", tmdbID, tmdbMovie.RuntimeMinutes)
+		metadataTracef("[metadata] using TMDB runtime for movie tmdbId=%d runtime=%d", tmdbID, tmdbMovie.RuntimeMinutes)
 		updated = true
 	}
 	if title.Collection == nil && tmdbMovie.Collection != nil {
 		title.Collection = tmdbMovie.Collection
-		log.Printf("[metadata] using TMDB collection for movie tmdbId=%d collection=%q collectionId=%d", tmdbID, tmdbMovie.Collection.Name, tmdbMovie.Collection.ID)
+		metadataTracef("[metadata] using TMDB collection for movie tmdbId=%d collection=%q collectionId=%d", tmdbID, tmdbMovie.Collection.Name, tmdbMovie.Collection.ID)
 		updated = true
 	}
 	if len(title.Genres) == 0 && len(tmdbMovie.Genres) > 0 {
 		title.Genres = tmdbMovie.Genres
-		log.Printf("[metadata] using TMDB genres for movie tmdbId=%d genres=%v", tmdbID, tmdbMovie.Genres)
+		metadataTracef("[metadata] using TMDB genres for movie tmdbId=%d genres=%v", tmdbID, tmdbMovie.Genres)
 		updated = true
 	}
 
@@ -5815,7 +5828,7 @@ func (s *Service) maybeHydrateOverviewFromTMDB(ctx context.Context, title *model
 	tmdbOverview := strings.TrimSpace(tmdbMovie.Overview)
 	if tmdbOverview != "" && tmdbOverview != strings.TrimSpace(title.Overview) {
 		title.Overview = tmdbOverview
-		log.Printf("[metadata] hydrated overview from TMDB for tmdbId=%d", tmdbID)
+		metadataTracef("[metadata] hydrated overview from TMDB for tmdbId=%d", tmdbID)
 	}
 }
 
@@ -6053,7 +6066,7 @@ func (s *Service) Trailers(ctx context.Context, req models.TrailerQuery) (*model
 		tvdbID = parseTVDBIDFromTitleID(req.TitleID)
 	}
 
-	log.Printf("[metadata] trailers request mediaType=%s tmdbId=%d tvdbId=%d imdbId=%s titleId=%q name=%q year=%d season=%d",
+	metadataTracef("[metadata] trailers request mediaType=%s tmdbId=%d tvdbId=%d imdbId=%s titleId=%q name=%q year=%d season=%d",
 		mediaType, tmdbID, tvdbID, strings.TrimSpace(req.IMDBID), strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.SeasonNumber)
 
 	var combined []models.Trailer
@@ -6063,7 +6076,7 @@ func (s *Service) Trailers(ctx context.Context, req models.TrailerQuery) (*model
 		if seasonTrailers, err := s.fetchTMDBSeasonTrailers(ctx, tmdbID, req.SeasonNumber); err != nil {
 			log.Printf("[metadata] WARN: tmdb season trailers fetch failed tmdbId=%d season=%d err=%v", tmdbID, req.SeasonNumber, err)
 		} else if len(seasonTrailers) > 0 {
-			log.Printf("[metadata] found %d season-specific trailers for tmdbId=%d season=%d", len(seasonTrailers), tmdbID, req.SeasonNumber)
+			metadataTracef("[metadata] found %d season-specific trailers for tmdbId=%d season=%d", len(seasonTrailers), tmdbID, req.SeasonNumber)
 			combined = append(combined, seasonTrailers...)
 		}
 	}
@@ -6100,7 +6113,7 @@ func (s *Service) Trailers(ctx context.Context, req models.TrailerQuery) (*model
 	// Log trailer details for debugging
 	for i, t := range trailers {
 		score := scoreTrailerCandidate(&t)
-		log.Printf("[metadata] trailer[%d]: name=%q type=%q official=%v season=%d lang=%q res=%d source=%q score=%d",
+		metadataTracef("[metadata] trailer[%d]: name=%q type=%q official=%v season=%d lang=%q res=%d source=%q score=%d",
 			i, t.Name, t.Type, t.Official, t.SeasonNumber, t.Language, t.Resolution, t.Source, score)
 	}
 
@@ -6490,7 +6503,7 @@ func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType str
 
 	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
 
-	log.Printf("[metadata] ResolveIMDBID called: title=%q, mediaType=%q, year=%d", title, mediaType, year)
+	metadataTracef("[metadata] ResolveIMDBID called: title=%q, mediaType=%q, year=%d", title, mediaType, year)
 
 	var results []tvdbSearchResult
 	var err error
@@ -6509,7 +6522,7 @@ func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType str
 	}
 
 	if len(results) == 0 {
-		log.Printf("[metadata] ResolveIMDBID no TVDB results for %q", title)
+		metadataTracef("[metadata] ResolveIMDBID no TVDB results for %q", title)
 		return ""
 	}
 
@@ -6522,13 +6535,13 @@ func (s *Service) ResolveIMDBID(ctx context.Context, title string, mediaType str
 			}
 			sourceName := strings.ToLower(strings.TrimSpace(remote.SourceName))
 			if strings.Contains(sourceName, "imdb") {
-				log.Printf("[metadata] ResolveIMDBID found IMDB ID=%s for %q via TVDB result %q", id, title, result.Name)
+				metadataTracef("[metadata] ResolveIMDBID found IMDB ID=%s for %q via TVDB result %q", id, title, result.Name)
 				return id
 			}
 		}
 	}
 
-	log.Printf("[metadata] ResolveIMDBID no IMDB ID found in %d TVDB results for %q", len(results), title)
+	metadataTracef("[metadata] ResolveIMDBID no IMDB ID found in %d TVDB results for %q", len(results), title)
 	return ""
 }
 

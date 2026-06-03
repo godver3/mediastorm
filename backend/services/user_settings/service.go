@@ -156,8 +156,6 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	defer s.mu.RUnlock()
 
 	if settings, ok := s.settings[userID]; ok {
-		log.Printf("[user-settings] GetWithDefaults(%q): found in cache, raw subMode=%q, defaults subMode=%q",
-			userID, settings.Playback.PreferredSubtitleMode, defaults.Playback.PreferredSubtitleMode)
 		// Sanitize language codes (strip stray quotes/whitespace)
 		settings.Playback.PreferredAudioLanguage = sanitizeLanguageCode(settings.Playback.PreferredAudioLanguage)
 		settings.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(settings.Playback.PreferredSubtitleLanguage)
@@ -178,7 +176,6 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 			settings.Playback.PreferredSubtitleMode = defaults.Playback.PreferredSubtitleMode
 		}
 		settings.Playback.PreferredSubtitleMode = normalizeSubtitleMode(settings.Playback.PreferredSubtitleMode)
-		log.Printf("[user-settings] GetWithDefaults(%q): final subMode=%q", userID, settings.Playback.PreferredSubtitleMode)
 		// SubtitleSize of 0 means "use default"
 		if settings.Playback.SubtitleSize == 0 {
 			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
@@ -338,8 +335,6 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 					settings.HomeShelves.Shelves = append(settings.HomeShelves.Shelves, sh)
 					log.Printf("[user-settings] GetWithDefaults(%q): injected missing shelf id=%s name=%q type=%s", userID, sh.ID, sh.Name, sh.Type)
 					injected++
-				} else {
-					log.Printf("[user-settings] GetWithDefaults(%q): shelf id=%s already present (type=%s)", userID, sh.ID, sh.Type)
 				}
 			}
 		}

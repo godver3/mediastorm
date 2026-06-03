@@ -22,6 +22,9 @@ const (
 	defaultIrohOrigin = "http://127.0.0.1:7777"
 )
 
+var debugIrohProxyLogs = strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "1") ||
+	strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "true")
+
 type IrohHostManager struct {
 	mu      sync.RWMutex
 	workDir string
@@ -165,7 +168,9 @@ func (m *IrohHostManager) scanOutput(output io.Reader, isErr bool) {
 	scanner := bufio.NewScanner(output)
 	for scanner.Scan() {
 		line := scanner.Text()
-		log.Printf("[remote-access][iroh] %s", line)
+		if shouldLogIrohLine(line, isErr) {
+			log.Printf("[remote-access][iroh] %s", line)
+		}
 		m.mu.Lock()
 		if value := strings.TrimSpace(strings.TrimPrefix(line, "invite=")); value != line && value != "" {
 			m.invite = value
@@ -179,6 +184,20 @@ func (m *IrohHostManager) scanOutput(output io.Reader, isErr bool) {
 	}
 }
 
+func shouldLogIrohLine(line string, isErr bool) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	if debugIrohProxyLogs || strings.HasPrefix(line, "invite=") {
+		return true
+	}
+	if isErr && shouldRecordIrohError(line) {
+		return true
+	}
+	return false
+}
+
 func shouldRecordIrohError(line string) bool {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -188,6 +207,15 @@ func shouldRecordIrohError(line string) bool {
 	// cancel range reads or background the app; they are per-stream closes, not
 	// host failures.
 	if strings.Contains(line, "stream_error") && strings.Contains(line, "sending stopped by peer") {
+		return false
+	}
+	if strings.Contains(line, "proxy_error") && (strings.Contains(line, "sending stopped by peer") || strings.Contains(line, "connection lost")) {
+		return false
+	}
+	if strings.Contains(line, "stream_error") && strings.Contains(line, "connection lost") {
+		return false
+	}
+	if strings.Contains(line, "connection_stream_accept_closed") && strings.Contains(line, "timed out") {
 		return false
 	}
 	return true

@@ -55,6 +55,13 @@ func sessionKey(userID, mediaType, itemID string) string {
 	return userID + ":" + mediaType + ":" + strings.ToLower(itemID)
 }
 
+func isExpectedPauseProgressError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Progress should be at least 1.0% to pause")
+}
+
 // HandleProgressUpdate processes a playback progress update and sends the appropriate scrobble event.
 func (t *ScrobbleStateTracker) HandleProgressUpdate(userID string, update models.PlaybackProgressUpdate, percentWatched float64) {
 	if !t.scrobbler.IsEnabledForUser(userID) {
@@ -102,7 +109,9 @@ func (t *ScrobbleStateTracker) HandleProgressUpdate(userID string, update models
 			if _, err := scrobbleWithAbsoluteEpisodeFallback("pause", req, func(scrobbleReq ScrobbleRequest) (*ScrobbleResponse, error) {
 				return t.client.ScrobblePause(accessToken, scrobbleReq)
 			}); err != nil {
-				log.Printf("[trakt-scrobble] pause failed for %s: %v", key, err)
+				if !isExpectedPauseProgressError(err) {
+					log.Printf("[trakt-scrobble] pause failed for %s: %v", key, err)
+				}
 			} else {
 				sess.state = statePaused
 				sess.lastTraktCall = now

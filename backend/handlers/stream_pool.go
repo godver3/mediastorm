@@ -135,7 +135,7 @@ func (p *streamPool) evictIdle() {
 			idle := now.Sub(s.lastAccess) > poolSlotIdleTimeout && atomic.LoadInt32(&s.readers) == 0
 			s.mu.Unlock()
 			if idle {
-				log.Printf("[stream-pool] evicting idle slot: path=%q startByte=%d buffered=%d",
+				videoTracef("[stream-pool] evicting idle slot: path=%q startByte=%d buffered=%d",
 					path, s.startByte, len(s.data))
 				s.cancel()
 			} else {
@@ -203,7 +203,7 @@ func (p *streamPool) serve(
 
 	// If requested position is before the slot's buffer start, can't serve
 	if reqStart < slot.startByte {
-		log.Printf("[stream-pool] MISS: data trimmed past reqStart=%d slotStart=%d", reqStart, slot.startByte)
+		videoTracef("[stream-pool] MISS: data trimmed past reqStart=%d slotStart=%d", reqStart, slot.startByte)
 		return false, nil
 	}
 
@@ -220,7 +220,7 @@ func (p *streamPool) serve(
 			gap = 0
 		}
 		waitStart := time.Now()
-		log.Printf("[stream-pool] WAIT-START: path=%q range=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v preBuffer=%d/%d slotTotalRead=%d slotAge=%v sinceLastRead=%v readers=%d",
+		videoTracef("[stream-pool] WAIT-START: path=%q range=%q reqStart=%d endPos=%d gap=%d slotStart=%d cdnDone=%v preBuffer=%d/%d slotTotalRead=%d slotAge=%v sinceLastRead=%v readers=%d",
 			path, rangeHeader, reqStart, endPos, gap, slot.startByte, false, buffered, preBufferTarget,
 			slotTotalRead, time.Since(slotReadStartedAt).Round(time.Millisecond), time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 		waitDeadline := time.After(poolWaitTimeout)
@@ -236,12 +236,12 @@ func (p *streamPool) serve(
 				slot.mu.Unlock()
 				buffered = endPos - reqStart
 				if reqStart < endPos && (buffered >= preBufferTarget || done) {
-					log.Printf("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d preBuffer=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
+					videoTracef("[stream-pool] WAIT-OK: path=%q waited=%v gap=%d newEndPos=%d preBuffer=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
 						path, time.Since(waitStart).Round(time.Millisecond), gap, endPos, buffered, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					goto dataReady
 				}
 				if done && reqStart >= endPos {
-					log.Printf("[stream-pool] CDN finished before reaching reqStart=%d endPos=%d", reqStart, endPos)
+					videoTracef("[stream-pool] CDN finished before reaching reqStart=%d endPos=%d", reqStart, endPos)
 					return false, nil
 				}
 			case <-waitDeadline:
@@ -255,12 +255,12 @@ func (p *streamPool) serve(
 				buffered = currentEnd - reqStart
 				if buffered > 0 {
 					// Timeout but we have some data — serve what we have rather than failing
-					log.Printf("[stream-pool] WAIT-PARTIAL: path=%q waited=%v preBuffer=%d/%d slotTotalRead=%d sinceLastRead=%v readers=%d (serving with partial buffer)",
+					videoTracef("[stream-pool] WAIT-PARTIAL: path=%q waited=%v preBuffer=%d/%d slotTotalRead=%d sinceLastRead=%v readers=%d (serving with partial buffer)",
 						path, time.Since(waitStart).Round(time.Millisecond), buffered, preBufferTarget, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 					endPos = currentEnd
 					goto dataReady
 				}
-				log.Printf("[stream-pool] TIMEOUT waiting for data: path=%q reqStart=%d endPos=%d remaining=%d cdnDone=%v elapsed=%v slotTotalRead=%d sinceLastRead=%v readers=%d",
+				videoTracef("[stream-pool] TIMEOUT waiting for data: path=%q reqStart=%d endPos=%d remaining=%d cdnDone=%v elapsed=%v slotTotalRead=%d sinceLastRead=%v readers=%d",
 					path, reqStart, currentEnd, remaining, cdnDone, time.Since(waitStart).Round(time.Millisecond), slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 				return false, nil
 			case <-ctx.Done():
@@ -341,7 +341,7 @@ dataReady:
 		maxWritten = reqEnd - reqStart + 1
 	}
 
-	log.Printf("[stream-pool] serving: path=%q range=%q reqStart=%d slotStart=%d buffered=%d slotTotalRead=%d readers=%d",
+	videoTracef("[stream-pool] serving: path=%q range=%q reqStart=%d slotStart=%d buffered=%d slotTotalRead=%d readers=%d",
 		path, rangeHeader, reqStart, slot.startByte, endPos-slot.startByte, slotTotalRead, atomic.LoadInt32(&slot.readers))
 
 	for {
@@ -353,7 +353,7 @@ dataReady:
 		// Check if the buffer has been trimmed past our read position
 		if pos < slot.startByte {
 			slot.mu.Unlock()
-			log.Printf("[stream-pool] buffer trimmed past reader: path=%q pos=%d slotStart=%d", path, pos, slot.startByte)
+			videoTracef("[stream-pool] buffer trimmed past reader: path=%q pos=%d slotStart=%d", path, pos, slot.startByte)
 			return true, fmt.Errorf("buffer trimmed past reader position")
 		}
 
@@ -380,7 +380,7 @@ dataReady:
 					slotTotalRead = slot.totalRead
 					slotLastReadAt = slot.lastReadAt
 					slot.mu.Unlock()
-					log.Printf("[stream-pool] READER-WAIT: path=%q pos=%d waited=%v currentEnd=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
+					videoTracef("[stream-pool] READER-WAIT: path=%q pos=%d waited=%v currentEnd=%d slotTotalRead=%d sinceLastRead=%v readers=%d",
 						path, pos, waited.Round(time.Millisecond), currentEnd, slotTotalRead, time.Since(slotLastReadAt).Round(time.Millisecond), atomic.LoadInt32(&slot.readers))
 				}
 				continue
@@ -418,7 +418,7 @@ dataReady:
 		if writeErr != nil {
 			if isClientGone(writeErr) && totalWritten > 0 {
 				// Only log if we actually sent some data (reduce noise)
-				log.Printf("[stream-pool] client gone: path=%q pos=%d written=%d", path, pos, totalWritten)
+				videoTracef("[stream-pool] client gone: path=%q pos=%d written=%d", path, pos, totalWritten)
 			}
 			return true, nil
 		}
@@ -451,7 +451,7 @@ dataReady:
 	if elapsed > 0 {
 		rateMBps = (float64(totalWritten) / 1024.0 / 1024.0) / elapsed.Seconds()
 	}
-	log.Printf("[stream-pool] stream complete: path=%q written=%d elapsed=%v avgRate=%.2fMBps", path, totalWritten, elapsed.Round(time.Millisecond), rateMBps)
+	videoTracef("[stream-pool] stream complete: path=%q written=%d elapsed=%v avgRate=%.2fMBps", path, totalWritten, elapsed.Round(time.Millisecond), rateMBps)
 	return true, nil
 }
 
@@ -506,7 +506,7 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 		if gap < 0 {
 			gap = 0
 		}
-		log.Printf("[stream-pool] REUSE slot: path=%q reqPos=%d slotStart=%d buffered=%d endPos=%d gap=%d cdnDone=%v",
+		videoTracef("[stream-pool] REUSE slot: path=%q reqPos=%d slotStart=%d buffered=%d endPos=%d gap=%d cdnDone=%v",
 			path, reqPos, slot.startByte, buffered, endPos, gap, cdnDone)
 		return slot, nil
 	}
@@ -579,7 +579,7 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 		evicted.mu.Lock()
 		evictedStart := evicted.startByte
 		evicted.mu.Unlock()
-		log.Printf("[stream-pool] evicting LRU slot: startByte=%d newPos=%d",
+		videoTracef("[stream-pool] evicting LRU slot: startByte=%d newPos=%d",
 			evictedStart, reqPos)
 		evicted.cancel()
 		slots = append(slots[:lruIdx], slots[lruIdx+1:]...)
@@ -590,7 +590,7 @@ func (p *streamPool) getOrCreate(path string, reqPos int64, streamer streaming.P
 	// Start background CDN reader
 	go slot.backgroundReader(resp)
 
-	log.Printf("[stream-pool] NEW slot: path=%q startByte=%d totalSize=%d contentType=%q status=%d", path, reqPos, totalSize, contentType, resp.Status)
+	videoTracef("[stream-pool] NEW slot: path=%q startByte=%d totalSize=%d contentType=%q status=%d", path, reqPos, totalSize, contentType, resp.Status)
 	return slot, nil
 }
 
@@ -641,7 +641,7 @@ func (s *poolSlot) backgroundReader(resp *streaming.Response) {
 					oldStart := s.startByte
 					s.data = newData
 					s.startByte += int64(trimAmount)
-					log.Printf("[stream-pool] backpressure trim: path=%q oldStart=%d newStart=%d trimmed=%d readers=%d minReaderPos=%d",
+					videoTracef("[stream-pool] backpressure trim: path=%q oldStart=%d newStart=%d trimmed=%d readers=%d minReaderPos=%d",
 						s.path, oldStart, s.startByte, trimAmount, readers, safeTrimTo)
 				}
 			}

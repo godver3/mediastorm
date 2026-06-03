@@ -269,11 +269,6 @@ func injectLocalLibraryShelves(shelves []models.ShelfConfig, libs []models.Local
 		}
 	}
 
-	log.Printf("[user-settings] injectLocalLibraryShelves: %d existing shelves, %d libraries", len(shelves), len(libs))
-	for _, lib := range libs {
-		log.Printf("[user-settings] injectLocalLibraryShelves: library id=%s name=%q type=%s", lib.ID, lib.Name, lib.Type)
-	}
-
 	// Build a lookup from shelf ID to library name for renaming existing shelves
 	libNameByID := make(map[string]string, len(libs))
 	for _, lib := range libs {
@@ -306,8 +301,6 @@ func injectLocalLibraryShelves(shelves []models.ShelfConfig, libs []models.Local
 			})
 			log.Printf("[user-settings] injectLocalLibraryShelves: injected new shelf id=%s name=%q", id, "Recently Added - "+lib.Name)
 			injected++
-		} else {
-			log.Printf("[user-settings] injectLocalLibraryShelves: shelf id=%s already present, skipping", id)
 		}
 	}
 	return result

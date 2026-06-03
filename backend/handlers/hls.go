@@ -793,7 +793,7 @@ func generateSessionID() string {
 // to the actual debrid CDN URL. By resolving once upfront, we avoid repeated redirect
 // resolution during probing and FFmpeg input, which can cause timeouts.
 func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string) (string, error) {
-	log.Printf("[hls] resolving external URL: %s", externalURL)
+	videoTracef("[hls] resolving external URL")
 
 	// Create a request-scoped client that captures the final URL after redirects
 	// while sharing the CDN transport and DNS cache.
@@ -805,7 +805,7 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 		}
 		// Track the URL we're redirecting to
 		finalURL = req.URL.String()
-		log.Printf("[hls] following redirect to: %s", finalURL)
+		videoTracef("[hls] following external URL redirect")
 		return nil
 	}
 
@@ -831,10 +831,10 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 	// If HEAD succeeded, check for redirects
 	if resp.StatusCode < 400 {
 		if finalURL != "" && finalURL != externalURL {
-			log.Printf("[hls] resolved external URL via HEAD: %s -> %s", externalURL, finalURL)
+			videoTracef("[hls] resolved external URL via HEAD")
 			return finalURL, nil
 		}
-		log.Printf("[hls] external URL has no redirects (HEAD): %s", externalURL)
+		videoTracef("[hls] external URL has no redirects (HEAD)")
 		return externalURL, nil
 	}
 
@@ -862,12 +862,12 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 
 	// If we followed redirects, use the final URL
 	if finalURL != "" && finalURL != externalURL {
-		log.Printf("[hls] resolved external URL via GET: %s -> %s", externalURL, finalURL)
+		videoTracef("[hls] resolved external URL via GET")
 		return finalURL, nil
 	}
 
 	// No redirects, use the original URL
-	log.Printf("[hls] external URL has no redirects (GET): %s", externalURL)
+	videoTracef("[hls] external URL has no redirects (GET)")
 	return externalURL, nil
 }
 
@@ -877,7 +877,7 @@ func (m *HLSManager) getDirectURL(ctx context.Context, session *HLSSession) (str
 	// If the path is already an external URL, return it directly
 	// Note: The URL should already be resolved in CreateSession, so we just return it
 	if strings.HasPrefix(session.Path, "http://") || strings.HasPrefix(session.Path, "https://") {
-		log.Printf("[hls] path is already an external URL: %s", session.Path)
+		videoTracef("[hls] path is already an external URL")
 		return session.Path, true
 	}
 
@@ -1792,7 +1792,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	log.Printf("[hls] session %s: checking for direct URL support (transcodingOffset=%.3f)", session.ID, session.TranscodingOffset)
 	directURL, hasDirectURL := m.getDirectURL(ctx, session)
 	if hasDirectURL {
-		log.Printf("[hls] session %s: got direct URL: %s", session.ID, directURL)
+		videoTracef("[hls] session %s: got direct URL", session.ID)
 	} else {
 		log.Printf("[hls] session %s: no direct URL available, using pipe", session.ID)
 	}
@@ -1808,7 +1808,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// For direct URLs, use a throttling proxy so FFmpeg can use HTTP Range requests for seeking
 	// while we still control the download speed
 	if hasDirectURL {
-		log.Printf("[hls] session %s: setting up throttling proxy for direct URL: %s", session.ID, directURL)
+		videoTracef("[hls] session %s: setting up throttling proxy for direct URL", session.ID)
 
 		var err error
 		proxy, proxyURL, err = newThrottlingProxy(directURL, session)

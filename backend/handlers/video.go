@@ -74,6 +74,19 @@ const providerProbeSampleBytes int64 = 16 * 1024 * 1024
 
 var externalProxyHTTPClient = newExternalProxyHTTPClient()
 
+var debugVideoTraceLogs = envFlag("STRMR_VIDEO_TRACE_LOGS")
+
+func envFlag(name string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+
+func videoTracef(format string, args ...any) {
+	if debugVideoTraceLogs {
+		log.Printf(format, args...)
+	}
+}
+
 func newExternalProxyHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
@@ -651,11 +664,11 @@ func (h *VideoHandler) StreamVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug logging for troubleshooting
-	log.Printf("[video] request path=%q clean=%q method=%s target=%q range=%s transmux=%t provider=%t", filePath, cleanPath, r.Method, target, rangeSummary, shouldTransmux, h.streamer != nil)
+	videoTracef("[video] request path=%q clean=%q method=%s target=%q range=%s transmux=%t provider=%t", filePath, cleanPath, r.Method, target, rangeSummary, shouldTransmux, h.streamer != nil)
 
 	// Additional detailed logging for range requests (seek operations)
 	if rangeHeader != "" {
-		log.Printf("[video] SEEK REQUEST detected: range=%q path=%q method=%s", rangeHeader, cleanPath, r.Method)
+		videoTracef("[video] SEEK REQUEST detected: range=%q path=%q method=%s", rangeHeader, cleanPath, r.Method)
 	}
 
 	if shouldTransmux {
@@ -726,7 +739,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 			if rangeLen > 0 && rangeLen <= rangeCacheMinFetchSize {
 				// Check cache first
 				if cached, hit := h.rangeCache.get(cleanPath, rangeStart, rangeEnd+1); hit {
-					log.Printf("[video] range cache HIT: path=%q range=%q (%d bytes)", cleanPath, rangeHeader, rangeLen)
+					videoTracef("[video] range cache HIT: path=%q range=%q (%d bytes)", cleanPath, rangeHeader, rangeLen)
 					h.writeCommonHeaders(w)
 					w.Header().Set("Content-Type", "video/mp4")
 					w.Header().Set("Accept-Ranges", "bytes")
@@ -750,7 +763,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 				// then serve from cache instead of making a duplicate CDN request.
 				isOwner, flightCh := h.rangeCache.tryStartFetch(cleanPath, fetchStart)
 				if !isOwner {
-					log.Printf("[video] range cache COALESCE: waiting for in-flight fetch path=%q window=%d", cleanPath, fetchStart)
+					videoTracef("[video] range cache COALESCE: waiting for in-flight fetch path=%q window=%d", cleanPath, fetchStart)
 					select {
 					case <-flightCh:
 						// Fetch completed — check cache
@@ -759,7 +772,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 						return true, r.Context().Err()
 					}
 					if cached, hit := h.rangeCache.get(cleanPath, rangeStart, rangeEnd+1); hit {
-						log.Printf("[video] range cache HIT (after coalesce): path=%q range=%q (%d bytes)", cleanPath, rangeHeader, rangeLen)
+						videoTracef("[video] range cache HIT (after coalesce): path=%q range=%q (%d bytes)", cleanPath, rangeHeader, rangeLen)
 						h.writeCommonHeaders(w)
 						w.Header().Set("Content-Type", "video/mp4")
 						w.Header().Set("Accept-Ranges", "bytes")
@@ -770,7 +783,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 					}
 					// Coalesced fetch didn't cover our range — fall through to normal streaming
 				} else {
-					log.Printf("[video] range cache MISS: expanding %q to %q for path=%q", rangeHeader, expandedRange, cleanPath)
+					videoTracef("[video] range cache MISS: expanding %q to %q for path=%q", rangeHeader, expandedRange, cleanPath)
 
 					fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 15*time.Second)
 					fetchResp, fetchErr := h.streamer.Stream(fetchCtx, streaming.Request{
@@ -787,7 +800,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 						if n > 0 {
 							fetchBuf = fetchBuf[:n]
 							h.rangeCache.put(cleanPath, fetchStart, fetchBuf)
-							log.Printf("[video] range cache FILL: path=%q offset=%d size=%d", cleanPath, fetchStart, n)
+							videoTracef("[video] range cache FILL: path=%q offset=%d size=%d", cleanPath, fetchStart, n)
 
 							// Serve the originally requested bytes from the fetched data
 							reqOffset := rangeStart - fetchStart
@@ -828,7 +841,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 			if served, err := h.streamPool.serve(w, r, cleanPath, reqStart, h.streamer, h.writeCommonHeaders, displayName, poolAccountID); served {
 				return true, err
 			}
-			log.Printf("[stream-pool] falling back to direct streaming: path=%q range=%q", cleanPath, rangeHeader)
+			videoTracef("[stream-pool] falling back to direct streaming: path=%q range=%q", cleanPath, rangeHeader)
 		}
 	}
 
@@ -839,7 +852,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	var activityCounter *int64
 
 	// Log the provider request details
-	log.Printf(
+	videoTracef(
 		"[video] provider request: path=%q range=%q method=%s rawQuery=%q",
 		cleanPath,
 		rangeHeader,
@@ -901,7 +914,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 			}
 		}
 	}
-	log.Printf("[video] provider response: path=%q status=%d content-length=%s content-range=%q accept-ranges=%q range-request=%q expected-bytes=%d",
+	videoTracef("[video] provider response: path=%q status=%d content-length=%s content-range=%q accept-ranges=%q range-request=%q expected-bytes=%d",
 		cleanPath, resp.Status, contentLength, contentRange, acceptRanges, rangeHeader, expectedLength)
 
 	h.writeCommonHeaders(w)
@@ -929,7 +942,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		if displayName != "" || w.Header().Get("Content-Disposition") == "" {
 			w.Header().Set("Content-Disposition", buildInlineContentDisposition(filename))
 		}
-		log.Printf("[video] setting filename headers: %s", filename)
+		videoTracef("[video] setting filename headers: %s", filename)
 	}
 	normalizeMediaContentType(w, filename, cleanPath)
 
@@ -939,7 +952,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Log the status being written back to client
-	log.Printf("[video] writing response to client: path=%q status=%d range=%q", cleanPath, status, rangeHeader)
+	videoTracef("[video] writing response to client: path=%q status=%d range=%q", cleanPath, status, rangeHeader)
 	w.WriteHeader(status)
 
 	if r.Method == http.MethodHead {
@@ -968,7 +981,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 		lastLogBytes := int64(0)
 		const logInterval = 10 * 1024 * 1024 // Log every 10MB
 
-		log.Printf("[video] starting stream copy: path=%q range=%q streamID=%s", cleanPath, rangeHeader, streamID)
+		videoTracef("[video] starting stream copy: path=%q range=%q streamID=%s", cleanPath, rangeHeader, streamID)
 
 		for {
 			// Check if context is cancelled (client disconnected)
@@ -987,7 +1000,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 						if flusher != nil {
 							flusher.Flush()
 						}
-						log.Printf("[video] provider stream complete path=%q total=%d range=%q (expected-bytes=%d)", cleanPath, total, rangeHeader, expectedLength)
+						videoTracef("[video] provider stream complete path=%q total=%d range=%q (expected-bytes=%d)", cleanPath, total, rangeHeader, expectedLength)
 						break
 					}
 					if int64(n) > remaining {
@@ -1017,7 +1030,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 
 				// Periodic progress logging
 				if total-lastLogBytes >= logInterval {
-					log.Printf("[video] streaming progress: path=%q total=%d range=%q", cleanPath, total, rangeHeader)
+					videoTracef("[video] streaming progress: path=%q total=%d range=%q", cleanPath, total, rangeHeader)
 					lastLogBytes = total
 				}
 
@@ -1031,7 +1044,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 					if flusher != nil {
 						flusher.Flush()
 					}
-					log.Printf("[video] provider stream complete path=%q total=%d range=%q (expected-bytes=%d)", cleanPath, total, rangeHeader, expectedLength)
+					videoTracef("[video] provider stream complete path=%q total=%d range=%q (expected-bytes=%d)", cleanPath, total, rangeHeader, expectedLength)
 					break
 				}
 			}
@@ -1048,7 +1061,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 				if flusher != nil {
 					flusher.Flush()
 				}
-				log.Printf("[video] provider stream complete path=%q total=%d range=%q", cleanPath, total, rangeHeader)
+				videoTracef("[video] provider stream complete path=%q total=%d range=%q", cleanPath, total, rangeHeader)
 				break
 			}
 		}
@@ -1497,7 +1510,7 @@ func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath str
 	// Check if this is already an external URL (e.g., from AIOStreams pre-resolved streams)
 	// If so, probe it directly without going through the provider
 	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
-		log.Printf("[video] ffprobe using external URL directly: %s", cleanPath)
+		videoTracef("[video] ffprobe using external URL directly: %s", cleanPath)
 		meta, err := h.runFFProbe(ctx, cleanPath, nil)
 		if err != nil {
 			return nil, fmt.Errorf("ffprobe external URL failed: %w", err)
@@ -1513,7 +1526,7 @@ func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath str
 	if directProvider, ok := h.streamer.(streaming.DirectURLProvider); ok {
 		directURL, err := directProvider.GetDirectURL(ctx, cleanPath)
 		if err == nil && directURL != "" {
-			log.Printf("[video] ffprobe using direct URL for seekable access: %s", cleanPath)
+			videoTracef("[video] ffprobe using direct URL for seekable access: %s", cleanPath)
 			meta, err := h.runFFProbe(ctx, directURL, nil)
 			if err != nil {
 				// Log but don't fail - fall through to WebDAV or piped approach
@@ -1530,7 +1543,7 @@ func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath str
 
 	// Try WebDAV URL for usenet paths - allows ffprobe to seek
 	if webdavURL := h.buildWebDAVURL(cleanPath); webdavURL != "" {
-		log.Printf("[video] ffprobe using WebDAV URL for seekable access: %s", cleanPath)
+		videoTracef("[video] ffprobe using WebDAV URL for seekable access: %s", cleanPath)
 		meta, err := h.runFFProbe(ctx, webdavURL, nil)
 		if err != nil {
 			// Log but don't fail - fall through to piped approach
@@ -1541,7 +1554,7 @@ func (h *VideoHandler) runFFProbeFromProvider(ctx context.Context, cleanPath str
 	}
 
 	// Fall back to piped approach (when direct URL and WebDAV fail)
-	log.Printf("[video] ffprobe falling back to piped probe for: %s", cleanPath)
+	videoTracef("[video] ffprobe falling back to piped probe for: %s", cleanPath)
 	request := streaming.Request{Path: cleanPath, Method: http.MethodGet}
 	if providerProbeSampleBytes > 0 {
 		request.RangeHeader = fmt.Sprintf("bytes=0-%d", providerProbeSampleBytes-1)
@@ -1599,7 +1612,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[video] ProbeVideo: received request for path=%q", filePath)
+	videoTracef("[video] ProbeVideo: received request for path=%q", filePath)
 
 	// Clean the path: remove /webdav/ prefix but preserve the leading slash for NZB paths
 	cleanPath := filePath
@@ -1609,7 +1622,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
 	}
 
-	log.Printf("[video] ProbeVideo: after cleaning, path=%q", cleanPath)
+	videoTracef("[video] ProbeVideo: after cleaning, path=%q", cleanPath)
 
 	sanitizedPath := cleanPath
 	if sanitizedPath == "" {
@@ -1618,7 +1631,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 
 	// Check cache first to avoid repeated ffprobe calls during playback
 	if cachedResp := h.getCachedMetadata(cleanPath); cachedResp != nil {
-		log.Printf("[video] ProbeVideo: using cached metadata for path=%q", cleanPath)
+		videoTracef("[video] ProbeVideo: using cached metadata for path=%q", cleanPath)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cachedResp)
 		return
@@ -1628,21 +1641,21 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 	doneChan := make(chan struct{})
 	if existing, loaded := h.probeInFlight.LoadOrStore(cleanPath, doneChan); loaded {
 		// Another probe is in progress - wait for it to complete
-		log.Printf("[video] ProbeVideo: waiting for in-flight probe for path=%q", cleanPath)
+		videoTracef("[video] ProbeVideo: waiting for in-flight probe for path=%q", cleanPath)
 		existingChan := existing.(chan struct{})
 		select {
 		case <-existingChan:
 			// Probe completed, result should now be in cache
 			if cachedResp := h.getCachedMetadata(cleanPath); cachedResp != nil {
-				log.Printf("[video] ProbeVideo: using result from completed in-flight probe for path=%q", cleanPath)
+				videoTracef("[video] ProbeVideo: using result from completed in-flight probe for path=%q", cleanPath)
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(cachedResp)
 				return
 			}
 			// If not in cache (probe failed?), fall through to probe ourselves
-			log.Printf("[video] ProbeVideo: in-flight probe completed but no cache entry, will probe again for path=%q", cleanPath)
+			videoTracef("[video] ProbeVideo: in-flight probe completed but no cache entry, will probe again for path=%q", cleanPath)
 		case <-r.Context().Done():
-			log.Printf("[video] ProbeVideo: request cancelled while waiting for in-flight probe for path=%q", cleanPath)
+			videoTracef("[video] ProbeVideo: request cancelled while waiting for in-flight probe for path=%q", cleanPath)
 			return
 		}
 	}
@@ -1677,7 +1690,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 	isExternalURL := strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://")
 
 	if isExternalURL {
-		log.Printf("[video] ProbeVideo: detected external URL, probing directly: %s", cleanPath)
+		videoTracef("[video] ProbeVideo: detected external URL, probing directly: %s", cleanPath)
 
 		// For external URLs, try to get file size via HEAD request
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -1701,7 +1714,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 			if m, err := h.runFFProbe(r.Context(), cleanPath, nil); err == nil && m != nil {
 				meta = m
 			} else if err != nil {
-				log.Printf("[video] ProbeVideo: ffprobe external URL failed: %v", err)
+				videoTracef("[video] ProbeVideo: ffprobe external URL failed: %v", err)
 				notes = append(notes, "ffprobe could not derive metadata")
 			}
 		}
@@ -1752,19 +1765,19 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.streamer != nil {
-		log.Printf("[video] ProbeVideo: attempting HEAD request for path=%q", cleanPath)
+		videoTracef("[video] ProbeVideo: attempting HEAD request for path=%q", cleanPath)
 		resp, err := h.streamer.Stream(r.Context(), streaming.Request{
 			Path:   cleanPath,
 			Method: http.MethodHead,
 		})
 		if err != nil {
 			if errors.Is(err, streaming.ErrNotFound) {
-				log.Printf("[video] ProbeVideo: stream not found for path=%q", cleanPath)
+				videoTracef("[video] ProbeVideo: stream not found for path=%q", cleanPath)
 				http.Error(w, "stream not found", http.StatusNotFound)
 				return
 			}
 			if errors.Is(err, streaming.ErrStaleTorrent) {
-				log.Printf("[video] ProbeVideo: stale torrent for path=%q", cleanPath)
+				videoTracef("[video] ProbeVideo: stale torrent for path=%q", cleanPath)
 				http.Error(w, "debrid torrent expired or deleted — please re-resolve", http.StatusGone)
 				return
 			}
@@ -1980,7 +1993,7 @@ func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferre
 		for _, stream := range audioStreams {
 			if matchesLang(stream) && isCopyable(stream) && !isCommentary(stream) {
 				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-				log.Printf("[metadata] selected compatible audio track %d (%s) for language %q", stream.Index, codec, preferredLanguage)
+				videoTracef("[metadata] selected compatible audio track %d (%s) for language %q", stream.Index, codec, preferredLanguage)
 				return audioPlan{mode: audioPlanCopy, stream: stream, reason: fmt.Sprintf("compatible codec %s matching language %s", codec, preferredLanguage)}
 			}
 		}
@@ -1989,7 +2002,7 @@ func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferre
 		for _, stream := range audioStreams {
 			if matchesLang(stream) && !isCommentary(stream) {
 				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-				log.Printf("[metadata] selected incompatible audio track %d (%s) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
+				videoTracef("[metadata] selected incompatible audio track %d (%s) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
 				return audioPlan{mode: audioPlanTranscode, stream: stream, reason: fmt.Sprintf("codec %s matching language %s requires transcoding", codec, preferredLanguage)}
 			}
 		}
@@ -1998,7 +2011,7 @@ func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferre
 		for _, stream := range audioStreams {
 			if matchesLang(stream) && isCopyable(stream) {
 				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-				log.Printf("[metadata] selected compatible audio track %d (%s, commentary) for language %q", stream.Index, codec, preferredLanguage)
+				videoTracef("[metadata] selected compatible audio track %d (%s, commentary) for language %q", stream.Index, codec, preferredLanguage)
 				return audioPlan{mode: audioPlanCopy, stream: stream, reason: fmt.Sprintf("compatible codec %s matching language %s (commentary)", codec, preferredLanguage)}
 			}
 		}
@@ -2007,13 +2020,13 @@ func determineAudioPlanWithLanguage(meta *ffprobeOutput, forceAAC bool, preferre
 		for _, stream := range audioStreams {
 			if matchesLang(stream) {
 				codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
-				log.Printf("[metadata] selected audio track %d (%s, commentary) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
+				videoTracef("[metadata] selected audio track %d (%s, commentary) for language %q - needs transcode", stream.Index, codec, preferredLanguage)
 				return audioPlan{mode: audioPlanTranscode, stream: stream, reason: fmt.Sprintf("codec %s matching language %s requires transcoding", codec, preferredLanguage)}
 			}
 		}
 
 		// No language match found, fall through to default selection
-		log.Printf("[metadata] no audio track found for language %q, falling back to default selection", preferredLanguage)
+		videoTracef("[metadata] no audio track found for language %q, falling back to default selection", preferredLanguage)
 	}
 
 	// Default selection: first compatible codec (original behavior)
@@ -2063,7 +2076,7 @@ func buildArgsWithProbe(inputURL, videoMap string, plan audioPlan, movflags stri
 			// -strict unofficial enables dvcC box generation
 			// hevc_metadata fixes VUI for sources with incorrect color metadata (e.g., bt709 instead of bt2020/PQ)
 			args = append(args, "-strict", "unofficial", "-tag:v", "dvh1", "-bsf:v", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9")
-			log.Printf("[video] Using dvh1 tag for Dolby Vision content (profile: %s)", dvProfile)
+			videoTracef("[video] Using dvh1 tag for Dolby Vision content (profile: %s)", dvProfile)
 		} else {
 			args = append(args, "-tag:v", "hvc1")
 		}
@@ -2128,7 +2141,7 @@ func buildLegacyArgs(inputURL, movflags string, forceAAC bool, videoCodec string
 		if hasDV {
 			// -strict unofficial enables dvcC box, hevc_metadata fixes color VUI for sources with wrong metadata
 			args = append(args, "-strict", "unofficial", "-tag:v", "dvh1", "-bsf:v", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9")
-			log.Printf("[video] Using dvh1 tag for Dolby Vision content (legacy mode, profile: %s)", dvProfile)
+			videoTracef("[video] Using dvh1 tag for Dolby Vision content (legacy mode, profile: %s)", dvProfile)
 		} else {
 			args = append(args, "-tag:v", "hvc1")
 		}
@@ -2194,7 +2207,7 @@ func detectDolbyVision(stream *ffprobeStream) (hasDV bool, dvProfile string, hdr
 		if strings.Contains(sdType, "dovi") || strings.Contains(sdType, "dolby") {
 			// Log detailed DOVI configuration
 			profileStr := fmt.Sprintf("dvhe.%02d.%02d", sd.DVProfile, sd.DVLevel)
-			log.Printf("[video] Dolby Vision detected: profile=%d level=%d version=%d.%d rpu=%d el=%d bl=%d bl_compat_id=%d (%s)",
+			videoTracef("[video] Dolby Vision detected: profile=%d level=%d version=%d.%d rpu=%d el=%d bl=%d bl_compat_id=%d (%s)",
 				sd.DVProfile, sd.DVLevel, sd.DVVersionMajor, sd.DVVersionMinor,
 				sd.RPUPresentFlag, sd.ELPresentFlag, sd.BLPresentFlag, sd.DVBLSignalCompatibilityID, profileStr)
 
@@ -2203,12 +2216,12 @@ func detectDolbyVision(stream *ffprobeStream) (hasDV bool, dvProfile string, hdr
 			// Profile 5 is dual-layer without HDR10 fallback
 			hasHDR10Fallback := sd.DVProfile == 8 && (sd.DVBLSignalCompatibilityID == 1 || sd.DVBLSignalCompatibilityID == 2)
 			if hasHDR10Fallback {
-				log.Printf("[video] Dolby Vision profile %d has HDR10 compatible base layer (bl_compat_id=%d)",
+				videoTracef("[video] Dolby Vision profile %d has HDR10 compatible base layer (bl_compat_id=%d)",
 					sd.DVProfile, sd.DVBLSignalCompatibilityID)
 			} else if sd.DVProfile == 5 {
-				log.Printf("[video] Dolby Vision profile 5 detected - dual-layer without HDR10 fallback")
+				videoTracef("[video] Dolby Vision profile 5 detected - dual-layer without HDR10 fallback")
 			} else if sd.DVProfile == 7 {
-				log.Printf("[video] Dolby Vision profile 7 detected - MEL/FEL enhancement layer")
+				videoTracef("[video] Dolby Vision profile 7 detected - MEL/FEL enhancement layer")
 			}
 
 			return true, profileStr, "DV"
@@ -2218,7 +2231,7 @@ func detectDolbyVision(stream *ffprobeStream) (hasDV bool, dvProfile string, hdr
 	// Check profile for Dolby Vision markers
 	profile := strings.ToLower(strings.TrimSpace(stream.Profile))
 	if strings.Contains(profile, "dv") || strings.Contains(profile, "dolby") {
-		log.Printf("[video] Dolby Vision detected via profile: %s", stream.Profile)
+		videoTracef("[video] Dolby Vision detected via profile: %s", stream.Profile)
 		return true, profile, "DV"
 	}
 
@@ -2701,7 +2714,7 @@ func (h *VideoHandler) setCachedMetadata(path string, response *videoMetadataRes
 		response:  response,
 		expiresAt: time.Now().Add(metadataCacheTTL),
 	}
-	log.Printf("[video] metadata cached for path: %s (expires in %v)", path, metadataCacheTTL)
+	videoTracef("[video] metadata cached for path: %s (expires in %v)", path, metadataCacheTTL)
 }
 
 // runMetadataCacheCleanup periodically removes expired entries from the metadata cache
@@ -2730,7 +2743,7 @@ func (h *VideoHandler) cleanExpiredMetadataCache() {
 	}
 
 	if expired > 0 {
-		log.Printf("[video] metadata cache cleanup: removed %d expired entries, %d remaining", expired, len(h.metadataCache))
+		videoTracef("[video] metadata cache cleanup: removed %d expired entries, %d remaining", expired, len(h.metadataCache))
 	}
 }
 
@@ -2910,7 +2923,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if hasDV && isDolbyVisionProfile7(dvProfile) {
-		log.Printf("[video] Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", cleanPath)
+		videoTracef("[video] Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", cleanPath)
 		hasDV = false
 		dvProfile = ""
 		hasHDR = true // DV Profile 7 has HDR10 base layer
@@ -2932,7 +2945,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 			if pct, err := strconv.ParseFloat(pctParam, 64); err == nil && pct > 0 && pct < 100 {
 				if dur, err := h.hlsManager.probeDuration(r.Context(), cleanPath); err == nil && dur > 0 {
 					startSeconds = (pct / 100) * dur
-					log.Printf("[video] Resolved startPercent=%.1f%% to startOffset=%.1fs (duration=%.1fs)", pct, startSeconds, dur)
+					videoTracef("[video] Resolved startPercent=%.1f%% to startOffset=%.1fs (duration=%.1fs)", pct, startSeconds, dur)
 				}
 			}
 		}
@@ -2944,7 +2957,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	if audioParam != "" {
 		if parsed, err := strconv.Atoi(audioParam); err == nil && parsed >= 0 {
 			audioTrackIndex = parsed
-			log.Printf("[video] HLS session requested audio track: %d", audioTrackIndex)
+			videoTracef("[video] HLS session requested audio track: %d", audioTrackIndex)
 		}
 	}
 
@@ -2953,7 +2966,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	if subtitleParam != "" {
 		if parsed, err := strconv.Atoi(subtitleParam); err == nil && parsed >= 0 {
 			subtitleTrackIndex = parsed
-			log.Printf("[video] HLS session requested subtitle track: %d", subtitleTrackIndex)
+			videoTracef("[video] HLS session requested subtitle track: %d", subtitleTrackIndex)
 		}
 	}
 
@@ -3000,11 +3013,11 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	if startSeconds > 0 {
 		keyframePos := h.hlsManager.probeKeyframePosition(r.Context(), cleanPath, startSeconds)
 		transcodingOffset = keyframePos
-		log.Printf("[video] warm start: probed keyframe position %.3fs (requested %.3fs, delta %.3fs)",
+		videoTracef("[video] warm start: probed keyframe position %.3fs (requested %.3fs, delta %.3fs)",
 			keyframePos, startSeconds, keyframePos-startSeconds)
 	}
 
-	log.Printf("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs transcodingOffset=%.3fs audioTrack=%d subtitleTrack=%d",
+	videoTracef("[video] creating HLS session for path=%q dv=%v dvProfile=%q hdr=%v start=%.3fs transcodingOffset=%.3fs audioTrack=%d subtitleTrack=%d",
 		cleanPath, hasDV, dvProfile, hasHDR, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex)
 
 	session, err := h.hlsManager.CreateSession(r.Context(), cleanPath, path, hasDV, dvProfile, hasHDR, forceAAC, startSeconds, transcodingOffset, audioTrackIndex, subtitleTrackIndex, profileID, profileName, getClientIP(r), castMode, "", playbackTarget)
@@ -3054,7 +3067,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[video] failed to encode HLS session response: %v", err)
 	}
 
-	log.Printf("[video] created HLS session %s (duration=%.2fs)", session.ID, session.Duration)
+	videoTracef("[video] created HLS session %s (duration=%.2fs)", session.ID, session.Duration)
 }
 
 type youtubeHLSURLs struct {
@@ -4381,17 +4394,17 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
 	}
 
-	log.Printf("[video] ProbeVideoPath: probing path=%q for HDR detection", cleanPath)
+	videoTracef("[video] ProbeVideoPath: probing path=%q for HDR detection", cleanPath)
 
 	var meta *ffprobeOutput
 
 	// For external URLs, probe directly without requiring a stream provider
 	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
-		log.Printf("[video] ProbeVideoPath: external URL detected, probing directly")
+		videoTracef("[video] ProbeVideoPath: external URL detected, probing directly")
 		m, err := h.runFFProbe(ctx, cleanPath, nil)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoPath: ffprobe external URL failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoPath: ffprobe external URL failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4400,7 +4413,7 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoPath: ffprobe via provider failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoPath: ffprobe via provider failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4422,7 +4435,7 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 	// Check the primary video stream for HDR content
 	stream := selectPrimaryVideoStream(meta)
 	if stream == nil {
-		log.Printf("[video] ProbeVideoPath: no video stream found in %q", cleanPath)
+		videoTracef("[video] ProbeVideoPath: no video stream found in %q", cleanPath)
 		return result, nil
 	}
 
@@ -4436,11 +4449,11 @@ func (h *VideoHandler) ProbeVideoPath(ctx context.Context, path string) (*VideoP
 	colorPrimaries := strings.ToLower(strings.TrimSpace(stream.ColorPrimaries))
 	if colorTransfer == "smpte2084" && colorPrimaries == "bt2020" {
 		result.HasHDR10 = true
-		log.Printf("[video] ProbeVideoPath: HDR10 detected (PQ + BT.2020)")
+		videoTracef("[video] ProbeVideoPath: HDR10 detected (PQ + BT.2020)")
 	}
 
 	if result.HasDolbyVision {
-		log.Printf("[video] ProbeVideoPath: Dolby Vision detected, profile=%s", result.DolbyVisionProfile)
+		videoTracef("[video] ProbeVideoPath: Dolby Vision detected, profile=%s", result.DolbyVisionProfile)
 	}
 
 	return result, nil
@@ -4465,17 +4478,17 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
 	}
 
-	log.Printf("[video] ProbeVideoMetadata: probing path=%q for track metadata", cleanPath)
+	videoTracef("[video] ProbeVideoMetadata: probing path=%q for track metadata", cleanPath)
 
 	var meta *ffprobeOutput
 
 	// For external URLs, probe directly without requiring a stream provider
 	if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
-		log.Printf("[video] ProbeVideoMetadata: external URL detected, probing directly")
+		videoTracef("[video] ProbeVideoMetadata: external URL detected, probing directly")
 		m, err := h.runFFProbe(ctx, cleanPath, nil)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoMetadata: ffprobe external URL failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoMetadata: ffprobe external URL failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4484,7 +4497,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoMetadata: ffprobe via provider failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoMetadata: ffprobe via provider failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4548,7 +4561,7 @@ func (h *VideoHandler) ProbeVideoMetadata(ctx context.Context, path string) (*Vi
 		}
 	}
 
-	log.Printf("[video] ProbeVideoMetadata: found %d audio streams, %d subtitle streams", len(result.AudioStreams), len(result.SubtitleStreams))
+	videoTracef("[video] ProbeVideoMetadata: found %d audio streams, %d subtitle streams", len(result.AudioStreams), len(result.SubtitleStreams))
 
 	return result, nil
 }
@@ -4575,12 +4588,12 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 	// Check shared cache first (via HLSManager)
 	if h.hlsManager != nil {
 		if cached := h.hlsManager.GetCachedProbe(cleanPath); cached != nil {
-			log.Printf("[video] ProbeVideoFull: using cached probe for path=%q", cleanPath)
+			videoTracef("[video] ProbeVideoFull: using cached probe for path=%q", cleanPath)
 			return h.unifiedProbeToVideoFull(cached), nil
 		}
 	}
 
-	log.Printf("[video] ProbeVideoFull: probing path=%q (unified HDR + metadata)", cleanPath)
+	videoTracef("[video] ProbeVideoFull: probing path=%q (unified HDR + metadata)", cleanPath)
 
 	var meta *ffprobeOutput
 
@@ -4589,7 +4602,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		m, err := h.runFFProbe(ctx, cleanPath, nil)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoFull: ffprobe external URL failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoFull: ffprobe external URL failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4598,7 +4611,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		m, err := h.runFFProbeFromProvider(ctx, cleanPath)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				log.Printf("[video] ProbeVideoFull: ffprobe via provider failed for %q: %v", cleanPath, err)
+				videoTracef("[video] ProbeVideoFull: ffprobe via provider failed for %q: %v", cleanPath, err)
 			}
 			return nil, err
 		}
@@ -4711,7 +4724,7 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 		}
 	}
 
-	log.Printf("[video] ProbeVideoFull: DV=%v HDR10=%v dvProfile=%q TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d videoCodec=%s",
+	videoTracef("[video] ProbeVideoFull: DV=%v HDR10=%v dvProfile=%q TrueHD=%v compatAudio=%v audioStreams=%d subStreams=%d videoCodec=%s",
 		result.HasDolbyVision, result.HasHDR10, result.DolbyVisionProfile,
 		result.HasTrueHD, result.HasCompatibleAudio,
 		len(result.AudioStreams), len(result.SubtitleStreams), result.VideoCodec)
@@ -4809,7 +4822,7 @@ func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *Unified
 // proxyExternalURL proxies a pre-resolved external URL (e.g., from AIOStreams) to the client.
 // It supports range requests for seeking and passes through the response from the remote server.
 func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, externalURL string) (bool, error) {
-	log.Printf("[video] proxying external URL: %s", externalURL)
+	videoTracef("[video] proxying external URL")
 
 	// Handle URLs with unencoded query parameters (e.g., "?name=The Devil's Plan")
 	// Split URL into base and query, properly encode the query parameters
@@ -4830,7 +4843,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 			}
 			// Re-encode query string properly
 			cleanURL = baseURL + "?" + params.Encode()
-			log.Printf("[video] external proxy: re-encoded query: %s -> %s", queryStr, params.Encode())
+			videoTracef("[video] external proxy: re-encoded query")
 		}
 	}
 
@@ -4842,7 +4855,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		return true, fmt.Errorf("parse external URL: %w", err)
 	}
 
-	log.Printf("[video] external proxy: final URL: %s (host=%s)", cleanURL, parsedURL.Host)
+	videoTracef("[video] external proxy: final URL host=%s", parsedURL.Host)
 
 	// Create request to external URL
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
@@ -4858,7 +4871,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
 		proxyReq.Header.Set("Range", rangeHeader)
-		log.Printf("[video] external proxy: forwarding range header: %s", rangeHeader)
+		videoTracef("[video] external proxy: forwarding range header: %s", rangeHeader)
 	}
 
 	// Add minimal headers - some servers are picky about extra headers
@@ -4868,7 +4881,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	proxyReq.Header.Set("Accept-Encoding", "identity") // Don't accept compression for video streaming
 
 	// Log request details for debugging
-	log.Printf("[video] external proxy request: method=%s host=%s path=%s", proxyReq.Method, proxyReq.URL.Host, proxyReq.URL.Path)
+	videoTracef("[video] external proxy request: method=%s host=%s path=%s", proxyReq.Method, proxyReq.URL.Host, proxyReq.URL.Path)
 
 	// Make the request
 	resp, err := externalProxyHTTPClient.Do(proxyReq)
@@ -4884,7 +4897,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	contentRange := resp.Header.Get("Content-Range")
 	acceptRanges := resp.Header.Get("Accept-Ranges")
 	location := resp.Header.Get("Location")
-	log.Printf("[video] external proxy response: status=%d content-length=%s content-range=%q accept-ranges=%q location=%q",
+	videoTracef("[video] external proxy response: status=%d content-length=%s content-range=%q accept-ranges=%q location=%q",
 		resp.StatusCode, contentLength, contentRange, acceptRanges, location)
 
 	// Check for error status codes
@@ -4984,13 +4997,13 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	lastLogBytes := int64(0)
 	const logInterval = 10 * 1024 * 1024 // Log every 10MB
 
-	log.Printf("[video] starting external proxy stream: url=%q streamID=%s", externalURL, streamID)
+	videoTracef("[video] starting external proxy stream: host=%q streamID=%s", parsedURL.Host, streamID)
 
 	for {
 		// Check if context is cancelled (client disconnected)
 		select {
 		case <-ctx.Done():
-			log.Printf("[video] external proxy cancelled: url=%q total=%d reason=%v", externalURL, total, ctx.Err())
+			videoTracef("[video] external proxy cancelled: host=%q total=%d reason=%v", parsedURL.Host, total, ctx.Err())
 			return true, ctx.Err()
 		default:
 		}
@@ -5000,10 +5013,10 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 			written, writeErr := w.Write(buf[:n])
 			if writeErr != nil {
 				if isClientGone(writeErr) || ctx.Err() == context.Canceled {
-					log.Printf("[video] external proxy: client disconnected url=%q total=%d", externalURL, total)
+					videoTracef("[video] external proxy: client disconnected host=%q total=%d", parsedURL.Host, total)
 					return true, nil
 				}
-				log.Printf("[video] external proxy write error: url=%q total=%d err=%v", externalURL, total, writeErr)
+				log.Printf("[video] external proxy write error: host=%q total=%d err=%v", parsedURL.Host, total, writeErr)
 				return true, writeErr
 			}
 
@@ -5019,7 +5032,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 
 			// Periodic progress logging
 			if total-lastLogBytes >= logInterval {
-				log.Printf("[video] external proxy progress: url=%q total=%d", externalURL, total)
+				videoTracef("[video] external proxy progress: host=%q total=%d", parsedURL.Host, total)
 				lastLogBytes = total
 			}
 
@@ -5031,14 +5044,14 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
-				log.Printf("[video] external proxy read error: url=%q total=%d err=%v", externalURL, total, readErr)
+				log.Printf("[video] external proxy read error: host=%q total=%d err=%v", parsedURL.Host, total, readErr)
 				return true, readErr
 			}
 			// Final flush on EOF
 			if flusher != nil {
 				flusher.Flush()
 			}
-			log.Printf("[video] external proxy complete: url=%q total=%d", externalURL, total)
+			videoTracef("[video] external proxy complete: host=%q total=%d", parsedURL.Host, total)
 			break
 		}
 	}
@@ -5084,7 +5097,7 @@ func (h *VideoHandler) GetDirectURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[video] GetDirectURL: path=%q -> %q", path, directURL)
+	videoTracef("[video] GetDirectURL: path=%q resolved direct URL", path)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -5153,7 +5166,7 @@ func (h *VideoHandler) checkDVPolicyViolation(response videoMetadataResponse, pr
 		if vs.HasDolbyVision && vs.DolbyVisionProfile != "" {
 			dvProfileNum := parseDVProfileNumber(vs.DolbyVisionProfile)
 			if dvProfileNum == 5 {
-				log.Printf("[video] ProbeVideo: DV profile 5 incompatible with 'hdr' policy (no HDR fallback)")
+				videoTracef("[video] ProbeVideo: DV profile 5 incompatible with 'hdr' policy (no HDR fallback)")
 				return true, vs.DolbyVisionProfile
 			}
 		}

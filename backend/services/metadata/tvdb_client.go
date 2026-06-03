@@ -190,7 +190,7 @@ func (c *tvdbClient) doGET(u string, q url.Values, v any) error {
 		if c.language != "" {
 			req.Header.Set("Accept-Language", c.language)
 		}
-		log.Printf("[tvdb] GET %s acceptLanguage=%q", u, req.Header.Get("Accept-Language"))
+		metadataTracef("[tvdb] GET %s acceptLanguage=%q", u, req.Header.Get("Accept-Language"))
 		resp, err := c.httpc.Do(req)
 		if err != nil {
 			lastErr = err
@@ -311,10 +311,10 @@ func (c *tvdbClient) seriesEpisodesBySeasonType(id int64, seasonType, lang strin
 					withAbsNum++
 				}
 			}
-			log.Printf("[tvdb] episodes page 0: got %d episodes, %d have absoluteNumber", len(resp.Data.Episodes), withAbsNum)
+			metadataTracef("[tvdb] episodes page 0: got %d episodes, %d have absoluteNumber", len(resp.Data.Episodes), withAbsNum)
 			if len(resp.Data.Episodes) > 0 {
 				ep := resp.Data.Episodes[0]
-				log.Printf("[tvdb] sample episode: S%02dE%02d absoluteNumber=%d name=%q", ep.SeasonNumber, ep.Number, ep.AbsoluteNumber, ep.Name)
+				metadataTracef("[tvdb] sample episode: S%02dE%02d absoluteNumber=%d name=%q", ep.SeasonNumber, ep.Number, ep.AbsoluteNumber, ep.Name)
 			}
 		}
 		if resp.Links.Next == nil || strings.TrimSpace(*resp.Links.Next) == "" {

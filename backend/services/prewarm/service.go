@@ -580,8 +580,6 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 		resolveCount := 0
 		for _, state := range states {
 			if !isRecentContinueWatchingActivity(state, activityCutoff) {
-				log.Printf("[prewarm] Skipping stale continue-watching item: %q user=%s activity=%s cutoff=%s",
-					state.SeriesTitle, user.Name, continueWatchingActivityAt(state).Format(time.RFC3339), activityCutoff.Format(time.RFC3339))
 				result.Skipped++
 				continue
 			}
@@ -593,7 +591,6 @@ func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 
 			// Skip if we already processed this title+user in this cycle
 			if processedKeys[key] {
-				log.Printf("[prewarm] Skipping duplicate key=%s title=%q", key, state.SeriesTitle)
 				result.Skipped++
 				continue
 			}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,6 +23,8 @@ var (
 	activeSegments  int64 // total segments across all active readers
 	estimatedMemory int64 // estimated total bytes in usenet pipelines
 	readerIDCounter int64
+	debugReaderLogs = strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_USENET_READER_LOGS")), "1") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_USENET_READER_LOGS")), "true")
 )
 
 const defaultDownloadWorkers = 15
@@ -92,20 +95,22 @@ func NewUsenetReader(
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	log.InfoContext(ctx, "usenet.reader.init",
-		"reader_id", readerID,
-		"segments", len(rg.segments),
-		"range_start", rg.start,
-		"range_end", rg.end,
-		"range_bytes", rg.end-rg.start+1,
-		"max_download_workers", maxDownloadWorkers,
-		"est_segment_bytes_mb", totalSegmentSize/1024/1024,
-		"global_active_readers", readers,
-		"global_active_segments", segs,
-		"global_est_memory_mb", estMem/1024/1024,
-		"heap_alloc_mb", m.HeapAlloc/1024/1024,
-		"pool", summarizePoolSnapshot(cp),
-	)
+	if debugReaderLogs {
+		log.InfoContext(ctx, "usenet.reader.init",
+			"reader_id", readerID,
+			"segments", len(rg.segments),
+			"range_start", rg.start,
+			"range_end", rg.end,
+			"range_bytes", rg.end-rg.start+1,
+			"max_download_workers", maxDownloadWorkers,
+			"est_segment_bytes_mb", totalSegmentSize/1024/1024,
+			"global_active_readers", readers,
+			"global_active_segments", segs,
+			"global_est_memory_mb", estMem/1024/1024,
+			"heap_alloc_mb", m.HeapAlloc/1024/1024,
+			"pool", summarizePoolSnapshot(cp),
+		)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Calculate optimal window size based on workers and total segments
@@ -162,17 +167,19 @@ func (b *usenetReader) Close() error {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 
-		b.log.Info("usenet.reader.closing",
-			"reader_id", b.id,
-			"total_bytes_read", totalBytesRead,
-			"avg_delivery_mbps", avgDeliveryMBps,
-			"segments_count", len(b.rg.segments),
-			"freed_est_mb", totalSegSize/1024/1024,
-			"global_active_readers", readers,
-			"global_active_segments", segs,
-			"global_est_memory_mb", estMem/1024/1024,
-			"heap_alloc_mb", m.HeapAlloc/1024/1024,
-		)
+		if debugReaderLogs {
+			b.log.Info("usenet.reader.closing",
+				"reader_id", b.id,
+				"total_bytes_read", totalBytesRead,
+				"avg_delivery_mbps", avgDeliveryMBps,
+				"segments_count", len(b.rg.segments),
+				"freed_est_mb", totalSegSize/1024/1024,
+				"global_active_readers", readers,
+				"global_active_segments", segs,
+				"global_est_memory_mb", estMem/1024/1024,
+				"heap_alloc_mb", m.HeapAlloc/1024/1024,
+			)
+		}
 
 		b.cancel()
 		close(b.init)
@@ -221,14 +228,16 @@ func (b *usenetReader) Read(p []byte) (int, error) {
 		b.readStartedAt = time.Now()
 		b.lastReadLogAt = b.readStartedAt
 		b.mu.Unlock()
-		b.log.Info("usenet.reader.start_download",
-			"reader_id", b.id,
-			"segments", len(b.rg.segments),
-			"range_start", b.rg.start,
-			"range_end", b.rg.end,
-			"range_bytes", b.rg.end-b.rg.start+1,
-			"max_download_workers", b.maxDownloadWorkers,
-		)
+		if debugReaderLogs {
+			b.log.Info("usenet.reader.start_download",
+				"reader_id", b.id,
+				"segments", len(b.rg.segments),
+				"range_start", b.rg.start,
+				"range_end", b.rg.end,
+				"range_bytes", b.rg.end-b.rg.start+1,
+				"max_download_workers", b.maxDownloadWorkers,
+			)
+		}
 		b.init <- struct{}{}
 	})
 
@@ -384,6 +393,9 @@ func (b *usenetReader) isArticleNotFoundError(err error) bool {
 }
 
 func (b *usenetReader) maybeLogReadThroughput(totalRead int64) {
+	if !debugReaderLogs {
+		return
+	}
 	now := time.Now()
 
 	b.mu.Lock()
@@ -440,16 +452,19 @@ func (b *usenetReader) downloadManager(
 		var failedDownloads int64
 		var downloadedBytes int64
 
-		// Log concurrent download setup
-		b.log.InfoContext(ctx, "usenet.download_manager.starting",
-			"reader_id", b.id,
-			"total_segments", len(b.rg.segments),
-			"max_workers", downloadWorkers,
-			"pool", summarizePoolSnapshot(cp),
-		)
+		if debugReaderLogs {
+			b.log.InfoContext(ctx, "usenet.download_manager.starting",
+				"reader_id", b.id,
+				"total_segments", len(b.rg.segments),
+				"max_workers", downloadWorkers,
+				"pool", summarizePoolSnapshot(cp),
+			)
+		}
 
 		progressDone := make(chan struct{})
-		go b.logDownloadProgress(ctx, cp, progressDone, &activeDownloads, &completedDownloads, &failedDownloads, &downloadedBytes)
+		if debugReaderLogs {
+			go b.logDownloadProgress(ctx, cp, progressDone, &activeDownloads, &completedDownloads, &failedDownloads, &downloadedBytes)
+		}
 
 		// Download all segments in the range (now limited at segment range level)
 		for _, seg := range b.rg.segments {
@@ -532,7 +547,9 @@ func (b *usenetReader) downloadManager(
 		}
 
 		if err := pool.Wait(); err != nil {
-			close(progressDone)
+			if debugReaderLogs {
+				close(progressDone)
+			}
 			b.log.DebugContext(ctx, "Error downloading segments:",
 				"reader_id", b.id,
 				"error", err,
@@ -540,15 +557,17 @@ func (b *usenetReader) downloadManager(
 			)
 			return
 		}
-		close(progressDone)
-		b.log.InfoContext(ctx, "usenet.download_manager.complete",
-			"reader_id", b.id,
-			"total_segments", len(b.rg.segments),
-			"completed_segments", atomic.LoadInt64(&completedDownloads),
-			"failed_segments", atomic.LoadInt64(&failedDownloads),
-			"downloaded_mb", atomic.LoadInt64(&downloadedBytes)/1024/1024,
-			"pool", summarizePoolSnapshot(cp),
-		)
+		if debugReaderLogs {
+			close(progressDone)
+			b.log.InfoContext(ctx, "usenet.download_manager.complete",
+				"reader_id", b.id,
+				"total_segments", len(b.rg.segments),
+				"completed_segments", atomic.LoadInt64(&completedDownloads),
+				"failed_segments", atomic.LoadInt64(&failedDownloads),
+				"downloaded_mb", atomic.LoadInt64(&downloadedBytes)/1024/1024,
+				"pool", summarizePoolSnapshot(cp),
+			)
+		}
 	case <-ctx.Done():
 		return
 	}
