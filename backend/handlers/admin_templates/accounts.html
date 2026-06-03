@@ -1283,10 +1283,16 @@ function renderConnectionInvites() {
     const countEl = document.getElementById('connection-invites-count');
     if (!container || !countEl) return;
 
-    const activeInvites = connectionInvites.filter(inv => !inv.revokedAt && (inv.usedAt || new Date(inv.expiresAt) > new Date()));
+    const now = new Date();
+    const revokedRetentionMs = 48 * 60 * 60 * 1000;
+    const visibleInvites = connectionInvites.filter(inv => {
+        if (!inv.revokedAt) return true;
+        return now - new Date(inv.revokedAt) <= revokedRetentionMs;
+    });
+    const activeInvites = visibleInvites.filter(inv => !inv.revokedAt && (inv.usedAt || new Date(inv.expiresAt) > now));
     countEl.textContent = activeInvites.length + ' active connection invite' + (activeInvites.length !== 1 ? 's' : '');
 
-    if (connectionInvites.length === 0) {
+    if (visibleInvites.length === 0) {
         container.innerHTML = `<div class="card"><div class="card-body" style="text-align: center; color: var(--text-muted);">No connection invitations yet.</div></div>`;
         return;
     }
@@ -1294,11 +1300,11 @@ function renderConnectionInvites() {
     function inviteState(inv) {
         if (inv.revokedAt) return { label: 'Revoked', cls: 'warning' };
         if (inv.usedAt) return { label: 'Claimed', cls: 'online' };
-        if (new Date(inv.expiresAt) <= new Date()) return { label: 'Expired', cls: 'warning' };
-        return { label: 'Waiting', cls: 'online' };
+        if (new Date(inv.expiresAt) <= now) return { label: 'Expired', cls: 'warning' };
+        return { label: 'Waiting', cls: 'warning' };
     }
 
-    container.innerHTML = connectionInvites.map(inv => {
+    container.innerHTML = visibleInvites.map(inv => {
         const state = inviteState(inv);
         const inactive = state.label === 'Revoked' || state.label === 'Expired';
         return `
