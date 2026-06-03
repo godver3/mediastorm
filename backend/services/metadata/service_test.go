@@ -437,6 +437,76 @@ func TestSearchWithoutMediaTypeIncludesMoviesAndSeries(t *testing.T) {
 	}
 }
 
+func TestSearchBlocksAdultResultsByDefaultAndAllowsWhenEnabled(t *testing.T) {
+	var tmdbIncludeAdult []string
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/v4/login":
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			case "/v4/search":
+				body := `{"data":[
+					{"type":"movie","tvdb_id":"101","name":"Regular Movie","year":"2020","score":100,"adult":false},
+					{"type":"movie","tvdb_id":"102","name":"Adult Movie","year":"2021","score":90,"adult":true}
+				]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/search/movie":
+				tmdbIncludeAdult = append(tmdbIncludeAdult, req.URL.Query().Get("include_adult"))
+				body := `{"results":[
+					{"id":201,"title":"Regular TMDB","media_type":"movie","release_date":"2022-01-01","popularity":10,"adult":false},
+					{"id":202,"title":"Adult TMDB","media_type":"movie","release_date":"2022-01-01","popularity":9,"adult":true}
+				]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			default:
+				t.Fatalf("unexpected request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	cacheDir := t.TempDir()
+	svc := &Service{
+		client: newTVDBClient("test-tvdb-key", "eng", httpc, 24),
+		tmdb:   newTMDBClient("test-tmdb-key", "eng", httpc, newFileCache(cacheDir, 24)),
+		cache:  newFileCache(cacheDir, 24),
+	}
+	svc.client.minInterval = 0
+
+	results, err := svc.Search(context.Background(), "movie", "movie")
+	if err != nil {
+		t.Fatalf("Search with adult blocked failed: %v", err)
+	}
+	for _, result := range results {
+		if result.Title.Adult {
+			t.Fatalf("adult result was returned while blocked: %+v", result.Title)
+		}
+	}
+	if len(results) != 2 {
+		t.Fatalf("blocked search returned %d results, want 2: %+v", len(results), results)
+	}
+	if len(tmdbIncludeAdult) != 1 || tmdbIncludeAdult[0] != "false" {
+		t.Fatalf("TMDB include_adult calls = %v, want [false]", tmdbIncludeAdult)
+	}
+
+	svc.SetAllowAdultSearch(true)
+	results, err = svc.Search(context.Background(), "movie", "movie")
+	if err != nil {
+		t.Fatalf("Search with adult allowed failed: %v", err)
+	}
+	adultCount := 0
+	for _, result := range results {
+		if result.Title.Adult {
+			adultCount++
+		}
+	}
+	if adultCount != 2 {
+		t.Fatalf("adult search returned %d adult results, want 2: %+v", adultCount, results)
+	}
+	if len(tmdbIncludeAdult) != 2 || tmdbIncludeAdult[1] != "true" {
+		t.Fatalf("TMDB include_adult calls = %v, want second true", tmdbIncludeAdult)
+	}
+}
+
 func TestPreferTMDBEpisodeImagesOverridesTVDBStills(t *testing.T) {
 	httpc := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

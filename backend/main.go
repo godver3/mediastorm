@@ -196,6 +196,7 @@ func main() {
 		EnabledRatings: settings.MDBList.EnabledRatings,
 	}
 	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, settings.Metadata.GeminiAPIKey)
+	metadataService.SetAllowAdultSearch(settings.Metadata.AllowAdultSearch)
 	metadataService.SetYTDLPProxyURL(settings.Playback.YouTubeProxyURL)
 	metadataHandler := handlers.NewMetadataHandler(metadataService, cfgManager)
 	debridSearchService := debrid.NewSearchService(cfgManager)

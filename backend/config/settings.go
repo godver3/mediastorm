@@ -88,10 +88,11 @@ type TorrentScraperConfig struct {
 }
 
 type MetadataSettings struct {
-	TVDBAPIKey   string `json:"tvdbApiKey"`
-	TMDBAPIKey   string `json:"tmdbApiKey"`
-	GeminiAPIKey string `json:"geminiApiKey,omitempty"`
-	Language     string `json:"language"`
+	TVDBAPIKey       string `json:"tvdbApiKey"`
+	TMDBAPIKey       string `json:"tmdbApiKey"`
+	GeminiAPIKey     string `json:"geminiApiKey,omitempty"`
+	Language         string `json:"language"`
+	AllowAdultSearch bool   `json:"allowAdultSearch"`
 }
 
 type CacheSettings struct {
@@ -1063,7 +1064,7 @@ func DefaultSettings() Settings {
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
-		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "eng"},
+		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "eng", AllowAdultSearch: false},
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},

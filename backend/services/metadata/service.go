@@ -56,6 +56,8 @@ type Service struct {
 	ytdlpProxyMu sync.RWMutex
 	ytdlpProxy   string
 
+	allowAdultSearch atomic.Bool
+
 	// Background cache manager
 	cacheStopCh          chan struct{}
 	cacheStatusMu        sync.RWMutex
@@ -175,7 +177,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		geminiKey = geminiAPIKey[0]
 	}
 
-	return &Service{
+	svc := &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
 		gemini:           newGeminiClient(geminiKey, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
@@ -190,6 +192,7 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		progressTasks:    make(map[string]*ProgressTask),
 		cacheDir:         cacheDir,
 	}
+	return svc
 }
 
 // SetYTDLPProxyURL updates the proxy URL passed to yt-dlp for YouTube requests.
@@ -207,6 +210,15 @@ func (s *Service) ytdlpProxyURL() string {
 	s.ytdlpProxyMu.RLock()
 	defer s.ytdlpProxyMu.RUnlock()
 	return s.ytdlpProxy
+}
+
+// SetAllowAdultSearch controls whether adult titles are allowed in metadata search results.
+func (s *Service) SetAllowAdultSearch(allow bool) {
+	s.allowAdultSearch.Store(allow)
+}
+
+func (s *Service) adultSearchAllowed() bool {
+	return s.allowAdultSearch.Load()
 }
 
 // startProgressTask registers a new progress task and returns a cleanup function
@@ -2290,7 +2302,12 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 		return nil, seriesErr
 	}
 
-	key := cacheKey("metadata", "search", "v2", mediaType, q, s.client.language)
+	allowAdultSearch := s.adultSearchAllowed()
+	adultPolicy := "adult-blocked"
+	if allowAdultSearch {
+		adultPolicy = "adult-allowed"
+	}
+	key := cacheKey("metadata", "search", "v3", mediaType, q, s.client.language, adultPolicy)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -2326,7 +2343,8 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 				SourceName string `json:"sourceName"`
 				Type       int    `json:"type"`
 			} `json:"remote_ids"`
-			Score float64 `json:"score"`
+			Score float64     `json:"score"`
+			Adult interface{} `json:"adult"`
 		} `json:"data"`
 	}
 	// Apply type filter
@@ -2406,6 +2424,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 				MediaType: entryMediaType,
 				TVDBID:    tvdbID,
 				Network:   strings.TrimSpace(d.Network),
+				Adult:     isAdultMetadataValue(d.Adult),
 			}
 			if tmdbIDStr := strings.TrimSpace(d.TMDBID); tmdbIDStr != "" {
 				if tmdbID, err := strconv.ParseInt(tmdbIDStr, 10, 64); err == nil {
@@ -2497,7 +2516,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	}
 
 	if s.tmdb != nil && s.tmdb.isConfigured() {
-		if tmdbResults, err := s.tmdb.searchTitles(ctx, q, mediaType, 20); err == nil {
+		if tmdbResults, err := s.tmdb.searchTitles(ctx, q, mediaType, 20, allowAdultSearch); err == nil {
 			results = append(results, tmdbResults...)
 		} else {
 			log.Printf("[metadata] TMDB search failed query=%q type=%s err=%v", q, mediaType, err)
@@ -2505,11 +2524,46 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	}
 
 	results = mergeSearchResults(results)
+	if !allowAdultSearch {
+		results = filterAdultSearchResults(results)
+	}
 	if len(results) == 0 && tvdbErr != nil {
 		return nil, tvdbErr
 	}
 	_ = s.cache.set(key, results)
 	return results, nil
+}
+
+func filterAdultSearchResults(results []models.SearchResult) []models.SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+	filtered := results[:0]
+	for _, result := range results {
+		if result.Title.Adult {
+			continue
+		}
+		filtered = append(filtered, result)
+	}
+	return filtered
+}
+
+func isAdultMetadataValue(value interface{}) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(v))
+		return normalized == "true" || normalized == "1" || normalized == "yes"
+	default:
+		return false
+	}
 }
 
 func mergeSearchResults(results []models.SearchResult) []models.SearchResult {
@@ -2572,6 +2626,7 @@ func shouldReplaceSearchResult(existing, candidate models.SearchResult) bool {
 }
 
 func mergeSearchTitleIDs(dst *models.Title, src models.Title) {
+	dst.Adult = dst.Adult || src.Adult
 	if dst.TMDBID == 0 {
 		dst.TMDBID = src.TMDBID
 	}

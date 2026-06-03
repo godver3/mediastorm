@@ -1282,7 +1282,7 @@ func (c *tmdbClient) seriesSeasonDetails(ctx context.Context, tmdbID int64, summ
 	return season, nil
 }
 
-func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, limit int) ([]models.SearchResult, error) {
+func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, limit int, includeAdult bool) ([]models.SearchResult, error) {
 	if !c.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
@@ -1302,8 +1302,8 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 		apiMediaType = "multi"
 	}
 
-	endpoint := fmt.Sprintf("%s/search/%s?api_key=%s&query=%s&include_adult=false",
-		tmdbBaseURL, apiMediaType, c.apiKey, url.QueryEscape(query))
+	endpoint := fmt.Sprintf("%s/search/%s?api_key=%s&query=%s&include_adult=%t",
+		tmdbBaseURL, apiMediaType, c.apiKey, url.QueryEscape(query), includeAdult)
 	if lang := strings.TrimSpace(c.language); lang != "" {
 		endpoint += "&language=" + normalizeLanguage(lang)
 	}
@@ -1324,6 +1324,7 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 			FirstAirDate     string  `json:"first_air_date"`
 			Popularity       float64 `json:"popularity"`
 			VoteAverage      float64 `json:"vote_average"`
+			Adult            bool    `json:"adult"`
 		} `json:"results"`
 	}
 	if err := c.doGET(ctx, endpoint, &payload); err != nil {
@@ -1358,6 +1359,7 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 			MediaType:    resultMediaType,
 			TMDBID:       r.ID,
 			Popularity:   scoreFallback(r.Popularity, r.VoteAverage),
+			Adult:        r.Adult,
 		}
 		if title.Name == "" {
 			title.Name = title.OriginalName

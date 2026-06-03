@@ -831,6 +831,12 @@ var SettingsSchema = map[string]interface{}{
 			"tvdbApiKey":   map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
 			"tmdbApiKey":   map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
 			"geminiApiKey": map[string]interface{}{"type": "password", "label": "Gemini API Key", "description": "Google Gemini API key for AI-powered recommendations (optional, free tier available)"},
+			"allowAdultSearch": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Allow Adult Search Results",
+				"description": "Permit adult titles in search results. Disabled by default for all profiles.",
+				"order":       3,
+			},
 			"language": map[string]interface{}{
 				"type":        "select",
 				"label":       "Metadata Language",
