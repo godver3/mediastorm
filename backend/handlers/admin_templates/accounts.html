@@ -41,7 +41,6 @@
 .connection-header-row > div { flex: 1; min-width: 0; }
 .remote-access-warning { margin-top: 0.75rem; padding: 0.65rem 0.75rem; border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 6px; background: rgba(245, 158, 11, 0.08); color: var(--text-secondary); font-size: 0.8rem; }
 .remote-access-status-line { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; overflow-wrap: anywhere; }
-.remote-access-status-error { margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
 @media (max-width: 600px) {
     .tabs { overflow-x: auto; padding-bottom: 0.25rem; -webkit-overflow-scrolling: touch; }
     .tab { flex: 0 0 auto; padding: 0.75rem 0.85rem; white-space: nowrap; }
@@ -1274,11 +1273,8 @@ function renderConnectionInvites() {
             const state = remoteAccessStatus.state || 'unknown';
             const activeInvites = remoteAccessStatus.activeInvites || 0;
             const running = remoteAccessStatus.running ? 'running' : 'stopped';
-            const lastError = remoteAccessStatus.lastError || '';
-            const error = lastError ? `<div class="remote-access-status-error">Last host message: ${escapeHtml(lastError)}</div>` : '';
             statusEl.innerHTML = `
                 ${escapeHtml(remoteAccessStatus.provider || 'iroh')}: ${running}, ${escapeHtml(state)}, ${activeInvites} active invite${activeInvites !== 1 ? 's' : ''}
-                ${error}
             `;
         }
     }
