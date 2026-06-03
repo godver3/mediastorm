@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/dnscache"
 	"novastream/internal/integration"
 	"novastream/internal/liveusage"
 	"novastream/internal/ytdlp"
@@ -70,6 +71,29 @@ var legacyAudioWhitelist = []string{"aac", "ac3", "eac3", "mp3"}
 
 const ffprobeTimeout = 15 * time.Second
 const providerProbeSampleBytes int64 = 16 * 1024 * 1024
+
+var externalProxyHTTPClient = newExternalProxyHTTPClient()
+
+func newExternalProxyHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
+
+	return &http.Client{
+		Timeout:   30 * time.Minute,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			for key, values := range via[0].Header {
+				for _, value := range values {
+					req.Header.Add(key, value)
+				}
+			}
+			return nil
+		},
+	}
+}
 
 // VideoHandler handles video streaming requests using the local stream provider.
 type VideoHandler struct {
@@ -4819,24 +4843,6 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 
 	log.Printf("[video] external proxy: final URL: %s (host=%s)", cleanURL, parsedURL.Host)
 
-	// Create HTTP client with reasonable timeout
-	client := &http.Client{
-		Timeout: 30 * time.Minute, // Long timeout for video streaming
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// Follow redirects but limit the chain
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
-			}
-			// Copy headers to redirected request
-			for key, values := range via[0].Header {
-				for _, value := range values {
-					req.Header.Add(key, value)
-				}
-			}
-			return nil
-		},
-	}
-
 	// Create request to external URL
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
@@ -4864,7 +4870,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	log.Printf("[video] external proxy request: method=%s host=%s path=%s", proxyReq.Method, proxyReq.URL.Host, proxyReq.URL.Path)
 
 	// Make the request
-	resp, err := client.Do(proxyReq)
+	resp, err := externalProxyHTTPClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("[video] external proxy request failed: %v", err)
 		http.Error(w, "failed to fetch external stream", http.StatusBadGateway)

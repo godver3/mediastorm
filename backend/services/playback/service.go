@@ -20,6 +20,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/database"
+	"novastream/internal/dnscache"
 	"novastream/internal/httpheaders"
 	"novastream/internal/importer"
 	"novastream/internal/integration"
@@ -75,16 +76,19 @@ type HealthCheckResult struct {
 
 // NewService returns a new playback service with a default HTTP client when one is not provided.
 func NewService(cfg *config.Manager, usenetSvc usenetHealthService, nzbSystem *integration.NzbSystem, metadataSvc metadataService) *Service {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20, // Allow parallel NZB fetches from same indexer
+		MaxConnsPerHost:     20,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
+
 	return &Service{
 		cfg: cfg,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 20, // Allow parallel NZB fetches from same indexer
-				MaxConnsPerHost:     20,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Timeout:   60 * time.Second,
+			Transport: transport,
 		},
 		usenet:      usenetSvc,
 		debrid:      debrid.NewPlaybackService(cfg, nil),

@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"novastream/config"
+	"novastream/internal/dnscache"
 	"novastream/internal/httpheaders"
 	"novastream/models"
 	"novastream/services/debrid"
@@ -147,15 +148,18 @@ func NewService(cfg *config.Manager, metadataSvc metadataSearchService, debridSv
 	if debridSvc == nil {
 		debridSvc = debrid.NewSearchService(cfg)
 	}
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
+
 	return &Service{
 		cfg: cfg,
 		httpc: &http.Client{
-			Timeout: 20 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 16,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Timeout:   20 * time.Second,
+			Transport: transport,
 		},
 		debrid:         debridSvc,
 		debridPlayback: debrid.NewPlaybackService(cfg, nil),

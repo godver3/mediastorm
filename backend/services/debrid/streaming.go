@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/dnscache"
 	"novastream/services/streaming"
 )
 
@@ -111,10 +111,6 @@ func cacheKeyFor(torrentID, fileID string) string {
 // NewStreamingProvider creates a new debrid streaming provider.
 func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
 	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          20,
@@ -125,6 +121,7 @@ func NewStreamingProvider(cfg *config.Manager) *StreamingProvider {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
 
 	return &StreamingProvider{
 		cfg:      cfg,

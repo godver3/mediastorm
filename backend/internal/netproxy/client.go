@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/dnscache"
+
 	"golang.org/x/net/proxy"
 )
 
@@ -32,6 +34,7 @@ func NewHTTPClientWithOptions(options HTTPClientOptions, rawProxyURL string) (*h
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
 
 	proxyURL := strings.TrimSpace(rawProxyURL)
 	if proxyURL != "" {

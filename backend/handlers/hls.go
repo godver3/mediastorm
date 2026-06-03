@@ -26,20 +26,33 @@ import (
 	"syscall"
 	"time"
 
+	"novastream/internal/dnscache"
 	"novastream/services/streaming"
 	"novastream/utils"
 )
 
 // cdnClient is a shared HTTP client optimized for CDN connections.
 // Uses connection pooling with longer idle timeout to reuse connections across seeks.
-var cdnClient = &http.Client{
-	Timeout: 0, // No timeout - we handle this per-request
-	Transport: &http.Transport{
+var cdnClient = newCDNClient()
+
+func newCDNClient() *http.Client {
+	transport := &http.Transport{
 		MaxIdleConns:        10,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     120 * time.Second, // Keep connections alive longer
 		DisableCompression:  true,              // Video is already compressed
-	},
+	}
+	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
+
+	return &http.Client{
+		Timeout:   0, // No timeout - we handle this per-request
+		Transport: transport,
+	}
+}
+
+var hlsRedirectHTTPClient = &http.Client{
+	Timeout:   30 * time.Second,
+	Transport: cdnClient.Transport,
 }
 
 // debugReader wraps an io.Reader to log bytes read and detect EOF
@@ -782,19 +795,18 @@ func generateSessionID() string {
 func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string) (string, error) {
 	log.Printf("[hls] resolving external URL: %s", externalURL)
 
-	// Create a client that captures the final URL after redirects
+	// Create a request-scoped client that captures the final URL after redirects
+	// while sharing the CDN transport and DNS cache.
 	var finalURL string
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
-			}
-			// Track the URL we're redirecting to
-			finalURL = req.URL.String()
-			log.Printf("[hls] following redirect to: %s", finalURL)
-			return nil
-		},
+	client := *hlsRedirectHTTPClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		// Track the URL we're redirecting to
+		finalURL = req.URL.String()
+		log.Printf("[hls] following redirect to: %s", finalURL)
+		return nil
 	}
 
 	// Encode URL properly (handles spaces and special characters)
