@@ -800,6 +800,11 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			var state models.SeriesWatchState
 			var nextEpisode *models.EpisodeReference
 
+			// Fetch series metadata once (cached) so the in-progress reconciliation,
+			// next-episode lookup, and enrichment below can all reuse it.
+			seriesDetails, seriesErr := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
+			numbering := newEpisodeNumberingIndex(seriesDetails)
+
 			// Priority 1: In-progress episode (resume watching)
 			// Skip if the in-progress episode is already marked as watched in history
 			// (e.g. Trakt sync marked it complete while stale playback progress remains),
@@ -808,22 +813,29 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			inProgressAlreadyWatched := false
 			inProgressStaleBehindLatestWatched := false
 			if t.inProgress != nil {
+				// Reconcile absolute episode numbering before comparing against watch
+				// history so a finished episode recorded under its absolute number
+				// (e.g. One Piece S23E1163) is recognised as the season-relative entry
+				// already in history (S23E08) instead of resurfacing as "next up".
+				inProgressSeason, inProgressEpisode := numbering.canonical(t.inProgress.SeasonNumber, t.inProgress.EpisodeNumber)
 				var latestWatchedAt time.Time
-				var furthestWatched *models.WatchHistoryItem
+				var furthestSeason, furthestEpisode int
+				haveFurthest := false
 				for _, ep := range t.episodes {
-					if ep.SeasonNumber == t.inProgress.SeasonNumber && ep.EpisodeNumber == t.inProgress.EpisodeNumber {
+					watchedSeason, watchedEpisode := numbering.canonical(ep.SeasonNumber, ep.EpisodeNumber)
+					if watchedSeason == inProgressSeason && watchedEpisode == inProgressEpisode {
 						inProgressAlreadyWatched = true
 					}
 					if ep.WatchedAt.After(latestWatchedAt) {
 						latestWatchedAt = ep.WatchedAt
 					}
-					if furthestWatched == nil || compareEpisodeOrder(ep.SeasonNumber, ep.EpisodeNumber, furthestWatched.SeasonNumber, furthestWatched.EpisodeNumber) > 0 {
-						episode := ep
-						furthestWatched = &episode
+					if !haveFurthest || compareEpisodeOrder(watchedSeason, watchedEpisode, furthestSeason, furthestEpisode) > 0 {
+						furthestSeason, furthestEpisode = watchedSeason, watchedEpisode
+						haveFurthest = true
 					}
 				}
-				if !inProgressAlreadyWatched && furthestWatched != nil &&
-					compareEpisodeOrder(furthestWatched.SeasonNumber, furthestWatched.EpisodeNumber, t.inProgress.SeasonNumber, t.inProgress.EpisodeNumber) > 0 &&
+				if !inProgressAlreadyWatched && haveFurthest &&
+					compareEpisodeOrder(furthestSeason, furthestEpisode, inProgressSeason, inProgressEpisode) > 0 &&
 					!t.inProgress.UpdatedAt.After(latestWatchedAt) {
 					inProgressStaleBehindLatestWatched = true
 				}
@@ -901,9 +913,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					NextEpisode: nextEpisode,
 				}
 
-				// Get full series details for poster, backdrop, IDs, and episode counts
-				seriesDetails, err := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
-				if err == nil && seriesDetails != nil {
+				// Use full series details for poster, backdrop, IDs, and episode counts
+				if seriesErr == nil && seriesDetails != nil {
 					// Add overview from metadata
 					if seriesDetails.Title.Overview != "" {
 						state.Overview = seriesDetails.Title.Overview
@@ -968,9 +979,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 				mostRecentEpisode := episodes[0]
 
-				// Get full series details (with all episodes) to find next unwatched
-				seriesDetails, err := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
-				if err != nil {
+				// Series details (with all episodes) are required to find next unwatched
+				if seriesErr != nil {
 					// Skip this series if metadata unavailable
 					return
 				}
@@ -1877,6 +1887,50 @@ func enrichEpisodeFromMetadata(ref *models.EpisodeReference, details *models.Ser
 			applyEpisodeMetadata(ref, ep)
 		}
 	}
+}
+
+// episodeNumberingIndex reconciles episodes that were recorded under a series'
+// absolute episode numbering back to canonical season-relative numbers. This is
+// common for long-running anime (e.g. One Piece) where some clients/scrobbles
+// record progress as S23E1163 while watch history uses S23E08.
+type episodeNumberingIndex struct {
+	valid    map[string]struct{} // keys of real season-relative episodes
+	absolute map[int][2]int      // absolute number -> {season, episode}
+}
+
+func newEpisodeNumberingIndex(details *models.SeriesDetails) *episodeNumberingIndex {
+	idx := &episodeNumberingIndex{
+		valid:    make(map[string]struct{}),
+		absolute: make(map[int][2]int),
+	}
+	if details == nil {
+		return idx
+	}
+	for _, season := range details.Seasons {
+		for _, ep := range season.Episodes {
+			idx.valid[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)] = struct{}{}
+			if ep.AbsoluteEpisodeNumber > 0 {
+				idx.absolute[ep.AbsoluteEpisodeNumber] = [2]int{ep.SeasonNumber, ep.EpisodeNumber}
+			}
+		}
+	}
+	return idx
+}
+
+// canonical returns the season-relative season/episode for the given numbers. It
+// returns the input unchanged when it already references a real episode, and only
+// remaps when the episode number matches a known absolute episode number.
+func (idx *episodeNumberingIndex) canonical(season, episode int) (int, int) {
+	if idx == nil || episode <= 0 {
+		return season, episode
+	}
+	if _, ok := idx.valid[episodeKey(season, episode)]; ok {
+		return season, episode
+	}
+	if mapped, ok := idx.absolute[episode]; ok {
+		return mapped[0], mapped[1]
+	}
+	return season, episode
 }
 
 func findEpisodeByAbsoluteNumber(details *models.SeriesDetails, absoluteEpisodeNumber int) (models.SeriesEpisode, bool) {

@@ -2234,6 +2234,96 @@ func TestContinueWatchingNormalizesLegacyAbsoluteNextEpisode(t *testing.T) {
 	}
 }
 
+func TestContinueWatching_AbsoluteNumberedInProgressTreatedAsWatched(t *testing.T) {
+	// Regression for One Piece: an episode finished and recorded in watch history
+	// under its season-relative number (S23E08) still has a stale playback-progress
+	// row keyed by the absolute episode number (S23E1163). The in-progress guard
+	// must reconcile the absolute number so the finished episode is not resurfaced
+	// as "next up" — the next unwatched episode (S23E09) should be shown instead.
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:81797"
+	userID := "user-one-piece-resume"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{ID: seriesID, Name: "One Piece", TVDBID: 81797, Year: 1999},
+			Seasons: []models.SeriesSeason{{
+				Number: 23,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1162", TVDBID: 1162, Name: "A Gargantuan Wave of Emotion", SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162, AiredDate: "2026-05-24", Runtime: 24},
+					{ID: "ep-1163", TVDBID: 1163, Name: "I Want You to Praise Me", SeasonNumber: 23, EpisodeNumber: 8, AbsoluteEpisodeNumber: 1163, AiredDate: "2026-05-31", Runtime: 24},
+					{ID: "ep-1164", TVDBID: 1164, Name: "Saul's Resolve", SeasonNumber: 23, EpisodeNumber: 9, AbsoluteEpisodeNumber: 1164, AiredDate: "2026-06-07", Runtime: 24},
+				},
+			}},
+		},
+	})
+
+	// Stale in-progress recorded under the ABSOLUTE number for the finished S23E08,
+	// with the most recent timestamp so it wins the per-series in-progress slot.
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s23e1163",
+		Position:      900,
+		Duration:      1200,
+		Timestamp:     time.Date(2026, 6, 4, 2, 3, 20, 0, time.UTC),
+		SeriesID:      seriesID,
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 1163,
+		ExternalIDs:   map[string]string{"tvdb": "81797"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// S23E07 and S23E08 watched (season-relative), S23E08 most recent.
+	watched := true
+	for _, ep := range []struct {
+		episode   int
+		watchedAt time.Time
+	}{
+		{episode: 7, watchedAt: time.Date(2026, 6, 3, 1, 43, 36, 0, time.UTC)},
+		{episode: 8, watchedAt: time.Date(2026, 6, 4, 1, 49, 35, 0, time.UTC)},
+	} {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType:     "episode",
+			ItemID:        fmt.Sprintf("%s:s23e%02d", seriesID, ep.episode),
+			Name:          "One Piece",
+			Watched:       &watched,
+			WatchedAt:     ep.watchedAt,
+			SeriesID:      seriesID,
+			SeriesName:    "One Piece",
+			SeasonNumber:  23,
+			EpisodeNumber: ep.episode,
+			ExternalIDs:   map[string]string{"tvdb": "81797"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 continue watching item, got %d", len(items))
+	}
+	next := items[0].NextEpisode
+	if next == nil {
+		t.Fatal("expected a next episode")
+	}
+	if next.SeasonNumber == 23 && next.EpisodeNumber == 8 {
+		t.Fatal("continue watching should not show S23E08 (already watched) as next episode")
+	}
+	if next.SeasonNumber != 23 || next.EpisodeNumber != 9 {
+		t.Fatalf("NextEpisode = S%02dE%02d, want S23E09", next.SeasonNumber, next.EpisodeNumber)
+	}
+}
+
 func TestEpisodeState_ContinueWatchingSkipsStaleBehindLatestWatchedInProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
