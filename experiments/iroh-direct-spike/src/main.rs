@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use iroh::{
     endpoint::{presets, Builder, Connection, RecvStream, SendStream},
     protocol::{AcceptError, ProtocolHandler, Router},
-    EndpointAddr,
+    EndpointAddr, SecretKey,
 };
 use n0_error::StdResultExt;
 use tokio::{
@@ -54,6 +54,13 @@ enum Command {
         /// without a reachable backend. The file is re-read periodically for changes.
         #[arg(long)]
         rendezvous_file: Option<String>,
+        /// File holding the host's persistent iroh secret key. When set, the key is
+        /// loaded from here (created on first run) so the host keeps a stable node ID
+        /// across restarts. A stable node ID lets already-paired clients reconnect with
+        /// a cached invite via iroh discovery, without re-resolving over the DHT. When
+        /// unset, a fresh ephemeral identity is generated each start (legacy behaviour).
+        #[arg(long)]
+        secret_file: Option<String>,
     },
     Client {
         #[arg(long)]
@@ -95,7 +102,16 @@ async fn main() -> Result<()> {
             bind,
             origin,
             rendezvous_file,
-        } => run_host(&bind, origin.as_deref(), rendezvous_file.as_deref()).await,
+            secret_file,
+        } => {
+            run_host(
+                &bind,
+                origin.as_deref(),
+                rendezvous_file.as_deref(),
+                secret_file.as_deref(),
+            )
+            .await
+        }
         Command::Client { invite } => run_client(&invite).await,
         Command::Speed { invite, bytes } => run_speed_client(&invite, bytes).await,
         Command::HttpSpeedHost { bind } => run_http_speed_host(&bind).await,
@@ -166,6 +182,41 @@ async fn run_rendezvous_publisher(path: String, invite: String) {
             }
         }
         tokio::time::sleep(RENDEZVOUS_POLL).await;
+    }
+}
+
+/// Load the host's persistent iroh secret key from `path`, creating and saving a fresh one
+/// if the file is absent. The key is stored base64url-encoded (32 raw bytes). A stable key
+/// keeps the node ID — and therefore the published invite — constant across host restarts.
+async fn load_or_create_secret_key(path: &str) -> Result<SecretKey> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(contents) => {
+            let decoded = BASE64_URL_SAFE_NO_PAD
+                .decode(contents.trim())
+                .context("decode secret key file")?;
+            let bytes: [u8; 32] = decoded
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("secret key file must contain 32 bytes"))?;
+            Ok(SecretKey::from_bytes(&bytes))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let key = SecretKey::generate();
+            let encoded = BASE64_URL_SAFE_NO_PAD.encode(key.to_bytes());
+            tokio::fs::write(path, encoded.as_bytes())
+                .await
+                .context("write secret key file")?;
+            // The key is equivalent to a private identity; keep it owner-only.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                    .await
+                    .context("restrict secret key file permissions")?;
+            }
+            Ok(key)
+        }
+        Err(err) => Err(err).context("read secret key file"),
     }
 }
 
@@ -246,12 +297,24 @@ async fn run_http_speed_host(bind: &str) -> Result<()> {
     }
 }
 
-async fn run_host(bind: &str, origin: Option<&str>, rendezvous_file: Option<&str>) -> Result<()> {
-    let endpoint = relay_enabled_builder()
+async fn run_host(
+    bind: &str,
+    origin: Option<&str>,
+    rendezvous_file: Option<&str>,
+    secret_file: Option<&str>,
+) -> Result<()> {
+    let mut builder = relay_enabled_builder()
         .bind_addr(bind)?
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await?;
+        .alpns(vec![ALPN.to_vec()]);
+    match secret_file {
+        Some(path) => {
+            let key = load_or_create_secret_key(path).await?;
+            println!("host_secret_key=persisted path={path}");
+            builder = builder.secret_key(key);
+        }
+        None => println!("host_secret_key=ephemeral"),
+    }
+    let endpoint = builder.bind().await?;
 
     let router = Router::builder(endpoint)
         .accept(
@@ -655,4 +718,46 @@ fn parse_speed_request(first_line: &str) -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A persisted secret key must round-trip: the second load returns the same identity,
+    // which is what keeps the host's node ID stable across restarts.
+    #[tokio::test]
+    async fn secret_key_persists_and_round_trips() {
+        let dir = std::env::temp_dir().join(format!("strmr-secret-test-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("iroh_host_secret.key");
+        let path_str = path.to_str().unwrap();
+
+        let first = load_or_create_secret_key(path_str).await.unwrap();
+        assert!(path.exists(), "key file should be created on first load");
+
+        let second = load_or_create_secret_key(path_str).await.unwrap();
+        assert_eq!(
+            first.public(),
+            second.public(),
+            "reloading must yield the same node identity"
+        );
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    // A corrupt key file is a hard error rather than silently minting a new identity.
+    #[tokio::test]
+    async fn secret_key_rejects_wrong_length() {
+        let dir = std::env::temp_dir().join(format!("strmr-secret-bad-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("bad.key");
+        tokio::fs::write(&path, BASE64_URL_SAFE_NO_PAD.encode([0u8; 16]))
+            .await
+            .unwrap();
+
+        assert!(load_or_create_secret_key(path.to_str().unwrap()).await.is_err());
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
 }

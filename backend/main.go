@@ -377,7 +377,7 @@ func main() {
 	var remoteAccessHost *remoteaccess.IrohHostManager
 	var remoteAccessService *remoteaccess.Service
 	if store != nil {
-		remoteAccessHost = remoteaccess.NewIrohHostManager("")
+		remoteAccessHost = remoteaccess.NewIrohHostManager("", settings.Cache.Directory)
 		remoteAccessService = remoteaccess.NewService(store.RemoteAccessInvites(), remoteAccessHost)
 		remoteAccessHandler = handlers.NewRemoteAccessHandler(remoteAccessService)
 		defer func() {
@@ -606,7 +606,11 @@ func main() {
 	prequeueHandler.GetStore().SetStreamPathValidator(func(ctx context.Context, streamPath string) error {
 		cleanPath := strings.TrimSpace(streamPath)
 		if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
-			return nil
+			// Pre-resolved external URLs (e.g. AIOStreams/Comet proxy links) expire
+			// when the upstream addon refreshes. Probe the URL so an expired link is
+			// detected and the ready entry is dropped, forcing a fresh re-search
+			// instead of serving a dead "404 - Link expired" link.
+			return handlers.DefaultExternalURLValidator(ctx, cleanPath)
 		}
 		if strings.HasPrefix(cleanPath, "/webdav/") {
 			cleanPath = strings.TrimPrefix(cleanPath, "/webdav")

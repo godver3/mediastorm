@@ -27,6 +27,12 @@ const (
 // in Docker regardless of whether the iroh workdir is read-only.
 const defaultRendezvousFileName = "mediastorm_rendezvous_codes.txt"
 
+// defaultSecretFileName holds the host's persistent iroh secret key. Unlike the rendezvous
+// file (codes are re-derived), this must survive restarts/redeploys so the host keeps a
+// stable node ID — letting paired clients reconnect with a cached invite without a DHT
+// lookup — so it lives in the persistent data dir, not temp.
+const defaultSecretFileName = "iroh_host_secret.key"
+
 var debugIrohProxyLogs = strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "1") ||
 	strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "true")
 
@@ -36,6 +42,7 @@ type IrohHostManager struct {
 	bind           string
 	origin         string
 	rendezvousFile string
+	secretFile     string
 
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
@@ -45,7 +52,10 @@ type IrohHostManager struct {
 	ready   chan struct{}
 }
 
-func NewIrohHostManager(workDir string) *IrohHostManager {
+// NewIrohHostManager builds a host manager. dataDir is a persistent directory (the app
+// cache dir) used to store the host's stable iroh secret key; pass "" to keep the legacy
+// ephemeral identity (a new node ID every start).
+func NewIrohHostManager(workDir, dataDir string) *IrohHostManager {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {
 		workDir = discoverIrohWorkDir()
@@ -65,11 +75,24 @@ func NewIrohHostManager(workDir string) *IrohHostManager {
 	if rendezvousFile == "" {
 		rendezvousFile = filepath.Join(os.TempDir(), defaultRendezvousFileName)
 	}
+	secretFile := strings.TrimSpace(os.Getenv("MEDIASTORM_IROH_SECRET_FILE"))
+	if secretFile == "" && strings.TrimSpace(dataDir) != "" {
+		secretFile = filepath.Join(strings.TrimSpace(dataDir), defaultSecretFileName)
+	}
+	// The host runs with cmd.Dir set to the spike workDir, so a relative path (e.g. the
+	// default "cache" data dir) would resolve under that dir instead of the backend's cache.
+	// Pin it to an absolute path against the backend's cwd at construction time.
+	if secretFile != "" {
+		if abs, err := filepath.Abs(secretFile); err == nil {
+			secretFile = abs
+		}
+	}
 	return &IrohHostManager{
 		workDir:        workDir,
 		bind:           bind,
 		origin:         origin,
 		rendezvousFile: rendezvousFile,
+		secretFile:     secretFile,
 		state:          "stopped",
 	}
 }
@@ -281,6 +304,9 @@ func (m *IrohHostManager) buildCommand(ctx context.Context) *exec.Cmd {
 	args := []string{"host", "--bind", m.bind, "--origin", m.origin}
 	if m.rendezvousFile != "" {
 		args = append(args, "--rendezvous-file", m.rendezvousFile)
+	}
+	if m.secretFile != "" {
+		args = append(args, "--secret-file", m.secretFile)
 	}
 	binary := filepath.Join(m.workDir, "target", "debug", "iroh-direct-spike")
 	if stat, err := os.Stat(binary); err == nil && !stat.IsDir() {
