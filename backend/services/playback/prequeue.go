@@ -992,6 +992,29 @@ func (s *PrequeueStore) ListExpired() []*PrequeueEntry {
 	return result
 }
 
+// EpisodeReferencesMatch reports whether two episode references point at the same
+// episode. It reconciles absolute numbering (common for anime like One Piece) against
+// season-relative numbering so a warmed entry can be compared against the current
+// next-up episode regardless of how each side was numbered.
+func EpisodeReferencesMatch(a, b *models.EpisodeReference) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.AbsoluteEpisodeNumber > 0 && b.AbsoluteEpisodeNumber > 0 {
+		return a.AbsoluteEpisodeNumber == b.AbsoluteEpisodeNumber
+	}
+	if a.SeasonNumber == b.SeasonNumber && a.EpisodeNumber == b.EpisodeNumber {
+		return true
+	}
+	if a.AbsoluteEpisodeNumber > 0 && b.AbsoluteEpisodeNumber == 0 {
+		return a.AbsoluteEpisodeNumber == b.EpisodeNumber
+	}
+	if b.AbsoluteEpisodeNumber > 0 && a.AbsoluteEpisodeNumber == 0 {
+		return b.AbsoluteEpisodeNumber == a.EpisodeNumber
+	}
+	return false
+}
+
 // ToResponse converts an entry to a status response
 func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 	return &PrequeueStatusResponse{

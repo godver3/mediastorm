@@ -205,6 +205,135 @@ func TestRunOnce_SkipsAlreadyWarmed(t *testing.T) {
 	}
 }
 
+// readyWorkerFn returns a worker that records calls and creates a ready prequeue
+// entry (with track metadata) targeting the requested episode.
+func readyWorkerFn(store *playback.PrequeueStore, calls *int, lastTarget **models.EpisodeReference) playback.PrequeueWorkerFunc {
+	return func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+		*calls++
+		if lastTarget != nil {
+			*lastTarget = targetEpisode
+		}
+		entry, _ := store.Create(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm")
+		store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+			e.Status = playback.PrequeueStatusReady
+			e.StreamPath = "/debrid/rd/123/456"
+			e.AudioTracks = []playback.AudioTrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
+		})
+		return entry.ID, nil
+	}
+}
+
+func TestRunOnce_ReResolvesWhenNextEpisodeAdvanced(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	users := []models.User{{ID: "user1", Name: "Alice"}}
+
+	// The user's next-up episode has advanced to S2E4 (e.g. they finished S2E3
+	// or a new episode aired), but the previously warmed stream still targets S2E3.
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {
+			{
+				SeriesID:    "title1",
+				SeriesTitle: "Breaking Bad",
+				UpdatedAt:   time.Now().UTC(),
+				NextEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 4},
+			},
+		},
+	}
+
+	// Pre-create a ready entry for the now-stale episode S2E3.
+	stale, _ := store.Create("title1", "Breaking Bad", "user1", "series", 0, &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3}, "prewarm")
+	store.Update(stale.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.AudioTracks = []playback.AudioTrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
+	})
+
+	workerCalls := 0
+	var resolvedTarget *models.EpisodeReference
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(readyWorkerFn(store, &workerCalls, &resolvedTarget))
+
+	svc.entries[entryKey("title1", "user1")] = &WarmEntry{
+		TitleID:       "title1",
+		UserID:        "user1",
+		PrequeueID:    stale.ID,
+		TargetEpisode: &models.EpisodeReference{SeasonNumber: 2, EpisodeNumber: 3},
+		ExpiresAt:     time.Now().Add(12 * time.Hour),
+	}
+
+	result, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+
+	if workerCalls != 1 {
+		t.Fatalf("expected 1 worker call (re-resolve for advanced episode), got %d", workerCalls)
+	}
+	if result.Warmed != 1 {
+		t.Errorf("expected 1 warmed, got %d", result.Warmed)
+	}
+	if resolvedTarget == nil || resolvedTarget.SeasonNumber != 2 || resolvedTarget.EpisodeNumber != 4 {
+		t.Errorf("expected re-resolve to target S2E4, got %+v", resolvedTarget)
+	}
+}
+
+func TestRunOnce_ReResolvesWhenAbsoluteEpisodeAdvanced(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+
+	users := []models.User{{ID: "user1", Name: "Alice"}}
+
+	// One Piece scenario: absolute numbering. Next-up advanced from abs 1163 to 1164.
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {
+			{
+				SeriesID:    "tvdb:series:81797",
+				SeriesTitle: "One Piece",
+				UpdatedAt:   time.Now().UTC(),
+				NextEpisode: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 9, AbsoluteEpisodeNumber: 1164},
+			},
+		},
+	}
+
+	stale, _ := store.Create("tvdb:series:81797", "One Piece", "user1", "series", 1999,
+		&models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 8, AbsoluteEpisodeNumber: 1163}, "prewarm")
+	store.Update(stale.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.AudioTracks = []playback.AudioTrackInfo{{Index: 0, Language: "jpn", Codec: "aac"}}
+	})
+
+	workerCalls := 0
+	var resolvedTarget *models.EpisodeReference
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(readyWorkerFn(store, &workerCalls, &resolvedTarget))
+
+	svc.entries[entryKey("tvdb:series:81797", "user1")] = &WarmEntry{
+		TitleID:       "tvdb:series:81797",
+		UserID:        "user1",
+		PrequeueID:    stale.ID,
+		TargetEpisode: &models.EpisodeReference{SeasonNumber: 23, EpisodeNumber: 8, AbsoluteEpisodeNumber: 1163},
+		ExpiresAt:     time.Now().Add(12 * time.Hour),
+	}
+
+	if _, err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+
+	if workerCalls != 1 {
+		t.Fatalf("expected 1 worker call (re-resolve for advanced absolute episode), got %d", workerCalls)
+	}
+	if resolvedTarget == nil || resolvedTarget.AbsoluteEpisodeNumber != 1164 {
+		t.Errorf("expected re-resolve to target abs 1164, got %+v", resolvedTarget)
+	}
+}
+
 func TestRunOnce_AdoptingExistingPrequeueExtendsTTL(t *testing.T) {
 	store := playback.NewPrequeueStore(30 * time.Minute)
 

@@ -77,23 +77,7 @@ func hasTrackMetadata(entry *playback.PrequeueEntry) bool {
 }
 
 func prequeueEpisodeMatches(requested, existing *models.EpisodeReference) bool {
-	if requested == nil || existing == nil {
-		return requested == nil && existing == nil
-	}
-	if requested.AbsoluteEpisodeNumber > 0 && existing.AbsoluteEpisodeNumber > 0 {
-		return requested.AbsoluteEpisodeNumber == existing.AbsoluteEpisodeNumber
-	}
-	if requested.SeasonNumber == existing.SeasonNumber &&
-		requested.EpisodeNumber == existing.EpisodeNumber {
-		return true
-	}
-	if requested.AbsoluteEpisodeNumber > 0 && existing.AbsoluteEpisodeNumber == 0 {
-		return requested.AbsoluteEpisodeNumber == existing.EpisodeNumber
-	}
-	if existing.AbsoluteEpisodeNumber > 0 && requested.AbsoluteEpisodeNumber == 0 {
-		return existing.AbsoluteEpisodeNumber == requested.EpisodeNumber
-	}
-	return false
+	return playback.EpisodeReferencesMatch(requested, existing)
 }
 
 func isPrequeueInProgress(status playback.PrequeueStatus) bool {

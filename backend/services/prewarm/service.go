@@ -228,32 +228,44 @@ func (s *Service) warmContinueWatchingScope(
 
 	if hasExisting && existing.PrequeueID != "" {
 		if entry, ok := s.prequeueStore.Get(existing.PrequeueID); ok && entry.Status == playback.PrequeueStatusReady && hasTrackMetadata(entry) {
-			expiresAt := time.Now().Add(maxAge)
-			s.extendPrequeueExpiry(existing.PrequeueID, expiresAt)
-			s.mu.Lock()
-			if current, ok := s.entries[key]; ok {
-				current.Error = ""
-				if current.StreamPath == "" {
-					current.StreamPath = entry.StreamPath
+			// Only reuse the warmed stream if it still targets the current next-up
+			// episode. For actively-airing series (e.g. anime with absolute numbering
+			// like One Piece) the next-up episode advances while the old stream stays
+			// healthy; without this guard the worker would keep the stale episode warm
+			// forever and the user would face a cold resolve on open.
+			if playback.EpisodeReferencesMatch(targetEpisode, entry.TargetEpisode) {
+				expiresAt := time.Now().Add(maxAge)
+				s.extendPrequeueExpiry(existing.PrequeueID, expiresAt)
+				s.mu.Lock()
+				if current, ok := s.entries[key]; ok {
+					current.Error = ""
+					if current.StreamPath == "" {
+						current.StreamPath = entry.StreamPath
+					}
+					if current.ExpiresAt.Before(expiresAt) {
+						current.ExpiresAt = expiresAt
+					}
+					current.LastRefresh = time.Now()
 				}
-				if current.ExpiresAt.Before(expiresAt) {
-					current.ExpiresAt = expiresAt
-				}
-				current.LastRefresh = time.Now()
+				s.mu.Unlock()
+				result.Skipped++
+				return nil
 			}
-			s.mu.Unlock()
+			log.Printf("[prewarm] Re-warming %q for user %s scope=%s: next-up episode advanced (warm=%s, next=%s)",
+				state.SeriesTitle, user.Name, settingsScopeKey,
+				episodeRefLabel(entry.TargetEpisode), episodeRefLabel(targetEpisode))
+		} else if existing.Error != "" && time.Now().Before(existing.ExpiresAt) {
 			result.Skipped++
 			return nil
+		} else {
+			log.Printf("[prewarm] Re-warming %q for user %s scope=%s: existing prequeue missing track metadata or not ready",
+				state.SeriesTitle, user.Name, settingsScopeKey)
 		}
-		if existing.Error != "" && time.Now().Before(existing.ExpiresAt) {
-			result.Skipped++
-			return nil
-		}
-		log.Printf("[prewarm] Re-warming %q for user %s scope=%s: existing prequeue missing track metadata or not ready",
-			state.SeriesTitle, user.Name, settingsScopeKey)
 	}
 
-	if pqEntry, ok := s.prequeueStore.GetByTitleUserScope(state.SeriesID, user.ID, settingsScopeKey); ok && pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) {
+	if pqEntry, ok := s.prequeueStore.GetByTitleUserScope(state.SeriesID, user.ID, settingsScopeKey); ok &&
+		pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) &&
+		playback.EpisodeReferencesMatch(targetEpisode, pqEntry.TargetEpisode) {
 		expiresAt := time.Now().Add(maxAge)
 		s.extendPrequeueExpiry(pqEntry.ID, expiresAt)
 		s.mu.Lock()
@@ -1036,6 +1048,17 @@ func entryKey(titleID, userID string, settingsScopeKey ...string) string {
 		}
 	}
 	return titleID + ":" + userID + ":" + scopeKey
+}
+
+// episodeRefLabel renders an episode reference for logging.
+func episodeRefLabel(ep *models.EpisodeReference) string {
+	if ep == nil {
+		return "none"
+	}
+	if ep.AbsoluteEpisodeNumber > 0 {
+		return fmt.Sprintf("S%02dE%02d(abs%d)", ep.SeasonNumber, ep.EpisodeNumber, ep.AbsoluteEpisodeNumber)
+	}
+	return fmt.Sprintf("S%02dE%02d", ep.SeasonNumber, ep.EpisodeNumber)
 }
 
 func targetEpisodeAirDate(ep *models.EpisodeReference) string {
