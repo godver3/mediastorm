@@ -23,7 +23,12 @@ mod rendezvous;
 const ALPN: &[u8] = b"strmr-remote-spike/iroh-direct/0";
 const INVITE_PREFIX: &str = "mshost-iroh-";
 const LEGACY_INVITE_PREFIX: &str = "mshost-iroh-direct-";
-const MAX_REQUEST_BYTES: usize = 64 * 1024;
+// The whole proxied request (request line + headers + body) is buffered in memory
+// before being forwarded upstream, so this cap bounds per-stream memory. 64 KiB was
+// too small: app requests carrying a JSON body (list/settings sync, uploads) exceeded
+// it and quinn's read_to_end rejected the stream with "stream too long". 4 MiB covers
+// those payloads while keeping a single misbehaving stream bounded.
+const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const SPEED_CHUNK_BYTES: usize = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
