@@ -153,7 +153,7 @@ async fn run_rendezvous_publisher(path: String, invite: String) {
                 Ok(()) => {
                     last_published.insert(code.clone(), Instant::now());
                     println!(
-                        "rendezvous_published code_key={} ",
+                        "rendezvous_published code_key={}",
                         rendezvous::derived_public_z32(code)
                     );
                 }

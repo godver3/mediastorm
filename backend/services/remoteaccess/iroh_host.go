@@ -189,10 +189,16 @@ func (m *IrohHostManager) scanOutput(output io.Reader, isErr bool) {
 			log.Printf("[remote-access][iroh] %s", line)
 		}
 		m.mu.Lock()
-		if value := strings.TrimSpace(strings.TrimPrefix(line, "invite=")); value != line && value != "" {
-			m.invite = value
-			m.state = "running"
-			m.closeReadyLocked()
+		// Only the host's "invite=<blob>" line carries the invite. Match the prefix
+		// explicitly: a bare `value != line` check also fires for any other stdout line
+		// that TrimSpace alters (e.g. the publisher's "rendezvous_published ..." log has a
+		// trailing space), which would store a log line as the invite.
+		if strings.HasPrefix(line, "invite=") {
+			if value := strings.TrimSpace(strings.TrimPrefix(line, "invite=")); value != "" {
+				m.invite = value
+				m.state = "running"
+				m.closeReadyLocked()
+			}
 		}
 		if isErr && shouldRecordIrohError(line) {
 			m.lastErr = line

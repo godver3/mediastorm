@@ -28,6 +28,9 @@ use sha2::{Digest, Sha256};
 const KDF_DOMAIN: &str = "strmr-rendezvous-v1:";
 /// DNS name the invite is published under inside the signed packet.
 const TXT_NAME: &str = "_strmr";
+/// Every host invite blob starts with this. A reassembled payload that doesn't is a corrupt
+/// or foreign record under the derived key and must not be treated as a usable invite.
+const INVITE_PREFIX: &str = "mshost-iroh-";
 /// Max characters of invite payload per TXT chunk. DNS limits a TXT string to 255 bytes;
 /// we reserve a few for the `NN:` ordering prefix and stay well under the limit.
 const TXT_PAYLOAD_CHUNK: usize = 240;
@@ -97,7 +100,11 @@ fn invite_from_packet(packet: &SignedPacket) -> Result<String> {
             return Err(anyhow!("rendezvous chunks out of sequence"));
         }
     }
-    Ok(chunks.into_iter().map(|(_, payload)| payload).collect())
+    let invite: String = chunks.into_iter().map(|(_, payload)| payload).collect();
+    if !invite.starts_with(INVITE_PREFIX) {
+        return Err(anyhow!("rendezvous record does not carry a valid invite"));
+    }
+    Ok(invite)
 }
 
 fn signed_packet_to_mutable_item(packet: &SignedPacket) -> MutableItem {
@@ -187,5 +194,14 @@ mod tests {
     #[test]
     fn empty_invite_is_rejected() {
         assert!(build_packet("mshost-1-2", "   ").is_err());
+    }
+
+    #[test]
+    fn record_without_invite_prefix_is_rejected() {
+        // A corrupt or foreign record under the derived key reassembles to a non-invite
+        // payload; resolution must reject it rather than return junk that later fails
+        // `decode_invite` with "invite must start with mshost-iroh-".
+        let packet = build_packet("mshost-424242-131313", "not-a-real-invite-blob").expect("build");
+        assert!(invite_from_packet(&packet).is_err());
     }
 }
