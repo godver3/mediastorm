@@ -7,7 +7,8 @@ import sys
 import json
 import re
 from babelfish import Language
-from subliminal import list_subtitles, download_subtitles, region
+from subliminal import region
+from subliminal.core import ProviderPool
 from subliminal.video import Episode, Movie
 
 # Configure cache
@@ -224,23 +225,30 @@ def main():
         }
 
     try:
-        # Search for subtitles from the specific provider
-        subtitles = list_subtitles([video], languages, providers=[provider], provider_configs=provider_configs)
+        # Search AND download within a single ProviderPool so the provider stays
+        # logged in for both steps. Using the module-level list_subtitles() then
+        # download_subtitles() opens two separate pools, which logs in twice in
+        # quick succession — OpenSubtitles.org's XML-RPC anti-flood rejects the
+        # second login with Unauthorized, yielding empty content. One session, one
+        # login. (This is why automatic subtitles — fetched in a single pool —
+        # worked while manual downloads via this script failed.)
+        with ProviderPool(providers=[provider], provider_configs=provider_configs) as pool:
+            subtitles = pool.list_subtitles(video, languages)
 
-        # Find the matching subtitle
-        target_sub = None
-        for sub in subtitles.get(video, []):
-            sub_id = getattr(sub, 'subtitle_id', None) or getattr(sub, 'id', str(hash(sub)))
-            if str(sub_id) == str(subtitle_id):
-                target_sub = sub
-                break
+            # Find the matching subtitle
+            target_sub = None
+            for sub in subtitles:
+                sub_id = getattr(sub, 'subtitle_id', None) or getattr(sub, 'id', str(hash(sub)))
+                if str(sub_id) == str(subtitle_id):
+                    target_sub = sub
+                    break
 
-        if not target_sub:
-            print(json.dumps({"error": f"Subtitle not found: {subtitle_id}"}), file=sys.stderr)
-            sys.exit(1)
+            if not target_sub:
+                print(json.dumps({"error": f"Subtitle not found: {subtitle_id}"}), file=sys.stderr)
+                sys.exit(1)
 
-        # Download the subtitle
-        download_subtitles([target_sub])
+            # Download the subtitle using the same logged-in provider
+            pool.download_subtitle(target_sub)
 
         # Get content
         content = target_sub.text or (target_sub.content.decode('utf-8', errors='replace') if target_sub.content else '')
