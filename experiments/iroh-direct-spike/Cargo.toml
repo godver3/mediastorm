@@ -8,7 +8,10 @@ anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 iroh = "0.98.2"
+iroh-dns = "0.98.0"
+mainline = "6"
 n0-error = "0.1"
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "net", "signal", "time"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

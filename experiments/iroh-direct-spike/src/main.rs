@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
@@ -16,6 +17,8 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+
+mod rendezvous;
 
 const ALPN: &[u8] = b"strmr-remote-spike/iroh-direct/0";
 const INVITE_PREFIX: &str = "mshost-iroh-";
@@ -41,6 +44,11 @@ enum Command {
         bind: String,
         #[arg(long)]
         origin: Option<String>,
+        /// File listing active connection codes (one per line). The host publishes a
+        /// rendezvous record for each so clients can resolve the invite over the DHT
+        /// without a reachable backend. The file is re-read periodically for changes.
+        #[arg(long)]
+        rendezvous_file: Option<String>,
     },
     Client {
         #[arg(long)]
@@ -56,6 +64,18 @@ enum Command {
         #[arg(long, default_value = "0.0.0.0:19092")]
         bind: String,
     },
+    /// Publish a rendezvous record mapping a connection code to an invite blob (test helper).
+    RendezvousPublish {
+        #[arg(long)]
+        code: String,
+        #[arg(long)]
+        invite: String,
+    },
+    /// Resolve a connection code to its invite blob over the public DHT (test helper).
+    RendezvousResolve {
+        #[arg(long)]
+        code: String,
+    },
 }
 
 #[tokio::main]
@@ -66,10 +86,107 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
-        Command::Host { bind, origin } => run_host(&bind, origin.as_deref()).await,
+        Command::Host {
+            bind,
+            origin,
+            rendezvous_file,
+        } => run_host(&bind, origin.as_deref(), rendezvous_file.as_deref()).await,
         Command::Client { invite } => run_client(&invite).await,
         Command::Speed { invite, bytes } => run_speed_client(&invite, bytes).await,
         Command::HttpSpeedHost { bind } => run_http_speed_host(&bind).await,
+        Command::RendezvousPublish { code, invite } => run_rendezvous_publish(&code, &invite).await,
+        Command::RendezvousResolve { code } => run_rendezvous_resolve(&code).await,
+    }
+}
+
+/// How often to refresh each code's DHT record. Must stay well under
+/// [`rendezvous::RENDEZVOUS_TTL_SECS`] so records never lapse while an invite is active.
+const RENDEZVOUS_REPUBLISH: Duration = Duration::from_secs(15 * 60);
+/// How often to re-read the codes file to pick up newly created / revoked invites.
+const RENDEZVOUS_POLL: Duration = Duration::from_secs(5);
+
+/// Parse the rendezvous file: one connection code per line, blanks and `#` comments ignored.
+async fn read_rendezvous_codes(path: &str) -> Vec<String> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(contents) => contents
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(ToOwned::to_owned)
+            .collect(),
+        Err(err) => {
+            // Missing file just means no active invites yet; only log unexpected errors.
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("rendezvous_file read error path={path} error={err}");
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Background task: keep a DHT rendezvous record live for every active connection code.
+///
+/// Re-reads `path` every [`RENDEZVOUS_POLL`], publishes new codes immediately, refreshes
+/// existing ones every [`RENDEZVOUS_REPUBLISH`], and forgets codes that leave the file
+/// (their DHT records lapse on their own once the TTL passes).
+async fn run_rendezvous_publisher(path: String, invite: String) {
+    let dht = match rendezvous_dht() {
+        Ok(dht) => dht,
+        Err(err) => {
+            eprintln!("rendezvous publisher disabled: {err}");
+            return;
+        }
+    };
+    let mut last_published: HashMap<String, Instant> = HashMap::new();
+    loop {
+        let codes = read_rendezvous_codes(&path).await;
+        last_published.retain(|code, _| codes.contains(code));
+        for code in &codes {
+            let due = last_published
+                .get(code)
+                .map(|at| at.elapsed() >= RENDEZVOUS_REPUBLISH)
+                .unwrap_or(true);
+            if !due {
+                continue;
+            }
+            match rendezvous::publish(&dht, code, &invite).await {
+                Ok(()) => {
+                    last_published.insert(code.clone(), Instant::now());
+                    println!(
+                        "rendezvous_published code_key={} ",
+                        rendezvous::derived_public_z32(code)
+                    );
+                }
+                Err(err) => eprintln!("rendezvous_publish_error error={err}"),
+            }
+        }
+        tokio::time::sleep(RENDEZVOUS_POLL).await;
+    }
+}
+
+fn rendezvous_dht() -> Result<mainline::Dht> {
+    mainline::Dht::builder()
+        .build()
+        .map_err(|err| anyhow::anyhow!("build mainline dht: {err}"))
+}
+
+async fn run_rendezvous_publish(code: &str, invite: &str) -> Result<()> {
+    let dht = rendezvous_dht()?;
+    println!("publishing under {}", rendezvous::derived_public_z32(code));
+    rendezvous::publish(&dht, code, invite).await?;
+    println!("published; record refreshes are the host's job in production");
+    Ok(())
+}
+
+async fn run_rendezvous_resolve(code: &str) -> Result<()> {
+    let dht = rendezvous_dht()?;
+    println!("resolving {}", rendezvous::derived_public_z32(code));
+    match rendezvous::resolve(&dht, code).await? {
+        Some(invite) => {
+            println!("invite={invite}");
+            Ok(())
+        }
+        None => Err(anyhow::anyhow!("no rendezvous record found for code")),
     }
 }
 
@@ -124,7 +241,7 @@ async fn run_http_speed_host(bind: &str) -> Result<()> {
     }
 }
 
-async fn run_host(bind: &str, origin: Option<&str>) -> Result<()> {
+async fn run_host(bind: &str, origin: Option<&str>, rendezvous_file: Option<&str>) -> Result<()> {
     let endpoint = relay_enabled_builder()
         .bind_addr(bind)?
         .alpns(vec![ALPN.to_vec()])
@@ -153,6 +270,12 @@ async fn run_host(bind: &str, origin: Option<&str>) -> Result<()> {
     println!("address_lookup=n0");
     println!("origin={}", origin.unwrap_or("(none)"));
     println!("waiting for iroh client requests");
+
+    if let Some(path) = rendezvous_file {
+        let path = path.to_string();
+        let invite = invite.clone();
+        tokio::spawn(async move { run_rendezvous_publisher(path, invite).await });
+    }
 
     tokio::signal::ctrl_c().await?;
     router.shutdown().await?;

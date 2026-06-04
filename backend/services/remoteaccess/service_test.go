@@ -2,6 +2,9 @@ package remoteaccess
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,5 +286,78 @@ func TestResolveClaimedInviteForPeerRecoversConnectionCode(t *testing.T) {
 	}
 	if resolved.IrohInvite != "mshost-iroh-direct-new" {
 		t.Fatalf("iroh invite = %q, want refreshed host invite", resolved.IrohInvite)
+	}
+}
+
+// fakeRendezvousHost is a fakeHost that also advertises a rendezvous file path, so the
+// service mirrors active connection codes into it.
+type fakeRendezvousHost struct {
+	fakeHost
+	path string
+}
+
+func (h *fakeRendezvousHost) RendezvousFilePath() string { return h.path }
+
+func readRendezvousCodes(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read rendezvous file: %v", err)
+	}
+	var codes []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		codes = append(codes, line)
+	}
+	return codes
+}
+
+func TestCreateInviteWritesRendezvousFile(t *testing.T) {
+	repo := newFakeInviteRepo()
+	path := filepath.Join(t.TempDir(), "codes.txt")
+	host := &fakeRendezvousHost{path: path}
+	svc := NewService(repo, host)
+	svc.now = func() time.Time { return time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC) }
+
+	inv, err := svc.CreateInvite(context.Background(), "account-1", CreateInviteRequest{ExpiresIn: time.Hour})
+	if err != nil {
+		t.Fatalf("CreateInvite returned error: %v", err)
+	}
+
+	codes := readRendezvousCodes(t, path)
+	if len(codes) != 1 || codes[0] != inv.ConnectionCode {
+		t.Fatalf("rendezvous codes = %v, want [%s]", codes, inv.ConnectionCode)
+	}
+}
+
+func TestSuperviseEmptiesRendezvousFileWhenNoActiveInvites(t *testing.T) {
+	repo := newFakeInviteRepo()
+	path := filepath.Join(t.TempDir(), "codes.txt")
+	host := &fakeRendezvousHost{path: path}
+	svc := NewService(repo, host)
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+
+	inv, err := svc.CreateInvite(context.Background(), "account-1", CreateInviteRequest{ExpiresIn: time.Hour})
+	if err != nil {
+		t.Fatalf("CreateInvite returned error: %v", err)
+	}
+	if codes := readRendezvousCodes(t, path); len(codes) != 1 {
+		t.Fatalf("expected one active code after create, got %v", codes)
+	}
+
+	// Expire the invite, then supervise should rewrite the file with no codes.
+	stored := repo.byID[inv.ID]
+	stored.ExpiresAt = now.Add(-time.Minute)
+	repo.byID[inv.ID] = stored
+
+	if _, err := svc.Supervise(context.Background()); err != nil {
+		t.Fatalf("Supervise returned error: %v", err)
+	}
+	if codes := readRendezvousCodes(t, path); len(codes) != 0 {
+		t.Fatalf("expected no active codes after expiry, got %v", codes)
 	}
 }

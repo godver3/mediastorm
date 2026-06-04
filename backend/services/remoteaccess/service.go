@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,6 +37,15 @@ type HostManager interface {
 	Ensure(ctx context.Context) (string, error)
 	Stop(ctx context.Context) error
 	Status(ctx context.Context) models.RemoteAccessStatus
+}
+
+// RendezvousPublisher is an optional capability implemented by hosts that publish
+// connection codes to the public DHT, letting clients resolve an invite without a
+// reachable backend URL. When the host implements it, the service mirrors the set of
+// active connection codes into the returned file path whenever invites change, and the
+// host watches that file to keep a DHT record live for each code.
+type RendezvousPublisher interface {
+	RendezvousFilePath() string
 }
 
 type CreateInviteRequest struct {
@@ -117,6 +129,9 @@ func (s *Service) CreateInvite(ctx context.Context, createdBy string, req Create
 	if err := s.invites.Create(ctx, &inv); err != nil {
 		return models.RemoteAccessInvite{}, err
 	}
+	// Best-effort: the host re-reads the file on a timer and Supervise rewrites it
+	// every minute, so a transient failure here self-heals.
+	s.trySyncRendezvousCodes(ctx)
 	inv.Token = token
 	return inv, nil
 }
@@ -148,6 +163,8 @@ func (s *Service) RevokeInvite(ctx context.Context, id string) error {
 	_, err = s.Supervise(ctx)
 	return err
 }
+
+// (Supervise rewrites the rendezvous file, so RevokeInvite relies on it via the call above.)
 
 func (s *Service) ClaimInvite(ctx context.Context, token, peerID string) (models.RemoteAccessInvite, error) {
 	token = strings.TrimSpace(token)
@@ -262,6 +279,10 @@ func (s *Service) Supervise(ctx context.Context) (SyncSummary, error) {
 	}
 	active := filterActiveInvites(invites, s.now())
 	summary := SyncSummary{Active: len(active)}
+	// Keep the host's rendezvous file in sync with the active set on every supervise
+	// pass (startup + the 1-minute ticker + after revoke), covering both newly added
+	// codes and emptying the file once the last invite lapses.
+	s.trySyncRendezvousCodes(ctx)
 	if len(active) == 0 {
 		if s.host != nil {
 			if status := s.host.Status(ctx); status.Running {
@@ -293,6 +314,65 @@ func (s *Service) Supervise(ctx context.Context) (SyncSummary, error) {
 		summary.Updated++
 	}
 	return summary, nil
+}
+
+// trySyncRendezvousCodes runs syncRendezvousCodes and logs (but does not propagate) any
+// error, for call sites where the rendezvous file is a side effect rather than the result.
+func (s *Service) trySyncRendezvousCodes(ctx context.Context) {
+	if err := s.syncRendezvousCodes(ctx); err != nil {
+		log.Printf("[remote-access] failed to sync rendezvous codes: %v", err)
+	}
+}
+
+// syncRendezvousCodes mirrors the active connection codes into the host's rendezvous
+// file (if the host supports DHT publishing). Best-effort: failures are non-fatal to the
+// invite operation that triggered the sync, since the host re-reads the file on a timer.
+func (s *Service) syncRendezvousCodes(ctx context.Context) error {
+	publisher, ok := s.host.(RendezvousPublisher)
+	if !ok {
+		return nil
+	}
+	path := strings.TrimSpace(publisher.RendezvousFilePath())
+	if path == "" {
+		return nil
+	}
+	invites, err := s.invites.List(ctx)
+	if err != nil {
+		return err
+	}
+	active := filterActiveInvites(invites, s.now())
+
+	var b strings.Builder
+	b.WriteString("# strmr active connection codes — managed by remoteaccess.Service; do not edit\n")
+	for i := range active {
+		code := strings.TrimSpace(active[i].ConnectionCode)
+		if code != "" {
+			b.WriteString(code)
+			b.WriteByte('\n')
+		}
+	}
+
+	// Write atomically so the host never reads a half-written file.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// RendezvousFilePath returns the path the host watches for active codes, or "" if the
+// configured host does not support DHT rendezvous publishing.
+func (s *Service) RendezvousFilePath() string {
+	if publisher, ok := s.host.(RendezvousPublisher); ok {
+		if path := strings.TrimSpace(publisher.RendezvousFilePath()); path != "" {
+			return filepath.Clean(path)
+		}
+	}
+	return ""
 }
 
 func HashInviteToken(token string) string {

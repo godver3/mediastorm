@@ -22,14 +22,20 @@ const (
 	defaultIrohOrigin = "http://127.0.0.1:7777"
 )
 
+// defaultRendezvousFileName is the file (under the OS temp dir) the host watches for the
+// set of active connection codes to publish to the DHT. Lives in temp so it is writable
+// in Docker regardless of whether the iroh workdir is read-only.
+const defaultRendezvousFileName = "mediastorm_rendezvous_codes.txt"
+
 var debugIrohProxyLogs = strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "1") ||
 	strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "true")
 
 type IrohHostManager struct {
-	mu      sync.RWMutex
-	workDir string
-	bind    string
-	origin  string
+	mu             sync.RWMutex
+	workDir        string
+	bind           string
+	origin         string
+	rendezvousFile string
 
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
@@ -55,12 +61,23 @@ func NewIrohHostManager(workDir string) *IrohHostManager {
 	if origin == "" {
 		origin = defaultIrohOrigin
 	}
-	return &IrohHostManager{
-		workDir: workDir,
-		bind:    bind,
-		origin:  origin,
-		state:   "stopped",
+	rendezvousFile := strings.TrimSpace(os.Getenv("MEDIASTORM_IROH_RENDEZVOUS_FILE"))
+	if rendezvousFile == "" {
+		rendezvousFile = filepath.Join(os.TempDir(), defaultRendezvousFileName)
 	}
+	return &IrohHostManager{
+		workDir:        workDir,
+		bind:           bind,
+		origin:         origin,
+		rendezvousFile: rendezvousFile,
+		state:          "stopped",
+	}
+}
+
+// RendezvousFilePath implements remoteaccess.RendezvousPublisher: the service writes the
+// active connection codes here and the host watches it to publish DHT records.
+func (m *IrohHostManager) RendezvousFilePath() string {
+	return m.rendezvousFile
 }
 
 func (m *IrohHostManager) Ensure(ctx context.Context) (string, error) {
@@ -255,13 +272,17 @@ func (m *IrohHostManager) validateWorkDirLocked() error {
 }
 
 func (m *IrohHostManager) buildCommand(ctx context.Context) *exec.Cmd {
+	args := []string{"host", "--bind", m.bind, "--origin", m.origin}
+	if m.rendezvousFile != "" {
+		args = append(args, "--rendezvous-file", m.rendezvousFile)
+	}
 	binary := filepath.Join(m.workDir, "target", "debug", "iroh-direct-spike")
 	if stat, err := os.Stat(binary); err == nil && !stat.IsDir() {
-		cmd := exec.CommandContext(ctx, binary, "host", "--bind", m.bind, "--origin", m.origin)
+		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = m.workDir
 		return cmd
 	}
-	cmd := exec.CommandContext(ctx, "cargo", "run", "--", "host", "--bind", m.bind, "--origin", m.origin)
+	cmd := exec.CommandContext(ctx, "cargo", append([]string{"run", "--"}, args...)...)
 	cmd.Dir = m.workDir
 	return cmd
 }
