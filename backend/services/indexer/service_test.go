@@ -383,6 +383,14 @@ func TestSearchWithScoringBypassesFilteringAndRankingForAIOStreamsOnlyDebridMode
 		if result.FilterReason != "" {
 			t.Fatalf("expected no filter reason for bypassed result %q, got %q", result.Title, result.FilterReason)
 		}
+		// In bypass mode mediastorm does not score results, so they must be flagged so
+		// UIs can hide the meaningless "Score 0" value.
+		if result.Attributes["ranking_bypassed"] != "true" {
+			t.Fatalf("expected ranking_bypassed=true attribute on bypassed result %q, got attrs %v", result.Title, result.Attributes)
+		}
+		if result.TotalScore != 0 {
+			t.Fatalf("expected TotalScore 0 for bypassed result %q, got %d", result.Title, result.TotalScore)
+		}
 	}
 }
 

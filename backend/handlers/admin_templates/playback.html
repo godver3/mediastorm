@@ -1148,6 +1148,34 @@
         font-weight: 700;
     }
 
+    .manual-result-desc {
+        margin-top: 0.35rem;
+        color: var(--text-secondary);
+        font-size: 0.78rem;
+        line-height: 1.35;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .playback-source {
+        margin-top: 0.5rem;
+    }
+
+    .playback-source-name {
+        font-weight: 600;
+        color: var(--text-primary);
+        word-break: break-word;
+    }
+
+    .playback-source-desc {
+        margin-top: 0.25rem;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        line-height: 1.35;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
     .iptv-panel {
         min-width: 0;
     }
@@ -2385,12 +2413,24 @@
         const service = result.serviceType || attrs.serviceType || 'source';
         const resolution = attrs.resolution || '';
         const hdr = attrs.hdr || (attrs.hasDV === 'true' ? 'DV' : '');
-        const score = result.totalScore != null ? `<span class="manual-result-score">Score ${escapeHtml(result.totalScore)}</span>` : '';
+        // AIOStreams passthrough formatting: prefer the scraper's own display name/description.
+        const usePassthrough = attrs.passthrough_format === 'true' && !!attrs.raw_name;
+        const displayTitle = usePassthrough ? attrs.raw_name : (result.title || 'Unknown release');
+        const description = usePassthrough && attrs.raw_description
+            ? `<div class="manual-result-desc">${escapeHtml(attrs.raw_description)}</div>`
+            : '';
+        // Hide the score when an external scraper provided the ranking (bypass mode): mediastorm
+        // did not score these, so the value is always 0 and would be misleading.
+        const rankingBypassed = attrs.ranking_bypassed === 'true';
+        const score = (!rankingBypassed && result.totalScore != null)
+            ? `<span class="manual-result-score">Score ${escapeHtml(result.totalScore)}</span>`
+            : '';
         const reason = isExcluded && result.filterReason ? `<span style="color: var(--danger);">${escapeHtml(result.filterReason)}</span>` : '';
         return `
             <article class="manual-result ${isExcluded ? 'manual-result-excluded' : ''}">
                 <div style="min-width: 0;">
-                    <div class="manual-result-title" title="${escapeHtml(result.title || '')}">${escapeHtml(result.title || 'Unknown release')}</div>
+                    <div class="manual-result-title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</div>
+                    ${description}
                     <div class="manual-result-meta">
                         <span>${escapeHtml(service)}</span>
                         ${size ? `<span>${escapeHtml(size)}</span>` : ''}
@@ -2601,6 +2641,15 @@
         const displaySizeBytes = Number(resolvedPlayback?.fileSize || candidate.sizeBytes || 0);
         const size = displaySizeBytes > 0 ? `${(displaySizeBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '';
         const displayFilename = playbackDisplayFilename(resolvedPlayback, candidate.title || '');
+        // Surface AIOStreams passthrough formatting (name + description) alongside the filename.
+        const attrs = candidate.attributes || {};
+        const usePassthrough = attrs.passthrough_format === 'true' && !!attrs.raw_name;
+        const passthroughBlock = usePassthrough
+            ? `<div class="playback-source">
+                    <div class="playback-source-name">${escapeHtml(attrs.raw_name)}</div>
+                    ${attrs.raw_description ? `<div class="playback-source-desc">${escapeHtml(attrs.raw_description)}</div>` : ''}
+                </div>`
+            : '';
         panel.innerHTML = `
             <div class="player-wrap">
                 <div class="details-actions" style="margin-bottom: 1rem;">
@@ -2623,6 +2672,7 @@
                     </button>
                 </div>
                 <div class="media-meta" title="${escapeHtml(resolvedPlayback.webdavPath || '')}">${escapeHtml(displayFilename)}${size ? ` - ${escapeHtml(size)}` : ''}</div>
+                ${passthroughBlock}
                 <div id="videoHost" style="display: none; margin-top: 1rem;"></div>
             </div>
         `;

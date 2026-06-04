@@ -866,7 +866,7 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		scored := make([]models.ScoredNZBResult, len(rawResults))
 		for i, r := range rawResults {
 			scored[i] = models.ScoredNZBResult{
-				NZBResult:    r,
+				NZBResult:    markRankingBypassed(r),
 				FilterStatus: "passed",
 			}
 		}
@@ -949,7 +949,7 @@ func (s *Service) SearchTest(ctx context.Context, opts SearchOptions) ([]models.
 		scored := make([]models.ScoredNZBResult, len(rawResults))
 		for i, r := range rawResults {
 			scored[i] = models.ScoredNZBResult{
-				NZBResult:    r,
+				NZBResult:    markRankingBypassed(r),
 				FilterStatus: "passed",
 			}
 		}
@@ -2379,4 +2379,15 @@ func shouldBypassAIOStreamsRanking(settings config.Settings, overrides effective
 	return models.BoolVal(overrides.BypassFilteringForAIOStreamsOnly, false) &&
 		isOnlyAIOStreamsEnabled(settings.TorrentScrapers) &&
 		!includeUsenet
+}
+
+// markRankingBypassed flags a result so consumers know mediastorm did not score/rank it
+// (an external scraper such as AIOStreams provided the ordering). The TotalScore on these
+// results is meaningless (always 0), so UIs should hide it rather than display "Score 0".
+func markRankingBypassed(r models.NZBResult) models.NZBResult {
+	if r.Attributes == nil {
+		r.Attributes = map[string]string{}
+	}
+	r.Attributes["ranking_bypassed"] = "true"
+	return r
 }
