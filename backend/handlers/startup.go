@@ -448,6 +448,13 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 	// Build lookup maps (mirrors the frontend's ContinueWatchingContext logic)
 	byItemID := make(map[string]float64, len(progress)*2)
 	byEpisode := make(map[string]float64)
+	// byExternalEpisode keys episode progress by each series-level external ID
+	// (tvdb/tmdb/imdb) so progress recorded under one provider ID still matches a
+	// continue-watching item that was canonicalised under a different one. This
+	// happens when a series' episodes get recorded under more than one series ID
+	// (e.g. E02 under tmdb:tv:220102 while E01/E03 use tvdb:series:450033).
+	byExternalEpisode := make(map[string]float64)
+	byEpisodeTvdb := make(map[string]float64)
 
 	for _, p := range progress {
 		if p.ItemID != "" {
@@ -456,13 +463,21 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 		if p.ID != "" {
 			byItemID[p.ID] = p.PercentWatched
 		}
-		if p.MediaType == "episode" && p.SeriesID != "" {
-			key := fmt.Sprintf("%s:S%dE%d", p.SeriesID, p.SeasonNumber, p.EpisodeNumber)
-			byEpisode[key] = p.PercentWatched
+		if p.MediaType == "episode" {
+			if p.SeriesID != "" {
+				key := fmt.Sprintf("%s:S%dE%d", p.SeriesID, p.SeasonNumber, p.EpisodeNumber)
+				byEpisode[key] = p.PercentWatched
+			}
+			for _, key := range seriesExternalEpisodeKeys(p.ExternalIDs, p.SeasonNumber, p.EpisodeNumber) {
+				byExternalEpisode[key] = p.PercentWatched
+			}
+			if epTvdb := strings.TrimSpace(p.ExternalIDs["episodeTvdb"]); epTvdb != "" {
+				byEpisodeTvdb[epTvdb] = p.PercentWatched
+			}
 		}
 	}
 
-	episodePercent := func(ep *models.EpisodeReference, seriesID string) float64 {
+	episodePercent := func(ep *models.EpisodeReference, item models.SeriesWatchState) float64 {
 		if ep == nil {
 			return 0
 		}
@@ -471,9 +486,19 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 				return pct
 			}
 		}
-		key := fmt.Sprintf("%s:S%dE%d", seriesID, ep.SeasonNumber, ep.EpisodeNumber)
+		key := fmt.Sprintf("%s:S%dE%d", item.SeriesID, ep.SeasonNumber, ep.EpisodeNumber)
 		if pct, ok := byEpisode[key]; ok {
 			return pct
+		}
+		for _, k := range seriesExternalEpisodeKeys(item.ExternalIDs, ep.SeasonNumber, ep.EpisodeNumber) {
+			if pct, ok := byExternalEpisode[k]; ok {
+				return pct
+			}
+		}
+		if ep.TvdbID != "" {
+			if pct, ok := byEpisodeTvdb[strings.TrimSpace(ep.TvdbID)]; ok {
+				return pct
+			}
 		}
 		return 0
 	}
@@ -488,8 +513,8 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 			merged[i].PercentWatched = moviePct
 			merged[i].ResumePercent = moviePct
 		} else {
-			nextPct := episodePercent(item.NextEpisode, item.SeriesID)
-			lastPct := episodePercent(&item.LastWatched, item.SeriesID)
+			nextPct := episodePercent(item.NextEpisode, item)
+			lastPct := episodePercent(&item.LastWatched, item)
 			isSame := item.LastWatched.SeasonNumber == item.NextEpisode.SeasonNumber &&
 				item.LastWatched.EpisodeNumber == item.NextEpisode.EpisodeNumber
 
@@ -508,6 +533,28 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 	}
 
 	return merged
+}
+
+// seriesExternalEpisodeKeys builds provider-agnostic episode lookup keys from a
+// series' external IDs (tvdb/tmdb/imdb). Keying episode progress by every known
+// provider ID lets progress and continue-watching items that reference the same
+// show under different series IDs still resolve to the same key.
+func seriesExternalEpisodeKeys(externalIDs map[string]string, season, episode int) []string {
+	if len(externalIDs) == 0 {
+		return nil
+	}
+	var keys []string
+	for _, idType := range []string{"tvdb", "tmdb", "imdb"} {
+		val := strings.TrimSpace(externalIDs[idType])
+		if val == "" {
+			continue
+		}
+		if idType == "imdb" {
+			val = strings.ToLower(val)
+		}
+		keys = append(keys, fmt.Sprintf("%s:%s:S%dE%d", idType, val, season, episode))
+	}
+	return keys
 }
 
 // slimTrendingItems strips heavy Title fields (releases, trailers, ratings,
