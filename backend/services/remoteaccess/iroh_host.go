@@ -300,6 +300,31 @@ func (m *IrohHostManager) validateWorkDirLocked() error {
 	return nil
 }
 
+// irohBinaryName is the compiled host binary produced by the Rust spike.
+const irohBinaryName = "iroh-direct-spike"
+
+// irohBinaryCandidates lists, in priority order, where a prebuilt host binary may live
+// under workDir. The target/release and target/debug paths cover a local `cargo build`;
+// the bare workDir/<name> path covers container images that drop only the compiled binary
+// into the work dir (see backend/Dockerfile's iroh build stage) without the cargo target tree.
+func irohBinaryCandidates(workDir string) []string {
+	return []string{
+		filepath.Join(workDir, "target", "release", irohBinaryName),
+		filepath.Join(workDir, "target", "debug", irohBinaryName),
+		filepath.Join(workDir, irohBinaryName),
+	}
+}
+
+// resolveIrohBinary returns the first existing prebuilt host binary under workDir, if any.
+func resolveIrohBinary(workDir string) (string, bool) {
+	for _, candidate := range irohBinaryCandidates(workDir) {
+		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
 func (m *IrohHostManager) buildCommand(ctx context.Context) *exec.Cmd {
 	args := []string{"host", "--bind", m.bind, "--origin", m.origin}
 	if m.rendezvousFile != "" {
@@ -308,12 +333,17 @@ func (m *IrohHostManager) buildCommand(ctx context.Context) *exec.Cmd {
 	if m.secretFile != "" {
 		args = append(args, "--secret-file", m.secretFile)
 	}
-	binary := filepath.Join(m.workDir, "target", "debug", "iroh-direct-spike")
-	if stat, err := os.Stat(binary); err == nil && !stat.IsDir() {
+	if binary, ok := resolveIrohBinary(m.workDir); ok {
+		// Log the resolved binary so a stale pick (e.g. an old target/release
+		// out-ranking current source) is visible at launch rather than only
+		// surfacing as an opaque "exit status 2" from clap arg rejection.
+		log.Printf("[remote-access][iroh] using host binary: %s", binary)
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Dir = m.workDir
 		return cmd
 	}
+	// No prebuilt binary (local dev without a build) — fall back to `cargo run`.
+	log.Printf("[remote-access][iroh] no prebuilt host binary under %s; falling back to `cargo run`", m.workDir)
 	cmd := exec.CommandContext(ctx, "cargo", append([]string{"run", "--"}, args...)...)
 	cmd.Dir = m.workDir
 	return cmd

@@ -2,6 +2,7 @@ package remoteaccess
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,6 +60,62 @@ func TestBuildCommandSecretFileArg(t *testing.T) {
 		if arg == "--secret-file" {
 			t.Fatalf("args should omit --secret-file when unset: %v", cmd.Args)
 		}
+	}
+}
+
+// buildCommand must run a prebuilt binary directly (no cargo) when one is dropped straight
+// into the work dir — the layout container images use (see backend/Dockerfile iroh stage).
+func TestBuildCommandUsesBareWorkDirBinary(t *testing.T) {
+	workDir := t.TempDir()
+	binary := filepath.Join(workDir, irohBinaryName)
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	m := &IrohHostManager{workDir: workDir, bind: defaultIrohBind, origin: defaultIrohOrigin}
+	cmd := m.buildCommand(context.Background())
+	if cmd.Path != binary {
+		t.Fatalf("cmd.Path = %q, want prebuilt binary %q", cmd.Path, binary)
+	}
+	if cmd.Dir != workDir {
+		t.Fatalf("cmd.Dir = %q, want %q", cmd.Dir, workDir)
+	}
+}
+
+// target/release wins over target/debug and the bare path; with no binary at all,
+// buildCommand falls back to `cargo run` for local dev.
+func TestResolveIrohBinaryPriorityAndFallback(t *testing.T) {
+	workDir := t.TempDir()
+	if _, ok := resolveIrohBinary(workDir); ok {
+		t.Fatalf("expected no binary in empty work dir")
+	}
+
+	debug := filepath.Join(workDir, "target", "debug", irohBinaryName)
+	if err := os.MkdirAll(filepath.Dir(debug), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(debug, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := resolveIrohBinary(workDir); got != debug {
+		t.Fatalf("resolveIrohBinary = %q, want debug %q", got, debug)
+	}
+
+	release := filepath.Join(workDir, "target", "release", irohBinaryName)
+	if err := os.MkdirAll(filepath.Dir(release), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(release, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := resolveIrohBinary(workDir); got != release {
+		t.Fatalf("resolveIrohBinary = %q, want release %q (release should win)", got, release)
+	}
+
+	cargoFallback := &IrohHostManager{workDir: t.TempDir(), bind: defaultIrohBind, origin: defaultIrohOrigin}
+	cmd := cargoFallback.buildCommand(context.Background())
+	if filepath.Base(cmd.Args[0]) != "cargo" {
+		t.Fatalf("expected cargo fallback when no binary present, got %v", cmd.Args)
 	}
 }
 

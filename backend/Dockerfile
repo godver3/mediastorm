@@ -36,6 +36,16 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     CGO_ENABLED=1 go build -o mediastorm .
 
+# iroh bridge build stage. The Go backend shells out to this Rust binary to host
+# the iroh remote-access endpoint, so the image needs a Linux build of it.
+FROM rust:1-bookworm AS iroh-builder
+WORKDIR /iroh
+COPY experiments/iroh-direct-spike/ ./
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/iroh/target,sharing=locked \
+    cargo build --release && \
+    cp target/release/iroh-direct-spike /iroh/iroh-direct-spike
+
 # Final stage
 FROM debian:bookworm-slim
 
@@ -101,6 +111,11 @@ WORKDIR /root/
 
 # Copy the binary from builder stage
 COPY --from=builder /app/mediastorm .
+
+# Copy the iroh remote-access bridge binary. MEDIASTORM_IROH_DIRECT_DIR points the
+# host manager at this dir; it runs <dir>/iroh-direct-spike directly (no cargo needed).
+COPY --from=iroh-builder /iroh/iroh-direct-spike /opt/iroh/iroh-direct-spike
+ENV MEDIASTORM_IROH_DIRECT_DIR=/opt/iroh
 
 # Copy version file
 COPY backend/version.txt /app/version.txt
