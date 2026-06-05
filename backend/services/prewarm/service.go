@@ -705,6 +705,17 @@ func (s *Service) RefreshURLs(ctx context.Context) error {
 			continue
 		}
 
+		// Pre-resolved external URLs (e.g. AIOStreams/Comet "/api/v1/proxy/..."
+		// links) are not debrid paths and can't be kept alive by re-unrestricting.
+		// They expire when the upstream addon refreshes and must be re-searched
+		// instead. Attempting GetDirectURL on them only logs a spurious
+		// "invalid debrid path format" warning every cycle. Staleness is handled
+		// by the stream-path validator (which probes the URL) and by 404
+		// invalidation at playback time, both of which force a fresh resolve.
+		if isExternalStreamURL(entry.StreamPath) {
+			continue
+		}
+
 		if time.Since(entry.LastRefresh) < refreshInterval {
 			continue
 		}
@@ -1037,6 +1048,13 @@ func (s *Service) isAdoptedEntry(entry *WarmEntry) bool {
 	defer s.adhocMu.RUnlock()
 	_, adopted := s.adhocEntries[entry.PrequeueID]
 	return adopted
+}
+
+// isExternalStreamURL reports whether a stream path is a pre-resolved external
+// HTTP(S) URL (e.g. AIOStreams/Comet proxy links) rather than a debrid/webdav path.
+func isExternalStreamURL(streamPath string) bool {
+	p := strings.TrimSpace(streamPath)
+	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://")
 }
 
 func entryKey(titleID, userID string, settingsScopeKey ...string) string {

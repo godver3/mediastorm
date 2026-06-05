@@ -171,6 +171,15 @@ func unknownTrackPolicyRejects(policy string, audioStreams []AudioStreamInfo, su
 	return false, ""
 }
 
+// DefaultExternalURLValidator probes a pre-resolved external stream URL (e.g.
+// AIOStreams/Comet proxy links) and returns an error when the link has expired,
+// so callers can drop the stale ready entry and force a fresh re-search. It is
+// the single source of truth for external-URL staleness, shared by the prequeue
+// reuse path and the prequeue store's stream-path validator.
+func DefaultExternalURLValidator(ctx context.Context, streamURL string) error {
+	return defaultExternalURLValidator(ctx, streamURL)
+}
+
 func defaultExternalURLValidator(ctx context.Context, streamURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, streamURL, nil)
 	if err != nil {

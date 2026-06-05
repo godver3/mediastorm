@@ -4908,6 +4908,13 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		for key, values := range resp.Header {
 			log.Printf("[video] external proxy error header: %s=%v", key, values)
 		}
+		// A 404/410 from a pre-resolved external URL (e.g. AIOStreams "404 - Link
+		// expired") means the addon refreshed and the link is dead. Drop the ready
+		// prequeue/prewarm entry so the next resolve re-searches for a fresh stream
+		// instead of repeatedly serving the expired link.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+			h.invalidatePrequeuesForFailedPath(externalURL)
+		}
 		http.Error(w, fmt.Sprintf("external stream error: %d", resp.StatusCode), resp.StatusCode)
 		return true, fmt.Errorf("external stream returned %d", resp.StatusCode)
 	}

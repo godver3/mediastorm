@@ -606,6 +606,49 @@ func TestRefreshURLs_CallsDebridRefresher(t *testing.T) {
 	}
 }
 
+func TestRefreshURLs_SkipsExternalProxyURLs(t *testing.T) {
+	refresher := &mockDebridRefresher{}
+
+	svc := NewService(nil, "")
+	svc.SetDebridStreaming(refresher)
+
+	// Pre-resolved AIOStreams proxy URL — not a debrid path, must not be sent
+	// through GetDirectURL (which would log "invalid debrid path format").
+	svc.entries[entryKey("title1", "user1")] = &WarmEntry{
+		TitleID:     "title1",
+		UserID:      "user1",
+		StreamPath:  "https://aiostreams.example.com/api/v1/proxy/abc123/stream.mkv",
+		LastRefresh: time.Now().Add(-10 * time.Minute),
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	}
+
+	err := svc.RefreshURLs(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshURLs failed: %v", err)
+	}
+
+	if len(refresher.calls) != 0 {
+		t.Errorf("expected 0 debrid refresh calls for external proxy URLs, got %d (%v)", len(refresher.calls), refresher.calls)
+	}
+}
+
+func TestIsExternalStreamURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://aiostreams.example.com/api/v1/proxy/x": true,
+		"http://comet.example.com/playback/x":           true,
+		"  https://leading.space/x  ":                    true,
+		"/debrid/rd/123/456":                             false,
+		"/webdav/title.mkv":                              false,
+		"localmedia:abc":                                 false,
+		"":                                               false,
+	}
+	for path, want := range cases {
+		if got := isExternalStreamURL(path); got != want {
+			t.Errorf("isExternalStreamURL(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestRefreshURLs_SkipsRecentlyRefreshed(t *testing.T) {
 	refresher := &mockDebridRefresher{}
 

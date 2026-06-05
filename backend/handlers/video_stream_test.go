@@ -60,6 +60,44 @@ func TestVideoHandlerStreamsFromMetadataProvider(t *testing.T) {
 	}
 }
 
+func TestVideoHandlerInvalidatesPrequeueOnExternalURL404(t *testing.T) {
+	// Simulate an expired AIOStreams proxy link returning "404 - Link expired".
+	expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "404 - Link expired. Re-search in your client.", http.StatusNotFound)
+	}))
+	defer expired.Close()
+
+	streamPath := expired.URL + "/api/v1/proxy/abc123/stream.mkv"
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	entry, _ := store.Create("title1", "Title", "user1", "series", 0,
+		&models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 1}, "prewarm")
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = streamPath
+	})
+
+	prewarm := &invalidationPrewarmMock{}
+	// Provider is irrelevant — external http URLs are proxied directly.
+	handler := NewVideoHandlerWithProvider(false, "", "", "", failingProvider{err: streaming.ErrNotFound})
+	handler.SetPrequeueStore(store)
+	handler.SetPrewarmService(prewarm)
+
+	req := httptest.NewRequest(http.MethodGet, "/video/stream?path="+url.QueryEscape(streamPath), nil)
+	rr := httptest.NewRecorder()
+
+	handler.StreamVideo(rr, req)
+
+	if rr.Result().StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rr.Result().StatusCode, http.StatusNotFound)
+	}
+	if _, ok := store.Get(entry.ID); ok {
+		t.Fatal("expected expired external-URL prequeue to be removed")
+	}
+	if len(prewarm.invalidated) != 1 || prewarm.invalidated[0] != entry.ID {
+		t.Fatalf("expected prewarm invalidation for %s, got %#v", entry.ID, prewarm.invalidated)
+	}
+}
+
 type failingProvider struct {
 	err error
 }
