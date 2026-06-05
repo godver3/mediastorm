@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"novastream/internal/importer"
 	"novastream/internal/integration"
 	"novastream/internal/mediaresolve"
+	metapb "novastream/internal/nzb/metadata/proto"
 	"novastream/models"
 	"novastream/services/debrid"
 	usenetsvc "novastream/services/usenet"
@@ -41,6 +43,7 @@ var _ usenetHealthService = (*usenetsvc.Service)(nil)
 type metadataService interface {
 	ListDirectory(virtualPath string) ([]string, error)
 	ListSubdirectories(virtualPath string) ([]string, error)
+	GetFileMetadata(virtualPath string) (*metapb.FileMetadata, error)
 }
 
 // Service coordinates NZB validation and prepares backend-hosted playback streams.
@@ -212,6 +215,12 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 			finalPath = mediaFile
 			log.Printf("[playback] selected media file from directory: %q", finalPath)
 		}
+	}
+	if isNonContentMediaPath(finalPath) {
+		return nil, fmt.Errorf("resolved media path appears to be a sample/extras file: %s", path.Base(finalPath))
+	}
+	if err := s.validateResolvedMediaFile(finalPath, storagePath, candidate); err != nil {
+		return nil, err
 	}
 
 	sourceNZBPath := strings.TrimSpace(fileName)
@@ -451,6 +460,26 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 
 	log.Printf("[playback] NZB processed successfully, storagePath=%q", storagePath)
 
+	finalPath := storagePath
+	if s.metadataSvc != nil && s.isLikelyDirectory(storagePath) {
+		log.Printf("[playback] storagePath appears to be a directory, scanning for media files: %q", storagePath)
+		hints := buildSelectionHintsFromCandidate(result.Candidate, storagePath)
+		mediaFile, findErr := s.findBestMediaFile(storagePath, hints)
+		if findErr != nil {
+			return nil, fmt.Errorf("directory contains no playable media files: %w", findErr)
+		}
+		if mediaFile != "" {
+			finalPath = mediaFile
+			log.Printf("[playback] selected media file from directory: %q", finalPath)
+		}
+	}
+	if isNonContentMediaPath(finalPath) {
+		return nil, fmt.Errorf("resolved media path appears to be a sample/extras file: %s", path.Base(finalPath))
+	}
+	if err := s.validateResolvedMediaFile(finalPath, storagePath, result.Candidate); err != nil {
+		return nil, err
+	}
+
 	sourceNZBPath := strings.TrimSpace(result.FileName)
 	if result.Check != nil && strings.TrimSpace(result.Check.FileName) != "" {
 		sourceNZBPath = strings.TrimSpace(result.Check.FileName)
@@ -470,8 +499,8 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 		}
 	}
 
-	// Prepend WebDAV prefix to the storage path
-	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), storagePath)
+	// Prepend WebDAV prefix to the final path (file, not directory)
+	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), finalPath)
 
 	resolution := &models.PlaybackResolution{
 		HealthStatus:  "healthy",
@@ -661,6 +690,11 @@ func ensureNZBExtension(name string) string {
 }
 
 const webDAVScanMaxDepth = 3
+const (
+	suspiciousSelectedMediaMinAdvertisedSize = 300 * 1024 * 1024
+	suspiciousSelectedMediaMaxSize           = 100 * 1024 * 1024
+	suspiciousSelectedMediaRatioDivisor      = 4
+)
 
 var playableExtensionPriority = map[string]int{
 	".mp4":  0,
@@ -676,6 +710,8 @@ var playableExtensionPriority = map[string]int{
 	".mts":  7,
 }
 
+var episodeSpecificReleasePattern = regexp.MustCompile(`(?i)s\d{1,2}\s*e\d{1,4}`)
+
 type webDAVEntry struct {
 	Name  string
 	Size  int64
@@ -685,6 +721,106 @@ type webDAVEntry struct {
 type mediaFileCandidate struct {
 	path     string
 	priority int
+}
+
+func isNonContentMediaPath(mediaPath string) bool {
+	base := strings.ToLower(path.Base(strings.TrimSpace(mediaPath)))
+	if base == "" || base == "." || base == "/" {
+		return false
+	}
+	if _, ok := playableExtensionPriority[strings.ToLower(path.Ext(base))]; !ok {
+		return false
+	}
+	return strings.Contains(base, "sample") ||
+		strings.Contains(base, "extras") ||
+		strings.Contains(base, "trailer") ||
+		strings.Contains(base, "featurette") ||
+		strings.Contains(base, "bonus") ||
+		strings.Contains(base, "promo")
+}
+
+func fileSizeFromPtr(size *int64) int64 {
+	if size == nil {
+		return 0
+	}
+	return *size
+}
+
+func (s *Service) validateResolvedMediaFile(finalPath, storagePath string, candidate models.NZBResult) error {
+	if s.metadataSvc == nil {
+		return nil
+	}
+	selectedSize := s.fileSizeForPath(finalPath)
+	if selectedSize <= 0 {
+		return nil
+	}
+
+	expectedSize := expectedPerFileSize(candidate)
+	if expectedSize <= 0 {
+		return nil
+	}
+
+	if selectedSize < suspiciousSelectedMediaMaxSize &&
+		expectedSize >= suspiciousSelectedMediaMinAdvertisedSize &&
+		selectedSize*suspiciousSelectedMediaRatioDivisor < expectedSize {
+		log.Printf("[playback] rejected suspiciously small media selection finalPath=%q storagePath=%q selectedSize=%d expectedSize=%d title=%q",
+			finalPath, storagePath, selectedSize, expectedSize, candidate.Title)
+		return fmt.Errorf("resolved media file appears to be a short sample: %s (%d MB selected from %d MB release)",
+			path.Base(finalPath), selectedSize/(1024*1024), expectedSize/(1024*1024))
+	}
+
+	return nil
+}
+
+func (s *Service) fileSizeForPath(filePath string) int64 {
+	if s.metadataSvc == nil || strings.TrimSpace(filePath) == "" {
+		return 0
+	}
+	meta, err := s.metadataSvc.GetFileMetadata(filePath)
+	if err != nil {
+		log.Printf("[playback] failed to read metadata for selected media file %q: %v", filePath, err)
+		return 0
+	}
+	if meta == nil {
+		return 0
+	}
+	return meta.GetFileSize()
+}
+
+func expectedPerFileSize(candidate models.NZBResult) int64 {
+	if candidate.SizeBytes <= 0 {
+		return 0
+	}
+	if candidate.SizePerFile {
+		return candidate.SizeBytes
+	}
+	if candidate.EpisodeCount > 1 {
+		return 0
+	}
+	if isEpisodeSpecificRelease(candidate) {
+		return candidate.SizeBytes
+	}
+	return 0
+}
+
+func isEpisodeSpecificRelease(candidate models.NZBResult) bool {
+	title := strings.ToLower(strings.TrimSpace(candidate.Title))
+	if title == "" {
+		return false
+	}
+	if candidate.Attributes != nil {
+		if code := strings.ToLower(strings.TrimSpace(candidate.Attributes["targetEpisodeCode"])); code != "" && strings.Contains(title, strings.ToLower(code)) {
+			return true
+		}
+		if season, _ := strconv.Atoi(strings.TrimSpace(candidate.Attributes["targetSeason"])); season > 0 {
+			if episode, _ := strconv.Atoi(strings.TrimSpace(candidate.Attributes["targetEpisode"])); episode > 0 {
+				if strings.Contains(title, fmt.Sprintf("s%02de%02d", season, episode)) {
+					return true
+				}
+			}
+		}
+	}
+	return episodeSpecificReleasePattern.MatchString(title)
 }
 
 // buildSelectionHintsFromCandidate extracts selection hints from an NZBResult for file matching.
@@ -944,6 +1080,15 @@ func (s *Service) buildResolutionFromCompletedItem(queueItem *database.ImportQue
 		} else {
 			log.Printf("[playback] WARNING: no media file found in directory %q", storagePath)
 		}
+	}
+	if isNonContentMediaPath(finalPath) {
+		return nil, fmt.Errorf("resolved media path appears to be a sample/extras file: %s", path.Base(finalPath))
+	}
+	if err := s.validateResolvedMediaFile(finalPath, storagePath, models.NZBResult{
+		Title:     meta.SourceNZBPath,
+		SizeBytes: fileSizeFromPtr(queueItem.FileSize),
+	}); err != nil {
+		return nil, err
 	}
 
 	settings, err := s.cfg.Load()
