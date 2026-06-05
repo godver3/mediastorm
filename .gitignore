@@ -140,3 +140,9 @@ build.sh
 # Deployment and utility scripts
 deploy/
 scripts/
+
+# Throwaway usenet benchmark harnesses (kept locally, not tracked)
+backend/tools/benchfb/
+backend/tools/benchrar/
+backend/benchfb
+backend/benchrar
