@@ -17,10 +17,11 @@ type fakeInviteRepo struct {
 }
 
 type fakeHost struct {
-	invite  string
-	running bool
-	ensures int
-	stops   int
+	invite         string
+	running        bool
+	ensures        int
+	stops          int
+	publishedCodes []string
 }
 
 func newFakeInviteRepo() *fakeInviteRepo {
@@ -53,6 +54,11 @@ func (h *fakeHost) Status(ctx context.Context) models.RemoteAccessStatus {
 		State:       "test",
 		ActiveHosts: boolToInt(h.running),
 	}
+}
+
+func (h *fakeHost) PublishRendezvousRecords(ctx context.Context, codes []string, invite string) error {
+	h.publishedCodes = append(h.publishedCodes, codes...)
+	return nil
 }
 
 func (r *fakeInviteRepo) Get(ctx context.Context, id string) (*models.RemoteAccessInvite, error) {
@@ -144,6 +150,9 @@ func TestCreateInviteStartsSharedIrohHost(t *testing.T) {
 	if inv.IrohInvite != "mshost-iroh-direct-test" {
 		t.Fatalf("iroh invite = %q, want resolved iroh invite", inv.IrohInvite)
 	}
+	if len(host.publishedCodes) != 1 || host.publishedCodes[0] != inv.ConnectionCode {
+		t.Fatalf("published codes = %v, want [%s]", host.publishedCodes, inv.ConnectionCode)
+	}
 }
 
 func TestSuperviseStopsHostWhenNoActiveInvites(t *testing.T) {
@@ -230,7 +239,7 @@ func TestSuperviseKeepsHostAfterClaimedInviteExpires(t *testing.T) {
 	}
 }
 
-func TestResolveInviteAllowsClaimedInviteAfterUnusedExpiry(t *testing.T) {
+func TestResolveInviteRejectsClaimedInvite(t *testing.T) {
 	repo := newFakeInviteRepo()
 	host := &fakeHost{invite: "mshost-iroh-direct-new"}
 	svc := NewService(repo, host)
@@ -249,12 +258,8 @@ func TestResolveInviteAllowsClaimedInviteAfterUnusedExpiry(t *testing.T) {
 	stored.IrohInvite = "mshost-iroh-direct-old"
 	repo.byID[inv.ID] = stored
 
-	resolved, err := svc.ResolveInvite(context.Background(), inv.Token)
-	if err != nil {
-		t.Fatalf("ResolveInvite returned error: %v", err)
-	}
-	if resolved.IrohInvite != "mshost-iroh-direct-new" {
-		t.Fatalf("resolved Iroh invite = %q, want refreshed host invite", resolved.IrohInvite)
+	if _, err := svc.ResolveInvite(context.Background(), inv.Token); err != ErrInviteUsed {
+		t.Fatalf("ResolveInvite error = %v, want ErrInviteUsed", err)
 	}
 }
 

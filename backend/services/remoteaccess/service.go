@@ -47,6 +47,14 @@ type RendezvousPublisher interface {
 	RendezvousFilePath() string
 }
 
+// RendezvousImmediatePublisher is implemented by hosts that can publish records on
+// demand. The background host publisher still refreshes records; this fast path makes a
+// freshly created code usable immediately and gives us clearer logging when publishing
+// fails.
+type RendezvousImmediatePublisher interface {
+	PublishRendezvousRecords(ctx context.Context, codes []string, invite string) error
+}
+
 type CreateInviteRequest struct {
 	PeerName  string
 	ExpiresIn time.Duration
@@ -131,6 +139,7 @@ func (s *Service) CreateInvite(ctx context.Context, createdBy string, req Create
 	// Best-effort: the host re-reads the file on a timer and Supervise rewrites it
 	// every minute, so a transient failure here self-heals.
 	s.trySyncRendezvousCodes(ctx)
+	s.tryPublishRendezvousCodes(ctx, []string{inv.ConnectionCode}, irohInvite)
 	inv.Token = token
 	return inv, nil
 }
@@ -215,6 +224,9 @@ func (s *Service) ResolveInvite(ctx context.Context, token string) (models.Remot
 	now := s.now()
 	if inv.RevokedAt != nil {
 		return models.RemoteAccessInvite{}, ErrInviteRevoked
+	}
+	if inv.UsedAt != nil {
+		return models.RemoteAccessInvite{}, ErrInviteUsed
 	}
 	if inv.UsedAt == nil && !now.Before(inv.ExpiresAt) {
 		return models.RemoteAccessInvite{}, ErrInviteExpired
@@ -316,6 +328,14 @@ func (s *Service) Supervise(ctx context.Context) (SyncSummary, error) {
 		}
 		summary.Updated++
 	}
+	publishable := filterPublishableInvites(active, s.now())
+	codes := make([]string, 0, len(publishable))
+	for i := range publishable {
+		if code := strings.TrimSpace(publishable[i].ConnectionCode); code != "" {
+			codes = append(codes, code)
+		}
+	}
+	s.tryPublishRendezvousCodes(ctx, codes, irohInvite)
 	return summary, nil
 }
 
@@ -324,6 +344,16 @@ func (s *Service) Supervise(ctx context.Context) (SyncSummary, error) {
 func (s *Service) trySyncRendezvousCodes(ctx context.Context) {
 	if err := s.syncRendezvousCodes(ctx); err != nil {
 		log.Printf("[remote-access] failed to sync rendezvous codes: %v", err)
+	}
+}
+
+func (s *Service) tryPublishRendezvousCodes(ctx context.Context, codes []string, invite string) {
+	publisher, ok := s.host.(RendezvousImmediatePublisher)
+	if !ok || len(codes) == 0 || strings.TrimSpace(invite) == "" {
+		return
+	}
+	if err := publisher.PublishRendezvousRecords(ctx, codes, invite); err != nil {
+		log.Printf("[remote-access] failed to publish rendezvous codes: %v", err)
 	}
 }
 

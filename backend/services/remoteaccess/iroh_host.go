@@ -103,6 +103,42 @@ func (m *IrohHostManager) RendezvousFilePath() string {
 	return m.rendezvousFile
 }
 
+func (m *IrohHostManager) PublishRendezvousRecords(ctx context.Context, codes []string, invite string) error {
+	invite = strings.TrimSpace(invite)
+	if invite == "" || len(codes) == 0 {
+		return nil
+	}
+	if err := m.validateWorkDirForPublish(); err != nil {
+		return err
+	}
+	for _, code := range codes {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		if err := m.publishRendezvousRecord(ctx, code, invite); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *IrohHostManager) publishRendezvousRecord(ctx context.Context, code, invite string) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := m.buildRendezvousPublishCommand(ctx, code, invite)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(output))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("publish rendezvous code %s: %s", code, msg)
+	}
+	log.Printf("[remote-access][iroh] rendezvous published code=%s", code)
+	return nil
+}
+
 func (m *IrohHostManager) Ensure(ctx context.Context) (string, error) {
 	m.mu.Lock()
 	if m.isRunningLocked() {
@@ -300,6 +336,19 @@ func (m *IrohHostManager) validateWorkDirLocked() error {
 	return nil
 }
 
+func (m *IrohHostManager) validateWorkDirForPublish() error {
+	m.mu.RLock()
+	workDir := m.workDir
+	m.mu.RUnlock()
+	if workDir == "" {
+		return errors.New("iroh-direct-spike directory not found")
+	}
+	if stat, err := os.Stat(workDir); err != nil || !stat.IsDir() {
+		return fmt.Errorf("iroh-direct-spike directory unavailable: %s", workDir)
+	}
+	return nil
+}
+
 // irohBinaryName is the compiled host binary produced by the Rust spike.
 const irohBinaryName = "iroh-direct-spike"
 
@@ -346,6 +395,21 @@ func (m *IrohHostManager) buildCommand(ctx context.Context) *exec.Cmd {
 	log.Printf("[remote-access][iroh] no prebuilt host binary under %s; falling back to `cargo run`", m.workDir)
 	cmd := exec.CommandContext(ctx, "cargo", append([]string{"run", "--"}, args...)...)
 	cmd.Dir = m.workDir
+	return cmd
+}
+
+func (m *IrohHostManager) buildRendezvousPublishCommand(ctx context.Context, code, invite string) *exec.Cmd {
+	m.mu.RLock()
+	workDir := m.workDir
+	m.mu.RUnlock()
+	args := []string{"rendezvous-publish", "--code", code, "--invite", invite}
+	if binary, ok := resolveIrohBinary(workDir); ok {
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = workDir
+		return cmd
+	}
+	cmd := exec.CommandContext(ctx, "cargo", append([]string{"run", "--"}, args...)...)
+	cmd.Dir = workDir
 	return cmd
 }
 
