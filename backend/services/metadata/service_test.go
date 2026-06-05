@@ -770,6 +770,12 @@ func TestExtractTitleFields(t *testing.T) {
 		Network:       "HBO",
 		Certification: "TV-MA",
 		Popularity:    85.5,
+		Poster:        &models.Image{URL: "https://example.com/poster.jpg", Type: "poster"},
+		TextPoster:    &models.Image{URL: "https://example.com/text-poster.jpg", Type: "poster"},
+		Backdrop:      &models.Image{URL: "https://example.com/backdrop.jpg", Type: "backdrop"},
+		TextBackdrop:  &models.Image{URL: "https://example.com/text-backdrop.jpg", Type: "backdrop"},
+		Backdrops:     []models.Image{{URL: "https://example.com/alt-backdrop.jpg", Type: "backdrop"}},
+		Logo:          &models.Image{URL: "https://example.com/logo.png", Type: "logo"},
 		Ratings:       []models.Rating{{Source: "imdb", Value: 8.5, Max: 10}},
 	}
 
@@ -790,6 +796,45 @@ func TestExtractTitleFields(t *testing.T) {
 				}
 				if len(out.Genres) != 0 {
 					t.Errorf("genres should be empty, got %v", out.Genres)
+				}
+			},
+		},
+		{
+			name:   "image aliases",
+			fields: []string{"images"},
+			check: func(t *testing.T, out models.Title) {
+				if out.Poster == nil || out.Poster.URL != "https://example.com/poster.jpg" {
+					t.Fatalf("expected poster image, got %#v", out.Poster)
+				}
+				if out.TextPoster == nil || out.TextPoster.URL != "https://example.com/text-poster.jpg" {
+					t.Fatalf("expected text poster image, got %#v", out.TextPoster)
+				}
+				if out.Backdrop == nil || out.Backdrop.URL != "https://example.com/backdrop.jpg" {
+					t.Fatalf("expected backdrop image, got %#v", out.Backdrop)
+				}
+				if out.TextBackdrop == nil || out.TextBackdrop.URL != "https://example.com/text-backdrop.jpg" {
+					t.Fatalf("expected text backdrop image, got %#v", out.TextBackdrop)
+				}
+				if len(out.Backdrops) != 1 {
+					t.Fatalf("expected alternate backdrops, got %#v", out.Backdrops)
+				}
+				if out.Logo == nil || out.Logo.URL != "https://example.com/logo.png" {
+					t.Fatalf("expected logo image, got %#v", out.Logo)
+				}
+			},
+		},
+		{
+			name:   "text poster and logo aliases",
+			fields: []string{"textPoster", "logo"},
+			check: func(t *testing.T, out models.Title) {
+				if out.TextPoster == nil || out.TextPoster.URL != "https://example.com/text-poster.jpg" {
+					t.Fatalf("expected text poster image, got %#v", out.TextPoster)
+				}
+				if out.Logo == nil || out.Logo.URL != "https://example.com/logo.png" {
+					t.Fatalf("expected logo image, got %#v", out.Logo)
+				}
+				if out.Poster != nil || out.Backdrop != nil {
+					t.Fatalf("did not expect poster/backdrop, got poster=%#v backdrop=%#v", out.Poster, out.Backdrop)
 				}
 			},
 		},

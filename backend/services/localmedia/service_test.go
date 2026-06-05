@@ -614,6 +614,55 @@ func TestListGroupsExcludesMissingByDefault(t *testing.T) {
 	}
 }
 
+func TestListGroupsIncludeCardsOmitsNestedItemsAndSeasons(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &fakeLocalMediaRepo{
+		library: &models.LocalMediaLibrary{
+			ID:        "lib1",
+			Name:      "Shows",
+			Type:      models.LocalMediaLibraryTypeShow,
+			RootPath:  t.TempDir(),
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		items: map[string]*models.LocalMediaItem{
+			"show/S01E01.mkv": {
+				ID:             "item1",
+				LibraryID:      "lib1",
+				RelativePath:   "show/S01E01.mkv",
+				FileName:       "S01E01.mkv",
+				MatchedTitleID: "tvdb:series:123",
+				MatchedName:    "Example Show",
+				MatchedYear:    2024,
+				LibraryType:    models.LocalMediaLibraryTypeShow,
+				SeasonNumber:   1,
+				EpisodeNumber:  1,
+				UpdatedAt:      now,
+				CreatedAt:      now,
+			},
+		},
+	}
+	service := &Service{repo: repo}
+
+	result, err := service.ListGroups(context.Background(), "lib1", models.LocalMediaItemListQuery{IncludeCards: true})
+	if err != nil {
+		t.Fatalf("ListGroups error: %v", err)
+	}
+	if len(result.Groups) != 1 {
+		t.Fatalf("len(result.Groups) = %d, want 1", len(result.Groups))
+	}
+	group := result.Groups[0]
+	if group.Title != "Example Show" || group.Year != 2024 || group.ItemCount != 1 {
+		t.Fatalf("unexpected card group: %+v", group)
+	}
+	if group.Items != nil {
+		t.Fatalf("expected nil Items for card projection, got %#v", group.Items)
+	}
+	if group.Seasons != nil {
+		t.Fatalf("expected nil Seasons for card projection, got %#v", group.Seasons)
+	}
+}
+
 func TestUpdateItemMatchRefreshesLibrarySummary(t *testing.T) {
 	now := time.Now().UTC()
 	repo := &fakeLocalMediaRepo{

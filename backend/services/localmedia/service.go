@@ -430,6 +430,15 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 		pageGroups = []models.LocalMediaItemGroup{}
 	}
 
+	if query.IncludeCards {
+		return &models.LocalMediaGroupListResult{
+			Groups: trimLocalMediaGroupsToCards(pageGroups),
+			Total:  total,
+			Limit:  query.Limit,
+			Offset: query.Offset,
+		}, nil
+	}
+
 	// Enrich only items in the current page so we don't make TMDB/TVDB calls
 	// for the entire library on every request.
 	pageItems := collectItemsFromGroups(pageGroups)
@@ -442,6 +451,16 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 		Limit:  query.Limit,
 		Offset: query.Offset,
 	}, nil
+}
+
+func trimLocalMediaGroupsToCards(groups []models.LocalMediaItemGroup) []models.LocalMediaItemGroup {
+	trimmed := make([]models.LocalMediaItemGroup, len(groups))
+	for i, group := range groups {
+		group.Items = nil
+		group.Seasons = nil
+		trimmed[i] = group
+	}
+	return trimmed
 }
 
 type localMediaGroupAccumulator struct {

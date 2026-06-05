@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -452,5 +453,125 @@ func TestGetCalendar_AirTimeNotFabricatedForMovies(t *testing.T) {
 	}
 	if resp.Items[0].AirTimezone != "" {
 		t.Errorf("AirTimezone should remain empty for items without original air time, got %q", resp.Items[0].AirTimezone)
+	}
+}
+
+func TestGetCalendarCompactTruncatesEpisodeOverview(t *testing.T) {
+	futureDate := time.Now().AddDate(0, 0, 5).Format("2006-01-02")
+	longOverview := strings.Repeat("A", 320)
+
+	meta := &calendarMockMetadataWithData{
+		series: map[int64]*models.SeriesDetails{
+			100: {
+				Title: models.Title{Name: "Compact Show", TVDBID: 100},
+				Seasons: []models.SeriesSeason{
+					{Number: 1, Episodes: []models.SeriesEpisode{
+						{
+							Name:          "Ep 1",
+							Overview:      longOverview,
+							SeasonNumber:  1,
+							EpisodeNumber: 1,
+							AiredDate:     futureDate,
+						},
+					}},
+				},
+			},
+		},
+	}
+	wl := &calendarMockWatchlistWithData{
+		items: []models.WatchlistItem{
+			{ID: "tvdb:100", MediaType: "series", Name: "Compact Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+		},
+	}
+	svc := calendar.New(
+		meta, wl,
+		&calendarMockHistory{},
+		&calendarMockUserSettings{},
+		&calendarMockUsers{},
+	)
+	h := handlers.NewCalendarHandler(svc, &mockCalendarUserService{exists: map[string]bool{"user1": true}}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/calendar?compact=1", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetCalendar(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp models.CalendarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("expected 1 item, got %d", resp.Total)
+	}
+	if len([]rune(resp.Items[0].EpisodeOverview)) != 240 {
+		t.Fatalf("overview length = %d, want 240", len([]rune(resp.Items[0].EpisodeOverview)))
+	}
+}
+
+func TestGetCalendarHomeLimitsCandidateWindow(t *testing.T) {
+	meta := &calendarMockMetadataWithData{series: map[int64]*models.SeriesDetails{}}
+	for i := 0; i < 90; i++ {
+		tvdbID := int64(1000 + i)
+		meta.series[tvdbID] = &models.SeriesDetails{
+			Title: models.Title{Name: fmt.Sprintf("Show %d", i), TVDBID: tvdbID},
+			Seasons: []models.SeriesSeason{
+				{Number: 1, Episodes: []models.SeriesEpisode{
+					{
+						Name:          fmt.Sprintf("Recent %d", i),
+						SeasonNumber:  1,
+						EpisodeNumber: 1,
+						AiredDate:     time.Now().AddDate(0, 0, -89+i).Format("2006-01-02"),
+					},
+					{
+						Name:          fmt.Sprintf("Future %d", i),
+						SeasonNumber:  1,
+						EpisodeNumber: 2,
+						AiredDate:     time.Now().AddDate(0, 0, i+1).Format("2006-01-02"),
+					},
+				}},
+			},
+		}
+	}
+
+	watchlist := make([]models.WatchlistItem, 0, len(meta.series))
+	for tvdbID := range meta.series {
+		watchlist = append(watchlist, models.WatchlistItem{
+			ID:          fmt.Sprintf("tvdb:%d", tvdbID),
+			MediaType:   "series",
+			Name:        fmt.Sprintf("Show %d", tvdbID),
+			ExternalIDs: map[string]string{"tvdb": fmt.Sprint(tvdbID)},
+		})
+	}
+	svc := calendar.New(
+		meta,
+		&calendarMockWatchlistWithData{items: watchlist},
+		&calendarMockHistory{},
+		&calendarMockUserSettings{},
+		&calendarMockUsers{},
+	)
+	h := handlers.NewCalendarHandler(svc, &mockCalendarUserService{exists: map[string]bool{"user1": true}}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/calendar?recentDays=90&days=90&home=1&limit=20", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetCalendar(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp models.CalendarResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total > 120 {
+		t.Fatalf("expected home calendar to cap candidates at 120 or less, got %d", resp.Total)
+	}
+	if resp.Total < 60 {
+		t.Fatalf("expected enough home candidates for shelf filtering, got %d", resp.Total)
 	}
 }

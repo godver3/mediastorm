@@ -283,6 +283,42 @@ func (h *HistoryHandler) ListWatchHistory(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("fields")), "status") {
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "keys") {
+			type watchStatusKeysProjection struct {
+				Watched []string `json:"watched"`
+			}
+			watched := make([]string, 0, len(items))
+			for _, item := range items {
+				if !item.Watched {
+					continue
+				}
+				key := strings.ToLower(strings.TrimSpace(item.MediaType)) + ":" + strings.ToLower(strings.TrimSpace(item.ItemID))
+				if key == ":" {
+					continue
+				}
+				watched = append(watched, key)
+			}
+			json.NewEncoder(w).Encode(watchStatusKeysProjection{Watched: watched})
+			return
+		}
+
+		type watchStatusProjection struct {
+			MediaType string `json:"mediaType"`
+			ItemID    string `json:"itemId"`
+			Watched   bool   `json:"watched"`
+		}
+		projected := make([]watchStatusProjection, 0, len(items))
+		for _, item := range items {
+			projected = append(projected, watchStatusProjection{
+				MediaType: item.MediaType,
+				ItemID:    item.ItemID,
+				Watched:   item.Watched,
+			})
+		}
+		json.NewEncoder(w).Encode(projected)
+		return
+	}
 	json.NewEncoder(w).Encode(items)
 }
 

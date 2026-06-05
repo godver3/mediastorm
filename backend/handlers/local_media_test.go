@@ -23,6 +23,7 @@ type fakeLocalMediaPlaybackService struct {
 	libraries []models.LocalMediaLibrary
 	groups    *models.LocalMediaGroupListResult
 	matches   []models.LocalMediaMatchedGroup
+	lastQuery models.LocalMediaItemListQuery
 	err       error
 }
 
@@ -45,6 +46,7 @@ func (f *fakeLocalMediaPlaybackService) ListLibraries(ctx context.Context) ([]mo
 }
 
 func (f *fakeLocalMediaPlaybackService) ListGroups(ctx context.Context, libraryID string, query models.LocalMediaItemListQuery) (*models.LocalMediaGroupListResult, error) {
+	f.lastQuery = query
 	return f.groups, f.err
 }
 
@@ -250,7 +252,7 @@ func TestLocalMediaHandlerListLibrariesEmpty(t *testing.T) {
 }
 
 func TestLocalMediaHandlerListGroups(t *testing.T) {
-	handler := NewLocalMediaHandler(&fakeLocalMediaPlaybackService{
+	service := &fakeLocalMediaPlaybackService{
 		groups: &models.LocalMediaGroupListResult{
 			Groups: []models.LocalMediaItemGroup{
 				{ID: "g1", Title: "Inception", LibraryType: models.LocalMediaLibraryTypeMovie, ItemCount: 1},
@@ -258,9 +260,10 @@ func TestLocalMediaHandlerListGroups(t *testing.T) {
 			Total: 1,
 			Limit: 50,
 		},
-	}, fakeLocalMediaUsersProvider{}, false)
+	}
+	handler := NewLocalMediaHandler(service, fakeLocalMediaUsersProvider{}, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries/lib1/groups", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries/lib1/groups?include=cards", nil)
 	req = mux.SetURLVars(req, map[string]string{"libraryID": "lib1"})
 	rec := httptest.NewRecorder()
 	handler.ListGroups(rec, req)
@@ -274,6 +277,9 @@ func TestLocalMediaHandlerListGroups(t *testing.T) {
 	}
 	if len(result.Groups) != 1 || result.Groups[0].ID != "g1" {
 		t.Fatalf("unexpected groups: %+v", result)
+	}
+	if !service.lastQuery.IncludeCards {
+		t.Fatal("expected IncludeCards to be true")
 	}
 }
 

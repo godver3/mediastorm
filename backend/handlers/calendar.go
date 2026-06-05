@@ -77,6 +77,17 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 
 	// Parse optional source filter
 	sourceFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("source")))
+	compact := parseCalendarBoolQuery(r.URL.Query().Get("compact"))
+	home := parseCalendarBoolQuery(r.URL.Query().Get("home"))
+	homeLimit := 20
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			homeLimit = parsed
+		}
+	}
+	if homeLimit > 100 {
+		homeLimit = 100
+	}
 
 	cached := h.Service.Get(userID)
 	if cached == nil {
@@ -121,6 +132,9 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 			adjusted.AirTime = airInTZ.Format("15:04")
 			adjusted.AirTimezone = loc.String()
 		}
+		if compact {
+			adjusted.EpisodeOverview = compactCalendarText(adjusted.EpisodeOverview, 240)
+		}
 		result = append(result, adjusted)
 	}
 
@@ -135,6 +149,9 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	if result == nil {
 		result = []models.CalendarItem{}
 	}
+	if home {
+		result = limitCalendarForHome(result, loc, homeLimit)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(models.CalendarResponse{
@@ -145,6 +162,62 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		RecentDays:  recentDays,
 		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
 	})
+}
+
+func limitCalendarForHome(items []models.CalendarItem, loc *time.Location, limit int) []models.CalendarItem {
+	if len(items) == 0 || limit <= 0 {
+		return []models.CalendarItem{}
+	}
+	candidateLimit := limit * 3
+	if candidateLimit < 60 {
+		candidateLimit = 60
+	}
+	if candidateLimit > 200 {
+		candidateLimit = 200
+	}
+
+	now := time.Now().In(loc)
+	recent := make([]models.CalendarItem, 0, candidateLimit)
+	upcoming := make([]models.CalendarItem, 0, candidateLimit)
+	for _, item := range items {
+		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone).In(loc)
+		if airDT.After(now) {
+			if len(upcoming) < candidateLimit {
+				upcoming = append(upcoming, item)
+			}
+			continue
+		}
+		recent = append(recent, item)
+		if len(recent) > candidateLimit {
+			recent = recent[1:]
+		}
+	}
+
+	limited := make([]models.CalendarItem, 0, len(recent)+len(upcoming))
+	limited = append(limited, recent...)
+	limited = append(limited, upcoming...)
+	return limited
+}
+
+func parseCalendarBoolQuery(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactCalendarText(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if maxRunes <= 0 || value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxRunes]))
 }
 
 // Options handles CORS preflight.

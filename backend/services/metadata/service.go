@@ -4502,13 +4502,38 @@ func extractTitleFields(full *models.Title, fields []string) models.Title {
 			out.Popularity = full.Popularity
 		case "poster":
 			out.Poster = full.Poster
+		case "textposter", "text_poster", "textposterurl":
+			out.TextPoster = full.TextPoster
 		case "backdrop":
 			out.Backdrop = full.Backdrop
+		case "textbackdrop", "text_backdrop", "textbackdropurl":
+			out.TextBackdrop = full.TextBackdrop
+		case "backdrops":
+			out.Backdrops = full.Backdrops
+		case "logo":
+			out.Logo = full.Logo
+		case "images":
+			out.Poster = full.Poster
+			out.TextPoster = full.TextPoster
+			out.Backdrop = full.Backdrop
+			out.TextBackdrop = full.TextBackdrop
+			out.Backdrops = full.Backdrops
+			out.Logo = full.Logo
 		case "ratings":
 			out.Ratings = full.Ratings
 		}
 	}
 	return out
+}
+
+func titleFieldsNeedFullSeriesArt(fields []string) bool {
+	for _, f := range fields {
+		switch strings.ToLower(strings.TrimSpace(f)) {
+		case "images", "logo", "textposter", "text_poster", "textposterurl", "textbackdrop", "text_backdrop", "textbackdropurl", "backdrops":
+			return true
+		}
+	}
+	return false
 }
 
 // BatchSeriesTitleFields returns only requested fields for each series query.
@@ -4520,6 +4545,7 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 	}
 
 	results := make([]models.BatchSeriesDetailsItem, len(queries))
+	needsFullArt := titleFieldsNeedFullSeriesArt(fields)
 
 	type fetchTask struct {
 		index int
@@ -4550,13 +4576,16 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 			continue
 		}
 
-		// Also check the lightweight SeriesInfo cache
-		infoCacheID := cacheKey("tvdb", "series", "info", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
-		var cachedTitle models.Title
-		if ok, _ := s.cache.get(infoCacheID, &cachedTitle); ok {
-			extracted := extractTitleFields(&cachedTitle, fields)
-			results[i].Details = &models.SeriesDetails{Title: extracted}
-			continue
+		if !needsFullArt {
+			// Also check the lightweight SeriesInfo cache. It does not include TMDB
+			// text/logo art, so skip it when those fields are requested.
+			infoCacheID := cacheKey("tvdb", "series", "info", "v1", s.client.language, strconv.FormatInt(tvdbID, 10))
+			var cachedTitle models.Title
+			if ok, _ := s.cache.get(infoCacheID, &cachedTitle); ok {
+				extracted := extractTitleFields(&cachedTitle, fields)
+				results[i].Details = &models.SeriesDetails{Title: extracted}
+				continue
+			}
 		}
 
 		tasksToFetch = append(tasksToFetch, fetchTask{index: i, query: query})
@@ -4570,7 +4599,9 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 	log.Printf("[metadata] batch series fields fetching cached=%d uncached=%d fields=%v",
 		len(queries)-len(tasksToFetch), len(tasksToFetch), fields)
 
-	// Second pass: fetch uncached items using lightweight SeriesInfo
+	// Second pass: fetch uncached items. SeriesDetailsLite is used when TMDB
+	// image fields are requested so the response can include text posters/logos
+	// without returning full season/episode payloads.
 	const maxConcurrent = 5
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -4582,10 +4613,21 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			title, err := s.SeriesInfo(ctx, q)
-			if err != nil {
-				results[idx].Error = err.Error()
-				return
+			var title *models.Title
+			if needsFullArt {
+				details, err := s.SeriesDetailsLite(ctx, q)
+				if err != nil {
+					results[idx].Error = err.Error()
+					return
+				}
+				title = &details.Title
+			} else {
+				var err error
+				title, err = s.SeriesInfo(ctx, q)
+				if err != nil {
+					results[idx].Error = err.Error()
+					return
+				}
 			}
 			extracted := extractTitleFields(title, fields)
 			results[idx].Details = &models.SeriesDetails{Title: extracted}

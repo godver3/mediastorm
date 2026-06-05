@@ -108,6 +108,7 @@ type LocalMediaItemListQuery struct {
 	Limit          int    `json:"limit"`
 	Offset         int    `json:"offset"`
 	IncludeMissing bool   `json:"includeMissing"`
+	IncludeCards   bool   `json:"includeCards"`
 }
 
 type LocalMediaItemListResult struct {

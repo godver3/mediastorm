@@ -77,12 +77,13 @@ func (h *LocalMediaHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[localmedia] ListGroups: libraryID=%s limit=%d offset=%d filter=%q sort=%q", libraryID, limit, offset, r.URL.Query().Get("filter"), r.URL.Query().Get("sort"))
 	t0 := time.Now()
 	groups, err := h.service.ListGroups(r.Context(), libraryID, models.LocalMediaItemListQuery{
-		Filter: r.URL.Query().Get("filter"),
-		Sort:   r.URL.Query().Get("sort"),
-		Dir:    r.URL.Query().Get("dir"),
-		Query:  r.URL.Query().Get("query"),
-		Limit:  limit,
-		Offset: offset,
+		Filter:       r.URL.Query().Get("filter"),
+		Sort:         r.URL.Query().Get("sort"),
+		Dir:          r.URL.Query().Get("dir"),
+		Query:        r.URL.Query().Get("query"),
+		Limit:        limit,
+		Offset:       offset,
+		IncludeCards: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include")), "cards"),
 	})
 	if err != nil {
 		log.Printf("[localmedia] ListGroups: libraryID=%s error after %s: %v", libraryID, time.Since(t0).Round(time.Millisecond), err)

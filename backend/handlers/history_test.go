@@ -17,6 +17,7 @@ import (
 type fakeHistoryService struct {
 	state        models.SeriesWatchState
 	items        []models.SeriesWatchState
+	watchItems   []models.WatchHistoryItem
 	revision     string
 	err          error
 	hideUserID   string
@@ -47,7 +48,7 @@ func (f *fakeHistoryService) GetSeriesWatchState(userID, seriesID string) (*mode
 }
 
 func (f *fakeHistoryService) ListWatchHistory(userID string) ([]models.WatchHistoryItem, error) {
-	return nil, f.err
+	return f.watchItems, f.err
 }
 
 func (f *fakeHistoryService) GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error) {
@@ -91,6 +92,109 @@ func (f *fakeHistoryService) DeletePlaybackProgress(userID, mediaType, itemID st
 
 func (f *fakeHistoryService) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
 	return nil
+}
+
+func TestListWatchHistoryStatusProjection(t *testing.T) {
+	handler := handlers.NewHistoryHandler(&fakeHistoryService{
+		watchItems: []models.WatchHistoryItem{
+			{
+				ID:          "movie:tmdb:1",
+				MediaType:   "movie",
+				ItemID:      "tmdb:1",
+				Name:        "Heavy Movie",
+				Watched:     true,
+				ExternalIDs: map[string]string{"tmdb": "1", "imdb": "tt1"},
+			},
+			{
+				ID:         "episode:tvdb:2:s01e01",
+				MediaType:  "episode",
+				ItemID:     "tvdb:2:s01e01",
+				Name:       "Heavy Episode",
+				SeriesName: "Heavy Show",
+				Watched:    false,
+			},
+		},
+	}, nil, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/history/watched?fields=status", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	handler.ListWatchHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var items []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(items))
+	}
+	if items[0]["mediaType"] != "movie" || items[0]["itemId"] != "tmdb:1" || items[0]["watched"] != true {
+		t.Fatalf("unexpected projected item: %+v", items[0])
+	}
+	if _, ok := items[0]["name"]; ok {
+		t.Fatalf("status projection included name: %+v", items[0])
+	}
+	if _, ok := items[0]["externalIds"]; ok {
+		t.Fatalf("status projection included externalIds: %+v", items[0])
+	}
+}
+
+func TestListWatchHistoryStatusKeysProjection(t *testing.T) {
+	handler := handlers.NewHistoryHandler(&fakeHistoryService{
+		watchItems: []models.WatchHistoryItem{
+			{
+				ID:        "movie:tmdb:1",
+				MediaType: "movie",
+				ItemID:    "tmdb:1",
+				Name:      "Heavy Movie",
+				Watched:   true,
+			},
+			{
+				ID:         "episode:tvdb:2:s01e01",
+				MediaType:  "episode",
+				ItemID:     "tvdb:2:s01e01",
+				Name:       "Heavy Episode",
+				SeriesName: "Heavy Show",
+				Watched:    false,
+			},
+			{
+				ID:        "series:TVDB:3",
+				MediaType: "series",
+				ItemID:    "TVDB:3",
+				Name:      "Heavy Show",
+				Watched:   true,
+			},
+		},
+	}, nil, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/history/watched?fields=status&format=keys", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	handler.ListWatchHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var body struct {
+		Watched []string `json:"watched"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := []string{"movie:tmdb:1", "series:tvdb:3"}
+	if len(body.Watched) != len(want) {
+		t.Fatalf("len(watched) = %d, want %d (%+v)", len(body.Watched), len(want), body.Watched)
+	}
+	for i := range want {
+		if body.Watched[i] != want[i] {
+			t.Fatalf("watched[%d] = %q, want %q", i, body.Watched[i], want[i])
+		}
+	}
 }
 
 func (f *fakeHistoryService) HideFromContinueWatching(userID, seriesID string) error {
