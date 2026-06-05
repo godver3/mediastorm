@@ -379,7 +379,11 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			log.Printf("[details-bundle] playback progress error: %v", err)
 			return
 		}
-		filtered := filterProgressForTitle(items, titleID, contentType)
+		filtered := filterProgressForTitle(items, titleID, contentType, titleExternalIDs{
+			imdb: strings.ToLower(strings.TrimSpace(imdbID)),
+			tvdb: nonZeroInt64String(tvdbID),
+			tmdb: nonZeroInt64String(tmdbID),
+		})
 		mu.Lock()
 		resp.PlaybackProgress = filtered
 		mu.Unlock()
@@ -434,20 +438,37 @@ func slimTitles(titles []models.Title) []models.Title {
 	return slim
 }
 
+// titleExternalIDs carries the requested title's provider IDs so progress
+// recorded under a different series-ID variant can still be matched.
+type titleExternalIDs struct {
+	imdb string // lowercased
+	tvdb string // numeric string, "" when unknown
+	tmdb string // numeric string, "" when unknown
+}
+
 // filterProgressForTitle returns only playback progress items relevant to the
 // given title. For movies, this is typically 1 item; for series, it's the
 // episodes of that series. This avoids sending all ~300 items (113 KB) when
 // only a handful are needed.
-func filterProgressForTitle(items []models.PlaybackProgress, titleID, contentType string) []models.PlaybackProgress {
-	if titleID == "" {
+//
+// Beyond the exact titleID, it matches on shared external IDs (tmdb/tvdb/imdb)
+// so episodes recorded under a non-canonical series-ID variant (split series
+// IDs) are still surfaced — the same class of bug that hid progress on the
+// continue-watching shelf.
+func filterProgressForTitle(items []models.PlaybackProgress, titleID, contentType string, ext titleExternalIDs) []models.PlaybackProgress {
+	if titleID == "" && ext.imdb == "" && ext.tvdb == "" && ext.tmdb == "" {
 		return items
 	}
 	prefix := titleID + ":"
 	var filtered []models.PlaybackProgress
 	for _, p := range items {
 		// Match by seriesId (episodes of this series) or by itemId/ID (direct match for movies)
-		if p.SeriesID == titleID || p.ItemID == titleID || p.ID == titleID ||
-			strings.HasPrefix(p.ItemID, prefix) || strings.HasPrefix(p.ID, prefix) {
+		if titleID != "" && (p.SeriesID == titleID || p.ItemID == titleID || p.ID == titleID ||
+			strings.HasPrefix(p.ItemID, prefix) || strings.HasPrefix(p.ID, prefix)) {
+			filtered = append(filtered, p)
+			continue
+		}
+		if progressMatchesTitleExternalIDs(p, ext, contentType) {
 			filtered = append(filtered, p)
 		}
 	}
@@ -455,6 +476,44 @@ func filterProgressForTitle(items []models.PlaybackProgress, titleID, contentTyp
 		filtered = []models.PlaybackProgress{}
 	}
 	return filtered
+}
+
+// progressMatchesTitleExternalIDs reports whether a progress entry shares an
+// external ID with the requested title. Media kind is checked first so that a
+// movie and a series carrying the same numeric tmdb/tvdb ID cannot cross-match.
+func progressMatchesTitleExternalIDs(p models.PlaybackProgress, ext titleExternalIDs, contentType string) bool {
+	if len(p.ExternalIDs) == 0 {
+		return false
+	}
+	switch contentType {
+	case "series":
+		if p.MediaType != "episode" && p.MediaType != "series" {
+			return false
+		}
+	case "movie":
+		if p.MediaType != "movie" {
+			return false
+		}
+	}
+	if ext.tvdb != "" && strings.TrimSpace(p.ExternalIDs["tvdb"]) == ext.tvdb {
+		return true
+	}
+	if ext.tmdb != "" && strings.TrimSpace(p.ExternalIDs["tmdb"]) == ext.tmdb {
+		return true
+	}
+	if ext.imdb != "" && strings.EqualFold(strings.TrimSpace(p.ExternalIDs["imdb"]), ext.imdb) {
+		return true
+	}
+	return false
+}
+
+// nonZeroInt64String renders a positive int64 as a decimal string, returning ""
+// for zero/negative so unknown IDs don't produce spurious matches.
+func nonZeroInt64String(v int64) string {
+	if v <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(v, 10)
 }
 
 func trimAndParseInt(value string) int {

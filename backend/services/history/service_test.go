@@ -1292,6 +1292,53 @@ func TestUpdateWatchHistory_UnwatchedClearsCrossProviderProgress(t *testing.T) {
 	}
 }
 
+// TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent verifies that the
+// surviving key is the canonical TMDB one regardless of which provider scheme
+// wrote last — i.e. a TVDB-first sync followed by a native TMDB play converges
+// to the same single TMDB-keyed entry as the reverse order.
+func TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-order-independent"
+	externalIDs := map[string]string{"tvdb": "450033", "tmdb": "220102", "imdb": "tt30460310"}
+
+	// TVDB-keyed sync writes first (the importers prefer TVDB)...
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType: "episode", ItemID: "tvdb:series:450033:s01e03",
+		Position: 600, Duration: 2400, SeriesID: "tvdb:series:450033",
+		SeasonNumber: 1, EpisodeNumber: 3, ExternalIDs: externalIDs,
+	}); err != nil {
+		t.Fatalf("tvdb UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// ...then a native TMDB-keyed play resumes the same episode.
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType: "episode", ItemID: "tmdb:tv:220102:s01e03",
+		Position: 1500, Duration: 2400, SeriesID: "tmdb:tv:220102",
+		SeasonNumber: 1, EpisodeNumber: 3, ExternalIDs: externalIDs,
+	}); err != nil {
+		t.Fatalf("tmdb UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 consolidated progress item, got %d: %+v", len(progressItems), progressItems)
+	}
+	if progressItems[0].ItemID != "tmdb:tv:220102:s01e03" {
+		t.Fatalf("expected canonical TMDB key, got %q", progressItems[0].ItemID)
+	}
+	if progressItems[0].Position != 1500 {
+		t.Fatalf("expected latest position 1500 retained, got %v", progressItems[0].Position)
+	}
+}
+
 func TestUpdatePlaybackProgress_DedupesCrossProviderEpisodeProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -1343,8 +1390,13 @@ func TestUpdatePlaybackProgress_DedupesCrossProviderEpisodeProgress(t *testing.T
 	if len(progressItems) != 1 {
 		t.Fatalf("expected 1 deduped progress item, got %d: %+v", len(progressItems), progressItems)
 	}
-	if progressItems[0].ItemID != "tvdb:series:393810:s03e11" {
-		t.Fatalf("expected latest progress key to win, got %q", progressItems[0].ItemID)
+	// The canonical TMDB key wins deterministically (not the last writer),
+	// while the latest playback data is still retained under it.
+	if progressItems[0].ItemID != "tmdb:tv:114868:s03e11" {
+		t.Fatalf("expected canonical TMDB key to win, got %q", progressItems[0].ItemID)
+	}
+	if progressItems[0].Position != 900 {
+		t.Fatalf("expected latest position 900 retained, got %v", progressItems[0].Position)
 	}
 }
 
@@ -1393,8 +1445,13 @@ func TestUpdatePlaybackProgress_DedupesCrossProviderMovieProgress(t *testing.T) 
 	if len(progressItems) != 1 {
 		t.Fatalf("expected 1 deduped movie progress item, got %d: %+v", len(progressItems), progressItems)
 	}
-	if progressItems[0].ItemID != "tvdb:movie:77" {
-		t.Fatalf("expected latest movie progress key to win, got %q", progressItems[0].ItemID)
+	// The canonical TMDB key wins deterministically (not the last writer),
+	// while the latest playback data is still retained under it.
+	if progressItems[0].ItemID != "tmdb:movie:269149" {
+		t.Fatalf("expected canonical TMDB key to win, got %q", progressItems[0].ItemID)
+	}
+	if progressItems[0].Position != 2200 {
+		t.Fatalf("expected latest position 2200 retained, got %v", progressItems[0].Position)
 	}
 }
 
@@ -3829,15 +3886,17 @@ func TestImportWatchHistory_CrossProviderDedupSkipPreservesItem(t *testing.T) {
 		t.Fatalf("trakt import error: %v", err)
 	}
 
-	// Item must still exist — previously the cross-provider dedup deleted the TMDB key
-	// and the SKIP path continued without re-adding under the TVDB key.
+	// Item must still exist and stay consolidated to the canonical TMDB key:
+	// cross-provider dedup now attaches the incoming TVDB-keyed event to the
+	// existing TMDB entry (TMDB-preferred) rather than re-keying to TVDB, and the
+	// SKIP path must leave that single entry intact.
 	items, _ := svc.ListWatchHistory(userID)
 	movieCount := 0
 	for _, item := range items {
 		if item.MediaType == "movie" && item.Name == "Ponyo" {
 			movieCount++
-			if item.ItemID != "tvdb:movie:370" {
-				t.Errorf("expected item re-keyed to tvdb:movie:370, got %s", item.ItemID)
+			if item.ItemID != "tmdb:movie:37797" {
+				t.Errorf("expected item to stay on canonical key tmdb:movie:37797, got %s", item.ItemID)
 			}
 			if !item.Watched {
 				t.Error("expected item to remain watched")
@@ -3852,9 +3911,9 @@ func TestImportWatchHistory_CrossProviderDedupSkipPreservesItem(t *testing.T) {
 		t.Fatalf("expected 1 Ponyo entry after cross-provider dedup+skip, got %d (item lost from history)", movieCount)
 	}
 
-	// Verify the old TMDB key is gone (re-keyed, not duplicated)
-	tmdbItem, _ := svc.GetWatchHistoryItem(userID, "movie", "tmdb:movie:37797")
-	if tmdbItem != nil {
-		t.Error("expected old TMDB-keyed entry to be gone after re-key, but it still exists")
+	// The incoming TVDB key must not have been created (attached to TMDB instead).
+	tvdbItem, _ := svc.GetWatchHistoryItem(userID, "movie", "tvdb:movie:370")
+	if tvdbItem != nil {
+		t.Error("expected no separate TVDB-keyed entry; incoming event should attach to canonical TMDB key")
 	}
 }

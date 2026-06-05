@@ -2688,25 +2688,36 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				}
 				indexKey := epKey + ":" + idType + ":" + idValue
 				if idx, found := crossProviderIndex[indexKey]; found && idx.watchKey != key {
-					// Found a match under a different key — merge into existing entry
+					// Found a match under a different key — merge into existing entry.
 					existing = perUser[idx.watchKey]
 					exists = true
-					crossProviderRekeyed = true
-					// Remove old key, will re-key under new canonical key below
-					delete(perUser, idx.watchKey)
-					// Clean up old index entries
-					for oldIDType, oldIDValue := range existing.ExternalIDs {
-						if oldIDValue == "" || oldIDType == "titleId" {
-							continue
+					if preferProgressID(existing.ItemID, normalizedItemID) {
+						// Existing entry's key is the canonical (TMDB-preferred)
+						// survivor; attach to it instead of re-keying to the
+						// incoming scheme. Its index entries stay valid.
+						key = idx.watchKey
+						normalizedItemID = existing.ItemID
+						crossProviderRekeyed = false
+						log.Printf("[history] import: DEDUP cross-provider %s %q (attaching to canonical key %s)",
+							update.MediaType, update.Name, key)
+					} else {
+						// Incoming key is canonical; drop the old row and re-key
+						// onto the incoming key below.
+						crossProviderRekeyed = true
+						delete(perUser, idx.watchKey)
+						for oldIDType, oldIDValue := range existing.ExternalIDs {
+							if oldIDValue == "" || oldIDType == "titleId" {
+								continue
+							}
+							oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
+							delete(crossProviderIndex, oldIndexKey)
 						}
-						oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
-						delete(crossProviderIndex, oldIndexKey)
+						for _, oldIndexKey := range episodeScopedIndexKeys(existing.ExternalIDs) {
+							delete(episodeScopedIDIndex, oldIndexKey)
+						}
+						log.Printf("[history] import: DEDUP cross-provider %s %q (old key %s -> new key %s)",
+							update.MediaType, update.Name, idx.watchKey, key)
 					}
-					for _, oldIndexKey := range episodeScopedIndexKeys(existing.ExternalIDs) {
-						delete(episodeScopedIDIndex, oldIndexKey)
-					}
-					log.Printf("[history] import: DEDUP cross-provider %s %q (old key %s -> new key %s)",
-						update.MediaType, update.Name, idx.watchKey, key)
 					break
 				}
 			}
@@ -2746,10 +2757,19 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				if hasMatchingExternalID(update.ExternalIDs, existingItem.ExternalIDs) {
 					existing = existingItem
 					exists = true
-					crossProviderRekeyed = true
-					delete(perUser, existingKey)
-					log.Printf("[history] import: DEDUP cross-provider movie %q (old key %s -> new key %s)",
-						update.Name, existingKey, key)
+					if preferProgressID(existingItem.ItemID, normalizedItemID) {
+						// Existing key is the canonical (TMDB-preferred) survivor.
+						key = existingKey
+						normalizedItemID = existingItem.ItemID
+						crossProviderRekeyed = false
+						log.Printf("[history] import: DEDUP cross-provider movie %q (attaching to canonical key %s)",
+							update.Name, key)
+					} else {
+						crossProviderRekeyed = true
+						delete(perUser, existingKey)
+						log.Printf("[history] import: DEDUP cross-provider movie %q (old key %s -> new key %s)",
+							update.Name, existingKey, key)
+					}
 					break
 				}
 			}
@@ -3182,17 +3202,35 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		Year:           update.Year,
 	}
 
-	// For episodes, collapse same-episode progress stored under alternate ID formats
-	// before writing the new row. This keeps each episode in a single "in progress"
-	// state even when different sources use TMDB/TVDB/IMDB-based item IDs.
+	// Collapse same-item progress stored under alternate ID schemes (split
+	// series/movie IDs) onto a single deterministic key, preferring TMDB. This
+	// keeps each episode/movie in a single "in progress" state regardless of
+	// whether the player or a sync service wrote last. Storage only — episode
+	// numbering and metadata are resolved at read time from external IDs and are
+	// unaffected by which key survives.
+	canonicalKey := key
 	if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
-		s.clearOtherEpisodeProgressByExternalIDMatchLocked(perUser, key, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
+		var canonicalItemID, canonicalSeriesID string
+		canonicalKey, canonicalItemID, canonicalSeriesID, progress.ExternalIDs =
+			s.consolidateEpisodeProgressLocked(perUser, key, normalizedItemID, progress.SeriesID, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
+		progress.ItemID = canonicalItemID
+		if canonicalSeriesID != "" {
+			progress.SeriesID = canonicalSeriesID
+		}
+	} else if progress.MediaType == "movie" {
+		var canonicalItemID string
+		canonicalKey, canonicalItemID, progress.ExternalIDs =
+			s.consolidateMovieProgressLocked(perUser, key, normalizedItemID, progress.ExternalIDs)
+		progress.ItemID = canonicalItemID
 	}
-	if progress.MediaType == "movie" {
-		s.clearOtherMovieProgressByExternalIDMatchLocked(perUser, key, progress.ExternalIDs)
-	}
+	progress.ID = canonicalKey
 
-	perUser[key] = progress
+	// If consolidation chose an existing canonical key, drop any stale row under
+	// the incoming key so a duplicate isn't left behind.
+	if canonicalKey != key {
+		delete(perUser, key)
+	}
+	perUser[canonicalKey] = progress
 
 	// Clear hidden flag for related series entries when new progress is logged
 	// This ensures the series reappears in continue watching when user resumes watching
@@ -4009,46 +4047,112 @@ func (s *Service) clearMovieProgressByExternalIDMatchLocked(userID string, exter
 	return anyCleared
 }
 
-// clearOtherMovieProgressByExternalIDMatchLocked removes duplicate in-progress rows
-// for the same movie stored under alternate ID formats, preserving keepKey.
-// Callers must hold s.mu before invoking this helper.
-func (s *Service) clearOtherMovieProgressByExternalIDMatchLocked(perUser map[string]models.PlaybackProgress, keepKey string, externalIDs map[string]string) bool {
-	if len(externalIDs) == 0 {
-		return false
+// seriesIDProviderRank ranks an item/series ID string by provider so duplicate
+// progress rows stored under different schemes collapse onto a single
+// deterministic key. TMDB is preferred because the native details page and the
+// continue-watching metadata path both resolve episodes via TMDB; ranking it
+// highest keeps stored progress aligned with how it is displayed. This affects
+// only which storage key survives — episode numbering and metadata are resolved
+// at read time from external IDs (buildCanonicalSeriesIDMap +
+// getSeriesMetadataWithCache) and are unaffected by the choice here.
+func seriesIDProviderRank(id string) int {
+	lower := strings.ToLower(strings.TrimSpace(id))
+	switch {
+	case strings.HasPrefix(lower, "tmdb:"):
+		return 3
+	case strings.HasPrefix(lower, "tvdb:"):
+		return 2
+	case strings.HasPrefix(lower, "imdb:"), strings.HasPrefix(lower, "tt"):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// preferProgressID reports whether candidate should win over current as the
+// canonical key: higher provider rank first, then a stable lexical order so the
+// outcome is independent of map iteration order.
+func preferProgressID(candidate, current string) bool {
+	rc, rcur := seriesIDProviderRank(candidate), seriesIDProviderRank(current)
+	if rc != rcur {
+		return rc > rcur
+	}
+	return candidate < current
+}
+
+// unionExternalIDs copies non-empty external IDs from src into dst without
+// overwriting existing values, preserving the richest set so the read-side
+// canonical resolver keeps its choice stable when rows are consolidated.
+func unionExternalIDs(dst, src map[string]string) map[string]string {
+	if dst == nil {
+		dst = make(map[string]string, len(src))
+	}
+	for k, v := range src {
+		if v == "" {
+			continue
+		}
+		if _, ok := dst[k]; !ok {
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+// consolidateMovieProgressLocked collapses duplicate movie progress rows stored
+// under alternate ID schemes onto a single deterministic key. It returns the
+// canonical key/itemID the incoming progress should be written under and the
+// union of external IDs across every merged row. Non-survivor rows are deleted
+// (hidden-from-continue-watching state preserved). Callers must hold s.mu.
+func (s *Service) consolidateMovieProgressLocked(perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID string, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID string, merged map[string]string) {
+	canonicalKey, canonicalItemID = incomingKey, incomingItemID
+	merged = unionExternalIDs(nil, incomingExternalIDs)
+	if len(incomingExternalIDs) == 0 {
+		return canonicalKey, canonicalItemID, merged
 	}
 
-	anyCleared := false
+	var matchedKeys []string
 	for key, progress := range perUser {
-		if key == keepKey {
+		if key == incomingKey || progress.MediaType != "movie" {
 			continue
 		}
-		if progress.MediaType != "movie" {
+		if !hasMatchingExternalID(progress.ExternalIDs, incomingExternalIDs) {
 			continue
 		}
-		if !hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+		matchedKeys = append(matchedKeys, key)
+		merged = unionExternalIDs(merged, progress.ExternalIDs)
+		if preferProgressID(progress.ItemID, canonicalItemID) {
+			canonicalKey, canonicalItemID = key, progress.ItemID
+		}
+	}
+
+	for _, key := range matchedKeys {
+		if key == canonicalKey {
 			continue
 		}
+		progress := perUser[key]
 		delete(perUser, key)
 		if progress.HiddenFromContinueWatching {
 			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
 		}
-		anyCleared = true
 	}
-
-	return anyCleared
+	return canonicalKey, canonicalItemID, merged
 }
 
-// clearOtherEpisodeProgressByExternalIDMatchLocked removes duplicate in-progress rows
-// for the same episode stored under alternate ID formats, preserving the entry whose
-// key matches keepKey. Callers must hold s.mu before invoking this helper.
-func (s *Service) clearOtherEpisodeProgressByExternalIDMatchLocked(perUser map[string]models.PlaybackProgress, keepKey string, seasonNumber, episodeNumber int, externalIDs map[string]string) bool {
-	if seasonNumber <= 0 || episodeNumber <= 0 || len(externalIDs) == 0 {
-		return false
+// consolidateEpisodeProgressLocked collapses duplicate same-episode progress
+// rows stored under alternate series-ID schemes onto a single deterministic key.
+// It returns the canonical key/itemID/seriesID the incoming progress should be
+// written under and the union of external IDs across every merged row.
+// Non-survivor rows are deleted (hidden state preserved). Callers must hold s.mu.
+func (s *Service) consolidateEpisodeProgressLocked(perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID, incomingSeriesID string, seasonNumber, episodeNumber int, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID, canonicalSeriesID string, merged map[string]string) {
+	canonicalKey, canonicalItemID, canonicalSeriesID = incomingKey, incomingItemID, incomingSeriesID
+	merged = unionExternalIDs(nil, incomingExternalIDs)
+	if seasonNumber <= 0 || episodeNumber <= 0 || len(incomingExternalIDs) == 0 {
+		return canonicalKey, canonicalItemID, canonicalSeriesID, merged
 	}
 
-	anyCleared := false
+	var matchedKeys []string
 	for key, progress := range perUser {
-		if key == keepKey {
+		if key == incomingKey {
 			continue
 		}
 		if progress.MediaType != "episode" ||
@@ -4056,16 +4160,27 @@ func (s *Service) clearOtherEpisodeProgressByExternalIDMatchLocked(perUser map[s
 			progress.EpisodeNumber != episodeNumber {
 			continue
 		}
-		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
-			delete(perUser, key)
-			if progress.HiddenFromContinueWatching {
-				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-			}
-			anyCleared = true
+		if !hasMatchingExternalID(progress.ExternalIDs, incomingExternalIDs) {
+			continue
+		}
+		matchedKeys = append(matchedKeys, key)
+		merged = unionExternalIDs(merged, progress.ExternalIDs)
+		if preferProgressID(progress.ItemID, canonicalItemID) {
+			canonicalKey, canonicalItemID, canonicalSeriesID = key, progress.ItemID, progress.SeriesID
 		}
 	}
 
-	return anyCleared
+	for _, key := range matchedKeys {
+		if key == canonicalKey {
+			continue
+		}
+		progress := perUser[key]
+		delete(perUser, key)
+		if progress.HiddenFromContinueWatching {
+			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
+		}
+	}
+	return canonicalKey, canonicalItemID, canonicalSeriesID, merged
 }
 
 // preserveSeriesHiddenMarkerLocked ensures the hidden-from-continue-watching state
