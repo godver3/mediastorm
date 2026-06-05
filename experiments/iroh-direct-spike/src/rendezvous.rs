@@ -8,14 +8,32 @@
 //! client looks it up on the public DHT. No reachable backend URL is required on either
 //! side — the public DHT is the resolver.
 //!
-//! SECURITY: the code's entropy is the entire security boundary. Anyone who knows (or
-//! brute-forces) the code can derive the same secret key and therefore both read and
-//! *forge* the record, enabling a MITM. The mainline DHT verifies signatures against the
-//! queried public key, so a record under the derived key is authentic w.r.t. "someone who
-//! knew the code", but it does not protect against an attacker who also knows the code.
-//! Mitigate with: single-use + short-lived codes (already enforced by the backend), higher
-//! code entropy, and ideally a PAKE (SPAKE2-style) handshake layered on the iroh
-//! connection. See docs/TODO.md.
+//! SECURITY: the code's entropy is the entire security boundary. The derived public key is
+//! itself published on the DHT, so a low-entropy code is open to an *offline* brute force
+//! (derive a candidate key from each guess, compare against the queried public key). Anyone
+//! who recovers the code can both read and *forge* the record, enabling a MITM. The mainline
+//! DHT verifies signatures against the queried public key, so a record under the derived key
+//! is authentic w.r.t. "someone who knew the code", but it does not protect against an
+//! attacker who also knows the code.
+//!
+//! Mitigations in place:
+//!   - High-entropy codes are the primary defense: the backend issues ~90-bit Crockford
+//!     base32 codes (`generateToken` in services/remoteaccess/service.go), well beyond an
+//!     offline brute force of the published derived key. This holds even if the key is
+//!     observed for the full unclaimed window.
+//!   - Single-use + expiring codes: enforced by the backend.
+//!   - Claimed codes stop being published: the backend lists only *pending* codes in the
+//!     rendezvous file, so on claim this publisher stops republishing the code and its DHT
+//!     record lapses at TTL. The lingering record is harmless — the code is single-use, so a
+//!     forged record has no victim: the already-paired client reconnects by dialing the
+//!     host's stable iroh NodeID (n0 discovery resolves current addressing), never by
+//!     re-resolving the code, and no new client resolves a used code.
+//!
+//! Residual risk: a first-contact MITM during the unclaimed window (an attacker who wins the
+//! offline crack before the legitimate client claims — infeasible at ~90 bits, but the window
+//! is bounded by the invite's expiry, not necessarily short). Closeable with a short
+//! verification string (SAS) bound to the iroh channel keys, shown on both ends at pairing
+//! time — the lighter equivalent of a full PAKE.
 
 use anyhow::{anyhow, Context, Result};
 use iroh::SecretKey;

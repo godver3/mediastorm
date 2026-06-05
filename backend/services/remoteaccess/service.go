@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +192,10 @@ func (s *Service) ClaimInvite(ctx context.Context, token, peerID string) (models
 		}
 		return models.RemoteAccessInvite{}, ErrInviteUsed
 	}
+	// The invite is now claimed, so its code no longer needs to be resolvable on the DHT;
+	// drop it immediately rather than waiting for the next Supervise tick. Best-effort:
+	// Supervise re-syncs on its timer, so a transient failure here self-heals.
+	s.trySyncRendezvousCodes(ctx)
 	inv.Token = ""
 	return *inv, nil
 }
@@ -340,12 +343,16 @@ func (s *Service) syncRendezvousCodes(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	active := filterActiveInvites(invites, s.now())
+	// Only publish codes for invites still awaiting their first claim. Once an invite is
+	// claimed, the paired client reconnects via the host's stable iroh NodeID rather than
+	// re-resolving the code, so we drop the record to stop exposing the code-derived DHT
+	// key to an offline brute-force for the life of the pairing.
+	publishable := filterPublishableInvites(invites, s.now())
 
 	var b strings.Builder
-	b.WriteString("# strmr active connection codes — managed by remoteaccess.Service; do not edit\n")
-	for i := range active {
-		code := strings.TrimSpace(active[i].ConnectionCode)
+	b.WriteString("# strmr pending connection codes — managed by remoteaccess.Service; do not edit\n")
+	for i := range publishable {
+		code := strings.TrimSpace(publishable[i].ConnectionCode)
 		if code != "" {
 			b.WriteString(code)
 			b.WriteByte('\n')
@@ -380,14 +387,29 @@ func HashInviteToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// codeAlphabet is Crockford base32 (no I, L, O, U) so codes are unambiguous to read
+// aloud or type. Each character carries 5 bits of entropy.
+const codeAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+// codeBodyLength is the number of random base32 characters in a connection code.
+// 18 chars * 5 bits = ~90 bits of entropy, formatted as three groups of six. This is
+// the entire security boundary of the rendezvous record (the DHT signing key is derived
+// from the code), so it must be high enough to resist an offline brute-force of the
+// published, code-derived public key. See experiments/iroh-direct-spike/src/rendezvous.rs.
+const codeBodyLength = 18
+
 func generateToken() (string, error) {
-	max := big.NewInt(1_000_000_000_000)
-	value, err := rand.Int(rand.Reader, max)
-	if err != nil {
+	buf := make([]byte, codeBodyLength)
+	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate remote access invite token: %w", err)
 	}
-	digits := fmt.Sprintf("%012d", value.Int64())
-	return "mshost-" + digits[:6] + "-" + digits[6:], nil
+	// Masking a uniform byte to its low 5 bits is unbiased because 256 is an exact
+	// multiple of 32, so every alphabet index is equally likely.
+	body := make([]byte, codeBodyLength)
+	for i, b := range buf {
+		body[i] = codeAlphabet[b&0x1f]
+	}
+	return "mshost-" + string(body[0:6]) + "-" + string(body[6:12]) + "-" + string(body[12:18]), nil
 }
 
 func countActiveInvites(invites []models.RemoteAccessInvite, now time.Time) int {
@@ -402,4 +424,17 @@ func filterActiveInvites(invites []models.RemoteAccessInvite, now time.Time) []m
 		}
 	}
 	return active
+}
+
+// filterPublishableInvites returns the invites whose connection codes should be live on
+// the rendezvous DHT — i.e. those still awaiting their first claim. Claimed invites stay
+// "active" (the host keeps running for them) but are no longer published.
+func filterPublishableInvites(invites []models.RemoteAccessInvite, now time.Time) []models.RemoteAccessInvite {
+	pending := make([]models.RemoteAccessInvite, 0, len(invites))
+	for _, inv := range invites {
+		if inv.IsPendingClaim(now) {
+			pending = append(pending, inv)
+		}
+	}
+	return pending
 }

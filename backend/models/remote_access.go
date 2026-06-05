@@ -33,3 +33,14 @@ func (i *RemoteAccessInvite) IsActive(now time.Time) bool {
 	}
 	return i.UsedAt != nil || now.Before(i.ExpiresAt)
 }
+
+// IsPendingClaim reports whether the invite is still awaiting its first claim and so
+// needs its connection code published to the rendezvous DHT. Once claimed, paired clients
+// reconnect via the host's stable iroh NodeID (n0 discovery), so the code-derived record
+// is dropped to remove the offline brute-force oracle on the low-entropy code.
+func (i *RemoteAccessInvite) IsPendingClaim(now time.Time) bool {
+	if i.RevokedAt != nil || i.UsedAt != nil {
+		return false
+	}
+	return now.Before(i.ExpiresAt)
+}

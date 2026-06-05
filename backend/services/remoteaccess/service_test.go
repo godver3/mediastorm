@@ -333,6 +333,68 @@ func TestCreateInviteWritesRendezvousFile(t *testing.T) {
 	}
 }
 
+func TestGenerateTokenHasHighEntropyUnambiguousBody(t *testing.T) {
+	const prefix = "mshost-"
+	seen := make(map[string]struct{})
+	for i := 0; i < 200; i++ {
+		token, err := generateToken()
+		if err != nil {
+			t.Fatalf("generateToken returned error: %v", err)
+		}
+		if _, dup := seen[token]; dup {
+			t.Fatalf("generateToken produced a duplicate token %q", token)
+		}
+		seen[token] = struct{}{}
+
+		if !strings.HasPrefix(token, prefix) {
+			t.Fatalf("token %q missing %q prefix", token, prefix)
+		}
+		groups := strings.Split(strings.TrimPrefix(token, prefix), "-")
+		if len(groups) != 3 {
+			t.Fatalf("token %q body = %v, want three groups", token, groups)
+		}
+		body := strings.Join(groups, "")
+		if len(body) != codeBodyLength {
+			t.Fatalf("token %q body length = %d, want %d", token, len(body), codeBodyLength)
+		}
+		for _, c := range body {
+			if !strings.ContainsRune(codeAlphabet, c) {
+				t.Fatalf("token %q contains character %q outside the Crockford base32 alphabet", token, string(c))
+			}
+		}
+		// Crockford base32 deliberately omits these ambiguous characters.
+		if strings.ContainsAny(body, "ILOU") {
+			t.Fatalf("token %q body contains an ambiguous character", token)
+		}
+	}
+}
+
+func TestClaimDropsConnectionCodeFromRendezvousFile(t *testing.T) {
+	repo := newFakeInviteRepo()
+	path := filepath.Join(t.TempDir(), "codes.txt")
+	host := &fakeRendezvousHost{path: path}
+	svc := NewService(repo, host)
+	svc.now = func() time.Time { return time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC) }
+
+	inv, err := svc.CreateInvite(context.Background(), "account-1", CreateInviteRequest{ExpiresIn: time.Hour})
+	if err != nil {
+		t.Fatalf("CreateInvite returned error: %v", err)
+	}
+	if codes := readRendezvousCodes(t, path); len(codes) != 1 || codes[0] != inv.ConnectionCode {
+		t.Fatalf("rendezvous codes before claim = %v, want [%s]", codes, inv.ConnectionCode)
+	}
+
+	if _, err := svc.ClaimInvite(context.Background(), inv.Token, "peer-1"); err != nil {
+		t.Fatalf("ClaimInvite returned error: %v", err)
+	}
+
+	// A claimed invite stays active (host keeps running for reconnects) but its code must
+	// no longer be published to the DHT.
+	if codes := readRendezvousCodes(t, path); len(codes) != 0 {
+		t.Fatalf("rendezvous codes after claim = %v, want none", codes)
+	}
+}
+
 func TestSuperviseEmptiesRendezvousFileWhenNoActiveInvites(t *testing.T) {
 	repo := newFakeInviteRepo()
 	path := filepath.Join(t.TempDir(), "codes.txt")

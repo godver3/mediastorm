@@ -121,9 +121,9 @@ async fn main() -> Result<()> {
 }
 
 /// How often to refresh each code's DHT record. Must stay well under
-/// [`rendezvous::RENDEZVOUS_TTL_SECS`] so records never lapse while an invite is active.
+/// [`rendezvous::RENDEZVOUS_TTL_SECS`] so records never lapse while a code is still pending.
 const RENDEZVOUS_REPUBLISH: Duration = Duration::from_secs(15 * 60);
-/// How often to re-read the codes file to pick up newly created / revoked invites.
+/// How often to re-read the codes file to pick up newly created / claimed / revoked invites.
 const RENDEZVOUS_POLL: Duration = Duration::from_secs(5);
 
 /// Parse the rendezvous file: one connection code per line, blanks and `#` comments ignored.
