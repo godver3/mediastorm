@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -387,7 +388,6 @@ func main() {
 				log.Printf("failed to stop remote access host: %v", err)
 			}
 		}()
-		go superviseRemoteAccess(remoteAccessService)
 	}
 
 	// Background cleanup of expired temporary accounts
@@ -1477,9 +1477,17 @@ func main() {
 		}()
 	}
 
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
+	if remoteAccessService != nil {
+		go superviseRemoteAccess(remoteAccessService)
+	}
+
 	// Start server in goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
