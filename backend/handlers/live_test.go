@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -571,5 +573,63 @@ func TestFetchM3UCategoriesIgnoresPlaylistBodyLimit(t *testing.T) {
 
 	if _, err := h.fetchPlaylistContents(t.Context(), playlistServer.URL, ""); err == nil {
 		t.Fatalf("fetchPlaylistContents() error = nil, want playlist size limit error")
+	}
+}
+
+// TestStreamChannelWebRequestUsesProxyAndUserAgent verifies that web transmux
+// requests fetch the upstream stream through the configured proxy (sending a
+// User-Agent) and pipe it into ffmpeg, rather than letting ffmpeg connect
+// directly. Providers reject non-proxy source IPs and drop UA-less requests,
+// so the proxied-pipe path is required for live TV to work in the web player.
+func TestStreamChannelWebRequestUsesProxyAndUserAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ffmpeg shell script is POSIX-only")
+	}
+
+	const streamBody = "PROXIED-TS-PAYLOAD"
+
+	// HTTP proxy that also serves as the origin: it records the User-Agent it
+	// received and returns the stream body. transport.Proxy routes the absolute
+	// request URL here.
+	var sawUA string
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUA = r.Header.Get("User-Agent")
+		_, _ = w.Write([]byte(streamBody))
+	}))
+	defer proxyServer.Close()
+
+	// Fake ffmpeg: ignore all args and copy stdin (pipe:0) to stdout (pipe:1).
+	scriptPath := filepath.Join(t.TempDir(), "fake-ffmpeg.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexec cat\n"), 0o755); err != nil {
+		t.Fatalf("write fake ffmpeg: %v", err)
+	}
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(config.Settings{
+		Live: config.LiveSettings{
+			Mode:           "xtream",
+			XtreamHost:     "http://provider.example",
+			XtreamUsername: "user",
+			XtreamPassword: "pass",
+			ProxyURL:       proxyServer.URL,
+		},
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	h := NewLiveHandler(proxyServer.Client(), true, scriptPath, 24, 0, 0, false, mgr, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/live/stream?target=web&url=http://provider.example/live/user/pass/1.ts", nil)
+	rec := httptest.NewRecorder()
+	h.StreamChannel(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != streamBody {
+		t.Fatalf("body = %q, want %q (stream should be fetched via proxy and piped through ffmpeg)", rec.Body.String(), streamBody)
+	}
+	if sawUA != liveStreamUserAgent {
+		t.Fatalf("upstream User-Agent = %q, want %q", sawUA, liveStreamUserAgent)
 	}
 }

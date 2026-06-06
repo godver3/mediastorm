@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"novastream/config"
@@ -157,7 +158,7 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&profileId=profile-1&target=web&mediaType=channel&itemId=tvg-1&title=Evening%20News", nil)
+	req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&profileId=profile-1&target=app&mediaType=channel&itemId=tvg-1&title=Evening%20News", nil)
 	rec := httptest.NewRecorder()
 
 	handler.StartLiveHLSSession(rec, req)
@@ -188,8 +189,8 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 	if got := values.Get("profileName"); got != "Living Room" {
 		t.Fatalf("profileName = %q, want Living Room", got)
 	}
-	if got := values.Get("target"); got != "web" {
-		t.Fatalf("target = %q, want web", got)
+	if got := values.Get("target"); got != "app" {
+		t.Fatalf("target = %q, want app", got)
 	}
 	if got := values.Get("mediaType"); got != "channel" {
 		t.Fatalf("mediaType = %q, want channel", got)
@@ -199,5 +200,48 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 	}
 	if got := values.Get("title"); got != "Evening News" {
 		t.Fatalf("title = %q, want Evening News", got)
+	}
+}
+
+func TestStartLiveHLSSessionDirectForcesHLSWhenRequested(t *testing.T) {
+	handler := NewVideoHandlerWithProvider(true, "/usr/bin/true", "/usr/bin/true", t.TempDir(), nil)
+	handler.SetConfigManager(fakeLiveUsageConfigProvider{
+		settings: config.Settings{
+			Live: config.LiveSettings{
+				Mode:         "m3u",
+				PlaylistURL:  "http://example.com/live.m3u",
+				StreamFormat: "direct",
+			},
+		},
+	})
+	handler.SetUserSettingsService(fakeLiveUsageUserSettingsProvider{
+		settings: map[string]*models.UserSettings{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&target=app&format=hls", nil)
+	rec := httptest.NewRecorder()
+
+	handler.StartLiveHLSSession(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body struct {
+		PlaylistURL string `json:"playlistUrl"`
+		IsDirect    bool   `json:"isDirect"`
+		IsLive      bool   `json:"isLive"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.IsDirect {
+		t.Fatal("expected HLS response when format=hls is requested")
+	}
+	if !body.IsLive {
+		t.Fatal("expected live response")
+	}
+	if !strings.HasPrefix(body.PlaylistURL, "/video/hls/") {
+		t.Fatalf("playlistUrl = %q, want /video/hls/ prefix", body.PlaylistURL)
 	}
 }

@@ -35,6 +35,11 @@ const (
 	liveStreamTimeout        = 30 * time.Minute
 	defaultCacheTTL          = 24 * time.Hour
 	cacheDir                 = "cache/live"
+
+	// liveStreamUserAgent is sent on all upstream live stream requests. Some
+	// providers redirect .ts requests to tokenized CDN nodes that drop any
+	// connection lacking a User-Agent, so this must always be set.
+	liveStreamUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 )
 
 // LiveChannel represents a parsed channel from an M3U playlist.
@@ -289,6 +294,41 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When a proxy is configured we cannot let ffmpeg reach the provider
+	// directly: providers commonly reject non-proxy source IPs (401) and
+	// redirect .ts requests to CDN nodes that require a User-Agent. Fetch the
+	// stream through the proxied Go client (which sets the User-Agent and
+	// follows redirects) and pipe it into ffmpeg's stdin instead.
+	//
+	// Note: non-web requests with a proxy are already handled above by
+	// proxyStreamWithHTTPClient and return early, so this only applies to the
+	// web transmux path.
+	var proxyBody io.ReadCloser
+	inputArg := targetURL.String()
+	if proxyURL := h.resolveProxyURLForStream(r, targetURL); proxyURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL.String(), nil)
+		if err != nil {
+			http.Error(w, "failed to prepare live stream", http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("User-Agent", liveStreamUserAgent)
+		resp, err := h.liveStreamHTTPClient(proxyURL).Do(req)
+		if err != nil {
+			log.Printf("[live] proxied stream request failed for %q via %q: %v", targetURL.String(), proxyURL, err)
+			http.Error(w, "failed to open proxied live stream", http.StatusBadGateway)
+			return
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			log.Printf("[live] proxied stream returned status %d for %q via %q", resp.StatusCode, targetURL.String(), proxyURL)
+			resp.Body.Close()
+			http.Error(w, fmt.Sprintf("live stream returned status %d", resp.StatusCode), http.StatusBadGateway)
+			return
+		}
+		proxyBody = resp.Body
+		defer proxyBody.Close()
+		inputArg = "pipe:0"
+	}
+
 	// Build FFmpeg args with optional buffering settings
 	args := []string{
 		"-hide_banner",
@@ -313,12 +353,22 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-fflags", "+genpts")
 	}
 
-	// Reconnection options
+	// HTTP-specific input options (User-Agent, reconnection) only apply when
+	// ffmpeg reads the provider URL directly. On the proxied path the input is
+	// pipe:0, and these options are rejected ("Option reconnect not found",
+	// exit status 8) — the Go client already handles the User-Agent, redirects,
+	// and reconnection there.
+	if proxyBody == nil {
+		args = append(args,
+			"-user_agent", liveStreamUserAgent,
+			"-reconnect", "1",
+			"-reconnect_streamed", "1",
+			"-reconnect_delay_max", "3",
+		)
+	}
+
 	args = append(args,
-		"-reconnect", "1",
-		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "3",
-		"-i", targetURL.String(),
+		"-i", inputArg,
 		"-c:v", "copy",
 		"-c:a", "aac",
 		"-ac", "2",
@@ -331,6 +381,9 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	)
 
 	cmd := exec.CommandContext(ctx, h.ffmpegPath, args...)
+	if proxyBody != nil {
+		cmd.Stdin = proxyBody
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "failed to prepare live stream", http.StatusInternalServerError)
@@ -347,7 +400,13 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the first chunk of ffmpeg stderr so failures are diagnosable; at
+	// loglevel warning this stays small. Drain the rest to avoid blocking.
+	var ffmpegStderr []byte
+	stderrDone := make(chan struct{})
 	go func() {
+		defer close(stderrDone)
+		ffmpegStderr, _ = io.ReadAll(io.LimitReader(stderr, 8192))
 		_, _ = io.Copy(io.Discard, stderr)
 	}()
 
@@ -403,7 +462,13 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 
 	if err := cmd.Wait(); err != nil {
 		if !errors.Is(err, context.Canceled) && !strings.Contains(strings.ToLower(err.Error()), "broken pipe") {
-			log.Printf("[live] ffmpeg exited with error for %q: %v", targetURL.String(), err)
+			<-stderrDone
+			detail := strings.TrimSpace(string(ffmpegStderr))
+			if detail != "" {
+				log.Printf("[live] ffmpeg exited with error for %q: %v; stderr: %s", targetURL.String(), err, detail)
+			} else {
+				log.Printf("[live] ffmpeg exited with error for %q: %v", targetURL.String(), err)
+			}
 		}
 	}
 }
@@ -414,7 +479,7 @@ func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.R
 		http.Error(w, "failed to prepare live stream", http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+	req.Header.Set("User-Agent", liveStreamUserAgent)
 
 	resp, err := h.liveStreamHTTPClient(proxyURL).Do(req)
 	if err != nil {

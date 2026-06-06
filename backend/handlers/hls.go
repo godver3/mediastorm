@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"novastream/internal/dnscache"
+	"novastream/internal/netproxy"
 	"novastream/services/streaming"
 	"novastream/utils"
 )
@@ -426,6 +427,10 @@ type LiveTuningSettings struct {
 	ProbeSizeMB        int
 	AnalyzeDurationSec int
 	LowLatency         bool
+	// ProxyURL, when set, routes the upstream live fetch through this proxy.
+	// SOCKS5 proxies (which ffmpeg cannot use natively) are honored by fetching
+	// the stream with the Go HTTP client and piping it into ffmpeg's stdin.
+	ProxyURL string
 }
 
 // LiveProviderUsageEntry summarizes active usage for a single live provider.
@@ -1492,13 +1497,47 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	playlistPath := filepath.Join(session.OutputDir, "stream.m3u8")
 	segmentPattern := filepath.Join(session.OutputDir, "segment%d.ts")
 
+	// When a proxy is configured we cannot let ffmpeg reach the provider
+	// directly: providers reject non-proxy source IPs (401) and redirect .ts
+	// requests to CDN nodes that require a User-Agent. ffmpeg also cannot use a
+	// SOCKS5 proxy natively. Fetch through the proxied Go client (which sets the
+	// User-Agent and follows redirects) and pipe it into ffmpeg's stdin instead.
+	var proxyBody io.ReadCloser
+	inputArg := session.Path
+	if proxyURL := strings.TrimSpace(session.LiveTuning.ProxyURL); proxyURL != "" {
+		client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{ResponseHeaderTimeout: 15 * time.Second}, proxyURL)
+		if err != nil {
+			return fmt.Errorf("create proxied live client: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, session.Path, nil)
+		if err != nil {
+			return fmt.Errorf("prepare proxied live request: %w", err)
+		}
+		req.Header.Set("User-Agent", liveStreamUserAgent)
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("open proxied live stream: %w", err)
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			resp.Body.Close()
+			return fmt.Errorf("proxied live stream returned status %d", resp.StatusCode)
+		}
+		proxyBody = resp.Body
+		inputArg = "pipe:0"
+		log.Printf("[hls] live session %s: streaming upstream via proxy %s", session.ID, proxyURL)
+	}
+
 	// Build FFmpeg args optimized for live input
-	args := []string{
-		"-nostdin",
+	args := []string{}
+	if proxyBody == nil {
+		// -nostdin only matters when not feeding the input over stdin.
+		args = append(args, "-nostdin")
+	}
+	args = append(args,
 		"-y",
 		"-loglevel", "warning",
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
-	}
+	)
 
 	// Apply probe/analyze settings (these mirror StreamChannel in live.go)
 	if session.LiveTuning.ProbeSizeMB > 0 {
@@ -1515,11 +1554,20 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		args = append(args, "-fflags", "+genpts+discardcorrupt")
 	}
 
+	// HTTP-specific input options (User-Agent, reconnection) only apply when
+	// ffmpeg reads the provider URL directly. On the proxied path the input is
+	// pipe:0 and these options are rejected ("Option reconnect not found").
+	if proxyBody == nil {
+		args = append(args,
+			"-user_agent", liveStreamUserAgent,
+			"-reconnect", "1",
+			"-reconnect_streamed", "1",
+			"-reconnect_delay_max", "3",
+		)
+	}
+
 	args = append(args,
-		"-reconnect", "1",
-		"-reconnect_streamed", "1",
-		"-reconnect_delay_max", "3",
-		"-i", session.Path,
+		"-i", inputArg,
 		// Output options - transcode live video so HLS can start on our keyframe cadence
 		// instead of waiting for the upstream IPTV stream's next keyframe.
 		"-c:v", "libx264",
@@ -1549,6 +1597,10 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 	cmd.Dir = session.OutputDir
+	if proxyBody != nil {
+		cmd.Stdin = proxyBody
+		defer proxyBody.Close()
+	}
 
 	// Capture stderr for logging
 	stderr, err := cmd.StderrPipe()

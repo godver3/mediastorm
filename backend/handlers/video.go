@@ -3752,6 +3752,17 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		streamFormat = "hls"
 	}
 
+	forceHLS := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "web")
+	// iOS Safari/WebKit cannot play the endless chunked MP4 that direct mode
+	// produces via <video src> (fails with MEDIA_ERR_SRC_NOT_SUPPORTED). Clients
+	// that explicitly request this HLS endpoint also need the managed HLS path
+	// instead of the direct live proxy.
+	if streamFormat == "direct" && forceHLS {
+		log.Printf("[video] forcing HLS for live client (source configured direct) url=%s", liveURL)
+		streamFormat = "hls"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -3791,6 +3802,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		ProbeSizeMB:        target.ProbeSizeMB,
 		AnalyzeDurationSec: target.AnalyzeDurationSec,
 		LowLatency:         target.LowLatency,
+		ProxyURL:           target.ProxyURL,
 	}
 	session, err := h.hlsManager.CreateLiveSession(r.Context(), liveURL, target.Provider, target.BucketKey, profileID, profileName, getClientIP(r), tuning)
 	if err != nil {

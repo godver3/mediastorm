@@ -2186,6 +2186,8 @@
         ['play', 'volumechange'].forEach((eventName) => {
             video.addEventListener(eventName, updateIptvPlayerControls);
         });
+        instrumentIptvVideoDiagnostics(video);
+        webPlayerDebug('iptv.render', { isDirect, playbackUrl: String(playbackUrl).slice(0, 200), canPlayTypeFmp4: video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') });
         if (isDirect) {
             video.src = playbackUrl;
         } else {
@@ -2194,7 +2196,36 @@
         startKeepalive(video);
         updateIptvPlayerControls();
         scrollIptvPlayerIntoView();
-        video.play().catch(() => {});
+        video.play().then(() => {
+            webPlayerDebug('iptv.play.resolved');
+        }).catch((err) => {
+            webPlayerDebug('iptv.play.rejected', { error: String(err && err.message || err), name: err && err.name });
+        });
+    }
+
+    // Forwards <video> lifecycle/error events to the backend debug log so we can
+    // diagnose black-screen/loading issues on devices without a usable console.
+    function instrumentIptvVideoDiagnostics(video) {
+        if (!video || video.dataset.iptvDiag === '1') return;
+        video.dataset.iptvDiag = '1';
+        ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'playing', 'waiting', 'stalled', 'suspend', 'abort', 'emptied'].forEach((name) => {
+            video.addEventListener(name, () => {
+                webPlayerDebug('iptv.video.' + name, { readyState: video.readyState, networkState: video.networkState });
+            });
+        });
+        video.addEventListener('error', () => {
+            const e = video.error || {};
+            webPlayerDebug('iptv.video.error', { code: e.code || null, message: e.message || '', readyState: video.readyState, networkState: video.networkState });
+        });
+        if (!window.__iptvGlobalErrHooked) {
+            window.__iptvGlobalErrHooked = true;
+            window.addEventListener('error', (ev) => {
+                webPlayerDebug('window.error', { message: String(ev.message || ''), source: String(ev.filename || ''), line: ev.lineno || null });
+            });
+            window.addEventListener('unhandledrejection', (ev) => {
+                webPlayerDebug('window.unhandledrejection', { reason: String((ev.reason && ev.reason.message) || ev.reason || '') });
+            });
+        }
     }
 
     function stopIptvPlayback() {

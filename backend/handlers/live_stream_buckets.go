@@ -21,6 +21,7 @@ type liveStreamTarget struct {
 	ProbeSizeMB        int
 	AnalyzeDurationSec int
 	LowLatency         bool
+	ProxyURL           string
 }
 
 func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
@@ -135,6 +136,7 @@ func resolveLiveStreamTargets(global models.ResolvedLiveSource, profile *models.
 				ProbeSizeMB:        resolved.ProbeSizeMB,
 				AnalyzeDurationSec: resolved.AnalyzeDurationSec,
 				LowLatency:         resolved.LowLatency,
+				ProxyURL:           strings.TrimSpace(source.ProxyURL),
 			})
 		}
 		return targets
@@ -155,6 +157,7 @@ func resolveLiveStreamTargets(global models.ResolvedLiveSource, profile *models.
 		ProbeSizeMB:        resolved.ProbeSizeMB,
 		AnalyzeDurationSec: resolved.AnalyzeDurationSec,
 		LowLatency:         resolved.LowLatency,
+		ProxyURL:           strings.TrimSpace(resolved.ProxyURL),
 	}}
 }
 
