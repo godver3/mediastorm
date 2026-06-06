@@ -651,6 +651,76 @@
         bottom: 14%;
     }
 
+    /* Native HLS subtitle cue styling (used when WEB_PLAYER_NATIVE_SUBTITLES is on) */
+    #webPlayer::cue {
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        font-size: clamp(1rem, 2.5vw, 2rem);
+        line-height: 1.25;
+        text-shadow: 0 2px 6px black, 0 0 2px black;
+    }
+
+    .web-player-subtitle-diag {
+        margin-top: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.45);
+        color: #d7e2f0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.72rem;
+        line-height: 1.5;
+        white-space: pre;
+        overflow-x: auto;
+    }
+
+    .web-player-subtitle-diag .diag-title {
+        color: #8ab4f8;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .web-player-subtitle-diag .diag-warn {
+        color: #ffcc66;
+    }
+
+    .web-player-subtitle-diag-controls {
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem;
+        white-space: normal;
+    }
+
+    .web-player-subtitle-diag-controls .diag-controls-label {
+        color: #8ab4f8;
+        font-weight: 700;
+    }
+
+    .web-player-subtitle-diag-controls button {
+        font-family: inherit;
+        font-size: 0.72rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.08);
+        color: #e8eef6;
+        cursor: pointer;
+    }
+
+    .web-player-subtitle-diag-controls button:hover {
+        background: rgba(255, 255, 255, 0.16);
+    }
+
+    .web-player-subtitle-diag-controls .diag-controls-hint {
+        color: #93a1b3;
+        flex-basis: 100%;
+    }
+
     .web-player-pause-overlay {
         position: absolute;
         inset: 0;
@@ -1321,6 +1391,22 @@
     let webPlayerActualStartOffset = 0;
     let webPlayerSubtitleStartOffset = null;
     let webPlayerSubtitleTimeOffset = 0;
+    // Subtitle-sync diagnostics panel. Flip to false to hide the live offset readout
+    // below the player, or force it on with ?subtitleDiag=1 / localStorage webPlayerSubtitleDiag=1.
+    const WEB_PLAYER_SUBTITLE_DIAG_DEFAULT = true;
+    // Manual subtitle nudge (seconds) applied on top of the computed offset. Positive moves
+    // subtitles EARLIER (shows them sooner); use it only to diagnose residual sync issues.
+    let webPlayerSubtitleManualOffset = 0;
+    // Subtitle rendering mode.
+    // false (current): the custom overlay renders subtitles, but now fed by the backend's
+    //   same-pass synced WebVTT (subtitles_<index>.vtt, muxed in the video's exact timeline),
+    //   so the overlay offset is ~0 and stays in sync across seeks. Works on every browser.
+    // true: render natively from the HLS subtitle rendition (master.m3u8). iOS WebKit did not
+    //   reliably display it, so this is off.
+    const WEB_PLAYER_NATIVE_SUBTITLES = false;
+    // Constant subtitle bias should stay zero while validating the backend timing model.
+    // Use the manual nudge only as a diagnostic; a persistent nudge means the anchor math is wrong.
+    const WEB_PLAYER_SUBTITLE_SYNC_BIAS = 0;
     let lastWebPlayerTime = 0;
     let suppressWebPlayerSeek = false;
     let webPlayerSeekInProgress = false;
@@ -2755,6 +2841,12 @@
             if (webPlayerSelectedAudioTrack !== null && webPlayerSelectedAudioTrack !== undefined && webPlayerSelectedAudioTrack >= 0) {
                 params.set('audioTrack', String(webPlayerSelectedAudioTrack));
             }
+            // Tell the backend which text subtitle to mux into the stream as a single synced
+            // WebVTT (subtitles_<index>.vtt), so the overlay renders it in sync. Omitted when
+            // subtitles are off (< 0).
+            if (webPlayerSelectedSubtitleTrack !== null && webPlayerSelectedSubtitleTrack !== undefined && Number(webPlayerSelectedSubtitleTrack) >= 0) {
+                params.set('subtitleTrack', String(webPlayerSelectedSubtitleTrack));
+            }
             if (selectedItem.year) params.set('year', String(selectedItem.year));
             if (selectedItem.imdbId) params.set('imdb', selectedItem.imdbId);
             if (selectedItem.tmdbId) params.set('tmdb', selectedItem.tmdbId);
@@ -2839,6 +2931,18 @@
                     ${renderWebPlayerTrackSelectors()}
                 </div>
                 <div id="webPlayerStatus" class="media-meta" style="margin-top: 0.5rem;"></div>
+                <div id="webPlayerSubtitleDiag" class="web-player-subtitle-diag" style="display: none;">
+                    <div id="webPlayerSubtitleDiagText"></div>
+                    <div class="web-player-subtitle-diag-controls">
+                        <span class="diag-controls-label">subtitle nudge:</span>
+                        <button type="button" onclick="nudgeWebPlayerSubtitleOffset(-0.5)">−0.5s</button>
+                        <button type="button" onclick="nudgeWebPlayerSubtitleOffset(-0.1)">−0.1s</button>
+                        <button type="button" onclick="resetWebPlayerSubtitleManualOffset()">reset</button>
+                        <button type="button" onclick="nudgeWebPlayerSubtitleOffset(0.1)">+0.1s</button>
+                        <button type="button" onclick="nudgeWebPlayerSubtitleOffset(0.5)">+0.5s</button>
+                        <span class="diag-controls-hint">(+ = earlier · dial until in sync, then tell me the value + the requested/keyframe numbers above)</span>
+                    </div>
+                </div>
             `;
             const video = document.getElementById('webPlayer');
             applyWebPlayerVolume(video);
@@ -3022,7 +3126,11 @@
                 updateWebPlayerControls();
                 renderWebPlayerSubtitles();
                 setWebPlayerStatus('');
-                window.setTimeout(() => refreshWebPlayerActualStartOffset('seek-canplay'), 1500);
+                // Copy-mode seeks may probe the real keyframe asynchronously after a seek.
+                // Poll a few times so diagnostics catch the update regardless of probe timing.
+                [800, 1600, 2800, 4500].forEach((delay) => {
+                    window.setTimeout(() => refreshWebPlayerActualStartOffset('seek-canplay'), delay);
+                });
                 if (wasPlaying) {
                     webPlayerDebug('seekWebPlayer.resumePlayback');
                     video.play().catch(() => {});
@@ -3721,10 +3829,39 @@
         const parsed = Number(value);
         if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedSubtitleTrack)) return;
         webPlayerSelectedSubtitleTrack = parsed;
-        void installWebPlayerSubtitleTrack(document.getElementById('webPlayer'));
+        // The selected subtitle is muxed into the stream as a synced WebVTT, so switching tracks
+        // (or turning them off) requires re-running the transcode with the new selection.
+        restartWebPlayerWithSelectedTracks();
+    }
+
+    // Enable the player's native subtitle text track (HLS subtitle rendition). hls.js renders the
+    // DEFAULT rendition automatically; for native HLS (iOS/Safari, video.src) we force the first
+    // subtitles track to 'showing'. Returns true if a track was enabled.
+    function enableNativeWebPlayerSubtitleTrack(video) {
+        if (!video || !video.textTracks) return false;
+        const wantSubs = Number(webPlayerSelectedSubtitleTrack) >= 0;
+        let enabled = false;
+        for (let i = 0; i < video.textTracks.length; i++) {
+            const track = video.textTracks[i];
+            if (track.kind !== 'subtitles' && track.kind !== 'captions') continue;
+            if (wantSubs && !enabled) {
+                track.mode = 'showing';
+                enabled = true;
+            } else {
+                track.mode = 'disabled';
+            }
+        }
+        return enabled;
     }
 
     async function installWebPlayerSubtitleTrack(video, options = {}) {
+        if (WEB_PLAYER_NATIVE_SUBTITLES) {
+            // Native rendition handles display; just make sure the right track is showing.
+            // Retry a few times because native HLS exposes text tracks slightly after canplay.
+            const v = video || document.getElementById('webPlayer');
+            [0, 250, 800, 1800].forEach((delay) => window.setTimeout(() => enableNativeWebPlayerSubtitleTrack(v), delay));
+            return;
+        }
         if (!video) return;
         const loadToken = ++webPlayerSubtitleLoadToken;
         if (!options.silent) {
@@ -3754,20 +3891,29 @@
             const text = await response.text();
             if (loadToken !== webPlayerSubtitleLoadToken) return;
             const subtitleExtracting = response.headers.get('X-Subtitle-Extracting') === 'true';
-            const subtitleStartHeader = Number(response.headers.get('X-Subtitle-Start-Offset'));
-            if (Number.isFinite(subtitleStartHeader)) {
-                const subtitleStart = Math.max(0, subtitleStartHeader);
-                const cueCount = (text.match(/-->/g) || []).length;
-                const looksLikePlaceholderStart = hlsPlaybackOffset > 5 && subtitleStart <= 0.05 && cueCount < 2;
-                if (!looksLikePlaceholderStart) {
-                    webPlayerSubtitleStartOffset = subtitleStart;
-                    recomputeWebPlayerSubtitleTimeOffset('subtitle-response');
-                } else {
-                    webPlayerDebug('subtitleOffset.ignorePlaceholderStart', {
-                        playbackOffset: hlsPlaybackOffset,
-                        subtitleStartOffset: subtitleStart,
-                        cueCount,
-                    });
+            const subtitleSynced = response.headers.get('X-Subtitle-Synced') === 'true';
+            if (subtitleSynced) {
+                // VTT is muxed in the video's timeline — cue times already match video.currentTime,
+                // so the offset is 0. Ignore X-Subtitle-Start-Offset entirely (it can carry a stale
+                // value that would skew the overlay).
+                webPlayerSubtitleStartOffset = Number(hlsPlaybackOffset);
+                recomputeWebPlayerSubtitleTimeOffset('subtitle-synced');
+            } else {
+                const subtitleStartHeader = Number(response.headers.get('X-Subtitle-Start-Offset'));
+                if (Number.isFinite(subtitleStartHeader)) {
+                    const subtitleStart = Math.max(0, subtitleStartHeader);
+                    const cueCount = (text.match(/-->/g) || []).length;
+                    const looksLikePlaceholderStart = hlsPlaybackOffset > 5 && subtitleStart <= 0.05 && cueCount < 2;
+                    if (!looksLikePlaceholderStart) {
+                        webPlayerSubtitleStartOffset = subtitleStart;
+                        recomputeWebPlayerSubtitleTimeOffset('subtitle-response');
+                    } else {
+                        webPlayerDebug('subtitleOffset.ignorePlaceholderStart', {
+                            playbackOffset: hlsPlaybackOffset,
+                            subtitleStartOffset: subtitleStart,
+                            cueCount,
+                        });
+                    }
                 }
             }
             webPlayerSubtitleCues = parseWebVttCues(text);
@@ -3813,6 +3959,9 @@
     }
 
     function recomputeWebPlayerSubtitleTimeOffset(reason) {
+        // Base offset that lines sidecar VTT timelines up with the HLS playback timeline.
+        // Same-pass synced VTTs are already zero-based to the player timeline, so their offset
+        // remains 0. Keyframe-aligned copy seeks are handled by the backend seek target.
         if (!Number.isFinite(Number(hlsPlaybackOffset)) || !Number.isFinite(Number(webPlayerSubtitleStartOffset))) {
             webPlayerSubtitleTimeOffset = 0;
             return;
@@ -3858,6 +4007,10 @@
             subtitleTimeOffset: webPlayerSubtitleTimeOffset,
             keyframeDelta: data.keyframeDelta,
         });
+        // The backend may probe copy-mode keyframes asynchronously; keep diagnostics current.
+        // Same-pass synced VTTs stay zero-based to video.currentTime, so this is not an extra
+        // render offset by itself.
+        recomputeWebPlayerSubtitleTimeOffset(`actualStartCorrection:${reason}`);
     }
 
     function clearWebPlayerSubtitleRefresh() {
@@ -3916,15 +4069,163 @@
     function renderWebPlayerSubtitles() {
         const overlay = document.getElementById('webPlayerSubtitleOverlay');
         const video = document.getElementById('webPlayer');
-        if (!overlay || !video || Number(webPlayerSelectedSubtitleTrack) < 0 || !webPlayerSubtitleCues.length) {
+        if (WEB_PLAYER_NATIVE_SUBTITLES) {
+            // Native rendition renders subtitles itself; keep the custom overlay empty.
             if (overlay) overlay.textContent = '';
+            updateWebPlayerSubtitleDiagnostics(null, null);
             return;
         }
-        const currentTime = Number(video.currentTime || 0) + webPlayerSubtitleTimeOffset;
-        overlay.textContent = webPlayerSubtitleCues
-            .filter((cue) => currentTime >= cue.start && currentTime <= cue.end)
-            .map((cue) => cue.text)
-            .join('\n');
+        if (!overlay || !video) {
+            updateWebPlayerSubtitleDiagnostics(null, null);
+            return;
+        }
+        const subtitleTime = Number(video.currentTime || 0) + webPlayerSubtitleTimeOffset + webPlayerSubtitleManualOffset + WEB_PLAYER_SUBTITLE_SYNC_BIAS;
+        let activeCues = [];
+        if (Number(webPlayerSelectedSubtitleTrack) >= 0 && webPlayerSubtitleCues.length) {
+            activeCues = webPlayerSubtitleCues.filter((cue) => subtitleTime >= cue.start && subtitleTime <= cue.end);
+            overlay.textContent = activeCues.map((cue) => cue.text).join('\n');
+        } else {
+            overlay.textContent = '';
+        }
+        updateWebPlayerSubtitleDiagnostics(subtitleTime, activeCues);
+    }
+
+    function isWebPlayerSubtitleDiagEnabled() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('subtitleDiag') === '1') return true;
+            if (params.get('subtitleDiag') === '0') return false;
+            const stored = localStorage.getItem('webPlayerSubtitleDiag');
+            if (stored === '1') return true;
+            if (stored === '0') return false;
+        } catch {}
+        return WEB_PLAYER_SUBTITLE_DIAG_DEFAULT;
+    }
+
+    function fmtDiagSeconds(value) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toFixed(3) : '—';
+    }
+
+    function nearestWebPlayerCue(subtitleTime) {
+        if (!Number.isFinite(subtitleTime) || !webPlayerSubtitleCues.length) return null;
+        let best = null;
+        let bestGap = Infinity;
+        for (const cue of webPlayerSubtitleCues) {
+            const gap = subtitleTime < cue.start ? cue.start - subtitleTime
+                : subtitleTime > cue.end ? subtitleTime - cue.end
+                : 0;
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = cue;
+            }
+        }
+        return best;
+    }
+
+    // Live readout of the subtitle/video time anchors so keyframe-seek sync can be
+    // verified during testing. For accurate web video+subtitle transcodes, the probed
+    // keyframe gap should not become a render offset; same-pass VTT is zero-based to
+    // video.currentTime.
+    function updateWebPlayerSubtitleDiagnostics(subtitleTime, activeCues) {
+        const panel = document.getElementById('webPlayerSubtitleDiag');
+        const text = document.getElementById('webPlayerSubtitleDiagText');
+        if (!panel || !text) return;
+        if (!isWebPlayerSubtitleDiagEnabled()) {
+            panel.style.display = 'none';
+            return;
+        }
+        panel.style.display = 'block';
+
+        if (WEB_PLAYER_NATIVE_SUBTITLES) {
+            updateNativeWebPlayerSubtitleDiagnostics(text);
+            return;
+        }
+
+        const video = document.getElementById('webPlayer');
+        const currentTime = Number(video?.currentTime || 0);
+        const requested = Number(hlsPlaybackOffset);
+        const probedKeyframe = Number(webPlayerActualStartOffset);
+        const subtitleOrigin = Number(webPlayerSubtitleStartOffset);
+        // (requested - probedKeyframe): the probe finds the keyframe BEFORE the seek. The
+        // video may actually start on the keyframe AFTER the seek, so this is informational.
+        const keyframeGap = Number.isFinite(requested) && Number.isFinite(probedKeyframe)
+            ? requested - probedKeyframe
+            : Number.NaN;
+        const totalOffset = Number(webPlayerSubtitleTimeOffset) + Number(webPlayerSubtitleManualOffset) + Number(WEB_PLAYER_SUBTITLE_SYNC_BIAS);
+        const lookup = Number.isFinite(subtitleTime) ? subtitleTime : currentTime + totalOffset;
+
+        const cue = (activeCues && activeCues.length) ? activeCues[0] : nearestWebPlayerCue(lookup);
+        let cueLine;
+        if (!webPlayerSubtitleCues.length) {
+            cueLine = Number(webPlayerSelectedSubtitleTrack) < 0 ? 'cue           : (subtitles off)' : 'cue           : (none loaded)';
+        } else if (activeCues && activeCues.length) {
+            cueLine = `cue (ACTIVE)  : ${fmtDiagSeconds(cue.start)}–${fmtDiagSeconds(cue.end)}  (in-cue +${fmtDiagSeconds(lookup - cue.start)}s)`;
+        } else if (cue) {
+            const dir = lookup < cue.start ? `next in ${fmtDiagSeconds(cue.start - lookup)}s` : `last ended ${fmtDiagSeconds(lookup - cue.end)}s ago`;
+            cueLine = `cue (nearest) : ${fmtDiagSeconds(cue.start)}–${fmtDiagSeconds(cue.end)}  (${dir})`;
+        } else {
+            cueLine = 'cue           : (none)';
+        }
+
+        const manualClass = Math.abs(Number(webPlayerSubtitleManualOffset)) >= 0.001 ? 'diag-warn' : '';
+        text.innerHTML = [
+            '<span class="diag-title">subtitle sync diagnostics</span>',
+            `requested seek : ${fmtDiagSeconds(requested)}s    probed keyframe (before): ${fmtDiagSeconds(probedKeyframe)}s    gap ${fmtDiagSeconds(keyframeGap)}s`,
+            `subtitle origin: ${fmtDiagSeconds(subtitleOrigin)}s    base offset: ${fmtDiagSeconds(webPlayerSubtitleTimeOffset)}s`,
+            `<span class="${manualClass}">manual nudge   : ${fmtDiagSeconds(webPlayerSubtitleManualOffset)}s    TOTAL applied: ${fmtDiagSeconds(totalOffset)}s</span>`,
+            `video.currentTime: ${fmtDiagSeconds(currentTime)}s    VTT lookup: ${fmtDiagSeconds(lookup)}s    cues: ${webPlayerSubtitleCues.length}    track: ${webPlayerSelectedSubtitleTrack}`,
+            cueLine,
+        ].join('\n');
+    }
+
+    // Native-rendition diagnostics: confirm the player has the HLS subtitle text track and is
+    // showing it (no offset math — sync is handled by the muxed rendition).
+    function updateNativeWebPlayerSubtitleDiagnostics(text) {
+        const controls = document.querySelector('.web-player-subtitle-diag-controls');
+        if (controls) controls.style.display = 'none'; // manual nudge is irrelevant for native subs
+        const video = document.getElementById('webPlayer');
+        const tracks = video && video.textTracks ? video.textTracks : null;
+        let total = 0, showing = -1, activeCue = '';
+        if (tracks) {
+            for (let i = 0; i < tracks.length; i++) {
+                const t = tracks[i];
+                if (t.kind !== 'subtitles' && t.kind !== 'captions') continue;
+                total++;
+                if (t.mode === 'showing') {
+                    showing = i;
+                    const cues = t.activeCues;
+                    if (cues && cues.length) {
+                        activeCue = Array.from(cues).map((c) => c.text || '').join(' / ').replace(/<[^>]+>/g, '').slice(0, 80);
+                    }
+                }
+            }
+        }
+        const playlist = String(video?.currentSrc || '').includes('master.m3u8') ? 'master.m3u8' : (video?.currentSrc ? '(non-master)' : '(none)');
+        text.innerHTML = [
+            '<span class="diag-title">subtitle sync diagnostics (native rendition)</span>',
+            `mode           : native HLS rendition    playlist: ${playlist}`,
+            `selected track : ${webPlayerSelectedSubtitleTrack}    text tracks: ${total}    showing index: ${showing >= 0 ? showing : 'none'}`,
+            `video.currentTime: ${fmtDiagSeconds(Number(video?.currentTime || 0))}s`,
+            `<span class="${showing < 0 && Number(webPlayerSelectedSubtitleTrack) >= 0 ? 'diag-warn' : ''}">active cue     : ${activeCue || '(none)'}</span>`,
+        ].join('\n');
+    }
+
+    function nudgeWebPlayerSubtitleOffset(delta) {
+        webPlayerSubtitleManualOffset = Math.round((Number(webPlayerSubtitleManualOffset) + Number(delta)) * 1000) / 1000;
+        webPlayerDebug('subtitleOffset.manualNudge', {
+            manualOffset: webPlayerSubtitleManualOffset,
+            playbackOffset: hlsPlaybackOffset,
+            actualStartOffset: webPlayerActualStartOffset,
+            subtitleStartOffset: webPlayerSubtitleStartOffset,
+            baseOffset: webPlayerSubtitleTimeOffset,
+        });
+        renderWebPlayerSubtitles();
+    }
+
+    function resetWebPlayerSubtitleManualOffset() {
+        webPlayerSubtitleManualOffset = 0;
+        renderWebPlayerSubtitles();
     }
 
     function restartWebPlayerWithSelectedTracks() {
@@ -4226,6 +4527,7 @@
         webPlayerActualStartOffset = 0;
         webPlayerSubtitleStartOffset = null;
         webPlayerSubtitleTimeOffset = 0;
+        webPlayerSubtitleManualOffset = 0;
         lastWebPlayerTime = 0;
         suppressWebPlayerSeek = false;
         webPlayerSeekInProgress = false;

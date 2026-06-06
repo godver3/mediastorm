@@ -351,6 +351,10 @@ type HLSSession struct {
 	AudioTrackIndex    int // Selected audio stream index (ffprobe index), -1 = all/default
 	SubtitleTrackIndex int // Selected subtitle track index, -1 = none
 
+	// UsesSubtitleRendition is set when the transcode writes the selected subtitle as a
+	// same-pass WebVTT sidecar in the same timeline as the web player video output.
+	UsesSubtitleRendition bool
+
 	// Performance tracking
 	StreamStartTime      time.Time
 	FirstSegmentTime     time.Time
@@ -514,6 +518,42 @@ func isBrowserCopyCompatibleVideo(probe *UnifiedProbeResult) bool {
 	}
 
 	return true
+}
+
+func hlsWebVideoWillTranscode(playbackTarget string, probe *UnifiedProbeResult) bool {
+	if probe != nil && IsIncompatibleVideoCodec(probe.VideoCodec) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(playbackTarget), "web") && !isBrowserCopyCompatibleVideo(probe)
+}
+
+func selectedTextSubtitleStream(subtitleStreams []subtitleStreamInfo, trackIndex int) (subtitleStreamInfo, bool) {
+	if trackIndex < 0 {
+		return subtitleStreamInfo{}, false
+	}
+	for _, stream := range subtitleStreams {
+		if stream.Index == trackIndex && isTextSubtitleCodec(stream.Codec) {
+			return stream, true
+		}
+	}
+	return subtitleStreamInfo{}, false
+}
+
+func shouldUseAccurateRequestedSeekForWebSubtitle(playbackTarget string, probe *UnifiedProbeResult, subtitleStreams []subtitleStreamInfo, trackIndex int) bool {
+	if !strings.EqualFold(strings.TrimSpace(playbackTarget), "web") {
+		return false
+	}
+	if _, ok := selectedTextSubtitleStream(subtitleStreams, trackIndex); !ok {
+		return false
+	}
+	return hlsWebVideoWillTranscode(playbackTarget, probe)
+}
+
+func shouldPreferRequestedTranscodingOffset(playbackTarget string, probe *UnifiedProbeResult, subtitleStreams []subtitleStreamInfo, trackIndex int) bool {
+	if shouldUseAccurateRequestedSeekForWebSubtitle(playbackTarget, probe, subtitleStreams, trackIndex) {
+		return true
+	}
+	return probe == nil && strings.EqualFold(strings.TrimSpace(playbackTarget), "web") && trackIndex >= 0
 }
 
 func sanitizeHLSLanguage(language string) string {
@@ -1044,12 +1084,23 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		startOffset = math.Max(duration-4, 0)
 	}
 
+	normalizedPlaybackTarget := strings.ToLower(strings.TrimSpace(playbackTarget))
+	subtitleStreamsForSeek := []subtitleStreamInfo(nil)
+	if probeData != nil {
+		subtitleStreamsForSeek = probeData.SubtitleStreams
+	}
+
 	now := time.Now()
 	// Use provided transcodingOffset if valid, otherwise default to startOffset
 	// transcodingOffset may differ from startOffset when probed keyframe position is used
 	actualTranscodingOffset := startOffset
 	if transcodingOffset > 0 {
 		actualTranscodingOffset = transcodingOffset
+	}
+	if startOffset > 0 && shouldPreferRequestedTranscodingOffset(normalizedPlaybackTarget, probeData, subtitleStreamsForSeek, subtitleTrackIndex) {
+		actualTranscodingOffset = startOffset
+		log.Printf("[hls] session %s: using requested start %.3fs instead of probed keyframe %.3fs for accurate web video+subtitle seek",
+			sessionID, startOffset, transcodingOffset)
 	}
 
 	session := &HLSSession{
@@ -1084,7 +1135,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		subtitleExtractOffsets:  make(map[int]float64),
 		CastMode:                castMode,
 		PrequeueType:            prequeueType, // "", "details", or "next_episode"
-		PlaybackTarget:          strings.ToLower(strings.TrimSpace(playbackTarget)),
+		PlaybackTarget:          normalizedPlaybackTarget,
 	}
 
 	m.mu.Lock()
@@ -1935,16 +1986,31 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// - Large seeks (>= 30s): INPUT seeking (-ss before -i) - uses HTTP Range to skip data
 	const outputSeekThreshold = 30.0 // seconds
 
-	useOutputSeeking := session.TranscodingOffset > 0 && session.TranscodingOffset < outputSeekThreshold
+	// Determine up-front (these are computed in full detail further below too) whether the video
+	// will be transcoded and whether a same-pass subtitle is being muxed, because both change the
+	// seek strategy needed to keep the subtitle aligned with the video.
+	videoWillTranscode := hlsWebVideoWillTranscode(session.PlaybackTarget, session.ProbeData)
+	_, subtitleRenditionWanted := selectedTextSubtitleStream(subtitleStreams, session.SubtitleTrackIndex)
+	subtitleRenditionWanted = session.PlaybackTarget == "web" && subtitleRenditionWanted
 
-	// For INPUT seeking, add -ss before -i
-	// IMPORTANT: Use -noaccurate_seek when copying video but transcoding audio.
-	// By default, accurate_seek causes transcoded streams to discard frames between
-	// the seek point and exact position, while copied streams preserve them.
-	// This causes A/V desync. With -noaccurate_seek, both streams preserve the same frames.
-	if session.TranscodingOffset >= outputSeekThreshold {
-		args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
-		log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
+	// Force INPUT seeking when muxing a same-pass subtitle so the single -ss before -i applies to
+	// BOTH the video and the subtitle output. OUTPUT seeking only seeks the first output, which
+	// would leave the subtitle starting at the beginning of the file and wildly out of sync.
+	useOutputSeeking := session.TranscodingOffset > 0 && session.TranscodingOffset < outputSeekThreshold && !subtitleRenditionWanted
+
+	// For INPUT seeking, add -ss before -i.
+	// -noaccurate_seek keeps a COPIED video aligned with the same-pass subtitle (both anchored at
+	// the keyframe; also avoids A/V desync with copied video + transcoded audio). For a TRANSCODED
+	// video, -noaccurate_seek instead makes the video start diverge from the subtitle by the
+	// keyframe gap, so use accurate seek there to keep video + subtitle aligned.
+	if session.TranscodingOffset > 0 && !useOutputSeeking {
+		if videoWillTranscode && subtitleRenditionWanted {
+			args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
+			log.Printf("[hls] session %s: using INPUT seeking to %.3fs (accurate; transcoded video + subtitle)", session.ID, session.TranscodingOffset)
+		} else {
+			args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
+			log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
+		}
 	}
 
 	// Add input source - use proxy URL if available, otherwise use pipe
@@ -2067,6 +2133,28 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}
 
+	// Same-pass WebVTT subtitle rendition (web player only).
+	// To keep subtitles perfectly in sync after seeks, the selected text subtitle is muxed
+	// in THIS ffmpeg pass (sharing the exact -ss/timestamp rebasing as the video) and exposed
+	// as a single synced WebVTT file (a second plain -f webvtt output, added after the main HLS
+	// output below). Because it shares the exact -ss/timestamp rebasing as the video, the web
+	// overlay can render it with a zero offset and it stays in sync across seeks. Gated to
+	// PlaybackTarget=="web" so the native/iOS pipeline is untouched.
+	webSubtitleRendition := false
+	webSubtitleAbsIndex := -1
+	if session.PlaybackTarget == "web" && session.SubtitleTrackIndex >= 0 {
+		if stream, ok := selectedTextSubtitleStream(subtitleStreams, session.SubtitleTrackIndex); ok {
+			webSubtitleRendition = true
+			webSubtitleAbsIndex = stream.Index
+		}
+	}
+	if webSubtitleRendition {
+		log.Printf("[hls] session %s: same-pass synced WebVTT subtitle enabled for stream %d", session.ID, webSubtitleAbsIndex)
+	}
+	session.mu.Lock()
+	session.UsesSubtitleRendition = webSubtitleRendition
+	session.mu.Unlock()
+
 	// Check if video codec is compatible with iOS (H.264/HEVC only)
 	// Legacy codecs like MPEG-4 Part 2 (XviD/DivX), MPEG-2, etc. need transcoding
 	needsVideoTranscode := false
@@ -2098,6 +2186,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			"-profile:v", "high",
 			"-level", "4.1",
 			"-pix_fmt", "yuv420p",
+			"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%.3f)", hlsSegmentDuration),
 			"-threads", "0", // Use all available CPU cores
 		)
 		// When transcoding video for fMP4, also check if audio needs transcoding
@@ -2214,6 +2303,12 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		}
 	}
 
+	// Pin the video PTS to a ~0 origin so the same-pass WebVTT (also 0-based) aligns with the
+	// video timeline the player exposes. The subtitle itself is added as a second output below.
+	if webSubtitleRendition {
+		args = append(args, "-muxpreload", "0", "-muxdelay", "0")
+	}
+
 	// Subtitle handling: All subtitles are served via sidecar VTT files for consistent overlay rendering.
 	// - fMP4 (Dolby Vision/HDR): Extract ALL text-based tracks upfront as additional ffmpeg outputs
 	// - MPEG-TS: On-demand extraction via extractSubtitleTrack when a track is requested
@@ -2314,6 +2409,21 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		if len(sidecarSubtitles) > 0 {
 			log.Printf("[hls] session %s: %d subtitle tracks will be extracted on demand", session.ID, len(sidecarSubtitles))
 		}
+	}
+
+	// Second output: the selected subtitle muxed to a single synced WebVTT file in THIS pass
+	// (shares the video's -ss/timestamp rebasing). The web overlay fetches it via
+	// subtitles_<index>.vtt and renders it with a zero offset. Named to match the path
+	// ServeSubtitleTrack serves and clearSessionSegments clears on seek.
+	if webSubtitleRendition {
+		syncedVTTPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", webSubtitleAbsIndex))
+		args = append(args,
+			"-map", fmt.Sprintf("0:%d", webSubtitleAbsIndex),
+			"-c:s", "webvtt",
+			"-flush_packets", "1",
+			"-f", "webvtt",
+			syncedVTTPath,
+		)
 	}
 
 	ffmpegSetupStart := time.Now()
@@ -3393,22 +3503,33 @@ func (m *HLSManager) Seek(w http.ResponseWriter, r *http.Request, sessionID stri
 	// Frontend will pick up the correction on next keepalive poll
 	session.mu.RLock()
 	sessionPath := session.Path
+	probeData := session.ProbeData
+	probePlaybackTarget := session.PlaybackTarget
+	probeSubtitleTrack := session.SubtitleTrackIndex
+	probeSubtitleStreams := []subtitleStreamInfo(nil)
+	if probeData != nil {
+		probeSubtitleStreams = probeData.SubtitleStreams
+	}
 	session.mu.RUnlock()
 
-	go func() {
-		probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer probeCancel()
+	if shouldUseAccurateRequestedSeekForWebSubtitle(probePlaybackTarget, probeData, probeSubtitleStreams, probeSubtitleTrack) {
+		log.Printf("[hls] session %s: skipping background keyframe probe for accurate web video+subtitle seek", sessionID)
+	} else {
+		go func() {
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer probeCancel()
 
-		keyframePos := m.probeKeyframePosition(probeCtx, sessionPath, targetTime)
-		delta := keyframePos - targetTime
+			keyframePos := m.probeKeyframePosition(probeCtx, sessionPath, targetTime)
+			delta := keyframePos - targetTime
 
-		session.mu.Lock()
-		session.ActualStartOffset = keyframePos
-		session.mu.Unlock()
+			session.mu.Lock()
+			session.ActualStartOffset = keyframePos
+			session.mu.Unlock()
 
-		log.Printf("[hls] session %s: background keyframe probe complete: requested=%.3fs actual=%.3fs delta=%.3fs",
-			sessionID, targetTime, keyframePos, delta)
-	}()
+			log.Printf("[hls] session %s: background keyframe probe complete: requested=%.3fs actual=%.3fs delta=%.3fs",
+				sessionID, targetTime, keyframePos, delta)
+		}()
+	}
 
 	// Wait for the playlist file to be created before returning
 	// This prevents the player from trying to load a non-existent playlist
@@ -3490,6 +3611,7 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 		filepath.Join(outputDir, "segment*.m4s"),
 		filepath.Join(outputDir, "init.mp4"),
 		filepath.Join(outputDir, "stream.m3u8"),
+		// Includes the same-pass synced subtitles_<index>.vtt, regenerated from the new offset.
 		filepath.Join(outputDir, "subtitles_*.vtt"),
 	}
 
@@ -4008,10 +4130,13 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 		contentType = "video/mp4"
 	} else if strings.HasSuffix(segmentName, ".vtt") || strings.HasSuffix(segmentName, ".webvtt") {
 		contentType = "text/vtt"
+	} else if strings.HasSuffix(segmentName, ".m3u8") {
+		// e.g. stream_vtt.m3u8 (FFmpeg-generated subtitle rendition playlist) hits this handler
+		contentType = "application/vnd.apple.mpegurl"
 	}
 
 	w.Header().Set("Content-Type", contentType)
-	if strings.HasSuffix(segmentName, ".vtt") || strings.HasSuffix(segmentName, ".webvtt") {
+	if strings.HasSuffix(segmentName, ".vtt") || strings.HasSuffix(segmentName, ".webvtt") || strings.HasSuffix(segmentName, ".m3u8") {
 		w.Header().Set("Cache-Control", "no-cache")
 	} else {
 		w.Header().Set("Cache-Control", "no-store, max-age=0")
@@ -4089,9 +4214,16 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	// This naming is consistent for both initially selected and switched tracks
 	vttPath := filepath.Join(session.OutputDir, fmt.Sprintf("subtitles_%d.vtt", requestedTrack))
 
+	// For the same-pass synced subtitle (web overlay), the main transcode writes this exact file
+	// in the video's timeline. Skip the separate on-demand extraction, which would produce an
+	// out-of-sync VTT and race with the transcode's output.
+	session.mu.RLock()
+	syncedSamePass := session.UsesSubtitleRendition && requestedTrack == session.SubtitleTrackIndex
+	session.mu.RUnlock()
+
 	// Check if file exists - for fMP4/DV sessions, all tracks should be pre-extracted
 	// If not found, fall back to on-demand extraction (for MPEG-TS or edge cases)
-	if _, err := os.Stat(vttPath); os.IsNotExist(err) {
+	if _, err := os.Stat(vttPath); os.IsNotExist(err) && !syncedSamePass {
 		// Use per-track extraction tracking to prevent duplicates without blocking the session
 		// This avoids a deadlock where subtitle extraction holds session.mu while the
 		// transcoding pipeline waits for session.mu.RLock at startup
@@ -4170,10 +4302,16 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		if session.subtitleExtractionInProgress(requestedTrack) {
+		if session.subtitleExtractionInProgress(requestedTrack) || syncedSamePass {
+			// For synced same-pass subtitles the transcode is still writing the file; signal
+			// "extracting" so the overlay polls quickly instead of waiting the long interval.
 			w.Header().Set("X-Subtitle-Extracting", "true")
 		}
-		if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
+		if syncedSamePass {
+			// Muxed in the video's timeline — the overlay must use a zero offset, NOT the
+			// separate-extraction start offset (which can leak a stale 0 and break sync).
+			w.Header().Set("X-Subtitle-Synced", "true")
+		} else if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
 			w.Header().Set("X-Subtitle-Start-Offset", fmt.Sprintf("%.3f", offset))
 		}
 		w.Write([]byte("WEBVTT\n\n"))
@@ -4209,7 +4347,9 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	if session.subtitleExtractionInProgress(requestedTrack) {
 		w.Header().Set("X-Subtitle-Extracting", "true")
 	}
-	if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
+	if syncedSamePass {
+		w.Header().Set("X-Subtitle-Synced", "true")
+	} else if offset, ok := session.subtitleExtractionOffset(requestedTrack); ok {
 		w.Header().Set("X-Subtitle-Start-Offset", fmt.Sprintf("%.3f", offset))
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(processedContent)))

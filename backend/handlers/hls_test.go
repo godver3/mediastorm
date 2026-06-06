@@ -600,6 +600,81 @@ func TestIsBrowserCopyCompatibleVideo(t *testing.T) {
 	}
 }
 
+func TestShouldUseAccurateRequestedSeekForWebSubtitle(t *testing.T) {
+	textSubs := []subtitleStreamInfo{{Index: 3, Codec: "subrip"}}
+
+	tests := []struct {
+		name           string
+		playbackTarget string
+		probe          *UnifiedProbeResult
+		subtitles      []subtitleStreamInfo
+		trackIndex     int
+		want           bool
+	}{
+		{
+			name:           "web HEVC transcode with selected text subtitle",
+			playbackTarget: "web",
+			probe:          &UnifiedProbeResult{VideoCodec: "hevc", VideoPixFmt: "yuv420p10le", VideoProfile: "Main 10"},
+			subtitles:      textSubs,
+			trackIndex:     3,
+			want:           true,
+		},
+		{
+			name:           "web H264 copy-compatible video keeps keyframe path",
+			playbackTarget: "web",
+			probe:          &UnifiedProbeResult{VideoCodec: "h264", VideoPixFmt: "yuv420p", VideoProfile: "High"},
+			subtitles:      textSubs,
+			trackIndex:     3,
+			want:           false,
+		},
+		{
+			name:           "non-web playback does not use web subtitle seek path",
+			playbackTarget: "ios",
+			probe:          &UnifiedProbeResult{VideoCodec: "hevc", VideoPixFmt: "yuv420p10le", VideoProfile: "Main 10"},
+			subtitles:      textSubs,
+			trackIndex:     3,
+			want:           false,
+		},
+		{
+			name:           "bitmap subtitle does not trigger same-pass text path",
+			playbackTarget: "web",
+			probe:          &UnifiedProbeResult{VideoCodec: "hevc", VideoPixFmt: "yuv420p10le", VideoProfile: "Main 10"},
+			subtitles:      []subtitleStreamInfo{{Index: 3, Codec: "hdmv_pgs_subtitle"}},
+			trackIndex:     3,
+			want:           false,
+		},
+		{
+			name:           "unselected text subtitle does not trigger path",
+			playbackTarget: "web",
+			probe:          &UnifiedProbeResult{VideoCodec: "hevc", VideoPixFmt: "yuv420p10le", VideoProfile: "Main 10"},
+			subtitles:      textSubs,
+			trackIndex:     4,
+			want:           false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldUseAccurateRequestedSeekForWebSubtitle(tc.playbackTarget, tc.probe, tc.subtitles, tc.trackIndex)
+			if got != tc.want {
+				t.Fatalf("shouldUseAccurateRequestedSeekForWebSubtitle() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldPreferRequestedTranscodingOffset_NilProbeWebSubtitleFallback(t *testing.T) {
+	if !shouldPreferRequestedTranscodingOffset("web", nil, nil, 3) {
+		t.Fatal("nil-probe web subtitle sessions should prefer requested offset because web video compatibility is unknown")
+	}
+	if shouldPreferRequestedTranscodingOffset("web", nil, nil, -1) {
+		t.Fatal("subtitle-off sessions should not use the subtitle-specific fallback")
+	}
+	if shouldPreferRequestedTranscodingOffset("ios", nil, nil, 3) {
+		t.Fatal("non-web sessions should not use the web subtitle fallback")
+	}
+}
+
 func TestHLSManager_ServeSubtitlePlaylist(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := NewHLSManager(tmpDir, "", "", nil)

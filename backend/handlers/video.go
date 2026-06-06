@@ -3034,7 +3034,9 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	session.MediaMetadata = mediaMetadata
 	session.mu.Unlock()
 
-	actualStartOffset := transcodingOffset
+	session.mu.RLock()
+	actualStartOffset := session.ActualStartOffset
+	session.mu.RUnlock()
 	// Delta between actual keyframe position and requested position (negative = keyframe is earlier)
 	keyframeDelta := actualStartOffset - startSeconds
 
