@@ -93,6 +93,16 @@ POSTGRES_PASSWORD=your_secure_password docker compose up -d
 
 > **⚠️ Notice:** mediastorm is developed with the assistance of large language models (LLMs). While best efforts have been made to ensure security and code integrity, use this software at your own risk. mediastorm is not designed to be directly exposed to the internet — for safe remote access, use a VPN or overlay network like [Tailscale](https://tailscale.com/) to keep your server private while still accessible from your devices.
 
+### Connection Invites / Iroh Remote Access
+
+mediastorm includes an Iroh-based connection invite system for remote app access without opening ports or setting up a reverse proxy. In the admin panel, create a connection invite, share the generated code with the person you want to connect, and have them enter it from the app Login screen. They still need a valid mediastorm username and password, either for your account or a sub-account you created for them.
+
+At a high level, the backend creates both a full Iroh invite and a shorter connection code. The backend publishes a temporary DHT rendezvous record that lets the frontend use the short code to find the full invite. That record is signed with a key derived from the short code, so the public DHT record does not directly identify your backend. Once the frontend receives the full invite, it dials the backend over Iroh, using direct connectivity or hole punching where possible. Initial reachability can use Iroh relays when needed, but direct connections are preferred.
+
+Traffic remains encrypted between the frontend and your backend even when a relay is used. A relay can forward packets, but it cannot read the HTTP requests, API responses, or media bytes inside the Iroh connection. After the app connects successfully, the short code is claimed and is no longer reusable.
+
+Remote access through this path depends on network conditions and may not work everywhere. It may also be slower than LAN or local-network playback, especially for high-bitrate video. When connected through an Iroh bridge, only the built-in player is supported; external players such as VLC or Infuse will not work.
+
 ### Frontend Apps
 
 The frontend is built with React Native and supports iOS, tvOS, Android, and Android TV.
