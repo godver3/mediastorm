@@ -593,6 +593,13 @@ type FilterSettings struct {
 	PreferredScraper       string                   `json:"preferredScraper,omitempty"`       // Name of the preferred torrent scraper (empty = none)
 	ServicePriority        StreamingServicePriority `json:"servicePriority"`                  // Priority for service type in search results
 	UnknownTrackPolicy     UnknownTrackPolicy       `json:"unknownTrackPolicy,omitempty"`     // Post-probe automatic selection preference for files with known audio/subtitle language metadata
+	// AdaptivePlaybackEnabled lets each client auto-cap stream size (from its measured
+	// connection speed) and HDR/DV policy (from its display capability). Clients report
+	// the measurements; the caps are applied transiently at search time.
+	AdaptivePlaybackEnabled bool `json:"adaptivePlaybackEnabled,omitempty"`
+	// AdaptiveTargetBufferFactor is the fraction of measured throughput a file's average
+	// bitrate may consume and still be considered comfortably streamable (0-1, default 0.7).
+	AdaptiveTargetBufferFactor float64 `json:"adaptiveTargetBufferFactor,omitempty"`
 }
 
 // AnimeFilteringSettings controls anime-specific language preferences.
@@ -1087,11 +1094,13 @@ func DefaultSettings() Settings {
 			HomeHeroScale:  1.0,
 		},
 		Filtering: FilterSettings{
-			MaxSizeMovieGB:     0,                       // 0 means no limit
-			MaxSizeEpisodeGB:   0,                       // 0 means no limit
-			HDRDVPolicy:        HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
-			ServicePriority:    StreamingServicePriorityNone,
-			UnknownTrackPolicy: UnknownTrackPolicyNone,
+			MaxSizeMovieGB:             0,                       // 0 means no limit
+			MaxSizeEpisodeGB:           0,                       // 0 means no limit
+			HDRDVPolicy:                HDRDVPolicyIncludeHDRDV, // "hdr_dv" = allow all content (no HDR/DV filtering)
+			ServicePriority:            StreamingServicePriorityNone,
+			UnknownTrackPolicy:         UnknownTrackPolicyNone,
+			AdaptivePlaybackEnabled:    false, // opt-in
+			AdaptiveTargetBufferFactor: 0.7,
 		},
 		AnimeFiltering: AnimeFilteringSettings{},
 		UI: UISettings{

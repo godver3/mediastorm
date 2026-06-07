@@ -312,6 +312,17 @@ func (s *Service) getEffectiveFilterSettings(userID, clientID string, globalSett
 			if clientSettings.AnimePreferredLanguage != nil {
 				animeSettings.AnimePreferredLanguage = clientSettings.AnimePreferredLanguage
 			}
+
+			// Layer 4: Adaptive playback overlays transient size/HDR caps derived
+			// from this device's reported throughput + display capability. Gated by
+			// the global toggle; computed on the fly and never persisted into the
+			// flat filter fields.
+			models.ComputeAdaptiveCaps(
+				globalSettings.Filtering.AdaptivePlaybackEnabled,
+				globalSettings.Filtering.AdaptiveTargetBufferFactor,
+				clientSettings.AdaptivePlayback,
+				time.Now(),
+			).ApplyTo(&filterSettings)
 		}
 	}
 

@@ -5,6 +5,7 @@ func FloatPtr(v float64) *float64 { return &v }
 func BoolPtr(v bool) *bool        { return &v }
 func StringPtr(v string) *string  { return &v }
 func IntPtr(v int) *int           { return &v }
+func Int64Ptr(v int64) *int64     { return &v }
 
 // Helper functions for safely dereferencing pointers with defaults
 func FloatVal(p *float64, def float64) float64 {

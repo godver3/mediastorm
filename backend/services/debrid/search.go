@@ -320,6 +320,15 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 			if clientSettings.BypassFilteringForAIOStreamsOnly != nil {
 				bypassForAIO = *clientSettings.BypassFilteringForAIOStreamsOnly
 			}
+
+			// Layer 4: Adaptive playback overlays transient size/HDR caps derived
+			// from this device's reported throughput + display capability.
+			models.ComputeAdaptiveCaps(
+				globalSettings.Filtering.AdaptivePlaybackEnabled,
+				globalSettings.Filtering.AdaptiveTargetBufferFactor,
+				clientSettings.AdaptivePlayback,
+				time.Now(),
+			).ApplyTo(&filterSettings)
 		}
 	}
 

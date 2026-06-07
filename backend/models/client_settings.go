@@ -59,6 +59,11 @@ type ClientFilterSettings struct {
 
 	// Ranking criteria overrides
 	RankingCriteria *[]ClientRankingCriterion `json:"rankingCriteria,omitempty"`
+
+	// Adaptive playback measurements (device display + throughput) used to derive
+	// transient filter caps at search time. Never written back into the flat
+	// filter fields above.
+	AdaptivePlayback *AdaptivePlaybackSettings `json:"adaptivePlayback,omitempty"`
 }
 
 // IsEmpty returns true if no settings are configured
@@ -108,5 +113,6 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&
 		c.RemoteBackendUrl == nil &&
-		c.RankingCriteria == nil
+		c.RankingCriteria == nil &&
+		c.AdaptivePlayback == nil
 }

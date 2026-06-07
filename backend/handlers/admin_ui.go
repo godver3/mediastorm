@@ -339,6 +339,18 @@ var SettingsSchema = map[string]interface{}{
 				},
 				"description": "Content filtering: 'All content' allows everything. 'SDR + HDR only' excludes DV profile 5 (detected at probe time). 'SDR only' excludes all HDR/DV content.",
 			},
+			"adaptivePlaybackEnabled": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Adaptive Playback",
+				"description": "Auto-cap each client's max stream size (from its measured connection speed) and HDR/DV policy (from its display capability). Clients report their own measurements; caps apply at search time. Overrides the size/HDR limits above for that client.",
+				"order":       10,
+			},
+			"adaptiveTargetBufferFactor": map[string]interface{}{
+				"type":        "number",
+				"label":       "Adaptive Buffer Factor",
+				"description": "Fraction of measured throughput a stream's average bitrate may use and still be considered comfortably streamable (0-1, default 0.7). Lower = stricter size caps.",
+				"order":       11,
+			},
 			"requiredTerms":          map[string]interface{}{"type": "tags", "label": "Required Terms", "description": "At least one of these terms must match for a result to be kept. Wrap in /slashes/ for regex, e.g. /\\b(?:Multi|French)\\b/."},
 			"filterOutTerms":         map[string]interface{}{"type": "tags", "label": "Filter Out Terms", "description": "Terms to exclude from results (case-insensitive substring match; wrap in /slashes/ for regex, e.g. /\\bDUB\\b/)"},
 			"preferredTerms":         map[string]interface{}{"type": "weighted-tags", "label": "Preferred Terms", "description": "Terms to prioritize in results. Each term has a weight (1-10) that controls how strongly it influences ranking. Higher weights boost results more. Wrap in /slashes/ for regex."},

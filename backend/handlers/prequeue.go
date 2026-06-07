@@ -386,11 +386,32 @@ func (h *PrequeueHandler) prequeueSettingsScopeKey(userID, clientID, titleID str
 		}
 	}
 
+	var clientSettings *models.ClientFilterSettings
 	if clientID != "" && h.clientSettingsSvc != nil {
-		if clientSettings, err := h.clientSettingsSvc.Get(clientID); err == nil {
-			applyClientScopeOverrides(&effective, clientSettings)
+		if cs, err := h.clientSettingsSvc.Get(clientID); err == nil {
+			clientSettings = cs
+			applyClientScopeOverrides(&effective, cs)
 		} else {
 			log.Printf("[prequeue] Failed to build client prequeue settings scope (using profile/global): %v", err)
+		}
+	}
+
+	// Fold adaptive playback caps into the scope so cached prequeues are keyed by
+	// the same effective size/HDR limits the search will apply for this device.
+	// Without this, two devices that differ only by measured speed/display would
+	// share a cache entry (and prewarm would skip warming the second).
+	if h.configManager != nil {
+		if globalSettings, err := h.configManager.Load(); err == nil {
+			var adaptive *models.AdaptivePlaybackSettings
+			if clientSettings != nil {
+				adaptive = clientSettings.AdaptivePlayback
+			}
+			models.ComputeAdaptiveCaps(
+				globalSettings.Filtering.AdaptivePlaybackEnabled,
+				globalSettings.Filtering.AdaptiveTargetBufferFactor,
+				adaptive,
+				time.Now(),
+			).ApplyTo(&effective.Filtering)
 		}
 	}
 
