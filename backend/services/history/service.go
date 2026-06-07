@@ -108,6 +108,8 @@ type Service struct {
 	metadataCacheTTL      time.Duration
 	continueWatchingCache map[string]*cachedContinueWatching // userID -> continue watching
 	continueWatchingTTL   time.Duration
+	changeMu              sync.RWMutex
+	watchStateChanged     func(userID string)
 }
 
 type continueWatchingRevisionStats struct {
@@ -192,6 +194,28 @@ func (s *Service) SetMetadataService(metadataService MetadataService) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.metadataService = metadataService
+}
+
+// SetWatchStateChangedHook registers a callback invoked when a user's watch
+// history/progress changes enough to affect continue watching.
+func (s *Service) SetWatchStateChangedHook(fn func(userID string)) {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	s.watchStateChanged = fn
+}
+
+func (s *Service) invalidateContinueWatchingLocked(userID string) {
+	delete(s.continueWatchingCache, userID)
+	s.notifyWatchStateChanged(userID)
+}
+
+func (s *Service) notifyWatchStateChanged(userID string) {
+	s.changeMu.RLock()
+	fn := s.watchStateChanged
+	s.changeMu.RUnlock()
+	if fn != nil {
+		fn(userID)
+	}
 }
 
 // SetTraktScrobbler sets the Trakt scrobbler for syncing watch history.
@@ -318,7 +342,7 @@ func (s *Service) RecordEpisode(userID string, payload models.EpisodeWatchPayloa
 
 	// Invalidate continue watching cache for this user since they watched something new
 	s.mu.Lock()
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 	s.mu.Unlock()
 
 	// Build and return current state from watch history
@@ -2341,7 +2365,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	}
 
 	// Invalidate continue watching cache for this user
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	// Get scrobbler reference while holding lock (safe since we have write lock)
 	scrobbler := s.traktScrobbler
@@ -2468,7 +2492,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	}
 
 	// Invalidate continue watching cache for this user
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	// Get scrobbler reference while holding lock (safe since we have write lock)
 	scrobbler := s.traktScrobbler
@@ -2610,7 +2634,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 	}
 
 	// Invalidate continue watching cache for this user
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	// Get scrobbler reference while holding lock (safe since we have write lock)
 	scrobbler := s.traktScrobbler
@@ -2947,7 +2971,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 	}
 
 	// Invalidate continue watching cache for this user
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	// NOTE: No scrobbling — this method is specifically for importing from external sources
 
@@ -3298,7 +3322,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	}
 
 	// Invalidate continue watching cache for this user since progress changed
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	// Grab real-time scrobbler reference while holding the lock
 	rtScrobbler := s.traktRTScrobbler
@@ -3491,7 +3515,7 @@ func (s *Service) DeletePlaybackProgress(userID, mediaType, itemID string) error
 	if perUser, ok := s.playbackProgress[userID]; ok {
 		delete(perUser, key)
 		// Invalidate continue watching cache for this user since progress changed
-		delete(s.continueWatchingCache, userID)
+		s.invalidateContinueWatchingLocked(userID)
 		return s.savePlaybackProgressLocked()
 	}
 
@@ -3857,7 +3881,7 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 	}
 
 	// Invalidate continue watching cache
-	delete(s.continueWatchingCache, userID)
+	s.invalidateContinueWatchingLocked(userID)
 
 	if err := s.savePlaybackProgressLocked(); err != nil {
 		log.Printf("[history] HideFromContinueWatching: save failed: %v", err)

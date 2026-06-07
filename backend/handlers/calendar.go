@@ -178,6 +178,7 @@ func limitCalendarForHome(items []models.CalendarItem, loc *time.Location, limit
 
 	now := time.Now().In(loc)
 	recent := make([]models.CalendarItem, 0, candidateLimit)
+	recentBySource := make(map[string][]models.CalendarItem)
 	upcoming := make([]models.CalendarItem, 0, candidateLimit)
 	for _, item := range items {
 		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone).In(loc)
@@ -187,11 +188,25 @@ func limitCalendarForHome(items []models.CalendarItem, loc *time.Location, limit
 			}
 			continue
 		}
-		recent = append(recent, item)
-		if len(recent) > candidateLimit {
-			recent = recent[1:]
+		source := item.Source
+		if source == "" {
+			source = "unknown"
 		}
+		sourceRecent := append(recentBySource[source], item)
+		if len(sourceRecent) > limit {
+			sourceRecent = sourceRecent[len(sourceRecent)-limit:]
+		}
+		recentBySource[source] = sourceRecent
 	}
+
+	for _, sourceRecent := range recentBySource {
+		recent = append(recent, sourceRecent...)
+	}
+	sort.Slice(recent, func(i, j int) bool {
+		ti := calendar.ParseAirDateTime(recent[i].AirDate, recent[i].AirTime, recent[i].AirTimezone)
+		tj := calendar.ParseAirDateTime(recent[j].AirDate, recent[j].AirTime, recent[j].AirTimezone)
+		return ti.Before(tj)
+	})
 
 	limited := make([]models.CalendarItem, 0, len(recent)+len(upcoming))
 	limited = append(limited, recent...)

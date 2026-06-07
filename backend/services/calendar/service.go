@@ -303,6 +303,20 @@ func (s *Service) Get(userID string) *userCalendar {
 	return s.buildAndCacheUserCalendar(userID, false)
 }
 
+// Invalidate clears cached calendar data for a single user. The next request
+// will rebuild from current watchlist/history/settings data.
+func (s *Service) Invalidate(userID string) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return
+	}
+	s.mu.Lock()
+	delete(s.cache, userID)
+	delete(s.liteCache, userID)
+	s.mu.Unlock()
+	log.Printf("[calendar] cache invalidated user=%s", userID)
+}
+
 // peek returns the cached full calendar without triggering a build. Returns nil if
 // no calendar has been built for the user yet. Use this in latency-sensitive
 // paths where triggering a full calendar build is unacceptable.

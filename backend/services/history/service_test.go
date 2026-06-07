@@ -474,6 +474,34 @@ func TestToggleWatchedClearsMovieProgress(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaybackProgressNotifiesWatchStateChangedHook(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	var changedUsers []string
+	svc.SetWatchStateChangedHook(func(userID string) {
+		changedUsers = append(changedUsers, userID)
+	})
+
+	if _, err := svc.UpdatePlaybackProgress("secondary-profile", models.PlaybackProgressUpdate{
+		MediaType: "movie",
+		ItemID:    "tmdb:movie:12345",
+		Position:  60,
+		Duration:  300,
+		MovieName: "Test Movie",
+		Year:      2024,
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if len(changedUsers) != 1 || changedUsers[0] != "secondary-profile" {
+		t.Fatalf("expected hook to be called for secondary-profile, got %#v", changedUsers)
+	}
+}
+
 func TestUpdateWatchHistoryClearsProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

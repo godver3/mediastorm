@@ -574,6 +574,7 @@ func main() {
 
 	// Calendar service provides upcoming content from watchlist, history, and MDBList
 	calendarService := calendar.New(metadataService, watchlistService, historyService, userSettingsService, userService)
+	historyService.SetWatchStateChangedHook(calendarService.Invalidate)
 	calendarHandler := handlers.NewCalendarHandler(calendarService, userService, *demoMode)
 	startupHandler.SetCalendar(calendarService)
 
