@@ -540,8 +540,8 @@ func TestGetWithDefaults_BackfillsCalendarShelf(t *testing.T) {
 		t.Fatalf("GetWithDefaults: %v", err)
 	}
 
-	if len(got.HomeShelves.Shelves) != 7 {
-		t.Fatalf("expected 7 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
+	if len(got.HomeShelves.Shelves) != 8 {
+		t.Fatalf("expected 8 shelves after backfill, got %d", len(got.HomeShelves.Shelves))
 	}
 
 	var topTen *models.ShelfConfig
@@ -649,14 +649,14 @@ func TestGetWithDefaults_InjectsNewLocalLibraryShelf(t *testing.T) {
 	}
 }
 
-func TestGetWithDefaults_DoesNotReaddRemovedBuiltinShelf(t *testing.T) {
+func TestGetWithDefaults_InheritsMissingBuiltinShelfFromDefaults(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	// User saved settings without trending-tv (they removed it intentionally)
+	// User saved settings without trending-tv. Missing shelves inherit from the parent defaults.
 	if err := svc.Update("user-notrending", models.UserSettings{
 		HomeShelves: models.HomeShelvesSettings{
 			Shelves: []models.ShelfConfig{
@@ -669,15 +669,30 @@ func TestGetWithDefaults_DoesNotReaddRemovedBuiltinShelf(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	got, err := svc.GetWithDefaults("user-notrending", models.DefaultUserSettings())
+	defaults := models.DefaultUserSettings()
+	for i := range defaults.HomeShelves.Shelves {
+		if defaults.HomeShelves.Shelves[i].ID == "trending-tv" {
+			defaults.HomeShelves.Shelves[i].Enabled = false
+		}
+	}
+
+	got, err := svc.GetWithDefaults("user-notrending", defaults)
 	if err != nil {
 		t.Fatalf("GetWithDefaults: %v", err)
 	}
 
+	var trendingTV *models.ShelfConfig
 	for _, sh := range got.HomeShelves.Shelves {
 		if sh.ID == "trending-tv" {
-			t.Fatal("trending-tv should not be re-injected for a user who removed it")
+			trendingTV = &sh
+			break
 		}
+	}
+	if trendingTV == nil {
+		t.Fatal("expected missing trending-tv shelf to inherit from defaults")
+	}
+	if trendingTV.Enabled {
+		t.Fatal("expected inherited trending-tv shelf to use disabled parent value")
 	}
 }
 

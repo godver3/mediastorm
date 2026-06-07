@@ -312,6 +312,169 @@ func TestStripProfileShelfConfigsMatch(t *testing.T) {
 	}
 }
 
+func TestStripProfileShelfMissingGlobalShelfIsInherited(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{
+		ID:      "new-global-shelf",
+		Name:    "New Global Shelf",
+		Enabled: true,
+		Order:   2,
+		Type:    "mdblist",
+		ListURL: "https://mdblist.com/lists/example/new/json",
+	})
+
+	us := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+			},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	if _, ok := svc.settings["user1"]; ok {
+		t.Error("expected profile to be deleted because missing global shelf inherits")
+	}
+}
+
+func TestStripProfileShelfEnabledDiffersFromGlobal(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{
+		ID:      "calendar",
+		Name:    "Coming Up",
+		Enabled: false,
+		Order:   2,
+	})
+
+	us := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+				{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 2},
+			},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	got, ok := svc.settings["user1"]
+	if !ok {
+		t.Fatal("expected profile shelf override to be preserved")
+	}
+	calendar := findShelf(got.HomeShelves.Shelves, "calendar")
+	if calendar == nil {
+		t.Fatal("expected calendar shelf override to be preserved")
+	}
+	if !calendar.Enabled {
+		t.Error("expected calendar enabled override to remain true")
+	}
+}
+
+func TestStripProfileShelfMissingCalendarSourcesInherits(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{
+		ID:      "my-recently-aired",
+		Name:    "My Recently Aired",
+		Enabled: true,
+		Order:   2,
+		CalendarSources: config.CalendarSourceSettings{
+			Watchlist:   models.BoolPtr(true),
+			History:     models.BoolPtr(false),
+			Trending:    models.BoolPtr(false),
+			TopTrending: models.BoolPtr(false),
+			MDBLists:    models.BoolPtr(false),
+		},
+	})
+
+	us := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+				{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 2},
+			},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	if _, ok := svc.settings["user1"]; ok {
+		t.Error("expected profile to be deleted because missing shelf calendar sources inherit")
+	}
+}
+
+func TestMergeWithGlobalIncludesMissingShelves(t *testing.T) {
+	g := globalDefaults()
+	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{
+		ID:      "new-global-shelf",
+		Name:    "New Global Shelf",
+		Enabled: true,
+		Order:   2,
+		Type:    "mdblist",
+		ListURL: "https://mdblist.com/lists/example/new/json",
+	})
+
+	eff := mergeWithGlobal(models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: false, Order: 1},
+			},
+		},
+	}, g)
+
+	if findShelf(eff.HomeShelves.Shelves, "new-global-shelf") == nil {
+		t.Fatal("expected missing global shelf to be inherited into effective settings")
+	}
+	watchlist := findShelf(eff.HomeShelves.Shelves, "watchlist")
+	if watchlist == nil {
+		t.Fatal("expected explicit watchlist shelf to remain")
+	}
+	if watchlist.Enabled {
+		t.Error("expected explicit watchlist enabled override to be preserved")
+	}
+}
+
+func TestGetWithDefaultsIncludesMissingGlobalShelves(t *testing.T) {
+	svc := tempService(t)
+	defaults := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+				{ID: "new-global-shelf", Name: "New Global Shelf", Enabled: true, Order: 2, Type: "mdblist"},
+			},
+		},
+	}
+	svc.settings["user1"] = models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: false, Order: 1},
+			},
+		},
+	}
+
+	got, err := svc.GetWithDefaults("user1", defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findShelf(got.HomeShelves.Shelves, "new-global-shelf") == nil {
+		t.Fatal("expected missing global shelf to be included in effective settings")
+	}
+	watchlist := findShelf(got.HomeShelves.Shelves, "watchlist")
+	if watchlist == nil {
+		t.Fatal("expected watchlist shelf")
+	}
+	if watchlist.Enabled {
+		t.Error("expected explicit watchlist enabled override to be preserved")
+	}
+}
+
 func TestStripProfileLiveTVNeverStripped(t *testing.T) {
 	svc := tempService(t)
 	g := globalDefaults()
@@ -786,3 +949,12 @@ func TestStripProfileRankingDiffers(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+func findShelf(shelves []models.ShelfConfig, id string) *models.ShelfConfig {
+	for i := range shelves {
+		if shelves[i].ID == id {
+			return &shelves[i]
+		}
+	}
+	return nil
+}

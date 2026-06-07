@@ -1075,11 +1075,6 @@
                                 if (!gs) { diffs.push(ps.name + ' (added)'); continue; }
                                 if (!shelfEqual(ps, gs)) diffs.push(ps.name);
                             }
-                            // Check for removed shelves
-                            const profileIds = new Set(profileShelves.map(s => s.id));
-                            for (const gs of globalShelves) {
-                                if (!profileIds.has(gs.id)) diffs.push(gs.name + ' (removed)');
-                            }
                             if (diffs.length > 0) details[sec.label] = diffs;
                         }
                         // Also check non-shelves fields (e.g. exploreCardPosition)
@@ -1733,6 +1728,7 @@
         try {
             let successCount = 0;
             let failCount = 0;
+            let shouldRenderAfterPropagation = false;
 
             if (propagateLevel === 'global') {
                 // Reset selected profile groups so they inherit current global defaults.
@@ -1775,6 +1771,11 @@
                             });
                             if (savedResponse.ok) {
                                 const savedSettings = await savedResponse.json();
+                                if (selectedUserId === userId) {
+                                    userSettings = savedSettings;
+                                    originalUserSettings = JSON.parse(JSON.stringify(savedSettings));
+                                    shouldRenderAfterPropagation = true;
+                                }
                                 console.info('[settings-propagation] profile readback after save', {
                                     userId,
                                     settings: debugPropagationSettingsSlice(savedSettings),
@@ -1851,6 +1852,9 @@
             } else if (propagateLevel === 'profile') {
                 await recalculateAllClientOverrides();
                 updateClientDropdownIndicators();
+            }
+            if (shouldRenderAfterPropagation) {
+                renderSettings();
             }
             updateRevertButtonVisibility();
         } catch (e) {
@@ -4311,9 +4315,9 @@
         if (!profileShelf || !globalShelf) return profileShelf === globalShelf;
         // Core properties must match
         if (profileShelf.id !== globalShelf.id) return false;
-        if (profileShelf.name !== globalShelf.name) return false;
-        if (profileShelf.enabled !== globalShelf.enabled) return false;
-        if (profileShelf.order !== globalShelf.order) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'name') && profileShelf.name !== globalShelf.name) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'enabled') && profileShelf.enabled !== globalShelf.enabled) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'order') && profileShelf.order !== globalShelf.order) return false;
         // If profile has type/listUrl, they must match global
         if (profileShelf.type && profileShelf.type !== globalShelf.type) return false;
         if (profileShelf.listUrl && profileShelf.listUrl !== globalShelf.listUrl) return false;
@@ -4327,19 +4331,34 @@
         if (profileShelf.simklListType && profileShelf.simklListType !== globalShelf.simklListType) return false;
         if (profileShelf.letterboxdListId && profileShelf.letterboxdListId !== globalShelf.letterboxdListId) return false;
         if (profileShelf.letterboxdListUrl && profileShelf.letterboxdListUrl !== globalShelf.letterboxdListUrl) return false;
-        if (JSON.stringify(profileShelf.calendarSources || {}) !== JSON.stringify(globalShelf.calendarSources || {})) return false;
+        if (!calendarSourcesEqual(profileShelf.calendarSources, globalShelf.calendarSources)) return false;
         return true;
     }
 
-    // Compare two shelf arrays - considers them equal if all shelves match (using shelfEqual)
+    function calendarSourcesEqual(profileSources, globalSources) {
+        if (!profileSources || Object.keys(profileSources).length === 0) return true;
+        const global = globalSources || {};
+        for (const [key, value] of Object.entries(profileSources)) {
+            if (key === 'mdblistShelves') {
+                if (!deepEqual(value || {}, global.mdblistShelves || {})) return false;
+            } else if (!deepEqual(value, global[key])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Compare explicit profile shelves against global shelves.
+    // Global shelves missing from the profile are inherited, not overrides.
     function shelvesEqual(profileShelves, globalShelves) {
         if (!profileShelves || !globalShelves) return profileShelves === globalShelves;
-        if (profileShelves.length !== globalShelves.length) return false;
-        // Sort both arrays by ID for consistent comparison
-        const sortedProfile = [...profileShelves].sort((a, b) => a.id.localeCompare(b.id));
-        const sortedGlobal = [...globalShelves].sort((a, b) => a.id.localeCompare(b.id));
-        for (let i = 0; i < sortedProfile.length; i++) {
-            if (!shelfEqual(sortedProfile[i], sortedGlobal[i])) return false;
+        const globalById = {};
+        for (const shelf of globalShelves) {
+            globalById[shelf.id] = shelf;
+        }
+        for (const profileShelf of profileShelves) {
+            const globalShelf = globalById[profileShelf.id];
+            if (!globalShelf || !shelfEqual(profileShelf, globalShelf)) return false;
         }
         return true;
     }

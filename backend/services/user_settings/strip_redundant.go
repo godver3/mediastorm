@@ -401,6 +401,8 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	// HomeShelves
 	if len(eff.HomeShelves.Shelves) == 0 {
 		eff.HomeShelves.Shelves = configShelvesToModel(g.HomeShelves.Shelves)
+	} else {
+		eff.HomeShelves.Shelves = mergeShelvesWithGlobal(eff.HomeShelves.Shelves, g.HomeShelves.Shelves)
 	}
 	if eff.HomeShelves.ExploreCardPosition == "" {
 		eff.HomeShelves.ExploreCardPosition = string(g.HomeShelves.ExploreCardPosition)
@@ -1042,12 +1044,9 @@ func appearanceEqual(a, b models.AppearanceSettings) bool {
 	return true
 }
 
-// shelfConfigsEqual compares user shelves against global shelves.
-// Matches by ID and compares all fields.
+// shelfConfigsEqual compares explicit user shelf values against global shelves.
+// A global shelf missing from the user list is inherited, not an override.
 func shelfConfigsEqual(user []models.ShelfConfig, global []config.ShelfConfig) bool {
-	if len(user) != len(global) {
-		return false
-	}
 	globalByID := make(map[string]config.ShelfConfig)
 	for _, gs := range global {
 		globalByID[gs.ID] = gs
@@ -1058,13 +1057,68 @@ func shelfConfigsEqual(user []models.ShelfConfig, global []config.ShelfConfig) b
 			return false
 		}
 		if us.Name != gs.Name || us.Enabled != gs.Enabled || us.Order != gs.Order ||
-			us.Type != gs.Type || us.ListURL != gs.ListURL || us.Limit != gs.Limit ||
+			(us.Type != "" && us.Type != gs.Type) ||
+			(us.ListURL != "" && us.ListURL != gs.ListURL) ||
+			us.Limit != gs.Limit ||
 			us.HideUnreleased != gs.HideUnreleased ||
-			us.TraktAccountID != gs.TraktAccountID || us.TraktListType != gs.TraktListType || us.TraktListID != gs.TraktListID ||
-			us.SimklAccountID != gs.SimklAccountID || us.SimklListType != gs.SimklListType || us.SimklMediaType != gs.SimklMediaType ||
-			us.LetterboxdListID != gs.LetterboxdListID || us.LetterboxdListURL != gs.LetterboxdListURL {
+			(us.TraktAccountID != "" && us.TraktAccountID != gs.TraktAccountID) ||
+			(us.TraktListType != "" && us.TraktListType != gs.TraktListType) ||
+			(us.TraktListID != "" && us.TraktListID != gs.TraktListID) ||
+			(us.SimklAccountID != "" && us.SimklAccountID != gs.SimklAccountID) ||
+			(us.SimklListType != "" && us.SimklListType != gs.SimklListType) ||
+			(us.SimklMediaType != "" && us.SimklMediaType != gs.SimklMediaType) ||
+			(us.LetterboxdListID != "" && us.LetterboxdListID != gs.LetterboxdListID) ||
+			(us.LetterboxdListURL != "" && us.LetterboxdListURL != gs.LetterboxdListURL) ||
+			!calendarSettingsEqual(us.CalendarSources, gs.CalendarSources) {
 			return false
 		}
 	}
 	return true
+}
+
+func mergeShelvesWithGlobal(user []models.ShelfConfig, global []config.ShelfConfig) []models.ShelfConfig {
+	if len(global) == 0 {
+		return user
+	}
+	merged := append([]models.ShelfConfig(nil), user...)
+	existing := make(map[string]bool, len(merged))
+	for _, shelf := range merged {
+		existing[shelf.ID] = true
+	}
+	for _, shelf := range configShelvesToModel(global) {
+		if !existing[shelf.ID] {
+			merged = append(merged, shelf)
+			existing[shelf.ID] = true
+		}
+	}
+	return merged
+}
+
+func calendarSettingsEqual(user models.CalendarSettings, global config.CalendarSourceSettings) bool {
+	if !explicitBoolPtrEqual(user.Watchlist, global.Watchlist) ||
+		!explicitBoolPtrEqual(user.History, global.History) ||
+		!explicitBoolPtrEqual(user.Trending, global.Trending) ||
+		!explicitBoolPtrEqual(user.TopTrending, global.TopTrending) ||
+		!explicitBoolPtrEqual(user.MDBLists, global.MDBLists) {
+		return false
+	}
+	if user.MDBListShelves == nil {
+		return true
+	}
+	if len(user.MDBListShelves) != len(global.MDBListShelves) {
+		return false
+	}
+	for k, v := range user.MDBListShelves {
+		if global.MDBListShelves[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func explicitBoolPtrEqual(user, global *bool) bool {
+	if user == nil {
+		return true
+	}
+	return global != nil && *user == *global
 }

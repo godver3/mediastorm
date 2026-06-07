@@ -272,9 +272,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.Appearance.ReduceOverlays == nil {
 			settings.Display.Appearance.ReduceOverlays = defaults.Display.Appearance.ReduceOverlays
 		}
-		if shelves, changed := models.EnsureDefaultHomeShelves(settings.HomeShelves.Shelves); changed {
-			settings.HomeShelves.Shelves = shelves
-		}
+		settings.HomeShelves.Shelves = mergeShelvesWithDefaults(settings.HomeShelves.Shelves, defaults.HomeShelves.Shelves)
 		if settings.HomeShelves.ExploreCardPosition == "" {
 			settings.HomeShelves.ExploreCardPosition = string(defaults.HomeShelves.ExploreCardPosition)
 		}
@@ -312,32 +310,6 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		} else if *settings.HomeShelves.HomeHeroScale > 1.0 {
 			settings.HomeShelves.HomeHeroScale = models.FloatPtr(1.0)
 		}
-		// Inject any non-builtin shelves from defaults (e.g. newly-added local library
-		// or mdblist shelves) that are not yet present in the user's saved settings.
-		// We only inject non-builtin types so that built-in shelves the user deliberately
-		// removed (e.g. trending-tv) are not silently re-added.
-		if len(defaults.HomeShelves.Shelves) > 0 {
-			existing := make(map[string]bool, len(settings.HomeShelves.Shelves))
-			maxOrder := -1
-			for _, sh := range settings.HomeShelves.Shelves {
-				existing[sh.ID] = true
-				if sh.Order > maxOrder {
-					maxOrder = sh.Order
-				}
-			}
-			injected := 0
-			for _, sh := range defaults.HomeShelves.Shelves {
-				if sh.Type == "" || sh.Type == "builtin" {
-					continue
-				}
-				if !existing[sh.ID] {
-					sh.Order = maxOrder + 1 + injected
-					settings.HomeShelves.Shelves = append(settings.HomeShelves.Shelves, sh)
-					log.Printf("[user-settings] GetWithDefaults(%q): injected missing shelf id=%s name=%q type=%s", userID, sh.ID, sh.Name, sh.Type)
-					injected++
-				}
-			}
-		}
 		return settings, nil
 	}
 
@@ -345,6 +317,32 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	defaults.Playback.PreferredAudioLanguage = defaultPreferredAudioLanguage(defaults.Playback.PreferredAudioLanguage)
 	defaults.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(defaults.Playback.PreferredSubtitleLanguage)
 	return defaults, nil
+}
+
+func mergeShelvesWithDefaults(shelves []models.ShelfConfig, defaults []models.ShelfConfig) []models.ShelfConfig {
+	if len(shelves) == 0 {
+		if len(defaults) > 0 {
+			return append([]models.ShelfConfig(nil), defaults...)
+		}
+		merged, _ := models.EnsureDefaultHomeShelves(nil)
+		return merged
+	}
+	if len(defaults) == 0 {
+		merged, _ := models.EnsureDefaultHomeShelves(shelves)
+		return merged
+	}
+	merged := append([]models.ShelfConfig(nil), shelves...)
+	existing := make(map[string]bool, len(merged))
+	for _, sh := range merged {
+		existing[sh.ID] = true
+	}
+	for _, sh := range defaults {
+		if !existing[sh.ID] {
+			merged = append(merged, sh)
+			existing[sh.ID] = true
+		}
+	}
+	return merged
 }
 
 // Update saves the user's settings.
