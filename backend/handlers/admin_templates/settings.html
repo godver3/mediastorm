@@ -1457,6 +1457,22 @@
             ],
         },
         {
+            key: 'homeShelves',
+            label: 'Home Shelves',
+            description: 'Shelf configuration, item cap, Explore Card Position, TV Shelf Scale, TV Hero Area Scale',
+            detailSection: 'Home Shelves',
+            matchAllDetailFields: true,
+            userPaths: [
+                'homeShelves.shelves',
+                'homeShelves.exploreCardPosition',
+                'homeShelves.itemCap',
+                'homeShelves.disableTvLandscapeCardExpansion',
+                'homeShelves.homeShelfScale',
+                'homeShelves.homeHeroScale',
+            ],
+            clientPaths: [],
+        },
+        {
             key: 'liveTV',
             label: 'Live TV',
             description: 'Low Latency Mode, filtering',
@@ -1475,7 +1491,7 @@
         return propagationGroups.map(group => {
             const fields = details[group.detailSection];
             const matchingFields = Array.isArray(fields)
-                ? fields.filter(field => group.detailFields.includes(field))
+                ? (group.matchAllDetailFields ? fields : fields.filter(field => group.detailFields.includes(field)))
                 : [];
             if (matchingFields.length === 0) return null;
             console.info('[settings-propagation] group eligible', {
