@@ -15,7 +15,10 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/letterboxd"
+	"novastream/services/mdblist"
 	"novastream/services/metadata"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 )
 
@@ -490,6 +493,265 @@ func TestMetadataHandler_TraktListWatchlist(t *testing.T) {
 	}
 	if payload.Total != 1 || len(payload.Items) != 1 || payload.Items[0].Title.Name != "Arrival" {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestMetadataHandler_SimklList(t *testing.T) {
+	fake := &fakeMetadataService{
+		curatedResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "movie:438631", Name: "Dune", MediaType: "movie"}},
+		},
+	}
+	mgr := testConfigManager(t)
+	settings := config.DefaultSettings()
+	settings.Simkl.Accounts = []config.SimklAccount{
+		{ID: "simkl-1", Name: "Main Simkl", ClientID: "client-id", AccessToken: "access-token"},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := NewMetadataHandler(fake, mgr)
+	simklClient := simkl.NewClient()
+	simklClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/sync/all-items/movies/plantowatch" {
+				t.Fatalf("unexpected simkl path %s", r.URL.Path)
+			}
+			body := `{"movies":[
+				{"status":"plantowatch","movie":{"title":"Dune","year":2021,"ids":{"imdb":"tt1160419","tmdb":"438631"}}}
+			]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	})
+	handler.SetSimklClient(simklClient)
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"user-1": {ID: "user-1", AccountID: "acct-1", Name: "Profile", SimklAccountID: "simkl-1"},
+		},
+	})
+	handler.SetAccountsService(&fakeAccountsServiceForMetadata{
+		accounts: map[string]models.Account{"acct-1": {ID: "acct-1", Username: "account"}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/simkl?userId=user-1&accountId=simkl-1&mediaType=movies&listType=plantowatch&name=My+Simkl+Shelf", nil)
+	rec := httptest.NewRecorder()
+
+	handler.SimklList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastCuratedLabel != "My Simkl Shelf" {
+		t.Fatalf("expected curated label forwarded, got %q", fake.lastCuratedLabel)
+	}
+	// Only the plantowatch item should be forwarded.
+	if len(fake.lastCuratedItems) != 1 {
+		t.Fatalf("expected 1 curated item, got %d", len(fake.lastCuratedItems))
+	}
+	item := fake.lastCuratedItems[0]
+	if item.IMDBID != "tt1160419" || item.TMDBID != 438631 || item.MediaType != "movie" {
+		t.Fatalf("unexpected curated item: %+v", item)
+	}
+
+	var payload CustomListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Total != 1 || len(payload.Items) != 1 || payload.Items[0].Title.Name != "Dune" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestMetadataHandler_SimklListRejectsUnlinkedProfile(t *testing.T) {
+	fake := &fakeMetadataService{}
+	mgr := testConfigManager(t)
+	settings := config.DefaultSettings()
+	settings.Simkl.Accounts = []config.SimklAccount{
+		{ID: "simkl-1", ClientID: "client-id", AccessToken: "access-token"},
+	}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := NewMetadataHandler(fake, mgr)
+	handler.SetSimklClient(simkl.NewClient())
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{"user-1": {ID: "user-1", AccountID: "acct-1"}},
+	})
+	handler.SetAccountsService(&fakeAccountsServiceForMetadata{
+		accounts: map[string]models.Account{"acct-1": {ID: "acct-1"}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/simkl?userId=user-1&accountId=simkl-1&mediaType=movies", nil)
+	rec := httptest.NewRecorder()
+	handler.SimklList(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetadataHandler_LetterboxdList(t *testing.T) {
+	fake := &fakeMetadataService{
+		curatedResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "movie:496243", Name: "Parasite", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	listsClient := mdblist.NewListsClient("api-key")
+	listsClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/external/lists/777/items" {
+				t.Fatalf("unexpected mdblist path %s", r.URL.Path)
+			}
+			body := `{"movies":[{"title":"Parasite","release_year":2019,"mediatype":"movie","imdb_id":"tt6751668","tvdb_id":0,"ids":{"imdb":"tt6751668","tmdb":496243}}],"shows":[],"pagination":{}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	})
+	handler.SetMDBListListsClient(listsClient)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/letterboxd?listId=777&name=My+LB+Shelf", nil)
+	rec := httptest.NewRecorder()
+
+	handler.LetterboxdList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastCuratedLabel != "My LB Shelf" {
+		t.Fatalf("expected curated label forwarded, got %q", fake.lastCuratedLabel)
+	}
+	if len(fake.lastCuratedItems) != 1 {
+		t.Fatalf("expected 1 curated item, got %d", len(fake.lastCuratedItems))
+	}
+	item := fake.lastCuratedItems[0]
+	if item.IMDBID != "tt6751668" || item.TMDBID != 496243 || item.Title != "Parasite" || item.Year != 2019 || item.MediaType != "movie" {
+		t.Fatalf("unexpected curated item: %+v", item)
+	}
+
+	var payload CustomListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Total != 1 || len(payload.Items) != 1 || payload.Items[0].Title.Name != "Parasite" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestMetadataHandler_LetterboxdListPublicURL(t *testing.T) {
+	fake := &fakeMetadataService{
+		curatedResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "movie:1182513", Name: "Patriot", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	client := letterboxd.NewClient()
+	client.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != "https://letterboxd.com/godver3/list/test/" {
+				t.Fatalf("unexpected letterboxd url %s", r.URL.String())
+			}
+			body := `<!doctype html><html><head><title>Test</title><meta name="description" content="A list of 500 films compiled on Letterboxd, including Patriot (2026)."></head><body>
+				<div data-item-name="Patriot (2026)" data-item-slug="patriot-2026" data-target-link="/film/patriot-2026/"></div>
+			</body></html>`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	})
+	handler.SetLetterboxdClient(client)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/letterboxd?listUrl=https%3A%2F%2Fletterboxd.com%2Fgodver3%2Flist%2Ftest%2F&name=Public+LB+Shelf", nil)
+	rec := httptest.NewRecorder()
+
+	handler.LetterboxdList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastCuratedLabel != "Public LB Shelf" {
+		t.Fatalf("expected curated label forwarded, got %q", fake.lastCuratedLabel)
+	}
+	if len(fake.lastCuratedItems) != 1 {
+		t.Fatalf("expected 1 curated item, got %d", len(fake.lastCuratedItems))
+	}
+	item := fake.lastCuratedItems[0]
+	if item.Title != "Patriot" || item.Year != 2026 || item.MediaType != "movie" || item.IMDBID != "" || item.TMDBID != 0 {
+		t.Fatalf("unexpected curated item: %+v", item)
+	}
+	var payload CustomListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Total != 500 || len(payload.Items) != 1 {
+		t.Fatalf("unexpected payload total/items: %+v", payload)
+	}
+}
+
+func TestMetadataHandler_LetterboxdListRequiresListID(t *testing.T) {
+	handler := NewMetadataHandler(&fakeMetadataService{}, testConfigManager(t))
+	handler.SetMDBListListsClient(mdblist.NewListsClient("api-key"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/letterboxd", nil)
+	rec := httptest.NewRecorder()
+	handler.LetterboxdList(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestMetadataHandler_LetterboxdSources(t *testing.T) {
+	handler := NewMetadataHandler(&fakeMetadataService{}, testConfigManager(t))
+	listsClient := mdblist.NewListsClient("api-key")
+	listsClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/external/lists/user" {
+				t.Fatalf("unexpected path %s", r.URL.Path)
+			}
+			body := `[{"id":777,"name":"My LB List","source":"letterboxd","items":42},{"id":888,"name":"Netflix Top 10","source":"flixpatrol","items":10}]`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}),
+	})
+	handler.SetMDBListListsClient(listsClient)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/letterboxd/sources", nil)
+	rec := httptest.NewRecorder()
+	handler.LetterboxdSources(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Lists []struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Items int    `json:"items"`
+		} `json:"lists"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	// Only the letterboxd source should be returned.
+	if len(payload.Lists) != 1 || payload.Lists[0].ID != "777" || payload.Lists[0].Name != "My LB List" {
+		t.Fatalf("unexpected sources payload: %+v", payload.Lists)
 	}
 }
 

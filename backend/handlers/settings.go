@@ -22,6 +22,7 @@ import (
 	"novastream/internal/pool"
 	"novastream/services/debrid"
 	"novastream/services/epg"
+	"novastream/services/mdblist"
 	"novastream/services/metadata"
 	user_settings "novastream/services/user_settings"
 )
@@ -49,6 +50,7 @@ type SettingsHandler struct {
 	DemoMode            bool
 	PoolManager         pool.Manager
 	MetadataService     *metadata.Service
+	MDBListListsClient  *mdblist.ListsClient
 	DebridSearchService *debrid.SearchService
 	ImageHandler        *ImageHandler
 	EPGService          *epg.Service
@@ -74,6 +76,11 @@ func (h *SettingsHandler) SetPoolManager(pm pool.Manager) {
 // SetMetadataService sets the metadata service for hot reloading API keys
 func (h *SettingsHandler) SetMetadataService(ms *metadata.Service) {
 	h.MetadataService = ms
+}
+
+// SetMDBListListsClient sets the MDBList external-lists client for hot reloading API keys.
+func (h *SettingsHandler) SetMDBListListsClient(client *mdblist.ListsClient) {
+	h.MDBListListsClient = client
 }
 
 // SetDebridSearchService sets the debrid search service for hot reloading scrapers
@@ -869,6 +876,9 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 			EnabledRatings: s.MDBList.EnabledRatings,
 		})
 		log.Printf("[settings] reloaded MDBList settings (enabled=%v, ratings=%v)", s.MDBList.Enabled, s.MDBList.EnabledRatings)
+	}
+	if h.MDBListListsClient != nil {
+		h.MDBListListsClient.UpdateAPIKey(s.MDBList.APIKey)
 	}
 
 	// Reload debrid scrapers (Torrentio, Jackett, etc.)

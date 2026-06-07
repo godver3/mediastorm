@@ -42,6 +42,7 @@ import (
 	"novastream/services/indexer"
 	"novastream/services/invitations"
 	"novastream/services/jellyfin"
+	"novastream/services/letterboxd"
 	"novastream/services/localmedia"
 	"novastream/services/mdblist"
 	"novastream/services/metadata"
@@ -542,6 +543,11 @@ func main() {
 	// Wire up watchlist service to metadata handler for AI recommendations
 	metadataHandler.SetWatchlistService(watchlistService)
 	metadataHandler.SetTraktClient(traktClient)
+	metadataHandler.SetSimklClient(simklClient)
+	mdblistListsClient := mdblist.NewListsClient(settings.MDBList.APIKey)
+	metadataHandler.SetMDBListListsClient(mdblistListsClient)
+	settingsHandler.SetMDBListListsClient(mdblistListsClient)
+	metadataHandler.SetLetterboxdClient(letterboxd.NewClient())
 
 	// Backfill text poster URLs for existing watchlist items (one-time, background)
 	go func() {
@@ -907,6 +913,9 @@ func main() {
 	r.HandleFunc("/admin/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/lists/trakt", adminUIHandler.RequireAuth(metadataHandler.TraktList)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/lists/simkl", adminUIHandler.RequireAuth(metadataHandler.SimklList)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/lists/letterboxd", adminUIHandler.RequireAuth(metadataHandler.LetterboxdList)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/lists/letterboxd/sources", adminUIHandler.RequireAuth(metadataHandler.LetterboxdSources)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for admin kids-settings page)
 	r.HandleFunc("/admin/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)
@@ -1234,6 +1243,9 @@ func main() {
 	r.HandleFunc("/account/api/discover/new", adminUIHandler.RequireAuth(metadataHandler.DiscoverNew)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/lists/custom", adminUIHandler.RequireAuth(metadataHandler.CustomList)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/lists/trakt", adminUIHandler.RequireAuth(metadataHandler.TraktList)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/lists/simkl", adminUIHandler.RequireAuth(metadataHandler.SimklList)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/lists/letterboxd", adminUIHandler.RequireAuth(metadataHandler.LetterboxdList)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/lists/letterboxd/sources", adminUIHandler.RequireAuth(metadataHandler.LetterboxdSources)).Methods(http.MethodGet)
 	// Kids profile settings endpoints (for account kids-settings page)
 	r.HandleFunc("/account/api/users/{userID}/kids/mode", adminUIHandler.RequireAuth(usersHandler.SetKidsMode)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/users/{userID}/kids/rating", adminUIHandler.RequireAuth(usersHandler.SetKidsMaxRating)).Methods(http.MethodPut)

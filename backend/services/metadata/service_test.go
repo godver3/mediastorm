@@ -16,6 +16,35 @@ import (
 	"novastream/models"
 )
 
+func TestApplyTVDBMovieExtendedMetadataCopiesGenresWithoutExternalIDs(t *testing.T) {
+	title := models.Title{}
+
+	applyTVDBMovieExtendedMetadata(&title, tvdbMovieExtendedData{
+		Genres: []tvdbGenre{
+			{Name: "Drama"},
+			{Name: "Thriller"},
+		},
+		RemoteIDs: []struct {
+			ID         string `json:"id"`
+			Type       int    `json:"type"`
+			SourceName string `json:"sourceName"`
+		}{
+			{ID: "tt0050083", SourceName: "IMDB"},
+			{ID: "389", SourceName: "TheMovieDB.com"},
+		},
+	})
+
+	if title.IMDBID != "" {
+		t.Fatalf("IMDBID = %q, want empty", title.IMDBID)
+	}
+	if title.TMDBID != 0 {
+		t.Fatalf("TMDBID = %d, want 0", title.TMDBID)
+	}
+	if strings.Join(title.Genres, ",") != "Drama,Thriller" {
+		t.Fatalf("Genres = %+v, want Drama/Thriller", title.Genres)
+	}
+}
+
 // TestGetCustomListFetchesTranslations verifies that GetCustomList fetches translations
 // for series items when the base TVDB data has non-English content.
 func TestGetCustomListFetchesTranslations(t *testing.T) {

@@ -198,17 +198,22 @@ func configShelvesToModel(shelves []config.ShelfConfig) []models.ShelfConfig {
 	out := make([]models.ShelfConfig, len(shelves))
 	for i, s := range shelves {
 		out[i] = models.ShelfConfig{
-			ID:             s.ID,
-			Name:           s.Name,
-			Enabled:        s.Enabled,
-			Order:          s.Order,
-			Type:           s.Type,
-			ListURL:        s.ListURL,
-			TraktAccountID: s.TraktAccountID,
-			TraktListType:  s.TraktListType,
-			TraktListID:    s.TraktListID,
-			Limit:          s.Limit,
-			HideUnreleased: s.HideUnreleased,
+			ID:                s.ID,
+			Name:              s.Name,
+			Enabled:           s.Enabled,
+			Order:             s.Order,
+			Type:              s.Type,
+			ListURL:           s.ListURL,
+			TraktAccountID:    s.TraktAccountID,
+			TraktListType:     s.TraktListType,
+			TraktListID:       s.TraktListID,
+			SimklAccountID:    s.SimklAccountID,
+			SimklListType:     s.SimklListType,
+			SimklMediaType:    s.SimklMediaType,
+			LetterboxdListID:  s.LetterboxdListID,
+			LetterboxdListURL: s.LetterboxdListURL,
+			Limit:             s.Limit,
+			HideUnreleased:    s.HideUnreleased,
 			CalendarSources: models.CalendarSettings{
 				Watchlist:      s.CalendarSources.Watchlist,
 				History:        s.CalendarSources.History,
@@ -1054,7 +1059,10 @@ func shelfConfigsEqual(user []models.ShelfConfig, global []config.ShelfConfig) b
 		}
 		if us.Name != gs.Name || us.Enabled != gs.Enabled || us.Order != gs.Order ||
 			us.Type != gs.Type || us.ListURL != gs.ListURL || us.Limit != gs.Limit ||
-			us.HideUnreleased != gs.HideUnreleased {
+			us.HideUnreleased != gs.HideUnreleased ||
+			us.TraktAccountID != gs.TraktAccountID || us.TraktListType != gs.TraktListType || us.TraktListID != gs.TraktListID ||
+			us.SimklAccountID != gs.SimklAccountID || us.SimklListType != gs.SimklListType || us.SimklMediaType != gs.SimklMediaType ||
+			us.LetterboxdListID != gs.LetterboxdListID || us.LetterboxdListURL != gs.LetterboxdListURL {
 			return false
 		}
 	}

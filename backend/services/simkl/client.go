@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -202,6 +204,163 @@ func (c *Client) GetInitialSyncItems(clientID, accessToken, bucket string) (*All
 		}
 	}
 	return &out, nil
+}
+
+// ListItem is a normalized entry from a Simkl status bucket, suitable for
+// building home-shelf curated lists.
+type ListItem struct {
+	Title     string
+	Year      int
+	MediaType string // "movie" or "show"
+	Status    string // plantowatch, watching, completed, hold, dropped
+	IDs       IDs
+}
+
+// validSimklStatuses enumerates the Simkl list/status buckets.
+var validSimklStatuses = map[string]bool{
+	"plantowatch": true,
+	"watching":    true,
+	"completed":   true,
+	"hold":        true,
+	"dropped":     true,
+}
+
+// GetListItems fetches a user's Simkl list for a given media bucket
+// (movies/shows/anime) filtered to a single status bucket. An empty status
+// returns every item in the media bucket.
+func (c *Client) GetListItems(clientID, accessToken, mediaType, status string) ([]ListItem, error) {
+	if mediaType != "movies" && mediaType != "shows" && mediaType != "anime" {
+		return nil, fmt.Errorf("unsupported simkl media bucket: %s", mediaType)
+	}
+	status = normalizeSimklStatus(status)
+	if status != "" && !validSimklStatuses[status] {
+		return nil, fmt.Errorf("unsupported simkl status bucket: %s", status)
+	}
+
+	// The plain /sync/{type} endpoint only returns watched history. Watchlist
+	// statuses (plan-to-watch, watching, hold, dropped) live under
+	// /sync/all-items/{type}[/{status}].
+	path := "/sync/all-items/" + mediaType
+	if status != "" {
+		path += "/" + status
+	}
+	q := url.Values{}
+	q.Set("extended", "full")
+
+	var resp struct {
+		Movies []simklListItemRaw `json:"movies"`
+		Shows  []simklListItemRaw `json:"shows"`
+		Anime  []simklListItemRaw `json:"anime"`
+	}
+	if err := c.get(apiCredentials{clientID: clientID, accessToken: accessToken}, path, q, &resp); err != nil {
+		return nil, err
+	}
+
+	var raws []simklListItemRaw
+	switch mediaType {
+	case "movies":
+		raws = resp.Movies
+	case "shows":
+		raws = resp.Shows
+	case "anime":
+		raws = resp.Anime
+	}
+
+	items := make([]ListItem, 0, len(raws))
+	for _, raw := range raws {
+		item, ok := raw.normalize(mediaType)
+		if !ok {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func normalizeSimklStatus(status string) string {
+	s := strings.ToLower(strings.TrimSpace(status))
+	switch s {
+	case "", "all":
+		return ""
+	case "plan_to_watch", "plan-to-watch":
+		return "plantowatch"
+	case "on_hold", "on-hold":
+		return "hold"
+	default:
+		return s
+	}
+}
+
+// flexInt unmarshals a JSON value that may be a number or a numeric string.
+// Simkl's all-items endpoint returns tmdb/tvdb ids as strings.
+type flexInt int
+
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return nil // tolerate non-numeric ids rather than failing the whole item
+	}
+	*f = flexInt(n)
+	return nil
+}
+
+type simklIDsRaw struct {
+	Simkl int     `json:"simkl"`
+	IMDB  string  `json:"imdb"`
+	TMDB  flexInt `json:"tmdb"`
+	TVDB  flexInt `json:"tvdb"`
+}
+
+func (r simklIDsRaw) toIDs() IDs {
+	return IDs{Simkl: r.Simkl, IMDB: r.IMDB, TMDB: int(r.TMDB), TVDB: int(r.TVDB)}
+}
+
+type simklMediaRaw struct {
+	Title string      `json:"title"`
+	Year  int         `json:"year"`
+	IDs   simklIDsRaw `json:"ids"`
+}
+
+type simklListItemRaw struct {
+	Status string         `json:"status"`
+	Movie  *simklMediaRaw `json:"movie"`
+	Show   *simklMediaRaw `json:"show"`
+	Anime  *simklMediaRaw `json:"anime"`
+	// Fallback when the bucket returns bare media objects (no wrapper).
+	Title string      `json:"title"`
+	Year  int         `json:"year"`
+	IDs   simklIDsRaw `json:"ids"`
+}
+
+func (r simklListItemRaw) normalize(mediaType string) (ListItem, bool) {
+	item := ListItem{Status: normalizeSimklStatus(r.Status)}
+	switch {
+	case r.Movie != nil:
+		item.Title, item.Year, item.IDs, item.MediaType = r.Movie.Title, r.Movie.Year, r.Movie.IDs.toIDs(), "movie"
+	case r.Show != nil:
+		item.Title, item.Year, item.IDs, item.MediaType = r.Show.Title, r.Show.Year, r.Show.IDs.toIDs(), "show"
+	case r.Anime != nil:
+		item.Title, item.Year, item.IDs, item.MediaType = r.Anime.Title, r.Anime.Year, r.Anime.IDs.toIDs(), "show"
+	default:
+		item.Title, item.Year, item.IDs = r.Title, r.Year, r.IDs.toIDs()
+		if mediaType == "movies" {
+			item.MediaType = "movie"
+		} else {
+			item.MediaType = "show"
+		}
+	}
+
+	if item.Title == "" && item.IDs == (IDs{}) {
+		return ListItem{}, false
+	}
+	return item, true
 }
 
 func (c *Client) GetAllItemsSince(clientID, accessToken, dateFrom string) (*AllItemsResponse, error) {

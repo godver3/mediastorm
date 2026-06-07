@@ -354,6 +354,8 @@
     let accountsData = []; // User accounts with profiles
     let traktAccountsData = []; // Available Trakt accounts for the current admin/account scope
     let traktListsCache = {}; // accountId -> custom lists
+    let simklAccountsData = []; // Available Simkl accounts for the current admin scope
+    let letterboxdListsData = []; // Imported Letterboxd lists (MDBList external lists)
     let hasDefaultPassword = false; // Whether admin has default password
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
@@ -4320,6 +4322,11 @@
         if (profileShelf.traktAccountId && profileShelf.traktAccountId !== globalShelf.traktAccountId) return false;
         if (profileShelf.traktListType && profileShelf.traktListType !== globalShelf.traktListType) return false;
         if (profileShelf.traktListId && profileShelf.traktListId !== globalShelf.traktListId) return false;
+        if (profileShelf.simklAccountId && profileShelf.simklAccountId !== globalShelf.simklAccountId) return false;
+        if (profileShelf.simklMediaType && profileShelf.simklMediaType !== globalShelf.simklMediaType) return false;
+        if (profileShelf.simklListType && profileShelf.simklListType !== globalShelf.simklListType) return false;
+        if (profileShelf.letterboxdListId && profileShelf.letterboxdListId !== globalShelf.letterboxdListId) return false;
+        if (profileShelf.letterboxdListUrl && profileShelf.letterboxdListUrl !== globalShelf.letterboxdListUrl) return false;
         if (JSON.stringify(profileShelf.calendarSources || {}) !== JSON.stringify(globalShelf.calendarSources || {})) return false;
         return true;
     }
@@ -4715,7 +4722,7 @@
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
             const isRecentlyAired = s.id === 'my-recently-aired';
-            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-')));
+            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-')));
             const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
             const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
@@ -4803,6 +4810,8 @@
                     '<select id="newShelfType" onchange="onShelfTypeChange()">'+
                         '<option value="mdblist">MDBList</option>'+
                         '<option value="trakt">Trakt</option>'+
+                        '<option value="simkl">Simkl</option>'+
+                        '<option value="letterboxd">Letterboxd</option>'+
                         '<option value="streaming-service">Streaming Service</option>'+
                     '</select>'+
                 '</div>'+
@@ -4820,6 +4829,37 @@
                 '<div class="form-group" id="traktListGroup" style="display:none;">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Custom List</label>'+
                     '<select id="newShelfTraktList" onchange="onTraktShelfSourceChange()"></select>'+
+                '</div>'+
+                // Simkl fields (shown when type=simkl)
+                '<div class="form-group" id="simklAccountGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Simkl Account</label>'+
+                    '<select id="newShelfSimklAccount" onchange="onSimklShelfSourceChange()"></select>'+
+                '</div>'+
+                '<div class="form-group" id="simklMediaTypeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Content</label>'+
+                    '<select id="newShelfSimklMediaType" onchange="onSimklShelfSourceChange()">'+
+                        '<option value="movies">Movies</option>'+
+                        '<option value="shows">Shows</option>'+
+                        '<option value="anime">Anime</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group" id="simklListTypeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">List</label>'+
+                    '<select id="newShelfSimklListType" onchange="onSimklShelfSourceChange()">'+
+                        '<option value="plantowatch">Plan to Watch</option>'+
+                        '<option value="watching">Watching</option>'+
+                        '<option value="completed">Completed</option>'+
+                        '<option value="hold">On Hold</option>'+
+                        '<option value="dropped">Dropped</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group" id="letterboxdListGroup" style="display:none;flex:2;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Letterboxd List</label>'+
+                    '<select id="newShelfLetterboxdList" onchange="onLetterboxdShelfSourceChange()"></select>'+
+                '</div>'+
+                '<div class="form-group" id="letterboxdUrlGroup" style="display:none;flex:2;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Public URL</label>'+
+                    '<input type="text" id="newShelfLetterboxdUrl" placeholder="https://letterboxd.com/user/list/list-name/">'+
                 '</div>'+
                 // Streaming service fields (shown when type=streaming-service)
                 '<div class="form-group" id="streamingServiceGroup" style="display:none;">'+
@@ -4961,6 +5001,8 @@
         switch (type) {
             case 'mdblist': return 'MDBList';
             case 'trakt': return 'Trakt';
+            case 'simkl': return 'Simkl';
+            case 'letterboxd': return 'Letterboxd';
             default: return type || 'MDBList';
         }
     }
@@ -5088,6 +5130,79 @@
         }
     }
 
+    function getAvailableSimklAccountsForShelfForm() {
+        let accounts = [...simklAccountsData];
+        if (selectedUserId) {
+            const profile = profilesData.find((p) => p.id === selectedUserId);
+            const linkedId = profile?.simklAccountId || '';
+            accounts = linkedId ? accounts.filter((acc) => acc.id === linkedId) : [];
+        }
+        return accounts;
+    }
+
+    function renderSimklAccountOptions(selectId, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const accounts = getAvailableSimklAccountsForShelfForm();
+        if (accounts.length === 0) {
+            select.innerHTML = '<option value="">No Simkl accounts available</option>';
+            return;
+        }
+        select.innerHTML = accounts.map((acc) => {
+            const label = `${acc.name}${acc.username ? ' (' + acc.username + ')' : ''}${acc.connected ? '' : ' [Not Connected]'}`;
+            const disabled = !acc.connected ? 'disabled' : '';
+            const selected = acc.id === selectedValue ? 'selected' : '';
+            return `<option value="${acc.id}" ${selected} ${disabled}>${label}</option>`;
+        }).join('');
+        if (!selectedValue && select.options.length > 0) {
+            select.value = select.options[0].value;
+        }
+    }
+
+    const SIMKL_STATUS_LABELS = {
+        plantowatch: 'Plan to Watch',
+        watching: 'Watching',
+        completed: 'Completed',
+        hold: 'On Hold',
+        dropped: 'Dropped',
+    };
+    const SIMKL_MEDIA_LABELS = { movies: 'Movies', shows: 'Shows', anime: 'Anime' };
+
+    function onSimklShelfSourceChange() {
+        const mediaType = document.getElementById('newShelfSimklMediaType')?.value || 'movies';
+        const listType = document.getElementById('newShelfSimklListType')?.value || 'plantowatch';
+        const nameInput = document.getElementById('newShelfName');
+        if (!nameInput) return;
+        const statusLabel = SIMKL_STATUS_LABELS[listType] || 'Simkl';
+        const mediaLabel = SIMKL_MEDIA_LABELS[mediaType] || '';
+        nameInput.value = `${statusLabel} ${mediaLabel}`.trim();
+    }
+
+    function renderLetterboxdListOptions(selectId, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        if (letterboxdListsData.length === 0) {
+            select.innerHTML = '<option value="">No Letterboxd lists imported into MDBList</option>';
+            return;
+        }
+        select.innerHTML = letterboxdListsData.map((l) => {
+            const selected = String(l.id) === String(selectedValue) ? 'selected' : '';
+            return `<option value="${l.id}" ${selected}>${l.name}${l.items ? ' (' + l.items + ')' : ''}</option>`;
+        }).join('');
+        if (!selectedValue && select.options.length > 0) {
+            select.value = select.options[0].value;
+        }
+    }
+
+    function onLetterboxdShelfSourceChange() {
+        const select = document.getElementById('newShelfLetterboxdList');
+        const nameInput = document.getElementById('newShelfName');
+        if (!select || !nameInput) return;
+        nameInput.value = select.value
+            ? (select.selectedOptions?.[0]?.textContent?.replace(/\s*\(\d+\)\s*$/, '') || 'Letterboxd List')
+            : 'Letterboxd List';
+    }
+
     // Streaming service URL data (mirrors lists.tsx STREAMING_SERVICES)
     const STREAMING_SERVICES = {
         netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/snoak/netflix-top-10-movies/json',        shows: 'https://mdblist.com/lists/snoak/netflix-top-10-shows/json' },
@@ -5104,20 +5219,35 @@
         const type = document.getElementById('newShelfType')?.value;
         const isStreaming = type === 'streaming-service';
         const isTrakt = type === 'trakt';
+        const isSimkl = type === 'simkl';
+        const isLetterboxd = type === 'letterboxd';
         document.getElementById('streamingServiceGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('streamingMediaTypeGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('traktAccountGroup').style.display = isTrakt ? '' : 'none';
         document.getElementById('traktListTypeGroup').style.display = isTrakt ? '' : 'none';
         document.getElementById('traktListGroup').style.display = 'none';
-        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt) ? 'none' : '';
+        document.getElementById('simklAccountGroup').style.display = isSimkl ? '' : 'none';
+        document.getElementById('simklMediaTypeGroup').style.display = isSimkl ? '' : 'none';
+        document.getElementById('simklListTypeGroup').style.display = isSimkl ? '' : 'none';
+        document.getElementById('letterboxdListGroup').style.display = isLetterboxd ? '' : 'none';
+        document.getElementById('letterboxdUrlGroup').style.display = isLetterboxd ? '' : 'none';
+        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd) ? 'none' : '';
         const hint = document.getElementById('shelfFormHint');
         if (hint) {
-            hint.style.display = (isStreaming || isTrakt) ? 'none' : '';
+            hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd) ? 'none' : '';
         }
         if (isStreaming) onStreamingServiceChange();
         else if (isTrakt) {
             renderTraktAccountOptions('newShelfTraktAccount');
             onTraktShelfSourceChange();
+        }
+        else if (isSimkl) {
+            renderSimklAccountOptions('newShelfSimklAccount');
+            onSimklShelfSourceChange();
+        }
+        else if (isLetterboxd) {
+            renderLetterboxdListOptions('newShelfLetterboxdList');
+            onLetterboxdShelfSourceChange();
         }
         else {
             document.getElementById('newShelfName').value = '';
@@ -5254,6 +5384,73 @@
             if (limitInput) limitInput.value = '0';
             if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
             onShelfTypeChange();
+        } else if (shelfType === 'simkl') {
+            const accountId = document.getElementById('newShelfSimklAccount')?.value?.trim();
+            const simklMediaType = document.getElementById('newShelfSimklMediaType')?.value?.trim() || 'movies';
+            const simklListType = document.getElementById('newShelfSimklListType')?.value?.trim() || 'plantowatch';
+            const name = nameInput?.value?.trim();
+
+            if (!accountId || !name) {
+                alert('Please select a Simkl account and enter a name');
+                return;
+            }
+
+            const id = `simkl-${accountId}-${simklMediaType}-${simklListType}-${Date.now()}`;
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id,
+                name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: 'simkl',
+                simklAccountId: accountId,
+                simklMediaType,
+                simklListType,
+                limit,
+                hideUnreleased,
+            });
+
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
+        } else if (shelfType === 'letterboxd') {
+            const name = nameInput?.value?.trim();
+            const listId = document.getElementById('newShelfLetterboxdList')?.value?.trim();
+            const listUrl = document.getElementById('newShelfLetterboxdUrl')?.value?.trim();
+
+            if (!listId && !listUrl) {
+                alert('Please select an imported Letterboxd list or enter a public Letterboxd list URL.');
+                return;
+            }
+            if (!name) {
+                alert('Please enter a name');
+                return;
+            }
+
+            const idSource = listUrl ? listUrl.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') : listId;
+            const id = `letterboxd-${idSource}-${Date.now()}`;
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id,
+                name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: 'letterboxd',
+                letterboxdListId: listUrl ? '' : listId,
+                letterboxdListUrl: listUrl || '',
+                limit,
+                hideUnreleased,
+            });
+
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            const lbUrlInput = document.getElementById('newShelfLetterboxdUrl');
+            if (lbUrlInput) lbUrlInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
         } else {
             // MDBList shelf
             const name = nameInput?.value?.trim();
@@ -5329,6 +5526,8 @@
 
         const isRecentlyAiredShelf = shelf.id === 'my-recently-aired';
         const isTraktShelf = shelf.type === 'trakt';
+        const isSimklShelf = shelf.type === 'simkl';
+        const isLetterboxdShelf = shelf.type === 'letterboxd';
         const traktAccounts = getAvailableTraktAccountsForShelfForm();
         const traktAccountOptions = traktAccounts.map((acc) => {
             const selected = acc.id === (shelf.traktAccountId || '') ? 'selected' : '';
@@ -5338,25 +5537,73 @@
         const traktListTypeOptions =
             `<option value="watchlist" ${traktListType === 'watchlist' ? 'selected' : ''}>Watchlist</option>` +
             `<option value="custom" ${traktListType === 'custom' ? 'selected' : ''}>Custom List</option>`;
-        const traktSourceFields = isRecentlyAiredShelf ? buildCalendarSourceFields(shelf, 'editShelfCalendar') : isTraktShelf ? `
+        const selectStyle = 'width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;';
+        const simklAccountOptions = getAvailableSimklAccountsForShelfForm().map((acc) => {
+            const selected = acc.id === (shelf.simklAccountId || '') ? 'selected' : '';
+            return `<option value="${acc.id}" ${selected}>${acc.name}${acc.username ? ' (' + acc.username + ')' : ''}</option>`;
+        }).join('');
+        const simklMediaType = shelf.simklMediaType || 'movies';
+        const simklMediaOptions = Object.keys(SIMKL_MEDIA_LABELS).map((k) =>
+            `<option value="${k}" ${simklMediaType === k ? 'selected' : ''}>${SIMKL_MEDIA_LABELS[k]}</option>`).join('');
+        const simklListType = shelf.simklListType || 'plantowatch';
+        const simklStatusOptions = Object.keys(SIMKL_STATUS_LABELS).map((k) =>
+            `<option value="${k}" ${simklListType === k ? 'selected' : ''}>${SIMKL_STATUS_LABELS[k]}</option>`).join('');
+        let traktSourceFields;
+        if (isRecentlyAiredShelf) {
+            traktSourceFields = buildCalendarSourceFields(shelf, 'editShelfCalendar');
+        } else if (isTraktShelf) {
+            traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Trakt Account</label>
-                        <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">${traktAccountOptions}</select>
+                        <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" style="${selectStyle}">${traktAccountOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">List Type</label>
-                        <select id="editShelfTraktListType" onchange="onEditTraktShelfSourceChange()" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">${traktListTypeOptions}</select>
+                        <select id="editShelfTraktListType" onchange="onEditTraktShelfSourceChange()" style="${selectStyle}">${traktListTypeOptions}</select>
                     </div>
                     <div id="editShelfTraktListGroup" style="margin-bottom:12px;display:${traktListType === 'custom' ? 'block' : 'none'};">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Custom List</label>
-                        <select id="editShelfTraktList" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;"><option value="">Loading...</option></select>
-                    </div>
-        ` : `
-                    <div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
-                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                        <select id="editShelfTraktList" style="${selectStyle}"><option value="">Loading...</option></select>
                     </div>
         `;
+        } else if (isSimklShelf) {
+            traktSourceFields = `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Simkl Account</label>
+                        <select id="editShelfSimklAccount" style="${selectStyle}">${simklAccountOptions}</select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Content</label>
+                        <select id="editShelfSimklMediaType" style="${selectStyle}">${simklMediaOptions}</select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">List</label>
+                        <select id="editShelfSimklListType" style="${selectStyle}">${simklStatusOptions}</select>
+                    </div>
+        `;
+        } else if (isLetterboxdShelf) {
+            const letterboxdOptions = letterboxdListsData.map((l) => {
+                const selected = String(l.id) === String(shelf.letterboxdListId || '') ? 'selected' : '';
+                return `<option value="${l.id}" ${selected}>${l.name}${l.items ? ' (' + l.items + ')' : ''}</option>`;
+            }).join('') || '<option value="">No Letterboxd lists imported into MDBList</option>';
+            traktSourceFields = `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Imported Letterboxd List</label>
+                        <select id="editShelfLetterboxdList" style="${selectStyle}">${letterboxdOptions}</select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Public URL</label>
+                        <input type="text" id="editShelfLetterboxdUrl" value="${(shelf.letterboxdListUrl || '').replace(/"/g, '&quot;')}" placeholder="https://letterboxd.com/user/list/list-name/" style="${selectStyle}">
+                    </div>
+        `;
+        } else {
+            traktSourceFields = `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
+                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="${selectStyle}">
+                    </div>
+        `;
+        }
 
         // Create modal HTML
         const modalHtml = `
@@ -5476,6 +5723,26 @@
             shelf.traktAccountId = accountId;
             shelf.traktListType = listType;
             shelf.traktListId = listType === 'custom' ? listId : '';
+        } else if (shelf.type === 'simkl') {
+            const accountId = document.getElementById('editShelfSimklAccount')?.value?.trim();
+            const mediaType = document.getElementById('editShelfSimklMediaType')?.value?.trim() || 'movies';
+            const listType = document.getElementById('editShelfSimklListType')?.value?.trim() || 'plantowatch';
+            if (!accountId) {
+                alert('Please select a Simkl account');
+                return;
+            }
+            shelf.simklAccountId = accountId;
+            shelf.simklMediaType = mediaType;
+            shelf.simklListType = listType;
+        } else if (shelf.type === 'letterboxd') {
+            const listId = document.getElementById('editShelfLetterboxdList')?.value?.trim();
+            const listUrl = document.getElementById('editShelfLetterboxdUrl')?.value?.trim();
+            if (!listId && !listUrl) {
+                alert('Please select an imported Letterboxd list or enter a public Letterboxd list URL.');
+                return;
+            }
+            shelf.letterboxdListId = listUrl ? '' : listId;
+            shelf.letterboxdListUrl = listUrl || '';
         } else if (shelf.id !== 'my-recently-aired') {
             const urlInput = document.getElementById('editShelfUrl');
             let url = urlInput?.value?.trim();
@@ -6553,6 +6820,37 @@
         }
     }
 
+    async function loadSimklAccounts() {
+        try {
+            const response = await fetch(basePath + '/api/simkl/accounts');
+            if (response.ok) {
+                const data = await response.json();
+                // GetSimklAccounts returns a bare array of accounts.
+                simklAccountsData = Array.isArray(data) ? data : (data.accounts || []);
+            } else {
+                simklAccountsData = [];
+            }
+        } catch (e) {
+            console.error('Error loading Simkl accounts:', e);
+            simklAccountsData = [];
+        }
+    }
+
+    async function loadLetterboxdLists() {
+        try {
+            const response = await fetch(basePath + '/api/lists/letterboxd/sources');
+            if (response.ok) {
+                const data = await response.json();
+                letterboxdListsData = data.lists || [];
+            } else {
+                letterboxdListsData = [];
+            }
+        } catch (e) {
+            console.error('Error loading Letterboxd lists:', e);
+            letterboxdListsData = [];
+        }
+    }
+
     async function loadTraktLists(accountId) {
         if (!accountId || accountId === '__all__') return [];
         if (traktListsCache[accountId]) return traktListsCache[accountId];
@@ -7388,7 +7686,7 @@
         const urlProfileId = new URLSearchParams(window.location.search).get('profileId');
 
         if (isAdmin) {
-            await Promise.all([loadProfiles(), loadAccounts(), loadTraktAccounts(), checkDefaultPassword()]);
+            await Promise.all([loadProfiles(), loadAccounts(), loadTraktAccounts(), loadSimklAccounts(), loadLetterboxdLists(), checkDefaultPassword()]);
             const selector = document.getElementById('userSelector');
             // Pre-select from query param if provided
             if (urlProfileId && selector) {

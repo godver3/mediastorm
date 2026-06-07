@@ -250,6 +250,111 @@ func TestGetInitialSyncItemsAcceptsArrayResponses(t *testing.T) {
 	}
 }
 
+func TestGetListItemsFiltersByStatus(t *testing.T) {
+	client := NewClient()
+	client.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/sync/all-items/movies/plantowatch" {
+				t.Fatalf("path = %q, want /sync/all-items/movies/plantowatch", r.URL.Path)
+			}
+			// tmdb/tvdb are returned as strings by the all-items endpoint.
+			body := `{"movies":[
+				{"status":"plantowatch","movie":{"title":"Dune","year":2021,"ids":{"imdb":"tt1160419","tmdb":"438631"}}},
+				{"status":"completed","movie":{"title":"Inception","year":2010,"ids":{"tmdb":"27205"}}}
+			]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	items, err := client.GetListItems("client-id", "token", "movies", "plantowatch")
+	if err != nil {
+		t.Fatalf("GetListItems() error = %v", err)
+	}
+	// Endpoint is already status-scoped, so only the matching item is returned.
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	got := items[0]
+	if got.Title != "Dune" || got.Year != 2021 {
+		t.Fatalf("item = %+v, want Dune/2021", got)
+	}
+	if got.MediaType != "movie" {
+		t.Fatalf("mediaType = %q, want movie", got.MediaType)
+	}
+	if got.IDs.IMDB != "tt1160419" || got.IDs.TMDB != 438631 {
+		t.Fatalf("ids = %+v (want imdb tt1160419, tmdb 438631 parsed from string)", got.IDs)
+	}
+	if got.Status != "plantowatch" {
+		t.Fatalf("status = %q, want plantowatch", got.Status)
+	}
+}
+
+func TestGetListItemsEmptyStatusReturnsAll(t *testing.T) {
+	client := NewClient()
+	client.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/sync/all-items/shows" {
+				t.Fatalf("path = %q, want /sync/all-items/shows", r.URL.Path)
+			}
+			body := `{"shows":[
+				{"status":"watching","show":{"title":"Severance","year":2022,"ids":{"tvdb":"371980"}}},
+				{"status":"completed","show":{"title":"Andor","year":2022,"ids":{"tmdb":"83867"}}}
+			]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	items, err := client.GetListItems("client-id", "token", "shows", "")
+	if err != nil {
+		t.Fatalf("GetListItems() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want 2", len(items))
+	}
+	for _, it := range items {
+		if it.MediaType != "show" {
+			t.Fatalf("mediaType = %q, want show", it.MediaType)
+		}
+	}
+	if items[0].IDs.TVDB != 371980 {
+		t.Fatalf("tvdb = %d, want 371980 parsed from string", items[0].IDs.TVDB)
+	}
+}
+
+func TestGetListItemsRejectsBadInput(t *testing.T) {
+	client := NewClient()
+	if _, err := client.GetListItems("c", "t", "books", ""); err == nil {
+		t.Fatal("expected error for invalid media bucket")
+	}
+	if _, err := client.GetListItems("c", "t", "movies", "favourite"); err == nil {
+		t.Fatal("expected error for invalid status bucket")
+	}
+}
+
+func TestNormalizeSimklStatus(t *testing.T) {
+	cases := map[string]string{
+		"":              "",
+		"all":           "",
+		"PlanToWatch":   "plantowatch",
+		"plan_to_watch": "plantowatch",
+		"on_hold":       "hold",
+		"Completed":     "completed",
+	}
+	for in, want := range cases {
+		if got := normalizeSimklStatus(in); got != want {
+			t.Fatalf("normalizeSimklStatus(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestGetAllItemsSinceSendsDateFrom(t *testing.T) {
 	client := NewClient()
 	client.SetHTTPClientForTest(&http.Client{

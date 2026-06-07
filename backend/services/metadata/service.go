@@ -6607,6 +6607,7 @@ type CustomListOptions struct {
 const (
 	foregroundCustomListEnrichConcurrency = 16
 	backgroundCustomListEnrichConcurrency = 4
+	customListShelfArtworkLimit           = 40
 )
 
 // GetCustomListForCalendar fetches a custom MDBList with the lighter-weight options calendar needs.
@@ -7124,9 +7125,18 @@ func (s *Service) preFilterUnreleased(ctx context.Context, items []mdblistItem) 
 	return result
 }
 
+func applyTVDBMovieExtendedMetadata(title *models.Title, ext tvdbMovieExtendedData) {
+	applyTVDBArtworks(title, ext.Artworks)
+	if len(title.Genres) == 0 {
+		if genres := tvdbGenreNames(ext.Genres); len(genres) > 0 {
+			title.Genres = genres
+		}
+	}
+}
+
 // enrichCustomListItem enriches a single mdblistItem into a full TrendingItem.
 // Within each item, TVDB extended + translations calls are parallelized.
-func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) models.TrendingItem {
+func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, liteMovieEnrichment bool) models.TrendingItem {
 	mediaType := mdblistItemMediaType(item)
 
 	title := models.Title{
@@ -7175,7 +7185,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 				title.Name = ext.Name
 				title.Overview = ext.Overview
 				found = true
-				applyTVDBArtworks(&title, ext.Artworks)
+				applyTVDBMovieExtendedMetadata(&title, ext)
 
 				if trans != nil {
 					if trans.Name != "" {
@@ -7257,7 +7267,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 						title.Poster = img
 					}
 					if ext, err := s.cachedMovieExtended(tvdbID, []string{"artwork"}); err == nil {
-						applyTVDBArtworks(&title, ext.Artworks)
+						applyTVDBMovieExtendedMetadata(&title, ext)
 					}
 					if result.Overview != "" {
 						title.Overview = result.Overview
@@ -7353,7 +7363,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 	}
 
 	// Enrich movies with release data from TMDB (parallel where possible)
-	if mediaType == "movie" {
+	if mediaType == "movie" && !liteMovieEnrichment {
 		tmdbID := title.TMDBID
 		if tmdbID <= 0 && title.IMDBID != "" {
 			if resolved := s.getTMDBIDForIMDB(ctx, title.IMDBID); resolved > 0 {
@@ -7453,8 +7463,14 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem) mo
 // Pre-filters watched/unreleased items before enrichment so only displayed items incur full
 // TVDB lookups. Returns (items, filteredTotal, unfilteredTotal, error).
 func (s *Service) GetCustomList(ctx context.Context, listURL string, opts CustomListOptions) ([]models.TrendingItem, int, int, error) {
+	liteMovieEnrichment := opts.Limit <= 0
+	cacheMode := "full"
+	if liteMovieEnrichment {
+		cacheMode = "lite"
+	}
+
 	// Check full-list cache first (only populated when no filtering was applied)
-	cacheID := cacheKey("mdblist", "custom", "v6", listURL, s.client.language)
+	cacheID := cacheKey("mdblist", "custom", "v7", cacheMode, listURL, s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] custom list cache hit for %s (%d items)", listURL, len(cached))
@@ -7470,7 +7486,7 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		if opts.Limit > 0 && opts.Limit < len(result) {
 			result = result[:opts.Limit]
 		}
-		s.enrichShelfArtwork(ctx, result, len(result))
+		s.enrichShelfArtwork(ctx, result, customListShelfArtworkLimit)
 		return result, total, total, nil
 	}
 
@@ -7534,6 +7550,9 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 
 	log.Printf("[metadata] enriching %d items (filtered=%d, unfiltered=%d, offset=%d, limit=%d)",
 		len(itemsToEnrich), filteredTotal, unfilteredTotal, opts.Offset, opts.Limit)
+	if liteMovieEnrichment {
+		log.Printf("[metadata] using lite movie enrichment for uncapped custom list: %s", listURL)
+	}
 
 	// User-facing requests get more enrichment slots; background refreshes stay
 	// quieter so they do not crowd out interactive navigation.
@@ -7554,14 +7573,14 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[idx] = s.enrichCustomListItem(ctx, it)
+			results[idx] = s.enrichCustomListItem(ctx, it, liteMovieEnrichment)
 			if progressID != "" {
 				s.incrementProgress(progressID)
 			}
 		}(i, item)
 	}
 	wg.Wait()
-	s.enrichShelfArtwork(ctx, results, len(results))
+	s.enrichShelfArtwork(ctx, results, customListShelfArtworkLimit)
 
 	// Only cache full-list results when no filtering was applied
 	if !opts.HideWatched && !opts.HideUnreleased && opts.Offset == 0 &&
@@ -7578,36 +7597,83 @@ type CuratedItem struct {
 	Title     string `json:"title"`
 	Year      int    `json:"year"`
 	IMDBID    string `json:"imdbId"`
+	TMDBID    int64  `json:"tmdbId,omitempty"`
+	TVDBID    int64  `json:"tvdbId,omitempty"`
 	MediaType string `json:"mediaType"`
+}
+
+// curatedItemMediaType normalizes a curated item's media type to "movie" or "series".
+func curatedItemMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "show", "series", "tv", "anime":
+		return "series"
+	default:
+		return "movie"
+	}
 }
 
 // GetCuratedList enriches a caller-provided list of curated items (identified by
 // IMDB ID) and returns them as TrendingItems, using the same concurrent enrichment
 // pipeline as custom MDBList lists.
 func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label string) ([]models.TrendingItem, error) {
-	// Convert CuratedItems into mdblistItems for the shared enrichment pipeline
+	// Convert CuratedItems into mdblistItems for the shared enrichment pipeline.
+	// Items may arrive identified only by TMDB ID (e.g. Letterboxd RSS) or TVDB
+	// ID (e.g. Simkl); thread those IDs through and resolve a stable IMDB ID
+	// when one is missing so the enrichment pipeline and cache key behave the
+	// same as for IMDB-keyed MDBList lists.
 	mdbItems := make([]mdblistItem, len(items))
-	ids := make([]string, len(items))
+	identities := make([]string, len(items))
 	for i, ci := range items {
-		mdbItems[i] = mdblistItem{
+		mediaType := curatedItemMediaType(ci.MediaType)
+		imdbID := ci.IMDBID
+		if imdbID == "" && ci.TMDBID > 0 {
+			tmdbMediaType := "movie"
+			if mediaType == "series" {
+				tmdbMediaType = "tv"
+			}
+			imdbID = s.getIMDBIDForTMDB(ctx, tmdbMediaType, ci.TMDBID)
+		}
+
+		item := mdblistItem{
 			Rank:        i,
-			IMDBID:      ci.IMDBID,
+			IMDBID:      imdbID,
 			Title:       ci.Title,
 			ReleaseYear: ci.Year,
 			MediaType:   ci.MediaType,
 		}
-		ids[i] = ci.IMDBID
+		if ci.TMDBID > 0 {
+			tmdb := ci.TMDBID
+			item.TMDBID = &tmdb
+		}
+		if ci.TVDBID > 0 {
+			tvdb := ci.TVDBID
+			item.TVDBID = &tvdb
+		}
+		mdbItems[i] = item
+
+		// Build a per-item identity for the cache key that never collapses to
+		// an empty string (which would collide across distinct TMDB-only lists).
+		switch {
+		case imdbID != "":
+			identities[i] = "imdb:" + imdbID
+		case ci.TMDBID > 0:
+			identities[i] = fmt.Sprintf("tmdb:%s:%d", mediaType, ci.TMDBID)
+		case ci.TVDBID > 0:
+			identities[i] = fmt.Sprintf("tvdb:%s:%d", mediaType, ci.TVDBID)
+		default:
+			identities[i] = fmt.Sprintf("title:%s:%d", strings.ToLower(strings.TrimSpace(ci.Title)), ci.Year)
+		}
 	}
 
-	// Build a deterministic cache key from sorted IMDB IDs + language
-	sort.Strings(ids)
-	sortedImdbIds := strings.Join(ids, ",")
-	cacheID := cacheKey("curated", "v2", sortedImdbIds, s.client.language)
+	// Build a deterministic cache key from sorted item identities + language
+	sort.Strings(identities)
+	sortedIdentities := strings.Join(identities, ",")
+	cacheID := cacheKey("curated", "v5", sortedIdentities, s.client.language)
 
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
 		log.Printf("[metadata] curated list cache hit for %q (%d items)", label, len(cached))
-		s.enrichShelfArtwork(ctx, cached, len(cached))
+		s.enrichShelfArtwork(ctx, cached, customListShelfArtworkLimit)
 		return cached, nil
 	}
 
@@ -7626,12 +7692,12 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[idx] = s.enrichCustomListItem(ctx, it)
+			results[idx] = s.enrichCustomListItem(ctx, it, false)
 			s.incrementProgress(progressID)
 		}(i, item)
 	}
 	wg.Wait()
-	s.enrichShelfArtwork(ctx, results, len(results))
+	s.enrichShelfArtwork(ctx, results, customListShelfArtworkLimit)
 
 	// Cache results
 	if len(results) > 0 {

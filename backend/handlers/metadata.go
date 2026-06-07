@@ -16,7 +16,10 @@ import (
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/kids"
+	"novastream/services/letterboxd"
+	"novastream/services/mdblist"
 	metadatapkg "novastream/services/metadata"
+	"novastream/services/simkl"
 	"novastream/services/trakt"
 )
 
@@ -144,14 +147,17 @@ type accountsServiceInterface interface {
 }
 
 type MetadataHandler struct {
-	Service          metadataService
-	CfgManager       *config.Manager
-	UserSettings     userSettingsProvider
-	HistoryService   historyServiceInterface
-	UsersService     usersServiceInterface
-	AccountsService  accountsServiceInterface
-	WatchlistService watchlistLister
-	TraktClient      *trakt.Client
+	Service            metadataService
+	CfgManager         *config.Manager
+	UserSettings       userSettingsProvider
+	HistoryService     historyServiceInterface
+	UsersService       usersServiceInterface
+	AccountsService    accountsServiceInterface
+	WatchlistService   watchlistLister
+	TraktClient        *trakt.Client
+	SimklClient        *simkl.Client
+	MDBListListsClient *mdblist.ListsClient
+	LetterboxdClient   *letterboxd.Client
 }
 
 func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *MetadataHandler {
@@ -184,6 +190,22 @@ func (h *MetadataHandler) SetWatchlistService(service watchlistLister) {
 
 func (h *MetadataHandler) SetTraktClient(client *trakt.Client) {
 	h.TraktClient = client
+}
+
+// SetSimklClient sets the Simkl client for Simkl-backed home shelves.
+func (h *MetadataHandler) SetSimklClient(client *simkl.Client) {
+	h.SimklClient = client
+}
+
+// SetMDBListListsClient sets the MDBList lists client used for Letterboxd-backed
+// home shelves (sourced via MDBList external lists).
+func (h *MetadataHandler) SetMDBListListsClient(client *mdblist.ListsClient) {
+	h.MDBListListsClient = client
+}
+
+// SetLetterboxdClient sets the public Letterboxd list client.
+func (h *MetadataHandler) SetLetterboxdClient(client *letterboxd.Client) {
+	h.LetterboxdClient = client
 }
 
 // DiscoverNewResponse wraps trending items with total count for pagination
@@ -1359,6 +1381,289 @@ func upsertTraktShelfItem(seen map[string]traktShelfDedupeItem, item traktShelfS
 	if !ok || item.ListedAt > existing.item.ListedAt {
 		seen[key] = traktShelfDedupeItem{item: item}
 	}
+}
+
+var validSimklShelfMediaTypes = map[string]bool{"movies": true, "shows": true, "anime": true}
+
+// SimklList returns enriched items from a Simkl status bucket for home shelves.
+func (h *MetadataHandler) SimklList(w http.ResponseWriter, r *http.Request) {
+	if h.SimklClient == nil {
+		writeJSONError(w, "simkl client unavailable", http.StatusInternalServerError)
+		return
+	}
+	if h.UsersService == nil {
+		writeJSONError(w, "users service unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		writeJSONError(w, "userId parameter required", http.StatusBadRequest)
+		return
+	}
+	user, ok := h.UsersService.Get(userID)
+	if !ok {
+		writeJSONError(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
+	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mediaType")))
+	listType := strings.TrimSpace(r.URL.Query().Get("listType"))
+	if accountID == "" {
+		writeJSONError(w, "accountId parameter required", http.StatusBadRequest)
+		return
+	}
+	if !validSimklShelfMediaTypes[mediaType] {
+		writeJSONError(w, "invalid mediaType (expected movies, shows, or anime)", http.StatusBadRequest)
+		return
+	}
+
+	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
+	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	limit, offset := parseLimitOffset(r)
+
+	settings, err := h.CfgManager.Load()
+	if err != nil {
+		writeJSONError(w, "failed to load settings", http.StatusInternalServerError)
+		return
+	}
+
+	account, err := h.resolveSimklShelfAccount(user, settings, accountID)
+	if err != nil {
+		status := http.StatusForbidden
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, err.Error(), status)
+		return
+	}
+
+	listItems, err := h.SimklClient.GetListItems(account.ClientID, account.AccessToken, mediaType, listType)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	curated := make([]metadatapkg.CuratedItem, 0, len(listItems))
+	for _, item := range listItems {
+		ci := metadatapkg.CuratedItem{
+			Title:     item.Title,
+			Year:      item.Year,
+			IMDBID:    item.IDs.IMDB,
+			MediaType: "movie",
+		}
+		if item.MediaType == "show" {
+			ci.MediaType = "series"
+		}
+		if item.IDs.TMDB > 0 {
+			ci.TMDBID = int64(item.IDs.TMDB)
+		}
+		if item.IDs.TVDB > 0 {
+			ci.TVDBID = int64(item.IDs.TVDB)
+		}
+		curated = append(curated, ci)
+	}
+
+	label := strings.TrimSpace(r.URL.Query().Get("name"))
+	if label == "" {
+		label = "Simkl List"
+	}
+
+	items := h.buildShelfFromCurated(w, r, curated, label, userID, hideUnreleased, hideWatched, limit, offset)
+	if items == nil {
+		return // error already written
+	}
+	json.NewEncoder(w).Encode(items)
+}
+
+func (h *MetadataHandler) resolveSimklShelfAccount(user models.User, settings config.Settings, accountID string) (*config.SimklAccount, error) {
+	acc := settings.Simkl.GetAccountByID(accountID)
+	if acc == nil {
+		return nil, fmt.Errorf("simkl account not found")
+	}
+	if strings.TrimSpace(acc.AccessToken) == "" {
+		return nil, fmt.Errorf("simkl account not authenticated")
+	}
+
+	if h.AccountsService != nil {
+		if account, ok := h.AccountsService.Get(user.AccountID); ok && account.IsMaster {
+			return acc, nil
+		}
+	}
+	if user.SimklAccountID != "" && user.SimklAccountID == accountID {
+		return acc, nil
+	}
+	return nil, fmt.Errorf("simkl account is not available to this profile")
+}
+
+// LetterboxdList returns enriched movie items from either a public Letterboxd
+// list URL or a Letterboxd list imported into MDBList. Imported lists are
+// identified by MDBList's external-list ID.
+func (h *MetadataHandler) LetterboxdList(w http.ResponseWriter, r *http.Request) {
+	listID := strings.TrimSpace(r.URL.Query().Get("listId"))
+	listURL := strings.TrimSpace(r.URL.Query().Get("listUrl"))
+
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
+	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	limit, offset := parseLimitOffset(r)
+
+	maxItems := maxShelfSourceItems(limit, offset)
+	var curated []metadatapkg.CuratedItem
+	sourceTotal := 0
+	switch {
+	case listURL != "":
+		if h.LetterboxdClient == nil {
+			writeJSONError(w, "letterboxd client unavailable", http.StatusInternalServerError)
+			return
+		}
+		result, err := h.LetterboxdClient.GetListResult(r.Context(), listURL, maxItems)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		sourceTotal = result.Total
+		curated = make([]metadatapkg.CuratedItem, 0, len(result.Items))
+		for _, item := range result.Items {
+			curated = append(curated, metadatapkg.CuratedItem{
+				Title:     item.Title,
+				Year:      item.Year,
+				MediaType: item.MediaType,
+			})
+		}
+	case listID != "":
+		if h.MDBListListsClient == nil || !h.MDBListListsClient.IsConfigured() {
+			writeJSONError(w, "MDBList API key not configured", http.StatusInternalServerError)
+			return
+		}
+		listItems, err := h.MDBListListsClient.GetExternalListItems(r.Context(), listID, maxItems)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		curated = make([]metadatapkg.CuratedItem, 0, len(listItems))
+		for _, item := range listItems {
+			curated = append(curated, metadatapkg.CuratedItem{
+				Title:     item.Title,
+				Year:      item.Year,
+				IMDBID:    item.IMDBID,
+				TMDBID:    item.TMDBID,
+				TVDBID:    item.TVDBID,
+				MediaType: item.MediaType,
+			})
+		}
+	default:
+		writeJSONError(w, "listId or listUrl parameter required", http.StatusBadRequest)
+		return
+	}
+
+	label := strings.TrimSpace(r.URL.Query().Get("name"))
+	if label == "" {
+		label = "Letterboxd List"
+	}
+
+	items := h.buildShelfFromCurated(w, r, curated, label, userID, hideUnreleased, hideWatched, limit, offset)
+	if items == nil {
+		return // error already written
+	}
+	if sourceTotal > items.Total && !hideUnreleased && !hideWatched {
+		items.Total = sourceTotal
+	}
+	json.NewEncoder(w).Encode(items)
+}
+
+func maxShelfSourceItems(limit, offset int) int {
+	if limit > 0 {
+		return offset + limit
+	}
+	return 1000
+}
+
+// LetterboxdSources returns the user's imported Letterboxd lists (MDBList
+// external lists with source "letterboxd"), for the shelf-config picker.
+func (h *MetadataHandler) LetterboxdSources(w http.ResponseWriter, r *http.Request) {
+	if h.MDBListListsClient == nil || !h.MDBListListsClient.IsConfigured() {
+		writeJSONError(w, "MDBList API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	lists, err := h.MDBListListsClient.GetExternalLists(r.Context())
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	type sourceResponse struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Items int    `json:"items"`
+	}
+	out := make([]sourceResponse, 0, len(lists))
+	for _, l := range lists {
+		if !strings.EqualFold(strings.TrimSpace(l.Source), "letterboxd") {
+			continue
+		}
+		out = append(out, sourceResponse{ID: strconv.Itoa(l.ID), Name: l.Name, Items: l.Items})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"lists": out})
+}
+
+// buildShelfFromCurated enriches curated items, applies the shared shelf
+// filters/pagination and writes the standard shelf response. It returns nil
+// (after writing an error) on failure.
+func (h *MetadataHandler) buildShelfFromCurated(w http.ResponseWriter, r *http.Request, curated []metadatapkg.CuratedItem, label, userID string, hideUnreleased, hideWatched bool, limit, offset int) *CustomListResponse {
+	items, err := h.Service.GetCuratedList(r.Context(), curated, label)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadGateway)
+		return nil
+	}
+
+	unfilteredTotal := len(items)
+	if hideUnreleased {
+		items = filterUnreleasedItems(items)
+	}
+	if hideWatched && userID != "" && h.HistoryService != nil {
+		items = filterWatchedItems(items, userID, h.HistoryService)
+	}
+	filteredTotal := len(items)
+
+	if offset > 0 && offset < len(items) {
+		items = items[offset:]
+	} else if offset >= len(items) {
+		items = []models.TrendingItem{}
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+
+	enrichTrendingRatings(items, h.Service)
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := &CustomListResponse{Items: items, Total: filteredTotal}
+	if hideUnreleased || hideWatched {
+		resp.UnfilteredTotal = unfilteredTotal
+	}
+	return resp
+}
+
+// parseLimitOffset reads optional limit/offset query parameters (0 = unset).
+func parseLimitOffset(r *http.Request) (int, int) {
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	return limit, offset
 }
 
 // CuratedList enriches a caller-provided list of items (POST with JSON body).
