@@ -247,6 +247,7 @@ type PlaybackSettings struct {
 	RewindOnPlaybackStart      int     `json:"rewindOnPlaybackStart"`               // Seconds to rewind when resuming from saved progress (default 0)
 	DisablePrequeue            bool    `json:"disablePrequeue"`                     // Disable automatic prequeue on page load (streams only resolve when Play is pressed)
 	IgnoreDVCompatibilityCheck bool    `json:"ignoreDolbyVisionCompatibilityCheck"` // Skip Android display DV capability check before playback
+	CreditsDetectionEnabled    bool    `json:"creditsDetectionEnabled"`             // Enable on-device credits detection/OCR during playback
 	CreditsAutoSkip            bool    `json:"creditsAutoSkip"`                     // Automatically play the next episode after credits are detected
 	CreditsDetection           bool    `json:"creditsDetection"`                    // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams       int     `json:"maxConcurrentStreams"`                // Global max concurrent VOD streams across all accounts (0 = unlimited)
@@ -1090,7 +1091,7 @@ func DefaultSettings() Settings {
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
 		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", PreferredAudioLanguage: "eng", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleBold: false, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10},
+		Playback:  PlaybackSettings{PreferredPlayer: "native", PreferredAudioLanguage: "eng", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleBold: false, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10, CreditsDetectionEnabled: true},
 		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24},
 		HomeShelves: HomeShelvesSettings{
 			Shelves:        DefaultHomeShelfConfigs(),
@@ -1379,6 +1380,9 @@ func (m *Manager) Load() (Settings, error) {
 			if legacyCreditsDetection, hasLegacy := playbackRaw["creditsDetection"]; hasLegacy {
 				playbackRaw["creditsAutoSkip"] = legacyCreditsDetection
 			}
+		}
+		if _, exists := playbackRaw["creditsDetectionEnabled"]; !exists {
+			playbackRaw["creditsDetectionEnabled"] = true
 		}
 		if _, exists := playbackRaw["subtitleColor"]; !exists {
 			playbackRaw["subtitleColor"] = "#FFFFFF"

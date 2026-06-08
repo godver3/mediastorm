@@ -225,6 +225,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if !settings.Playback.DisablePrequeue {
 			settings.Playback.DisablePrequeue = defaults.Playback.DisablePrequeue
 		}
+		if settings.Playback.CreditsDetectionEnabled == nil {
+			settings.Playback.CreditsDetectionEnabled = defaults.Playback.CreditsDetectionEnabled
+		}
 
 		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
 		if settings.Display.BadgeVisibility == nil {

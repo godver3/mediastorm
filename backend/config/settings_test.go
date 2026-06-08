@@ -24,6 +24,9 @@ func TestLoadMigratesCreditsDetectionToCreditsAutoSkip(t *testing.T) {
 	if settings.Playback.CreditsDetection {
 		t.Fatal("expected legacy creditsDetection field to be cleared after migration")
 	}
+	if !settings.Playback.CreditsDetectionEnabled {
+		t.Fatal("expected creditsDetectionEnabled to default to true")
+	}
 }
 
 func TestLoadMigratesYouTubeProxyURLFromMetadataToPlayback(t *testing.T) {

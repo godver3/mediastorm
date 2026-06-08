@@ -420,6 +420,18 @@ function renderSettings() {
                         </label>
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <h4>Credits Detection</h4>
+                        <p>Use on-device OCR near the end of episodes to detect credits and show next-episode actions</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="creditsDetectionEnabled" ${s.playback.creditsDetectionEnabled !== false ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <div class="settings-subgroup">
                     <div class="settings-subgroup-title">
                         <h3>Subtitle Appearance</h3>
@@ -704,6 +716,7 @@ function collectSettings() {
             subtitleBackgroundOpacity: Number.isFinite(subtitleBackgroundOpacity) ? subtitleBackgroundOpacity : 0.6,
             pauseWhenAppInactive: document.getElementById('pauseWhenAppInactive').checked,
             ignoreDolbyVisionCompatibilityCheck: document.getElementById('ignoreDolbyVisionCompatibilityCheck').checked,
+            creditsDetectionEnabled: document.getElementById('creditsDetectionEnabled').checked,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },
         homeShelves: currentSettings.homeShelves || { shelves: [] },

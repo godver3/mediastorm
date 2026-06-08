@@ -417,6 +417,7 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 				defaults.Playback.SubtitleBackgroundColor = globalSettings.Playback.SubtitleBackgroundColor
 			}
 			defaults.Playback.SubtitleBackgroundOpacity = models.FloatPtr(globalSettings.Playback.SubtitleBackgroundOpacity)
+			defaults.Playback.CreditsDetectionEnabled = models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled)
 			maxStreams := globalSettings.Live.MaxStreams
 			if maxStreams < 0 {
 				maxStreams = 0

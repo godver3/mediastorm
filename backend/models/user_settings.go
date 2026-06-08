@@ -313,6 +313,7 @@ type PlaybackSettings struct {
 	RewindOnPlaybackStart      int      `json:"rewindOnPlaybackStart,omitempty"`               // Seconds to rewind when resuming from saved progress (default 0)
 	DisablePrequeue            bool     `json:"disablePrequeue,omitempty"`                     // Disable automatic stream pre-loading
 	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"` // Skip Android display DV capability check before playback
+	CreditsDetectionEnabled    *bool    `json:"creditsDetectionEnabled,omitempty"`             // Enable on-device credits detection/OCR during playback
 	CreditsAutoSkip            bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	CreditsDetection           bool     `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
 	MaxConcurrentStreams       *int     `json:"maxConcurrentStreams,omitempty"`                // Per-profile concurrent stream limit (nil = use account limit)
@@ -538,6 +539,7 @@ func DefaultUserSettings() UserSettings {
 			SeekForwardSeconds:         30,
 			SeekBackwardSeconds:        10,
 			IgnoreDVCompatibilityCheck: BoolPtr(false),
+			CreditsDetectionEnabled:    BoolPtr(true),
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves:                         DefaultHomeShelfConfigs(),

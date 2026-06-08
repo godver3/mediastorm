@@ -54,6 +54,7 @@ type ClientFilterSettings struct {
 	RewindOnPlaybackStart      *int     `json:"rewindOnPlaybackStart,omitempty"`
 	DisablePrequeue            *bool    `json:"disablePrequeue,omitempty"`
 	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"`
+	CreditsDetectionEnabled    *bool    `json:"creditsDetectionEnabled,omitempty"`
 	CreditsAutoSkip            *bool    `json:"creditsAutoSkip,omitempty"`
 	MaxResultsPerResolution    *int     `json:"maxResultsPerResolution,omitempty"`
 
@@ -108,6 +109,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.RewindOnPlaybackStart == nil &&
 		c.DisablePrequeue == nil &&
 		c.IgnoreDVCompatibilityCheck == nil &&
+		c.CreditsDetectionEnabled == nil &&
 		c.CreditsAutoSkip == nil &&
 		c.MaxResultsPerResolution == nil &&
 		c.HomeWifiSSID == nil &&

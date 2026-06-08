@@ -140,6 +140,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			RewindOnPlaybackStart:      g.Playback.RewindOnPlaybackStart,
 			DisablePrequeue:            g.Playback.DisablePrequeue,
 			IgnoreDVCompatibilityCheck: models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck),
+			CreditsDetectionEnabled:    models.BoolPtr(g.Playback.CreditsDetectionEnabled),
 			CreditsAutoSkip:            g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
 			MaxResultsPerResolution:    models.IntPtr(g.Playback.MaxResultsPerResolution),
 		},
@@ -309,6 +310,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.IgnoreDVCompatibilityCheck == nil {
 		eff.Playback.IgnoreDVCompatibilityCheck = models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck)
+	}
+	if eff.Playback.CreditsDetectionEnabled == nil {
+		eff.Playback.CreditsDetectionEnabled = models.BoolPtr(g.Playback.CreditsDetectionEnabled)
 	}
 	if eff.Playback.MaxResultsPerResolution == nil {
 		eff.Playback.MaxResultsPerResolution = models.IntPtr(g.Playback.MaxResultsPerResolution)
@@ -561,6 +565,10 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	globalCreditsAutoSkip := g.CreditsAutoSkip || g.CreditsDetection
 	if p.CreditsAutoSkip && p.CreditsAutoSkip == globalCreditsAutoSkip {
 		p.CreditsAutoSkip = false
+		changed = true
+	}
+	if p.CreditsDetectionEnabled != nil && *p.CreditsDetectionEnabled == g.CreditsDetectionEnabled {
+		p.CreditsDetectionEnabled = nil
 		changed = true
 	}
 	if p.DisablePrequeue && p.DisablePrequeue == g.DisablePrequeue {
@@ -864,6 +872,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 		cs.IgnoreDVCompatibilityCheck = nil
 		changed = true
 	}
+	if cs.CreditsDetectionEnabled != nil && eff.Playback.CreditsDetectionEnabled != nil && *cs.CreditsDetectionEnabled == *eff.Playback.CreditsDetectionEnabled {
+		cs.CreditsDetectionEnabled = nil
+		changed = true
+	}
 	if cs.CreditsAutoSkip != nil && *cs.CreditsAutoSkip == eff.Playback.CreditsAutoSkip {
 		cs.CreditsAutoSkip = nil
 		changed = true
@@ -1120,5 +1132,8 @@ func explicitBoolPtrEqual(user, global *bool) bool {
 	if user == nil {
 		return true
 	}
-	return global != nil && *user == *global
+	if global == nil {
+		return !*user
+	}
+	return *user == *global
 }

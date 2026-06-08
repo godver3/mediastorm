@@ -270,6 +270,7 @@ func configPlaybackToUserPlayback(p config.PlaybackSettings) models.PlaybackSett
 		PreferredSubtitleMode:      p.PreferredSubtitleMode,
 		ForceAACTranscoding:        p.ForceAACTranscoding,
 		IgnoreDVCompatibilityCheck: models.BoolPtr(p.IgnoreDVCompatibilityCheck),
+		CreditsDetectionEnabled:    models.BoolPtr(p.CreditsDetectionEnabled),
 		MaxResultsPerResolution:    models.IntPtr(p.MaxResultsPerResolution),
 	}
 }

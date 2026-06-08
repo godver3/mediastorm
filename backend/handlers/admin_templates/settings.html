@@ -1386,15 +1386,16 @@
         {
             key: 'playback',
             label: 'Playback',
-            description: 'Audio Language, Subtitle Language, Subtitle Mode, Pause When App Inactive, Dolby Vision Compatibility Check',
+            description: 'Audio Language, Subtitle Language, Subtitle Mode, Pause When App Inactive, Dolby Vision Compatibility Check, Credits Detection',
             detailSection: 'Playback',
-            detailFields: ['Audio Language', 'Subtitle Language', 'Subtitle Mode', 'Pause When App Inactive', 'Pause When Covered', 'Dolby Vision Compatibility Check'],
+            detailFields: ['Audio Language', 'Subtitle Language', 'Subtitle Mode', 'Pause When App Inactive', 'Pause When Covered', 'Dolby Vision Compatibility Check', 'Credits Detection'],
             userPaths: [
                 'playback.preferredAudioLanguage',
                 'playback.preferredSubtitleLanguage',
                 'playback.preferredSubtitleMode',
                 'playback.pauseWhenAppInactive',
                 'playback.ignoreDolbyVisionCompatibilityCheck',
+                'playback.creditsDetectionEnabled',
             ],
             clientPaths: [
                 'preferredAudioLanguage',
@@ -1402,6 +1403,7 @@
                 'preferredSubtitleMode',
                 'pauseWhenAppInactive',
                 'ignoreDolbyVisionCompatibilityCheck',
+                'creditsDetectionEnabled',
             ],
         },
         {
@@ -2139,6 +2141,7 @@
         'rewindOnPlaybackStart',
         'disablePrequeue',
         'ignoreDolbyVisionCompatibilityCheck',
+        'creditsDetectionEnabled',
         'creditsAutoSkip',
         'maxResultsPerResolution',
     ];

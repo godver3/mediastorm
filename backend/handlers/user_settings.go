@@ -176,6 +176,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			RewindOnPlaybackStart:      globalSettings.Playback.RewindOnPlaybackStart,
 			DisablePrequeue:            globalSettings.Playback.DisablePrequeue,
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
+			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
 			CreditsAutoSkip:            globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
 			MaxResultsPerResolution:    models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
 		},
