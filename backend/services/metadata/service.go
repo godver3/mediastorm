@@ -948,7 +948,7 @@ func ratingsDiskCacheKey(imdbID, mediaType string) string {
 // GetMDBListAllRatings returns all ratings for a title without filtering by enabled display settings.
 // Results are persisted to disk cache so they survive restarts.
 func (s *Service) GetMDBListAllRatings(ctx context.Context, imdbID, mediaType string) ([]models.Rating, error) {
-	if s.mdblist == nil {
+	if s.mdblist == nil || s.ratingsCache == nil {
 		return nil, nil
 	}
 	// Check disk cache first
@@ -982,12 +982,41 @@ func (s *Service) GetMDBListAllRatings(ctx context.Context, imdbID, mediaType st
 
 // GetMDBListAllRatingsCached returns disk-cached ratings only (no API call). Returns nil on cache miss.
 func (s *Service) GetMDBListAllRatingsCached(imdbID, mediaType string) []models.Rating {
+	if s.ratingsCache == nil {
+		return nil
+	}
 	key := ratingsDiskCacheKey(imdbID, mediaType)
 	var cached []models.Rating
 	if ok, _ := s.ratingsCache.get(key, &cached); ok {
 		return cached
 	}
 	return nil
+}
+
+// getMDBListDisplayRatings returns ratings filtered to the configured display
+// sources. It prefers the persistent all-ratings cache and only calls MDBList
+// when the disk cache has no entry for the title.
+func (s *Service) getMDBListDisplayRatings(ctx context.Context, imdbID, mediaType string, timeout time.Duration) ([]models.Rating, error) {
+	if s.mdblist == nil || !s.mdblist.IsEnabled() || strings.TrimSpace(imdbID) == "" {
+		return nil, nil
+	}
+
+	if cachedAll := s.GetMDBListAllRatingsCached(imdbID, mediaType); cachedAll != nil {
+		return s.mdblist.FilterEnabledRatings(cachedAll), nil
+	}
+
+	ratingCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		ratingCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
+
+	allRatings, err := s.GetMDBListAllRatings(ratingCtx, imdbID, mediaType)
+	if err != nil {
+		return nil, err
+	}
+	return s.mdblist.FilterEnabledRatings(allRatings), nil
 }
 
 // GetTextPosterURL returns the text poster URL for a title from cache, if available.
@@ -3481,6 +3510,14 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			_ = s.cache.set(cacheID, cached)
 		}
 
+		if cached.Title.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+			if ratings, err := s.getMDBListDisplayRatings(ctx, cached.Title.IMDBID, "show", 3*time.Second); err != nil {
+				log.Printf("[metadata] failed to hydrate cached series ratings imdbId=%s: %v", cached.Title.IMDBID, err)
+			} else {
+				cached.Title.Ratings = ratings
+			}
+		}
+
 		// In demo mode, clamp to season 1 only (skip season 0/specials if present)
 		if s.demo && len(cached.Seasons) > 0 {
 			var season1 *models.SeriesSeason
@@ -3885,16 +3922,16 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		log.Printf("[metadata] applied TMDB episode stills tvdbId=%d tmdbId=%d", tvdbID, tmdbIDForEnrichment)
 	}
 
-	// Fetch ratings from MDBList if enabled and IMDB ID is available
-	// Short timeout so 429 retries don't block the entire details response.
+	// Fetch ratings from MDBList if enabled and IMDB ID is available.
+	// Prefer the disk-persisted ratings cache; only fall back to the API when needed.
 	if seriesTitle.IMDBID != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
-		ratingCtx, ratingCancel := context.WithTimeout(ctx, 1*time.Second)
-		if ratings, err := s.mdblist.GetRatings(ratingCtx, seriesTitle.IMDBID, "show"); err == nil && len(ratings) > 0 {
+		if ratings, err := s.getMDBListDisplayRatings(ctx, seriesTitle.IMDBID, "show", 3*time.Second); err == nil && len(ratings) > 0 {
 			seriesTitle.Ratings = ratings
 			details.Title = seriesTitle // Update the details with ratings
 			metadataTracef("[metadata] fetched %d ratings for series imdbId=%s", len(ratings), seriesTitle.IMDBID)
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch ratings for series imdbId=%s: %v", seriesTitle.IMDBID, err)
 		}
-		ratingCancel()
 	}
 
 	// Fetch cast credits from TMDB if configured
@@ -5671,6 +5708,18 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		// If cached data doesn't have genres, they'll be fetched on next fresh fetch
 		// (Movies get genres from the movieDetails call which has them inline)
 
+		imdbIDForRatings := cached.IMDBID
+		if imdbIDForRatings == "" {
+			imdbIDForRatings = req.IMDBID
+		}
+		if imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
+			if ratings, err := s.getMDBListDisplayRatings(ctx, imdbIDForRatings, "movie", 3*time.Second); err != nil {
+				log.Printf("[metadata] failed to hydrate cached movie ratings imdbId=%s: %v", imdbIDForRatings, err)
+			} else {
+				cached.Ratings = ratings
+			}
+		}
+
 		return &cached, nil
 	}
 
@@ -5824,14 +5873,13 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}
 	}()
 
-	// 2. MDBList ratings (short timeout so 429 retries don't block the response)
+	// 2. MDBList ratings. Prefer the disk-persisted ratings cache; only fall
+	// back to the API when needed.
 	if includeRatings && imdbIDForRatings != "" && s.mdblist != nil && s.mdblist.IsEnabled() {
 		enrichWg.Add(1)
 		go func() {
 			defer enrichWg.Done()
-			ratingCtx, ratingCancel := context.WithTimeout(ctx, 1*time.Second)
-			defer ratingCancel()
-			if ratings, err := s.mdblist.GetRatings(ratingCtx, imdbIDForRatings, "movie"); err != nil {
+			if ratings, err := s.getMDBListDisplayRatings(ctx, imdbIDForRatings, "movie", 3*time.Second); err != nil {
 				log.Printf("[metadata] error fetching ratings for movie imdbId=%s: %v", imdbIDForRatings, err)
 			} else if len(ratings) > 0 {
 				movieTitle.Ratings = ratings

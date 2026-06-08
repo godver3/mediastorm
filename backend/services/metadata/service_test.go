@@ -1501,6 +1501,97 @@ func TestClearCacheClearsAllMetadataCaches(t *testing.T) {
 	}
 }
 
+func TestMovieDetailsCacheHitHydratesRatingsFromRatingsCache(t *testing.T) {
+	tempDir := t.TempDir()
+	svc := &Service{
+		client:       &tvdbClient{language: "eng"},
+		cache:        newFileCache(tempDir+"/metadata", 24),
+		ratingsCache: newFileCache(tempDir+"/ratings", 24),
+		mdblist:      newMDBListClient("test-key", []string{"tomatoes", "audience"}, true, 24),
+	}
+
+	cacheID := cacheKey("tvdb", "movie", "details", "v5", "eng", "369859")
+	if err := svc.cache.set(cacheID, models.Title{
+		ID:            "tvdb:movie:369859",
+		Name:          "Primate",
+		MediaType:     "movie",
+		TVDBID:        369859,
+		IMDBID:        "tt33028778",
+		Certification: "R",
+	}); err != nil {
+		t.Fatalf("set movie cache: %v", err)
+	}
+
+	if err := svc.ratingsCache.set(ratingsDiskCacheKey("tt33028778", "movie"), []models.Rating{
+		{Source: "imdb", Value: 5.8, Max: 10},
+		{Source: "tomatoes", Value: 78, Max: 100},
+		{Source: "audience", Value: 70, Max: 100},
+	}); err != nil {
+		t.Fatalf("set ratings cache: %v", err)
+	}
+
+	title, err := svc.MovieDetails(context.Background(), models.MovieDetailsQuery{
+		TitleID: "tvdb:movie:369859",
+		IMDBID:  "tt33028778",
+	})
+	if err != nil {
+		t.Fatalf("MovieDetails: %v", err)
+	}
+	if len(title.Ratings) != 2 {
+		t.Fatalf("expected 2 enabled ratings, got %#v", title.Ratings)
+	}
+	if title.Ratings[0].Source != "tomatoes" || title.Ratings[1].Source != "audience" {
+		t.Fatalf("expected RT ratings only, got %#v", title.Ratings)
+	}
+}
+
+func TestSeriesDetailsCacheHitHydratesRatingsFromRatingsCache(t *testing.T) {
+	tempDir := t.TempDir()
+	svc := &Service{
+		client:       &tvdbClient{language: "eng"},
+		cache:        newFileCache(tempDir+"/metadata", 24),
+		ratingsCache: newFileCache(tempDir+"/ratings", 24),
+		mdblist:      newMDBListClient("test-key", []string{"tomatoes", "audience"}, true, 24),
+	}
+
+	cacheID := cacheKey("tvdb", "series", "details", "v10", "eng", "75805")
+	if err := svc.cache.set(cacheID, models.SeriesDetails{
+		Title: models.Title{
+			ID:        "tvdb:series:75805",
+			Name:      "It's Always Sunny in Philadelphia",
+			MediaType: "series",
+			TVDBID:    75805,
+			IMDBID:    "tt0472954",
+			Poster:    &models.Image{URL: "https://example.com/poster.jpg"},
+			Backdrop:  &models.Image{URL: "https://example.com/backdrop.jpg"},
+		},
+		Seasons: []models.SeriesSeason{{Number: 1, Name: "Season 1"}},
+	}); err != nil {
+		t.Fatalf("set series cache: %v", err)
+	}
+
+	if err := svc.ratingsCache.set(ratingsDiskCacheKey("tt0472954", "show"), []models.Rating{
+		{Source: "imdb", Value: 8.8, Max: 10},
+		{Source: "tomatoes", Value: 94, Max: 100},
+		{Source: "audience", Value: 91, Max: 100},
+	}); err != nil {
+		t.Fatalf("set ratings cache: %v", err)
+	}
+
+	details, err := svc.SeriesDetails(context.Background(), models.SeriesDetailsQuery{
+		TitleID: "tvdb:series:75805",
+	})
+	if err != nil {
+		t.Fatalf("SeriesDetails: %v", err)
+	}
+	if len(details.Title.Ratings) != 2 {
+		t.Fatalf("expected 2 enabled ratings, got %#v", details.Title.Ratings)
+	}
+	if details.Title.Ratings[0].Source != "tomatoes" || details.Title.Ratings[1].Source != "audience" {
+		t.Fatalf("expected RT ratings only, got %#v", details.Title.Ratings)
+	}
+}
+
 func TestGetCacheManagerStatusCountsV5CustomListCache(t *testing.T) {
 	tempDir := t.TempDir()
 	svc := &Service{

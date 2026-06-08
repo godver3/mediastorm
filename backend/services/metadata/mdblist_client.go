@@ -60,9 +60,9 @@ var apiSourceToInternal = map[string]string{
 type mdblistMediaResponse struct {
 	Ratings []struct {
 		Source string   `json:"source"`
-		Value  *float64 `json:"value"`  // Pointer to handle null
-		Score  *float64 `json:"score"`  // Pointer to handle null, can be int or float
-		Votes  *int     `json:"votes"`  // Pointer to handle null
+		Value  *float64 `json:"value"` // Pointer to handle null
+		Score  *float64 `json:"score"` // Pointer to handle null, can be int or float
+		Votes  *int     `json:"votes"` // Pointer to handle null
 	} `json:"ratings"`
 }
 
@@ -409,6 +409,49 @@ func (c *mdblistClient) GetAllRatingsCached(imdbID string, mediaType string) []m
 		return entry.ratings
 	}
 	return nil
+}
+
+// FilterEnabledRatings filters an all-sources rating set down to the sources
+// configured for display. Cached ratings are stored unfiltered so sort-by-rating
+// can use every source, while details UI should respect enabledRatings.
+func (c *mdblistClient) FilterEnabledRatings(allRatings []models.Rating) []models.Rating {
+	if !c.enabled || c.apiKey == "" || len(allRatings) == 0 {
+		return nil
+	}
+
+	c.cacheMu.RLock()
+	enabledRatings := make(map[string]bool, len(c.enabledRatings))
+	for source, enabled := range c.enabledRatings {
+		enabledRatings[source] = enabled
+	}
+	c.cacheMu.RUnlock()
+
+	hasEnabled := false
+	for _, enabled := range enabledRatings {
+		if enabled {
+			hasEnabled = true
+			break
+		}
+	}
+	if !hasEnabled {
+		return nil
+	}
+
+	filtered := make([]models.Rating, 0, len(allRatings))
+	for _, rating := range allRatings {
+		internalSource := rating.Source
+		if mapped, ok := apiSourceToInternal[rating.Source]; ok {
+			internalSource = mapped
+		}
+		if !enabledRatings[internalSource] {
+			continue
+		}
+
+		rating.Source = internalSource
+		filtered = append(filtered, rating)
+	}
+
+	return filtered
 }
 
 // IsEnabled returns whether the MDBList client is enabled and configured
