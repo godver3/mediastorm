@@ -409,6 +409,45 @@ func TestStripProfileShelfMissingCalendarSourcesInherits(t *testing.T) {
 	}
 }
 
+func TestStripProfileShelfExplicitFalseCalendarSourcesMatchMissingGlobal(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{
+		ID:      "my-recently-aired",
+		Name:    "My Recently Aired",
+		Enabled: true,
+		Order:   2,
+	})
+
+	us := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 1},
+				{
+					ID:      "my-recently-aired",
+					Name:    "My Recently Aired",
+					Enabled: true,
+					Order:   2,
+					CalendarSources: models.CalendarSettings{
+						Watchlist:   models.BoolPtr(false),
+						History:     models.BoolPtr(false),
+						Trending:    models.BoolPtr(false),
+						TopTrending: models.BoolPtr(false),
+						MDBLists:    models.BoolPtr(false),
+					},
+				},
+			},
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	if _, ok := svc.settings["user1"]; ok {
+		t.Error("expected profile to be deleted because explicit false calendar sources match missing global defaults")
+	}
+}
+
 func TestMergeWithGlobalIncludesMissingShelves(t *testing.T) {
 	g := globalDefaults()
 	g.HomeShelves.Shelves = append(g.HomeShelves.Shelves, config.ShelfConfig{

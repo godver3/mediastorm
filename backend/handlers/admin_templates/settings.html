@@ -1080,9 +1080,9 @@
                         // Also check non-shelves fields (e.g. exploreCardPosition)
                         for (const fieldKey of Object.keys(profileSection)) {
                             if (fieldKey === 'shelves') continue;
-                            const profileVal = normalizeForComparison(profileSection[fieldKey]);
+                            const profileVal = normalizeForComparisonForField(sec.key, fieldKey, profileSection[fieldKey]);
                             if (profileVal === null) continue;
-                            const globalVal = normalizeForComparison(globalSection[fieldKey]);
+                            const globalVal = normalizeForComparisonForField(sec.key, fieldKey, globalSection[fieldKey]);
                             if (!deepEqual(profileVal, globalVal)) {
                                 if (!details[sec.label]) details[sec.label] = [];
                                 details[sec.label].push(getFieldLabel(sec.key, fieldKey));
@@ -2416,8 +2416,14 @@
         ].includes(key);
     }
 
+    function isDefaultFalseBooleanField(section, key) {
+        return section === 'homeShelves' && key === 'disableTvLandscapeCardExpansion';
+    }
+
     function normalizeForComparisonForField(section, key, val) {
-        if (val === undefined || val === null) return null;
+        if (val === undefined || val === null) {
+            return isDefaultFalseBooleanField(section, key) ? false : null;
+        }
         if (Array.isArray(val) && val.length === 0) {
             return isExplicitEmptyArrayOverride(section, key) ? [] : null;
         }
@@ -2445,6 +2451,10 @@
 
         // Get global value (mapping section key if needed)
         const globalVal = getGlobalValue(path);
+
+        if (path === 'homeShelves.shelves') {
+            return !shelvesEqual(profileVal, globalVal || []);
+        }
 
         // Normalize and compare - treat empty arrays/strings/null/undefined as equivalent
         const normProfile = normalizeForComparisonForField(keys[0], keys[keys.length - 1], profileVal);
@@ -4312,28 +4322,41 @@
         return true;
     }
 
-    // Compare two shelf objects - considers them equal if core properties match
-    // This handles cases where profile shelf is missing type/listUrl but otherwise matches global
+    function normalizeOptionalString(value) {
+        return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function normalizeOptionalNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : 0;
+    }
+
+    function normalizeOptionalBoolean(value) {
+        return value === true;
+    }
+
+    // Compare two shelf objects - considers them equal if explicit profile properties match
+    // the effective global value. Missing/default profile fields inherit from global.
     function shelfEqual(profileShelf, globalShelf) {
         if (!profileShelf || !globalShelf) return profileShelf === globalShelf;
         // Core properties must match
         if (profileShelf.id !== globalShelf.id) return false;
         if (Object.prototype.hasOwnProperty.call(profileShelf, 'name') && profileShelf.name !== globalShelf.name) return false;
-        if (Object.prototype.hasOwnProperty.call(profileShelf, 'enabled') && profileShelf.enabled !== globalShelf.enabled) return false;
-        if (Object.prototype.hasOwnProperty.call(profileShelf, 'order') && profileShelf.order !== globalShelf.order) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'enabled') && normalizeOptionalBoolean(profileShelf.enabled) !== normalizeOptionalBoolean(globalShelf.enabled)) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'order') && normalizeOptionalNumber(profileShelf.order) !== normalizeOptionalNumber(globalShelf.order)) return false;
         // If profile has type/listUrl, they must match global
-        if (profileShelf.type && profileShelf.type !== globalShelf.type) return false;
-        if (profileShelf.listUrl && profileShelf.listUrl !== globalShelf.listUrl) return false;
-        if (profileShelf.limit !== undefined && profileShelf.limit !== globalShelf.limit) return false;
-        if (profileShelf.hideUnreleased !== undefined && profileShelf.hideUnreleased !== globalShelf.hideUnreleased) return false;
-        if (profileShelf.traktAccountId && profileShelf.traktAccountId !== globalShelf.traktAccountId) return false;
-        if (profileShelf.traktListType && profileShelf.traktListType !== globalShelf.traktListType) return false;
-        if (profileShelf.traktListId && profileShelf.traktListId !== globalShelf.traktListId) return false;
-        if (profileShelf.simklAccountId && profileShelf.simklAccountId !== globalShelf.simklAccountId) return false;
-        if (profileShelf.simklMediaType && profileShelf.simklMediaType !== globalShelf.simklMediaType) return false;
-        if (profileShelf.simklListType && profileShelf.simklListType !== globalShelf.simklListType) return false;
-        if (profileShelf.letterboxdListId && profileShelf.letterboxdListId !== globalShelf.letterboxdListId) return false;
-        if (profileShelf.letterboxdListUrl && profileShelf.letterboxdListUrl !== globalShelf.letterboxdListUrl) return false;
+        if (normalizeOptionalString(profileShelf.type) && normalizeOptionalString(profileShelf.type) !== normalizeOptionalString(globalShelf.type)) return false;
+        if (normalizeOptionalString(profileShelf.listUrl) && normalizeOptionalString(profileShelf.listUrl) !== normalizeOptionalString(globalShelf.listUrl)) return false;
+        if (profileShelf.limit !== undefined && normalizeOptionalNumber(profileShelf.limit) !== normalizeOptionalNumber(globalShelf.limit)) return false;
+        if (profileShelf.hideUnreleased !== undefined && normalizeOptionalBoolean(profileShelf.hideUnreleased) !== normalizeOptionalBoolean(globalShelf.hideUnreleased)) return false;
+        if (normalizeOptionalString(profileShelf.traktAccountId) && normalizeOptionalString(profileShelf.traktAccountId) !== normalizeOptionalString(globalShelf.traktAccountId)) return false;
+        if (normalizeOptionalString(profileShelf.traktListType) && normalizeOptionalString(profileShelf.traktListType) !== normalizeOptionalString(globalShelf.traktListType)) return false;
+        if (normalizeOptionalString(profileShelf.traktListId) && normalizeOptionalString(profileShelf.traktListId) !== normalizeOptionalString(globalShelf.traktListId)) return false;
+        if (normalizeOptionalString(profileShelf.simklAccountId) && normalizeOptionalString(profileShelf.simklAccountId) !== normalizeOptionalString(globalShelf.simklAccountId)) return false;
+        if (normalizeOptionalString(profileShelf.simklMediaType) && normalizeOptionalString(profileShelf.simklMediaType) !== normalizeOptionalString(globalShelf.simklMediaType)) return false;
+        if (normalizeOptionalString(profileShelf.simklListType) && normalizeOptionalString(profileShelf.simklListType) !== normalizeOptionalString(globalShelf.simklListType)) return false;
+        if (normalizeOptionalString(profileShelf.letterboxdListId) && normalizeOptionalString(profileShelf.letterboxdListId) !== normalizeOptionalString(globalShelf.letterboxdListId)) return false;
+        if (normalizeOptionalString(profileShelf.letterboxdListUrl) && normalizeOptionalString(profileShelf.letterboxdListUrl) !== normalizeOptionalString(globalShelf.letterboxdListUrl)) return false;
         if (!calendarSourcesEqual(profileShelf.calendarSources, globalShelf.calendarSources)) return false;
         return true;
     }
@@ -4344,7 +4367,7 @@
         for (const [key, value] of Object.entries(profileSources)) {
             if (key === 'mdblistShelves') {
                 if (!deepEqual(value || {}, global.mdblistShelves || {})) return false;
-            } else if (!deepEqual(value, global[key])) {
+            } else if (normalizeOptionalBoolean(value) !== normalizeOptionalBoolean(global[key])) {
                 return false;
             }
         }
@@ -4373,7 +4396,7 @@
         if (Object.prototype.hasOwnProperty.call(profileHomeShelves, 'shelves') && !shelvesEqual(profileHomeShelves.shelves, globalHomeShelves.shelves)) return false;
         for (const key of Object.keys(profileHomeShelves)) {
             if (key === 'shelves') continue;
-            if (!deepEqual(normalizeForComparison(profileHomeShelves[key]), normalizeForComparison(globalHomeShelves[key]))) return false;
+            if (!deepEqual(normalizeForComparisonForField('homeShelves', key, profileHomeShelves[key]), normalizeForComparisonForField('homeShelves', key, globalHomeShelves[key]))) return false;
         }
         return true;
     }
