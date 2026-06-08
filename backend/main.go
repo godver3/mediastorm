@@ -607,9 +607,20 @@ func main() {
 	// Best-effort save so the config persists the defaults
 	_ = cfgManager.Save(settings)
 
+	// Recordings service is created early so its streaming provider can join the
+	// composite provider, letting recordings play through the shared HLS pipeline.
+	var recordingsService *recordings.Service
+	if store != nil {
+		recordingsService = recordings.NewService(store.Recordings(), settings.Transmux.FFmpegPath, filepath.Join(settings.Cache.Directory, "recordings"))
+	}
+	var recordingsStreamProvider streaming.Provider
+	if recordingsService != nil {
+		recordingsStreamProvider = recordings.NewStreamProvider(recordingsService)
+	}
+
 	// Create composite streaming provider that handles both usenet and debrid
 	debridStreamingProvider := debrid.NewStreamingProvider(cfgManager)
-	compositeProvider := debrid.NewCompositeProvider(localMediaProvider, debridStreamingProvider, nzbSystem)
+	compositeProvider := debrid.NewCompositeProvider(localMediaProvider, recordingsStreamProvider, debridStreamingProvider, nzbSystem)
 	prequeueHandler.GetStore().SetStreamPathValidator(func(ctx context.Context, streamPath string) error {
 		cleanPath := strings.TrimSpace(streamPath)
 		if strings.HasPrefix(cleanPath, "http://") || strings.HasPrefix(cleanPath, "https://") {
@@ -731,10 +742,6 @@ func main() {
 	settingsHandler.SetImageHandler(imageHandler)                // Enable clearing image cache
 	settingsHandler.SetPrequeueStore(prequeueHandler.GetStore()) // Clear prequeue when ShowParsedBadges changes
 
-	var recordingsService *recordings.Service
-	if store != nil {
-		recordingsService = recordings.NewService(store.Recordings(), settings.Transmux.FFmpegPath, filepath.Join(settings.Cache.Directory, "recordings"))
-	}
 	recordingsHandler := handlers.NewRecordingsHandler(recordingsService, userService)
 
 	api.Register(

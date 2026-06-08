@@ -7407,6 +7407,9 @@ func (h *AdminUIHandler) ListLocalMediaGroups(w http.ResponseWriter, r *http.Req
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMissing: true,
+		// Cards mode returns lightweight group summaries (no items/seasons, no live
+		// metadata enrichment) for fast shelf rendering in the web player.
+		IncludeCards: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include")), "cards"),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

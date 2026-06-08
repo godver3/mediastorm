@@ -1441,6 +1441,8 @@
     let webPlayerLastProgressPaused = false;
     let webPlayerProgressCompleted = false;
     let continueWatchingExpanded = false;
+    // Per-shelf expand state (keyed by shelf source); collapsed shelves show 20 items.
+    const expandedShelves = {};
     let activePlaybackMode = 'media';
     let iptvChannels = [];
     let iptvEpgByChannel = {};
@@ -1610,6 +1612,7 @@
         clearDetails();
         void loadProfileSettings(activeProfileId);
         continueWatchingExpanded = false;
+        resetExpandedShelves();
         iptvChannelsLoaded = false;
         if (activePlaybackMode === 'iptv') {
             loadIptvChannels({ force: true });
@@ -1672,10 +1675,13 @@
             container.innerHTML = '<div class="empty-inline">Select a profile</div>';
             return;
         }
-        if (options.force) continueWatchingExpanded = false;
+        if (options.force) {
+            continueWatchingExpanded = false;
+            resetExpandedShelves();
+        }
         container.innerHTML = '<div class="empty-inline">Loading shelves...</div>';
         try {
-            const [fullContinue, moviesData, showsData] = await Promise.all([
+            const [fullContinue, moviesData, showsData, recordingsData, libraries] = await Promise.all([
                 apiCall(`/api/history/continue?userId=${encodeURIComponent(activeProfileId)}`).catch((error) => {
                     console.warn('Continue watching load failed:', error);
                     return [];
@@ -1688,6 +1694,16 @@
                     console.warn('Trending shows load failed:', error);
                     return null;
                 }),
+                // Recordings: pass both userId (master scope) and profileId (account scope)
+                // so the same call works regardless of which web UI session is active.
+                apiCall(`/api/live/recordings?userId=${encodeURIComponent(activeProfileId)}&profileId=${encodeURIComponent(activeProfileId)}`).catch((error) => {
+                    console.warn('Recordings load failed:', error);
+                    return null;
+                }),
+                apiCall('/api/library/libraries').catch((error) => {
+                    console.warn('Local libraries load failed:', error);
+                    return null;
+                }),
             ]);
             const continueItems = Array.isArray(fullContinue) ? fullContinue.map(normalizeContinueItem) : [];
             const trendingMovies = Array.isArray(moviesData?.items)
@@ -1696,12 +1712,44 @@
             const trendingShows = Array.isArray(showsData?.items)
                 ? showsData.items.map((item) => normalizeTrendingItem(item, 'series'))
                 : [];
+            const recordingItems = Array.isArray(recordingsData?.recordings)
+                ? recordingsData.recordings.map(normalizeRecordingItem).filter(Boolean)
+                : [];
+
+            // Each local media library becomes its own shelf. Fetch their groups in
+            // parallel; a failing library just drops out instead of breaking the page.
+            const libraryList = Array.isArray(libraries) ? libraries : [];
+            const localShelves = [];
+            const localItemsByKey = {};
+            await Promise.all(libraryList.map(async (library) => {
+                if (!library?.id) return;
+                const key = `localmedia:${library.id}`;
+                try {
+                    // Cards mode skips per-item TMDB/TVDB enrichment and omits the heavy
+                    // items/seasons payload — posters/titles come from stored scan metadata,
+                    // so the shelf renders fast. Full items are fetched lazily on click.
+                    const groupsData = await apiCall(`/api/library/libraries/${encodeURIComponent(library.id)}/groups?include=cards&limit=200&sort=created&dir=desc`);
+                    const groups = Array.isArray(groupsData?.groups) ? groupsData.groups : [];
+                    const items = groups
+                        .map((group) => normalizeLocalMediaGroup(group, library))
+                        .filter(Boolean);
+                    if (items.length) {
+                        localItemsByKey[key] = items;
+                        localShelves.push({ key, title: library.name || 'Local Library' });
+                    }
+                } catch (error) {
+                    console.warn('Local library groups load failed:', library?.name, error);
+                }
+            }));
+            window.localLibraryShelves = localShelves;
 
             window.playbackShelfItems = {
                 search: window.playbackShelfItems?.search || [],
                 continue: continueItems,
                 trendingMovies,
                 trendingShows,
+                recordings: recordingItems,
+                ...localItemsByKey,
             };
 
             const shelves = renderPlaybackShelves();
@@ -1739,7 +1787,7 @@
                 return;
             }
             window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: items };
-            container.innerHTML = renderMediaShelf(`Search Results for "${query}"`, 'search', items, { closeable: true });
+            container.innerHTML = renderMediaShelf(`Search Results for "${query}"`, 'search', items, { closeable: true, expandable: false });
         } catch (error) {
             container.innerHTML = `<div class="empty-inline" style="margin-bottom: 1rem;">Search failed: ${escapeHtml(error.message)}</div>`;
         }
@@ -1747,28 +1795,34 @@
 
     function renderPlaybackShelves() {
         const items = window.playbackShelfItems || {};
-        return [
-            renderMediaShelf('Continue Watching', 'continue', items.continue || [], { expandable: true, expanded: continueWatchingExpanded }),
+        const shelves = [
+            renderMediaShelf('Continue Watching', 'continue', items.continue || []),
+            renderMediaShelf('Recordings', 'recordings', items.recordings || []),
             renderMediaShelf('Trending Movies', 'trendingMovies', items.trendingMovies || []),
             renderMediaShelf('Trending Shows', 'trendingShows', items.trendingShows || []),
-        ].filter(Boolean);
+        ];
+        for (const shelf of (window.localLibraryShelves || [])) {
+            shelves.push(renderMediaShelf(shelf.title, shelf.key, items[shelf.key] || []));
+        }
+        return shelves.filter(Boolean);
     }
 
     function renderMediaShelf(title, source, items, options = {}) {
         if (!items.length) return '';
         const total = items.length;
-        const shouldCollapse = options.expandable && total > 20 && !options.expanded;
+        // Every shelf collapses to 20 with a "Show All" toggle (search results opt out).
+        const expandable = options.expandable !== false && total > 20;
+        const expanded = expandable && !!expandedShelves[source];
+        const shouldCollapse = expandable && !expanded;
         const visibleItems = shouldCollapse ? items.slice(0, 20) : items;
-        const bodyClass = options.expanded ? 'shelf-expanded-grid' : 'media-row';
-        const actions = [];
-        if (options.expandable && total > 20) {
-            actions.push(`
-                <button class="btn btn-sm btn-secondary" onclick="toggleContinueWatchingExpanded()">
-                    ${options.expanded ? 'Show Less' : `Show All ${total}`}
-                </button>
-            `);
-        }
-        const action = actions.length ? `<div class="shelf-actions">${actions.join('')}</div>` : '';
+        const bodyClass = expanded ? 'shelf-expanded-grid' : 'media-row';
+        const action = expandable
+            ? `<div class="shelf-actions">
+                    <button class="btn btn-sm btn-secondary" onclick="toggleShelfExpanded('${escapeHtml(source)}')">
+                        ${expanded ? 'Show Less' : `Show All ${total}`}
+                    </button>
+                </div>`
+            : '';
         return `
             <section class="media-shelf" data-shelf="${escapeHtml(source)}">
                 <div class="shelf-header">
@@ -1780,8 +1834,8 @@
                                 Close
                             </button>
                         ` : ''}
-                        ${options.expandable && options.expanded ? `
-                            <button class="btn btn-sm btn-secondary shelf-top-collapse" onclick="toggleContinueWatchingExpanded()" aria-label="Collapse ${escapeHtml(title)}">
+                        ${expanded ? `
+                            <button class="btn btn-sm btn-secondary shelf-top-collapse" onclick="toggleShelfExpanded('${escapeHtml(source)}')" aria-label="Collapse ${escapeHtml(title)}">
                                 Close
                             </button>
                         ` : ''}
@@ -1801,8 +1855,13 @@
         window.playbackShelfItems = { ...(window.playbackShelfItems || {}), search: [] };
     }
 
-    function toggleContinueWatchingExpanded() {
-        continueWatchingExpanded = !continueWatchingExpanded;
+    function resetExpandedShelves() {
+        for (const key of Object.keys(expandedShelves)) delete expandedShelves[key];
+    }
+
+    function toggleShelfExpanded(source) {
+        expandedShelves[source] = !expandedShelves[source];
+        if (source === 'continue') continueWatchingExpanded = expandedShelves[source];
         const container = document.getElementById('playbackShelves');
         const shelves = renderPlaybackShelves();
         container.innerHTML = shelves.join('') || '<div class="empty-inline">No shelf items available</div>';
@@ -1811,7 +1870,7 @@
 
     function updateExpandedShelfTopCollapseButtons() {
         requestAnimationFrame(() => {
-            document.querySelectorAll('.media-shelf[data-shelf="continue"]').forEach((shelf) => {
+            document.querySelectorAll('.media-shelf').forEach((shelf) => {
                 const button = shelf.querySelector('.shelf-top-collapse');
                 const grid = shelf.querySelector('.shelf-expanded-grid');
                 if (!button || !grid) return;
@@ -1956,21 +2015,326 @@
         };
     }
 
+    function recordingIsPlayable(recording) {
+        return ['completed', 'running', 'cancelled', 'failed'].includes(recording.status) && !!recording.outputPath;
+    }
+
+    function normalizeRecordingItem(recording) {
+        if (!recording || !recordingIsPlayable(recording)) return null;
+        const startLabel = recording.startAt ? new Date(recording.startAt).toLocaleString() : '';
+        const subtitleParts = [recording.channelName, startLabel].filter(Boolean);
+        if (recording.status === 'running') subtitleParts.unshift('In Progress');
+        return {
+            playKind: 'recording',
+            id: recording.id,
+            title: recording.title || recording.channelName || 'Recording',
+            mediaType: 'movie',
+            year: 0,
+            posterUrl: '',
+            metaText: subtitleParts.join(' · '),
+            // Recordings are MPEG-TS; route through the shared HLS pipeline via the
+            // recordings streaming provider rather than direct <video> playback.
+            webdavPath: `recording:${recording.id}/recording.ts`,
+            subtitle: subtitleParts.join(' · '),
+            raw: recording,
+        };
+    }
+
+    function localMediaGroupPoster(group) {
+        return group.textPoster?.url || group.poster?.url || group.backdrop?.url || '';
+    }
+
+    function normalizeLocalMediaGroup(group, library) {
+        if (!group) return null;
+        const isSeries = (library?.type === 'show') || group.libraryType === 'show' || group.groupType === 'show';
+        const mediaType = isSeries ? 'series' : 'movie';
+        const countLabel = group.itemCount ? `${group.itemCount} file${group.itemCount === 1 ? '' : 's'}` : '';
+        const metaParts = [group.year ? String(group.year) : '', isSeries ? 'TV Show' : 'Movie', countLabel].filter(Boolean);
+        return {
+            playKind: 'localmedia',
+            libraryId: library?.id || group.libraryId || '',
+            libraryTitle: library?.name || 'Local Library',
+            id: group.id || '',
+            title: group.title || 'Untitled',
+            mediaType,
+            year: group.year || 0,
+            posterUrl: localMediaGroupPoster(group),
+            metaText: metaParts.join(' · '),
+            group,
+            raw: group,
+        };
+    }
+
+    function firstLocalMediaItem(group) {
+        if (!group) return null;
+        if (Array.isArray(group.items) && group.items.length) return group.items[0];
+        const seasons = Array.isArray(group.seasons) ? group.seasons : [];
+        for (const season of seasons) {
+            for (const episode of (season.episodes || [])) {
+                if (Array.isArray(episode.items) && episode.items.length) return episode.items[0];
+            }
+        }
+        return null;
+    }
+
+    function buildLocalMediaSelected(groupItem, localItem) {
+        const ext = localItem.externalIds || {};
+        const meta = localItem.metadata || {};
+        return {
+            id: localItem.matchedTitleId || meta.id || groupItem.id || localItem.id,
+            title: groupItem.title || localItem.matchedName || localItem.fileName || 'Local Media',
+            mediaType: groupItem.mediaType,
+            year: groupItem.year || localItem.matchedYear || 0,
+            posterUrl: groupItem.posterUrl || '',
+            imdbId: ext.imdb || meta.imdbId || '',
+            tmdbId: ext.tmdb || (meta.tmdbId ? String(meta.tmdbId) : ''),
+            tvdbId: ext.tvdb || (meta.tvdbId ? String(meta.tvdbId) : ''),
+        };
+    }
+
+    function playShelfRecording(source, index) {
+        const item = (window.playbackShelfItems?.[source] || [])[index];
+        if (!item) return;
+        void playDirectStreamItem({
+            webdavPath: item.webdavPath,
+            selected: {
+                id: item.id,
+                title: item.title,
+                mediaType: 'movie',
+                year: 0,
+                posterUrl: '',
+            },
+            episode: null,
+            badge: 'Recording',
+            title: item.title,
+            subtitle: item.subtitle || '',
+        });
+    }
+
+    // Shelf cards are loaded in lightweight "cards" mode (no items/seasons), so the
+    // full group with playable files is fetched on demand the first time a title is opened.
+    async function resolveLocalMediaGroup(item) {
+        if (item.resolvedGroup) return item.resolvedGroup;
+        if (!item.libraryId) return item.group;
+        const params = new URLSearchParams({ limit: '50' });
+        if (item.title) params.set('query', item.title);
+        const data = await apiCall(`/api/library/libraries/${encodeURIComponent(item.libraryId)}/groups?${params.toString()}`);
+        const groups = Array.isArray(data?.groups) ? data.groups : [];
+        const match = groups.find((group) => group.id === item.id) || groups[0] || null;
+        item.resolvedGroup = match;
+        return match;
+    }
+
+    async function openLocalMediaGroup(source, index) {
+        const item = (window.playbackShelfItems?.[source] || [])[index];
+        if (!item) return;
+        const panel = document.getElementById('detailsPanel');
+        panel.style.display = 'block';
+        document.getElementById('shelvesPanel').style.display = 'none';
+        document.getElementById('playbackPanel').style.display = 'none';
+        panel.innerHTML = `<div class="empty-inline">Loading ${escapeHtml(item.title || 'title')}...</div>`;
+        let group;
+        try {
+            group = await resolveLocalMediaGroup(item);
+        } catch (error) {
+            panel.innerHTML = `<div class="empty-inline">Could not load title: ${escapeHtml(error.message)}</div>`;
+            return;
+        }
+        if (!group) {
+            panel.innerHTML = '<div class="empty-inline">Title not found in library</div>';
+            return;
+        }
+        item.group = group;
+        if (item.mediaType === 'series') {
+            openLocalMediaEpisodePicker(source, index);
+            return;
+        }
+        const localItem = firstLocalMediaItem(group);
+        if (!localItem) {
+            panel.style.display = 'none';
+            showToast('No playable file found for this title', 'error');
+            clearDetails();
+            return;
+        }
+        void playLocalMediaItem(item, localItem, null);
+    }
+
+    function localMediaSeasonOptions(group) {
+        const seasons = (group.seasons || []).filter((season) => Array.isArray(season.episodes) && season.episodes.length);
+        return seasons.sort((a, b) => Number(a.seasonNumber) - Number(b.seasonNumber));
+    }
+
+    function openLocalMediaEpisodePicker(source, index) {
+        const item = (window.playbackShelfItems?.[source] || [])[index];
+        if (!item) return;
+        const seasons = localMediaSeasonOptions(item.group);
+        if (!seasons.length) {
+            showToast('No episodes available for this title', 'error');
+            return;
+        }
+        const panel = document.getElementById('detailsPanel');
+        panel.style.display = 'block';
+        document.getElementById('shelvesPanel').style.display = 'none';
+        document.getElementById('playbackPanel').style.display = 'none';
+        window.localMediaPickerContext = { source, index };
+        const initialSeason = seasons[0];
+        const seasonOptions = seasons.map((season) => `<option value="${season.seasonNumber}">Season ${season.seasonNumber}</option>`).join('');
+        panel.innerHTML = `
+            <div class="player-wrap">
+                <div class="details-actions" style="margin-bottom: 1rem;">
+                    <button class="btn btn-secondary" onclick="clearDetails()">Back</button>
+                </div>
+                <div class="section-label">${escapeHtml(item.libraryTitle || 'Local Library')}</div>
+                <h2 class="shelf-title" style="margin-bottom: 0.35rem;">${escapeHtml(item.title)}</h2>
+                <div class="media-meta" style="margin-bottom: 0.75rem;">${escapeHtml(item.metaText || '')}</div>
+                <div class="episode-row">
+                    <div class="form-group">
+                        <label class="form-label">Season</label>
+                        <select id="localMediaSeasonSelect" class="form-select" onchange="renderLocalMediaEpisodeList()">${seasonOptions}</select>
+                    </div>
+                </div>
+                <div id="localMediaEpisodeList" style="margin-top: 0.75rem; display: grid; gap: 0.5rem;"></div>
+            </div>
+        `;
+        document.getElementById('localMediaSeasonSelect').value = String(initialSeason.seasonNumber);
+        renderLocalMediaEpisodeList();
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderLocalMediaEpisodeList() {
+        const ctx = window.localMediaPickerContext;
+        if (!ctx) return;
+        const item = (window.playbackShelfItems?.[ctx.source] || [])[ctx.index];
+        const container = document.getElementById('localMediaEpisodeList');
+        if (!item || !container) return;
+        const seasonNumber = Number(document.getElementById('localMediaSeasonSelect').value);
+        const season = (item.group.seasons || []).find((entry) => Number(entry.seasonNumber) === seasonNumber);
+        const episodes = (season?.episodes || []).filter((episode) => Array.isArray(episode.items) && episode.items.length);
+        if (!episodes.length) {
+            container.innerHTML = '<div class="empty-inline">No playable episodes in this season</div>';
+            return;
+        }
+        container.innerHTML = episodes.map((episode) => {
+            const label = `E${String(episode.episodeNumber).padStart(2, '0')}${episode.episodeTitle ? ` - ${episode.episodeTitle}` : ''}`;
+            return `
+                <button class="btn btn-secondary" style="justify-content: flex-start; text-align: left;" onclick="playLocalMediaEpisode(${seasonNumber}, ${episode.episodeNumber})">
+                    ${escapeHtml(label)}
+                </button>
+            `;
+        }).join('');
+    }
+
+    function playLocalMediaEpisode(seasonNumber, episodeNumber) {
+        const ctx = window.localMediaPickerContext;
+        if (!ctx) return;
+        const item = (window.playbackShelfItems?.[ctx.source] || [])[ctx.index];
+        if (!item) return;
+        const season = (item.group.seasons || []).find((entry) => Number(entry.seasonNumber) === Number(seasonNumber));
+        const episode = (season?.episodes || []).find((entry) => Number(entry.episodeNumber) === Number(episodeNumber));
+        const localItem = Array.isArray(episode?.items) && episode.items.length ? episode.items[0] : null;
+        if (!localItem) {
+            showToast('No playable file for this episode', 'error');
+            return;
+        }
+        void playLocalMediaItem(item, localItem, {
+            seasonNumber: Number(seasonNumber),
+            episodeNumber: Number(episodeNumber),
+            title: episode?.episodeTitle || '',
+        });
+    }
+
+    async function playLocalMediaItem(groupItem, localItem, episode) {
+        const filename = localItem.fileName || 'stream.bin';
+        const webdavPath = `localmedia:${localItem.id}/${filename}`;
+        const subtitleParts = [];
+        if (episode) {
+            subtitleParts.push(`S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`);
+            if (episode.title) subtitleParts.push(episode.title);
+        } else if (groupItem.year) {
+            subtitleParts.push(String(groupItem.year));
+        }
+        await playDirectStreamItem({
+            webdavPath,
+            selected: buildLocalMediaSelected(groupItem, localItem),
+            episode: episode ? { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber, title: episode.title } : null,
+            badge: groupItem.libraryTitle || 'Local Library',
+            title: groupItem.title,
+            subtitle: subtitleParts.join(' · '),
+        });
+    }
+
+    function preparePlaybackPanelForDirect({ badge, title, subtitle }) {
+        const panel = document.getElementById('playbackPanel');
+        panel.classList.remove('web-player-theater-panel');
+        document.body.classList.remove('web-player-theater-active');
+        panel.style.display = 'block';
+        document.getElementById('detailsPanel').style.display = 'none';
+        document.getElementById('shelvesPanel').style.display = 'none';
+        panel.innerHTML = `
+            <div class="player-wrap">
+                <div class="details-actions" style="margin-bottom: 1rem;">
+                    <button class="btn btn-secondary" onclick="clearDetails()">Back to Shelves</button>
+                </div>
+                ${badge ? `<div class="section-label">${escapeHtml(badge)}</div>` : ''}
+                <h2 class="shelf-title" style="margin-bottom: 0.35rem;">${escapeHtml(title || '')}</h2>
+                ${subtitle ? `<div class="media-meta" style="margin-bottom: 0.75rem;">${escapeHtml(subtitle)}</div>` : ''}
+                <div id="videoHost" style="display: none; margin-top: 1rem;"></div>
+            </div>
+        `;
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Shared entry point for recordings + local media: wires up the player state the
+    // HLS web player expects (selectedItem/selectedEpisode/resolvedPlayback) and starts
+    // transmuxed playback from the beginning.
+    async function playDirectStreamItem({ webdavPath, selected, episode, badge, title, subtitle }) {
+        if (!activeProfileId) {
+            showToast('Select a profile first', 'error');
+            return;
+        }
+        if (!webdavPath) {
+            showToast('This title has no playable stream', 'error');
+            return;
+        }
+        stopHlsSession();
+        selectedItem = selected;
+        selectedEpisode = episode || null;
+        selectedDetails = null;
+        resolvedPlayback = { webdavPath };
+        currentResolvedCandidate = null;
+        manualResults = [];
+        preparePlaybackPanelForDirect({ badge, title, subtitle });
+        await startWebPlayer({ startPercent: 0 });
+    }
+
     function renderMediaCard(item, index, source) {
         const poster = item.posterUrl
             ? `<img src="${escapeHtml(item.posterUrl)}" alt="">`
             : '<span>No image</span>';
-        const type = item.mediaType === 'series' ? 'TV Show' : 'Movie';
-        const episode = item.nextEpisode
-            ? ` S${String(item.nextEpisode.seasonNumber).padStart(2, '0')}E${String(item.nextEpisode.episodeNumber).padStart(2, '0')}`
-            : '';
-        const progress = item.progress ? ` - ${Math.round(item.progress)}%` : '';
+        // Recordings and local library items play directly rather than going through
+        // the torrent/details resolution flow.
+        const handler = item.playKind === 'recording'
+            ? `playShelfRecording('${escapeHtml(source)}', ${index})`
+            : item.playKind === 'localmedia'
+                ? `openLocalMediaGroup('${escapeHtml(source)}', ${index})`
+                : `openDetails('${escapeHtml(source)}', ${index})`;
+        let meta;
+        if (item.metaText !== undefined) {
+            meta = escapeHtml(item.metaText);
+        } else {
+            const type = item.mediaType === 'series' ? 'TV Show' : 'Movie';
+            const episode = item.nextEpisode
+                ? ` S${String(item.nextEpisode.seasonNumber).padStart(2, '0')}E${String(item.nextEpisode.episodeNumber).padStart(2, '0')}`
+                : '';
+            const progress = item.progress ? ` - ${Math.round(item.progress)}%` : '';
+            meta = `${item.year ? `${escapeHtml(item.year)} - ` : ''}${type}${escapeHtml(episode)}${escapeHtml(progress)}`;
+        }
         return `
-            <article class="media-card" onclick="openDetails('${source}', ${index})">
+            <article class="media-card" onclick="${handler}">
                 <div class="poster">${poster}</div>
                 <div class="media-info">
                     <div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
-                    <div class="media-meta">${item.year ? `${escapeHtml(item.year)} - ` : ''}${type}${escapeHtml(episode)}${escapeHtml(progress)}</div>
+                    <div class="media-meta">${meta}</div>
                 </div>
             </article>
         `;
