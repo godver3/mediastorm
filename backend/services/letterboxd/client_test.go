@@ -112,6 +112,33 @@ func TestClient_GetListItemsFollowsPagination(t *testing.T) {
 	}
 }
 
+func TestClient_GetListItemsParsesPublicWatchlist(t *testing.T) {
+	client := NewClient()
+	client.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != "https://letterboxd.com/jdmry/watchlist/" {
+				t.Fatalf("unexpected url %s", r.URL.String())
+			}
+			body := `<!doctype html><html><head><title>Watchlist</title></head><body>
+				<div data-item-name="Sunshine (2007)" data-item-slug="sunshine-2007" data-target-link="/film/sunshine-2007/"></div>
+				<div data-item-name="Solaris (2002)" data-item-slug="solaris-2002" data-target-link="/film/solaris-2002/"></div>
+			</body></html>`
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		}),
+	})
+
+	items, err := client.GetListItems(context.Background(), "https://letterboxd.com/jdmry/watchlist/?sort=shuffle", 10)
+	if err != nil {
+		t.Fatalf("GetListItems() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want 2", len(items))
+	}
+	if items[0].Title != "Sunshine" || items[0].Year != 2007 || items[0].URL != "https://letterboxd.com/film/sunshine-2007/" {
+		t.Fatalf("unexpected first item: %+v", items[0])
+	}
+}
+
 func TestClient_GetListItemsRejectsNonLetterboxdURL(t *testing.T) {
 	client := NewClient()
 	if _, err := client.GetListItems(context.Background(), "https://example.com/user/list/test/", 10); err == nil {

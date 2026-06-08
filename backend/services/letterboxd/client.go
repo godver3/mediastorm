@@ -220,8 +220,9 @@ func normalizeListURL(rawURL string) (string, error) {
 	if host != "letterboxd.com" && host != "www.letterboxd.com" {
 		return "", fmt.Errorf("letterboxd url must be on letterboxd.com")
 	}
-	if !strings.Contains(strings.Trim(u.Path, "/"), "/list/") {
-		return "", fmt.Errorf("letterboxd url must be a public list url")
+	path := strings.Trim(u.Path, "/")
+	if !strings.Contains(path, "/list/") && !isWatchlistPath(path) {
+		return "", fmt.Errorf("letterboxd url must be a public list or watchlist url")
 	}
 	u.Scheme = "https"
 	u.Host = "letterboxd.com"
@@ -229,6 +230,11 @@ func normalizeListURL(rawURL string) (string, error) {
 	u.Fragment = ""
 	u.Path = strings.TrimRight(u.Path, "/") + "/"
 	return u.String(), nil
+}
+
+func isWatchlistPath(path string) bool {
+	parts := strings.Split(path, "/")
+	return len(parts) >= 2 && parts[1] == "watchlist"
 }
 
 func parseListPage(doc *xhtml.Node, pageURL string) ([]ListItem, string, int) {

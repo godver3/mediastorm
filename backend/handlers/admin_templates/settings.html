@@ -4899,13 +4899,20 @@
                         '<option value="dropped">Dropped</option>'+
                     '</select>'+
                 '</div>'+
-                '<div class="form-group" id="letterboxdListGroup" style="display:none;flex:2;">'+
-                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Letterboxd List</label>'+
-                    '<select id="newShelfLetterboxdList" onchange="onLetterboxdShelfSourceChange()"></select>'+
+                '<div class="form-group" id="letterboxdSourceGroup" style="display:none;flex:0 0 200px;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Source</label>'+
+                    '<select id="newShelfLetterboxdSource" onchange="onLetterboxdSourceModeChange()">'+
+                        '<option value="url">Public URL</option>'+
+                        '<option value="mdblist">Imported via MDBList</option>'+
+                    '</select>'+
                 '</div>'+
                 '<div class="form-group" id="letterboxdUrlGroup" style="display:none;flex:2;">'+
-                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Public URL</label>'+
-                    '<input type="text" id="newShelfLetterboxdUrl" placeholder="https://letterboxd.com/user/list/list-name/">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Public Letterboxd URL</label>'+
+                    '<input type="text" id="newShelfLetterboxdUrl" oninput="onLetterboxdUrlInput()" placeholder="https://letterboxd.com/user/list/list-name/">'+
+                '</div>'+
+                '<div class="form-group" id="letterboxdListGroup" style="display:none;flex:2;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Imported List</label>'+
+                    '<select id="newShelfLetterboxdList" onchange="onLetterboxdShelfSourceChange()"></select>'+
                 '</div>'+
                 '<div class="form-group" id="genreMediaTypeGroup" style="display:none;">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Content</label>'+
@@ -4959,6 +4966,8 @@
                 '<button onclick="addCustomShelf()" style="align-self:center;height:38px;margin-top:18px;">Add</button>'+
             '</div>'+
             '<p class="form-hint" id="shelfFormHint" style="margin-top:8px;font-size:11px;">Example: https://mdblist.com/lists/garycrawfordgc/top-movies-of-the-week/json<br><span style="color:#9b9b9b;">Hide Unreleased: Only show movies available for home viewing (streaming/digital/physical) and exclude upcoming series.</span></p>'+
+            '<p class="form-hint" id="letterboxdUrlHint" style="margin-top:8px;font-size:11px;display:none;">Paste any public Letterboxd list or watchlist URL — no MDBList account needed.<br><span style="color:#9b9b9b;">Example: https://letterboxd.com/dave/list/official-top-250-narrative-feature-films/</span></p>'+
+            '<p class="form-hint" id="letterboxdMdblistHint" style="margin-top:8px;font-size:11px;display:none;">Pick a Letterboxd list you\'ve imported into mdblist.com. Don\'t see yours? Import it on MDBList first, then reload this page.</p>'+
         '</div>';
 
         // Add inherited class to wrapper when inheriting from global
@@ -5261,6 +5270,57 @@
             : 'Letterboxd List';
     }
 
+    // Derive a human-readable shelf name from a Letterboxd list/watchlist URL slug.
+    function letterboxdNameFromUrl(rawUrl) {
+        try {
+            const u = new URL(rawUrl);
+            const parts = u.pathname.split('/').filter(Boolean);
+            const listIdx = parts.indexOf('list');
+            let slug = '';
+            if (listIdx >= 0 && parts[listIdx + 1]) slug = parts[listIdx + 1];
+            else if (parts.includes('watchlist')) slug = (parts[0] || '') + ' watchlist';
+            if (!slug) return '';
+            return slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim();
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function onLetterboxdUrlInput() {
+        const urlInput = document.getElementById('newShelfLetterboxdUrl');
+        const nameInput = document.getElementById('newShelfName');
+        if (!urlInput || !nameInput) return;
+        const derived = letterboxdNameFromUrl(urlInput.value.trim());
+        // Only auto-fill when the name is empty or still a previously-derived/default value.
+        if (derived && (!nameInput.value.trim() || nameInput.dataset.lbAutofilled === '1')) {
+            nameInput.value = derived;
+            nameInput.dataset.lbAutofilled = '1';
+        }
+    }
+
+    // Toggle between the Public URL and MDBList-import inputs so only one is shown.
+    function onLetterboxdSourceModeChange() {
+        const mode = document.getElementById('newShelfLetterboxdSource')?.value || 'url';
+        const isUrl = mode === 'url';
+        document.getElementById('letterboxdUrlGroup').style.display = isUrl ? '' : 'none';
+        document.getElementById('letterboxdListGroup').style.display = isUrl ? 'none' : '';
+        const urlHint = document.getElementById('letterboxdUrlHint');
+        const mdblistHint = document.getElementById('letterboxdMdblistHint');
+        if (urlHint) urlHint.style.display = isUrl ? '' : 'none';
+        if (mdblistHint) mdblistHint.style.display = isUrl ? 'none' : '';
+        if (isUrl) onLetterboxdUrlInput();
+        else onLetterboxdShelfSourceChange();
+    }
+
+    // Edit modal: toggle between the Public URL and MDBList-import inputs.
+    function onEditLetterboxdSourceModeChange() {
+        const isUrl = (document.getElementById('editShelfLetterboxdSource')?.value || 'url') === 'url';
+        const urlGroup = document.getElementById('editLetterboxdUrlGroup');
+        const listGroup = document.getElementById('editLetterboxdListGroup');
+        if (urlGroup) urlGroup.style.display = isUrl ? 'block' : 'none';
+        if (listGroup) listGroup.style.display = isUrl ? 'none' : 'block';
+    }
+
     const GENRE_SHELVES = {
         movie: [
             { id: 28, name: 'Action' },
@@ -5355,14 +5415,21 @@
         document.getElementById('simklAccountGroup').style.display = isSimkl ? '' : 'none';
         document.getElementById('simklMediaTypeGroup').style.display = isSimkl ? '' : 'none';
         document.getElementById('simklListTypeGroup').style.display = isSimkl ? '' : 'none';
-        document.getElementById('letterboxdListGroup').style.display = isLetterboxd ? '' : 'none';
-        document.getElementById('letterboxdUrlGroup').style.display = isLetterboxd ? '' : 'none';
+        document.getElementById('letterboxdSourceGroup').style.display = isLetterboxd ? '' : 'none';
+        document.getElementById('letterboxdListGroup').style.display = 'none';
+        document.getElementById('letterboxdUrlGroup').style.display = 'none';
         document.getElementById('genreMediaTypeGroup').style.display = isGenre ? '' : 'none';
         document.getElementById('genreGroup').style.display = isGenre ? '' : 'none';
         document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre) ? 'none' : '';
         const hint = document.getElementById('shelfFormHint');
         if (hint) {
             hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre) ? 'none' : '';
+        }
+        if (!isLetterboxd) {
+            const urlHint = document.getElementById('letterboxdUrlHint');
+            const mdblistHint = document.getElementById('letterboxdMdblistHint');
+            if (urlHint) urlHint.style.display = 'none';
+            if (mdblistHint) mdblistHint.style.display = 'none';
         }
         if (isStreaming) onStreamingServiceChange();
         else if (isTrakt) {
@@ -5375,7 +5442,7 @@
         }
         else if (isLetterboxd) {
             renderLetterboxdListOptions('newShelfLetterboxdList');
-            onLetterboxdShelfSourceChange();
+            onLetterboxdSourceModeChange();
         }
         else if (isGenre) {
             onGenreShelfMediaTypeChange();
@@ -5548,11 +5615,17 @@
             onShelfTypeChange();
         } else if (shelfType === 'letterboxd') {
             const name = nameInput?.value?.trim();
-            const listId = document.getElementById('newShelfLetterboxdList')?.value?.trim();
-            const listUrl = document.getElementById('newShelfLetterboxdUrl')?.value?.trim();
+            const sourceMode = document.getElementById('newShelfLetterboxdSource')?.value || 'url';
+            const useUrl = sourceMode === 'url';
+            const listId = useUrl ? '' : document.getElementById('newShelfLetterboxdList')?.value?.trim();
+            const listUrl = useUrl ? document.getElementById('newShelfLetterboxdUrl')?.value?.trim() : '';
 
-            if (!listId && !listUrl) {
-                alert('Please select an imported Letterboxd list or enter a public Letterboxd list URL.');
+            if (useUrl && !listUrl) {
+                alert('Please enter a public Letterboxd list URL.');
+                return;
+            }
+            if (!useUrl && !listId) {
+                alert('Please select a Letterboxd list imported into MDBList, or switch the Source to Public URL.');
                 return;
             }
             if (!name) {
@@ -5577,6 +5650,7 @@
 
             if (typeSelect) typeSelect.value = 'mdblist';
             nameInput.value = '';
+            delete nameInput.dataset.lbAutofilled;
             const lbUrlInput = document.getElementById('newShelfLetterboxdUrl');
             if (lbUrlInput) lbUrlInput.value = '';
             if (limitInput) limitInput.value = '0';
@@ -5756,14 +5830,25 @@
                 const selected = String(l.id) === String(shelf.letterboxdListId || '') ? 'selected' : '';
                 return `<option value="${l.id}" ${selected}>${l.name}${l.items ? ' (' + l.items + ')' : ''}</option>`;
             }).join('') || '<option value="">No Letterboxd lists imported into MDBList</option>';
+            // Default to the URL path unless the shelf was saved against an MDBList import.
+            const editUseUrl = !(shelf.letterboxdListId && !shelf.letterboxdListUrl);
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Imported Letterboxd List</label>
-                        <select id="editShelfLetterboxdList" style="${selectStyle}">${letterboxdOptions}</select>
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Source</label>
+                        <select id="editShelfLetterboxdSource" onchange="onEditLetterboxdSourceModeChange()" style="${selectStyle}">
+                            <option value="url" ${editUseUrl ? 'selected' : ''}>Public URL</option>
+                            <option value="mdblist" ${editUseUrl ? '' : 'selected'}>Imported via MDBList</option>
+                        </select>
                     </div>
-                    <div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Public URL</label>
+                    <div id="editLetterboxdUrlGroup" style="margin-bottom:12px;display:${editUseUrl ? 'block' : 'none'};">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Public Letterboxd URL</label>
                         <input type="text" id="editShelfLetterboxdUrl" value="${(shelf.letterboxdListUrl || '').replace(/"/g, '&quot;')}" placeholder="https://letterboxd.com/user/list/list-name/" style="${selectStyle}">
+                        <p class="form-hint" style="margin-top:6px;font-size:11px;">Any public Letterboxd list or watchlist URL — no MDBList account needed.</p>
+                    </div>
+                    <div id="editLetterboxdListGroup" style="margin-bottom:12px;display:${editUseUrl ? 'none' : 'block'};">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Imported List</label>
+                        <select id="editShelfLetterboxdList" style="${selectStyle}">${letterboxdOptions}</select>
+                        <p class="form-hint" style="margin-top:6px;font-size:11px;">Letterboxd lists imported into mdblist.com. Don't see yours? Import it on MDBList first.</p>
                     </div>
         `;
         } else if (isGenreShelf) {
@@ -5921,13 +6006,18 @@
             shelf.simklMediaType = mediaType;
             shelf.simklListType = listType;
         } else if (shelf.type === 'letterboxd') {
-            const listId = document.getElementById('editShelfLetterboxdList')?.value?.trim();
-            const listUrl = document.getElementById('editShelfLetterboxdUrl')?.value?.trim();
-            if (!listId && !listUrl) {
-                alert('Please select an imported Letterboxd list or enter a public Letterboxd list URL.');
+            const useUrl = (document.getElementById('editShelfLetterboxdSource')?.value || 'url') === 'url';
+            const listId = useUrl ? '' : document.getElementById('editShelfLetterboxdList')?.value?.trim();
+            const listUrl = useUrl ? document.getElementById('editShelfLetterboxdUrl')?.value?.trim() : '';
+            if (useUrl && !listUrl) {
+                alert('Please enter a public Letterboxd list URL.');
                 return;
             }
-            shelf.letterboxdListId = listUrl ? '' : listId;
+            if (!useUrl && !listId) {
+                alert('Please select a Letterboxd list imported into MDBList, or switch the Source to Public URL.');
+                return;
+            }
+            shelf.letterboxdListId = listId || '';
             shelf.letterboxdListUrl = listUrl || '';
         } else if (shelf.type === 'genre') {
             const mediaType = document.getElementById('editShelfGenreMediaType')?.value || 'movie';
