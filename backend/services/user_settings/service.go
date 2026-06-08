@@ -348,6 +348,90 @@ func mergeShelvesWithDefaults(shelves []models.ShelfConfig, defaults []models.Sh
 	return merged
 }
 
+// reconcileProfileHomeShelves repairs a profile's stored home-shelf override during load.
+//
+// An empty shelf list means "inherit the global shelf list", so the built-in defaults
+// must never be materialized into it. Doing so turns an inheriting profile into one that
+// permanently appears to deviate from a customized global (e.g. once the admin disables
+// the calendar shelf globally, every profile still carrying the materialized default set
+// is flagged as an override forever). A stored list that exactly matches the built-in
+// defaults was written by that earlier buggy migration; revert it to the inherit state.
+// Genuinely customized profiles keep their shelves, with any missing built-ins backfilled.
+//
+// Returns true if the stored shelves were modified.
+func reconcileProfileHomeShelves(us *models.UserSettings) bool {
+	shelves := us.HomeShelves.Shelves
+	if len(shelves) == 0 {
+		// No stored override → fully inherits global. Never materialize defaults here.
+		return false
+	}
+	if shelvesArePristineDefaults(shelves) {
+		// Auto-materialized default set → restore the inherit state.
+		us.HomeShelves.Shelves = nil
+		return true
+	}
+	if merged, changed := models.EnsureDefaultHomeShelves(shelves); changed {
+		us.HomeShelves.Shelves = merged
+		return true
+	}
+	return false
+}
+
+// shelvesArePristineDefaults reports whether shelves is exactly the built-in default
+// set, in default order and with default field values. Such a list provides no override
+// beyond what inheriting from global would (missing global shelves are merged back in on
+// read), so it is safe to drop in favor of inheritance.
+func shelvesArePristineDefaults(shelves []models.ShelfConfig) bool {
+	defaults := models.DefaultHomeShelfConfigs()
+	if len(shelves) != len(defaults) {
+		return false
+	}
+	for i := range defaults {
+		if !shelfConfigEqualsDefault(shelves[i], defaults[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func shelfConfigEqualsDefault(stored, def models.ShelfConfig) bool {
+	return stored.ID == def.ID &&
+		stored.Name == def.Name &&
+		stored.Enabled == def.Enabled &&
+		stored.Order == def.Order &&
+		stored.Type == def.Type &&
+		stored.ListURL == def.ListURL &&
+		stored.TraktAccountID == def.TraktAccountID &&
+		stored.TraktListType == def.TraktListType &&
+		stored.TraktListID == def.TraktListID &&
+		stored.SimklAccountID == def.SimklAccountID &&
+		stored.SimklListType == def.SimklListType &&
+		stored.SimklMediaType == def.SimklMediaType &&
+		stored.LetterboxdListID == def.LetterboxdListID &&
+		stored.LetterboxdListURL == def.LetterboxdListURL &&
+		stored.Limit == def.Limit &&
+		stored.HideUnreleased == def.HideUnreleased &&
+		calendarSettingsValueEqual(stored.CalendarSources, def.CalendarSources)
+}
+
+// calendarSettingsValueEqual compares calendar source toggles by value, treating an
+// unset (nil) toggle as off so a stored "{}" matches a zero-value default.
+func calendarSettingsValueEqual(a, b models.CalendarSettings) bool {
+	if calBoolValue(a.Watchlist) != calBoolValue(b.Watchlist) ||
+		calBoolValue(a.History) != calBoolValue(b.History) ||
+		calBoolValue(a.Trending) != calBoolValue(b.Trending) ||
+		calBoolValue(a.TopTrending) != calBoolValue(b.TopTrending) ||
+		calBoolValue(a.MDBLists) != calBoolValue(b.MDBLists) {
+		return false
+	}
+	// Per-shelf MDBList calendar toggles are a genuine customization, never a default.
+	return len(a.MDBListShelves) == 0 && len(b.MDBListShelves) == 0
+}
+
+func calBoolValue(b *bool) bool {
+	return b != nil && *b
+}
+
 // Update saves the user's settings.
 // If the settings are empty (no actual overrides), the user entry is deleted instead.
 func (s *Service) Update(userID string, settings models.UserSettings) error {
@@ -585,8 +669,7 @@ func (s *Service) load() error {
 		needsSave := false
 		for userID, us := range s.settings {
 			changed := false
-			if shelves, shelvesChanged := models.EnsureDefaultHomeShelves(us.HomeShelves.Shelves); shelvesChanged {
-				us.HomeShelves.Shelves = shelves
+			if reconcileProfileHomeShelves(&us) {
 				changed = true
 			}
 			for i := range us.HomeShelves.Shelves {
@@ -675,8 +758,7 @@ func (s *Service) load() error {
 	// Migrate: force hideUnreleased=false on trending shelves (curated lists handle this now)
 	for userID, us := range settings {
 		changed := false
-		if shelves, shelvesChanged := models.EnsureDefaultHomeShelves(us.HomeShelves.Shelves); shelvesChanged {
-			us.HomeShelves.Shelves = shelves
+		if reconcileProfileHomeShelves(&us) {
 			changed = true
 			needsSave = true
 		}

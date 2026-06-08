@@ -777,3 +777,114 @@ func TestLoad_MigratesMissingCalendarShelf(t *testing.T) {
 		t.Fatalf("expected watchlist to shift to order 4, got %d", watchlist.Order)
 	}
 }
+
+// A profile that stores exactly the built-in default shelves was materialized by the
+// old buggy load migration. On reload it should be reverted to the inherit state so it
+// no longer counts as a deviation from a customized global shelf list.
+func TestLoad_DropsMaterializedDefaultShelves(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	settings := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: models.DefaultHomeShelfConfigs(),
+		},
+	}
+	if err := svc.Update("profile-1", settings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	reloaded, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService reload: %v", err)
+	}
+	got, err := reloaded.Get("profile-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil && len(got.HomeShelves.Shelves) != 0 {
+		t.Fatalf("expected materialized default shelves to be cleared, got %d shelves", len(got.HomeShelves.Shelves))
+	}
+}
+
+// A profile with no stored shelf override inherits the global shelf list and must not
+// have the defaults materialized into it on load.
+func TestLoad_DoesNotMaterializeDefaultsForInheritingProfile(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	// Empty shelves plus an unrelated override so the entry is persisted.
+	settings := models.UserSettings{
+		Filtering: models.FilterSettings{MaxResolution: "1080p"},
+	}
+	if err := svc.Update("profile-1", settings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	reloaded, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService reload: %v", err)
+	}
+	got, err := reloaded.Get("profile-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected persisted settings, got nil")
+	}
+	if len(got.HomeShelves.Shelves) != 0 {
+		t.Fatalf("inheriting profile should have no materialized shelves, got %d", len(got.HomeShelves.Shelves))
+	}
+}
+
+// A genuinely customized profile (its own custom shelf) keeps its shelves on reload,
+// with any missing built-in shelves backfilled.
+func TestLoad_PreservesCustomizedShelves(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	settings := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			Shelves: []models.ShelfConfig{
+				{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 0},
+				{ID: "my-custom-mdblist", Name: "My List", Enabled: true, Order: 1, Type: "mdblist", ListURL: "https://example.com/list"},
+			},
+		},
+	}
+	if err := svc.Update("profile-1", settings); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	reloaded, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService reload: %v", err)
+	}
+	got, err := reloaded.Get("profile-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected persisted settings, got nil")
+	}
+	hasCustom := false
+	for _, sh := range got.HomeShelves.Shelves {
+		if sh.ID == "my-custom-mdblist" {
+			hasCustom = true
+		}
+	}
+	if !hasCustom {
+		t.Fatal("custom shelf should be preserved on reload")
+	}
+	if len(got.HomeShelves.Shelves) == 0 {
+		t.Fatal("customized profile should retain its shelf override")
+	}
+}
