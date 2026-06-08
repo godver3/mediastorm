@@ -1666,6 +1666,7 @@
         }).join('');
 
         document.getElementById('propagateModal').classList.add('visible');
+        document.body.style.overflow = 'hidden';
         updatePropagateConfirmState();
     }
 
@@ -1704,11 +1705,13 @@
         ).join('');
 
         document.getElementById('propagateModal').classList.add('visible');
+        document.body.style.overflow = 'hidden';
         updatePropagateConfirmState();
     }
 
     function closePropagateModal() {
         document.getElementById('propagateModal').classList.remove('visible');
+        document.body.style.overflow = '';
     }
 
     async function confirmPropagate() {
