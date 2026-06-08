@@ -32,6 +32,7 @@ func buildGlobalLiveSource(settings config.Settings) models.ResolvedLiveSource {
 	return models.ResolvedLiveSource{
 		Mode:                    settings.Live.Mode,
 		PlaylistURL:             settings.Live.PlaylistURL,
+		ManifestURL:             settings.Live.ManifestURL,
 		ProxyURL:                settings.Live.ProxyURL,
 		Sources:                 configPlaylistSourcesToModel(settings.Live.Sources),
 		PlaylistSources:         configPlaylistSourcesToModel(settings.Live.PlaylistSources),
@@ -64,6 +65,7 @@ func configPlaylistSourcesToModel(sources []config.LivePlaylistSource) []models.
 			Name:                  src.Name,
 			Mode:                  src.Mode,
 			PlaylistURL:           src.PlaylistURL,
+			ManifestURL:           src.ManifestURL,
 			ProxyURL:              src.ProxyURL,
 			XtreamHost:            src.XtreamHost,
 			XtreamUsername:        src.XtreamUsername,
@@ -165,9 +167,16 @@ func deriveLiveSourceBucket(provider string, source resolvedM3USource) (string, 
 	resolved := models.ResolvedLiveSource{
 		Mode:           source.Mode,
 		PlaylistURL:    source.PlaylistURL,
+		ManifestURL:    source.ManifestURL,
 		XtreamHost:     source.XtreamHost,
 		XtreamUsername: source.XtreamUsername,
 		XtreamPassword: source.XtreamPassword,
+	}
+	// Stremio sources have no PlaylistURL; carry the manifest URL in the
+	// PlaylistURL slot so deriveLiveBucket can derive a stable per-addon bucket.
+	if normalizeLiveProvider(source.Mode) == "stremio" {
+		resolved.PlaylistURL = source.ManifestURL
+		resolved.ManifestURL = source.ManifestURL
 	}
 	key, label := deriveLiveBucket(provider, resolved)
 	name := strings.TrimSpace(source.Name)
@@ -190,6 +199,20 @@ func deriveLiveBucket(provider string, src models.ResolvedLiveSource) (string, s
 			label = "XTREAM shared"
 		} else {
 			label = fmt.Sprintf("XTREAM %s", host)
+		}
+	} else if normalizedProvider == "stremio" {
+		manifest := strings.TrimSpace(src.ManifestURL)
+		if manifest == "" {
+			// Array-source callers carry the manifest URL in PlaylistURL to preserve
+			// the existing deriveLiveBucket signature.
+			manifest = strings.TrimSpace(src.PlaylistURL)
+		}
+		host := normalizeHost(manifest)
+		identity = "stremio|" + strings.ToLower(manifest)
+		if host == "" {
+			label = "Stremio shared"
+		} else {
+			label = fmt.Sprintf("Stremio %s", host)
 		}
 	} else {
 		playlist := strings.TrimSpace(src.PlaylistURL)

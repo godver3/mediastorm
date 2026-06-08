@@ -303,6 +303,7 @@ type LivePlaylistSource struct {
 	Name                  string               `json:"name"`
 	Mode                  string               `json:"mode,omitempty"`
 	PlaylistURL           string               `json:"playlistUrl"`
+	ManifestURL           string               `json:"manifestUrl,omitempty"` // Stremio addon manifest URL (used when mode is "stremio")
 	ProxyURL              string               `json:"proxyUrl"`
 	XtreamHost            string               `json:"xtreamHost,omitempty"`
 	XtreamUsername        string               `json:"xtreamUsername,omitempty"`
@@ -343,6 +344,7 @@ type EPGSettings struct {
 type LiveSettings struct {
 	Mode                  string               `json:"mode"`        // "m3u" or "xtream" - how to source the playlist
 	PlaylistURL           string               `json:"playlistUrl"` // M3U playlist URL (used when mode is "m3u")
+	ManifestURL           string               `json:"manifestUrl,omitempty"`
 	ProxyURL              string               `json:"proxyUrl,omitempty"`
 	Sources               []LivePlaylistSource `json:"sources,omitempty"`
 	PlaylistSources       []LivePlaylistSource `json:"playlistSources,omitempty"`
@@ -1769,6 +1771,7 @@ func migrateLiveSourcesRaw(raw map[string]interface{}) {
 	for _, key := range []string{
 		"mode",
 		"playlistUrl",
+		"manifestUrl",
 		"proxyUrl",
 		"xtreamHost",
 		"xtreamUsername",

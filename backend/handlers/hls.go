@@ -1437,6 +1437,8 @@ func normalizeLiveProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xtream":
 		return "xtream"
+	case "stremio":
+		return "stremio"
 	default:
 		return "m3u"
 	}
@@ -1568,6 +1570,12 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 			"-reconnect", "1",
 			"-reconnect_streamed", "1",
 			"-reconnect_delay_max", "3",
+			// Some Stremio/live providers proxy HLS segments through signed URLs
+			// without .ts/.m4s extensions. FFmpeg's HLS demuxer rejects those by
+			// default before it ever fetches the segment.
+			"-allowed_extensions", "ALL",
+			"-allowed_segment_extensions", "ALL",
+			"-extension_picky", "0",
 		)
 	}
 

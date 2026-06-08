@@ -248,7 +248,7 @@ func (m *MediaFusionScraper) fetchStreams(ctx context.Context, mediaType, id str
 
 	payload, err := m.fetchAddonPayload(ctx, "playback", mediaType, id)
 	if err != nil {
-		if !isNotFoundHTTPError(err) {
+		if !isPlaybackFallbackHTTPError(err) {
 			return nil, err
 		}
 		log.Printf("[mediafusion] playback endpoint unavailable for %s, falling back to stream endpoint", id)
@@ -387,7 +387,7 @@ func (e addonHTTPError) Error() string {
 	return fmt.Sprintf("mediafusion %s %s returned %d: %s", e.resource, e.id, e.status, e.body)
 }
 
-func isNotFoundHTTPError(err error) bool {
+func isPlaybackFallbackHTTPError(err error) bool {
 	var httpErr addonHTTPError
-	return errors.As(err, &httpErr) && httpErr.status == http.StatusNotFound
+	return errors.As(err, &httpErr) && (httpErr.status == http.StatusNotFound || httpErr.status == http.StatusUnauthorized)
 }

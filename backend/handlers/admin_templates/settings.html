@@ -3490,17 +3490,24 @@
                 payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
                 break;
             case 'live.sources':
-            case 'liveTV.sources':
+            case 'liveTV.sources': {
                 endpoint = basePath + '/api/test/live';
+                const liveRowPath = sectionKey + '.' + index;
+                const liveRowValue = (field) => {
+                    const value = getValue(liveRowPath + '.' + field);
+                    return value === undefined || value === null ? '' : value;
+                };
                 payload = {
-                    mode: item.mode || '',
-                    playlistUrl: item.playlistUrl || '',
-                    proxyUrl: item.proxyUrl || '',
-                    xtreamHost: item.xtreamHost || '',
-                    xtreamUsername: item.xtreamUsername || '',
-                    xtreamPassword: item.xtreamPassword || ''
+                    mode: liveRowValue('mode'),
+                    playlistUrl: liveRowValue('playlistUrl'),
+                    manifestUrl: liveRowValue('manifestUrl'),
+                    proxyUrl: liveRowValue('proxyUrl'),
+                    xtreamHost: liveRowValue('xtreamHost'),
+                    xtreamUsername: liveRowValue('xtreamUsername'),
+                    xtreamPassword: liveRowValue('xtreamPassword')
                 };
                 break;
+            }
             default:
                 btn.disabled = false;
                 btn.textContent = 'Test';
@@ -6962,6 +6969,7 @@
                 payload = {
                     mode: getValue(sectionKey + '.mode') || '',
                     playlistUrl: getValue(sectionKey + '.playlistUrl') || '',
+                    manifestUrl: getValue(sectionKey + '.manifestUrl') || '',
                     proxyUrl: getValue(sectionKey + '.proxyUrl') || '',
                     xtreamHost: getValue(sectionKey + '.xtreamHost') || '',
                     xtreamUsername: getValue(sectionKey + '.xtreamUsername') || '',

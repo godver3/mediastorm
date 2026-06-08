@@ -78,6 +78,22 @@ func TestResolveLiveSource_OverrideFields(t *testing.T) {
 	}
 }
 
+func TestResolveLiveSource_OverrideManifestURL(t *testing.T) {
+	profile := &LiveTVSettings{
+		Mode:        StringPtr("stremio"),
+		ManifestURL: StringPtr("https://profile.example/manifest.json"),
+	}
+
+	r := ResolveLiveSource(profile, newGlobal())
+
+	if r.Mode != "stremio" {
+		t.Errorf("Mode = %q, want stremio", r.Mode)
+	}
+	if r.ManifestURL != "https://profile.example/manifest.json" {
+		t.Errorf("ManifestURL = %q, want profile manifest", r.ManifestURL)
+	}
+}
+
 func TestResolveLiveSource_ProfilePlaylistSourcesOverrideGlobal(t *testing.T) {
 	enabled := true
 	profile := &LiveTVSettings{

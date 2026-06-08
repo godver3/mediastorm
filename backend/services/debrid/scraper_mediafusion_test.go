@@ -194,6 +194,54 @@ func TestMediaFusionSearchFallsBackToStreamEndpoint(t *testing.T) {
 	}
 }
 
+func TestMediaFusionSearchFallsBackToStreamEndpointOnUnauthorized(t *testing.T) {
+	var playbackCalls, streamCalls int
+	client := newStubClient(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/playback/movie/tt0133093.json":
+			playbackCalls++
+			return jsonResponse(http.StatusUnauthorized, `missing api key`), nil
+		case "/stream/movie/tt0133093.json":
+			streamCalls++
+			return jsonResponse(http.StatusOK, `{
+				"streams": [
+					{
+						"name": "MediaFusion 1080p",
+						"title": "Movie\n💾 7 GB\n⚙️ Debrid",
+						"url": "https://cdn.example.com/video.mkv"
+					}
+				]
+			}`), nil
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+			return nil, nil
+		}
+	})
+
+	scraper := NewMediaFusionScraper(client, "https://mediafusion.test", "")
+	results, err := scraper.Search(context.Background(), SearchRequest{
+		Parsed: ParsedQuery{
+			Title:     "Movie",
+			Year:      2024,
+			MediaType: MediaTypeMovie,
+		},
+		IMDBID: "tt0133093",
+	})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if playbackCalls != 1 || streamCalls != 1 {
+		t.Fatalf("expected one playback call and one stream fallback, got playback=%d stream=%d", playbackCalls, streamCalls)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].TorrentURL != "https://cdn.example.com/video.mkv" {
+		t.Fatalf("expected direct URL result, got %q", results[0].TorrentURL)
+	}
+}
+
 func TestMediaFusionSearchTVWithSeasonEpisode(t *testing.T) {
 	var capturedPath string
 	client := newStubClient(func(r *http.Request) (*http.Response, error) {

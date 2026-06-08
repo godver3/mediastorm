@@ -245,3 +245,59 @@ func TestStartLiveHLSSessionDirectForcesHLSWhenRequested(t *testing.T) {
 		t.Fatalf("playlistUrl = %q, want /video/hls/ prefix", body.PlaylistURL)
 	}
 }
+
+func TestStartLiveHLSSessionResolvesStremioStreamResource(t *testing.T) {
+	stremio := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/stream/sport/event.json" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"streams":[{"url":"https://cdn.example/live/event.m3u8"}]}`))
+	}))
+	defer stremio.Close()
+
+	handler := NewVideoHandlerWithProvider(true, "/usr/bin/true", "/usr/bin/true", t.TempDir(), nil)
+	handler.SetConfigManager(fakeLiveUsageConfigProvider{
+		settings: config.Settings{
+			Live: config.LiveSettings{
+				Mode:         "stremio",
+				ManifestURL:  stremio.URL + "/manifest.json",
+				StreamFormat: "hls",
+			},
+		},
+	})
+	handler.SetUserSettingsService(fakeLiveUsageUserSettingsProvider{
+		settings: map[string]*models.UserSettings{},
+	})
+
+	reqURL := "/live/hls/start?url=" + url.QueryEscape(stremio.URL+"/stream/sport/event.json") + "&format=hls"
+	req := httptest.NewRequest(http.MethodGet, reqURL, nil)
+	rec := httptest.NewRecorder()
+
+	handler.StartLiveHLSSession(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.SessionID == "" {
+		t.Fatal("expected sessionId")
+	}
+
+	handler.hlsManager.mu.RLock()
+	session := handler.hlsManager.sessions[body.SessionID]
+	handler.hlsManager.mu.RUnlock()
+	if session == nil {
+		t.Fatalf("session %q not found", body.SessionID)
+	}
+	if session.Path != "https://cdn.example/live/event.m3u8" {
+		t.Fatalf("session path = %q, want resolved stream URL", session.Path)
+	}
+	handler.hlsManager.CleanupSession(body.SessionID)
+}

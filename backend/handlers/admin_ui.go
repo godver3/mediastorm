@@ -434,8 +434,9 @@ var SettingsSchema = map[string]interface{}{
 		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
-			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source the IPTV playlist", "order": 0},
+			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}}, "description": "How to source the IPTV playlist", "order": 0},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 1},
+			"manifestUrl":                 map[string]interface{}{"type": "text", "label": "Manifest URL", "description": "Stremio addon manifest URL (e.g. https://example.com/manifest.json). Channels are built from the addon's catalogs.", "placeholder": "https://example.com/manifest.json", "showWhen": map[string]interface{}{"field": "mode", "value": "stremio"}, "order": 1},
 			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for Live TV provider requests (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 2},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 2},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 3},
@@ -467,8 +468,9 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"id":                          map[string]interface{}{"type": "text", "label": "ID", "description": "Stable source identifier. Leave blank to auto-generate.", "order": 0},
 			"name":                        map[string]interface{}{"type": "text", "label": "Name", "description": "Display name shown in the apps.", "order": 1},
-			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source this IPTV provider.", "order": 2},
+			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}}, "description": "How to source this IPTV provider.", "order": 2},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL.", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 3},
+			"manifestUrl":                 map[string]interface{}{"type": "text", "label": "Manifest URL", "description": "Stremio addon manifest URL (e.g. https://example.com/manifest.json). Channels are built from the addon's catalogs.", "placeholder": "https://example.com/manifest.json", "showWhen": map[string]interface{}{"field": "mode", "value": "stremio"}, "order": 3},
 			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for this Live TV source (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 4},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 4},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 5},
@@ -991,7 +993,7 @@ var SettingsSchema = map[string]interface{}{
 				"label":       "Source Type",
 				"description": "How to source the IPTV playlist for this profile.",
 				"order":       0,
-				"options":     []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}},
+				"options":     []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}},
 			},
 			"playlistUrl": map[string]interface{}{
 				"type":        "text",
@@ -999,6 +1001,14 @@ var SettingsSchema = map[string]interface{}{
 				"description": "M3U playlist URL",
 				"order":       1,
 				"showWhen":    map[string]interface{}{"field": "mode", "value": "m3u"},
+			},
+			"manifestUrl": map[string]interface{}{
+				"type":        "text",
+				"label":       "Manifest URL",
+				"description": "Stremio addon manifest URL (e.g. https://example.com/manifest.json). Channels are built from the addon's catalogs.",
+				"placeholder": "https://example.com/manifest.json",
+				"order":       1,
+				"showWhen":    map[string]interface{}{"field": "mode", "value": "stremio"},
 			},
 			"proxyUrl": map[string]interface{}{
 				"type":        "text",
@@ -1128,8 +1138,9 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"id":                          map[string]interface{}{"type": "text", "label": "ID", "description": "Stable source identifier. Leave blank to auto-generate.", "order": 0},
 			"name":                        map[string]interface{}{"type": "text", "label": "Name", "description": "Display name shown in the apps.", "order": 1},
-			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}}, "description": "How to source this IPTV provider.", "order": 2},
+			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}}, "description": "How to source this IPTV provider.", "order": 2},
 			"playlistUrl":                 map[string]interface{}{"type": "text", "label": "Playlist URL", "description": "M3U playlist URL.", "showWhen": map[string]interface{}{"field": "mode", "value": "m3u"}, "order": 3},
+			"manifestUrl":                 map[string]interface{}{"type": "text", "label": "Manifest URL", "description": "Stremio addon manifest URL (e.g. https://example.com/manifest.json). Channels are built from the addon's catalogs.", "placeholder": "https://example.com/manifest.json", "showWhen": map[string]interface{}{"field": "mode", "value": "stremio"}, "order": 3},
 			"proxyUrl":                    map[string]interface{}{"type": "text", "label": "Proxy URL", "description": "Optional proxy for this Live TV source (for example socks5://127.0.0.1:18080).", "placeholder": "socks5://127.0.0.1:18080", "order": 4},
 			"xtreamHost":                  map[string]interface{}{"type": "text", "label": "Server URL", "description": "Xtream Codes server URL (e.g., http://example.com:8080)", "placeholder": "http://example.com:8080", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 4},
 			"xtreamUsername":              map[string]interface{}{"type": "text", "label": "Username", "description": "Xtream Codes username", "showWhen": map[string]interface{}{"field": "mode", "value": "xtream"}, "order": 5},
@@ -6448,6 +6459,7 @@ func (h *AdminUIHandler) DisconnectSimklAccount(w http.ResponseWriter, r *http.R
 type TestLiveTVRequest struct {
 	Mode           string `json:"mode"`
 	PlaylistURL    string `json:"playlistUrl"`
+	ManifestURL    string `json:"manifestUrl"`
 	ProxyURL       string `json:"proxyUrl"`
 	XtreamHost     string `json:"xtreamHost"`
 	XtreamUsername string `json:"xtreamUsername"`
@@ -6536,6 +6548,53 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": fmt.Sprintf("Connected (%d categories)", len(categories)),
+		})
+
+	case "stremio":
+		if req.ManifestURL == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Manifest URL is required for Stremio",
+			})
+			return
+		}
+		base := normalizeStremioBaseURL(req.ManifestURL)
+		resp, err := client.Get(base + "/manifest.json")
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Connection failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		var manifest struct {
+			Name     string `json:"name"`
+			Catalogs []struct {
+				ID string `json:"id"`
+			} `json:"catalogs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Invalid response (not a valid Stremio manifest)",
+			})
+			return
+		}
+		if len(manifest.Catalogs) == 0 {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Addon manifest has no catalogs to build channels from",
+			})
+			return
+		}
+		name := strings.TrimSpace(manifest.Name)
+		if name == "" {
+			name = "Stremio addon"
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Connected to %s (%d catalogs)", name, len(manifest.Catalogs)),
 		})
 
 	default:

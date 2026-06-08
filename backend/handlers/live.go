@@ -160,6 +160,9 @@ type LiveHandler struct {
 	lowLatency         bool // Enable low-latency mode
 	cfgManager         *config.Manager
 	userSettingsSvc    LiveUserSettingsProvider
+
+	stremioMu    sync.Mutex
+	stremioCache map[string]stremioChannelsCacheEntry
 }
 
 // NewLiveHandler creates a handler capable of fetching remote playlists.
@@ -193,6 +196,7 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 		lowLatency:         lowLatency,
 		cfgManager:         cfgManager,
 		userSettingsSvc:    userSettingsSvc,
+		stremioCache:       make(map[string]stremioChannelsCacheEntry),
 	}
 }
 
@@ -288,6 +292,24 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), liveStreamTimeout)
 	defer cancel()
+
+	// Stremio sources hand us a stream *resource* URL (.../stream/{type}/{id}.json)
+	// rather than a playable URL. Resolve it to a concrete (often expiring) stream
+	// URL at tune-in time before handing it to the proxy/transmux paths below.
+	if isStremioStreamResourceURL(targetURL) {
+		resolved, err := h.resolveStremioStream(ctx, targetURL.String(), h.resolveProxyURLForStream(r, targetURL))
+		if err != nil {
+			log.Printf("[live] failed to resolve stremio stream %q: %v", targetURL.String(), err)
+			http.Error(w, "live stream unavailable", http.StatusBadGateway)
+			return
+		}
+		targetURL, err = h.parseRemoteURL(resolved)
+		if err != nil {
+			log.Printf("[live] resolved stremio stream is invalid %q: %v", resolved, err)
+			http.Error(w, "live stream unavailable", http.StatusBadGateway)
+			return
+		}
+	}
 
 	if proxyURL := h.resolveProxyURLForStream(r, targetURL); proxyURL != "" && !isWebLiveStreamRequest(r) {
 		h.proxyStreamWithHTTPClient(w, r, ctx, targetURL, proxyURL)
@@ -566,7 +588,7 @@ func (h *LiveHandler) resolveProxyURLForStream(r *http.Request, targetURL *url.U
 }
 
 func liveSourceMatchesStreamHost(source resolvedM3USource, targetHost string) bool {
-	for _, rawURL := range []string{source.XtreamHost, source.PlaylistURL} {
+	for _, rawURL := range []string{source.XtreamHost, source.PlaylistURL, source.ManifestURL} {
 		if strings.TrimSpace(rawURL) == "" {
 			continue
 		}
@@ -816,6 +838,7 @@ type resolvedM3USource struct {
 	Name              string
 	Mode              string
 	PlaylistURL       string
+	ManifestURL       string
 	ProxyURL          string
 	XtreamHost        string
 	XtreamUsername    string
@@ -841,6 +864,9 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			continue
 		}
 		if mode == "xtream" && (strings.TrimSpace(candidate.XtreamHost) == "" || strings.TrimSpace(candidate.XtreamUsername) == "" || strings.TrimSpace(candidate.XtreamPassword) == "") {
+			continue
+		}
+		if mode == "stremio" && strings.TrimSpace(candidate.ManifestURL) == "" {
 			continue
 		}
 		if candidate.Enabled != nil && !*candidate.Enabled {
@@ -875,6 +901,7 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			Name:              name,
 			Mode:              mode,
 			PlaylistURL:       strings.TrimSpace(candidate.PlaylistURL),
+			ManifestURL:       strings.TrimSpace(candidate.ManifestURL),
 			ProxyURL:          strings.TrimSpace(candidate.ProxyURL),
 			XtreamHost:        strings.TrimSpace(candidate.XtreamHost),
 			XtreamUsername:    strings.TrimSpace(candidate.XtreamUsername),
@@ -890,6 +917,18 @@ func resolvedLiveSources(src models.ResolvedLiveSource) []resolvedM3USource {
 			Name:        "Default",
 			Mode:        "m3u",
 			PlaylistURL: strings.TrimSpace(src.PlaylistURL),
+			ProxyURL:    strings.TrimSpace(src.ProxyURL),
+			MaxStreams:  src.MaxStreams,
+		})
+	}
+	if len(sources) == 0 &&
+		strings.EqualFold(strings.TrimSpace(src.Mode), "stremio") &&
+		strings.TrimSpace(src.ManifestURL) != "" {
+		sources = append(sources, resolvedM3USource{
+			ID:          "default",
+			Name:        "Default",
+			Mode:        "stremio",
+			ManifestURL: strings.TrimSpace(src.ManifestURL),
 			ProxyURL:    strings.TrimSpace(src.ProxyURL),
 			MaxStreams:  src.MaxStreams,
 		})
@@ -926,6 +965,9 @@ func resolvedM3USources(src models.ResolvedLiveSource) []resolvedM3USource {
 func liveSourceIdentity(source models.LivePlaylistSource) string {
 	if strings.EqualFold(strings.TrimSpace(source.Mode), "xtream") {
 		return strings.TrimSpace(source.XtreamHost) + "|" + strings.TrimSpace(source.XtreamUsername)
+	}
+	if strings.EqualFold(strings.TrimSpace(source.Mode), "stremio") {
+		return strings.TrimSpace(source.ManifestURL)
 	}
 	return strings.TrimSpace(source.PlaylistURL)
 }
@@ -1237,6 +1279,7 @@ func (h *LiveHandler) WarmPlaylistCache(ctx context.Context) (int, error) {
 	src := models.ResolvedLiveSource{
 		Mode:            settings.Live.Mode,
 		PlaylistURL:     settings.Live.PlaylistURL,
+		ManifestURL:     settings.Live.ManifestURL,
 		ProxyURL:        settings.Live.ProxyURL,
 		XtreamHost:      settings.Live.XtreamHost,
 		XtreamUsername:  settings.Live.XtreamUsername,
@@ -1256,6 +1299,14 @@ func (h *LiveHandler) WarmPlaylistCache(ctx context.Context) (int, error) {
 			channels, err := h.fetchXtreamChannels(ctx, liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
 			if err != nil {
 				return totalChannels, fmt.Errorf("failed to warm Xtream source %q: %w", liveSource.ID, err)
+			}
+			totalChannels += len(channels)
+			continue
+		}
+		if liveSource.Mode == "stremio" {
+			channels, err := h.fetchStremioChannels(ctx, liveSource.ManifestURL, liveSource.ProxyURL)
+			if err != nil {
+				return totalChannels, fmt.Errorf("failed to warm Stremio source %q: %w", liveSource.ID, err)
 			}
 			totalChannels += len(channels)
 			continue
@@ -1385,6 +1436,7 @@ func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings c
 	global := models.ResolvedLiveSource{
 		Mode:                    globalSettings.Live.Mode,
 		PlaylistURL:             globalSettings.Live.PlaylistURL,
+		ManifestURL:             globalSettings.Live.ManifestURL,
 		Sources:                 configPlaylistSourcesToModel(globalSettings.Live.Sources),
 		PlaylistSources:         configPlaylistSourcesToModel(globalSettings.Live.PlaylistSources),
 		XtreamHost:              globalSettings.Live.XtreamHost,
@@ -1462,6 +1514,14 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			sourceChannels = channels
+		} else if liveSource.Mode == "stremio" {
+			channels, err := h.fetchStremioChannels(r.Context(), liveSource.ManifestURL, liveSource.ProxyURL)
+			if err != nil {
+				log.Printf("[live] GetChannels Stremio error for source %q: %v", liveSource.ID, err)
+				http.Error(w, `{"error":"failed to fetch channels"}`, http.StatusBadGateway)
+				return
+			}
+			sourceChannels = channels
 		} else {
 			contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
 			if err != nil {
@@ -1529,6 +1589,18 @@ func (h *LiveHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
 			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
 			if err != nil {
 				log.Printf("[live] GetCategories Xtream error for source %q: %v", liveSource.ID, err)
+				http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
+				return
+			}
+			for _, category := range extractCategories(channels) {
+				categoryCounts[category.Name] += category.ChannelCount
+			}
+			continue
+		}
+		if liveSource.Mode == "stremio" {
+			channels, err := h.fetchStremioChannels(r.Context(), liveSource.ManifestURL, liveSource.ProxyURL)
+			if err != nil {
+				log.Printf("[live] GetCategories Stremio error for source %q: %v", liveSource.ID, err)
 				http.Error(w, `{"error":"failed to fetch categories"}`, http.StatusBadGateway)
 				return
 			}

@@ -31,6 +31,7 @@ import (
 	"novastream/internal/dnscache"
 	"novastream/internal/integration"
 	"novastream/internal/liveusage"
+	"novastream/internal/netproxy"
 	"novastream/internal/ytdlp"
 	"novastream/models"
 	"novastream/services/credits"
@@ -3698,6 +3699,37 @@ func (h *VideoHandler) ytdlpCookiesPath() string {
 	return ""
 }
 
+func resolveStremioLiveStreamResource(ctx context.Context, streamResourceURL, proxyURL string) (string, error) {
+	parsed, err := url.Parse(streamResourceURL)
+	if err != nil {
+		return "", err
+	}
+	if !isStremioStreamResourceURL(parsed) {
+		return streamResourceURL, nil
+	}
+
+	client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+		ResponseHeaderTimeout: defaultStreamOpenTimeout,
+	}, proxyURL)
+	if err != nil {
+		log.Printf("[video] invalid stremio live proxy URL %q: %v", proxyURL, err)
+		client, _ = netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
+			ResponseHeaderTimeout: defaultStreamOpenTimeout,
+		}, "")
+	}
+
+	var resp stremioStreamResponse
+	if err := getStremioJSON(ctx, client, streamResourceURL, &resp); err != nil {
+		return "", fmt.Errorf("stremio: resolve stream: %w", err)
+	}
+	for _, stream := range resp.Streams {
+		if u := strings.TrimSpace(stream.URL); u != "" {
+			return u, nil
+		}
+	}
+	return "", fmt.Errorf("stremio: no playable stream for %s", streamResourceURL)
+}
+
 // StartLiveHLSSession creates a new HLS session for live TV streams
 func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Request) {
 	if h.hlsManager == nil {
@@ -3796,6 +3828,15 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	// HLS mode: create a segmented HLS session
+	if resolvedURL, err := resolveStremioLiveStreamResource(r.Context(), liveURL, target.ProxyURL); err != nil {
+		log.Printf("[video] failed to resolve stremio live HLS stream %q: %v", liveURL, err)
+		http.Error(w, "failed to resolve live stream", http.StatusBadGateway)
+		return
+	} else if resolvedURL != liveURL {
+		log.Printf("[video] resolved stremio live HLS stream resource: %s -> %s", liveURL, resolvedURL)
+		liveURL = resolvedURL
+	}
+
 	log.Printf("[video] creating live HLS session for URL: %s (provider=%s bucket=%s profile=%s)", liveURL, target.Provider, target.BucketKey, profileID)
 
 	tuning := LiveTuningSettings{
