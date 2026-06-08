@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,146 @@ func TestApplyTVDBMovieExtendedMetadataCopiesGenresWithoutExternalIDs(t *testing
 	}
 	if strings.Join(title.Genres, ",") != "Drama,Thriller" {
 		t.Fatalf("Genres = %+v, want Drama/Thriller", title.Genres)
+	}
+}
+
+func TestEnrichLiteCustomListItemKeepsGenres(t *testing.T) {
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  newFileCache(t.TempDir(), 24),
+	}
+
+	movieCacheID := cacheKey("tvdb", "movie", "extended", "v1", "100", "artwork")
+	if err := svc.cache.set(movieCacheID, tvdbMovieExtendedData{
+		Name:   "Cached Movie",
+		Genres: []tvdbGenre{{Name: "Drama"}, {Name: "Thriller"}},
+	}); err != nil {
+		t.Fatalf("set movie cache: %v", err)
+	}
+
+	movieTVDBID := int64(100)
+	movie := svc.enrichLiteCustomListItem(context.Background(), mdblistItem{
+		ID:          1,
+		Rank:        1,
+		Title:       "Raw Movie",
+		TVDBID:      &movieTVDBID,
+		MediaType:   "movie",
+		ReleaseYear: 2024,
+	})
+	if got := strings.Join(movie.Title.Genres, ","); got != "Drama,Thriller" {
+		t.Fatalf("movie genres = %q, want Drama,Thriller", got)
+	}
+	if movie.Title.Name != "Cached Movie" {
+		t.Fatalf("movie name = %q, want Cached Movie", movie.Title.Name)
+	}
+
+	seriesCacheID := cacheKey("tvdb", "series", "extended", "v1", "200", "artworks")
+	if err := svc.cache.set(seriesCacheID, tvdbSeriesExtendedData{
+		Name:   "Cached Series",
+		Genres: []tvdbGenre{{Name: "Comedy"}, {Name: "Mystery"}},
+		Status: struct {
+			Name string `json:"name"`
+		}{Name: "Continuing"},
+	}); err != nil {
+		t.Fatalf("set series cache: %v", err)
+	}
+
+	seriesTVDBID := int64(200)
+	series := svc.enrichLiteCustomListItem(context.Background(), mdblistItem{
+		ID:          2,
+		Rank:        2,
+		Title:       "Raw Series",
+		TVDBID:      &seriesTVDBID,
+		MediaType:   "show",
+		ReleaseYear: 2023,
+	})
+	if got := strings.Join(series.Title.Genres, ","); got != "Comedy,Mystery" {
+		t.Fatalf("series genres = %q, want Comedy,Mystery", got)
+	}
+	if series.Title.Status != "Continuing" {
+		t.Fatalf("series status = %q, want Continuing", series.Title.Status)
+	}
+}
+
+func TestEnrichLiteCustomListItemFallsBackToTMDBGenres(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+	}
+	svc.tmdb = newTMDBClient("tmdb-key", "eng", &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			switch req.URL.Path {
+			case "/3/movie/1049471":
+				body = `{"id":1049471,"title":"Outcome","genres":[{"id":18,"name":"Drama"},{"id":53,"name":"Thriller"}]}`
+			case "/3/tv/241609":
+				body = `{"genres":[{"id":18,"name":"Drama"},{"id":9648,"name":"Mystery"}]}`
+			default:
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Status:     "404 Not Found",
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}, cache)
+
+	movieTVDBID := int64(358924)
+	if err := svc.cache.set(cacheKey("tvdb", "movie", "extended", "v1", "358924", "artwork"), tvdbMovieExtendedData{
+		Name: "Outcome",
+		RemoteIDs: []struct {
+			ID         string `json:"id"`
+			Type       int    `json:"type"`
+			SourceName string `json:"sourceName"`
+		}{
+			{ID: "1049471", SourceName: "TheMovieDB.com"},
+		},
+	}); err != nil {
+		t.Fatalf("set movie cache: %v", err)
+	}
+	movie := svc.enrichLiteCustomListItem(context.Background(), mdblistItem{
+		ID:          1,
+		Rank:        1,
+		Title:       "Outcome",
+		TVDBID:      &movieTVDBID,
+		MediaType:   "movie",
+		ReleaseYear: 2025,
+	})
+	if got := strings.Join(movie.Title.Genres, ","); got != "Drama,Thriller" {
+		t.Fatalf("movie genres = %q, want Drama,Thriller", got)
+	}
+
+	seriesTVDBID := int64(443433)
+	if err := svc.cache.set(cacheKey("tvdb", "series", "extended", "v1", "443433", "artworks"), tvdbSeriesExtendedData{
+		Name: "Your Friends & Neighbors",
+		RemoteIDs: []struct {
+			ID         string `json:"id"`
+			Type       int    `json:"type"`
+			SourceName string `json:"sourceName"`
+		}{
+			{ID: "241609", SourceName: "TheMovieDB.com"},
+		},
+	}); err != nil {
+		t.Fatalf("set series cache: %v", err)
+	}
+	series := svc.enrichLiteCustomListItem(context.Background(), mdblistItem{
+		ID:          2,
+		Rank:        1,
+		Title:       "Your Friends & Neighbors",
+		TVDBID:      &seriesTVDBID,
+		MediaType:   "show",
+		ReleaseYear: 2025,
+	})
+	if got := strings.Join(series.Title.Genres, ","); got != "Drama,Mystery" {
+		t.Fatalf("series genres = %q, want Drama,Mystery", got)
 	}
 }
 
@@ -779,6 +920,76 @@ func TestGetCustomListSuppressProgress(t *testing.T) {
 	}
 	if observedSuppressed != 0 {
 		t.Fatalf("expected no active progress task during suppressed custom list fetch, got %d", observedSuppressed)
+	}
+}
+
+func TestDiscoverByGenreWithOptionsAllowsFiftyItems(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	var requestedPages []string
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+		tmdb: newTMDBClient("tmdb-key", "eng", &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(req.URL.Path, "/3/movie/") && strings.HasSuffix(req.URL.Path, "/images") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"backdrops":[],"posters":[],"logos":[]}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				if req.URL.Path != "/3/discover/movie" {
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Status:     "404 Not Found",
+						Body:       io.NopCloser(strings.NewReader(`{}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				page := req.URL.Query().Get("page")
+				requestedPages = append(requestedPages, page)
+				pageNum, _ := strconv.Atoi(page)
+				startID := int64((pageNum-1)*20 + 1)
+				var results []string
+				for i := int64(0); i < 20; i++ {
+					id := startID + i
+					results = append(results, fmt.Sprintf(
+						`{"id":%d,"title":"Movie %d","release_date":"2025-01-01","genre_ids":[28],"popularity":%d}`,
+						id,
+						id,
+						100-id,
+					))
+				}
+				body := fmt.Sprintf(`{"results":[%s],"total_results":60}`, strings.Join(results, ","))
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}, cache),
+	}
+
+	items, total, err := svc.DiscoverByGenreWithOptions(context.Background(), "movie", 28, 50, 0, ShelfLoadOptions{
+		Lite:         true,
+		ArtworkLimit: 20,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverByGenreWithOptions: %v", err)
+	}
+	if total != 60 {
+		t.Fatalf("total = %d, want 60", total)
+	}
+	if len(items) != 50 {
+		t.Fatalf("len(items) = %d, want 50", len(items))
+	}
+	if items[49].Rank != 50 || items[49].Title.Name != "Movie 50" {
+		t.Fatalf("last item = rank %d name %q, want rank 50 Movie 50", items[49].Rank, items[49].Title.Name)
+	}
+	if got := strings.Join(requestedPages, ","); got != "1,2,3" {
+		t.Fatalf("requested pages = %s, want 1,2,3", got)
 	}
 }
 

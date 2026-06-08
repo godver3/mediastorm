@@ -38,24 +38,38 @@ type fakeMetadataService struct {
 	discoverByGenreTotal int
 	discoverByGenreErr   error
 	curatedResp          []models.TrendingItem
+	customListResp       []models.TrendingItem
+	customListTotal      int
+	customListUnfiltered int
+	customListErr        error
 
-	lastTrendingType        string
-	lastSearchQuery         string
-	lastSearchType          string
-	lastYouTubeQuery        string
-	lastYouTubeLimit        int
-	lastSeriesQuery         models.SeriesDetailsQuery
-	lastMovieQuery          models.MovieDetailsQuery
-	lastDiscoverGenreType   string
-	lastDiscoverGenreID     int64
-	lastDiscoverGenreLimit  int
-	lastDiscoverGenreOffset int
-	lastCuratedItems        []metadata.CuratedItem
-	lastCuratedLabel        string
+	lastTrendingType         string
+	lastTrendingOptions      metadata.ShelfLoadOptions
+	lastSearchQuery          string
+	lastSearchType           string
+	lastYouTubeQuery         string
+	lastYouTubeLimit         int
+	lastSeriesQuery          models.SeriesDetailsQuery
+	lastMovieQuery           models.MovieDetailsQuery
+	lastDiscoverGenreType    string
+	lastDiscoverGenreID      int64
+	lastDiscoverGenreLimit   int
+	lastDiscoverGenreOffset  int
+	lastDiscoverGenreOptions metadata.ShelfLoadOptions
+	lastCuratedItems         []metadata.CuratedItem
+	lastCuratedLabel         string
+	lastCustomListURL        string
+	lastCustomListOptions    metadata.CustomListOptions
 }
 
 func (f *fakeMetadataService) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
 	f.lastTrendingType = mediaType
+	return f.trendingResp, f.trendingErr
+}
+
+func (f *fakeMetadataService) TrendingWithOptions(_ context.Context, mediaType string, opts metadata.ShelfLoadOptions) ([]models.TrendingItem, error) {
+	f.lastTrendingType = mediaType
+	f.lastTrendingOptions = opts
 	return f.trendingResp, f.trendingErr
 }
 
@@ -153,8 +167,10 @@ func (f *fakeMetadataService) CollectionDetails(_ context.Context, _ int64) (*mo
 	return nil, nil
 }
 
-func (f *fakeMetadataService) GetCustomList(_ context.Context, _ string, _ metadata.CustomListOptions) ([]models.TrendingItem, int, int, error) {
-	return nil, 0, 0, nil
+func (f *fakeMetadataService) GetCustomList(_ context.Context, listURL string, opts metadata.CustomListOptions) ([]models.TrendingItem, int, int, error) {
+	f.lastCustomListURL = listURL
+	f.lastCustomListOptions = opts
+	return f.customListResp, f.customListTotal, f.customListUnfiltered, f.customListErr
 }
 
 func (f *fakeMetadataService) GetCuratedList(_ context.Context, items []metadata.CuratedItem, label string) ([]models.TrendingItem, error) {
@@ -200,6 +216,15 @@ func (f *fakeMetadataService) DiscoverByGenre(_ context.Context, mediaType strin
 	f.lastDiscoverGenreID = genreID
 	f.lastDiscoverGenreLimit = limit
 	f.lastDiscoverGenreOffset = offset
+	return f.discoverByGenreResp, f.discoverByGenreTotal, f.discoverByGenreErr
+}
+
+func (f *fakeMetadataService) DiscoverByGenreWithOptions(_ context.Context, mediaType string, genreID int64, limit, offset int, opts metadata.ShelfLoadOptions) ([]models.TrendingItem, int, error) {
+	f.lastDiscoverGenreType = mediaType
+	f.lastDiscoverGenreID = genreID
+	f.lastDiscoverGenreLimit = limit
+	f.lastDiscoverGenreOffset = offset
+	f.lastDiscoverGenreOptions = opts
 	return f.discoverByGenreResp, f.discoverByGenreTotal, f.discoverByGenreErr
 }
 
@@ -298,7 +323,7 @@ func TestMetadataHandler_DiscoverNew(t *testing.T) {
 
 	handler := NewMetadataHandler(fake, testConfigManager(t))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/discover/new?type=Movie", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/new?type=Movie&lite=true&artworkLimit=20", nil)
 	rec := httptest.NewRecorder()
 
 	handler.DiscoverNew(rec, req)
@@ -308,6 +333,9 @@ func TestMetadataHandler_DiscoverNew(t *testing.T) {
 	}
 	if fake.lastTrendingType != "movie" {
 		t.Fatalf("expected media type to normalize to movie, got %q", fake.lastTrendingType)
+	}
+	if !fake.lastTrendingOptions.Lite || fake.lastTrendingOptions.ArtworkLimit != 20 {
+		t.Fatalf("unexpected trending options: %+v", fake.lastTrendingOptions)
 	}
 
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
@@ -593,6 +621,41 @@ func TestMetadataHandler_SimklListRejectsUnlinkedProfile(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+}
+
+func TestMetadataHandler_CustomListForwardsLiteOption(t *testing.T) {
+	fake := &fakeMetadataService{
+		customListResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "movie:1", Name: "Fast Shelf", MediaType: "movie"}},
+		},
+		customListTotal:      2,
+		customListUnfiltered: 3,
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/custom?url=https%3A%2F%2Fmdblist.com%2Flists%2Fsnoak%2Fdisney-plus-top-10-movies%2Fjson&limit=50&lite=true&artworkLimit=20&name=Disney%2B", nil)
+	rec := httptest.NewRecorder()
+
+	handler.CustomList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastCustomListURL != "https://mdblist.com/lists/snoak/disney-plus-top-10-movies/json" {
+		t.Fatalf("unexpected list URL %q", fake.lastCustomListURL)
+	}
+	opts := fake.lastCustomListOptions
+	if opts.Limit != 50 || !opts.Lite || opts.ArtworkLimit != 20 || opts.Label != "Disney+" {
+		t.Fatalf("unexpected custom list options: %+v", opts)
+	}
+
+	var payload CustomListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Total != 2 || len(payload.Items) != 1 || payload.Items[0].Title.Name != "Fast Shelf" {
+		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }
 
@@ -918,7 +981,7 @@ func TestMetadataHandler_DiscoverByGenre(t *testing.T) {
 	}
 	handler := NewMetadataHandler(fake, testConfigManager(t))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=28&limit=10&offset=0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/genre?type=movie&genreId=28&limit=10&offset=0&lite=true&artworkLimit=20", nil)
 	rec := httptest.NewRecorder()
 
 	handler.DiscoverByGenre(rec, req)
@@ -937,6 +1000,9 @@ func TestMetadataHandler_DiscoverByGenre(t *testing.T) {
 	}
 	if fake.lastDiscoverGenreOffset != 0 {
 		t.Fatalf("expected offset 0, got %d", fake.lastDiscoverGenreOffset)
+	}
+	if !fake.lastDiscoverGenreOptions.Lite || fake.lastDiscoverGenreOptions.ArtworkLimit != 20 {
+		t.Fatalf("unexpected discover genre options: %+v", fake.lastDiscoverGenreOptions)
 	}
 
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {

@@ -65,6 +65,14 @@ type metadataService interface {
 	GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error)
 }
 
+type trendingOptionsService interface {
+	TrendingWithOptions(context.Context, string, metadatapkg.ShelfLoadOptions) ([]models.TrendingItem, error)
+}
+
+type discoverByGenreOptionsService interface {
+	DiscoverByGenreWithOptions(context.Context, string, int64, int, int, metadatapkg.ShelfLoadOptions) ([]models.TrendingItem, int, error)
+}
+
 func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
@@ -221,6 +229,18 @@ type TopTenResponse struct {
 	Debug []metadatapkg.TopTenDebugEntry `json:"debug,omitempty"`
 }
 
+func parseShelfLoadOptions(r *http.Request) metadatapkg.ShelfLoadOptions {
+	opts := metadatapkg.ShelfLoadOptions{
+		Lite: strings.ToLower(strings.TrimSpace(r.URL.Query().Get("lite"))) == "true",
+	}
+	if artworkLimitStr := r.URL.Query().Get("artworkLimit"); artworkLimitStr != "" {
+		if parsed, err := strconv.Atoi(artworkLimitStr); err == nil && parsed > 0 {
+			opts.ArtworkLimit = parsed
+		}
+	}
+	return opts
+}
+
 func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
@@ -240,7 +260,14 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items, err := h.Service.Trending(r.Context(), mediaType)
+	loadOpts := parseShelfLoadOptions(r)
+	var items []models.TrendingItem
+	var err error
+	if svc, ok := h.Service.(trendingOptionsService); ok {
+		items, err = svc.TrendingWithOptions(r.Context(), mediaType, loadOpts)
+	} else {
+		items, err = h.Service.Trending(r.Context(), mediaType)
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -972,6 +999,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
+	lite := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("lite"))) == "true"
 
 	// Parse optional pagination parameters (0 = no limit/offset)
 	limit := 0
@@ -984,6 +1012,12 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
 			offset = parsed
+		}
+	}
+	artworkLimit := 0
+	if artworkLimitStr := r.URL.Query().Get("artworkLimit"); artworkLimitStr != "" {
+		if parsed, err := strconv.Atoi(artworkLimitStr); err == nil && parsed > 0 {
+			artworkLimit = parsed
 		}
 	}
 
@@ -1007,6 +1041,8 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		Offset:         offset,
 		HideUnreleased: hideUnreleased,
 		HideWatched:    hideWatched,
+		Lite:           lite,
+		ArtworkLimit:   artworkLimit,
 		UserID:         userID,
 		Label:          strings.TrimSpace(r.URL.Query().Get("name")),
 	}
@@ -1746,7 +1782,14 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	items, total, err := h.Service.DiscoverByGenre(r.Context(), mediaType, genreID, limit, offset)
+	loadOpts := parseShelfLoadOptions(r)
+	var items []models.TrendingItem
+	var total int
+	if svc, ok := h.Service.(discoverByGenreOptionsService); ok {
+		items, total, err = svc.DiscoverByGenreWithOptions(r.Context(), mediaType, genreID, limit, offset, loadOpts)
+	} else {
+		items, total, err = h.Service.DiscoverByGenre(r.Context(), mediaType, genreID, limit, offset)
+	}
 	if err != nil {
 		log.Printf("[metadata] discover genre error type=%s genreId=%d: %v", mediaType, genreID, err)
 		w.Header().Set("Content-Type", "application/json")

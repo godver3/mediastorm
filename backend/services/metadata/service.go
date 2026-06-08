@@ -1265,9 +1265,29 @@ func cacheKey(parts ...string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// ShelfLoadOptions configures fast shelf rendering for list-style endpoints.
+type ShelfLoadOptions struct {
+	Lite         bool
+	ArtworkLimit int
+}
+
+func shelfLoadArtworkLimit(opts ShelfLoadOptions) int {
+	if opts.ArtworkLimit > 0 {
+		return opts.ArtworkLimit
+	}
+	if opts.Lite {
+		return customListLiteArtworkLimit
+	}
+	return customListShelfArtworkLimit
+}
+
 // Trending returns a list of trending titles for the given media type (series|movie).
 // Uses MDBList curated lists for both movies and TV shows.
 func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
+	return s.TrendingWithOptions(ctx, mediaType, ShelfLoadOptions{})
+}
+
+func (s *Service) TrendingWithOptions(ctx context.Context, mediaType string, opts ShelfLoadOptions) ([]models.TrendingItem, error) {
 	normalized := strings.ToLower(strings.TrimSpace(mediaType))
 	switch normalized {
 	case "", "tv", "series", "show", "shows":
@@ -1295,11 +1315,15 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 		progressLabel = "Trending Movies"
 	}
 
-	// v6: added genre hydration from TVDB
-	key := cacheKey("mdblist", "trending", label, "v7", s.client.language)
+	cacheMode := "full"
+	if opts.Lite {
+		cacheMode = "fast"
+	}
+	key := cacheKey("mdblist", "trending", label, "v8", cacheMode, s.client.language)
 	// Use a detached context for enrichment so work completes even if the
 	// HTTP client disconnects — results are cached for future requests.
 	enrichCtx := context.Background()
+	artworkLimit := shelfLoadArtworkLimit(opts)
 
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(key, &cached); ok && len(cached) > 0 {
@@ -1314,7 +1338,7 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 				break
 			}
 		}
-		if needsEnrich {
+		if needsEnrich && !opts.Lite {
 			// Only spawn one enrichment goroutine per media type at a time.
 			// If one is already running (e.g. from a concurrent request or the
 			// background cache manager), skip — it will write the result to disk
@@ -1334,6 +1358,15 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 				}()
 			}
 		}
+		if opts.Lite {
+			genresUpdated := s.enrichLiteMissingGenres(ctx, cached)
+			s.enrichShelfArtwork(ctx, cached, artworkLimit)
+			if genresUpdated || artworkLimit > customListLiteArtworkLimit {
+				_ = s.cache.set(key, cached)
+			}
+		} else if opts.ArtworkLimit > 0 {
+			s.enrichShelfArtwork(ctx, cached, artworkLimit)
+		}
 		return cached, nil
 	}
 
@@ -1341,17 +1374,29 @@ func (s *Service) Trending(ctx context.Context, mediaType string) ([]models.Tren
 	cleanup := s.startProgressTask(progressID, progressLabel, "fetching", 0)
 	defer cleanup()
 
-	items, err := fetcher()
+	var items []models.TrendingItem
+	var err error
+	if opts.Lite {
+		if normalized == "movie" {
+			items, err = s.getRecentMoviesLite(ctx)
+		} else {
+			items, err = s.getTrendingSeriesLite(ctx)
+		}
+	} else {
+		items, err = fetcher()
+	}
 	if err != nil {
 		return nil, err
 	}
-	// Enrich movies with release data (theatrical/home release)
-	if normalized == "movie" {
+	if opts.Lite {
+		s.enrichShelfArtwork(ctx, items, artworkLimit)
+	} else if normalized == "movie" {
+		// Enrich movies with release data (theatrical/home release)
 		s.enrichTrendingMovieReleases(enrichCtx, items)
 	} else {
 		// Enrich TV shows with content ratings
 		s.enrichTrendingTVContentRatings(enrichCtx, items)
-		s.enrichShelfArtwork(enrichCtx, items, 40)
+		s.enrichShelfArtwork(enrichCtx, items, artworkLimit)
 	}
 	if len(items) > 0 {
 		_ = s.cache.set(key, items)
@@ -1710,6 +1755,31 @@ func (s *Service) getRecentMovies() ([]models.TrendingItem, error) {
 	wg.Wait()
 
 	return items, nil
+}
+
+func (s *Service) getRecentMoviesLite(ctx context.Context) ([]models.TrendingItem, error) {
+	mdblistMovies, err := s.client.fetchMDBListMovies()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch MDBList movies: %w", err)
+	}
+	const processLimit = 200
+	if len(mdblistMovies) > processLimit {
+		mdblistMovies = mdblistMovies[:processLimit]
+	}
+	items := make([]mdblistItem, len(mdblistMovies))
+	for i, movie := range mdblistMovies {
+		items[i] = mdblistItem{
+			ID:          movie.ID,
+			Rank:        movie.Rank,
+			Adult:       movie.Adult,
+			Title:       movie.Title,
+			TVDBID:      movie.TVDBID,
+			IMDBID:      movie.IMDBID,
+			MediaType:   "movie",
+			ReleaseYear: movie.ReleaseYear,
+		}
+	}
+	return s.enrichLiteMDBListItems(ctx, items, "trending-movie"), nil
 }
 
 // enrichMovieTVDB enriches a single movie Title with TVDB artwork and metadata.
@@ -2158,6 +2228,31 @@ func (s *Service) getTrendingSeries() ([]models.TrendingItem, error) {
 	wg.Wait()
 
 	return items, nil
+}
+
+func (s *Service) getTrendingSeriesLite(ctx context.Context) ([]models.TrendingItem, error) {
+	mdblistTVShows, err := s.client.fetchMDBListTVShows()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch MDBList TV shows: %w", err)
+	}
+	const processLimit = 200
+	if len(mdblistTVShows) > processLimit {
+		mdblistTVShows = mdblistTVShows[:processLimit]
+	}
+	items := make([]mdblistItem, len(mdblistTVShows))
+	for i, tvShow := range mdblistTVShows {
+		items[i] = mdblistItem{
+			ID:          tvShow.ID,
+			Rank:        tvShow.Rank,
+			Adult:       tvShow.Adult,
+			Title:       tvShow.Title,
+			TVDBID:      tvShow.TVDBID,
+			IMDBID:      tvShow.IMDBID,
+			MediaType:   "show",
+			ReleaseYear: tvShow.ReleaseYear,
+		}
+	}
+	return s.enrichLiteMDBListItems(ctx, items, "trending-series"), nil
 }
 
 // enrichSeriesTVDB enriches a single series Title with TVDB artwork and metadata.
@@ -5008,6 +5103,10 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 
 // DiscoverByGenre returns TMDB discover results for a specific genre.
 func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID int64, limit, offset int) ([]models.TrendingItem, int, error) {
+	return s.DiscoverByGenreWithOptions(ctx, mediaType, genreID, limit, offset, ShelfLoadOptions{})
+}
+
+func (s *Service) DiscoverByGenreWithOptions(ctx context.Context, mediaType string, genreID int64, limit, offset int, opts ShelfLoadOptions) ([]models.TrendingItem, int, error) {
 	start := time.Now()
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, 0, fmt.Errorf("tmdb client not configured")
@@ -5020,87 +5119,101 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 	if normalizedType != "movie" {
 		normalizedType = "series"
 	}
+	artworkLimit := shelfLoadArtworkLimit(opts)
 
-	// Convert offset/limit to TMDB page (TMDB pages are 20 items)
-	page := 1
-	if offset > 0 {
-		page = (offset / 20) + 1
+	const tmdbDiscoverPageSize = 20
+	const maxDiscoverGenreLimit = 50
+
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = tmdbDiscoverPageSize
+	} else if effectiveLimit > maxDiscoverGenreLimit {
+		effectiveLimit = maxDiscoverGenreLimit
 	}
 
-	cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page), s.client.language)
+	// Convert offset/limit to TMDB pages (TMDB pages are 20 items).
+	startPage := 1
+	if offset > 0 {
+		startPage = (offset / tmdbDiscoverPageSize) + 1
+	}
+
 	type discoverCache struct {
 		Items []models.Title `json:"items"`
 		Total int            `json:"total"`
 	}
-	var cached discoverCache
-	if ok, _ := s.cache.get(cacheID, &cached); ok {
-		log.Printf("[metadata] discover genre cache hit type=%s genreId=%d page=%d count=%d", normalizedType, genreID, page, len(cached.Items))
-		items := make([]models.TrendingItem, len(cached.Items))
-		for i, t := range cached.Items {
-			items[i] = models.TrendingItem{Rank: i + 1 + ((page - 1) * 20), Title: t}
-		}
-		// Apply offset within page
-		offsetInPage := offset % 20
-		if offsetInPage > 0 && offsetInPage < len(items) {
-			items = items[offsetInPage:]
-		}
-		if limit > 0 && limit < len(items) {
-			items = items[:limit]
-		}
-		s.enrichShelfArtwork(ctx, items, len(items))
-		log.Printf(
-			"[metadata] discover genre complete type=%s genreId=%d page=%d source=cache count=%d total=%d duration=%s",
-			normalizedType,
-			genreID,
-			page,
-			len(items),
-			cached.Total,
-			time.Since(start).Round(time.Millisecond),
-		)
-		return items, cached.Total, nil
-	}
 
-	tmdbStart := time.Now()
-	titles, total, err := s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
-	if err != nil {
-		return nil, 0, err
+	items := make([]models.TrendingItem, 0, effectiveLimit)
+	total := 0
+	remaining := effectiveLimit
+	source := "cache"
+	for page := startPage; remaining > 0; page++ {
+		cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page), s.client.language)
+		var pageData discoverCache
+		if ok, _ := s.cache.get(cacheID, &pageData); ok {
+			log.Printf("[metadata] discover genre cache hit type=%s genreId=%d page=%d count=%d", normalizedType, genreID, page, len(pageData.Items))
+		} else {
+			source = "tmdb"
+			tmdbStart := time.Now()
+			titles, fetchedTotal, err := s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
+			if err != nil {
+				return nil, 0, err
+			}
+			pageData = discoverCache{Items: titles, Total: fetchedTotal}
+			log.Printf(
+				"[metadata] discover genre tmdb fetch type=%s genreId=%d page=%d count=%d total=%d duration=%s",
+				normalizedType,
+				genreID,
+				page,
+				len(titles),
+				fetchedTotal,
+				time.Since(tmdbStart).Round(time.Millisecond),
+			)
+			if err := s.cache.set(cacheID, pageData); err != nil {
+				log.Printf("[metadata] failed to cache discover genre page=%d: %v", page, err)
+			}
+		}
+		if pageData.Total > 0 {
+			total = pageData.Total
+		}
+		if len(pageData.Items) == 0 {
+			break
+		}
+
+		pageOffset := 0
+		if page == startPage {
+			pageOffset = offset % tmdbDiscoverPageSize
+		}
+		if pageOffset >= len(pageData.Items) {
+			continue
+		}
+		pageItems := pageData.Items[pageOffset:]
+		if len(pageItems) > remaining {
+			pageItems = pageItems[:remaining]
+		}
+		for i, title := range pageItems {
+			items = append(items, models.TrendingItem{
+				Rank:  ((page - 1) * tmdbDiscoverPageSize) + pageOffset + i + 1,
+				Title: title,
+			})
+		}
+		remaining -= len(pageItems)
+		if len(pageData.Items) < tmdbDiscoverPageSize {
+			break
+		}
+		if total > 0 && offset+len(items) >= total {
+			break
+		}
 	}
+	s.enrichShelfArtwork(ctx, items, artworkLimit)
+
 	log.Printf(
-		"[metadata] discover genre tmdb fetch type=%s genreId=%d page=%d count=%d total=%d duration=%s",
+		"[metadata] discover genre complete type=%s genreId=%d startPage=%d limit=%d offset=%d source=%s count=%d total=%d duration=%s",
 		normalizedType,
 		genreID,
-		page,
-		len(titles),
-		total,
-		time.Since(tmdbStart).Round(time.Millisecond),
-	)
-
-	// Cache the raw page
-	if err := s.cache.set(cacheID, discoverCache{Items: titles, Total: total}); err != nil {
-		log.Printf("[metadata] failed to cache discover genre: %v", err)
-	}
-
-	items := make([]models.TrendingItem, len(titles))
-	for i, t := range titles {
-		items[i] = models.TrendingItem{Rank: i + 1 + ((page - 1) * 20), Title: t}
-	}
-
-	// Apply offset within page
-	offsetInPage := offset % 20
-	if offsetInPage > 0 && offsetInPage < len(items) {
-		items = items[offsetInPage:]
-	}
-	if limit > 0 && limit < len(items) {
-		items = items[:limit]
-	}
-	s.enrichShelfArtwork(ctx, items, len(items))
-
-	log.Printf("[metadata] discover genre success type=%s genreId=%d page=%d count=%d total=%d", normalizedType, genreID, page, len(items), total)
-	log.Printf(
-		"[metadata] discover genre complete type=%s genreId=%d page=%d source=tmdb count=%d total=%d duration=%s",
-		normalizedType,
-		genreID,
-		page,
+		startPage,
+		effectiveLimit,
+		offset,
+		source,
 		len(items),
 		total,
 		time.Since(start).Round(time.Millisecond),
@@ -6598,6 +6711,8 @@ type CustomListOptions struct {
 	Offset           int
 	HideUnreleased   bool
 	HideWatched      bool
+	Lite             bool // true skips expensive nonessential enrichment for fast shelf loads
+	ArtworkLimit     int  // optional cap for blocking artwork enrichment
 	UserID           string
 	HistorySvc       HistoryChecker // nil if hideWatched is false
 	Label            string         // optional display name for progress tracking (e.g. shelf name)
@@ -6608,6 +6723,7 @@ const (
 	foregroundCustomListEnrichConcurrency = 16
 	backgroundCustomListEnrichConcurrency = 4
 	customListShelfArtworkLimit           = 40
+	customListLiteArtworkLimit            = 20
 )
 
 // GetCustomListForCalendar fetches a custom MDBList with the lighter-weight options calendar needs.
@@ -7001,6 +7117,212 @@ func mdblistItemMediaType(item mdblistItem) string {
 		return "series"
 	}
 	return "movie"
+}
+
+func buildLiteCustomListItem(item mdblistItem) models.TrendingItem {
+	mediaType := mdblistItemMediaType(item)
+	title := models.Title{
+		ID:         fmt.Sprintf("mdblist:%s:%d", mediaType, item.ID),
+		Name:       item.Title,
+		Year:       item.ReleaseYear,
+		MediaType:  mediaType,
+		Popularity: float64(100 - item.Rank),
+	}
+	if item.IMDBID != "" {
+		title.IMDBID = item.IMDBID
+	}
+	if item.TMDBID != nil && *item.TMDBID > 0 {
+		title.TMDBID = *item.TMDBID
+		if mediaType == "series" {
+			title.ID = fmt.Sprintf("tmdb:tv:%d", *item.TMDBID)
+		} else {
+			title.ID = fmt.Sprintf("tmdb:movie:%d", *item.TMDBID)
+		}
+	}
+	if item.TVDBID != nil && *item.TVDBID > 0 {
+		title.TVDBID = *item.TVDBID
+		if mediaType == "series" {
+			title.ID = fmt.Sprintf("tvdb:series:%d", *item.TVDBID)
+		} else if title.TMDBID == 0 {
+			title.ID = fmt.Sprintf("tvdb:movie:%d", *item.TVDBID)
+		}
+	}
+	return models.TrendingItem{Rank: item.Rank, Title: title}
+}
+
+func (s *Service) enrichLiteCustomListItem(ctx context.Context, item mdblistItem) models.TrendingItem {
+	result := buildLiteCustomListItem(item)
+	title := &result.Title
+	if item.TVDBID == nil || *item.TVDBID <= 0 {
+		s.applyTMDBGenreFallback(ctx, title)
+		return result
+	}
+
+	tvdbID := *item.TVDBID
+	if title.MediaType == "movie" {
+		ext, err := s.cachedMovieExtended(tvdbID, []string{"artwork"})
+		if err != nil {
+			s.applyTMDBGenreFallback(ctx, title)
+			return result
+		}
+		if ext.Name != "" {
+			title.Name = ext.Name
+		}
+		if ext.Overview != "" {
+			title.Overview = ext.Overview
+		}
+		applyTVDBMovieExtendedMetadata(title, ext)
+		applyTVDBRemoteIDs(title, ext.RemoteIDs)
+		s.applyTMDBGenreFallback(ctx, title)
+		return result
+	}
+
+	ext, err := s.cachedSeriesExtended(tvdbID, []string{"artworks"})
+	if err != nil {
+		s.applyTMDBGenreFallback(ctx, title)
+		return result
+	}
+	if ext.Name != "" {
+		title.Name = ext.Name
+	}
+	if ext.Overview != "" {
+		title.Overview = ext.Overview
+	}
+	if ext.Status.Name != "" {
+		title.Status = ext.Status.Name
+	}
+	applyTVDBArtworks(title, ext.Artworks)
+	applyTVDBRemoteIDs(title, ext.RemoteIDs)
+	if genres := tvdbGenreNames(ext.Genres); len(genres) > 0 {
+		title.Genres = genres
+	}
+	s.applyTMDBGenreFallback(ctx, title)
+	return result
+}
+
+func applyTVDBRemoteIDs(title *models.Title, remoteIDs []struct {
+	ID         string `json:"id"`
+	Type       int    `json:"type"`
+	SourceName string `json:"sourceName"`
+}) {
+	if title == nil {
+		return
+	}
+	for _, remote := range remoteIDs {
+		id := strings.TrimSpace(remote.ID)
+		if id == "" {
+			continue
+		}
+		source := strings.ToLower(remote.SourceName)
+		switch {
+		case title.IMDBID == "" && strings.Contains(source, "imdb"):
+			title.IMDBID = id
+		case title.TMDBID == 0 && (strings.Contains(source, "themoviedb") || strings.Contains(source, "tmdb")):
+			if tmdbID, err := strconv.ParseInt(id, 10, 64); err == nil {
+				title.TMDBID = tmdbID
+			}
+		}
+	}
+}
+
+func (s *Service) applyTMDBGenreFallback(ctx context.Context, title *models.Title) bool {
+	if title == nil || len(title.Genres) > 0 || title.TMDBID <= 0 || s == nil || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return false
+	}
+
+	language := strings.TrimSpace(s.tmdb.language)
+	cacheID := cacheKey("tmdb", "genres", "v1", title.MediaType, strconv.FormatInt(title.TMDBID, 10), language)
+	var cached []string
+	if s.cache != nil {
+		if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
+			title.Genres = cached
+			return true
+		}
+	}
+
+	var genres []string
+	if title.MediaType == "series" {
+		var err error
+		genres, err = s.tmdb.fetchSeriesGenres(ctx, title.TMDBID)
+		if err != nil {
+			return false
+		}
+	} else {
+		details, err := s.tmdb.movieDetails(ctx, title.TMDBID)
+		if err != nil || details == nil {
+			return false
+		}
+		genres = details.Genres
+	}
+	if len(genres) == 0 {
+		return false
+	}
+
+	title.Genres = genres
+	if s.cache != nil {
+		_ = s.cache.set(cacheID, genres)
+	}
+	return true
+}
+
+func (s *Service) enrichLiteMissingGenres(ctx context.Context, items []models.TrendingItem) bool {
+	var changed atomic.Bool
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, backgroundCustomListEnrichConcurrency)
+
+	for i := range items {
+		if len(items[i].Title.Genres) > 0 || items[i].Title.TMDBID <= 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if s.applyTMDBGenreFallback(ctx, &items[idx].Title) {
+				changed.Store(true)
+			}
+		}(i)
+	}
+	wg.Wait()
+	return changed.Load()
+}
+
+func (s *Service) enrichLiteMDBListItems(ctx context.Context, items []mdblistItem, progressID string) []models.TrendingItem {
+	results := make([]models.TrendingItem, len(items))
+	if len(items) == 0 {
+		return results
+	}
+	if progressID != "" {
+		s.updateProgressPhase(progressID, "fast-enriching", len(items))
+	}
+
+	sem := make(chan struct{}, foregroundCustomListEnrichConcurrency)
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Add(1)
+		go func(idx int, it mdblistItem) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx] = s.enrichLiteCustomListItem(ctx, it)
+			if progressID != "" {
+				s.incrementProgress(progressID)
+			}
+		}(i, item)
+	}
+	wg.Wait()
+	return results
+}
+
+func customListArtworkLimit(opts CustomListOptions) int {
+	if opts.ArtworkLimit > 0 {
+		return opts.ArtworkLimit
+	}
+	if opts.Lite {
+		return customListLiteArtworkLimit
+	}
+	return customListShelfArtworkLimit
 }
 
 // buildMDBListItemIDForHistory constructs the watch history item ID from raw MDBList data.
@@ -7463,9 +7785,11 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, li
 // Pre-filters watched/unreleased items before enrichment so only displayed items incur full
 // TVDB lookups. Returns (items, filteredTotal, unfilteredTotal, error).
 func (s *Service) GetCustomList(ctx context.Context, listURL string, opts CustomListOptions) ([]models.TrendingItem, int, int, error) {
-	liteMovieEnrichment := opts.Limit <= 0
+	liteMovieEnrichment := opts.Lite || opts.Limit <= 0
 	cacheMode := "full"
-	if liteMovieEnrichment {
+	if opts.Lite {
+		cacheMode = "fast"
+	} else if liteMovieEnrichment {
 		cacheMode = "lite"
 	}
 
@@ -7486,7 +7810,15 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 		if opts.Limit > 0 && opts.Limit < len(result) {
 			result = result[:opts.Limit]
 		}
-		s.enrichShelfArtwork(ctx, result, customListShelfArtworkLimit)
+		artworkLimit := customListArtworkLimit(opts)
+		genresUpdated := false
+		if opts.Lite {
+			genresUpdated = s.enrichLiteMissingGenres(ctx, result)
+		}
+		s.enrichShelfArtwork(ctx, result, artworkLimit)
+		if opts.Lite && (genresUpdated || (opts.Offset == 0 && artworkLimit > customListLiteArtworkLimit)) {
+			_ = s.cache.set(cacheID, cached)
+		}
 		return result, total, total, nil
 	}
 
@@ -7550,7 +7882,9 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 
 	log.Printf("[metadata] enriching %d items (filtered=%d, unfiltered=%d, offset=%d, limit=%d)",
 		len(itemsToEnrich), filteredTotal, unfilteredTotal, opts.Offset, opts.Limit)
-	if liteMovieEnrichment {
+	if opts.Lite {
+		log.Printf("[metadata] using fast custom list enrichment for %s", listURL)
+	} else if liteMovieEnrichment {
 		log.Printf("[metadata] using lite movie enrichment for uncapped custom list: %s", listURL)
 	}
 
@@ -7573,14 +7907,18 @@ func (s *Service) GetCustomList(ctx context.Context, listURL string, opts Custom
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[idx] = s.enrichCustomListItem(ctx, it, liteMovieEnrichment)
+			if opts.Lite {
+				results[idx] = s.enrichLiteCustomListItem(ctx, it)
+			} else {
+				results[idx] = s.enrichCustomListItem(ctx, it, liteMovieEnrichment)
+			}
 			if progressID != "" {
 				s.incrementProgress(progressID)
 			}
 		}(i, item)
 	}
 	wg.Wait()
-	s.enrichShelfArtwork(ctx, results, customListShelfArtworkLimit)
+	s.enrichShelfArtwork(ctx, results, customListArtworkLimit(opts))
 
 	// Only cache full-list results when no filtering was applied
 	if !opts.HideWatched && !opts.HideUnreleased && opts.Offset == 0 &&
