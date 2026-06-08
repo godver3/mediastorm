@@ -56,6 +56,11 @@ var hlsRedirectHTTPClient = &http.Client{
 	Transport: cdnClient.Transport,
 }
 
+func isHTTPDirectURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
 // debugReader wraps an io.Reader to log bytes read and detect EOF
 type debugReader struct {
 	r           io.Reader
@@ -1905,21 +1910,28 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	var headerPrefix []byte
 	var requireMatroskaAlign bool
 	var proxyURL string // URL for FFmpeg to use (via throttling proxy)
+	var directInputPath string
 
 	var proxy *throttlingProxy // proxy server to close when done
 
-	// For direct URLs, use a throttling proxy so FFmpeg can use HTTP Range requests for seeking
-	// while we still control the download speed
+	// For remote direct URLs, use a throttling proxy so FFmpeg can use HTTP Range requests for
+	// seeking while we still control the download speed. Local providers return filesystem paths;
+	// pass those straight to FFmpeg instead of treating them as HTTP URLs.
 	if hasDirectURL {
-		videoTracef("[hls] session %s: setting up throttling proxy for direct URL", session.ID)
+		if isHTTPDirectURL(directURL) {
+			videoTracef("[hls] session %s: setting up throttling proxy for direct URL", session.ID)
 
-		var err error
-		proxy, proxyURL, err = newThrottlingProxy(directURL, session)
-		if err != nil {
-			log.Printf("[hls] session %s: failed to create throttling proxy: %v, falling back to pipe", session.ID, err)
-			hasDirectURL = false // Fall through to pipe handling
+			var err error
+			proxy, proxyURL, err = newThrottlingProxy(directURL, session)
+			if err != nil {
+				log.Printf("[hls] session %s: failed to create throttling proxy: %v, falling back to pipe", session.ID, err)
+				hasDirectURL = false // Fall through to pipe handling
+			} else {
+				log.Printf("[hls] session %s: throttling proxy ready at %s", session.ID, proxyURL)
+			}
 		} else {
-			log.Printf("[hls] session %s: throttling proxy ready at %s", session.ID, proxyURL)
+			directInputPath = strings.TrimSpace(directURL)
+			log.Printf("[hls] session %s: FFmpeg will read direct local input: %s", session.ID, directInputPath)
 		}
 	}
 
@@ -2061,14 +2073,17 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			log.Printf("[hls] session %s: using INPUT seeking to %.3fs (accurate; transcoded video + subtitle)", session.ID, session.TranscodingOffset)
 		} else {
 			args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
-			log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek (HTTP Range, skips data)", session.ID, session.TranscodingOffset)
+			log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek", session.ID, session.TranscodingOffset)
 		}
 	}
 
-	// Add input source - use proxy URL if available, otherwise use pipe
+	// Add input source - use proxy URL or local direct path if available, otherwise use pipe.
 	if proxyURL != "" {
 		args = append(args, "-i", proxyURL)
 		log.Printf("[hls] session %s: FFmpeg input set to proxy URL: %s", session.ID, proxyURL)
+	} else if directInputPath != "" {
+		args = append(args, "-i", directInputPath)
+		log.Printf("[hls] session %s: FFmpeg input set to direct local path: %s", session.ID, directInputPath)
 	} else {
 		args = append(args, "-i", "pipe:0")
 		log.Printf("[hls] session %s: FFmpeg input set to pipe:0", session.ID)

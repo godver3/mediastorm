@@ -67,6 +67,30 @@ func TestFFmpegHTTPProxyArgs(t *testing.T) {
 	}
 }
 
+func TestIsHTTPDirectURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{name: "http", input: "http://example.com/video.ts", expected: true},
+		{name: "https with whitespace", input: " https://example.com/video.ts ", expected: true},
+		{name: "relative recording path", input: "cache/recordings/default/show.ts", expected: false},
+		{name: "absolute local path", input: "/var/lib/recordings/show.ts", expected: false},
+		{name: "file URL", input: "file:///var/lib/recordings/show.ts", expected: false},
+		{name: "missing host", input: "https:///video.ts", expected: false},
+		{name: "invalid", input: "://cache/recordings/show.ts", expected: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isHTTPDirectURL(tc.input); got != tc.expected {
+				t.Fatalf("isHTTPDirectURL(%q) = %v, want %v", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 // --- isMatroskaPath tests ---
 
 func TestIsMatroskaPath(t *testing.T) {
