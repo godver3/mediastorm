@@ -120,6 +120,54 @@ func TestUsenetTrackProberFetchNZBSetsDownloadHeaders(t *testing.T) {
 	}
 }
 
+// fakeNZBImporter emulates the importer service for track-probe tests. On entry
+// it cancels the original request context, then records whether the context it
+// actually received is still live — proving the heavy work is detached from
+// request cancellation (a client abort must not SIGKILL an in-progress probe).
+type fakeNZBImporter struct {
+	cancelRequest     func()
+	ctxErrAfterCancel error
+	called            bool
+}
+
+func (f *fakeNZBImporter) ProcessNZBImmediately(ctx context.Context, _ string, _ []byte) (string, error) {
+	f.called = true
+	if f.cancelRequest != nil {
+		f.cancelRequest() // emulate the frontend aborting the request mid-probe
+	}
+	f.ctxErrAfterCancel = ctx.Err()
+	// Return a non-video path so probe() stops before attempting real ffprobe.
+	return "/some-directory", nil
+}
+
+// TestUsenetTrackProberDetachesFromCanceledRequest verifies that a client abort
+// (canceled request context) does not propagate into the NZB processing / ffprobe
+// stage. The NZB fetch runs first on the live request context; once we reach the
+// heavy work, canceling the request must leave the detached context unaffected.
+func TestUsenetTrackProberDetachesFromCanceledRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="test.nzb"`)
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><nzb></nzb>`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	importer := &fakeNZBImporter{cancelRequest: cancel}
+	prober := &usenetTrackProber{
+		importer:   importer,
+		httpClient: server.Client(),
+	}
+
+	_, _, _ = prober.probe(ctx, models.NZBResult{DownloadURL: server.URL + "/test.nzb"})
+
+	if !importer.called {
+		t.Fatal("ProcessNZBImmediately was never reached; fetchNZB likely failed")
+	}
+	if importer.ctxErrAfterCancel != nil {
+		t.Fatalf("processing context was canceled (%v) when the request was aborted; probe work was not detached", importer.ctxErrAfterCancel)
+	}
+}
+
 func TestUsenetHandlerProbeForTracksNoProber(t *testing.T) {
 	// When probeForTracks=true but no prober is configured, the response should
 	// indicate tracksProbed=true and include a trackProbeError.

@@ -54,8 +54,15 @@ func (p *usenetTrackProber) probe(ctx context.Context, candidate models.NZBResul
 		return nil, nil, fmt.Sprintf("fetch NZB: %v", err)
 	}
 
+	// Detach the heavy WebDAV/Usenet work from the request context so a client
+	// navigation/abort (AbortController) doesn't SIGKILL an in-progress ffprobe.
+	// Large remuxes serve probe bytes slowly over WebDAV-from-Usenet and lose the
+	// race against client cancellation; letting the probe finish on its own budget
+	// lets the result be cached for the next attempt. Own timeouts still bound it.
+	detached := context.WithoutCancel(ctx)
+
 	// Register NZB in virtual FS to get the file's storage path
-	processCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	processCtx, cancel := context.WithTimeout(detached, 60*time.Second)
 	defer cancel()
 	storagePath, err := p.importer.ProcessNZBImmediately(processCtx, fileName, nzbBytes)
 	if err != nil {
@@ -73,7 +80,7 @@ func (p *usenetTrackProber) probe(ctx context.Context, candidate models.NZBResul
 		return nil, nil, "WebDAV not configured"
 	}
 
-	audio, subs, probeErr := p.runFFProbe(ctx, probeURL)
+	audio, subs, probeErr := p.runFFProbe(detached, probeURL)
 	if probeErr != nil {
 		return nil, nil, fmt.Sprintf("ffprobe: %v", probeErr)
 	}
@@ -121,7 +128,9 @@ func (p *usenetTrackProber) buildProbeURL(storagePath string) string {
 }
 
 func (p *usenetTrackProber) runFFProbe(ctx context.Context, probeURL string) ([]models.NZBAudioTrack, []models.NZBSubtitleTrack, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Generous cap: large remuxes serve probe bytes slowly over WebDAV-from-Usenet
+	// (header + cues may require scattered on-demand segment fetches).
+	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
 	args := []string{
