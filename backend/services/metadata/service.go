@@ -5144,12 +5144,40 @@ func (s *Service) DiscoverByGenre(ctx context.Context, mediaType string, genreID
 }
 
 func (s *Service) DiscoverByGenreWithOptions(ctx context.Context, mediaType string, genreID int64, limit, offset int, opts ShelfLoadOptions) ([]models.TrendingItem, int, error) {
+	if genreID <= 0 {
+		return nil, 0, fmt.Errorf("genre id required")
+	}
+	return s.discoverShelfWithOptions(ctx, mediaType, limit, offset, opts,
+		fmt.Sprintf("genre genreId=%d", genreID),
+		[]string{"genre", fmt.Sprintf("%d", genreID)},
+		func(normalizedType string, page int) ([]models.Title, int, error) {
+			return s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
+		})
+}
+
+// DiscoverByDecade returns TMDB discover results for titles released in a decade (e.g. 1980).
+func (s *Service) DiscoverByDecade(ctx context.Context, mediaType string, decadeStart int, limit, offset int) ([]models.TrendingItem, int, error) {
+	return s.DiscoverByDecadeWithOptions(ctx, mediaType, decadeStart, limit, offset, ShelfLoadOptions{})
+}
+
+func (s *Service) DiscoverByDecadeWithOptions(ctx context.Context, mediaType string, decadeStart int, limit, offset int, opts ShelfLoadOptions) ([]models.TrendingItem, int, error) {
+	if decadeStart < 1900 || decadeStart%10 != 0 {
+		return nil, 0, fmt.Errorf("invalid decade")
+	}
+	return s.discoverShelfWithOptions(ctx, mediaType, limit, offset, opts,
+		fmt.Sprintf("decade decade=%d", decadeStart),
+		[]string{"decade", fmt.Sprintf("%d", decadeStart), "v2"},
+		func(normalizedType string, page int) ([]models.Title, int, error) {
+			return s.tmdb.discoverByDecade(ctx, normalizedType, decadeStart, page)
+		})
+}
+
+// discoverShelfWithOptions implements the shared paging/caching logic for the
+// TMDB discover-backed shelves (genre, decade).
+func (s *Service) discoverShelfWithOptions(ctx context.Context, mediaType string, limit, offset int, opts ShelfLoadOptions, logLabel string, cacheKeyParts []string, fetch func(normalizedType string, page int) ([]models.Title, int, error)) ([]models.TrendingItem, int, error) {
 	start := time.Now()
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, 0, fmt.Errorf("tmdb client not configured")
-	}
-	if genreID <= 0 {
-		return nil, 0, fmt.Errorf("genre id required")
 	}
 
 	normalizedType := strings.ToLower(strings.TrimSpace(mediaType))
@@ -5184,29 +5212,31 @@ func (s *Service) DiscoverByGenreWithOptions(ctx context.Context, mediaType stri
 	remaining := effectiveLimit
 	source := "cache"
 	for page := startPage; remaining > 0; page++ {
-		cacheID := cacheKey("tmdb", "discover", normalizedType, "genre", fmt.Sprintf("%d", genreID), "page", fmt.Sprintf("%d", page), s.client.language)
+		cacheArgs := append([]string{"tmdb", "discover", normalizedType}, cacheKeyParts...)
+		cacheArgs = append(cacheArgs, "page", fmt.Sprintf("%d", page), s.client.language)
+		cacheID := cacheKey(cacheArgs...)
 		var pageData discoverCache
 		if ok, _ := s.cache.get(cacheID, &pageData); ok {
-			log.Printf("[metadata] discover genre cache hit type=%s genreId=%d page=%d count=%d", normalizedType, genreID, page, len(pageData.Items))
+			log.Printf("[metadata] discover %s cache hit type=%s page=%d count=%d", logLabel, normalizedType, page, len(pageData.Items))
 		} else {
 			source = "tmdb"
 			tmdbStart := time.Now()
-			titles, fetchedTotal, err := s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
+			titles, fetchedTotal, err := fetch(normalizedType, page)
 			if err != nil {
 				return nil, 0, err
 			}
 			pageData = discoverCache{Items: titles, Total: fetchedTotal}
 			log.Printf(
-				"[metadata] discover genre tmdb fetch type=%s genreId=%d page=%d count=%d total=%d duration=%s",
+				"[metadata] discover %s tmdb fetch type=%s page=%d count=%d total=%d duration=%s",
+				logLabel,
 				normalizedType,
-				genreID,
 				page,
 				len(titles),
 				fetchedTotal,
 				time.Since(tmdbStart).Round(time.Millisecond),
 			)
 			if err := s.cache.set(cacheID, pageData); err != nil {
-				log.Printf("[metadata] failed to cache discover genre page=%d: %v", page, err)
+				log.Printf("[metadata] failed to cache discover %s page=%d: %v", logLabel, page, err)
 			}
 		}
 		if pageData.Total > 0 {
@@ -5244,9 +5274,9 @@ func (s *Service) DiscoverByGenreWithOptions(ctx context.Context, mediaType stri
 	s.enrichShelfArtwork(ctx, items, artworkLimit)
 
 	log.Printf(
-		"[metadata] discover genre complete type=%s genreId=%d startPage=%d limit=%d offset=%d source=%s count=%d total=%d duration=%s",
+		"[metadata] discover %s complete type=%s startPage=%d limit=%d offset=%d source=%s count=%d total=%d duration=%s",
+		logLabel,
 		normalizedType,
-		genreID,
 		startPage,
 		effectiveLimit,
 		offset,

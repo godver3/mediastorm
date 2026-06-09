@@ -3188,6 +3188,27 @@ func (c *tmdbClient) searchByTitle(ctx context.Context, title string, year int, 
 
 // discoverByGenre fetches movies or TV shows for a given genre from TMDB discover API
 func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genreID int64, page int) ([]models.Title, int, error) {
+	return c.discoverTitles(ctx, mediaType, fmt.Sprintf("&with_genres=%d", genreID), fmt.Sprintf("genre genreId=%d", genreID), page)
+}
+
+// discoverByDecade fetches movies or TV shows released within a decade (e.g. 1980 → 1980-1989)
+// from the TMDB discover API. A vote-count floor keeps current-popularity spikes on obscure
+// titles from drowning out the well-known releases of older decades.
+func (c *tmdbClient) discoverByDecade(ctx context.Context, mediaType string, decadeStart int, page int) ([]models.Title, int, error) {
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	dateField := "primary_release_date"
+	minVotes := 300
+	if apiMediaType != "movie" {
+		dateField = "first_air_date"
+		minVotes = 50
+	}
+	filter := fmt.Sprintf("&%s.gte=%d-01-01&%s.lte=%d-12-31&vote_count.gte=%d", dateField, decadeStart, dateField, decadeStart+9, minVotes)
+	return c.discoverTitles(ctx, mediaType, filter, fmt.Sprintf("decade decade=%d", decadeStart), page)
+}
+
+// discoverTitles runs a TMDB discover query with the given extra filter params
+// (already URL-encoded, starting with "&") sorted by popularity.
+func (c *tmdbClient) discoverTitles(ctx context.Context, mediaType, filterQuery, logLabel string, page int) ([]models.Title, int, error) {
 	start := time.Now()
 	if !c.isConfigured() {
 		return nil, 0, errors.New("tmdb api key not configured")
@@ -3199,8 +3220,8 @@ func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genr
 		apiMediaType = "tv"
 	}
 
-	endpoint := fmt.Sprintf("%s/discover/%s?api_key=%s&with_genres=%d&sort_by=popularity.desc&page=%d",
-		tmdbBaseURL, apiMediaType, c.apiKey, genreID, page)
+	endpoint := fmt.Sprintf("%s/discover/%s?api_key=%s%s&sort_by=popularity.desc&page=%d",
+		tmdbBaseURL, apiMediaType, c.apiKey, filterQuery, page)
 	if lang := strings.TrimSpace(c.language); lang != "" {
 		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
 	}
@@ -3223,12 +3244,12 @@ func (c *tmdbClient) discoverByGenre(ctx context.Context, mediaType string, genr
 		TotalResults int `json:"total_results"`
 	}
 	if err := c.doGET(ctx, endpoint, &payload); err != nil {
-		return nil, 0, fmt.Errorf("tmdb discover genre for %s/%d failed: %w", apiMediaType, genreID, err)
+		return nil, 0, fmt.Errorf("tmdb discover %s for %s failed: %w", logLabel, apiMediaType, err)
 	}
 	log.Printf(
-		"[tmdb] discover genre fetched mediaType=%s genreId=%d page=%d results=%d total=%d duration=%s",
+		"[tmdb] discover %s fetched mediaType=%s page=%d results=%d total=%d duration=%s",
+		logLabel,
 		apiMediaType,
-		genreID,
 		page,
 		len(payload.Results),
 		payload.TotalResults,

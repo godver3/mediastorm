@@ -36,6 +36,7 @@ type metadataService interface {
 	CollectionDetails(context.Context, int64) (*models.CollectionDetails, error)
 	Similar(context.Context, string, int64) ([]models.Title, error)
 	DiscoverByGenre(context.Context, string, int64, int, int) ([]models.TrendingItem, int, error)
+	DiscoverByDecade(context.Context, string, int, int, int) ([]models.TrendingItem, int, error)
 	GetAIRecommendations(context.Context, []string, []string, string) ([]models.TrendingItem, error)
 	GetAISimilar(context.Context, string, string) ([]models.TrendingItem, error)
 	GetAICustomRecommendations(context.Context, string) ([]models.TrendingItem, error)
@@ -71,6 +72,10 @@ type trendingOptionsService interface {
 
 type discoverByGenreOptionsService interface {
 	DiscoverByGenreWithOptions(context.Context, string, int64, int, int, metadatapkg.ShelfLoadOptions) ([]models.TrendingItem, int, error)
+}
+
+type discoverByDecadeOptionsService interface {
+	DiscoverByDecadeWithOptions(context.Context, string, int, int, int, metadatapkg.ShelfLoadOptions) ([]models.TrendingItem, int, error)
 }
 
 func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Request) {
@@ -1808,6 +1813,77 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		"[metadata] discover genre handler complete type=%s genreId=%d limit=%d offset=%d count=%d total=%d duration=%s",
 		mediaType,
 		genreID,
+		limit,
+		offset,
+		len(items),
+		total,
+		time.Since(start).Round(time.Millisecond),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
+}
+
+// DiscoverByDecade returns TMDB discover results for a specific decade
+func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	decadeStr := strings.TrimSpace(r.URL.Query().Get("decade"))
+
+	if decadeStr == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "decade is required"})
+		return
+	}
+
+	decade, err := strconv.Atoi(decadeStr)
+	if err != nil || decade < 1900 || decade%10 != 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid decade"})
+		return
+	}
+
+	limit := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	loadOpts := parseShelfLoadOptions(r)
+	var items []models.TrendingItem
+	var total int
+	if svc, ok := h.Service.(discoverByDecadeOptionsService); ok {
+		items, total, err = svc.DiscoverByDecadeWithOptions(r.Context(), mediaType, decade, limit, offset, loadOpts)
+	} else {
+		items, total, err = h.Service.DiscoverByDecade(r.Context(), mediaType, decade, limit, offset)
+	}
+	if err != nil {
+		log.Printf("[metadata] discover decade error type=%s decade=%d: %v", mediaType, decade, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if items == nil {
+		items = []models.TrendingItem{}
+	}
+
+	// Enrich with MDBList ratings for sort-by-rating support
+	enrichTrendingRatings(items, h.Service)
+	log.Printf(
+		"[metadata] discover decade handler complete type=%s decade=%d limit=%d offset=%d count=%d total=%d duration=%s",
+		mediaType,
+		decade,
 		limit,
 		offset,
 		len(items),

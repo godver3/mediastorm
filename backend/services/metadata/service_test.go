@@ -993,6 +993,58 @@ func TestDiscoverByGenreWithOptionsAllowsFiftyItems(t *testing.T) {
 	}
 }
 
+func TestDiscoverByDecadeWithOptions(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	var capturedQuery string
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+		tmdb: newTMDBClient("tmdb-key", "eng", &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/3/discover/movie" {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"backdrops":[],"posters":[],"logos":[]}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				capturedQuery = req.URL.RawQuery
+				body := `{"results":[{"id":1,"title":"Eighties Movie","release_date":"1984-06-08","popularity":50}],"total_results":1}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}, cache),
+	}
+
+	items, total, err := svc.DiscoverByDecadeWithOptions(context.Background(), "movie", 1980, 20, 0, ShelfLoadOptions{
+		Lite:         true,
+		ArtworkLimit: 20,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverByDecadeWithOptions: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("total = %d len(items) = %d, want 1/1", total, len(items))
+	}
+	if items[0].Title.Name != "Eighties Movie" || items[0].Title.Year != 1984 {
+		t.Fatalf("unexpected item: %+v", items[0].Title)
+	}
+	if !strings.Contains(capturedQuery, "primary_release_date.gte=1980-01-01") ||
+		!strings.Contains(capturedQuery, "primary_release_date.lte=1989-12-31") ||
+		!strings.Contains(capturedQuery, "vote_count.gte=300") {
+		t.Fatalf("decade filters missing from query: %s", capturedQuery)
+	}
+
+	if _, _, err := svc.DiscoverByDecadeWithOptions(context.Background(), "movie", 1985, 20, 0, ShelfLoadOptions{}); err == nil {
+		t.Fatalf("expected error for non-decade year")
+	}
+}
+
 // TestExtractTitleFields verifies that extractTitleFields copies only requested fields.
 func TestExtractTitleFields(t *testing.T) {
 	full := &models.Title{

@@ -53,6 +53,9 @@ func (m *mockMetadataServiceDetailsBundle) Similar(_ context.Context, _ string, 
 func (m *mockMetadataServiceDetailsBundle) DiscoverByGenre(_ context.Context, _ string, _ int64, _, _ int) ([]models.TrendingItem, int, error) {
 	return nil, 0, nil
 }
+func (m *mockMetadataServiceDetailsBundle) DiscoverByDecade(_ context.Context, _ string, _, _, _ int) ([]models.TrendingItem, int, error) {
+	return nil, 0, nil
+}
 func (m *mockMetadataServiceDetailsBundle) GetAIRecommendations(_ context.Context, _ []string, _ []string, _ string) ([]models.TrendingItem, error) {
 	return nil, nil
 }

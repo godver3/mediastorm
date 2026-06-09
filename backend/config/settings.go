@@ -379,7 +379,7 @@ type ShelfConfig struct {
 	Name              string                 `json:"name"`                        // Display name
 	Enabled           bool                   `json:"enabled"`                     // Whether the shelf is visible
 	Order             int                    `json:"order"`                       // Sort order (lower numbers appear first)
-	Type              string                 `json:"type,omitempty"`              // "builtin" (default), "mdblist", "trakt", "simkl", "letterboxd", "genre", or "local-library"
+	Type              string                 `json:"type,omitempty"`              // "builtin" (default), "mdblist", "trakt", "simkl", "letterboxd", "genre", "decade", or "local-library"
 	ListURL           string                 `json:"listUrl,omitempty"`           // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
 	TraktAccountID    string                 `json:"traktAccountId,omitempty"`    // Trakt account ID, or "__all__" for master-account global watchlists
 	TraktListType     string                 `json:"traktListType,omitempty"`     // "watchlist" or "custom"

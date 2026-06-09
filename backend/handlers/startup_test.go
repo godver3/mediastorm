@@ -187,6 +187,9 @@ func (m *mockMetadataServiceStartup) Similar(context.Context, string, int64) ([]
 func (m *mockMetadataServiceStartup) DiscoverByGenre(context.Context, string, int64, int, int) ([]models.TrendingItem, int, error) {
 	return nil, 0, nil
 }
+func (m *mockMetadataServiceStartup) DiscoverByDecade(context.Context, string, int, int, int) ([]models.TrendingItem, int, error) {
+	return nil, 0, nil
+}
 func (m *mockMetadataServiceStartup) GetAIRecommendations(context.Context, []string, []string, string) ([]models.TrendingItem, error) {
 	return nil, nil
 }

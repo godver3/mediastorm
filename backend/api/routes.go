@@ -246,6 +246,8 @@ func Register(
 	protected.HandleFunc("/lists/curated", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/discover/genre", metadataHandler.DiscoverByGenre).Methods(http.MethodGet)
 	protected.HandleFunc("/discover/genre", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/discover/decade", metadataHandler.DiscoverByDecade).Methods(http.MethodGet)
+	protected.HandleFunc("/discover/decade", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/discover/top-ten", metadataHandler.TopTen).Methods(http.MethodGet)
 	protected.HandleFunc("/discover/top-ten", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations", metadataHandler.GetAIRecommendations).Methods(http.MethodGet)

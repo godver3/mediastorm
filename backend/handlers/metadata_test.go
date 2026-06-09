@@ -37,6 +37,10 @@ type fakeMetadataService struct {
 	discoverByGenreResp  []models.TrendingItem
 	discoverByGenreTotal int
 	discoverByGenreErr   error
+
+	discoverByDecadeResp  []models.TrendingItem
+	discoverByDecadeTotal int
+	discoverByDecadeErr   error
 	curatedResp          []models.TrendingItem
 	customListResp       []models.TrendingItem
 	customListTotal      int
@@ -56,6 +60,12 @@ type fakeMetadataService struct {
 	lastDiscoverGenreLimit   int
 	lastDiscoverGenreOffset  int
 	lastDiscoverGenreOptions metadata.ShelfLoadOptions
+
+	lastDiscoverDecadeType    string
+	lastDiscoverDecade        int
+	lastDiscoverDecadeLimit   int
+	lastDiscoverDecadeOffset  int
+	lastDiscoverDecadeOptions metadata.ShelfLoadOptions
 	lastCuratedItems         []metadata.CuratedItem
 	lastCuratedLabel         string
 	lastCustomListURL        string
@@ -226,6 +236,23 @@ func (f *fakeMetadataService) DiscoverByGenreWithOptions(_ context.Context, medi
 	f.lastDiscoverGenreOffset = offset
 	f.lastDiscoverGenreOptions = opts
 	return f.discoverByGenreResp, f.discoverByGenreTotal, f.discoverByGenreErr
+}
+
+func (f *fakeMetadataService) DiscoverByDecade(_ context.Context, mediaType string, decadeStart, limit, offset int) ([]models.TrendingItem, int, error) {
+	f.lastDiscoverDecadeType = mediaType
+	f.lastDiscoverDecade = decadeStart
+	f.lastDiscoverDecadeLimit = limit
+	f.lastDiscoverDecadeOffset = offset
+	return f.discoverByDecadeResp, f.discoverByDecadeTotal, f.discoverByDecadeErr
+}
+
+func (f *fakeMetadataService) DiscoverByDecadeWithOptions(_ context.Context, mediaType string, decadeStart, limit, offset int, opts metadata.ShelfLoadOptions) ([]models.TrendingItem, int, error) {
+	f.lastDiscoverDecadeType = mediaType
+	f.lastDiscoverDecade = decadeStart
+	f.lastDiscoverDecadeLimit = limit
+	f.lastDiscoverDecadeOffset = offset
+	f.lastDiscoverDecadeOptions = opts
+	return f.discoverByDecadeResp, f.discoverByDecadeTotal, f.discoverByDecadeErr
 }
 
 func (f *fakeMetadataService) GetAIRecommendations(_ context.Context, _ []string, _ []string, _ string) ([]models.TrendingItem, error) {
@@ -1117,6 +1144,114 @@ func TestMetadataHandler_DiscoverByGenreNilItems(t *testing.T) {
 	}
 	if len(payload.Items) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(payload.Items))
+	}
+}
+
+func TestMetadataHandler_DiscoverByDecade(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByDecadeResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{Name: "Eighties Movie", MediaType: "movie", TMDBID: 100}},
+			{Rank: 2, Title: models.Title{Name: "Eighties Movie 2", MediaType: "movie", TMDBID: 200}},
+		},
+		discoverByDecadeTotal: 42,
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/decade?type=movie&decade=1980&limit=10&offset=0&lite=true&artworkLimit=20", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByDecade(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if fake.lastDiscoverDecadeType != "movie" {
+		t.Fatalf("expected media type movie, got %q", fake.lastDiscoverDecadeType)
+	}
+	if fake.lastDiscoverDecade != 1980 {
+		t.Fatalf("expected decade 1980, got %d", fake.lastDiscoverDecade)
+	}
+	if fake.lastDiscoverDecadeLimit != 10 {
+		t.Fatalf("expected limit 10, got %d", fake.lastDiscoverDecadeLimit)
+	}
+	if fake.lastDiscoverDecadeOffset != 0 {
+		t.Fatalf("expected offset 0, got %d", fake.lastDiscoverDecadeOffset)
+	}
+	if !fake.lastDiscoverDecadeOptions.Lite || fake.lastDiscoverDecadeOptions.ArtworkLimit != 20 {
+		t.Fatalf("unexpected discover decade options: %+v", fake.lastDiscoverDecadeOptions)
+	}
+
+	var payload DiscoverNewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(payload.Items))
+	}
+	if payload.Total != 42 {
+		t.Fatalf("expected total 42, got %d", payload.Total)
+	}
+}
+
+func TestMetadataHandler_DiscoverByDecadeMissingDecade(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/decade?type=movie", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByDecade(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload["error"] != "decade is required" {
+		t.Fatalf("expected decade required error, got %q", payload["error"])
+	}
+}
+
+func TestMetadataHandler_DiscoverByDecadeInvalidDecade(t *testing.T) {
+	fake := &fakeMetadataService{}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	for _, decade := range []string{"abc", "1985", "1890"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/discover/decade?type=movie&decade="+decade, nil)
+		rec := httptest.NewRecorder()
+
+		handler.DiscoverByDecade(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("decade %q: expected %d, got %d", decade, http.StatusBadRequest, rec.Code)
+		}
+
+		var payload map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decade %q: decode payload: %v", decade, err)
+		}
+		if payload["error"] != "invalid decade" {
+			t.Fatalf("decade %q: expected invalid decade error, got %q", decade, payload["error"])
+		}
+	}
+}
+
+func TestMetadataHandler_DiscoverByDecadeError(t *testing.T) {
+	fake := &fakeMetadataService{
+		discoverByDecadeErr: errors.New("tmdb unavailable"),
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/decade?type=series&decade=1990", nil)
+	rec := httptest.NewRecorder()
+
+	handler.DiscoverByDecade(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected %d, got %d", http.StatusBadGateway, rec.Code)
 	}
 }
 

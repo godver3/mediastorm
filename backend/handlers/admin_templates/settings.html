@@ -4802,7 +4802,7 @@
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
             const isRecentlyAired = s.id === 'my-recently-aired';
-            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-')));
+            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || s.type === 'decade' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-') || s.id.startsWith('decade-')));
             const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
             const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
@@ -4893,6 +4893,7 @@
                         '<option value="simkl">Simkl</option>'+
                         '<option value="letterboxd">Letterboxd</option>'+
                         '<option value="genre">Genre</option>'+
+                        '<option value="decade">Decade</option>'+
                         '<option value="streaming-service">Streaming Service</option>'+
                     '</select>'+
                 '</div>'+
@@ -4959,6 +4960,17 @@
                 '<div class="form-group" id="genreGroup" style="display:none;">'+
                     '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Genre</label>'+
                     '<select id="newShelfGenre" onchange="onGenreShelfSourceChange()"></select>'+
+                '</div>'+
+                '<div class="form-group" id="decadeMediaTypeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Content</label>'+
+                    '<select id="newShelfDecadeMediaType" onchange="onDecadeShelfSourceChange()">'+
+                        '<option value="movie">Movies</option>'+
+                        '<option value="tv">TV Shows</option>'+
+                    '</select>'+
+                '</div>'+
+                '<div class="form-group" id="decadeGroup" style="display:none;">'+
+                    '<label class="form-label" style="font-size:12px;margin-bottom:4px;">Decade</label>'+
+                    '<select id="newShelfDecade" onchange="onDecadeShelfSourceChange()"></select>'+
                 '</div>'+
                 // Streaming service fields (shown when type=streaming-service)
                 '<div class="form-group" id="streamingServiceGroup" style="display:none;">'+
@@ -5105,6 +5117,7 @@
             case 'simkl': return 'Simkl';
             case 'letterboxd': return 'Letterboxd';
             case 'genre': return 'Genre';
+            case 'decade': return 'Decade';
             default: return type || 'MDBList';
         }
     }
@@ -5423,6 +5436,28 @@
         nameInput.value = `${getSelectedGenreName('newShelfGenre')} ${mediaType === 'tv' ? 'TV Shows' : 'Movies'}`;
     }
 
+    const DECADE_SHELVES = [2020, 2010, 2000, 1990, 1980, 1970, 1960, 1950, 1940, 1930];
+
+    function renderDecadeOptions(selectId, selectedValue) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        select.innerHTML = DECADE_SHELVES.map((decade) => {
+            const selected = String(decade) === String(selectedValue || '') ? 'selected' : '';
+            return `<option value="${decade}" ${selected}>${decade}s</option>`;
+        }).join('');
+        if (!selectedValue && select.options.length > 0) {
+            select.value = select.options[0].value;
+        }
+    }
+
+    function onDecadeShelfSourceChange() {
+        const mediaType = document.getElementById('newShelfDecadeMediaType')?.value || 'movie';
+        const decade = document.getElementById('newShelfDecade')?.value;
+        const nameInput = document.getElementById('newShelfName');
+        if (!nameInput || !decade) return;
+        nameInput.value = `${decade}s ${mediaType === 'tv' ? 'TV Shows' : 'Movies'}`;
+    }
+
     // Streaming service URL data (mirrors lists.tsx STREAMING_SERVICES)
     const STREAMING_SERVICES = {
         netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/snoak/netflix-top-10-movies/json',        shows: 'https://mdblist.com/lists/snoak/netflix-top-10-shows/json' },
@@ -5442,6 +5477,7 @@
         const isSimkl = type === 'simkl';
         const isLetterboxd = type === 'letterboxd';
         const isGenre = type === 'genre';
+        const isDecade = type === 'decade';
         document.getElementById('streamingServiceGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('streamingMediaTypeGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('traktAccountGroup').style.display = isTrakt ? '' : 'none';
@@ -5455,10 +5491,12 @@
         document.getElementById('letterboxdUrlGroup').style.display = 'none';
         document.getElementById('genreMediaTypeGroup').style.display = isGenre ? '' : 'none';
         document.getElementById('genreGroup').style.display = isGenre ? '' : 'none';
-        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre) ? 'none' : '';
+        document.getElementById('decadeMediaTypeGroup').style.display = isDecade ? '' : 'none';
+        document.getElementById('decadeGroup').style.display = isDecade ? '' : 'none';
+        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade) ? 'none' : '';
         const hint = document.getElementById('shelfFormHint');
         if (hint) {
-            hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre) ? 'none' : '';
+            hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade) ? 'none' : '';
         }
         if (!isLetterboxd) {
             const urlHint = document.getElementById('letterboxdUrlHint');
@@ -5481,6 +5519,10 @@
         }
         else if (isGenre) {
             onGenreShelfMediaTypeChange();
+        }
+        else if (isDecade) {
+            renderDecadeOptions('newShelfDecade');
+            onDecadeShelfSourceChange();
         }
         else {
             document.getElementById('newShelfName').value = '';
@@ -5721,6 +5763,36 @@
             if (limitInput) limitInput.value = '0';
             if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
             onShelfTypeChange();
+        } else if (shelfType === 'decade') {
+            const mediaType = document.getElementById('newShelfDecadeMediaType')?.value || 'movie';
+            const decade = document.getElementById('newShelfDecade')?.value;
+            const name = nameInput?.value?.trim();
+
+            if (!decade || !name) {
+                alert('Please select a decade and enter a name');
+                return;
+            }
+
+            const id = `decade-${decade}-${mediaType}`;
+            if (shelves.some((s) => s.id === id)) {
+                alert('That decade shelf already exists.');
+                return;
+            }
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id,
+                name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: 'decade',
+                limit,
+            });
+
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
         } else {
             // MDBList shelf
             const name = nameInput?.value?.trim();
@@ -5799,6 +5871,7 @@
         const isSimklShelf = shelf.type === 'simkl';
         const isLetterboxdShelf = shelf.type === 'letterboxd';
         const isGenreShelf = shelf.type === 'genre';
+        const isDecadeShelf = shelf.type === 'decade';
         const traktAccounts = getAvailableTraktAccountsForShelfForm();
         const traktAccountOptions = traktAccounts.map((acc) => {
             const selected = acc.id === (shelf.traktAccountId || '') ? 'selected' : '';
@@ -5827,6 +5900,14 @@
             `<option value="tv" ${genreMediaType === 'tv' ? 'selected' : ''}>TV Shows</option>`;
         const genreOptions = (GENRE_SHELVES[genreMediaType] || GENRE_SHELVES.movie).map((genre) =>
             `<option value="${genre.id}" ${String(genre.id) === String(genreId) ? 'selected' : ''}>${genre.name}</option>`).join('');
+        const decadeMatch = /^decade-(\d{4})-(movie|tv)$/.exec(shelf.id || '');
+        const decadeMediaType = decadeMatch?.[2] || 'movie';
+        const decadeStart = decadeMatch?.[1] || '';
+        const decadeMediaOptions =
+            `<option value="movie" ${decadeMediaType === 'movie' ? 'selected' : ''}>Movies</option>` +
+            `<option value="tv" ${decadeMediaType === 'tv' ? 'selected' : ''}>TV Shows</option>`;
+        const decadeOptions = DECADE_SHELVES.map((decade) =>
+            `<option value="${decade}" ${String(decade) === String(decadeStart) ? 'selected' : ''}>${decade}s</option>`).join('');
         let traktSourceFields;
         if (isRecentlyAiredShelf) {
             traktSourceFields = buildCalendarSourceFields(shelf, 'editShelfCalendar');
@@ -5895,6 +5976,17 @@
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Genre</label>
                         <select id="editShelfGenre" style="${selectStyle}">${genreOptions}</select>
+                    </div>
+        `;
+        } else if (isDecadeShelf) {
+            traktSourceFields = `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Content</label>
+                        <select id="editShelfDecadeMediaType" style="${selectStyle}">${decadeMediaOptions}</select>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Decade</label>
+                        <select id="editShelfDecade" style="${selectStyle}">${decadeOptions}</select>
                     </div>
         `;
         } else {
@@ -6064,6 +6156,19 @@
             const nextId = `genre-${genreId}-${mediaType}`;
             if (nextId !== shelf.id && shelves.some((s) => s.id === nextId)) {
                 alert('That genre shelf already exists.');
+                return;
+            }
+            shelf.id = nextId;
+        } else if (shelf.type === 'decade') {
+            const mediaType = document.getElementById('editShelfDecadeMediaType')?.value || 'movie';
+            const decade = document.getElementById('editShelfDecade')?.value;
+            if (!decade) {
+                alert('Please select a decade');
+                return;
+            }
+            const nextId = `decade-${decade}-${mediaType}`;
+            if (nextId !== shelf.id && shelves.some((s) => s.id === nextId)) {
+                alert('That decade shelf already exists.');
                 return;
             }
             shelf.id = nextId;
