@@ -291,7 +291,9 @@ func TestGetActiveStreams_HeartbeatAgeRemovesEnded(t *testing.T) {
 	)
 	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
 	atomic.StoreInt64(bytesCounter, 50000)
-	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	// Both the progress heartbeat and the transport are stale: the stream has
+	// genuinely ended and should be removed.
+	atomic.StoreInt64(activityCounter, time.Now().Add(-61*time.Second).UnixNano())
 	defer tracker.EndStream(streamID)
 
 	rec := httptest.NewRecorder()
@@ -307,5 +309,63 @@ func TestGetActiveStreams_HeartbeatAgeRemovesEnded(t *testing.T) {
 	}
 	if len(resp.Streams) != 0 {
 		t.Fatalf("expected ended stream to be removed, got %d streams", len(resp.Streams))
+	}
+}
+
+// TestGetActiveStreams_StaleHeartbeatActiveTransportKept covers the case where a
+// client stops sending progress heartbeats after crossing the 90% watched
+// threshold but is still actively streaming. The stream must remain visible (so
+// the dashboard keeps advancing via interpolation) rather than freezing or
+// disappearing.
+func TestGetActiveStreams_StaleHeartbeatActiveTransportKept(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+	handler.SetProgressService(&mockProgressService{
+		all: map[string][]models.PlaybackProgress{
+			"user1": {
+				{
+					ID:             "movie:tmdb:1234",
+					MediaType:      "movie",
+					ItemID:         "tmdb:1234",
+					Position:       6600,
+					Duration:       7200,
+					PercentWatched: 91.6,
+					UpdatedAt:      time.Now().Add(-26 * time.Second).UTC(),
+					MovieName:      "The Matrix",
+					Year:           1999,
+				},
+			},
+		},
+	})
+
+	tracker := GetStreamTracker()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=user1&profileName=Alice&mediaType=movie&itemId=tmdb:1234&title=The%20Matrix&movieName=The%20Matrix&year=1999",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/obfuscated-file-abc123.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	// Heartbeat is stale (past the watched threshold) but transport is fresh.
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 1 {
+		t.Fatalf("expected still-streaming entry to be kept, got %d streams", len(resp.Streams))
+	}
+	if resp.Streams[0].IsPaused {
+		t.Fatalf("expected actively-streaming entry to not be marked paused")
 	}
 }

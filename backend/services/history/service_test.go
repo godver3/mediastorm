@@ -342,6 +342,65 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
+// TestListAllPlaybackProgressKeepsActivePositionPast90 verifies that the
+// active-stream dashboard feed keeps reporting an advancing position after the
+// 90% auto-watched marking clears the underlying playback_progress row.
+func TestListAllPlaybackProgressKeepsActivePositionPast90(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	movie := func(position float64) models.PlaybackProgressUpdate {
+		return models.PlaybackProgressUpdate{
+			MediaType: "movie",
+			ItemID:    "tmdb:1234",
+			Position:  position,
+			Duration:  7200,
+			MovieName: "The Matrix",
+			Year:      1999,
+		}
+	}
+
+	// Below the threshold: stored progress is present as usual.
+	if _, err := svc.UpdatePlaybackProgress("user", movie(3600)); err != nil { // 50%
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// Cross 90%: this marks the movie watched and clears the stored row.
+	if _, err := svc.UpdatePlaybackProgress("user", movie(6552)); err != nil { // 91%
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	// The stored row is gone (so continue-watching won't surface it)...
+	if got, _ := svc.GetPlaybackProgress("user", "movie", "tmdb:1234"); got != nil {
+		t.Fatalf("expected stored progress to be cleared at 90%%, got %+v", got)
+	}
+
+	// ...but the dashboard feed still reports the latest position past 90%.
+	all := svc.ListAllPlaybackProgress()
+	items := all["user"]
+	if len(items) != 1 {
+		t.Fatalf("expected dashboard feed to keep 1 active item, got %d", len(items))
+	}
+	if items[0].PercentWatched < 90 {
+		t.Fatalf("expected active position past 90%%, got %.1f%%", items[0].PercentWatched)
+	}
+	if items[0].Position != 6552 {
+		t.Fatalf("expected active position 6552, got %.0f", items[0].Position)
+	}
+
+	// A further heartbeat keeps advancing the dashboard position.
+	if _, err := svc.UpdatePlaybackProgress("user", movie(6840)); err != nil { // 95%
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+	all = svc.ListAllPlaybackProgress()
+	if got := all["user"][0].Position; got != 6840 {
+		t.Fatalf("expected advanced active position 6840, got %.0f", got)
+	}
+}
+
 func TestContinueWatchingWithoutMetadata(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

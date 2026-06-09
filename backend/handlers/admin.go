@@ -578,14 +578,17 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		if matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
+		matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
 			MediaType: info.MediaType,
 			ItemID:    info.ItemID,
-		}, nameToUserID); matchedProgress != nil && !matchedProgress.UpdatedAt.IsZero() {
-			heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
-			if heartbeatAge > heartbeatEndedThreshold {
-				continue
-			}
+		}, nameToUserID)
+		// Prefer fresh progress heartbeats; once they go stale (e.g. a client
+		// stops scrobbling after crossing the 90% watched threshold) fall back to
+		// raw transport activity so a still-streaming entry isn't dropped or
+		// frozen at the last reported position.
+		heartbeatFresh := matchedProgress != nil && !matchedProgress.UpdatedAt.IsZero() &&
+			now.Sub(matchedProgress.UpdatedAt) <= heartbeatEndedThreshold
+		if heartbeatFresh {
 			if matchedProgress.IsPaused {
 				info.IsPaused = true
 				info.PausedSince = matchedProgress.UpdatedAt

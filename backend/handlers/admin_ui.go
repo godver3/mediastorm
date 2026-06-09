@@ -1977,24 +1977,24 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"posterUrl":      posterURL,
 				"externalIds":    externalIDs,
 			}
-			if matchedProgress != nil {
-				heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
-				if heartbeatAge > heartbeatEndedThreshold {
-					session.mu.RUnlock()
-					continue
+			// Prefer fresh progress heartbeats; once they go stale (e.g. a client
+			// stops scrobbling after crossing the 90% watched threshold) fall back
+			// to raw transport activity so the dashboard keeps advancing via
+			// interpolation instead of freezing at the last reported position.
+			heartbeatFresh := matchedProgress != nil && now.Sub(matchedProgress.UpdatedAt) <= heartbeatEndedThreshold
+			if heartbeatFresh {
+				if matchedProgress.IsPaused {
+					hlsStreamData["is_paused"] = true
 				}
 			} else {
 				hlsIdleDuration := now.Sub(hlsActivity)
 				if hlsIdleDuration > transportHideThreshold {
 					session.mu.RUnlock()
-					continue // Hidden: idle too long
+					continue // Hidden: transport idle too long
 				}
 				if hlsIdleDuration > transportPauseThreshold {
 					hlsStreamData["is_paused"] = true
 				}
-			}
-			if matchedProgress != nil && matchedProgress.IsPaused {
-				hlsStreamData["is_paused"] = true
 			}
 			if matchedProgress != nil {
 				hlsStreamData["last_updated"] = matchedProgress.UpdatedAt
@@ -2071,22 +2071,23 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"posterUrl":      posterURL,
 			"externalIds":    externalIDs,
 		}
-		if matchedProgress != nil {
-			heartbeatAge := now.Sub(matchedProgress.UpdatedAt)
-			if heartbeatAge > heartbeatEndedThreshold {
-				continue
+		// Prefer fresh progress heartbeats; once they go stale (e.g. a client
+		// stops scrobbling after crossing the 90% watched threshold) fall back to
+		// raw transport activity so the dashboard keeps advancing via
+		// interpolation instead of freezing at the last reported position.
+		heartbeatFresh := matchedProgress != nil && now.Sub(matchedProgress.UpdatedAt) <= heartbeatEndedThreshold
+		if heartbeatFresh {
+			if matchedProgress.IsPaused {
+				streamData["is_paused"] = true
 			}
 		} else {
 			idleDuration := now.Sub(stream.LastActivity)
 			if idleDuration > transportHideThreshold {
-				continue // Hidden: idle too long
+				continue // Hidden: transport idle too long
 			}
 			if idleDuration > transportPauseThreshold {
 				streamData["is_paused"] = true
 			}
-		}
-		if matchedProgress != nil && matchedProgress.IsPaused {
-			streamData["is_paused"] = true
 		}
 		if matchedProgress != nil {
 			streamData["last_updated"] = matchedProgress.UpdatedAt

@@ -91,25 +91,31 @@ type cachedContinueWatching struct {
 
 // Service persists watch history for all content (movies, series, episodes).
 type Service struct {
-	mu                    sync.RWMutex
-	store                 *datastore.DataStore
-	path                  string
-	watchHistPath         string
-	playbackProgressPath  string
-	states                map[string]map[string]models.SeriesWatchState // Deprecated: kept for migration only
-	watchHistory          map[string]map[string]models.WatchHistoryItem // Manual watch tracking (all media)
-	playbackProgress      map[string]map[string]models.PlaybackProgress // userID -> mediaKey -> progress
-	metadataService       MetadataService
-	traktScrobbler        TraktScrobbler
-	traktRTScrobbler      TraktRealTimeScrobbler
-	metadataCache         map[string]*cachedSeriesMetadata // seriesID -> metadata (full details)
-	seriesInfoCache       map[string]*cachedSeriesInfo     // seriesID -> lightweight info
-	movieMetadataCache    map[string]*cachedMovieMetadata  // movieID -> metadata
-	metadataCacheTTL      time.Duration
-	continueWatchingCache map[string]*cachedContinueWatching // userID -> continue watching
-	continueWatchingTTL   time.Duration
-	changeMu              sync.RWMutex
-	watchStateChanged     func(userID string)
+	mu                   sync.RWMutex
+	store                *datastore.DataStore
+	path                 string
+	watchHistPath        string
+	playbackProgressPath string
+	states               map[string]map[string]models.SeriesWatchState // Deprecated: kept for migration only
+	watchHistory         map[string]map[string]models.WatchHistoryItem // Manual watch tracking (all media)
+	playbackProgress     map[string]map[string]models.PlaybackProgress // userID -> mediaKey -> progress
+	// activePlaybackProgress mirrors the most recent progress heartbeat for each
+	// item but is NEVER cleared by watched-marking. It exists so the active-stream
+	// dashboard can keep tracking position past the 90% auto-watched threshold
+	// (which clears the row from playbackProgress). Entries are pruned by age on
+	// read. Not persisted — purely in-memory live state.
+	activePlaybackProgress map[string]map[string]models.PlaybackProgress // userID -> mediaKey -> progress
+	metadataService        MetadataService
+	traktScrobbler         TraktScrobbler
+	traktRTScrobbler       TraktRealTimeScrobbler
+	metadataCache          map[string]*cachedSeriesMetadata // seriesID -> metadata (full details)
+	seriesInfoCache        map[string]*cachedSeriesInfo     // seriesID -> lightweight info
+	movieMetadataCache     map[string]*cachedMovieMetadata  // movieID -> metadata
+	metadataCacheTTL       time.Duration
+	continueWatchingCache  map[string]*cachedContinueWatching // userID -> continue watching
+	continueWatchingTTL    time.Duration
+	changeMu               sync.RWMutex
+	watchStateChanged      func(userID string)
 }
 
 type continueWatchingRevisionStats struct {
@@ -126,16 +132,17 @@ func (s *Service) useDB() bool { return s.store != nil }
 // NewServiceWithStore creates a history service backed by PostgreSQL.
 func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
 	svc := &Service{
-		store:                 store,
-		states:                make(map[string]map[string]models.SeriesWatchState),
-		watchHistory:          make(map[string]map[string]models.WatchHistoryItem),
-		playbackProgress:      make(map[string]map[string]models.PlaybackProgress),
-		metadataCache:         make(map[string]*cachedSeriesMetadata),
-		seriesInfoCache:       make(map[string]*cachedSeriesInfo),
-		movieMetadataCache:    make(map[string]*cachedMovieMetadata),
-		metadataCacheTTL:      24 * time.Hour,
-		continueWatchingCache: make(map[string]*cachedContinueWatching),
-		continueWatchingTTL:   10 * time.Minute,
+		store:                  store,
+		states:                 make(map[string]map[string]models.SeriesWatchState),
+		watchHistory:           make(map[string]map[string]models.WatchHistoryItem),
+		playbackProgress:       make(map[string]map[string]models.PlaybackProgress),
+		activePlaybackProgress: make(map[string]map[string]models.PlaybackProgress),
+		metadataCache:          make(map[string]*cachedSeriesMetadata),
+		seriesInfoCache:        make(map[string]*cachedSeriesInfo),
+		movieMetadataCache:     make(map[string]*cachedMovieMetadata),
+		metadataCacheTTL:       24 * time.Hour,
+		continueWatchingCache:  make(map[string]*cachedContinueWatching),
+		continueWatchingTTL:    10 * time.Minute,
 	}
 
 	if err := svc.loadWatchHistory(); err != nil {
@@ -160,18 +167,19 @@ func NewService(storageDir string) (*Service, error) {
 	}
 
 	svc := &Service{
-		path:                  filepath.Join(storageDir, "watch_history.json"),
-		watchHistPath:         filepath.Join(storageDir, "watched_items.json"),
-		playbackProgressPath:  filepath.Join(storageDir, "playback_progress.json"),
-		states:                make(map[string]map[string]models.SeriesWatchState),
-		watchHistory:          make(map[string]map[string]models.WatchHistoryItem),
-		playbackProgress:      make(map[string]map[string]models.PlaybackProgress),
-		metadataCache:         make(map[string]*cachedSeriesMetadata),
-		seriesInfoCache:       make(map[string]*cachedSeriesInfo),
-		movieMetadataCache:    make(map[string]*cachedMovieMetadata),
-		metadataCacheTTL:      24 * time.Hour, // Cache metadata for 24 hours - ensures new episodes are detected daily
-		continueWatchingCache: make(map[string]*cachedContinueWatching),
-		continueWatchingTTL:   10 * time.Minute, // Cache continue watching response for 10 minutes - reduces frequent rebuilds
+		path:                   filepath.Join(storageDir, "watch_history.json"),
+		watchHistPath:          filepath.Join(storageDir, "watched_items.json"),
+		playbackProgressPath:   filepath.Join(storageDir, "playback_progress.json"),
+		states:                 make(map[string]map[string]models.SeriesWatchState),
+		watchHistory:           make(map[string]map[string]models.WatchHistoryItem),
+		playbackProgress:       make(map[string]map[string]models.PlaybackProgress),
+		activePlaybackProgress: make(map[string]map[string]models.PlaybackProgress),
+		metadataCache:          make(map[string]*cachedSeriesMetadata),
+		seriesInfoCache:        make(map[string]*cachedSeriesInfo),
+		movieMetadataCache:     make(map[string]*cachedMovieMetadata),
+		metadataCacheTTL:       24 * time.Hour, // Cache metadata for 24 hours - ensures new episodes are detected daily
+		continueWatchingCache:  make(map[string]*cachedContinueWatching),
+		continueWatchingTTL:    10 * time.Minute, // Cache continue watching response for 10 minutes - reduces frequent rebuilds
 	}
 
 	if err := svc.load(); err != nil {
@@ -3256,6 +3264,11 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	}
 	perUser[canonicalKey] = progress
 
+	// Mirror the heartbeat into the active-progress map so the active-stream
+	// dashboard can keep tracking position even after the row above is cleared by
+	// the 90% auto-watched marking below. This is in-memory live state only.
+	s.recordActiveProgressLocked(userID, progress)
+
 	// Clear hidden flag for related series entries when new progress is logged
 	// This ensures the series reappears in continue watching when user resumes watching
 	if update.SeriesID != "" {
@@ -3740,19 +3753,71 @@ func (s *Service) syncProgressToDB() error {
 	})
 }
 
-// ListAllPlaybackProgress returns all playback progress for all users (for admin dashboard).
-func (s *Service) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// activeProgressTTL bounds how long a heartbeat lingers in activePlaybackProgress
+// after the last update. It must exceed the dashboard's own heartbeat-ended
+// threshold so the dashboard, not this map, decides when a stream has stopped.
+const activeProgressTTL = 2 * time.Minute
 
-	result := make(map[string][]models.PlaybackProgress)
+// recordActiveProgressLocked stores the latest heartbeat for an item in the
+// active-progress map. Callers must hold s.mu.
+func (s *Service) recordActiveProgressLocked(userID string, progress models.PlaybackProgress) {
+	if s.activePlaybackProgress == nil {
+		s.activePlaybackProgress = make(map[string]map[string]models.PlaybackProgress)
+	}
+	perUser, ok := s.activePlaybackProgress[userID]
+	if !ok {
+		perUser = make(map[string]models.PlaybackProgress)
+		s.activePlaybackProgress[userID] = perUser
+	}
+	perUser[progress.ID] = progress
+}
+
+// ListAllPlaybackProgress returns playback progress for the active-stream
+// dashboard. Live heartbeats (activePlaybackProgress) are overlaid on the stored
+// progress so position keeps advancing past the 90% auto-watched threshold,
+// which clears the underlying row. This method is the dashboard feed only;
+// continue-watching uses GetContinueWatching.
+func (s *Service) ListAllPlaybackProgress() map[string][]models.PlaybackProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	merged := make(map[string]map[string]models.PlaybackProgress)
 	for userID, perUser := range s.playbackProgress {
-		items := make([]models.PlaybackProgress, 0, len(perUser))
 		for _, progress := range perUser {
 			// Only include items that haven't been hidden from continue watching
-			if !progress.HiddenFromContinueWatching {
-				items = append(items, progress)
+			if progress.HiddenFromContinueWatching {
+				continue
 			}
+			if merged[userID] == nil {
+				merged[userID] = make(map[string]models.PlaybackProgress)
+			}
+			merged[userID][progress.ID] = progress
+		}
+	}
+
+	// Overlay fresher live heartbeats, pruning stale entries as we go.
+	for userID, perUser := range s.activePlaybackProgress {
+		for key, progress := range perUser {
+			if now.Sub(progress.UpdatedAt) > activeProgressTTL {
+				delete(perUser, key)
+				continue
+			}
+			if merged[userID] == nil {
+				merged[userID] = make(map[string]models.PlaybackProgress)
+			}
+			merged[userID][progress.ID] = progress
+		}
+		if len(perUser) == 0 {
+			delete(s.activePlaybackProgress, userID)
+		}
+	}
+
+	result := make(map[string][]models.PlaybackProgress, len(merged))
+	for userID, perUser := range merged {
+		items := make([]models.PlaybackProgress, 0, len(perUser))
+		for _, progress := range perUser {
+			items = append(items, progress)
 		}
 		if len(items) > 0 {
 			result[userID] = items
