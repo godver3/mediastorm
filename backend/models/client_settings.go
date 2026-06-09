@@ -57,6 +57,7 @@ type ClientFilterSettings struct {
 	IgnoreDVCompatibilityCheck *bool    `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"`
 	CreditsDetectionEnabled    *bool    `json:"creditsDetectionEnabled,omitempty"`
 	CreditsAutoSkip            *bool    `json:"creditsAutoSkip,omitempty"`
+	MatchFrameRate             *bool    `json:"matchFrameRate,omitempty"`
 	MaxResultsPerResolution    *int     `json:"maxResultsPerResolution,omitempty"`
 
 	// Ranking criteria overrides
@@ -113,6 +114,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.IgnoreDVCompatibilityCheck == nil &&
 		c.CreditsDetectionEnabled == nil &&
 		c.CreditsAutoSkip == nil &&
+		c.MatchFrameRate == nil &&
 		c.MaxResultsPerResolution == nil &&
 		c.HomeWifiSSID == nil &&
 		c.HomeBackendUrl == nil &&

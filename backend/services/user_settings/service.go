@@ -228,6 +228,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.CreditsDetectionEnabled == nil {
 			settings.Playback.CreditsDetectionEnabled = defaults.Playback.CreditsDetectionEnabled
 		}
+		if settings.Playback.MatchFrameRate == nil {
+			settings.Playback.MatchFrameRate = defaults.Playback.MatchFrameRate
+		}
 
 		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
 		if settings.Display.BadgeVisibility == nil {
@@ -491,6 +494,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.SeekBackwardSeconds != 0 ||
 		s.Playback.ForceAACTranscoding ||
 		s.Playback.AutoPlayTrailersTV ||
+		s.Playback.MatchFrameRate != nil ||
 		s.Playback.DisablePrequeue {
 		return false
 	}

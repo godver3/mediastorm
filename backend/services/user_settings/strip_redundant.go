@@ -142,6 +142,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			IgnoreDVCompatibilityCheck: models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(g.Playback.CreditsDetectionEnabled),
 			CreditsAutoSkip:            g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
+			MatchFrameRate:             models.BoolPtr(g.Playback.MatchFrameRate),
 			MaxResultsPerResolution:    models.IntPtr(g.Playback.MaxResultsPerResolution),
 		},
 		Filtering: models.FilterSettings{
@@ -314,6 +315,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.CreditsDetectionEnabled == nil {
 		eff.Playback.CreditsDetectionEnabled = models.BoolPtr(g.Playback.CreditsDetectionEnabled)
+	}
+	if eff.Playback.MatchFrameRate == nil {
+		eff.Playback.MatchFrameRate = models.BoolPtr(g.Playback.MatchFrameRate)
 	}
 	if eff.Playback.MaxResultsPerResolution == nil {
 		eff.Playback.MaxResultsPerResolution = models.IntPtr(g.Playback.MaxResultsPerResolution)
@@ -573,6 +577,10 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.CreditsDetectionEnabled != nil && *p.CreditsDetectionEnabled == g.CreditsDetectionEnabled {
 		p.CreditsDetectionEnabled = nil
+		changed = true
+	}
+	if p.MatchFrameRate != nil && *p.MatchFrameRate == g.MatchFrameRate {
+		p.MatchFrameRate = nil
 		changed = true
 	}
 	if p.DisablePrequeue && p.DisablePrequeue == g.DisablePrequeue {
@@ -886,6 +894,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.CreditsAutoSkip != nil && *cs.CreditsAutoSkip == eff.Playback.CreditsAutoSkip {
 		cs.CreditsAutoSkip = nil
+		changed = true
+	}
+	if cs.MatchFrameRate != nil && eff.Playback.MatchFrameRate != nil && *cs.MatchFrameRate == *eff.Playback.MatchFrameRate {
+		cs.MatchFrameRate = nil
 		changed = true
 	}
 	if cs.DisablePrequeue != nil && *cs.DisablePrequeue == eff.Playback.DisablePrequeue {

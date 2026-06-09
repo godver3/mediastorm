@@ -579,9 +579,10 @@ var SettingsSchema = map[string]interface{}{
 			"disablePrequeue":         map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
 			"creditsDetectionEnabled": map[string]interface{}{"type": "boolean", "label": "Credits Detection", "description": "Run on-device OCR near the end of eligible episodes to detect credits and show next-episode actions.", "order": 102},
 			"creditsAutoSkip":         map[string]interface{}{"type": "boolean", "label": "Auto-Skip Credits", "description": "Automatically start the next episode after on-device credits detection fires.", "order": 103},
-			"maxResultsPerResolution": map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)", "order": 104},
-			"youtubeProxyUrl":         map[string]interface{}{"type": "password", "label": "Proxy URL", "description": "Optional HTTP proxy for YouTube extraction and HLS playback. For Gluetun, use http://gluetun:8888.", "placeholder": "http://gluetun:8888", "order": 105, "group": "youtubeYTDLP", "groupLabel": "YouTube / yt-dlp", "groupDescription": "Server-side YouTube extraction settings used for trailers, YouTube video search, and HLS playback.", "globalOnly": true},
-			"ytdlpCookies":            map[string]interface{}{"type": "file_upload", "label": "Cookies", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 106, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true, "group": "youtubeYTDLP", "groupLabel": "YouTube / yt-dlp", "groupDescription": "Server-side YouTube extraction settings used for trailers, YouTube video search, and HLS playback."},
+			"matchFrameRate":          map[string]interface{}{"type": "boolean", "label": "Match Frame Rate", "description": "On supported TV devices, request a display refresh rate that matches the video's frame rate during native playback.", "order": 104},
+			"maxResultsPerResolution": map[string]interface{}{"type": "number", "label": "Max Results Per Resolution", "description": "Maximum number of results per resolution tier (0 = no limit)", "order": 105},
+			"youtubeProxyUrl":         map[string]interface{}{"type": "password", "label": "Proxy URL", "description": "Optional HTTP proxy for YouTube extraction and HLS playback. For Gluetun, use http://gluetun:8888.", "placeholder": "http://gluetun:8888", "order": 106, "group": "youtubeYTDLP", "groupLabel": "YouTube / yt-dlp", "groupDescription": "Server-side YouTube extraction settings used for trailers, YouTube video search, and HLS playback.", "globalOnly": true},
+			"ytdlpCookies":            map[string]interface{}{"type": "file_upload", "label": "Cookies", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 107, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true, "group": "youtubeYTDLP", "groupLabel": "YouTube / yt-dlp", "groupDescription": "Server-side YouTube extraction settings used for trailers, YouTube video search, and HLS playback."},
 		},
 	},
 	"homeShelves": map[string]interface{}{
@@ -2512,6 +2513,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
 			CreditsAutoSkip:            globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
+			MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),
 			MaxResultsPerResolution:    models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
 		},
 		HomeShelves: models.HomeShelvesSettings{
@@ -2711,6 +2713,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 						IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 						CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
 						CreditsAutoSkip:            globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
+						MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),
 						MaxResultsPerResolution:    models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
 					},
 					HomeShelves: models.HomeShelvesSettings{

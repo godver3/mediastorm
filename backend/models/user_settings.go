@@ -324,6 +324,7 @@ type PlaybackSettings struct {
 	CreditsDetectionEnabled    *bool    `json:"creditsDetectionEnabled,omitempty"`             // Enable on-device credits detection/OCR during playback
 	CreditsAutoSkip            bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	CreditsDetection           bool     `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
+	MatchFrameRate             *bool    `json:"matchFrameRate,omitempty"`                      // Request TV display refresh rate matching during playback
 	MaxConcurrentStreams       *int     `json:"maxConcurrentStreams,omitempty"`                // Per-profile concurrent stream limit (nil = use account limit)
 	MaxResultsPerResolution    *int     `json:"maxResultsPerResolution,omitempty"`             // Maximum number of results per resolution tier (0 = no limit)
 }
@@ -548,6 +549,7 @@ func DefaultUserSettings() UserSettings {
 			SeekBackwardSeconds:        10,
 			IgnoreDVCompatibilityCheck: BoolPtr(false),
 			CreditsDetectionEnabled:    BoolPtr(true),
+			MatchFrameRate:             BoolPtr(true),
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves:                         DefaultHomeShelfConfigs(),

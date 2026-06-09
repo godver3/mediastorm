@@ -640,6 +640,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
 			CreditsAutoSkip:            globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection,
+			MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),
 			MaxResultsPerResolution:    models.IntPtr(globalSettings.Playback.MaxResultsPerResolution),
 		},
 		HomeShelves: models.HomeShelvesSettings{

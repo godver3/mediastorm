@@ -422,6 +422,18 @@ function renderSettings() {
                 </div>
                 <div class="setting-row">
                     <div class="setting-label">
+                        <h4>Match Frame Rate</h4>
+                        <p>On supported TV devices, request a display refresh rate that matches the video's frame rate during native playback</p>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="matchFrameRate" ${s.playback.matchFrameRate ? 'checked' : ''} onchange="markChanged()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
                         <h4>Credits Detection</h4>
                         <p>Use on-device OCR near the end of episodes to detect credits and show next-episode actions</p>
                     </div>
@@ -716,6 +728,7 @@ function collectSettings() {
             subtitleBackgroundOpacity: Number.isFinite(subtitleBackgroundOpacity) ? subtitleBackgroundOpacity : 0.6,
             pauseWhenAppInactive: document.getElementById('pauseWhenAppInactive').checked,
             ignoreDolbyVisionCompatibilityCheck: document.getElementById('ignoreDolbyVisionCompatibilityCheck').checked,
+            matchFrameRate: document.getElementById('matchFrameRate').checked,
             creditsDetectionEnabled: document.getElementById('creditsDetectionEnabled').checked,
             useLoadingScreen: document.getElementById('useLoadingScreen').checked,
         },
