@@ -89,6 +89,8 @@ type DisplaySettings struct {
 	WatchStateIconStyle string `json:"watchStateIconStyle,omitempty"`
 	// BypassFilteringForAIOStreamsOnly skips mediastorm filtering/ranking when AIOStreams is the only enabled scraper.
 	BypassFilteringForAIOStreamsOnly *bool `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	// DisableMobileTopCarousel hides the top hero carousel on mobile home.
+	DisableMobileTopCarousel *bool `json:"disableMobileTopCarousel,omitempty"`
 	// AppLanguage overrides the app UI language (ISO 639-1 code, e.g. "en", "fr"). Empty = use device locale.
 	AppLanguage string `json:"appLanguage,omitempty"`
 	// Appearance controls app-wide visual accessibility and theming preferences.
@@ -566,9 +568,10 @@ func DefaultUserSettings() UserSettings {
 			SelectedCategories: []string{},
 		},
 		Display: DisplaySettings{
-			BadgeVisibility:         []string{"watchProgress"},
-			NavigationTabVisibility: []string{"home", "search", "lists", "live", "profiles", "downloads"},
-			WatchStateIconStyle:     "colored",
+			BadgeVisibility:          []string{"watchProgress"},
+			NavigationTabVisibility:  []string{"home", "search", "lists", "live", "profiles", "downloads"},
+			WatchStateIconStyle:      "colored",
+			DisableMobileTopCarousel: BoolPtr(false),
 			Appearance: AppearanceSettings{
 				FontScale:    FloatPtr(1.0),
 				ButtonStyle:  "soft",

@@ -205,6 +205,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			NavigationTabVisibility:          globalSettings.Display.NavigationTabVisibility,
 			WatchStateIconStyle:              globalSettings.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
+			DisableMobileTopCarousel:         models.BoolPtr(globalSettings.Display.DisableMobileTopCarousel),
 			AppLanguage:                      globalSettings.Display.AppLanguage,
 			Appearance: models.AppearanceSettings{
 				FontScale:            globalSettings.Display.Appearance.FontScale,

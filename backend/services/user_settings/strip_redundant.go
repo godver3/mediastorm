@@ -165,6 +165,7 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			NavigationTabVisibility:          g.Display.NavigationTabVisibility,
 			WatchStateIconStyle:              g.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly),
+			DisableMobileTopCarousel:         models.BoolPtr(g.Display.DisableMobileTopCarousel),
 			AppLanguage:                      g.Display.AppLanguage,
 			Appearance: models.AppearanceSettings{
 				FontScale:            g.Display.Appearance.FontScale,
@@ -351,6 +352,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Display.BypassFilteringForAIOStreamsOnly == nil {
 		eff.Display.BypassFilteringForAIOStreamsOnly = models.BoolPtr(g.Display.BypassFilteringForAIOStreamsOnly)
+	}
+	if eff.Display.DisableMobileTopCarousel == nil {
+		eff.Display.DisableMobileTopCarousel = models.BoolPtr(g.Display.DisableMobileTopCarousel)
 	}
 
 	// AnimeFiltering
@@ -680,6 +684,10 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 		d.BypassFilteringForAIOStreamsOnly = nil
 		changed = true
 	}
+	if d.DisableMobileTopCarousel != nil && *d.DisableMobileTopCarousel == g.DisableMobileTopCarousel {
+		d.DisableMobileTopCarousel = nil
+		changed = true
+	}
 	if d.AppLanguage != "" && d.AppLanguage == g.AppLanguage {
 		d.AppLanguage = ""
 		changed = true
@@ -932,6 +940,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.BypassFilteringForAIOStreamsOnly != nil && eff.Display.BypassFilteringForAIOStreamsOnly != nil && *cs.BypassFilteringForAIOStreamsOnly == *eff.Display.BypassFilteringForAIOStreamsOnly {
 		cs.BypassFilteringForAIOStreamsOnly = nil
+		changed = true
+	}
+	if cs.DisableMobileTopCarousel != nil && eff.Display.DisableMobileTopCarousel != nil && *cs.DisableMobileTopCarousel == *eff.Display.DisableMobileTopCarousel {
+		cs.DisableMobileTopCarousel = nil
 		changed = true
 	}
 	if cs.NavigationTabVisibility != nil && stringSliceEqualUnordered(*cs.NavigationTabVisibility, eff.Display.NavigationTabVisibility) {

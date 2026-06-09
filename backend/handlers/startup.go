@@ -663,6 +663,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 		},
 		Display: models.DisplaySettings{
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
+			DisableMobileTopCarousel:         models.BoolPtr(globalSettings.Display.DisableMobileTopCarousel),
 			AppLanguage:                      globalSettings.Display.AppLanguage,
 			Appearance: models.AppearanceSettings{
 				FontScale:            globalSettings.Display.Appearance.FontScale,

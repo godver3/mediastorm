@@ -25,6 +25,7 @@ type ClientFilterSettings struct {
 
 	// Display overrides
 	BypassFilteringForAIOStreamsOnly *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	DisableMobileTopCarousel         *bool               `json:"disableMobileTopCarousel,omitempty"`
 	NavigationTabVisibility          *[]string           `json:"navigationTabVisibility,omitempty"`
 	Appearance                       *AppearanceSettings `json:"appearance,omitempty"`
 
@@ -82,6 +83,7 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.AnimeLanguageEnabled == nil &&
 		c.AnimePreferredLanguage == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&
+		c.DisableMobileTopCarousel == nil &&
 		c.NavigationTabVisibility == nil &&
 		c.Appearance == nil &&
 		c.PreferredPlayer == nil &&

@@ -242,6 +242,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.BypassFilteringForAIOStreamsOnly == nil {
 			settings.Display.BypassFilteringForAIOStreamsOnly = defaults.Display.BypassFilteringForAIOStreamsOnly
 		}
+		if settings.Display.DisableMobileTopCarousel == nil {
+			settings.Display.DisableMobileTopCarousel = defaults.Display.DisableMobileTopCarousel
+		}
 		if settings.Display.AppLanguage == "" {
 			settings.Display.AppLanguage = defaults.Display.AppLanguage
 		}
@@ -542,6 +545,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		len(s.Display.NavigationTabVisibility) > 0 ||
 		s.Display.WatchStateIconStyle != "" ||
 		s.Display.BypassFilteringForAIOStreamsOnly != nil ||
+		s.Display.DisableMobileTopCarousel != nil ||
 		s.Display.AppLanguage != "" ||
 		s.Display.Appearance.FontScale != nil ||
 		s.Display.Appearance.AccentColor != "" ||
