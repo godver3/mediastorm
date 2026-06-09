@@ -291,6 +291,18 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 				settings.HomeShelves.ItemCap = 20
 			}
 		}
+		if settings.HomeShelves.MobileTopShelfMode == "" {
+			settings.HomeShelves.MobileTopShelfMode = defaults.HomeShelves.MobileTopShelfMode
+		}
+		if settings.HomeShelves.MobileTopShelfSourceID == "" {
+			settings.HomeShelves.MobileTopShelfSourceID = defaults.HomeShelves.MobileTopShelfSourceID
+		}
+		if settings.HomeShelves.TVTopShelfMode == "" {
+			settings.HomeShelves.TVTopShelfMode = defaults.HomeShelves.TVTopShelfMode
+		}
+		if settings.HomeShelves.TVTopShelfSourceID == "" {
+			settings.HomeShelves.TVTopShelfSourceID = defaults.HomeShelves.TVTopShelfSourceID
+		}
 		if settings.HomeShelves.DisableTvLandscapeCardExpansion == nil {
 			settings.HomeShelves.DisableTvLandscapeCardExpansion = defaults.HomeShelves.DisableTvLandscapeCardExpansion
 			if settings.HomeShelves.DisableTvLandscapeCardExpansion == nil {
@@ -503,6 +515,10 @@ func isSettingsEmpty(s models.UserSettings) bool {
 	if len(s.HomeShelves.Shelves) > 0 ||
 		s.HomeShelves.ExploreCardPosition != "" ||
 		s.HomeShelves.ItemCap != 0 ||
+		s.HomeShelves.MobileTopShelfMode != "" ||
+		s.HomeShelves.MobileTopShelfSourceID != "" ||
+		s.HomeShelves.TVTopShelfMode != "" ||
+		s.HomeShelves.TVTopShelfSourceID != "" ||
 		s.HomeShelves.DisableTvLandscapeCardExpansion != nil ||
 		s.HomeShelves.HomeShelfScale != nil ||
 		s.HomeShelves.HomeHeroScale != nil {

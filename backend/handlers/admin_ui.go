@@ -593,9 +593,13 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"exploreCardPosition":             map[string]interface{}{"type": "select", "label": "Explore Card Position", "options": []string{"front", "end"}, "description": "Where the Explore card appears on shelves", "order": 1},
 			"itemCap":                         map[string]interface{}{"type": "number", "label": "Shelf Item Cap", "description": "Max items shown per home shelf before the Explore card (default 20)", "order": 2, "step": 1, "min": 1, "max": 100},
-			"disableTvLandscapeCardExpansion": map[string]interface{}{"type": "boolean", "label": "Disable TV Card Expansion", "description": "Keep portrait shelf cards from expanding into landscape layout when focused on TV home screens.", "order": 3},
-			"homeShelfScale":                  map[string]interface{}{"type": "number", "label": "TV Shelf Scale", "description": "Scale TV home shelf headers, cards, card overlays, and hero text. Lower values fit more shelves on screen.", "order": 4, "step": 0.05, "min": 0.5, "max": 1.0},
-			"homeHeroScale":                   map[string]interface{}{"type": "number", "label": "TV Hero Area Scale", "description": "Scale the upper TV hero region and top-right hero artwork. Lower values move shelves higher.", "order": 5, "step": 0.05, "min": 0.5, "max": 1.0},
+			"mobileTopShelfMode":              map[string]interface{}{"type": "select", "label": "Mobile Top Carousel", "options": []map[string]string{{"value": "default", "label": "Default"}, {"value": "disabled", "label": "Disabled"}, {"value": "shelf", "label": "Use Shelf"}}, "description": "Controls the top carousel on mobile home. Default preserves the current Top 10/fallback behavior.", "order": 3},
+			"mobileTopShelfSourceId":          map[string]interface{}{"type": "select", "label": "Mobile Carousel Source", "optionsFrom": "homeShelves", "description": "Shelf shown in the mobile top carousel when Mobile Top Carousel is set to Use Shelf.", "order": 4, "showWhen": "mobileTopShelfMode=shelf"},
+			"tvTopShelfMode":                  map[string]interface{}{"type": "select", "label": "TV Top Shelf", "options": []map[string]string{{"value": "default", "label": "Default"}, {"value": "disabled", "label": "Disabled"}, {"value": "shelf", "label": "Use Shelf"}}, "description": "Controls the first Top 10 shelf position on TV home.", "order": 5},
+			"tvTopShelfSourceId":              map[string]interface{}{"type": "select", "label": "TV Top Shelf Source", "optionsFrom": "homeShelves", "description": "Shelf that replaces Top 10 on TV when TV Top Shelf is set to Use Shelf.", "order": 6, "showWhen": "tvTopShelfMode=shelf"},
+			"disableTvLandscapeCardExpansion": map[string]interface{}{"type": "boolean", "label": "Disable TV Card Expansion", "description": "Keep portrait shelf cards from expanding into landscape layout when focused on TV home screens.", "order": 7},
+			"homeShelfScale":                  map[string]interface{}{"type": "number", "label": "TV Shelf Scale", "description": "Scale TV home shelf headers, cards, card overlays, and hero text. Lower values fit more shelves on screen.", "order": 8, "step": 0.05, "min": 0.5, "max": 1.0},
+			"homeHeroScale":                   map[string]interface{}{"type": "number", "label": "TV Hero Area Scale", "description": "Scale the upper TV hero region and top-right hero artwork. Lower values move shelves higher.", "order": 9, "step": 0.05, "min": 0.5, "max": 1.0},
 		},
 	},
 	"homeShelves.shelves": map[string]interface{}{
@@ -689,7 +693,6 @@ var SettingsSchema = map[string]interface{}{
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet.", "order": 5},
 			"showParsedBadges":                 map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 6},
 			"cleanPosters":                     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 7},
-			"disableMobileTopCarousel":         map[string]interface{}{"type": "boolean", "label": "Disable Mobile Top Carousel", "description": "Hide the top carousel on mobile home so shelves start at the top", "order": 7.5},
 			"appLanguage": map[string]interface{}{
 				"type":        "select",
 				"label":       "App Language",

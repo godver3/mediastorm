@@ -98,6 +98,38 @@ func TestLoadClampsHomeShelfAndHeroScale(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesHomeTopShelfSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"homeShelves":{
+		"shelves":[],
+		"mobileTopShelfMode":"shelf",
+		"mobileTopShelfSourceId":"calendar",
+		"tvTopShelfMode":"disabled",
+		"tvTopShelfSourceId":"continue-watching"
+	}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.HomeShelves.MobileTopShelfMode != "shelf" {
+		t.Fatalf("MobileTopShelfMode = %q, want shelf", settings.HomeShelves.MobileTopShelfMode)
+	}
+	if settings.HomeShelves.MobileTopShelfSourceID != "calendar" {
+		t.Fatalf("MobileTopShelfSourceID = %q, want calendar", settings.HomeShelves.MobileTopShelfSourceID)
+	}
+	if settings.HomeShelves.TVTopShelfMode != "disabled" {
+		t.Fatalf("TVTopShelfMode = %q, want disabled", settings.HomeShelves.TVTopShelfMode)
+	}
+	if settings.HomeShelves.TVTopShelfSourceID != "continue-watching" {
+		t.Fatalf("TVTopShelfSourceID = %q, want continue-watching", settings.HomeShelves.TVTopShelfSourceID)
+	}
+}
+
 func TestLoadBackfillsStreamingServicesHomeShelf(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"homeShelves":{"shelves":[

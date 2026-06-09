@@ -185,6 +185,10 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			Shelves:                         configShelvesToModel(g.HomeShelves.Shelves),
 			ExploreCardPosition:             string(g.HomeShelves.ExploreCardPosition),
 			ItemCap:                         g.HomeShelves.ItemCap,
+			MobileTopShelfMode:              g.HomeShelves.MobileTopShelfMode,
+			MobileTopShelfSourceID:          g.HomeShelves.MobileTopShelfSourceID,
+			TVTopShelfMode:                  g.HomeShelves.TVTopShelfMode,
+			TVTopShelfSourceID:              g.HomeShelves.TVTopShelfSourceID,
 			DisableTvLandscapeCardExpansion: models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion),
 			HomeShelfScale:                  models.FloatPtr(g.HomeShelves.HomeShelfScale),
 			HomeHeroScale:                   models.FloatPtr(g.HomeShelves.HomeHeroScale),
@@ -421,6 +425,18 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.HomeShelves.ItemCap <= 0 {
 		eff.HomeShelves.ItemCap = g.HomeShelves.ItemCap
+	}
+	if eff.HomeShelves.MobileTopShelfMode == "" {
+		eff.HomeShelves.MobileTopShelfMode = g.HomeShelves.MobileTopShelfMode
+	}
+	if eff.HomeShelves.MobileTopShelfSourceID == "" {
+		eff.HomeShelves.MobileTopShelfSourceID = g.HomeShelves.MobileTopShelfSourceID
+	}
+	if eff.HomeShelves.TVTopShelfMode == "" {
+		eff.HomeShelves.TVTopShelfMode = g.HomeShelves.TVTopShelfMode
+	}
+	if eff.HomeShelves.TVTopShelfSourceID == "" {
+		eff.HomeShelves.TVTopShelfSourceID = g.HomeShelves.TVTopShelfSourceID
 	}
 	if eff.HomeShelves.DisableTvLandscapeCardExpansion == nil {
 		eff.HomeShelves.DisableTvLandscapeCardExpansion = models.BoolPtr(g.HomeShelves.DisableTvLandscapeCardExpansion)
@@ -659,6 +675,22 @@ func stripHomeShelves(h *models.HomeShelvesSettings, g config.HomeShelvesSetting
 		h.ItemCap = 0
 		changed = true
 	}
+	if h.MobileTopShelfMode != "" && normalizeHomeTopShelfMode(h.MobileTopShelfMode) == normalizeHomeTopShelfMode(g.MobileTopShelfMode) {
+		h.MobileTopShelfMode = ""
+		changed = true
+	}
+	if h.MobileTopShelfSourceID != "" && h.MobileTopShelfSourceID == g.MobileTopShelfSourceID {
+		h.MobileTopShelfSourceID = ""
+		changed = true
+	}
+	if h.TVTopShelfMode != "" && normalizeHomeTopShelfMode(h.TVTopShelfMode) == normalizeHomeTopShelfMode(g.TVTopShelfMode) {
+		h.TVTopShelfMode = ""
+		changed = true
+	}
+	if h.TVTopShelfSourceID != "" && h.TVTopShelfSourceID == g.TVTopShelfSourceID {
+		h.TVTopShelfSourceID = ""
+		changed = true
+	}
 	if h.DisableTvLandscapeCardExpansion != nil && *h.DisableTvLandscapeCardExpansion == g.DisableTvLandscapeCardExpansion {
 		h.DisableTvLandscapeCardExpansion = nil
 		changed = true
@@ -672,6 +704,13 @@ func stripHomeShelves(h *models.HomeShelvesSettings, g config.HomeShelvesSetting
 		changed = true
 	}
 	return changed
+}
+
+func normalizeHomeTopShelfMode(mode string) string {
+	if mode == "" {
+		return "default"
+	}
+	return mode
 }
 
 func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {

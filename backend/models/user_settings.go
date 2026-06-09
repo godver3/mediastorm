@@ -355,6 +355,10 @@ type HomeShelvesSettings struct {
 	Shelves                         []ShelfConfig `json:"shelves"`
 	ExploreCardPosition             string        `json:"exploreCardPosition,omitempty"`             // "front" (default) or "end"
 	ItemCap                         int           `json:"itemCap,omitempty"`                         // Max items shown per home shelf before Explore card (default 20)
+	MobileTopShelfMode              string        `json:"mobileTopShelfMode,omitempty"`              // "default", "disabled", or "shelf"
+	MobileTopShelfSourceID          string        `json:"mobileTopShelfSourceId,omitempty"`          // Shelf ID used when mobileTopShelfMode is "shelf"
+	TVTopShelfMode                  string        `json:"tvTopShelfMode,omitempty"`                  // "default", "disabled", or "shelf"
+	TVTopShelfSourceID              string        `json:"tvTopShelfSourceId,omitempty"`              // Shelf ID used when tvTopShelfMode is "shelf"
 	DisableTvLandscapeCardExpansion *bool         `json:"disableTvLandscapeCardExpansion,omitempty"` // Keep TV shelf cards in portrait when focused
 	HomeShelfScale                  *float64      `json:"homeShelfScale,omitempty"`                  // TV home shelf/card scale, 0.5-1.0 (default 1.0)
 	HomeHeroScale                   *float64      `json:"homeHeroScale,omitempty"`                   // TV upper hero/art scale, 0.5-1.0 (default 1.0)

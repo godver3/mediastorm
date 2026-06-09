@@ -1442,33 +1442,35 @@
         {
             key: 'display',
             label: 'Display',
-            description: 'Badge Icon Style, navigation tabs, filtering bypass, mobile carousel, appearance',
+            description: 'Badge Icon Style, navigation tabs, filtering bypass, appearance',
             detailSection: 'Display',
-            detailFields: ['Badge Icon Style', 'Navigation Tabs', 'Bypass Filtering for AIOStreams Only', 'Disable Mobile Top Carousel', 'appearance'],
+            detailFields: ['Badge Icon Style', 'Navigation Tabs', 'Bypass Filtering for AIOStreams Only', 'appearance'],
             userPaths: [
                 'display.watchStateIconStyle',
                 'display.navigationTabVisibility',
                 'display.bypassFilteringForAioStreamsOnly',
-                'display.disableMobileTopCarousel',
                 'display.appearance',
             ],
             clientPaths: [
                 'navigationTabVisibility',
                 'bypassFilteringForAioStreamsOnly',
-                'disableMobileTopCarousel',
                 'appearance',
             ],
         },
         {
             key: 'homeShelves',
             label: 'Home Shelves',
-            description: 'Shelf configuration, item cap, Explore Card Position, TV Shelf Scale, TV Hero Area Scale',
+            description: 'Shelf configuration, top carousel/shelf behavior, item cap, Explore Card Position, TV Shelf Scale, TV Hero Area Scale',
             detailSection: 'Home Shelves',
             matchAllDetailFields: true,
             userPaths: [
                 'homeShelves.shelves',
                 'homeShelves.exploreCardPosition',
                 'homeShelves.itemCap',
+                'homeShelves.mobileTopShelfMode',
+                'homeShelves.mobileTopShelfSourceId',
+                'homeShelves.tvTopShelfMode',
+                'homeShelves.tvTopShelfSourceId',
                 'homeShelves.disableTvLandscapeCardExpansion',
                 'homeShelves.homeShelfScale',
                 'homeShelves.homeHeroScale',
@@ -2121,7 +2123,7 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'unknownTrackPolicy'];
-    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'disableMobileTopCarousel', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
+    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
     const clientPlaybackFields = [
         'preferredPlayer',
         'preferredAudioLanguage',
@@ -2429,6 +2431,10 @@
     }
 
     function normalizeForComparisonForField(section, key, val) {
+        if (section === 'homeShelves' && (key === 'mobileTopShelfMode' || key === 'tvTopShelfMode')) {
+            if (val === undefined || val === null || val === '') return 'default';
+            return val;
+        }
         if (val === undefined || val === null) {
             return isDefaultFalseBooleanField(section, key) ? false : null;
         }
@@ -2610,11 +2616,25 @@
                     scrapers.forEach(s => {
                         if (s.enabled && s.name) selectOptions.push({value: s.name, label: s.name});
                     });
+                } else if (fieldDef.optionsFrom === 'homeShelves') {
+                    selectOptions = [{value: '', label: 'Select shelf'}];
+                    const shelves = ensureRecentlyAiredShelfConfig(getValue('homeShelves.shelves') || []);
+                    shelves
+                        .slice()
+                        .sort((a, b) => (a.order || 0) - (b.order || 0))
+                        .forEach(shelf => {
+                            if (!shelf || !shelf.id) return;
+                            const label = shelf.name ? `${shelf.name} (${shelf.id})` : shelf.id;
+                            selectOptions.push({value: shelf.id, label});
+                        });
+                    if (value && !selectOptions.some(opt => opt.value === value)) {
+                        selectOptions.push({value, label: value});
+                    }
                 }
                 const options = selectOptions.map(opt => {
                     const optValue = typeof opt === 'object' ? opt.value : opt;
                     const optLabel = typeof opt === 'object' ? opt.label : opt;
-                    return '<option value="'+optValue+'" '+(value === optValue ? 'selected' : '')+'>'+optLabel+'</option>';
+                    return '<option value="'+escapeHtml(String(optValue)).replace(/"/g, '&quot;')+'" '+(value === optValue ? 'selected' : '')+'>'+escapeHtml(String(optLabel))+'</option>';
                 }).join('');
                 return '<select class="form-select'+invalidClass+'" id="'+id+'" onchange="handleFieldChange(\''+basePath+'\', \''+fieldKey+'\', this.value)">'+options+'</select>';
             case 'number':

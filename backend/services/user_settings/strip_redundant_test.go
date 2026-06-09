@@ -312,6 +312,34 @@ func TestStripProfileShelfConfigsMatch(t *testing.T) {
 	}
 }
 
+func TestStripProfileHomeTopShelfSettings(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.HomeShelves.MobileTopShelfMode = "shelf"
+	g.HomeShelves.MobileTopShelfSourceID = "calendar"
+	g.HomeShelves.TVTopShelfMode = "default"
+	g.HomeShelves.TVTopShelfSourceID = "top-ten"
+
+	us := models.UserSettings{
+		HomeShelves: models.HomeShelvesSettings{
+			MobileTopShelfMode:     "shelf",
+			MobileTopShelfSourceID: "calendar",
+			TVTopShelfMode:         "disabled",
+			TVTopShelfSourceID:     "watchlist",
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	got := svc.settings["user1"].HomeShelves
+	if got.MobileTopShelfMode != "" || got.MobileTopShelfSourceID != "" {
+		t.Fatalf("expected matching mobile top shelf settings stripped, got mode=%q source=%q", got.MobileTopShelfMode, got.MobileTopShelfSourceID)
+	}
+	if got.TVTopShelfMode != "disabled" || got.TVTopShelfSourceID != "watchlist" {
+		t.Fatalf("expected differing TV top shelf settings preserved, got mode=%q source=%q", got.TVTopShelfMode, got.TVTopShelfSourceID)
+	}
+}
+
 func TestStripProfileShelfMissingGlobalShelfIsInherited(t *testing.T) {
 	svc := tempService(t)
 	g := globalDefaults()
