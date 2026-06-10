@@ -134,7 +134,7 @@ func TestWebPlaybackHandlerServesStandalonePlayer(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"<title>strmr player</title>", "Starting HLS session", `"/mediastorm"`} {
+	for _, want := range []string{"<title>mediastorm player</title>", "Starting HLS session", `"/mediastorm"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected body to contain %q", want)
 		}

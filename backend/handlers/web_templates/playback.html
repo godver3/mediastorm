@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>strmr player</title>
+  <title>mediastorm player</title>
   <style>
     :root {
       --bg: #08090d;
@@ -216,8 +216,7 @@
     }
 
     .controls {
-      display: grid;
-      grid-template-columns: repeat(7, 2.35rem) minmax(0, 1fr) auto;
+      display: flex;
       gap: 0.55rem;
       align-items: center;
       position: absolute;
@@ -344,9 +343,15 @@
     }
 
     .seek {
-      width: 100%;
+      flex: 1;
       min-width: 0;
       accent-color: var(--accent);
+    }
+    .volume-slider {
+      width: 84px;
+      min-width: 84px;
+      accent-color: var(--accent);
+      cursor: pointer;
     }
 
     .time {
@@ -675,7 +680,7 @@
           <span class="back-label">Back</span>
         </button>
         <div class="brand">
-          <div class="brand-title">strmr</div>
+          <div class="brand-title">mediastorm</div>
           <div id="topSubtitle" class="brand-subtitle">Web player</div>
         </div>
       </div>
@@ -735,6 +740,7 @@
     let webPlayerSubtitleLoadToken = 0;
     let webPlayerSubtitleRefreshTimer = null;
     let webPlayerControlsHideTimer = null;
+    let webPlayerMediaRecoverAttempts = 0;
     let webPlayerVolume = 1;
     let webPlayerMuted = false;
     let webPlayerAutoMutedPendingGesture = false;
@@ -1028,11 +1034,11 @@
                far enough to fire canplay without it. Mirrors the admin player. -->
           <video id="webPlayer" playsinline webkit-playsinline autoplay controlsList="nodownload noplaybackrate noremoteplayback nofullscreen"></video>
           <div id="subtitleOverlay" class="subtitle-overlay"></div>
-          <div class="pause-overlay" aria-hidden="true">
+          ${isLive ? '' : `<div class="pause-overlay" aria-hidden="true">
             <div class="pause-chip">
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
             </div>
-          </div>
+          </div>`}
         </div>
         <button class="btn icon-btn player-back mobile-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
@@ -1044,23 +1050,24 @@
           ${isLive ? '' : `<button class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></span>
           </button>`}
-          <button id="playButton" class="btn icon-btn play-btn" onclick="togglePlayback()" aria-label="Play" title="Play">
+          ${isLive ? '' : `<button id="playButton" class="btn icon-btn play-btn" onclick="togglePlayback()" aria-label="Play" title="Play">
             <span class="icon play-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
             <span class="icon pause-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></span>
-          </button>
+          </button>`}
           ${isLive ? '' : `<button class="btn icon-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="Skip forward 30 seconds">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
           </button>`}
           <button id="muteButton" class="btn icon-btn" onclick="toggleMute()" aria-label="Mute" title="Mute">
             <span id="volumeIcon" class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
           </button>
+          <input id="volumeSlider" class="volume-slider desktop-only" type="range" min="0" max="1" step="0.05" value="1" oninput="setWebPlayerVolume(this.value)" aria-label="Volume" title="Volume">
           ${isLive ? '' : `<button class="btn icon-btn mobile-only tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4"/><path d="M14 15h3"/><path d="M7 11h2"/><path d="M12 11h5"/></svg></span>
           </button>`}
-          <button class="btn icon-btn desktop-only" onclick="toggleTheater()" aria-label="Theater mode" title="Theater mode">
+          ${isLive ? '' : `<button class="btn icon-btn desktop-only" onclick="toggleTheater()" aria-label="Theater mode" title="Theater mode">
             <span class="icon theater-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10v4H7z"/></svg></span>
             <span class="icon theater-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 9v6"/><path d="M15 9v6"/></svg></span>
-          </button>
+          </button>`}
           <button class="btn icon-btn desktop-only" onclick="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen">
             <span class="icon fullscreen-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
             <span class="icon fullscreen-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
@@ -1084,7 +1091,7 @@
       const video = document.getElementById('webPlayer');
       video.volume = webPlayerVolume;
       video.muted = webPlayerMuted;
-      video.addEventListener('click', togglePlayback);
+      if (!isLive) video.addEventListener('click', togglePlayback);
       installVideoEvents(video);
       installControlsAutoHide(host);
 
@@ -1142,17 +1149,41 @@
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = playlistUrl;
       } else if (window.Hls && window.Hls.isSupported()) {
-        hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0 });
+        hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0, backBufferLength: 30 });
+        webPlayerMediaRecoverAttempts = 0;
         hlsInstance.loadSource(playlistUrl);
         hlsInstance.attachMedia(video);
+        // Once we're successfully buffering again, forget prior recovery attempts
+        // so an isolated later blip doesn't immediately exhaust the budget.
+        hlsInstance.on(Hls.Events.FRAG_BUFFERED, () => {
+          webPlayerMediaRecoverAttempts = 0;
+        });
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
           if (!data?.fatal) return;
-          setStatus('Playback error. Try seeking or switching tracks.', true);
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            setStatus('Reconnecting…', true);
             hlsInstance.startLoad();
-          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            hlsInstance.recoverMediaError();
+            return;
           }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            // DEMUXER_ERROR_COULD_NOT_PARSE et al. surface here. hls.js's
+            // recommended escalation: recover, then swap the audio codec, then
+            // give up. swapAudioCodec resolves the common "can't parse" cases
+            // caused by an AAC/MP3 mismatch in the remuxed fMP4.
+            webPlayerMediaRecoverAttempts += 1;
+            if (webPlayerMediaRecoverAttempts === 1) {
+              setStatus('Recovering playback…', true);
+              hlsInstance.recoverMediaError();
+            } else if (webPlayerMediaRecoverAttempts === 2) {
+              setStatus('Recovering playback…', true);
+              hlsInstance.swapAudioCodec();
+              hlsInstance.recoverMediaError();
+            } else {
+              setStatus('Playback error. Try switching channel or track.', true);
+            }
+            return;
+          }
+          setStatus('Playback error. Try seeking or switching tracks.', true);
         });
       } else {
         video.src = playlistUrl;
@@ -1353,7 +1384,7 @@
       if (!video || !host) return;
 
       const playing = !video.paused;
-      host.classList.toggle('is-paused', !playing);
+      host.classList.toggle('is-paused', !playbackMeta.isLive && !playing);
       if (playButton) {
         playButton.classList.toggle('is-playing', playing);
         playButton.setAttribute('aria-label', playing ? 'Pause' : 'Play');
@@ -1369,6 +1400,10 @@
       }
       // Live playback shows a static "LIVE" badge in #time — don't overwrite it.
       if (time && !playbackMeta.isLive) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+      const volumeSlider = document.getElementById('volumeSlider');
+      if (volumeSlider && document.activeElement !== volumeSlider) {
+        volumeSlider.value = String(video.muted ? 0 : Number(video.volume || 0));
+      }
       if (volumeIcon) {
         volumeIcon.innerHTML = video.muted || Number(video.volume || 0) === 0
           ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/></svg>'
@@ -1379,6 +1414,7 @@
     function togglePlayback() {
       const video = document.getElementById('webPlayer');
       if (!video) return;
+      if (playbackMeta.isLive) return;
       if (video.paused) video.play().catch(() => {});
       else video.pause();
       updateControls();
@@ -1393,6 +1429,19 @@
       video.volume = webPlayerVolume;
       video.muted = webPlayerMuted;
       updateControls();
+    }
+
+    function setWebPlayerVolume(value) {
+      const video = document.getElementById('webPlayer');
+      if (!video) return;
+      const vol = Math.max(0, Math.min(1, Number(value) || 0));
+      webPlayerVolume = vol;
+      webPlayerAutoMutedPendingGesture = false;
+      webPlayerMuted = vol <= 0;
+      video.volume = vol;
+      video.muted = webPlayerMuted;
+      updateControls();
+      showControls();
     }
 
     function openTrackSheet() {
