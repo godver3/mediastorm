@@ -756,6 +756,19 @@ type HLSManager struct {
 	probeCacheMu sync.RWMutex
 }
 
+// inputLooksLikeHLS reports whether a live source URL is an HLS playlist. The
+// `-allowed_extensions`, `-allowed_segment_extensions` and `-extension_picky`
+// options are private to FFmpeg's HLS demuxer; passing them for a direct
+// MPEG-TS (.ts) input — which selects the mpegts demuxer — aborts the whole
+// command with "Option <name> not found".
+func inputLooksLikeHLS(rawURL string) bool {
+	lower := strings.ToLower(rawURL)
+	if i := strings.IndexAny(lower, "?#"); i >= 0 {
+		lower = lower[:i]
+	}
+	return strings.HasSuffix(lower, ".m3u8") || strings.Contains(lower, ".m3u8")
+}
+
 // NewHLSManager creates a new HLS session manager
 func NewHLSManager(baseDir, ffmpegPath, ffprobePath string, streamer streaming.Provider) *HLSManager {
 	if baseDir == "" {
@@ -1570,13 +1583,19 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 			"-reconnect", "1",
 			"-reconnect_streamed", "1",
 			"-reconnect_delay_max", "3",
-			// Some Stremio/live providers proxy HLS segments through signed URLs
-			// without .ts/.m4s extensions. FFmpeg's HLS demuxer rejects those by
-			// default before it ever fetches the segment.
-			"-allowed_extensions", "ALL",
-			"-allowed_segment_extensions", "ALL",
-			"-extension_picky", "0",
 		)
+		// These are HLS-demuxer-private options. Some Stremio/live providers proxy
+		// HLS segments through signed URLs without .ts/.m4s extensions, which the
+		// HLS demuxer rejects by default. Only apply them for actual .m3u8 inputs —
+		// for a direct MPEG-TS (.ts) input the mpegts demuxer is selected and these
+		// options abort the command ("Option ... not found").
+		if inputLooksLikeHLS(session.Path) {
+			args = append(args,
+				"-allowed_extensions", "ALL",
+				"-allowed_segment_extensions", "ALL",
+				"-extension_picky", "0",
+			)
+		}
 	}
 
 	args = append(args,

@@ -356,6 +356,36 @@
       white-space: nowrap;
     }
 
+    /* Live playback: no seek bar, just a flexible spacer + LIVE badge. */
+    .seek-spacer {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .time.live-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .live-dot {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: #ff3b30;
+      box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+      animation: live-pulse 2s infinite;
+    }
+
+    @keyframes live-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.6); }
+      70% { box-shadow: 0 0 0 0.5rem rgba(255, 59, 48, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
+    }
+
     .select {
       max-width: min(330px, 76vw);
       padding: 0.42rem 0.55rem;
@@ -385,6 +415,24 @@
       padding: 1.5rem;
       color: var(--muted);
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+    }
+
+    .spinner {
+      width: 2.75rem;
+      height: 2.75rem;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.16);
+      border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     .manual {
@@ -643,7 +691,7 @@
 
       <section class="player-panel">
         <div id="videoHost">
-          <div class="empty">Preparing player...</div>
+          <div class="empty"><div class="spinner" role="status" aria-label="Loading"></div><span>Preparing player...</span></div>
         </div>
       </section>
 
@@ -822,12 +870,14 @@
       }
 
       const rawMediaType = (routeParam('mediaType') || 'movie').toLowerCase();
+      const isLive = rawMediaType === 'channel' || rawMediaType === 'live';
       const mediaType = rawMediaType === 'episode' || rawMediaType === 'series' ? 'episode' : 'movie';
       const title = routeParam('title') || routeParam('seriesTitle') || routeParam('displayName') || 'Untitled';
       const itemId = routeParam('titleId') || routeParam('imdbId') || routeParam('tvdbId') || sourcePath || directMovieUrl || title;
 
       playbackMeta = {
         mediaType,
+        isLive,
         itemId,
         title,
         seriesTitle: routeParam('seriesTitle'),
@@ -853,7 +903,9 @@
         ? `S${String(playbackMeta.seasonNumber || 1).padStart(2, '0')}E${String(playbackMeta.episodeNumber || 1).padStart(2, '0')}`
         : '';
       document.getElementById('title').textContent = title;
-      document.getElementById('mediaTypeLabel').textContent = playbackMeta.mediaType === 'episode' ? 'Episode' : 'Movie';
+      document.getElementById('mediaTypeLabel').textContent = playbackMeta.isLive
+        ? 'Live'
+        : playbackMeta.mediaType === 'episode' ? 'Episode' : 'Movie';
       document.getElementById('details').textContent = [episode, playbackMeta.episodeName, playbackMeta.displayName || sourcePath]
         .filter(Boolean)
         .join(' - ');
@@ -958,12 +1010,15 @@
     function renderLoading(message, error) {
       const host = document.getElementById('videoHost');
       host.className = '';
-      host.innerHTML = `<div class="empty ${error ? 'status error' : ''}">${escapeHtml(message)}</div>`;
+      // Show a spinner while loading; suppress it on error states.
+      const spinner = error ? '' : '<div class="spinner" role="status" aria-label="Loading"></div>';
+      host.innerHTML = `<div class="empty ${error ? 'status error' : ''}">${spinner}<span>${escapeHtml(message)}</span></div>`;
     }
 
     function renderPlayerShell() {
       const host = document.getElementById('videoHost');
-      host.className = '';
+      const isLive = !!playbackMeta.isLive;
+      host.className = isLive ? 'is-live' : '';
       host.innerHTML = `
         <div class="video-frame">
           <!-- The autoplay attribute is load-bearing: a tap-initiated same-origin
@@ -986,22 +1041,22 @@
           <button class="btn icon-btn desktop-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
           </button>
-          <button class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
+          ${isLive ? '' : `<button class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></span>
-          </button>
+          </button>`}
           <button id="playButton" class="btn icon-btn play-btn" onclick="togglePlayback()" aria-label="Play" title="Play">
             <span class="icon play-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
             <span class="icon pause-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></span>
           </button>
-          <button class="btn icon-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="Skip forward 30 seconds">
+          ${isLive ? '' : `<button class="btn icon-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="Skip forward 30 seconds">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
-          </button>
+          </button>`}
           <button id="muteButton" class="btn icon-btn" onclick="toggleMute()" aria-label="Mute" title="Mute">
             <span id="volumeIcon" class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
           </button>
-          <button class="btn icon-btn mobile-only tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
+          ${isLive ? '' : `<button class="btn icon-btn mobile-only tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4"/><path d="M14 15h3"/><path d="M7 11h2"/><path d="M12 11h5"/></svg></span>
-          </button>
+          </button>`}
           <button class="btn icon-btn desktop-only" onclick="toggleTheater()" aria-label="Theater mode" title="Theater mode">
             <span class="icon theater-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10v4H7z"/></svg></span>
             <span class="icon theater-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 9v6"/><path d="M15 9v6"/></svg></span>
@@ -1010,10 +1065,11 @@
             <span class="icon fullscreen-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
             <span class="icon fullscreen-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
           </button>
-          <input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)">
-          <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
+          ${isLive ? `<div class="seek-spacer"></div>
+          <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)">
+          <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>`}
         </div>
-        <div class="track-controls">
+        ${isLive ? '' : `<div class="track-controls">
           <div class="track-sheet-header mobile-only">
             <span>Audio &amp; Subtitles</span>
             <button class="btn icon-btn" onclick="closeTrackSheet()" aria-label="Close" title="Close">
@@ -1021,7 +1077,7 @@
             </button>
           </div>
           ${renderTrackSelectors()}
-        </div>
+        </div>`}
         <div id="status" class="status"></div>
       `;
 
@@ -1311,7 +1367,8 @@
         seek.max = String(Math.max(1, Math.floor(duration || 1)));
         seek.value = String(Math.floor(Math.min(controlTime, duration || controlTime)));
       }
-      if (time) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+      // Live playback shows a static "LIVE" badge in #time — don't overwrite it.
+      if (time && !playbackMeta.isLive) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
       if (volumeIcon) {
         volumeIcon.innerHTML = video.muted || Number(video.volume || 0) === 0
           ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/></svg>'
@@ -1511,6 +1568,8 @@
     }
 
     function startProgressTracking() {
+      // Live channels have no meaningful resume position — don't record history.
+      if (playbackMeta.isLive) return;
       stopProgressTracking();
       lastProgressSentAt = 0;
       lastProgressPosition = 0;

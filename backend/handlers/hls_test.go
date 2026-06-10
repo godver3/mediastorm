@@ -940,3 +940,23 @@ func TestHLSManager_FindHighestSegmentNumber(t *testing.T) {
 		t.Errorf("expected 10 as highest segment, got %d", result)
 	}
 }
+
+func TestInputLooksLikeHLS(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"http://host/live/u/p/31930.ts", false},
+		{"http://host/live/u/p/31930.m3u8", true},
+		{"http://host/path/playlist.m3u8?token=abc", true},
+		{"http://host/path/master.M3U8", true},
+		{"http://host/stream.mp4", false},
+		{"http://host/live/u/p/31930.ts?x=1#frag", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := inputLooksLikeHLS(c.url); got != c.want {
+			t.Errorf("inputLooksLikeHLS(%q) = %v, want %v", c.url, got, c.want)
+		}
+	}
+}
