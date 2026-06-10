@@ -496,6 +496,54 @@ func TestHLSManager_ServePlaylist_NotFound(t *testing.T) {
 	}
 }
 
+func TestHLSManager_ServePlaylist_WaitsForFirstSegment(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := NewHLSManager(tmpDir, "", "", nil)
+	defer manager.Shutdown()
+
+	sessionID := "vod-empty-playlist-session"
+	outputDir := filepath.Join(tmpDir, sessionID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	playlistPath := filepath.Join(outputDir, "stream.m3u8")
+	emptyPlaylist := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n"
+	if err := os.WriteFile(playlistPath, []byte(emptyPlaylist), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &HLSSession{
+		ID:         sessionID,
+		OutputDir:  outputDir,
+		CreatedAt:  time.Now(),
+		LastAccess: time.Now(),
+	}
+	manager.mu.Lock()
+	manager.sessions[sessionID] = session
+	manager.mu.Unlock()
+
+	// Write the first segment entry shortly after the request starts. The
+	// handler must hold the response until the playlist lists a media segment —
+	// native HLS clients (Safari) stall permanently on an initial empty playlist.
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		withSegment := emptyPlaylist + "#EXTINF:2.000000,\nsegment0.ts\n"
+		os.WriteFile(playlistPath, []byte(withSegment), 0644)
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/video/hls/%s/stream.m3u8", sessionID), nil)
+	rr := httptest.NewRecorder()
+	manager.ServePlaylist(rr, req, sessionID)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d (body: %s)", http.StatusOK, rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "segment0.ts") {
+		t.Fatalf("expected playlist to include first media segment, got: %s", rr.Body.String())
+	}
+}
+
 func TestHLSManager_ServeSegment_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := NewHLSManager(tmpDir, "", "", nil)

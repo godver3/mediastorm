@@ -1,0 +1,1771 @@
+{{define "playback"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>strmr player</title>
+  <style>
+    :root {
+      --bg: #08090d;
+      --panel: #0d0f15;
+      --panel-2: #181b24;
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #f4f7fb;
+      --muted: #9aa4b2;
+      --accent: #4f8cff;
+      --danger: #f87171;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(79, 140, 255, 0.16), transparent 34rem),
+        linear-gradient(180deg, #0b0d13 0%, #050609 100%);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.8rem clamp(0.75rem, 2.5vw, 1.5rem);
+      background: linear-gradient(180deg, rgba(5, 6, 9, 0.92), rgba(5, 6, 9, 0.62));
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 0.75rem;
+    }
+
+    .brand {
+      display: grid;
+      gap: 0.12rem;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-size: 0.95rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .brand-subtitle {
+      color: var(--muted);
+      font-size: 0.78rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-select {
+      min-width: 160px;
+      max-width: 280px;
+      padding: 0.5rem 0.65rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    .shell {
+      display: grid;
+      gap: 0.8rem;
+      width: min(1420px, calc(100vw - 1.5rem));
+      margin: 0 auto;
+      padding: clamp(0.5rem, 1.5vw, 1rem) 0 1.25rem;
+    }
+
+    .meta {
+      display: grid;
+      gap: 0.35rem;
+      min-width: 0;
+      padding: 0 clamp(0.15rem, 1vw, 0.75rem);
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.2rem, 2.5vw, 2rem);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .details {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .player-panel {
+      background: #000;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+    }
+
+    #videoHost {
+      position: relative;
+      padding: clamp(0.35rem, 1vw, 0.75rem);
+      background: #000;
+    }
+
+    .video-frame {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      max-height: calc(100vh - 11rem);
+      max-height: calc(100dvh - 11rem);
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .subtitle-overlay {
+      position: absolute;
+      left: 5%;
+      right: 5%;
+      bottom: clamp(5.25rem, 12vh, 8rem);
+      color: #fff;
+      font-size: clamp(1rem, 2.5vw, 2rem);
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: center;
+      text-shadow: 0 2px 7px #000, 0 0 2px #000;
+      white-space: pre-line;
+      pointer-events: none;
+    }
+
+    .pause-overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s ease;
+    }
+
+    #videoHost.is-paused .pause-overlay {
+      opacity: 1;
+    }
+
+    .pause-chip {
+      display: grid;
+      place-items: center;
+      width: 4rem;
+      height: 4rem;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.62);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: white;
+      backdrop-filter: blur(10px);
+    }
+
+    .pause-chip svg {
+      width: 42%;
+      height: 42%;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(7, 2.35rem) minmax(0, 1fr) auto;
+      gap: 0.55rem;
+      align-items: center;
+      position: absolute;
+      left: clamp(0.75rem, 2.5vw, 1.6rem);
+      right: clamp(0.75rem, 2.5vw, 1.6rem);
+      bottom: clamp(0.75rem, 2.5vw, 1.6rem);
+      z-index: 4;
+      padding: 0.55rem;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(12, 14, 18, 0.78), rgba(0, 0, 0, 0.82));
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(18px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .track-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      position: absolute;
+      top: clamp(0.75rem, 2.5vw, 1.5rem);
+      right: clamp(0.75rem, 2.5vw, 1.5rem);
+      z-index: 4;
+      max-width: min(620px, calc(100% - 1.5rem));
+      padding: 0.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius);
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(16px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .track-controls label {
+      display: inline-flex;
+      gap: 0.4rem;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      min-height: 2.35rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .btn:hover {
+      border-color: rgba(255, 255, 255, 0.24);
+      background: #202431;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .icon-btn {
+      width: 2.35rem;
+      min-width: 2.35rem;
+      padding: 0;
+    }
+
+    .back-btn {
+      min-width: 0;
+      padding: 0 0.8rem;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.14);
+    }
+
+    .topbar .back-btn {
+      height: 2.35rem;
+      min-height: 2.35rem;
+    }
+
+    .play-btn {
+      width: 2.75rem;
+      min-width: 2.75rem;
+    }
+
+    .icon {
+      display: inline-flex;
+      width: 1rem;
+      height: 1rem;
+    }
+
+    .icon svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .pause-icon,
+    .fullscreen-exit,
+    .theater-exit {
+      display: none;
+    }
+
+    .play-btn.is-playing .play-icon {
+      display: none;
+    }
+
+    .play-btn.is-playing .pause-icon {
+      display: inline-flex;
+    }
+
+    #videoHost.is-fullscreen .fullscreen-enter,
+    #videoHost.is-theater .theater-enter {
+      display: none;
+    }
+
+    #videoHost.is-fullscreen .fullscreen-exit,
+    #videoHost.is-theater .theater-exit {
+      display: inline-flex;
+    }
+
+    .seek {
+      width: 100%;
+      min-width: 0;
+      accent-color: var(--accent);
+    }
+
+    .time {
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .select {
+      max-width: min(330px, 76vw);
+      padding: 0.42rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    .status {
+      position: absolute;
+      left: clamp(0.75rem, 2.5vw, 1.6rem);
+      right: clamp(0.75rem, 2.5vw, 1.6rem);
+      bottom: calc(clamp(0.75rem, 2.5vw, 1.6rem) + 3.75rem);
+      z-index: 4;
+      min-height: 1.2rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+      pointer-events: none;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .empty {
+      padding: 1.5rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .manual {
+      display: none;
+      gap: 0.6rem;
+      align-items: center;
+      padding: 0.85rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .manual.is-visible {
+      display: flex;
+    }
+
+    .manual input {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    #videoHost.is-theater {
+      position: fixed;
+      inset: clamp(0.5rem, 2vw, 1rem);
+      z-index: 80;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto auto auto;
+      max-height: calc(100vh - 2rem);
+      background: #000;
+      border-radius: var(--radius);
+      overflow: auto;
+    }
+
+    #videoHost.is-theater .video-frame {
+      max-height: none;
+      height: 100%;
+    }
+
+    #videoHost.is-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #videoHost.is-fullscreen .video-frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-height: none;
+      aspect-ratio: auto;
+      border-radius: 0;
+    }
+
+    #videoHost.controls-hidden .controls,
+    #videoHost.controls-hidden .track-controls,
+    #videoHost.controls-hidden .player-back {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(0.4rem);
+    }
+
+    /* Visibility helpers — mobile vs desktop player chrome. */
+    .mobile-only {
+      display: none;
+    }
+
+    /* Top-left in-video back button (mobile immersive view). */
+    .player-back {
+      position: absolute;
+      top: calc(0.75rem + env(safe-area-inset-top));
+      left: calc(0.75rem + env(safe-area-inset-left));
+      z-index: 6;
+      background: rgba(0, 0, 0, 0.5);
+      border-color: rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(10px);
+    }
+
+    .track-sheet-header {
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    @media (max-width: 760px) {
+      /* Mobile is immersive-only: hide the page chrome and make the player fill
+         the viewport from the very first paint (loading state included), so the
+         non-fullscreen page never flashes before the shell renders. */
+      html,
+      body {
+        overflow: hidden;
+      }
+
+      .topbar,
+      .meta,
+      #manualStart {
+        display: none;
+      }
+
+      .shell,
+      .player-panel {
+        padding: 0;
+        margin: 0;
+      }
+
+      #videoHost {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: #000;
+      }
+
+      .profile-select {
+        display: none;
+      }
+
+      /* Cluster the transport buttons on the left; push the tracks button right.
+         Seek + time wrap onto their own full-width rows below. */
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      .controls .icon-btn {
+        flex: 0 0 auto;
+      }
+
+      .controls .tracks-btn {
+        margin-left: auto;
+      }
+
+      .seek {
+        flex: 1 1 100%;
+        order: 5;
+      }
+
+      .time {
+        flex: 0 0 100%;
+        order: 6;
+      }
+
+      .back-btn .back-label {
+        display: none;
+      }
+
+      /* Mobile player chrome: immersive only — no theater/fullscreen/desktop back,
+         track selectors live in a bottom sheet opened from the tracks button. */
+      .desktop-only {
+        display: none !important;
+      }
+
+      .mobile-only {
+        display: inline-flex;
+      }
+
+      .track-sheet-header.mobile-only {
+        display: flex;
+      }
+
+      /* Audio/subtitle selectors as a bottom sheet, hidden until the tracks
+         button toggles `.tracks-open` on the host. */
+      .track-controls {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-width: none;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.85rem;
+        padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+        border-radius: 16px 16px 0 0;
+        background: rgba(8, 10, 14, 0.94);
+        transform: translateY(110%);
+        opacity: 1;
+        pointer-events: auto;
+        transition: transform 0.22s ease;
+      }
+
+      .track-controls label {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
+        font-size: 0.95rem;
+      }
+
+      .track-controls .select {
+        max-width: none;
+        width: 100%;
+        padding: 0.7rem 0.6rem;
+      }
+
+      #videoHost.tracks-open .track-controls {
+        transform: translateY(0);
+      }
+
+      /* The shared controls-hidden rule must not reveal or fade the sheet —
+         its visibility is driven solely by `.tracks-open`. */
+      #videoHost.controls-hidden .track-controls {
+        transform: translateY(110%);
+        opacity: 1;
+      }
+
+      #videoHost.controls-hidden.tracks-open .track-controls {
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .manual {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="btn back-btn" type="button" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
+          <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
+          <span class="back-label">Back</span>
+        </button>
+        <div class="brand">
+          <div class="brand-title">strmr</div>
+          <div id="topSubtitle" class="brand-subtitle">Web player</div>
+        </div>
+      </div>
+      <select id="profileSelect" class="profile-select" aria-label="Profile"></select>
+    </header>
+
+    <main class="shell">
+      <section class="meta">
+        <div id="mediaTypeLabel" class="eyebrow">Playback</div>
+        <h1 id="title">Loading player</h1>
+        <div id="details" class="details"></div>
+      </section>
+
+      <section class="player-panel">
+        <div id="videoHost">
+          <div class="empty">Preparing player...</div>
+        </div>
+      </section>
+
+      <section id="manualStart" class="manual">
+        <input id="manualPath" type="text" placeholder="Paste a WebDAV path or stream URL">
+        <button class="btn btn-primary" type="button" onclick="startManualPath()">Play</button>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+  <script>
+    const SERVER_BASE_PATH = {{json .ServerBasePath}};
+    const RAW_PROFILES = {{json .Users}};
+    const PROFILES = Array.isArray(RAW_PROFILES) ? RAW_PROFILES : [];
+    const ROUTE_PARAMS = new URLSearchParams(window.location.search || '');
+    const AUTH_TOKEN = routeParam('token');
+    const WEB_PLAYER_PROGRESS_INTERVAL_MS = 10000;
+    const WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS = 5;
+
+    let activeProfileId = '';
+    let activeProfileName = '';
+    let playbackMeta = {};
+    let sourcePath = '';
+    let directMovieUrl = '';
+    let hlsInstance = null;
+    let hlsSessionId = '';
+    let hlsPlaybackOffset = 0;
+    let hlsDuration = 0;
+    let hlsPlaylistUrl = '';
+    let webPlayerSeekInProgress = false;
+    let webPlayerSeekInputActive = false;
+    let webPlayerDisplayedSeekTarget = null;
+    let webPlayerQueuedSeekTarget = null;
+    let webPlayerAudioStreams = [];
+    let webPlayerSubtitleStreams = [];
+    let webPlayerSelectedAudioTrack = parseOptionalInt(routeParam('preselectedAudioTrack'));
+    let webPlayerSelectedSubtitleTrack = parseOptionalInt(routeParam('preselectedSubtitleTrack'));
+    if (webPlayerSelectedSubtitleTrack === null) webPlayerSelectedSubtitleTrack = -1;
+    let webPlayerSubtitleCues = [];
+    let webPlayerSubtitleLoadToken = 0;
+    let webPlayerSubtitleRefreshTimer = null;
+    let webPlayerControlsHideTimer = null;
+    let webPlayerVolume = 1;
+    let webPlayerMuted = false;
+    let webPlayerAutoMutedPendingGesture = false;
+    let keepaliveTimer = null;
+    let progressTimer = null;
+    let lastProgressSentAt = 0;
+    let lastProgressPosition = 0;
+    let lastProgressPaused = false;
+    let progressCompleted = false;
+
+    document.addEventListener('DOMContentLoaded', safeInit);
+    window.addEventListener('beforeunload', () => {
+      sendWebPlayerProgress({ force: true, keepalive: true, isPaused: true });
+      stopHlsSession({ keepalive: true });
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        setFullscreen(false);
+        setTheater(false);
+      }
+      if (event.key === ' ' && document.activeElement?.tagName !== 'INPUT') {
+        event.preventDefault();
+        togglePlayback();
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const host = document.getElementById('videoHost');
+      if (host && document.fullscreenElement !== host && host.classList.contains('is-fullscreen')) {
+        setFullscreen(false);
+      }
+    });
+
+    function safeInit() {
+      try {
+        init();
+      } catch (error) {
+        console.error('[web-player] init failed', error);
+        renderLoading(`Player initialization failed: ${error.message || String(error)}`, true);
+        document.getElementById('manualStart')?.classList.add('is-visible');
+      }
+    }
+
+    function init() {
+      setupProfileSelect();
+      readRouteMetadata();
+      renderHeader();
+      console.info('[web-player] init', {
+        hasSourcePath: Boolean(sourcePath),
+        hasDirectMovieUrl: Boolean(directMovieUrl),
+        hasHlsSessionId: Boolean(hlsSessionId),
+        hasToken: Boolean(AUTH_TOKEN),
+        activeProfileId,
+        mediaType: playbackMeta.mediaType,
+      });
+
+      if (!activeProfileId) {
+        renderLoading('No profile was provided for playback.', true);
+        document.getElementById('manualStart').classList.add('is-visible');
+        return;
+      }
+
+      if (sourcePath) {
+        startWebPlayerFromSource({ startOffset: numericRouteParam('startOffset'), startPercent: numericRouteParam('startPercent') });
+      } else if (hlsSessionId && directMovieUrl) {
+        hlsPlaybackOffset = numericRouteParam('startOffset') || numericRouteParam('actualStartOffset') || 0;
+        hlsDuration = numericRouteParam('durationHint') || 0;
+        renderPlayerShell();
+        attachWebPlayer(document.getElementById('webPlayer'), apiUrl(directMovieUrl));
+        startKeepalive();
+        startProgressTracking();
+      } else if (directMovieUrl) {
+        hlsDuration = numericRouteParam('durationHint') || 0;
+        renderPlayerShell();
+        attachWebPlayer(document.getElementById('webPlayer'), apiUrl(directMovieUrl));
+        startProgressTracking();
+      } else {
+        renderLoading('No playback source was provided.', true);
+        document.getElementById('manualStart').classList.add('is-visible');
+      }
+    }
+
+    function goBackToWatch() {
+      sendWebPlayerProgress({ force: true, keepalive: true, isPaused: true });
+      stopHlsSession({ keepalive: true });
+
+      try {
+        const referrer = document.referrer ? new URL(document.referrer) : null;
+        if (referrer && referrer.origin === window.location.origin && window.history.length > 1) {
+          window.history.back();
+          return;
+        }
+      } catch {}
+
+      const watchIndex = window.location.pathname.indexOf('/watch');
+      const basePath = watchIndex >= 0 ? window.location.pathname.slice(0, watchIndex) : SERVER_BASE_PATH;
+      window.location.assign(`${basePath || ''}/watch`);
+    }
+
+    function setupProfileSelect() {
+      const requestedProfile = routeParam('profileId') || routeParam('userId');
+      const select = document.getElementById('profileSelect');
+      select.innerHTML = PROFILES.map((profile) =>
+        `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`
+      ).join('');
+
+      const selected = PROFILES.find((profile) => profile.id === requestedProfile) || PROFILES[0];
+      if (selected) {
+        activeProfileId = selected.id;
+        activeProfileName = selected.name || selected.id;
+        select.value = selected.id;
+      } else if (requestedProfile) {
+        activeProfileId = requestedProfile;
+        activeProfileName = routeParam('profileName') || requestedProfile;
+        select.innerHTML = `<option value="${escapeHtml(activeProfileId)}">${escapeHtml(activeProfileName)}</option>`;
+        select.value = activeProfileId;
+      }
+
+      select.addEventListener('change', () => {
+        const profile = PROFILES.find((entry) => entry.id === select.value);
+        activeProfileId = profile?.id || '';
+        activeProfileName = profile?.name || activeProfileId;
+      });
+    }
+
+    function readRouteMetadata() {
+      sourcePath = routeParam('sourcePath');
+      directMovieUrl = routeParam('movie');
+      hlsSessionId = routeParam('hlsSessionId');
+      if (!sourcePath && directMovieUrl) {
+        sourcePath = sourcePathFromStreamUrl(directMovieUrl);
+      }
+
+      const rawMediaType = (routeParam('mediaType') || 'movie').toLowerCase();
+      const mediaType = rawMediaType === 'episode' || rawMediaType === 'series' ? 'episode' : 'movie';
+      const title = routeParam('title') || routeParam('seriesTitle') || routeParam('displayName') || 'Untitled';
+      const itemId = routeParam('titleId') || routeParam('imdbId') || routeParam('tvdbId') || sourcePath || directMovieUrl || title;
+
+      playbackMeta = {
+        mediaType,
+        itemId,
+        title,
+        seriesTitle: routeParam('seriesTitle'),
+        displayName: routeParam('displayName'),
+        year: parseOptionalInt(routeParam('year')),
+        seasonNumber: parseOptionalInt(routeParam('seasonNumber')),
+        episodeNumber: parseOptionalInt(routeParam('episodeNumber')),
+        episodeName: routeParam('episodeName'),
+        imdbId: routeParam('imdbId'),
+        tvdbId: routeParam('tvdbId'),
+        tmdbId: routeParam('tmdbId'),
+        posterUrl: routeParam('headerImage'),
+        dv: routeParam('dv') === '1' || routeParam('dv') === 'true',
+        hdr10: routeParam('hdr10') === '1' || routeParam('hdr10') === 'true',
+        dvProfile: routeParam('dvProfile'),
+        forceAAC: routeParam('forceAAC') === '1' || routeParam('forceAAC') === 'true',
+      };
+    }
+
+    function renderHeader() {
+      const title = playbackMeta.title || 'Untitled';
+      const episode = playbackMeta.mediaType === 'episode'
+        ? `S${String(playbackMeta.seasonNumber || 1).padStart(2, '0')}E${String(playbackMeta.episodeNumber || 1).padStart(2, '0')}`
+        : '';
+      document.getElementById('title').textContent = title;
+      document.getElementById('mediaTypeLabel').textContent = playbackMeta.mediaType === 'episode' ? 'Episode' : 'Movie';
+      document.getElementById('details').textContent = [episode, playbackMeta.episodeName, playbackMeta.displayName || sourcePath]
+        .filter(Boolean)
+        .join(' - ');
+      document.getElementById('topSubtitle').textContent = activeProfileName ? `Playing as ${activeProfileName}` : 'Web player';
+    }
+
+    async function startManualPath() {
+      const value = document.getElementById('manualPath').value.trim();
+      if (!value) return;
+      sourcePath = value;
+      directMovieUrl = '';
+      await startWebPlayerFromSource({ startOffset: 0 });
+    }
+
+    async function startWebPlayerFromSource(options = {}) {
+      if (!sourcePath) {
+        renderLoading('No playback source was provided.', true);
+        document.getElementById('manualStart')?.classList.add('is-visible');
+        return;
+      }
+      if (!activeProfileId) {
+        renderLoading('No profile was provided for playback.', true);
+        document.getElementById('manualStart')?.classList.add('is-visible');
+        return;
+      }
+      stopHlsSession();
+      renderLoading('Starting HLS session...');
+
+      try {
+        await loadTrackMetadata();
+        const session = await createHlsSession(options);
+        hlsSessionId = session.sessionId || '';
+        hlsPlaybackOffset = Number(session.startOffset || options.startOffset || 0);
+        hlsDuration = Number(session.duration || hlsDuration || numericRouteParam('durationHint') || 0);
+        hlsPlaylistUrl = apiUrl(session.playlistUrl || '');
+
+        renderPlayerShell();
+        attachWebPlayer(document.getElementById('webPlayer'), hlsPlaylistUrl);
+        startKeepalive();
+        startProgressTracking();
+      } catch (error) {
+        renderLoading(`Web player failed: ${error.message || String(error)}`, true);
+      }
+    }
+
+    async function loadTrackMetadata() {
+      webPlayerAudioStreams = [];
+      webPlayerSubtitleStreams = [];
+      try {
+        const params = new URLSearchParams({ path: sourcePath, profileId: activeProfileId });
+        const metadata = await apiCall(`/video/metadata?${params.toString()}`);
+        webPlayerAudioStreams = Array.isArray(metadata?.audioStreams) ? metadata.audioStreams : [];
+        webPlayerSubtitleStreams = Array.isArray(metadata?.subtitleStreams)
+          ? metadata.subtitleStreams.filter(isWebTextSubtitleStream)
+          : [];
+        if (webPlayerSelectedAudioTrack === null && webPlayerAudioStreams.length) {
+          webPlayerSelectedAudioTrack = Number(webPlayerAudioStreams[0].index);
+        }
+      } catch (error) {
+        console.warn('Failed to load track metadata:', error);
+      }
+    }
+
+    async function createHlsSession(options = {}) {
+      const params = new URLSearchParams({
+        path: sourcePath,
+        forceAAC: playbackMeta.forceAAC ? 'true' : 'true',
+        target: 'web',
+        profileId: activeProfileId,
+        profileName: activeProfileName,
+        mediaType: playbackMeta.mediaType || 'movie',
+        title: playbackMeta.title || '',
+        itemId: playbackMeta.itemId || '',
+        startOffset: String(Math.max(0, Number(options.startOffset || 0)).toFixed(2)),
+      });
+
+      if (!options.startOffset && Number(options.startPercent) > 0) params.set('startPercent', String(options.startPercent));
+      if (playbackMeta.dv) params.set('dv', 'true');
+      if (playbackMeta.hdr10) params.set('hdr', 'true');
+      if (playbackMeta.dvProfile) params.set('dvProfile', playbackMeta.dvProfile);
+      if (Number(webPlayerSelectedAudioTrack) >= 0) params.set('audioTrack', String(webPlayerSelectedAudioTrack));
+      if (Number(webPlayerSelectedSubtitleTrack) >= 0) params.set('subtitleTrack', String(webPlayerSelectedSubtitleTrack));
+      if (playbackMeta.year) params.set('year', String(playbackMeta.year));
+      if (playbackMeta.imdbId) params.set('imdb', playbackMeta.imdbId);
+      if (playbackMeta.tmdbId) params.set('tmdb', playbackMeta.tmdbId);
+      if (playbackMeta.tvdbId) params.set('tvdb', playbackMeta.tvdbId);
+      if (playbackMeta.posterUrl) params.set('posterUrl', playbackMeta.posterUrl);
+
+      if (playbackMeta.mediaType === 'episode') {
+        params.set('seasonNumber', String(playbackMeta.seasonNumber || 1));
+        params.set('episodeNumber', String(playbackMeta.episodeNumber || 1));
+        params.set('seriesId', playbackMeta.itemId || '');
+        params.set('seriesName', playbackMeta.seriesTitle || playbackMeta.title || '');
+        if (playbackMeta.episodeName) params.set('episodeName', playbackMeta.episodeName);
+      } else {
+        params.set('movieName', playbackMeta.title || '');
+      }
+
+      return apiCall(`/video/hls/start?${params.toString()}`);
+    }
+
+    function renderLoading(message, error) {
+      const host = document.getElementById('videoHost');
+      host.className = '';
+      host.innerHTML = `<div class="empty ${error ? 'status error' : ''}">${escapeHtml(message)}</div>`;
+    }
+
+    function renderPlayerShell() {
+      const host = document.getElementById('videoHost');
+      host.className = '';
+      host.innerHTML = `
+        <div class="video-frame">
+          <!-- The autoplay attribute is load-bearing: a tap-initiated same-origin
+               navigation (the /watch handoff) grants this page autoplay permission,
+               and the native attribute is what consumes it — programmatic play()
+               from canplay is blocked on mobile Chrome and may never even buffer
+               far enough to fire canplay without it. Mirrors the admin player. -->
+          <video id="webPlayer" playsinline webkit-playsinline autoplay controlsList="nodownload noplaybackrate noremoteplayback nofullscreen"></video>
+          <div id="subtitleOverlay" class="subtitle-overlay"></div>
+          <div class="pause-overlay" aria-hidden="true">
+            <div class="pause-chip">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+            </div>
+          </div>
+        </div>
+        <button class="btn icon-btn player-back mobile-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
+          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
+        </button>
+        <div class="controls">
+          <button class="btn icon-btn desktop-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
+          </button>
+          <button class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg></span>
+          </button>
+          <button id="playButton" class="btn icon-btn play-btn" onclick="togglePlayback()" aria-label="Play" title="Play">
+            <span class="icon play-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+            <span class="icon pause-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></span>
+          </button>
+          <button class="btn icon-btn" onclick="skipWebPlayer(30)" aria-label="Skip forward 30 seconds" title="Skip forward 30 seconds">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span>
+          </button>
+          <button id="muteButton" class="btn icon-btn" onclick="toggleMute()" aria-label="Mute" title="Mute">
+            <span id="volumeIcon" class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
+          </button>
+          <button class="btn icon-btn mobile-only tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4"/><path d="M14 15h3"/><path d="M7 11h2"/><path d="M12 11h5"/></svg></span>
+          </button>
+          <button class="btn icon-btn desktop-only" onclick="toggleTheater()" aria-label="Theater mode" title="Theater mode">
+            <span class="icon theater-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10v4H7z"/></svg></span>
+            <span class="icon theater-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 9v6"/><path d="M15 9v6"/></svg></span>
+          </button>
+          <button class="btn icon-btn desktop-only" onclick="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen">
+            <span class="icon fullscreen-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
+            <span class="icon fullscreen-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
+          </button>
+          <input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)">
+          <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
+        </div>
+        <div class="track-controls">
+          <div class="track-sheet-header mobile-only">
+            <span>Audio &amp; Subtitles</span>
+            <button class="btn icon-btn" onclick="closeTrackSheet()" aria-label="Close" title="Close">
+              <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
+            </button>
+          </div>
+          ${renderTrackSelectors()}
+        </div>
+        <div id="status" class="status"></div>
+      `;
+
+      const video = document.getElementById('webPlayer');
+      video.volume = webPlayerVolume;
+      video.muted = webPlayerMuted;
+      video.addEventListener('click', togglePlayback);
+      installVideoEvents(video);
+      installControlsAutoHide(host);
+
+      // On mobile the immersive (fullscreen) view is the default and only layout.
+      // Apply the CSS fill directly — the real Fullscreen API needs a user gesture,
+      // and the class alone gives an edge-to-edge player.
+      if (isMobileViewport()) {
+        host.classList.add('is-fullscreen');
+        document.body.style.overflow = 'hidden';
+      }
+
+      updateControls();
+    }
+
+    function isMobileViewport() {
+      return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches;
+    }
+
+    function renderTrackSelectors() {
+      const audioOptions = webPlayerAudioStreams.map((stream) => {
+        const index = Number(stream.index);
+        const selected = Number(webPlayerSelectedAudioTrack) === index ? ' selected' : '';
+        return `<option value="${index}"${selected}>${escapeHtml(formatTrackLabel(stream, 'Audio'))}</option>`;
+      }).join('');
+      const subtitleOptions = [
+        `<option value="-1"${Number(webPlayerSelectedSubtitleTrack) < 0 ? ' selected' : ''}>Subtitles Off</option>`,
+        ...webPlayerSubtitleStreams.map((stream) => {
+          const index = Number(stream.index);
+          const selected = Number(webPlayerSelectedSubtitleTrack) === index ? ' selected' : '';
+          return `<option value="${index}"${selected}>${escapeHtml(formatTrackLabel(stream, 'Subtitles'))}</option>`;
+        }),
+      ].join('');
+
+      return `
+        <label>Audio
+          <select class="select" onchange="changeAudioTrack(this.value)" ${audioOptions ? '' : 'disabled'}>
+            ${audioOptions || '<option>No audio tracks</option>'}
+          </select>
+        </label>
+        <label>Subtitles
+          <select class="select" onchange="changeSubtitleTrack(this.value)" ${webPlayerSubtitleStreams.length ? '' : 'disabled'}>
+            ${subtitleOptions}
+          </select>
+        </label>
+      `;
+    }
+
+    function attachWebPlayer(video, playlistUrl) {
+      if (!video || !playlistUrl) return;
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = playlistUrl;
+      } else if (window.Hls && window.Hls.isSupported()) {
+        hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0 });
+        hlsInstance.loadSource(playlistUrl);
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data?.fatal) return;
+          setStatus('Playback error. Try seeking or switching tracks.', true);
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hlsInstance.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hlsInstance.recoverMediaError();
+          }
+        });
+      } else {
+        video.src = playlistUrl;
+      }
+
+      video.addEventListener('canplay', () => {
+        attemptAutoplay(video);
+        installSubtitleTrack(video);
+      }, { once: true });
+    }
+
+    function attemptAutoplay(video) {
+      if (!video) return;
+      const result = video.play();
+      if (!result || typeof result.catch !== 'function') return;
+      result.catch(() => {
+        // Unmuted autoplay is blocked by mobile browsers after a page
+        // navigation (the originating tap's activation doesn't carry over).
+        // Fall back to muted autoplay so playback starts immediately, and
+        // restore sound on the user's first interaction with the page.
+        webPlayerMuted = true;
+        video.muted = true;
+        armAutoUnmuteOnGesture();
+        updateControls();
+        const retry = video.play();
+        if (retry && typeof retry.catch === 'function') retry.catch(() => {});
+      });
+    }
+
+    // When autoplay had to fall back to muted, the first real user gesture on
+    // the page carries the activation needed to bring sound back — unmute then.
+    // Taps on the mute button are excluded so it keeps its normal toggle
+    // semantics, and any manual mute toggle disarms this.
+    function armAutoUnmuteOnGesture() {
+      if (webPlayerAutoMutedPendingGesture) return;
+      webPlayerAutoMutedPendingGesture = true;
+      const unmute = (event) => {
+        document.removeEventListener('pointerdown', unmute, true);
+        document.removeEventListener('keydown', unmute, true);
+        if (!webPlayerAutoMutedPendingGesture) return;
+        webPlayerAutoMutedPendingGesture = false;
+        if (event?.target?.closest?.('#muteButton')) return;
+        const video = document.getElementById('webPlayer');
+        if (!video) return;
+        webPlayerMuted = false;
+        if (webPlayerVolume <= 0) webPlayerVolume = 1;
+        video.volume = webPlayerVolume;
+        video.muted = false;
+        updateControls();
+      };
+      document.addEventListener('pointerdown', unmute, true);
+      document.addEventListener('keydown', unmute, true);
+    }
+
+    function installVideoEvents(video) {
+      video.addEventListener('timeupdate', () => {
+        if (!webPlayerSeekInProgress && !video.seeking) {
+          updateControls();
+          renderSubtitles();
+          sendWebPlayerProgress();
+        }
+      });
+      video.addEventListener('play', () => {
+        updateControls();
+        showControls();
+        sendWebPlayerProgress({ force: true, isPaused: false });
+      });
+      video.addEventListener('pause', () => {
+        updateControls();
+        showControls();
+        sendWebPlayerProgress({ force: true, isPaused: true });
+      });
+      video.addEventListener('ended', () => {
+        updateControls();
+        sendWebPlayerProgress({ force: true, isPaused: true, ended: true });
+      });
+      video.addEventListener('volumechange', () => {
+        webPlayerVolume = Number(video.volume || 0);
+        webPlayerMuted = Boolean(video.muted);
+        updateControls();
+      });
+      video.addEventListener('error', () => {
+        const message = video.error?.message || 'Video playback failed.';
+        setStatus(message, true);
+      });
+    }
+
+    async function seekWebPlayer(target) {
+      const video = document.getElementById('webPlayer');
+      if (!video) return;
+      const absoluteTarget = clampSeekTarget(target);
+      if (!Number.isFinite(absoluteTarget)) return;
+
+      if (!hlsSessionId) {
+        video.currentTime = absoluteTarget;
+        return;
+      }
+      if (webPlayerSeekInProgress) {
+        webPlayerQueuedSeekTarget = absoluteTarget;
+        webPlayerDisplayedSeekTarget = absoluteTarget;
+        updateControls();
+        return;
+      }
+
+      webPlayerSeekInProgress = true;
+      webPlayerDisplayedSeekTarget = absoluteTarget;
+      setStatus(`Seeking to ${formatTime(absoluteTarget)}...`);
+      const wasPlaying = !video.paused;
+      // Only auto-resume the re-attached stream if it was playing — the autoplay
+      // attribute must not force playback after a paused seek.
+      video.autoplay = wasPlaying;
+      video.pause();
+
+      try {
+        const response = await apiCall(`/video/hls/${encodeURIComponent(hlsSessionId)}/seek?time=${absoluteTarget.toFixed(2)}`, { method: 'POST' });
+        if (!response?.playlistUrl) throw new Error('seek response missing playlist URL');
+        hlsPlaybackOffset = Number(response.startOffset ?? absoluteTarget);
+        hlsDuration = Number(response.duration || hlsDuration || 0);
+        webPlayerSubtitleCues = [];
+        attachWebPlayer(video, apiUrl(response.playlistUrl));
+        video.addEventListener('canplay', () => {
+          installSubtitleTrack(video);
+          setStatus('');
+          if (wasPlaying) video.play().catch(() => {});
+        }, { once: true });
+      } catch (error) {
+        setStatus(`Seek failed: ${error.message || String(error)}`, true);
+      } finally {
+        window.setTimeout(() => {
+          webPlayerSeekInProgress = false;
+          const queued = webPlayerQueuedSeekTarget;
+          webPlayerQueuedSeekTarget = null;
+          webPlayerDisplayedSeekTarget = null;
+          updateControls();
+          // Guard against Number(null) === 0 — an empty queue must not replay a seek to 0.
+          const queuedTarget = queued === null || queued === undefined ? Number.NaN : Number(queued);
+          if (Number.isFinite(queuedTarget) && Math.abs(queuedTarget - absoluteTarget) >= 0.5) {
+            seekWebPlayer(queuedTarget);
+          }
+        }, 500);
+      }
+    }
+
+    function currentAbsoluteTime() {
+      const video = document.getElementById('webPlayer');
+      if (!hlsSessionId) return Number(video?.currentTime || 0);
+      return hlsPlaybackOffset + Number(video?.currentTime || 0);
+    }
+
+    function currentDuration() {
+      const video = document.getElementById('webPlayer');
+      const absoluteTime = currentAbsoluteTime();
+      return hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + (hlsSessionId ? hlsPlaybackOffset : 0));
+    }
+
+    function currentControlTime() {
+      // Guard against Number(null) === 0 — only honor an explicitly set target.
+      if (webPlayerDisplayedSeekTarget === null || webPlayerDisplayedSeekTarget === undefined) {
+        return currentAbsoluteTime();
+      }
+      const displayed = Number(webPlayerDisplayedSeekTarget);
+      return Number.isFinite(displayed) ? displayed : currentAbsoluteTime();
+    }
+
+    function clampSeekTarget(value) {
+      const target = Number(value);
+      if (!Number.isFinite(target)) return Number.NaN;
+      const duration = currentDuration();
+      return duration > 0 ? Math.max(0, Math.min(target, duration)) : Math.max(0, target);
+    }
+
+    function skipWebPlayer(delta) {
+      seekWebPlayer(clampSeekTarget(currentControlTime() + Number(delta || 0)));
+    }
+
+    function beginSeekInput() {
+      webPlayerSeekInputActive = true;
+    }
+
+    function previewSeek(value) {
+      webPlayerSeekInputActive = true;
+      const target = Number(value || 0);
+      document.getElementById('time').textContent = `${formatTime(target)} / ${formatTime(currentDuration())}`;
+    }
+
+    function commitSeek(value) {
+      webPlayerSeekInputActive = false;
+      seekWebPlayer(Number(value || 0));
+    }
+
+    function updateControls() {
+      const host = document.getElementById('videoHost');
+      const video = document.getElementById('webPlayer');
+      const playButton = document.getElementById('playButton');
+      const seek = document.getElementById('seek');
+      const time = document.getElementById('time');
+      const volumeIcon = document.getElementById('volumeIcon');
+      if (!video || !host) return;
+
+      const playing = !video.paused;
+      host.classList.toggle('is-paused', !playing);
+      if (playButton) {
+        playButton.classList.toggle('is-playing', playing);
+        playButton.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+        playButton.setAttribute('title', playing ? 'Pause' : 'Play');
+      }
+
+      const duration = currentDuration();
+      const controlTime = currentControlTime();
+      if (seek && !webPlayerSeekInputActive) {
+        seek.disabled = webPlayerSeekInProgress;
+        seek.max = String(Math.max(1, Math.floor(duration || 1)));
+        seek.value = String(Math.floor(Math.min(controlTime, duration || controlTime)));
+      }
+      if (time) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+      if (volumeIcon) {
+        volumeIcon.innerHTML = video.muted || Number(video.volume || 0) === 0
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="17" y1="9" x2="22" y2="14"/><line x1="22" y1="9" x2="17" y2="14"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+      }
+    }
+
+    function togglePlayback() {
+      const video = document.getElementById('webPlayer');
+      if (!video) return;
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+      updateControls();
+    }
+
+    function toggleMute() {
+      const video = document.getElementById('webPlayer');
+      if (!video) return;
+      webPlayerAutoMutedPendingGesture = false;
+      webPlayerMuted = !webPlayerMuted;
+      if (!webPlayerMuted && webPlayerVolume <= 0) webPlayerVolume = 0.5;
+      video.volume = webPlayerVolume;
+      video.muted = webPlayerMuted;
+      updateControls();
+    }
+
+    function openTrackSheet() {
+      const host = document.getElementById('videoHost');
+      if (!host) return;
+      host.classList.add('tracks-open');
+      showControls();
+    }
+
+    function closeTrackSheet() {
+      const host = document.getElementById('videoHost');
+      if (host) host.classList.remove('tracks-open');
+    }
+
+    function toggleTheater() {
+      const host = document.getElementById('videoHost');
+      setTheater(!host?.classList.contains('is-theater'));
+    }
+
+    function setTheater(enabled) {
+      const host = document.getElementById('videoHost');
+      if (!host) return;
+      host.classList.toggle('is-theater', Boolean(enabled));
+      document.body.style.overflow = enabled ? 'hidden' : '';
+      showControls();
+    }
+
+    function toggleFullscreen() {
+      const host = document.getElementById('videoHost');
+      setFullscreen(!host?.classList.contains('is-fullscreen'));
+    }
+
+    function setFullscreen(enabled) {
+      const host = document.getElementById('videoHost');
+      if (!host) return;
+      host.classList.toggle('is-fullscreen', Boolean(enabled));
+      document.body.style.overflow = enabled ? 'hidden' : '';
+      if (enabled) {
+        const request = host.requestFullscreen || host.webkitRequestFullscreen;
+        if (request) {
+          try {
+            const result = request.call(host);
+            if (result?.catch) result.catch(() => {});
+          } catch {}
+        }
+      } else if (document.fullscreenElement || document.webkitFullscreenElement) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) {
+          try {
+            const result = exit.call(document);
+            if (result?.catch) result.catch(() => {});
+          } catch {}
+        }
+      }
+      showControls();
+    }
+
+    function installControlsAutoHide(host) {
+      const wake = () => showControls();
+      host.addEventListener('mousemove', wake);
+      host.addEventListener('touchstart', wake, { passive: true });
+      host.addEventListener('click', wake);
+      showControls();
+    }
+
+    function showControls() {
+      const host = document.getElementById('videoHost');
+      if (!host) return;
+      host.classList.remove('controls-hidden');
+      if (webPlayerControlsHideTimer) clearTimeout(webPlayerControlsHideTimer);
+      webPlayerControlsHideTimer = window.setTimeout(() => {
+        const video = document.getElementById('webPlayer');
+        if (host.classList.contains('is-fullscreen') && video && !video.paused) {
+          host.classList.add('controls-hidden');
+        }
+      }, 3000);
+    }
+
+    function changeAudioTrack(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedAudioTrack)) return;
+      webPlayerSelectedAudioTrack = parsed;
+      startWebPlayerFromSource({ startOffset: currentAbsoluteTime() });
+    }
+
+    function changeSubtitleTrack(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedSubtitleTrack)) return;
+      webPlayerSelectedSubtitleTrack = parsed;
+      startWebPlayerFromSource({ startOffset: currentAbsoluteTime() });
+    }
+
+    async function installSubtitleTrack(video) {
+      const loadToken = ++webPlayerSubtitleLoadToken;
+      webPlayerSubtitleCues = [];
+      renderSubtitles();
+      if (!hlsSessionId || Number(webPlayerSelectedSubtitleTrack) < 0) return;
+      try {
+        const response = await fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/subtitles-${encodeURIComponent(String(webPlayerSelectedSubtitleTrack))}.vtt?reload=${Date.now()}`), {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        if (loadToken !== webPlayerSubtitleLoadToken) return;
+        webPlayerSubtitleCues = parseWebVttCues(text);
+        renderSubtitles();
+        if (response.headers.get('X-Subtitle-Extracting') === 'true') {
+          scheduleSubtitleRefresh(video);
+        }
+      } catch (error) {
+        console.warn('Subtitle load failed:', error);
+        scheduleSubtitleRefresh(video);
+      }
+    }
+
+    function scheduleSubtitleRefresh(video) {
+      if (webPlayerSubtitleRefreshTimer) clearTimeout(webPlayerSubtitleRefreshTimer);
+      webPlayerSubtitleRefreshTimer = window.setTimeout(() => installSubtitleTrack(video), 5000);
+    }
+
+    function renderSubtitles() {
+      const overlay = document.getElementById('subtitleOverlay');
+      const video = document.getElementById('webPlayer');
+      if (!overlay || !video || Number(webPlayerSelectedSubtitleTrack) < 0) {
+        if (overlay) overlay.textContent = '';
+        return;
+      }
+      const time = Number(video.currentTime || 0);
+      const active = webPlayerSubtitleCues.filter((cue) => time >= cue.start && time <= cue.end);
+      overlay.textContent = active.map((cue) => cue.text).join('\n');
+    }
+
+    function parseWebVttCues(text) {
+      const cues = [];
+      const normalized = String(text || '').replace(/\r/g, '');
+      for (const block of normalized.split(/\n{2,}/)) {
+        const lines = block.split('\n').map((line) => line.trimEnd()).filter(Boolean);
+        if (!lines.length || /^(WEBVTT|NOTE|STYLE|REGION)(\s|$)/i.test(lines[0])) continue;
+        const timingIndex = lines.findIndex((line) => line.includes('-->'));
+        if (timingIndex < 0) continue;
+        const match = lines[timingIndex].match(/^\s*([\d:.]+)\s+-->\s+([\d:.]+)/);
+        if (!match) continue;
+        const start = parseWebVttTimestamp(match[1]);
+        const end = parseWebVttTimestamp(match[2]);
+        const cueText = lines.slice(timingIndex + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+        if (Number.isFinite(start) && Number.isFinite(end) && end > start && cueText) {
+          cues.push({ start, end, text: cueText });
+        }
+      }
+      return cues;
+    }
+
+    function parseWebVttTimestamp(value) {
+      const parts = String(value || '').split(':');
+      if (parts.length < 2 || parts.length > 3) return Number.NaN;
+      const seconds = Number(parts.pop());
+      const minutes = Number(parts.pop());
+      const hours = parts.length ? Number(parts.pop()) : 0;
+      if (![hours, minutes, seconds].every(Number.isFinite)) return Number.NaN;
+      return (hours * 3600) + (minutes * 60) + seconds;
+    }
+
+    function startKeepalive() {
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+      keepaliveTimer = setInterval(() => {
+        if (!hlsSessionId) return;
+        fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentAbsoluteTime().toFixed(2)}`), {
+          method: 'POST',
+          credentials: 'same-origin',
+        }).catch(() => {});
+      }, 20000);
+    }
+
+    function startProgressTracking() {
+      stopProgressTracking();
+      lastProgressSentAt = 0;
+      lastProgressPosition = 0;
+      lastProgressPaused = false;
+      progressCompleted = false;
+      progressTimer = setInterval(() => sendWebPlayerProgress(), WEB_PLAYER_PROGRESS_INTERVAL_MS);
+    }
+
+    function stopProgressTracking() {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    }
+
+    function sendWebPlayerProgress(options = {}) {
+      const video = document.getElementById('webPlayer');
+      if (!video || progressCompleted || !activeProfileId) return Promise.resolve(null);
+      const duration = currentDuration();
+      if (!Number.isFinite(duration) || duration <= 0) return Promise.resolve(null);
+      const isEnded = Boolean(options.ended);
+      const isPaused = options.isPaused !== undefined ? Boolean(options.isPaused) : Boolean(video.paused);
+      let position = isEnded ? duration : currentAbsoluteTime();
+      if (!Number.isFinite(position) || position < 0) return Promise.resolve(null);
+      position = Math.max(0, Math.min(position, duration));
+      if (position <= 0 && !options.force) return Promise.resolve(null);
+
+      const now = Date.now();
+      const positionDelta = Math.abs(position - lastProgressPosition);
+      const pauseStateChanged = isPaused !== lastProgressPaused;
+      if (!options.force && !pauseStateChanged && now - lastProgressSentAt < WEB_PLAYER_PROGRESS_INTERVAL_MS && positionDelta < WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS) {
+        return Promise.resolve(null);
+      }
+
+      const payload = buildProgressPayload(position, duration, isPaused);
+      const endpoint = `/users/${encodeURIComponent(activeProfileId)}/history/progress`;
+      const fetchOptions = { method: 'POST', body: JSON.stringify(payload) };
+      if (options.keepalive) {
+        return fetch(apiUrl(endpoint), {
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          ...fetchOptions,
+          keepalive: true,
+        }).catch(() => null);
+      }
+
+      return apiCall(endpoint, fetchOptions).then((result) => {
+        lastProgressSentAt = Date.now();
+        lastProgressPosition = position;
+        lastProgressPaused = isPaused;
+        const percentWatched = Number(result?.percentWatched ?? (duration > 0 ? (position / duration) * 100 : 0));
+        if (percentWatched >= 90 || isEnded) {
+          progressCompleted = true;
+          stopProgressTracking();
+        }
+        if (result?.allowedToContinue === false) {
+          video.pause();
+          setStatus('Playback stopped by server policy.');
+        }
+        return result;
+      }).catch(() => null);
+    }
+
+    function buildProgressPayload(position, duration, isPaused) {
+      const externalIds = {};
+      if (playbackMeta.imdbId) externalIds.imdb = playbackMeta.imdbId;
+      if (playbackMeta.tmdbId) externalIds.tmdb = String(playbackMeta.tmdbId);
+      if (playbackMeta.tvdbId) externalIds.tvdb = String(playbackMeta.tvdbId);
+      if (playbackMeta.itemId) externalIds.titleId = String(playbackMeta.itemId);
+
+      const payload = {
+        mediaType: playbackMeta.mediaType || 'movie',
+        itemId: buildProgressItemId(),
+        position,
+        duration,
+        isPaused: Boolean(isPaused),
+        timestamp: new Date().toISOString(),
+        externalIds,
+        year: playbackMeta.year || undefined,
+      };
+      if (payload.mediaType === 'episode') {
+        payload.seasonNumber = playbackMeta.seasonNumber || undefined;
+        payload.episodeNumber = playbackMeta.episodeNumber || undefined;
+        payload.seriesId = playbackMeta.itemId || undefined;
+        payload.seriesName = playbackMeta.seriesTitle || playbackMeta.title || undefined;
+        payload.episodeName = playbackMeta.episodeName || undefined;
+      } else {
+        payload.movieName = playbackMeta.title || undefined;
+      }
+      return payload;
+    }
+
+    function buildProgressItemId() {
+      if (playbackMeta.mediaType !== 'episode') return playbackMeta.itemId || sourcePath || directMovieUrl || playbackMeta.title || 'movie';
+      const seriesId = playbackMeta.itemId || playbackMeta.seriesTitle || playbackMeta.title || 'series';
+      const season = playbackMeta.seasonNumber || 1;
+      const episode = playbackMeta.episodeNumber || 1;
+      return `${seriesId}:S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+    }
+
+    function stopHlsSession(options = {}) {
+      sendWebPlayerProgress({ force: true, keepalive: Boolean(options.keepalive), isPaused: true });
+      stopProgressTracking();
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+      if (webPlayerSubtitleRefreshTimer) {
+        clearTimeout(webPlayerSubtitleRefreshTimer);
+        webPlayerSubtitleRefreshTimer = null;
+      }
+      const video = document.getElementById('webPlayer');
+      if (video) {
+        try {
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+        } catch {}
+      }
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      if (hlsSessionId) {
+        const id = hlsSessionId;
+        hlsSessionId = '';
+        fetch(apiUrl(`/video/hls/${encodeURIComponent(id)}/stop`), {
+          method: 'POST',
+          credentials: 'same-origin',
+          keepalive: Boolean(options.keepalive),
+        }).catch(() => {});
+      }
+    }
+
+    async function apiCall(path, options = {}) {
+      const response = await fetch(apiUrl(path), {
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        ...options,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return null;
+      return response.json();
+    }
+
+    function apiUrl(path) {
+      const value = String(path || '');
+      if (/^https?:\/\//i.test(value)) return value;
+      const apiPrefix = AUTH_TOKEN ? `${SERVER_BASE_PATH}/api` : `${SERVER_BASE_PATH}/account/api`;
+      if (value.startsWith(`${SERVER_BASE_PATH}/account/api/`)) return appendAuthToken(value);
+      if (value.startsWith(`${SERVER_BASE_PATH}/api/`)) return appendAuthToken(value);
+      if (value.startsWith('/account/api/')) return appendAuthToken(`${SERVER_BASE_PATH}${value}`);
+      if (value.startsWith('/api/')) return appendAuthToken(`${SERVER_BASE_PATH}${value}`);
+      if (value.startsWith('/video/') || value.startsWith('/live/')) return appendAuthToken(`${apiPrefix}${value}`);
+      if (value.startsWith('/')) return appendAuthToken(`${apiPrefix}${value}`);
+      return value;
+    }
+
+    function appendAuthToken(value) {
+      if (!AUTH_TOKEN) return value;
+      try {
+        const url = new URL(value, window.location.origin);
+        if (!url.searchParams.has('token')) url.searchParams.set('token', AUTH_TOKEN);
+        return url.toString();
+      } catch {
+        const separator = value.includes('?') ? '&' : '?';
+        return `${value}${separator}token=${encodeURIComponent(AUTH_TOKEN)}`;
+      }
+    }
+
+    function sourcePathFromStreamUrl(value) {
+      try {
+        const parsed = new URL(value, window.location.origin);
+        if (!parsed.pathname.endsWith('/video/stream')) return '';
+        return decodeRouteValue(parsed.searchParams.get('path') || '');
+      } catch {
+        return '';
+      }
+    }
+
+    function routeParam(name) {
+      return decodeRouteValue(ROUTE_PARAMS.get(name) || '');
+    }
+
+    function numericRouteParam(name) {
+      const parsed = Number(routeParam(name));
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function decodeRouteValue(value) {
+      let decoded = String(value || '');
+      for (let i = 0; i < 2; i++) {
+        try {
+          const next = decodeURIComponent(decoded);
+          if (next === decoded) break;
+          decoded = next;
+        } catch {
+          break;
+        }
+      }
+      return decoded;
+    }
+
+    function parseOptionalInt(value) {
+      const parsed = Number.parseInt(String(value || ''), 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function isWebTextSubtitleStream(stream) {
+      const codec = String(stream?.codecName || stream?.codec || '').toLowerCase();
+      return ['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'vtt', 'mov_text', 'text'].includes(codec);
+    }
+
+    function formatTrackLabel(stream, fallback) {
+      const index = Number(stream?.index);
+      const language = String(stream?.language || '').trim();
+      const title = String(stream?.title || '').trim();
+      const codec = String(stream?.codecName || stream?.codec || '').trim();
+      return [
+        `${fallback} ${Number.isFinite(index) ? index : ''}`.trim(),
+        language ? language.toUpperCase() : '',
+        title,
+        codec ? codec.toUpperCase() : '',
+      ].filter(Boolean).join(' - ');
+    }
+
+    function formatTime(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function setStatus(message, error) {
+      const status = document.getElementById('status');
+      if (!status) return;
+      status.textContent = message || '';
+      status.classList.toggle('error', Boolean(error));
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+  </script>
+</body>
+</html>
+{{end}}

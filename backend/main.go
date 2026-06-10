@@ -1311,6 +1311,17 @@ func main() {
 
 	fmt.Println("👤 Account management available at /account")
 
+	// Dedicated browser player handoff backed by the server-side HLS web player.
+	webPlaybackHandler := handlers.NewWebPlaybackHandler(userService, sessionsService, settings.Server.BasePath)
+	r.Handle("/watch/playback.html", webPlaybackHandler).Methods(http.MethodGet, http.MethodHead)
+
+	// Dedicated consumer web app served from the frontend Expo web export.
+	webAppHandler := handlers.NewWebAppHandler(handlers.ResolveWebAppDir(), "/watch")
+	r.Handle("/watch", webAppHandler).Methods(http.MethodGet, http.MethodHead)
+	r.PathPrefix("/watch/").Handler(webAppHandler).Methods(http.MethodGet, http.MethodHead)
+	fmt.Println("🎬 Web app available at /watch")
+	fmt.Println("🎬 Web playback handoff available at /watch/playback.html")
+
 	// Redirect root to admin dashboard
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusFound)

@@ -2283,26 +2283,32 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	needsFmp4 := session.HasDV || session.HasHDR
 	if session.HasDV && !session.DVDisabled {
 		segmentExt = ".m4s"
-		// Use correct codec tag based on DV profile:
-		// - dvh1: Profile 8 with HDR10-compatible base layer (bl_compat_id=1,2)
-		// - dvhe: Profile 5, 7 without HDR10-compatible base layer
-		dvTag := "dvh1"
-		if strings.HasPrefix(session.DVProfile, "dvhe.05") || strings.HasPrefix(session.DVProfile, "dvhe.07") {
-			dvTag = "dvhe"
+		if needsVideoTranscode {
+			log.Printf("[hls] session %s: using fMP4 H.264 output for web-compatible Dolby Vision/HDR source; skipping HEVC DV tag and hevc_metadata filter", session.ID)
+		} else {
+			// Use correct codec tag based on DV profile:
+			// - dvh1: Profile 8 with HDR10-compatible base layer (bl_compat_id=1,2)
+			// - dvhe: Profile 5, 7 without HDR10-compatible base layer
+			dvTag := "dvh1"
+			if strings.HasPrefix(session.DVProfile, "dvhe.05") || strings.HasPrefix(session.DVProfile, "dvhe.07") {
+				dvTag = "dvhe"
+			}
+			// For DV content, -strict unofficial enables FFmpeg to write dvcC/dvvC boxes
+			// IMPORTANT: -strict unofficial MUST be placed AFTER -i (as output option, not input option)
+			// NOTE: hevc_metadata filter is safe to use with DV - it only modifies VUI color parameters
+			// and does NOT interfere with dvcC box generation (tested). This fixes sources with
+			// incorrect color metadata (e.g., bt709 instead of bt2020/PQ) which cause saturated colors.
+			// Do NOT use dovi_rpu filter as it DOES break dvcC generation.
+			args = append(args, "-strict", "unofficial", "-tag:v", dvTag, "-bsf:v", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9")
+			log.Printf("[hls] session %s: using %s tag with fMP4 segments for Dolby Vision (profile: %s)", session.ID, dvTag, session.DVProfile)
 		}
-		// For DV content, -strict unofficial enables FFmpeg to write dvcC/dvvC boxes
-		// IMPORTANT: -strict unofficial MUST be placed AFTER -i (as output option, not input option)
-		// NOTE: hevc_metadata filter is safe to use with DV - it only modifies VUI color parameters
-		// and does NOT interfere with dvcC box generation (tested). This fixes sources with
-		// incorrect color metadata (e.g., bt709 instead of bt2020/PQ) which cause saturated colors.
-		// Do NOT use dovi_rpu filter as it DOES break dvcC generation.
-		args = append(args, "-strict", "unofficial", "-tag:v", dvTag, "-bsf:v", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9")
-		log.Printf("[hls] session %s: using %s tag with fMP4 segments for Dolby Vision (profile: %s)", session.ID, dvTag, session.DVProfile)
 	} else if session.HasHDR || (session.HasDV && session.DVDisabled) {
 		// Also handles DV fallback - DV Profile 8 has HDR10 base layer that plays fine without DV metadata
 		segmentExt = ".m4s"
-		// Use hevc_metadata to ensure proper BT.2020/PQ color signaling for HDR10 content
-		if session.HDRMetadataDisabled {
+		if needsVideoTranscode {
+			log.Printf("[hls] session %s: using fMP4 H.264 output for web-compatible HDR source; skipping hvc1 tag and hevc_metadata filter", session.ID)
+		} else if session.HDRMetadataDisabled {
+			// Use hevc_metadata to ensure proper BT.2020/PQ color signaling for HDR10 content.
 			// Skip hevc_metadata filter if it failed previously (malformed SEI data)
 			// Stream will still play, just without explicit HDR color signaling in fMP4
 			args = append(args, "-tag:v", "hvc1")
@@ -3798,9 +3804,10 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		}
 	}
 
-	// Read the playlist file. For live sessions, do not serve the first empty
-	// playlist; native HLS clients can stall if the initial response has no media
-	// segments and may not recover by polling.
+	// Read the playlist file. Do not serve an initial empty playlist (header but
+	// no media segments yet): native HLS clients (Safari) stall on it and never
+	// re-poll. The window between FFmpeg starting and the first segment landing
+	// makes this race common for VOD sessions too, not just live.
 	var content []byte
 	for {
 		var err error
@@ -3810,11 +3817,11 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 			http.Error(w, "playlist not ready", http.StatusInternalServerError)
 			return
 		}
-		if !session.IsLive || playlistHasMediaSegment(content) {
+		if playlistHasMediaSegment(content) {
 			break
 		}
 		if time.Now().After(deadline) {
-			log.Printf("[hls] live playlist has no media segments for session %s after 60s", sessionID)
+			log.Printf("[hls] playlist has no media segments for session %s after 60s", sessionID)
 			http.Error(w, "playlist not ready", http.StatusGatewayTimeout)
 			return
 		}
