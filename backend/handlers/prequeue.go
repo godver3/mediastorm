@@ -1199,6 +1199,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
 		e.Status = playback.PrequeueStatusProbing
 		e.StreamPath = resolution.WebDAVPath
+		if selectedResult != nil {
+			e.ServiceType = string(selectedResult.ServiceType)
+		}
 		e.FileSize = resolution.FileSize
 		if e.FileSize == 0 && selectedResult != nil && selectedResult.SizeBytes > 0 {
 			e.FileSize = selectedResult.SizeBytes

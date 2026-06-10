@@ -88,3 +88,43 @@ func TestPrequeueStoreDoesNotValidateNonReadyEntry(t *testing.T) {
 		t.Fatalf("Get returned (%v, %t), want queued entry", got, ok)
 	}
 }
+
+func TestPrequeueEntryToResponseIncludesServiceType(t *testing.T) {
+	entry := &PrequeueEntry{
+		ID:          "pq_test",
+		Status:      PrequeueStatusReady,
+		StreamPath:  "/debrid/realdebrid/file.mkv",
+		ServiceType: "debrid",
+	}
+
+	resp := entry.ToResponse()
+	if resp.ServiceType != "debrid" {
+		t.Fatalf("ServiceType = %q, want debrid", resp.ServiceType)
+	}
+}
+
+func TestPrequeueEntryToResponseInfersServiceType(t *testing.T) {
+	tests := []struct {
+		name       string
+		streamPath string
+		want       string
+	}{
+		{name: "debrid path", streamPath: "/debrid/realdebrid/file.mkv", want: "debrid"},
+		{name: "usenet path", streamPath: "/downloads/usenet/file.mkv", want: "usenet"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := &PrequeueEntry{
+				ID:         "pq_test",
+				Status:     PrequeueStatusReady,
+				StreamPath: tt.streamPath,
+			}
+
+			resp := entry.ToResponse()
+			if resp.ServiceType != tt.want {
+				t.Fatalf("ServiceType = %q, want %s", resp.ServiceType, tt.want)
+			}
+		})
+	}
+}

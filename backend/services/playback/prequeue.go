@@ -99,6 +99,7 @@ type PrequeueStatusResponse struct {
 	// When ready:
 	StreamPath   string `json:"streamPath,omitempty"`
 	DisplayName  string `json:"displayName,omitempty"` // For display instead of extracting from path
+	ServiceType  string `json:"serviceType,omitempty"`
 	FileSize     int64  `json:"fileSize,omitempty"`
 	HealthStatus string `json:"healthStatus,omitempty"`
 
@@ -152,6 +153,7 @@ type PrequeueEntry struct {
 	Status       PrequeueStatus `json:"status"`
 	StreamPath   string         `json:"streamPath,omitempty"`
 	MagnetLink   string         `json:"magnetLink,omitempty"` // Original magnet link for re-adding expired torrents
+	ServiceType  string         `json:"serviceType,omitempty"`
 	FileSize     int64          `json:"fileSize,omitempty"`
 	HealthStatus string         `json:"healthStatus,omitempty"`
 
@@ -1017,12 +1019,22 @@ func EpisodeReferencesMatch(a, b *models.EpisodeReference) bool {
 
 // ToResponse converts an entry to a status response
 func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
+	serviceType := e.ServiceType
+	if serviceType == "" {
+		streamPath := strings.ToLower(strings.TrimSpace(e.StreamPath))
+		if strings.HasPrefix(streamPath, "/debrid/") {
+			serviceType = "debrid"
+		} else if streamPath != "" {
+			serviceType = "usenet"
+		}
+	}
 	return &PrequeueStatusResponse{
 		PrequeueID:             e.ID,
 		Status:                 e.Status,
 		UserID:                 e.UserID,
 		TargetEpisode:          e.TargetEpisode,
 		StreamPath:             e.StreamPath,
+		ServiceType:            serviceType,
 		FileSize:               e.FileSize,
 		HealthStatus:           e.HealthStatus,
 		HasDolbyVision:         e.HasDolbyVision,
