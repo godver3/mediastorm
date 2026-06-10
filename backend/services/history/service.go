@@ -734,16 +734,25 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// Filter to watched episodes from the past 365 days
 	cutoffDate := time.Now().UTC().AddDate(-1, 0, 0) // 365 days ago
 	seriesEpisodes := make(map[string][]models.WatchHistoryItem)
+	seriesHistory := make(map[string][]models.WatchHistoryItem)
+	seriesActivityAt := make(map[string]time.Time)
 	seriesInfo := make(map[string]models.WatchHistoryItem) // Track series metadata
 
 	for _, item := range items {
-		if item.MediaType == "episode" && item.Watched && item.SeriesID != "" {
+		if item.MediaType == "episode" && item.SeriesID != "" {
 			resolvedID := resolveCanonicalID(canonicalSeriesID, item.SeriesID)
 			// Skip hidden series
 			if hiddenSeriesIDs[resolvedID] {
 				continue
 			}
-			if item.WatchedAt.After(cutoffDate) {
+			activityAt := watchHistoryActivityTime(item)
+			if activityAt.After(cutoffDate) {
+				seriesHistory[resolvedID] = append(seriesHistory[resolvedID], item)
+				if activityAt.After(seriesActivityAt[resolvedID]) {
+					seriesActivityAt[resolvedID] = activityAt
+				}
+			}
+			if item.Watched && item.WatchedAt.After(cutoffDate) {
 				seriesEpisodes[resolvedID] = append(seriesEpisodes[resolvedID], item)
 				if _, exists := seriesInfo[resolvedID]; !exists {
 					seriesInfo[resolvedID] = item
@@ -807,6 +816,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		seriesID   string
 		info       models.WatchHistoryItem
 		episodes   []models.WatchHistoryItem
+		history    []models.WatchHistoryItem
+		activityAt time.Time
 		inProgress *models.PlaybackProgress
 	}
 
@@ -816,6 +827,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			seriesID:   seriesID,
 			info:       seriesInfo[seriesID],
 			episodes:   seriesEpisodes[seriesID],
+			history:    seriesHistory[seriesID],
+			activityAt: seriesActivityAt[seriesID],
 			inProgress: inProgressBySeriesCache[seriesID],
 		})
 	}
@@ -836,6 +849,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			// next-episode lookup, and enrichment below can all reuse it.
 			seriesDetails, seriesErr := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
 			numbering := newEpisodeNumberingIndex(seriesDetails)
+			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
 
 			// Priority 1: In-progress episode (resume watching)
 			// Skip if the in-progress episode is already marked as watched in history
@@ -927,6 +941,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					if ep.WatchedAt.After(updatedAt) {
 						updatedAt = ep.WatchedAt
 					}
+				}
+				if t.activityAt.After(updatedAt) {
+					updatedAt = t.activityAt
 				}
 
 				// For in-progress, use the in-progress episode as both last and next
@@ -1037,6 +1054,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					UpdatedAt:   mostRecentEpisode.WatchedAt,
 					LastWatched: s.convertToEpisodeRef(mostRecentEpisode),
 					NextEpisode: nextEpisode,
+				}
+				if t.activityAt.After(state.UpdatedAt) {
+					state.UpdatedAt = t.activityAt
 				}
 				if promotedAt, ok := continueWatchingRecentReleaseTime(nextEpisode); ok && promotedAt.After(state.UpdatedAt) {
 					state.UpdatedAt = promotedAt
@@ -1271,6 +1291,48 @@ func continueWatchingComingSoonTime(nextEpisode *models.EpisodeReference) (time.
 		return time.Time{}, false
 	}
 	return releaseTime, true
+}
+
+func watchedEpisodesAfterManualUnwatch(watchedEpisodes, history []models.WatchHistoryItem, numbering *episodeNumberingIndex) []models.WatchHistoryItem {
+	if len(watchedEpisodes) == 0 || len(history) == 0 {
+		return watchedEpisodes
+	}
+
+	latestUnwatched := make(map[string]time.Time)
+	for _, item := range history {
+		if item.Watched {
+			continue
+		}
+		season, episode := numbering.canonical(item.SeasonNumber, item.EpisodeNumber)
+		key := episodeKey(season, episode)
+		activityAt := watchHistoryActivityTime(item)
+		if activityAt.After(latestUnwatched[key]) {
+			latestUnwatched[key] = activityAt
+		}
+	}
+	if len(latestUnwatched) == 0 {
+		return watchedEpisodes
+	}
+
+	filtered := make([]models.WatchHistoryItem, 0, len(watchedEpisodes))
+	for _, item := range watchedEpisodes {
+		season, episode := numbering.canonical(item.SeasonNumber, item.EpisodeNumber)
+		key := episodeKey(season, episode)
+		if unwatchedAt, ok := latestUnwatched[key]; ok && !watchHistoryActivityTime(item).After(unwatchedAt) {
+			continue
+		}
+		item.SeasonNumber = season
+		item.EpisodeNumber = episode
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func watchHistoryActivityTime(item models.WatchHistoryItem) time.Time {
+	if item.UpdatedAt.After(item.WatchedAt) {
+		return item.UpdatedAt
+	}
+	return item.WatchedAt
 }
 
 // getMovieMetadataWithCache retrieves movie metadata with caching.
@@ -2476,6 +2538,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	}
 
 	perUser[key] = item
+	syncEquivalentEpisodeWatchHistoryLocked(perUser, key, item)
 
 	// If marking an episode as watched, also clear progress for earlier episodes
 	if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
@@ -2616,6 +2679,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 		}
 
 		perUser[key] = item
+		syncEquivalentEpisodeWatchHistoryLocked(perUser, key, item)
 
 		// If marking an episode as watched, also clear progress for earlier episodes
 		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
@@ -3006,6 +3070,52 @@ func episodeScopedIndexKeys(externalIDs map[string]string) []string {
 		}
 	}
 	return keys
+}
+
+func syncEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHistoryItem, canonicalKey string, item models.WatchHistoryItem) {
+	if item.MediaType != "episode" || item.SeasonNumber <= 0 || item.EpisodeNumber <= 0 || len(item.ExternalIDs) == 0 {
+		return
+	}
+
+	for key, candidate := range perUser {
+		if key == canonicalKey ||
+			candidate.MediaType != "episode" ||
+			candidate.SeasonNumber != item.SeasonNumber ||
+			!hasMatchingExternalID(candidate.ExternalIDs, item.ExternalIDs) ||
+			!watchHistoryEpisodeNumbersMatch(candidate.EpisodeNumber, item.EpisodeNumber, candidate.ExternalIDs, item.ExternalIDs) {
+			continue
+		}
+
+		candidate.Watched = item.Watched
+		candidate.UpdatedAt = item.UpdatedAt
+		if item.Watched {
+			candidate.WatchedAt = item.WatchedAt
+		}
+		if candidate.ExternalIDs == nil {
+			candidate.ExternalIDs = make(map[string]string)
+		}
+		for k, v := range item.ExternalIDs {
+			if v != "" {
+				candidate.ExternalIDs[k] = v
+			}
+		}
+		perUser[key] = candidate
+	}
+}
+
+func watchHistoryEpisodeNumbersMatch(candidateEpisode, updateEpisode int, candidateExternalIDs, updateExternalIDs map[string]string) bool {
+	if candidateEpisode == updateEpisode {
+		return true
+	}
+	candidateAbsolute, candidateHasAbsolute := positiveExternalIDInt(candidateExternalIDs, "absoluteEpisode")
+	updateAbsolute, updateHasAbsolute := positiveExternalIDInt(updateExternalIDs, "absoluteEpisode")
+	if updateHasAbsolute && candidateEpisode == updateAbsolute {
+		return true
+	}
+	if candidateHasAbsolute && updateEpisode == candidateAbsolute {
+		return true
+	}
+	return candidateHasAbsolute && updateHasAbsolute && candidateAbsolute == updateAbsolute
 }
 
 func (s *Service) loadWatchHistory() error {
@@ -4084,9 +4194,10 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 
 	anyCleared := false
 	for key, progress := range perUser {
-		if progress.MediaType != "episode" ||
-			progress.SeasonNumber != seasonNumber ||
-			progress.EpisodeNumber != episodeNumber {
+		if progress.MediaType != "episode" || progress.SeasonNumber != seasonNumber {
+			continue
+		}
+		if !episodeNumbersMatchForProgressClear(progress.EpisodeNumber, episodeNumber, progress.ExternalIDs, externalIDs) {
 			continue
 		}
 
@@ -4101,6 +4212,36 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 	}
 
 	return anyCleared
+}
+
+func episodeNumbersMatchForProgressClear(progressEpisode, updateEpisode int, progressExternalIDs, updateExternalIDs map[string]string) bool {
+	if progressEpisode == updateEpisode {
+		return true
+	}
+	progressAbsolute, progressHasAbsolute := positiveExternalIDInt(progressExternalIDs, "absoluteEpisode")
+	updateAbsolute, updateHasAbsolute := positiveExternalIDInt(updateExternalIDs, "absoluteEpisode")
+	if progressHasAbsolute && progressEpisode == progressAbsolute && updateAbsolute == progressAbsolute {
+		return true
+	}
+	if updateHasAbsolute && updateEpisode == updateAbsolute && progressAbsolute == updateAbsolute {
+		return true
+	}
+	return false
+}
+
+func positiveExternalIDInt(externalIDs map[string]string, key string) (int, bool) {
+	if len(externalIDs) == 0 {
+		return 0, false
+	}
+	value, ok := externalIDs[key]
+	if !ok {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed <= 0 {
+		return 0, false
+	}
+	return parsed, true
 }
 
 // clearMovieProgressByExternalIDMatchLocked removes playback progress entries for a movie

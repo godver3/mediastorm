@@ -1379,6 +1379,122 @@ func TestUpdateWatchHistory_UnwatchedClearsCrossProviderProgress(t *testing.T) {
 	}
 }
 
+func TestUpdateWatchHistory_UnwatchedClearsAbsoluteEpisodeProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-absolute-progress"
+	watched := false
+	episodeIDs := map[string]string{
+		"imdb":            "tt0388629",
+		"tmdb":            "37854",
+		"tvdb":            "81797",
+		"episodeTvdb":     "11700062",
+		"absoluteEpisode": "1165",
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         "tvdb:series:81797:s23e1165",
+		Position:       0,
+		Duration:       0,
+		PercentWatched: 17.5,
+		SeriesID:       "tvdb:series:81797",
+		SeriesName:     "One Piece",
+		SeasonNumber:   23,
+		EpisodeNumber:  1165,
+		EpisodeName:    "S23E10",
+		ExternalIDs:    episodeIDs,
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:81797:s23e10",
+		Name:          "S23E10",
+		Watched:       &watched,
+		SeriesID:      "tvdb:series:81797",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 10,
+		ExternalIDs:   episodeIDs,
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 0 {
+		t.Fatalf("expected absolute-numbered progress to be cleared on manual unwatch, got %d items: %+v", len(progressItems), progressItems)
+	}
+}
+
+func TestUpdateWatchHistory_UnwatchedSyncsAbsoluteEpisodeDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-absolute-duplicate"
+	watched := true
+	unwatched := false
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:37854:s23e1164",
+		Name:          "One Piece",
+		Watched:       &watched,
+		SeriesID:      "tmdb:tv:37854",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 1164,
+		ExternalIDs: map[string]string{
+			"imdb": "tt0388629",
+			"tmdb": "37854",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() watched duplicate error = %v", err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:81797:s23e09",
+		Name:          "One Piece",
+		Watched:       &unwatched,
+		SeriesID:      "tvdb:series:81797",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 9,
+		ExternalIDs: map[string]string{
+			"imdb":            "tt0388629",
+			"tmdb":            "37854",
+			"tvdb":            "81797",
+			"episodeTvdb":     "11700061",
+			"absoluteEpisode": "1164",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() unwatched canonical error = %v", err)
+	}
+
+	duplicate, err := svc.GetWatchHistoryItem(userID, "episode", "tmdb:tv:37854:s23e1164")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if duplicate == nil {
+		t.Fatal("expected duplicate history row to remain for compatibility")
+	}
+	if duplicate.Watched {
+		t.Fatalf("expected absolute duplicate to be synced to unwatched: %+v", duplicate)
+	}
+}
+
 // TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent verifies that the
 // surviving key is the canonical TMDB one regardless of which provider scheme
 // wrote last — i.e. a TVDB-first sync followed by a native TMDB play converges
@@ -2465,6 +2581,97 @@ func TestContinueWatching_AbsoluteNumberedInProgressTreatedAsWatched(t *testing.
 	}
 	if next.SeasonNumber != 23 || next.EpisodeNumber != 9 {
 		t.Fatalf("NextEpisode = S%02dE%02d, want S23E09", next.SeasonNumber, next.EpisodeNumber)
+	}
+}
+
+func TestContinueWatching_ManualUnwatchSuppressesAbsoluteWatchedDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	seriesID := "tvdb:series:81797"
+	userID := "user-one-piece-unwatch"
+
+	svc.SetMetadataService(&mockMetadataService{
+		seriesDetails: &models.SeriesDetails{
+			Title: models.Title{ID: seriesID, Name: "One Piece", TVDBID: 81797, Year: 1999},
+			Seasons: []models.SeriesSeason{{
+				Number: 23,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1162", TVDBID: 1162, Name: "A Gargantuan Wave of Emotion", SeasonNumber: 23, EpisodeNumber: 7, AbsoluteEpisodeNumber: 1162, AiredDate: "2026-05-24", Runtime: 24},
+					{ID: "ep-1163", TVDBID: 1163, Name: "I Want You to Praise Me", SeasonNumber: 23, EpisodeNumber: 8, AbsoluteEpisodeNumber: 1163, AiredDate: "2026-05-31", Runtime: 24},
+					{ID: "ep-1164", TVDBID: 1164, Name: "Saul's Resolve", SeasonNumber: 23, EpisodeNumber: 9, AbsoluteEpisodeNumber: 1164, AiredDate: "2026-06-07", Runtime: 24},
+					{ID: "ep-1165", TVDBID: 1165, Name: "Robin and Saul", SeasonNumber: 23, EpisodeNumber: 10, AbsoluteEpisodeNumber: 1165, AiredDate: "2026-06-14", Runtime: 24},
+				},
+			}},
+		},
+	})
+
+	watched := true
+	unwatched := false
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s23e08",
+		Name:          "One Piece",
+		Watched:       &watched,
+		WatchedAt:     time.Date(2026, 6, 4, 1, 49, 35, 0, time.UTC),
+		SeriesID:      seriesID,
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 8,
+		ExternalIDs:   map[string]string{"imdb": "tt0388629", "tvdb": "81797", "absoluteEpisode": "1163"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:37854:s23e1164",
+		Name:          "One Piece",
+		Watched:       &watched,
+		WatchedAt:     time.Date(2026, 6, 6, 17, 32, 0, 0, time.UTC),
+		SeriesID:      "tmdb:tv:37854",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 1164,
+		ExternalIDs:   map[string]string{"imdb": "tt0388629", "tmdb": "37854"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        seriesID + ":s23e09",
+		Name:          "One Piece",
+		Watched:       &unwatched,
+		WatchedAt:     time.Date(2026, 6, 10, 23, 11, 43, 0, time.UTC),
+		SeriesID:      seriesID,
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 9,
+		ExternalIDs:   map[string]string{"imdb": "tt0388629", "tmdb": "37854", "tvdb": "81797", "episodeTvdb": "11700061", "absoluteEpisode": "1164"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 continue watching item, got %d", len(items))
+	}
+	next := items[0].NextEpisode
+	if next == nil {
+		t.Fatal("expected a next episode")
+	}
+	if next.SeasonNumber != 23 || next.EpisodeNumber != 9 {
+		t.Fatalf("NextEpisode = S%02dE%02d, want S23E09", next.SeasonNumber, next.EpisodeNumber)
+	}
+	if items[0].UpdatedAt.Before(time.Date(2026, 6, 10, 23, 11, 43, 0, time.UTC)) {
+		t.Fatalf("expected manual unwatch to refresh continue-watching activity, got %s", items[0].UpdatedAt)
 	}
 }
 
