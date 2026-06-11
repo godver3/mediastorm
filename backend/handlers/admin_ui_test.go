@@ -679,6 +679,52 @@ func TestAdminUIHandler_GetStatus(t *testing.T) {
 	}
 }
 
+func TestAdminUIHandler_StatusPageIncludesDonationBanner(t *testing.T) {
+	handler, tmpDir := setupAdminUIHandler(t)
+
+	accountsService, _ := accounts.NewService(tmpDir)
+	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)
+	handler.SetAccountsService(accountsService)
+	handler.SetSessionsService(sessionsService)
+	mgr := config.NewManager(filepath.Join(tmpDir, "settings.yaml"))
+	settings, err := mgr.Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.UI.OnboardingSkipped = true
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	masterAccount, ok := accountsService.Get("master")
+	if !ok {
+		t.Fatal("master account not found")
+	}
+
+	req := createAuthenticatedRequest(t, http.MethodGet, "/admin/status", nil, sessionsService, masterAccount.ID, true)
+	rec := httptest.NewRecorder()
+
+	handler.RequireAuth(handler.StatusPage)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("StatusPage status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="donationBanner"`,
+		`https://github.com/sponsors/godver3`,
+		`https://patreon.com/godver3`,
+		`https://ko-fi.com/godver3`,
+		`mediastormDonationBannerHidden`,
+		`Hide donation links permanently`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("StatusPage body missing %q", want)
+		}
+	}
+}
+
 func TestAdminUIHandler_GetStreams(t *testing.T) {
 	handler, tmpDir := setupAdminUIHandler(t)
 
