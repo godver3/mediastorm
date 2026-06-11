@@ -37,6 +37,38 @@ func TestMergeProgressIntoContinueWatching_SameSeriesID(t *testing.T) {
 	}
 }
 
+// TestMergeProgressIntoContinueWatching_MovieKeepsEnrichedProgress covers the
+// desktop web Matrix regression: ListContinueWatching may include active
+// playback progress, while the stored playback_progress row can still be stale
+// at 0%. Startup must not erase the enriched value.
+func TestMergeProgressIntoContinueWatching_MovieKeepsEnrichedProgress(t *testing.T) {
+	items := []models.SeriesWatchState{
+		{
+			SeriesID:       "tmdb:movie:603",
+			SeriesTitle:    "The Matrix",
+			PercentWatched: 85.2,
+			ResumePercent:  85.2,
+		},
+	}
+	progress := []models.PlaybackProgress{
+		{
+			MediaType:      "movie",
+			ItemID:         "tmdb:movie:603",
+			PercentWatched: 0,
+			MovieName:      "The Matrix",
+			Year:           1999,
+		},
+	}
+
+	merged := mergeProgressIntoContinueWatching(items, progress)
+	if got := merged[0].PercentWatched; got != 85.2 {
+		t.Fatalf("PercentWatched = %v, want 85.2", got)
+	}
+	if got := merged[0].ResumePercent; got != 85.2 {
+		t.Fatalf("ResumePercent = %v, want 85.2", got)
+	}
+}
+
 // TestMergeProgressIntoContinueWatching_SplitSeriesID reproduces the Spider-Noir
 // bug: episodes recorded under one series ID (tvdb:series:450033) while the
 // continue-watching item was canonicalised under a different one (tmdb:tv:220102).

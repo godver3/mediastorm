@@ -511,8 +511,16 @@ func mergeProgressIntoContinueWatching(items []models.SeriesWatchState, progress
 		merged[i] = item
 
 		if item.NextEpisode == nil {
-			// Movie — look up by seriesId
-			moviePct := byItemID[item.SeriesID]
+			// Movies may already carry active/enriched progress from the
+			// continue endpoint. Do not let a stale raw zero progress row erase
+			// that value and make the home shelf filter the card out.
+			moviePct := item.ResumePercent
+			if item.PercentWatched > moviePct {
+				moviePct = item.PercentWatched
+			}
+			if rawPct, ok := byItemID[item.SeriesID]; ok && rawPct > moviePct {
+				moviePct = rawPct
+			}
 			merged[i].PercentWatched = moviePct
 			merged[i].ResumePercent = moviePct
 		} else {

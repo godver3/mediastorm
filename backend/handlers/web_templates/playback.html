@@ -753,6 +753,7 @@
     let progressTimer = null;
     let lastProgressSentAt = 0;
     let lastProgressPosition = 0;
+    let lastKnownPositivePosition = 0;
     let lastProgressPaused = false;
     let progressCompleted = false;
 
@@ -1303,8 +1304,10 @@
         if (!response?.playlistUrl) throw new Error('seek response missing playlist URL');
         hlsPlaybackOffset = Number(response.startOffset ?? absoluteTarget);
         hlsDuration = Number(response.duration || hlsDuration || 0);
+        rememberPositivePosition(hlsPlaybackOffset);
         webPlayerSubtitleCues = [];
         attachWebPlayer(video, apiUrl(response.playlistUrl));
+        sendWebPlayerProgress({ force: true, isPaused: !wasPlaying, position: hlsPlaybackOffset });
         video.addEventListener('canplay', () => {
           installSubtitleTrack(video);
           setStatus('');
@@ -1330,8 +1333,30 @@
 
     function currentAbsoluteTime() {
       const video = document.getElementById('webPlayer');
-      if (!hlsSessionId) return Number(video?.currentTime || 0);
-      return hlsPlaybackOffset + Number(video?.currentTime || 0);
+      const position = hlsSessionId
+        ? hlsPlaybackOffset + Number(video?.currentTime || 0)
+        : Number(video?.currentTime || 0);
+      rememberPositivePosition(position);
+      return position;
+    }
+
+    function rememberPositivePosition(position) {
+      const value = Number(position);
+      if (Number.isFinite(value) && value > 0) {
+        lastKnownPositivePosition = value;
+      }
+    }
+
+    function progressPositionForSend(options = {}) {
+      if (options.position !== null && options.position !== undefined && Number.isFinite(Number(options.position))) {
+        const explicit = Number(options.position);
+        rememberPositivePosition(explicit);
+        return explicit;
+      }
+      const position = currentAbsoluteTime();
+      if (position > 0) return position;
+      if (options.force && lastKnownPositivePosition > 0) return lastKnownPositivePosition;
+      return position;
     }
 
     function currentDuration() {
@@ -1610,7 +1635,9 @@
       if (keepaliveTimer) clearInterval(keepaliveTimer);
       keepaliveTimer = setInterval(() => {
         if (!hlsSessionId) return;
-        fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive?time=${currentAbsoluteTime().toFixed(2)}`), {
+        const position = progressPositionForSend({ force: true });
+        const query = position > 0 ? `?time=${position.toFixed(2)}` : '';
+        fetch(apiUrl(`/video/hls/${encodeURIComponent(hlsSessionId)}/keepalive${query}`), {
           method: 'POST',
           credentials: 'same-origin',
         }).catch(() => {});
@@ -1623,6 +1650,7 @@
       stopProgressTracking();
       lastProgressSentAt = 0;
       lastProgressPosition = 0;
+      lastKnownPositivePosition = Math.max(0, currentAbsoluteTime());
       lastProgressPaused = false;
       progressCompleted = false;
       progressTimer = setInterval(() => sendWebPlayerProgress(), WEB_PLAYER_PROGRESS_INTERVAL_MS);
@@ -1642,10 +1670,11 @@
       if (!Number.isFinite(duration) || duration <= 0) return Promise.resolve(null);
       const isEnded = Boolean(options.ended);
       const isPaused = options.isPaused !== undefined ? Boolean(options.isPaused) : Boolean(video.paused);
-      let position = isEnded ? duration : currentAbsoluteTime();
+      let position = isEnded ? duration : progressPositionForSend(options);
       if (!Number.isFinite(position) || position < 0) return Promise.resolve(null);
       position = Math.max(0, Math.min(position, duration));
-      if (position <= 0 && !options.force) return Promise.resolve(null);
+      if (position <= 0) return Promise.resolve(null);
+      rememberPositivePosition(position);
 
       const now = Date.now();
       const positionDelta = Math.abs(position - lastProgressPosition);
@@ -1658,6 +1687,9 @@
       const endpoint = `/users/${encodeURIComponent(activeProfileId)}/history/progress`;
       const fetchOptions = { method: 'POST', body: JSON.stringify(payload) };
       if (options.keepalive) {
+        lastProgressSentAt = Date.now();
+        lastProgressPosition = position;
+        lastProgressPaused = isPaused;
         return fetch(apiUrl(endpoint), {
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },

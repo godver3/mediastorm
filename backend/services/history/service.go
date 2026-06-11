@@ -969,7 +969,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 							if watchedEps[episodeKey(prog.SeasonNumber, prog.EpisodeNumber)] ||
 								(prog.SeasonNumber == targetSeason && prog.EpisodeNumber == targetEpisode) {
 								log.Printf("[history] cleaning up stale progress %s (episode already watched)", key)
-								delete(perUser, key)
+								s.removePlaybackProgressEntryLocked(userID, perUser, key, prog)
 								cleaned++
 							}
 						}
@@ -3823,6 +3823,14 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		percentWatched = update.PercentWatched
 	}
 
+	if !hasMeaningfulProgressValues(update.Position, percentWatched) {
+		if existing, ok := findMatchingMeaningfulPlaybackProgress(perUser, key, update); ok {
+			log.Printf("[history] ignored zero playback progress overwrite user=%s mediaType=%s itemID=%s existingItemID=%s existingPosition=%.3f existingPercent=%.3f",
+				userID, update.MediaType, update.ItemID, existing.ItemID, existing.Position, existing.PercentWatched)
+			return existing, nil
+		}
+	}
+
 	// Create or update progress
 	// Note: HiddenFromContinueWatching defaults to false, which clears any previous hidden state
 	updatedAt := time.Now().UTC()
@@ -3860,7 +3868,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	if progress.MediaType == "episode" && progress.SeasonNumber > 0 && progress.EpisodeNumber > 0 {
 		var canonicalItemID, canonicalSeriesID string
 		canonicalKey, canonicalItemID, canonicalSeriesID, progress.ExternalIDs =
-			s.consolidateEpisodeProgressLocked(perUser, key, normalizedItemID, progress.SeriesID, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
+			s.consolidateEpisodeProgressLocked(userID, perUser, key, normalizedItemID, progress.SeriesID, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs)
 		progress.ItemID = canonicalItemID
 		if canonicalSeriesID != "" {
 			progress.SeriesID = canonicalSeriesID
@@ -3868,7 +3876,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	} else if progress.MediaType == "movie" {
 		var canonicalItemID string
 		canonicalKey, canonicalItemID, progress.ExternalIDs =
-			s.consolidateMovieProgressLocked(perUser, key, normalizedItemID, progress.ExternalIDs)
+			s.consolidateMovieProgressLocked(userID, perUser, key, normalizedItemID, progress.ExternalIDs)
 		progress.ItemID = canonicalItemID
 	}
 	progress.ID = canonicalKey
@@ -3876,7 +3884,12 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	// If consolidation chose an existing canonical key, drop any stale row under
 	// the incoming key so a duplicate isn't left behind.
 	if canonicalKey != key {
-		delete(perUser, key)
+		if entry, exists := perUser[key]; exists {
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+			s.clearActivePlaybackProgressKeyLocked(userID, key)
+		} else {
+			s.clearActivePlaybackProgressKeyLocked(userID, key)
+		}
 	}
 	perUser[canonicalKey] = progress
 
@@ -4100,23 +4113,46 @@ func (s *Service) ListPlaybackProgress(userID string) ([]models.PlaybackProgress
 		return nil, ErrUserIDRequired
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	items := make([]models.PlaybackProgress, 0)
+	now := time.Now()
+	merged := make(map[string]models.PlaybackProgress)
 	if perUser, ok := s.playbackProgress[userID]; ok {
-		items = make([]models.PlaybackProgress, 0, len(perUser))
 		for _, progress := range perUser {
-			// Deep copy to avoid concurrent map access during JSON encoding
-			copy := progress
-			if progress.ExternalIDs != nil {
-				copy.ExternalIDs = make(map[string]string, len(progress.ExternalIDs))
-				for k, v := range progress.ExternalIDs {
-					copy.ExternalIDs[k] = v
-				}
-			}
-			items = append(items, copy)
+			merged[progress.ID] = progress
 		}
+	}
+	if perUser, ok := s.activePlaybackProgress[userID]; ok {
+		for key, progress := range perUser {
+			if now.Sub(progress.UpdatedAt) > activeProgressTTL {
+				delete(perUser, key)
+				continue
+			}
+			existing, ok := merged[progress.ID]
+			if !ok {
+				continue
+			}
+			if preferPlaybackProgress(progress, existing) {
+				merged[progress.ID] = progress
+			}
+		}
+		if len(perUser) == 0 {
+			delete(s.activePlaybackProgress, userID)
+		}
+	}
+
+	items := make([]models.PlaybackProgress, 0, len(merged))
+	for _, progress := range merged {
+		// Deep copy to avoid concurrent map access during JSON encoding
+		copy := progress
+		if progress.ExternalIDs != nil {
+			copy.ExternalIDs = make(map[string]string, len(progress.ExternalIDs))
+			for k, v := range progress.ExternalIDs {
+				copy.ExternalIDs[k] = v
+			}
+		}
+		items = append(items, copy)
 	}
 
 	// Sort by most recently updated
@@ -4128,6 +4164,65 @@ func (s *Service) ListPlaybackProgress(userID string) ([]models.PlaybackProgress
 	})
 
 	return items, nil
+}
+
+func preferPlaybackProgress(candidate, existing models.PlaybackProgress) bool {
+	if candidate.UpdatedAt.After(existing.UpdatedAt) {
+		return true
+	}
+	if existing.UpdatedAt.After(candidate.UpdatedAt) {
+		return false
+	}
+	return candidate.PercentWatched > existing.PercentWatched
+}
+
+func hasMeaningfulProgressValues(position, percentWatched float64) bool {
+	return position > 0.5 || percentWatched > 0.1
+}
+
+func findMatchingMeaningfulPlaybackProgress(perUser map[string]models.PlaybackProgress, incomingKey string, update models.PlaybackProgressUpdate) (models.PlaybackProgress, bool) {
+	var best models.PlaybackProgress
+	found := false
+	for key, progress := range perUser {
+		if !hasMeaningfulProgressValues(progress.Position, progress.PercentWatched) {
+			continue
+		}
+		if !playbackProgressMatchesUpdate(key, progress, incomingKey, update) {
+			continue
+		}
+		if !found || preferPlaybackProgress(progress, best) {
+			best = progress
+			found = true
+		}
+	}
+	return best, found
+}
+
+func playbackProgressMatchesUpdate(existingKey string, progress models.PlaybackProgress, incomingKey string, update models.PlaybackProgressUpdate) bool {
+	if strings.ToLower(progress.MediaType) != strings.ToLower(update.MediaType) {
+		return false
+	}
+	if strings.ToLower(existingKey) == strings.ToLower(incomingKey) {
+		return true
+	}
+	if strings.EqualFold(progress.ItemID, update.ItemID) {
+		return true
+	}
+
+	switch strings.ToLower(update.MediaType) {
+	case "movie":
+		return hasMatchingExternalID(progress.ExternalIDs, update.ExternalIDs)
+	case "episode":
+		if progress.SeasonNumber != update.SeasonNumber || progress.EpisodeNumber != update.EpisodeNumber {
+			return false
+		}
+		if progress.SeriesID != "" && update.SeriesID != "" && strings.EqualFold(progress.SeriesID, update.SeriesID) {
+			return true
+		}
+		return hasMatchingExternalID(progress.ExternalIDs, update.ExternalIDs)
+	default:
+		return false
+	}
 }
 
 // DeletePlaybackProgress removes playback progress for a specific media item.
@@ -4142,11 +4237,16 @@ func (s *Service) DeletePlaybackProgress(userID, mediaType, itemID string) error
 
 	key := makeWatchKey(mediaType, itemID)
 	if perUser, ok := s.playbackProgress[userID]; ok {
-		delete(perUser, key)
+		if entry, exists := perUser[key]; exists {
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+		} else {
+			s.clearActivePlaybackProgressKeyLocked(userID, key)
+		}
 		// Invalidate continue watching cache for this user since progress changed
 		s.invalidateContinueWatchingLocked(userID)
 		return s.savePlaybackProgressLocked()
 	}
+	s.clearActivePlaybackProgressKeyLocked(userID, key)
 
 	return nil
 }
@@ -4459,10 +4559,7 @@ func (s *Service) clearPlaybackProgressEntryLocked(userID, mediaType, itemID str
 
 	key := makeWatchKey(mediaType, itemID)
 	if entry, exists := perUser[key]; exists {
-		delete(perUser, key)
-		if entry.HiddenFromContinueWatching {
-			s.preserveSeriesHiddenMarkerLocked(perUser, entry)
-		}
+		s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
 		return true
 	}
 
@@ -4470,15 +4567,28 @@ func (s *Service) clearPlaybackProgressEntryLocked(userID, mediaType, itemID str
 	target := strings.ToLower(key)
 	for existingKey, entry := range perUser {
 		if strings.ToLower(existingKey) == target {
-			delete(perUser, existingKey)
-			if entry.HiddenFromContinueWatching {
-				s.preserveSeriesHiddenMarkerLocked(perUser, entry)
-			}
+			s.removePlaybackProgressEntryLocked(userID, perUser, existingKey, entry)
 			return true
 		}
 	}
 
 	return false
+}
+
+func (s *Service) removePlaybackProgressEntryLocked(userID string, perUser map[string]models.PlaybackProgress, key string, entry models.PlaybackProgress) {
+	delete(perUser, key)
+	if entry.HiddenFromContinueWatching {
+		s.preserveSeriesHiddenMarkerLocked(perUser, entry)
+	}
+}
+
+func (s *Service) clearActivePlaybackProgressKeyLocked(userID, key string) {
+	if perUser, ok := s.activePlaybackProgress[userID]; ok {
+		delete(perUser, key)
+		if len(perUser) == 0 {
+			delete(s.activePlaybackProgress, userID)
+		}
+	}
 }
 
 // HideFromContinueWatching marks an item as hidden from the continue watching list.
@@ -4628,10 +4738,7 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 		}
 
 		if isCurrentOrEarlier {
-			delete(perUser, key)
-			if progress.HiddenFromContinueWatching {
-				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-			}
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, progress)
 			anyCleared = true
 		}
 	}
@@ -4708,10 +4815,7 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID, seriesID string, 
 		}
 
 		if episodeProgressMatchesSeries(progress, seriesID, externalIDs) {
-			delete(perUser, key)
-			if progress.HiddenFromContinueWatching {
-				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-			}
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, progress)
 			anyCleared = true
 		}
 	}
@@ -4802,10 +4906,7 @@ func (s *Service) clearMovieProgressByExternalIDMatchLocked(userID string, exter
 		if !hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
 			continue
 		}
-		delete(perUser, key)
-		if progress.HiddenFromContinueWatching {
-			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-		}
+		s.removePlaybackProgressEntryLocked(userID, perUser, key, progress)
 		anyCleared = true
 	}
 
@@ -4868,7 +4969,7 @@ func unionExternalIDs(dst, src map[string]string) map[string]string {
 // canonical key/itemID the incoming progress should be written under and the
 // union of external IDs across every merged row. Non-survivor rows are deleted
 // (hidden-from-continue-watching state preserved). Callers must hold s.mu.
-func (s *Service) consolidateMovieProgressLocked(perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID string, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID string, merged map[string]string) {
+func (s *Service) consolidateMovieProgressLocked(userID string, perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID string, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID string, merged map[string]string) {
 	canonicalKey, canonicalItemID = incomingKey, incomingItemID
 	merged = unionExternalIDs(nil, incomingExternalIDs)
 	if len(incomingExternalIDs) == 0 {
@@ -4895,10 +4996,8 @@ func (s *Service) consolidateMovieProgressLocked(perUser map[string]models.Playb
 			continue
 		}
 		progress := perUser[key]
-		delete(perUser, key)
-		if progress.HiddenFromContinueWatching {
-			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-		}
+		s.removePlaybackProgressEntryLocked(userID, perUser, key, progress)
+		s.clearActivePlaybackProgressKeyLocked(userID, key)
 	}
 	return canonicalKey, canonicalItemID, merged
 }
@@ -4908,7 +5007,7 @@ func (s *Service) consolidateMovieProgressLocked(perUser map[string]models.Playb
 // It returns the canonical key/itemID/seriesID the incoming progress should be
 // written under and the union of external IDs across every merged row.
 // Non-survivor rows are deleted (hidden state preserved). Callers must hold s.mu.
-func (s *Service) consolidateEpisodeProgressLocked(perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID, incomingSeriesID string, seasonNumber, episodeNumber int, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID, canonicalSeriesID string, merged map[string]string) {
+func (s *Service) consolidateEpisodeProgressLocked(userID string, perUser map[string]models.PlaybackProgress, incomingKey, incomingItemID, incomingSeriesID string, seasonNumber, episodeNumber int, incomingExternalIDs map[string]string) (canonicalKey, canonicalItemID, canonicalSeriesID string, merged map[string]string) {
 	canonicalKey, canonicalItemID, canonicalSeriesID = incomingKey, incomingItemID, incomingSeriesID
 	merged = unionExternalIDs(nil, incomingExternalIDs)
 	if seasonNumber <= 0 || episodeNumber <= 0 || len(incomingExternalIDs) == 0 {
@@ -4940,10 +5039,8 @@ func (s *Service) consolidateEpisodeProgressLocked(perUser map[string]models.Pla
 			continue
 		}
 		progress := perUser[key]
-		delete(perUser, key)
-		if progress.HiddenFromContinueWatching {
-			s.preserveSeriesHiddenMarkerLocked(perUser, progress)
-		}
+		s.removePlaybackProgressEntryLocked(userID, perUser, key, progress)
+		s.clearActivePlaybackProgressKeyLocked(userID, key)
 	}
 	return canonicalKey, canonicalItemID, canonicalSeriesID, merged
 }

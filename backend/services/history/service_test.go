@@ -533,6 +533,50 @@ func TestToggleWatchedClearsMovieProgress(t *testing.T) {
 	}
 }
 
+func TestListPlaybackProgressOverlaysActiveMovieProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "matrix-user"
+	itemID := "tmdb:movie:603"
+	key := makeWatchKey("movie", itemID)
+	stale := models.PlaybackProgress{
+		ID:             key,
+		MediaType:      "movie",
+		ItemID:         itemID,
+		Position:       0,
+		Duration:       8178.671,
+		PercentWatched: 0,
+		UpdatedAt:      time.Now().UTC().Add(-30 * time.Second),
+		MovieName:      "The Matrix",
+		Year:           1999,
+		ExternalIDs:    map[string]string{"tmdb": "603", "imdb": "tt0133093"},
+	}
+	active := stale
+	active.Position = 6975
+	active.PercentWatched = active.Position / active.Duration * 100
+	active.UpdatedAt = time.Now().UTC()
+
+	svc.mu.Lock()
+	svc.playbackProgress[userID] = map[string]models.PlaybackProgress{key: stale}
+	svc.recordActiveProgressLocked(userID, active)
+	svc.mu.Unlock()
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 progress item, got %d", len(progressItems))
+	}
+	if got := progressItems[0].PercentWatched; got < 85 || got > 86 {
+		t.Fatalf("PercentWatched = %v, want active Matrix progress around 85%%", got)
+	}
+}
+
 func TestUpdatePlaybackProgressNotifiesWatchStateChangedHook(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -2088,6 +2132,62 @@ func TestUpdatePlaybackProgress_DedupesCrossProviderMovieProgress(t *testing.T) 
 	}
 	if progressItems[0].Position != 2200 {
 		t.Fatalf("expected latest position 2200 retained, got %v", progressItems[0].Position)
+	}
+}
+
+func TestUpdatePlaybackProgress_IgnoresZeroMovieOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-zero-movie-overwrite"
+	externalIDs := map[string]string{
+		"tmdb": "603",
+		"tvdb": "169",
+		"imdb": "tt0133093",
+	}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "movie",
+		ItemID:         "tmdb:movie:603",
+		MovieName:      "The Matrix",
+		Position:       6917,
+		Duration:       8178.671,
+		ExternalIDs:    externalIDs,
+		PercentWatched: 84.57,
+	}); err != nil {
+		t.Fatalf("first UpdatePlaybackProgress() error = %v", err)
+	}
+
+	progress, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tvdb:movie:169",
+		MovieName:   "The Matrix",
+		Position:    0,
+		Duration:    8178.671,
+		ExternalIDs: externalIDs,
+	})
+	if err != nil {
+		t.Fatalf("zero UpdatePlaybackProgress() error = %v", err)
+	}
+	if progress.Position != 6917 {
+		t.Fatalf("expected zero overwrite to return existing position 6917, got %v", progress.Position)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 1 {
+		t.Fatalf("expected 1 progress item, got %d: %+v", len(progressItems), progressItems)
+	}
+	if progressItems[0].Position != 6917 {
+		t.Fatalf("expected stored position to remain 6917, got %v", progressItems[0].Position)
+	}
+	if progressItems[0].PercentWatched < 84 {
+		t.Fatalf("expected stored percent to remain meaningful, got %v", progressItems[0].PercentWatched)
 	}
 }
 
