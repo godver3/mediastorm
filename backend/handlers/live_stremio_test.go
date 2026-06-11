@@ -72,6 +72,9 @@ func stremioTestServer(t *testing.T, hits *int32) *httptest.Server {
 	mux.HandleFunc("/stream/sport/ev:nostream.json", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"streams":[]}`))
 	})
+	mux.HandleFunc("/stream/sport/ev:subscribe.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"streams":[{"name":"Subscribe","url":"https://stremverse.invalid/subscribe"}]}`))
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -212,6 +215,9 @@ func TestResolveStremioStream(t *testing.T) {
 
 	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:nostream.json", ""); err == nil {
 		t.Error("expected error for empty streams, got nil")
+	}
+	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:subscribe.json", ""); err == nil {
+		t.Error("expected error for subscription placeholder, got nil")
 	}
 }
 

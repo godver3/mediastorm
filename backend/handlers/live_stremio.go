@@ -97,6 +97,27 @@ func isStremioStreamResourceURL(u *url.URL) bool {
 	return strings.Contains(path, "/stream/") && strings.HasSuffix(path, ".json")
 }
 
+func isUnplayableStremioStreamURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.ToLower(strings.TrimSuffix(u.EscapedPath(), "/"))
+	return strings.HasSuffix(host, ".invalid") || host == "stremverse.invalid" || path == "/subscribe"
+}
+
+func firstPlayableStremioStreamURL(streams []stremioStream) (string, bool) {
+	for _, stream := range streams {
+		u := strings.TrimSpace(stream.URL)
+		if u == "" || isUnplayableStremioStreamURL(u) {
+			continue
+		}
+		return u, true
+	}
+	return "", false
+}
+
 // fetchStremioChannels returns the channel list for a Stremio addon, building
 // channels from every catalog the addon advertises. Results are cached in
 // memory for stremioChannelsTTL.
@@ -212,10 +233,8 @@ func (h *LiveHandler) resolveStremioStream(ctx context.Context, streamResourceUR
 	if err := getStremioJSON(ctx, client, streamResourceURL, &resp); err != nil {
 		return "", fmt.Errorf("stremio: resolve stream: %w", err)
 	}
-	for _, stream := range resp.Streams {
-		if u := strings.TrimSpace(stream.URL); u != "" {
-			return u, nil
-		}
+	if u, ok := firstPlayableStremioStreamURL(resp.Streams); ok {
+		return u, nil
 	}
 	return "", fmt.Errorf("stremio: no playable stream for %s", streamResourceURL)
 }

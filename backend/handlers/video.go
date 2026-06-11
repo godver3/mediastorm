@@ -3722,10 +3722,8 @@ func resolveStremioLiveStreamResource(ctx context.Context, streamResourceURL, pr
 	if err := getStremioJSON(ctx, client, streamResourceURL, &resp); err != nil {
 		return "", fmt.Errorf("stremio: resolve stream: %w", err)
 	}
-	for _, stream := range resp.Streams {
-		if u := strings.TrimSpace(stream.URL); u != "" {
-			return u, nil
-		}
+	if u, ok := firstPlayableStremioStreamURL(resp.Streams); ok {
+		return u, nil
 	}
 	return "", fmt.Errorf("stremio: no playable stream for %s", streamResourceURL)
 }
