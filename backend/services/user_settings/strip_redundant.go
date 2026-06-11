@@ -221,6 +221,7 @@ func configShelvesToModel(shelves []config.ShelfConfig) []models.ShelfConfig {
 			LetterboxdListURL: s.LetterboxdListURL,
 			Limit:             s.Limit,
 			HideUnreleased:    s.HideUnreleased,
+			Sort:              s.Sort,
 			CalendarSources: models.CalendarSettings{
 				Watchlist:      s.CalendarSources.Watchlist,
 				History:        s.CalendarSources.History,
@@ -1136,6 +1137,7 @@ func shelfConfigsEqual(user []models.ShelfConfig, global []config.ShelfConfig) b
 			(us.ListURL != "" && us.ListURL != gs.ListURL) ||
 			us.Limit != gs.Limit ||
 			us.HideUnreleased != gs.HideUnreleased ||
+			(us.Sort != "" && us.Sort != gs.Sort) ||
 			(us.TraktAccountID != "" && us.TraktAccountID != gs.TraktAccountID) ||
 			(us.TraktListType != "" && us.TraktListType != gs.TraktListType) ||
 			(us.TraktListID != "" && us.TraktListID != gs.TraktListID) ||

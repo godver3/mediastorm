@@ -2618,7 +2618,7 @@
                     });
                 } else if (fieldDef.optionsFrom === 'homeShelves') {
                     selectOptions = [{value: '', label: 'Select shelf'}];
-                    const shelves = ensureRecentlyAiredShelfConfig(getValue('homeShelves.shelves') || []);
+                    const shelves = ensureBuiltInHomeShelfConfig(getValue('homeShelves.shelves') || []);
                     shelves
                         .slice()
                         .sort((a, b) => (a.order || 0) - (b.order || 0))
@@ -4384,6 +4384,7 @@
         if (normalizeOptionalString(profileShelf.listUrl) && normalizeOptionalString(profileShelf.listUrl) !== normalizeOptionalString(globalShelf.listUrl)) return false;
         if (profileShelf.limit !== undefined && normalizeOptionalNumber(profileShelf.limit) !== normalizeOptionalNumber(globalShelf.limit)) return false;
         if (profileShelf.hideUnreleased !== undefined && normalizeOptionalBoolean(profileShelf.hideUnreleased) !== normalizeOptionalBoolean(globalShelf.hideUnreleased)) return false;
+        if (normalizeOptionalString(profileShelf.sort) && normalizeOptionalString(profileShelf.sort) !== normalizeOptionalString(globalShelf.sort)) return false;
         if (normalizeOptionalString(profileShelf.traktAccountId) && normalizeOptionalString(profileShelf.traktAccountId) !== normalizeOptionalString(globalShelf.traktAccountId)) return false;
         if (normalizeOptionalString(profileShelf.traktListType) && normalizeOptionalString(profileShelf.traktListType) !== normalizeOptionalString(globalShelf.traktListType)) return false;
         if (normalizeOptionalString(profileShelf.traktListId) && normalizeOptionalString(profileShelf.traktListId) !== normalizeOptionalString(globalShelf.traktListId)) return false;
@@ -4780,7 +4781,7 @@
             shelves = currentSettings.homeShelves?.shelves || [];
         }
 
-        shelves = ensureRecentlyAiredShelfConfig(shelves);
+        shelves = ensureBuiltInHomeShelfConfig(shelves);
 
         if (!shelves.length) return '<p class="form-hint">No shelves configured.</p>';
 
@@ -4801,18 +4802,22 @@
         const rows = sortedShelves.map((s, i) => {
             const enabledClass = s.enabled ? '' : ' disabled';
             const toggleChecked = s.enabled ? 'checked' : '';
+            const isMyUpcoming = s.id === 'my-upcoming';
             const isRecentlyAired = s.id === 'my-recently-aired';
             const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || s.type === 'decade' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-') || s.id.startsWith('decade-')));
             const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
             const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
+            const sortBadge = isMyUpcoming ? '<span class="shelf-source-badge" title="Sort">'+getMyUpcomingSortLabel(s.sort)+'</span>' : '';
 
             let actionsHtml = '';
-            if (isCustom || isRecentlyAired) {
-                // Custom lists can be edited/deleted; calendar-backed built-ins expose source editing.
+            if (isCustom || isRecentlyAired || isMyUpcoming) {
+                // Custom lists can be edited/deleted; configurable built-ins expose scoped settings.
                 actionsHtml = '<div class="shelf-actions">'+
                     (isRecentlyAired
                         ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sources">Sources</button>'
+                        : isMyUpcoming
+                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sort">Sort</button>'
                         : '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>')+
                     (isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '')+
                 '</div>';
@@ -4821,7 +4826,7 @@
             // Use display index (i) for drag reordering, store shelf ID for reference
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
-                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+'</span>'+
+                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+sortBadge+'</span>'+
                 actionsHtml+
                 '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
             '</div>';
@@ -5126,8 +5131,41 @@
         return { watchlist: true, history: false, topTrending: false, trending: false, mdblists: false };
     }
 
-    function ensureRecentlyAiredShelfConfig(shelves) {
+    function defaultMyUpcomingSort() {
+        return 'air-date-asc';
+    }
+
+    function getMyUpcomingSortLabel(sort) {
+        switch (sort || defaultMyUpcomingSort()) {
+            case 'air-date-desc': return 'Latest air date';
+            case 'recently-watched': return 'Recently watched';
+            case 'title': return 'Title';
+            case 'air-date-asc':
+            default:
+                return 'Soonest air date';
+        }
+    }
+
+    function ensureBuiltInHomeShelfConfig(shelves) {
         if (!Array.isArray(shelves)) return shelves;
+        const myUpcomingShelf = shelves.find((s) => s.id === 'my-upcoming');
+        if (myUpcomingShelf) {
+            if (!myUpcomingShelf.sort) myUpcomingShelf.sort = defaultMyUpcomingSort();
+        } else {
+            const continueShelf = shelves.find((s) => s.id === 'continue-watching');
+            const insertOrder = continueShelf ? (continueShelf.order || 0) + 1 : 2;
+            shelves.forEach((s) => {
+                if ((s.order || 0) >= insertOrder) s.order = (s.order || 0) + 1;
+            });
+            shelves.push({
+                id: 'my-upcoming',
+                name: 'My Upcoming',
+                enabled: true,
+                order: insertOrder,
+                type: 'builtin',
+                sort: defaultMyUpcomingSort(),
+            });
+        }
         if (shelves.some((s) => s.id === 'my-recently-aired')) return shelves;
 
         const calendarShelf = shelves.find((s) => s.id === 'calendar');
@@ -5858,14 +5896,15 @@
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
             ensureProfileShelves();
-            shelves = ensureRecentlyAiredShelfConfig(userSettings.homeShelves?.shelves || []);
+            shelves = ensureBuiltInHomeShelfConfig(userSettings.homeShelves?.shelves || []);
         } else {
-            shelves = ensureRecentlyAiredShelfConfig(currentSettings.homeShelves?.shelves || []);
+            shelves = ensureBuiltInHomeShelfConfig(currentSettings.homeShelves?.shelves || []);
         }
 
         const shelf = shelves.find(s => s.id === shelfId);
         if (!shelf) return;
 
+        const isMyUpcomingShelf = shelf.id === 'my-upcoming';
         const isRecentlyAiredShelf = shelf.id === 'my-recently-aired';
         const isTraktShelf = shelf.type === 'trakt';
         const isSimklShelf = shelf.type === 'simkl';
@@ -5909,7 +5948,20 @@
         const decadeOptions = DECADE_SHELVES.map((decade) =>
             `<option value="${decade}" ${String(decade) === String(decadeStart) ? 'selected' : ''}>${decade}s</option>`).join('');
         let traktSourceFields;
-        if (isRecentlyAiredShelf) {
+        if (isMyUpcomingShelf) {
+            const currentSort = shelf.sort || defaultMyUpcomingSort();
+            traktSourceFields = `
+                    <div style="margin-bottom:12px;">
+                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Sort</label>
+                        <select id="editShelfSort" style="${selectStyle}">
+                            <option value="air-date-asc" ${currentSort === 'air-date-asc' ? 'selected' : ''}>Soonest air date</option>
+                            <option value="air-date-desc" ${currentSort === 'air-date-desc' ? 'selected' : ''}>Latest air date</option>
+                            <option value="recently-watched" ${currentSort === 'recently-watched' ? 'selected' : ''}>Recently watched</option>
+                            <option value="title" ${currentSort === 'title' ? 'selected' : ''}>Title</option>
+                        </select>
+                    </div>
+        `;
+        } else if (isRecentlyAiredShelf) {
             traktSourceFields = buildCalendarSourceFields(shelf, 'editShelfCalendar');
         } else if (isTraktShelf) {
             traktSourceFields = `
@@ -6002,13 +6054,13 @@
         const modalHtml = `
             <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
                 <div style="background:#1a1a2e;border-radius:12px;padding:24px;max-width:500px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${isRecentlyAiredShelf ? 'Recently Aired Shelf' : getShelfTypeLabel(shelf.type) + ' List'}</h3>
+                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${isMyUpcomingShelf ? 'My Upcoming Shelf' : isRecentlyAiredShelf ? 'Recently Aired Shelf' : getShelfTypeLabel(shelf.type) + ' List'}</h3>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
                         <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
                     ${traktSourceFields}
-                    ${isRecentlyAiredShelf ? '' : `<div style="margin-bottom:12px;">
+                    ${isRecentlyAiredShelf || isMyUpcomingShelf ? '' : `<div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
                         <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
@@ -6087,9 +6139,9 @@
         let shelves;
         if (selectedUserId && userSettings && isPerUserSection) {
             ensureProfileShelves();
-            shelves = ensureRecentlyAiredShelfConfig(userSettings.homeShelves?.shelves || []);
+            shelves = ensureBuiltInHomeShelfConfig(userSettings.homeShelves?.shelves || []);
         } else {
-            shelves = ensureRecentlyAiredShelfConfig(currentSettings.homeShelves?.shelves || []);
+            shelves = ensureBuiltInHomeShelfConfig(currentSettings.homeShelves?.shelves || []);
         }
 
         const shelf = shelves.find(s => s.id === shelfId);
@@ -6100,7 +6152,9 @@
             return;
         }
         shelf.name = name;
-        if (shelf.id === 'my-recently-aired') {
+        if (shelf.id === 'my-upcoming') {
+            shelf.sort = document.getElementById('editShelfSort')?.value || defaultMyUpcomingSort();
+        } else if (shelf.id === 'my-recently-aired') {
             shelf.calendarSources = readCalendarSourceFields('editShelfCalendar');
         } else {
             shelf.limit = limit;
@@ -6172,7 +6226,7 @@
                 return;
             }
             shelf.id = nextId;
-        } else if (shelf.id !== 'my-recently-aired') {
+        } else if (shelf.id !== 'my-recently-aired' && shelf.id !== 'my-upcoming') {
             const urlInput = document.getElementById('editShelfUrl');
             let url = urlInput?.value?.trim();
             if (!url || !validateShelfUrl(shelf.type, url)) {

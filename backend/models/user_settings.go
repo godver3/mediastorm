@@ -347,6 +347,7 @@ type ShelfConfig struct {
 	LetterboxdListURL string           `json:"letterboxdListUrl,omitempty"` // Public Letterboxd list URL
 	Limit             int              `json:"limit,omitempty"`             // Optional limit on number of items returned (0 = no limit)
 	HideUnreleased    bool             `json:"hideUnreleased,omitempty"`    // Filter out unreleased/in-theaters content
+	Sort              string           `json:"sort,omitempty"`              // Optional shelf-specific sort mode
 	CalendarSources   CalendarSettings `json:"calendarSources,omitempty"`   // Optional source filter for calendar-backed shelves
 }
 
@@ -355,6 +356,7 @@ type HomeShelvesSettings struct {
 	Shelves                         []ShelfConfig `json:"shelves"`
 	ExploreCardPosition             string        `json:"exploreCardPosition,omitempty"`             // "front" (default) or "end"
 	ItemCap                         int           `json:"itemCap,omitempty"`                         // Max items shown per home shelf before Explore card (default 20)
+	ExcludeUpcomingFromContinue     *bool         `json:"excludeUpcomingFromContinue,omitempty"`     // Move unreleased next-up episodes out of Continue Watching
 	MobileTopShelfMode              string        `json:"mobileTopShelfMode,omitempty"`              // "default", "disabled", or "shelf"
 	MobileTopShelfSourceID          string        `json:"mobileTopShelfSourceId,omitempty"`          // Shelf ID used when mobileTopShelfMode is "shelf"
 	TVTopShelfMode                  string        `json:"tvTopShelfMode,omitempty"`                  // "default", "disabled", or "shelf"
@@ -369,12 +371,13 @@ func DefaultHomeShelfConfigs() []ShelfConfig {
 	return []ShelfConfig{
 		{ID: "top-ten", Name: "Top 10 Today", Enabled: true, Order: 0},
 		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 1},
-		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 2},
-		{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 3, CalendarSources: CalendarSettings{Watchlist: BoolPtr(true), History: BoolPtr(false), Trending: BoolPtr(false), TopTrending: BoolPtr(false), MDBLists: BoolPtr(false)}},
-		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 4},
-		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 5},
-		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 6},
-		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 7},
+		{ID: "my-upcoming", Name: "My Upcoming", Enabled: true, Order: 2, Sort: "air-date-asc"},
+		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 3},
+		{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 4, CalendarSources: CalendarSettings{Watchlist: BoolPtr(true), History: BoolPtr(false), Trending: BoolPtr(false), TopTrending: BoolPtr(false), MDBLists: BoolPtr(false)}},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 5},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 6},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 7},
+		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 8},
 	}
 }
 
@@ -463,6 +466,37 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 			},
 		})
 		changed = true
+	}
+	if !hasShelf("my-upcoming") {
+		insertOrder := 2
+		for _, shelf := range nextShelves {
+			if shelf.ID == "continue-watching" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "my-upcoming",
+			Name:    "My Upcoming",
+			Enabled: true,
+			Order:   insertOrder,
+			Sort:    "air-date-asc",
+		})
+		changed = true
+	} else {
+		for i := range nextShelves {
+			if nextShelves[i].ID == "my-upcoming" && nextShelves[i].Sort == "" {
+				nextShelves[i].Sort = "air-date-asc"
+				changed = true
+			}
+		}
 	}
 
 	if !hasShelf("streaming-services") {
@@ -559,6 +593,7 @@ func DefaultUserSettings() UserSettings {
 			Shelves:                         DefaultHomeShelfConfigs(),
 			ExploreCardPosition:             "front",
 			ItemCap:                         20,
+			ExcludeUpcomingFromContinue:     BoolPtr(false),
 			DisableTvLandscapeCardExpansion: BoolPtr(false),
 			HomeShelfScale:                  FloatPtr(1.0),
 			HomeHeroScale:                   FloatPtr(1.0),

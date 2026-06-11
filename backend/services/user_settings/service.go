@@ -429,6 +429,7 @@ func shelfConfigEqualsDefault(stored, def models.ShelfConfig) bool {
 		stored.LetterboxdListURL == def.LetterboxdListURL &&
 		stored.Limit == def.Limit &&
 		stored.HideUnreleased == def.HideUnreleased &&
+		stored.Sort == def.Sort &&
 		calendarSettingsValueEqual(stored.CalendarSources, def.CalendarSources)
 }
 

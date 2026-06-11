@@ -185,6 +185,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			Shelves:                         shelves,
 			ExploreCardPosition:             string(globalSettings.HomeShelves.ExploreCardPosition),
 			ItemCap:                         globalSettings.HomeShelves.ItemCap,
+			ExcludeUpcomingFromContinue:     models.BoolPtr(globalSettings.HomeShelves.ExcludeUpcomingFromContinue),
 			DisableTvLandscapeCardExpansion: models.BoolPtr(globalSettings.HomeShelves.DisableTvLandscapeCardExpansion),
 			HomeShelfScale:                  models.FloatPtr(globalSettings.HomeShelves.HomeShelfScale),
 			HomeHeroScale:                   models.FloatPtr(globalSettings.HomeShelves.HomeHeroScale),
@@ -251,6 +252,7 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 			LetterboxdListURL: s.LetterboxdListURL,
 			Limit:             s.Limit,
 			HideUnreleased:    s.HideUnreleased,
+			Sort:              s.Sort,
 			CalendarSources: models.CalendarSettings{
 				Watchlist:      s.CalendarSources.Watchlist,
 				History:        s.CalendarSources.History,
