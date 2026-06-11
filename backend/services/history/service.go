@@ -651,6 +651,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// (e.g., player uses "tvdb:series:353546" while Trakt sync uses "tmdb:tv:82728" for the same show)
 	// This must happen before any grouping by seriesID.
 	canonicalSeriesID := buildCanonicalSeriesIDMap(items, progressItems)
+	logContinueDebugCanonicalMap("build", canonicalSeriesID, items, progressItems)
 
 	// Build set of hidden series IDs from progress items
 	hiddenSeriesIDs := make(map[string]bool)
@@ -717,6 +718,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		}
 
 		// Resolve to canonical ID so player and Trakt entries merge
+		originalSeriesID := seriesID
 		seriesID = resolveCanonicalID(canonicalSeriesID, seriesID)
 
 		if isEpisode && seriesID != "" && prog.PercentWatched < 90 && !hiddenSeriesIDs[seriesID] {
@@ -729,6 +731,9 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				}
 				inProgressBySeriesCache[seriesID] = prog
 			}
+			logContinueDebugProgress("in-progress accepted", *prog, originalSeriesID, seriesID, existing != nil)
+		} else {
+			logContinueDebugProgressSkip(*prog, originalSeriesID, seriesID, isEpisode, hiddenSeriesIDs[seriesID])
 		}
 	}
 	// Filter to watched episodes from the past 365 days
@@ -737,10 +742,18 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	seriesHistory := make(map[string][]models.WatchHistoryItem)
 	seriesActivityAt := make(map[string]time.Time)
 	seriesInfo := make(map[string]models.WatchHistoryItem) // Track series metadata
+	corruptedUnwatchedBySeries := make(map[string][]models.WatchHistoryItem)
+	watchedEpisodeSetBySeries := make(map[string]map[string]struct{})
+	type episodePosition struct {
+		season  int
+		episode int
+	}
+	furthestWatchedBySeries := make(map[string]episodePosition)
 
 	for _, item := range items {
 		if item.MediaType == "episode" && item.SeriesID != "" {
 			resolvedID := resolveCanonicalID(canonicalSeriesID, item.SeriesID)
+			logContinueDebugHistory("history candidate", item, resolvedID, hiddenSeriesIDs[resolvedID])
 			// Skip hidden series
 			if hiddenSeriesIDs[resolvedID] {
 				continue
@@ -752,12 +765,50 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					seriesActivityAt[resolvedID] = activityAt
 				}
 			}
+			if hasContradictorySeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) && !item.Watched {
+				corruptedUnwatchedBySeries[resolvedID] = append(corruptedUnwatchedBySeries[resolvedID], item)
+				continue
+			}
 			if item.Watched && item.WatchedAt.After(cutoffDate) {
 				seriesEpisodes[resolvedID] = append(seriesEpisodes[resolvedID], item)
+				if watchedEpisodeSetBySeries[resolvedID] == nil {
+					watchedEpisodeSetBySeries[resolvedID] = make(map[string]struct{})
+				}
+				watchedEpisodeSetBySeries[resolvedID][episodeKey(item.SeasonNumber, item.EpisodeNumber)] = struct{}{}
+				furthest := furthestWatchedBySeries[resolvedID]
+				if furthest.season == 0 || compareEpisodeOrder(item.SeasonNumber, item.EpisodeNumber, furthest.season, furthest.episode) > 0 {
+					furthestWatchedBySeries[resolvedID] = episodePosition{season: item.SeasonNumber, episode: item.EpisodeNumber}
+				}
 				if _, exists := seriesInfo[resolvedID]; !exists {
 					seriesInfo[resolvedID] = item
 				}
 			}
+		}
+	}
+
+	for seriesID, corruptedItems := range corruptedUnwatchedBySeries {
+		furthest := furthestWatchedBySeries[seriesID]
+		if furthest.season == 0 {
+			continue
+		}
+		for _, item := range corruptedItems {
+			if compareEpisodeOrder(item.SeasonNumber, item.EpisodeNumber, furthest.season, furthest.episode) > 0 {
+				continue
+			}
+			key := episodeKey(item.SeasonNumber, item.EpisodeNumber)
+			if _, exists := watchedEpisodeSetBySeries[seriesID][key]; exists {
+				continue
+			}
+			item.Watched = true
+			if item.WatchedAt.IsZero() {
+				item.WatchedAt = watchHistoryActivityTime(item)
+			}
+			seriesEpisodes[seriesID] = append(seriesEpisodes[seriesID], item)
+			watchedEpisodeSetBySeries[seriesID][key] = struct{}{}
+			if _, exists := seriesInfo[seriesID]; !exists {
+				seriesInfo[seriesID] = item
+			}
+			logContinueDebugHistory("promoted corrupted unwatched gap", item, seriesID, false)
 		}
 	}
 
@@ -773,6 +824,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				SeasonNumber:  prog.SeasonNumber,
 				EpisodeNumber: prog.EpisodeNumber,
 			}
+			logContinueDebugProgress("seriesInfo from progress", *prog, prog.SeriesID, seriesID, false)
 		}
 	}
 
@@ -848,6 +900,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			// Fetch series metadata once (cached) so the in-progress reconciliation,
 			// next-episode lookup, and enrichment below can all reuse it.
 			seriesDetails, seriesErr := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
+			logContinueDebugTask("task metadata", t.seriesID, t.info, t.inProgress, len(t.episodes), len(t.history), seriesErr)
 			numbering := newEpisodeNumberingIndex(seriesDetails)
 			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
 
@@ -886,6 +939,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					inProgressStaleBehindLatestWatched = true
 				}
 				if inProgressAlreadyWatched || inProgressStaleBehindLatestWatched {
+					logContinueDebugTaskDecision("in-progress stale", t.seriesID, t.info, t.inProgress, inProgressAlreadyWatched, inProgressStaleBehindLatestWatched, len(t.episodes))
 					// Clean up all stale progress entries for this series where
 					// the episode is already in watch history, or stale progress
 					// points behind the furthest watched episode for the series.
@@ -921,6 +975,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 						}
 						if cleaned > 0 {
 							_ = s.savePlaybackProgressLocked()
+							s.invalidateContinueWatchingLocked(userID)
 						}
 					}()
 				}
@@ -932,6 +987,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					EpisodeNumber: t.inProgress.EpisodeNumber,
 					Title:         t.inProgress.EpisodeName,
 				}
+				logContinueDebugTaskDecision("in-progress selected", t.seriesID, t.info, t.inProgress, false, false, len(t.episodes))
 
 				// Use the most recent timestamp between the in-progress entry and
 				// any watched episode (e.g. a Trakt sync may mark many episodes
@@ -1031,6 +1087,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				// Series details (with all episodes) are required to find next unwatched
 				if seriesErr != nil {
 					// Skip this series if metadata unavailable
+					logContinueDebugTaskSkip("metadata unavailable", t.seriesID, t.info, t.inProgress, seriesErr)
 					return
 				}
 
@@ -1038,6 +1095,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				nextEpisode = s.findNextUnwatchedEpisode(seriesDetails, mostRecentEpisode, episodes)
 				if nextEpisode == nil && onlyInProgress {
 					// No next episode available and only in-progress requested, skip this series
+					logContinueDebugTaskSkip("no next episode", t.seriesID, t.info, t.inProgress, nil)
 					return
 				}
 
@@ -1112,10 +1170,12 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				}
 			} else {
 				// No episodes and no in-progress (shouldn't happen)
+				logContinueDebugTaskSkip("no episodes or in-progress", t.seriesID, t.info, t.inProgress, nil)
 				return
 			}
 
 			// Add to results
+			logContinueDebugState("append", state)
 			mu.Lock()
 			continueWatching = append(continueWatching, state)
 			mu.Unlock()
@@ -1301,6 +1361,9 @@ func watchedEpisodesAfterManualUnwatch(watchedEpisodes, history []models.WatchHi
 	latestUnwatched := make(map[string]time.Time)
 	for _, item := range history {
 		if item.Watched {
+			continue
+		}
+		if hasContradictorySeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
 			continue
 		}
 		season, episode := numbering.canonical(item.SeasonNumber, item.EpisodeNumber)
@@ -1868,9 +1931,26 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 		}
 	}
 
+	recordSeriesAliases := func(seriesID, itemID string, extIDs map[string]string) {
+		canonicalExtIDs := canonicalSeriesExternalIDs(seriesID, itemID, extIDs)
+		recordIDs(seriesID, canonicalExtIDs)
+		if canonicalExtIDs == nil {
+			return
+		}
+		if id := strings.TrimSpace(canonicalExtIDs["tmdb"]); id != "" {
+			recordIDs("tmdb:tv:"+id, canonicalExtIDs)
+		}
+		if id := strings.TrimSpace(canonicalExtIDs["tvdb"]); id != "" {
+			recordIDs("tvdb:series:"+id, canonicalExtIDs)
+		}
+		if id := strings.TrimSpace(canonicalExtIDs["imdb"]); id != "" {
+			recordIDs(id, canonicalExtIDs)
+		}
+	}
+
 	for _, item := range items {
 		if item.MediaType == "episode" && item.SeriesID != "" {
-			recordIDs(item.SeriesID, item.ExternalIDs)
+			recordSeriesAliases(item.SeriesID, item.ItemID, item.ExternalIDs)
 		}
 	}
 	for _, prog := range progressItems {
@@ -1878,7 +1958,7 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 			continue
 		}
 		if (prog.MediaType == "episode" || prog.SeasonNumber > 0) && prog.SeriesID != "" {
-			recordIDs(prog.SeriesID, prog.ExternalIDs)
+			recordSeriesAliases(prog.SeriesID, prog.ItemID, prog.ExternalIDs)
 		}
 	}
 
@@ -1902,10 +1982,12 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 		if len(unique) < 2 {
 			return
 		}
-		// Pick canonical: prefer the one with the most external IDs
+		// Pick canonical: prefer the one with the most external IDs, then the
+		// most display-compatible provider when aliases have equivalent data.
 		best := unique[0]
 		for _, id := range unique[1:] {
-			if seriesExternalIDCount[id] > seriesExternalIDCount[best] {
+			if seriesExternalIDCount[id] > seriesExternalIDCount[best] ||
+				(seriesExternalIDCount[id] == seriesExternalIDCount[best] && preferProgressID(id, best)) {
 				best = id
 			}
 		}
@@ -1950,6 +2032,372 @@ func resolveCanonicalID(canonical map[string]string, seriesID string) string {
 		return resolved
 	}
 	return seriesID
+}
+
+func canonicalSeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) map[string]string {
+	if len(extIDs) == 0 {
+		return nil
+	}
+
+	provider, numericID := seriesProviderAndID(seriesID)
+	itemProvider, itemNumericID := seriesProviderAndID(inferSeriesIDFromEpisodeItemID(itemID))
+	titleProvider, titleNumericID := seriesProviderAndID(extIDs["titleId"])
+
+	if provider != "" && numericID != "" {
+		if id := strings.TrimSpace(extIDs[provider]); id != "" {
+			if id == numericID {
+				copied := copySeriesExternalIDs(extIDs)
+				addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+				return copied
+			}
+			copied := map[string]string{provider: numericID}
+			addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+			return copied
+		}
+		if titleProvider == provider && titleNumericID == numericID {
+			copied := copySeriesExternalIDs(extIDs)
+			if copied == nil {
+				copied = make(map[string]string, 1)
+			}
+			copied[provider] = numericID
+			addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+			return copied
+		}
+		copied := map[string]string{provider: numericID}
+		addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+		return copied
+	}
+
+	if titleProvider != "" && titleNumericID != "" {
+		return map[string]string{titleProvider: titleNumericID}
+	}
+
+	return copySeriesExternalIDs(extIDs)
+}
+
+func addEpisodeItemSeriesExternalID(extIDs map[string]string, seriesProvider, itemProvider, itemNumericID string) {
+	if extIDs == nil || itemProvider == "" || itemNumericID == "" || itemProvider == seriesProvider {
+		return
+	}
+	if existing := strings.TrimSpace(extIDs[itemProvider]); existing == "" {
+		extIDs[itemProvider] = itemNumericID
+	}
+}
+
+func copySeriesExternalIDs(extIDs map[string]string) map[string]string {
+	if len(extIDs) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(extIDs))
+	for k, v := range extIDs {
+		if v == "" || k == "titleId" || strings.HasPrefix(k, "episode") {
+			continue
+		}
+		copied[k] = v
+	}
+	if len(copied) == 0 {
+		return nil
+	}
+	return copied
+}
+
+func seriesProviderAndID(seriesID string) (string, string) {
+	seriesID = strings.TrimSpace(seriesID)
+	if seriesID == "" {
+		return "", ""
+	}
+	parts := strings.Split(seriesID, ":")
+	if len(parts) < 2 {
+		if strings.HasPrefix(strings.ToLower(seriesID), "tt") {
+			return "imdb", seriesID
+		}
+		return "", ""
+	}
+	provider := strings.ToLower(strings.TrimSpace(parts[0]))
+	numericID := strings.TrimSpace(parts[len(parts)-1])
+	switch provider {
+	case "tmdb", "tvdb", "imdb":
+		return provider, numericID
+	default:
+		return "", ""
+	}
+}
+
+func inferSeriesIDFromEpisodeItemID(itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ""
+	}
+	parts := strings.Split(itemID, ":")
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.ToLower(strings.TrimSpace(parts[i]))
+		if len(part) > 1 && strings.HasPrefix(part, "s") {
+			return strings.Join(parts[:i], ":")
+		}
+	}
+	return ""
+}
+
+func hasContradictorySeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) bool {
+	if len(extIDs) == 0 {
+		return false
+	}
+	for _, reliableID := range []string{seriesID, inferSeriesIDFromEpisodeItemID(itemID)} {
+		provider, numericID := seriesProviderAndID(reliableID)
+		if provider == "" || numericID == "" {
+			continue
+		}
+		externalID := strings.TrimSpace(extIDs[provider])
+		if externalID != "" && !strings.EqualFold(externalID, numericID) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldLogContinueDebug(parts ...string) bool {
+	for _, part := range parts {
+		lower := strings.ToLower(strings.TrimSpace(part))
+		if lower == "" {
+			continue
+		}
+		if strings.Contains(lower, "450033") ||
+			strings.Contains(lower, "220102") ||
+			strings.Contains(lower, "448176") ||
+			strings.Contains(lower, "250307") ||
+			strings.Contains(lower, "tt30460310") {
+			return true
+		}
+	}
+	return false
+}
+
+func continueDebugExternalIDs(extIDs map[string]string) string {
+	if len(extIDs) == 0 {
+		return "{}"
+	}
+	keys := make([]string, 0, len(extIDs))
+	for key := range extIDs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", key, extIDs[key]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func shouldLogContinueDebugProgress(progress models.PlaybackProgress) bool {
+	return shouldLogContinueDebug(
+		progress.ID,
+		progress.ItemID,
+		progress.SeriesID,
+		progress.SeriesName,
+		progress.EpisodeName,
+		continueDebugExternalIDs(progress.ExternalIDs),
+	)
+}
+
+func shouldLogContinueDebugHistory(item models.WatchHistoryItem) bool {
+	return shouldLogContinueDebug(
+		item.ItemID,
+		item.SeriesID,
+		item.SeriesName,
+		item.Name,
+		continueDebugExternalIDs(item.ExternalIDs),
+	)
+}
+
+func shouldLogContinueDebugState(item models.SeriesWatchState) bool {
+	next := ""
+	last := ""
+	if item.NextEpisode != nil {
+		next = fmt.Sprintf("s%02de%02d %s", item.NextEpisode.SeasonNumber, item.NextEpisode.EpisodeNumber, item.NextEpisode.Title)
+	}
+	last = fmt.Sprintf("s%02de%02d %s", item.LastWatched.SeasonNumber, item.LastWatched.EpisodeNumber, item.LastWatched.Title)
+	return shouldLogContinueDebug(
+		item.SeriesID,
+		item.SeriesTitle,
+		next,
+		last,
+		continueDebugExternalIDs(item.ExternalIDs),
+	)
+}
+
+func logContinueDebugCanonicalMap(stage string, canonical map[string]string, items []models.WatchHistoryItem, progressItems []models.PlaybackProgress) {
+	seen := make(map[string]bool)
+	logID := func(id string, extIDs map[string]string, source string) {
+		if !shouldLogContinueDebug(id, continueDebugExternalIDs(extIDs)) {
+			return
+		}
+		resolved := resolveCanonicalID(canonical, id)
+		key := source + "|" + id + "|" + resolved
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		log.Printf("[history][continue-debug] %s canonical source=%s id=%q resolved=%q extIDs={%s}", stage, source, id, resolved, continueDebugExternalIDs(extIDs))
+	}
+	for _, item := range items {
+		if item.MediaType == "episode" {
+			logID(item.SeriesID, item.ExternalIDs, "history")
+		}
+	}
+	for _, progress := range progressItems {
+		if progress.MediaType == "episode" || progress.SeasonNumber > 0 {
+			logID(progress.SeriesID, progress.ExternalIDs, "progress")
+		}
+	}
+}
+
+func logContinueDebugProgress(stage string, progress models.PlaybackProgress, originalSeriesID, resolvedSeriesID string, replacedExisting bool) {
+	if !shouldLogContinueDebugProgress(progress) && !shouldLogContinueDebug(originalSeriesID, resolvedSeriesID) {
+		return
+	}
+	log.Printf("[history][continue-debug] %s progress id=%q itemID=%q originalSeriesID=%q resolvedSeriesID=%q seriesName=%q s=%d e=%d pct=%.2f hidden=%t updated=%s replacedExisting=%t extIDs={%s}",
+		stage,
+		progress.ID,
+		progress.ItemID,
+		originalSeriesID,
+		resolvedSeriesID,
+		progress.SeriesName,
+		progress.SeasonNumber,
+		progress.EpisodeNumber,
+		progress.PercentWatched,
+		progress.HiddenFromContinueWatching,
+		progress.UpdatedAt.Format(time.RFC3339Nano),
+		replacedExisting,
+		continueDebugExternalIDs(progress.ExternalIDs),
+	)
+}
+
+func logContinueDebugProgressSkip(progress models.PlaybackProgress, originalSeriesID, resolvedSeriesID string, isEpisode, hidden bool) {
+	if !shouldLogContinueDebugProgress(progress) && !shouldLogContinueDebug(originalSeriesID, resolvedSeriesID) {
+		return
+	}
+	reason := "unknown"
+	switch {
+	case progress.HiddenFromContinueWatching:
+		reason = "progress hidden"
+	case isSeriesLevelPlaybackMarker(progress):
+		reason = "series-level marker"
+	case !isEpisode:
+		reason = "not episode"
+	case resolvedSeriesID == "":
+		reason = "empty resolved series id"
+	case progress.PercentWatched >= 90:
+		reason = "percent >= 90"
+	case hidden:
+		reason = "series hidden"
+	}
+	log.Printf("[history][continue-debug] in-progress skipped reason=%q id=%q itemID=%q originalSeriesID=%q resolvedSeriesID=%q seriesName=%q s=%d e=%d pct=%.2f hidden=%t isEpisode=%t seriesHidden=%t extIDs={%s}",
+		reason,
+		progress.ID,
+		progress.ItemID,
+		originalSeriesID,
+		resolvedSeriesID,
+		progress.SeriesName,
+		progress.SeasonNumber,
+		progress.EpisodeNumber,
+		progress.PercentWatched,
+		progress.HiddenFromContinueWatching,
+		isEpisode,
+		hidden,
+		continueDebugExternalIDs(progress.ExternalIDs),
+	)
+}
+
+func logContinueDebugHistory(stage string, item models.WatchHistoryItem, resolvedSeriesID string, hidden bool) {
+	if !shouldLogContinueDebugHistory(item) && !shouldLogContinueDebug(resolvedSeriesID) {
+		return
+	}
+	log.Printf("[history][continue-debug] %s history itemID=%q seriesID=%q resolvedSeriesID=%q seriesName=%q name=%q s=%d e=%d watched=%t watchedAt=%s updated=%s hiddenSeries=%t extIDs={%s}",
+		stage,
+		item.ItemID,
+		item.SeriesID,
+		resolvedSeriesID,
+		item.SeriesName,
+		item.Name,
+		item.SeasonNumber,
+		item.EpisodeNumber,
+		item.Watched,
+		item.WatchedAt.Format(time.RFC3339Nano),
+		item.UpdatedAt.Format(time.RFC3339Nano),
+		hidden,
+		continueDebugExternalIDs(item.ExternalIDs),
+	)
+}
+
+func logContinueDebugTask(stage, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, episodeCount, historyCount int, err error) {
+	progressText := ""
+	if inProgress != nil {
+		progressText = fmt.Sprintf(" itemID=%q seriesID=%q s=%d e=%d pct=%.2f updated=%s extIDs={%s}",
+			inProgress.ItemID,
+			inProgress.SeriesID,
+			inProgress.SeasonNumber,
+			inProgress.EpisodeNumber,
+			inProgress.PercentWatched,
+			inProgress.UpdatedAt.Format(time.RFC3339Nano),
+			continueDebugExternalIDs(inProgress.ExternalIDs),
+		)
+	}
+	errText := "<nil>"
+	if err != nil {
+		errText = err.Error()
+	}
+	if !shouldLogContinueDebug(seriesID, info.SeriesID, info.SeriesName, info.Name, continueDebugExternalIDs(info.ExternalIDs), progressText) {
+		return
+	}
+	log.Printf("[history][continue-debug] %s task seriesID=%q infoSeriesID=%q infoName=%q infoSeriesName=%q episodes=%d history=%d metadataErr=%q inProgress={%s} infoExtIDs={%s}",
+		stage,
+		seriesID,
+		info.SeriesID,
+		info.Name,
+		info.SeriesName,
+		episodeCount,
+		historyCount,
+		errText,
+		strings.TrimSpace(progressText),
+		continueDebugExternalIDs(info.ExternalIDs),
+	)
+}
+
+func logContinueDebugTaskDecision(stage, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, alreadyWatched, staleBehind bool, episodeCount int) {
+	logContinueDebugTask(stage+fmt.Sprintf(" alreadyWatched=%t staleBehind=%t", alreadyWatched, staleBehind), seriesID, info, inProgress, episodeCount, 0, nil)
+}
+
+func logContinueDebugTaskSkip(reason, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, err error) {
+	if err == nil {
+		err = errors.New(reason)
+	} else {
+		err = fmt.Errorf("%s: %w", reason, err)
+	}
+	logContinueDebugTask("task skipped", seriesID, info, inProgress, 0, 0, err)
+}
+
+func logContinueDebugState(stage string, state models.SeriesWatchState) {
+	if !shouldLogContinueDebugState(state) {
+		return
+	}
+	next := "<nil>"
+	if state.NextEpisode != nil {
+		next = fmt.Sprintf("S%02dE%02d %q", state.NextEpisode.SeasonNumber, state.NextEpisode.EpisodeNumber, state.NextEpisode.Title)
+	}
+	log.Printf("[history][continue-debug] %s state seriesID=%q title=%q updated=%s last=S%02dE%02d %q next=%s watched=%d total=%d pct=%.2f extIDs={%s}",
+		stage,
+		state.SeriesID,
+		state.SeriesTitle,
+		state.UpdatedAt.Format(time.RFC3339Nano),
+		state.LastWatched.SeasonNumber,
+		state.LastWatched.EpisodeNumber,
+		state.LastWatched.Title,
+		next,
+		state.WatchedEpisodeCount,
+		state.TotalEpisodeCount,
+		state.PercentWatched,
+		continueDebugExternalIDs(state.ExternalIDs),
+	)
 }
 
 // countTotalEpisodes counts the total number of released episodes in a series,
@@ -2752,8 +3200,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			continue
 		}
 		epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
-		for idType, idValue := range item.ExternalIDs {
-			if idValue == "" || idType == "titleId" {
+		for idType, idValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
+			if idValue == "" {
 				continue
 			}
 			indexKey := epKey + ":" + idType + ":" + idValue
@@ -2778,8 +3226,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		// with matching external IDs and same season/episode numbers.
 		if !exists && update.SeasonNumber > 0 && update.EpisodeNumber > 0 && len(update.ExternalIDs) > 0 {
 			epKey := episodeKey(update.SeasonNumber, update.EpisodeNumber)
-			for idType, idValue := range update.ExternalIDs {
-				if idValue == "" || idType == "titleId" {
+			for idType, idValue := range canonicalSeriesExternalIDs(update.SeriesID, update.ItemID, update.ExternalIDs) {
+				if idValue == "" {
 					continue
 				}
 				indexKey := epKey + ":" + idType + ":" + idValue
@@ -2801,8 +3249,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 						// onto the incoming key below.
 						crossProviderRekeyed = true
 						delete(perUser, idx.watchKey)
-						for oldIDType, oldIDValue := range existing.ExternalIDs {
-							if oldIDValue == "" || oldIDType == "titleId" {
+						for oldIDType, oldIDValue := range canonicalSeriesExternalIDs(existing.SeriesID, existing.ItemID, existing.ExternalIDs) {
+							if oldIDValue == "" {
 								continue
 							}
 							oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
@@ -3006,8 +3454,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		// Update cross-provider index so subsequent items in this batch can find this entry
 		if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
 			epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
-			for idType, idValue := range item.ExternalIDs {
-				if idValue == "" || idType == "titleId" {
+			for idType, idValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
+				if idValue == "" {
 					continue
 				}
 				crossProviderIndex[epKey+":"+idType+":"+idValue] = episodeIndex{watchKey: key}

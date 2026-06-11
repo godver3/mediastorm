@@ -1593,6 +1593,261 @@ func TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent(t *testing.T) {
 	}
 }
 
+func TestBuildCanonicalSeriesIDMap_UsesExternalProviderAliases(t *testing.T) {
+	items := []models.WatchHistoryItem{
+		{
+			MediaType:   "episode",
+			ItemID:      "tvdb:series:450033:s01e04",
+			SeriesID:    "tvdb:series:450033",
+			SeriesName:  "Spider-Noir",
+			ExternalIDs: map[string]string{"tvdb": "450033", "tmdb": "220102", "imdb": "tt30460310"},
+		},
+	}
+	progressItems := []models.PlaybackProgress{
+		{
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:360261:s01e01",
+			SeriesID:      "tvdb:series:360261",
+			SeriesName:    "Spider-Noir",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			ExternalIDs:   map[string]string{"tvdb": "450033", "tmdb": "220102", "imdb": "tt30460310"},
+		},
+	}
+
+	canonical := buildCanonicalSeriesIDMap(items, progressItems)
+	if got := canonical["tvdb:series:360261"]; got != "tvdb:series:360261" {
+		t.Fatalf("expected contradictory stale TVDB series ID to stay isolated, got %q", got)
+	}
+	if got := canonical["tvdb:series:450033"]; got != "tmdb:tv:220102" {
+		t.Fatalf("expected TVDB alias to resolve to TMDB alias, got %q", got)
+	}
+	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:220102" {
+		t.Fatalf("expected TMDB alias to resolve to itself, got %q", got)
+	}
+}
+
+func TestBuildCanonicalSeriesIDMap_IgnoresContradictoryExternalIDs(t *testing.T) {
+	items := []models.WatchHistoryItem{
+		{
+			MediaType:  "episode",
+			ItemID:     "tmdb:tv:220102:s01e02",
+			SeriesID:   "tmdb:tv:220102",
+			SeriesName: "Spider-Noir",
+			ExternalIDs: map[string]string{
+				"tmdb":    "4629",
+				"tvdb":    "72449",
+				"imdb":    "tt0118480",
+				"titleId": "tmdb:tv:220102",
+			},
+		},
+		{
+			MediaType:  "episode",
+			ItemID:     "tvdb:series:72449:s01e01",
+			SeriesID:   "tvdb:series:72449",
+			SeriesName: "Stargate SG-1",
+			ExternalIDs: map[string]string{
+				"tmdb": "4629",
+				"tvdb": "72449",
+				"imdb": "tt0118480",
+			},
+		},
+	}
+	progressItems := []models.PlaybackProgress{
+		{
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:450033:s01e05",
+			SeriesID:      "tvdb:series:450033",
+			SeriesName:    "Spider-Noir",
+			SeasonNumber:  1,
+			EpisodeNumber: 5,
+			ExternalIDs: map[string]string{
+				"tvdb":    "450033",
+				"imdb":    "tt30460310",
+				"titleId": "tvdb:series:450033",
+			},
+		},
+	}
+
+	canonical := buildCanonicalSeriesIDMap(items, progressItems)
+	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:220102" {
+		t.Fatalf("expected Spider-Noir TMDB row to stay isolated from bad external IDs, got %q", got)
+	}
+	if got := canonical["tvdb:series:72449"]; got != "tmdb:tv:4629" {
+		t.Fatalf("expected Stargate row to resolve within its own clean external IDs, got %q", got)
+	}
+	if got := canonical["tvdb:series:450033"]; got != "tvdb:series:450033" {
+		t.Fatalf("expected Spider-Noir TVDB progress without TMDB ID to stay on TVDB key, got %q", got)
+	}
+}
+
+func TestBuildCanonicalSeriesIDMap_UsesEpisodeItemIDBridgeForPollutedRows(t *testing.T) {
+	items := []models.WatchHistoryItem{
+		{
+			MediaType:   "episode",
+			ItemID:      "tvdb:series:450033:s01e04",
+			SeriesID:    "tvdb:series:450033",
+			SeriesName:  "Spider-Noir",
+			ExternalIDs: map[string]string{"tvdb": "450033", "imdb": "tt30460310"},
+		},
+		{
+			MediaType:   "episode",
+			ItemID:      "tvdb:series:450033:s01e02",
+			SeriesID:    "tmdb:tv:220102",
+			SeriesName:  "Spider-Noir",
+			ExternalIDs: map[string]string{"tmdb": "4629", "tvdb": "72449", "imdb": "tt0118480"},
+		},
+	}
+
+	canonical := buildCanonicalSeriesIDMap(items, nil)
+	if got := resolveCanonicalID(canonical, "tvdb:series:450033"); got != "tmdb:tv:220102" {
+		t.Fatalf("expected TVDB item-key bridge to merge into TMDB canonical ID, got %q", got)
+	}
+}
+
+func TestContinueWatching_PromotesCorruptedUnwatchedGapsBeforeLaterWatchedEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "cw-corrupt-gaps"
+	watched := true
+	unwatched := false
+	now := time.Now().UTC()
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tmdb:tv:220102": {
+				Title: models.Title{ID: "tmdb:tv:220102", Name: "Spider-Noir", TMDBID: 220102, TVDBID: 450033},
+				Seasons: []models.SeriesSeason{{
+					Number: 1,
+					Episodes: []models.SeriesEpisode{
+						{ID: "spider-1", Name: "Step Into My Office", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2026-05-01"},
+						{ID: "spider-2", Name: "Tread Lightly", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2026-05-08"},
+						{ID: "spider-3", Name: "Double Cross", SeasonNumber: 1, EpisodeNumber: 3, AiredDate: "2026-05-15"},
+						{ID: "spider-4", Name: "A Mistake I'll Never Make Again", SeasonNumber: 1, EpisodeNumber: 4, AiredDate: "2026-05-22"},
+						{ID: "spider-5", Name: "Betrayal", SeasonNumber: 1, EpisodeNumber: 5, AiredDate: "2026-05-29"},
+					},
+				}},
+			},
+		},
+	})
+
+	updates := []models.WatchHistoryUpdate{
+		{MediaType: "episode", ItemID: "tvdb:series:450033:s01e01", SeriesID: "tvdb:series:450033", SeriesName: "Spider-Noir", Name: "Step Into My Office", SeasonNumber: 1, EpisodeNumber: 1, Watched: &watched, WatchedAt: now.Add(-4 * time.Hour), ExternalIDs: map[string]string{"tvdb": "450033", "imdb": "tt30460310"}},
+		{MediaType: "episode", ItemID: "tvdb:series:450033:s01e02", SeriesID: "tmdb:tv:220102", SeriesName: "Spider-Noir", Name: "Tread Lightly", SeasonNumber: 1, EpisodeNumber: 2, Watched: &unwatched, WatchedAt: now.Add(-3 * time.Hour), ExternalIDs: map[string]string{"tmdb": "4629", "tvdb": "72449", "imdb": "tt0118480"}},
+		{MediaType: "episode", ItemID: "tmdb:tv:220102:s01e03", SeriesID: "tmdb:tv:220102", SeriesName: "Spider-Noir", Name: "Double Cross", SeasonNumber: 1, EpisodeNumber: 3, Watched: &unwatched, WatchedAt: now.Add(-2 * time.Hour), ExternalIDs: map[string]string{"tmdb": "4629", "tvdb": "72449", "imdb": "tt0118480"}},
+		{MediaType: "episode", ItemID: "tvdb:series:450033:s01e04", SeriesID: "tvdb:series:450033", SeriesName: "Spider-Noir", Name: "A Mistake I'll Never Make Again", SeasonNumber: 1, EpisodeNumber: 4, Watched: &watched, WatchedAt: now.Add(-1 * time.Hour), ExternalIDs: map[string]string{"tvdb": "450033", "imdb": "tt30460310"}},
+	}
+	for _, update := range updates {
+		if _, err := svc.UpdateWatchHistory(userID, update); err != nil {
+			t.Fatalf("UpdateWatchHistory(%s) error = %v", update.ItemID, err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one Spider-Noir item, got %d: %+v", len(items), items)
+	}
+	if items[0].WatchedEpisodeCount != 4 {
+		t.Fatalf("expected corrupted E2/E3 gaps to count as watched, got %d", items[0].WatchedEpisodeCount)
+	}
+	if items[0].NextEpisode == nil || items[0].NextEpisode.EpisodeNumber != 5 {
+		t.Fatalf("expected next episode S01E05, got %+v", items[0].NextEpisode)
+	}
+}
+
+func TestContinueWatching_CorruptedFutureRowsDoNotRewindNextEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "cw-corrupt-future"
+	watched := true
+	unwatched := false
+	now := time.Now().UTC()
+	episodes := make([]models.SeriesEpisode, 0, 15)
+	for i := 1; i <= 15; i++ {
+		episodes = append(episodes, models.SeriesEpisode{
+			ID:            fmt.Sprintf("pitt-%d", i),
+			Name:          fmt.Sprintf("%d:00", i+6),
+			SeasonNumber:  2,
+			EpisodeNumber: i,
+			AiredDate:     "2026-05-01",
+		})
+	}
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tmdb:tv:250307": {
+				Title: models.Title{ID: "tmdb:tv:250307", Name: "The Pitt", TMDBID: 250307, TVDBID: 448176},
+				Seasons: []models.SeriesSeason{{
+					Number:   2,
+					Episodes: episodes,
+				}},
+			},
+		},
+	})
+
+	for ep := 1; ep <= 9; ep++ {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType: "episode", ItemID: fmt.Sprintf("tvdb:series:448176:s02e%02d", ep),
+			SeriesID: "tvdb:series:448176", SeriesName: "The Pitt", Name: fmt.Sprintf("%d:00", ep+6),
+			SeasonNumber: 2, EpisodeNumber: ep, Watched: &watched, WatchedAt: now.Add(time.Duration(ep) * time.Minute),
+			ExternalIDs: map[string]string{"tmdb": "250307", "tvdb": "448176", "imdb": "tt31938062"},
+		}); err != nil {
+			t.Fatalf("watched S02E%02d error = %v", ep, err)
+		}
+	}
+	for ep := 10; ep <= 12; ep++ {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType: "episode", ItemID: fmt.Sprintf("tvdb:series:448176:s02e%02d", ep),
+			SeriesID: "tvdb:series:448176", SeriesName: "The Pitt", Name: fmt.Sprintf("%d:00", ep+6),
+			SeasonNumber: 2, EpisodeNumber: ep, Watched: &unwatched, WatchedAt: now.Add(time.Duration(ep) * time.Minute),
+			ExternalIDs: map[string]string{"tmdb": "4629", "tvdb": "72449", "imdb": "tt0118480", "titleId": "tvdb:series:448176"},
+		}); err != nil {
+			t.Fatalf("corrupt S02E%02d error = %v", ep, err)
+		}
+	}
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType: "episode", ItemID: "tvdb:series:448176:s02e13",
+		SeriesID: "tvdb:series:448176", SeriesName: "The Pitt", Name: "7:00 P.M.",
+		SeasonNumber: 2, EpisodeNumber: 13, Watched: &watched, WatchedAt: now.Add(13 * time.Minute),
+		ExternalIDs: map[string]string{"tmdb": "250307", "tvdb": "448176", "imdb": "tt31938062"},
+	}); err != nil {
+		t.Fatalf("watched S02E13 error = %v", err)
+	}
+	for ep := 14; ep <= 15; ep++ {
+		if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+			MediaType: "episode", ItemID: fmt.Sprintf("tvdb:series:448176:s02e%02d", ep),
+			SeriesID: "tvdb:series:448176", SeriesName: "The Pitt", Name: fmt.Sprintf("%d:00", ep+6),
+			SeasonNumber: 2, EpisodeNumber: ep, Watched: &unwatched, WatchedAt: now.Add(time.Duration(ep) * time.Minute),
+			ExternalIDs: map[string]string{"tmdb": "4629", "tvdb": "72449", "imdb": "tt0118480", "titleId": "tvdb:series:448176"},
+		}); err != nil {
+			t.Fatalf("corrupt future S02E%02d error = %v", ep, err)
+		}
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one Pitt item, got %d: %+v", len(items), items)
+	}
+	if items[0].WatchedEpisodeCount != 13 {
+		t.Fatalf("expected corrupted S02E10-S02E12 gaps to count as watched, got %d", items[0].WatchedEpisodeCount)
+	}
+	if items[0].NextEpisode == nil || items[0].NextEpisode.EpisodeNumber != 14 {
+		t.Fatalf("expected next episode to advance to S02E14, got %+v", items[0].NextEpisode)
+	}
+}
+
 func TestUpdatePlaybackProgress_DedupesCrossProviderEpisodeProgress(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -3634,9 +3889,10 @@ func TestBuildCanonicalSeriesIDMap_TMDBMerge(t *testing.T) {
 		t.Fatalf("expected same canonical ID, got %q and %q", resolved1, resolved2)
 	}
 
-	// The canonical should be the one with more external IDs (tvdb:series:67890 has 2)
-	if resolved1 != "tvdb:series:67890" {
-		t.Fatalf("expected canonical to be tvdb:series:67890 (richer), got %q", resolved1)
+	// Provider aliases carry the same external ID richness; prefer the TMDB
+	// title key so metadata lookups and display IDs are stable.
+	if resolved1 != "tmdb:tv:12345" {
+		t.Fatalf("expected canonical to be tmdb:tv:12345, got %q", resolved1)
 	}
 }
 
