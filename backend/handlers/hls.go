@@ -4327,6 +4327,7 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	// out-of-sync VTT and race with the transcode's output.
 	session.mu.RLock()
 	syncedSamePass := session.UsesSubtitleRendition && requestedTrack == session.SubtitleTrackIndex
+	syncedSamePassWriting := syncedSamePass && !session.Completed
 	session.mu.RUnlock()
 
 	// Check if file exists - for fMP4/DV sessions, all tracks should be pre-extracted
@@ -4452,7 +4453,7 @@ func (m *HLSManager) ServeSubtitleTrack(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache") // Don't cache since file is growing
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	if session.subtitleExtractionInProgress(requestedTrack) {
+	if session.subtitleExtractionInProgress(requestedTrack) || syncedSamePassWriting {
 		w.Header().Set("X-Subtitle-Extracting", "true")
 	}
 	if syncedSamePass {
