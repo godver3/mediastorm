@@ -1546,6 +1546,133 @@ func TestUpdateWatchHistory_UnwatchedSyncsAbsoluteEpisodeDuplicate(t *testing.T)
 	}
 }
 
+func TestImportWatchHistory_UnwatchedSyncsCrossProviderEpisodeDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-cross-provider-unwatch"
+	watched := true
+	unwatched := false
+
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:81797:s23e10",
+		Name:          "A Welcome with Friends' Cups and Intruders Seeking Loki",
+		Watched:       &watched,
+		WatchedAt:     time.Date(2026, 6, 11, 1, 2, 55, 0, time.UTC),
+		SeriesID:      "tvdb:series:81797",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 10,
+		ExternalIDs: map[string]string{
+			"imdb":            "tt0388629",
+			"tmdb":            "37854",
+			"tvdb":            "81797",
+			"episodeTvdb":     "11700062",
+			"absoluteEpisode": "1165",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() watched duplicate error = %v", err)
+	}
+
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:37854:s23e10",
+		Name:          "A Welcome with Friends' Cups and Intruders Seeking Loki",
+		Watched:       &unwatched,
+		WatchedAt:     time.Date(2026, 6, 11, 1, 19, 45, 0, time.UTC),
+		SeriesID:      "tmdb:tv:37854",
+		SeriesName:    "One Piece",
+		SeasonNumber:  23,
+		EpisodeNumber: 10,
+		ExternalIDs: map[string]string{
+			"imdb":            "tt0388629",
+			"tmdb":            "37854",
+			"tvdb":            "81797",
+			"episodeTvdb":     "11700062",
+			"absoluteEpisode": "1165",
+		},
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() unwatched duplicate error = %v", err)
+	}
+
+	duplicate, err := svc.GetWatchHistoryItem(userID, "episode", "tmdb:tv:37854:s23e10")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if duplicate == nil {
+		t.Fatal("expected TMDB survivor history row")
+	}
+	if duplicate.Watched {
+		t.Fatalf("expected TMDB survivor to be unwatched: %+v", duplicate)
+	}
+	oldDuplicate, err := svc.GetWatchHistoryItem(userID, "episode", "tvdb:series:81797:s23e10")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() old duplicate error = %v", err)
+	}
+	if oldDuplicate != nil {
+		t.Fatalf("expected TVDB duplicate to be rekeyed away, got %+v", oldDuplicate)
+	}
+}
+
+func TestReconcileEquivalentEpisodeWatchHistoryNewestStateWins(t *testing.T) {
+	older := time.Date(2026, 6, 11, 1, 2, 55, 0, time.UTC)
+	newer := time.Date(2026, 6, 11, 1, 19, 45, 0, time.UTC)
+	perUser := map[string]models.WatchHistoryItem{
+		"episode:tvdb:series:81797:s23e10": {
+			ID:            "episode:tvdb:series:81797:s23e10",
+			MediaType:     "episode",
+			ItemID:        "tvdb:series:81797:s23e10",
+			SeriesID:      "tvdb:series:81797",
+			SeriesName:    "One Piece",
+			SeasonNumber:  23,
+			EpisodeNumber: 10,
+			Watched:       true,
+			WatchedAt:     older,
+			UpdatedAt:     older,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt0388629",
+				"tmdb":            "37854",
+				"tvdb":            "81797",
+				"episodeTvdb":     "11700062",
+				"absoluteEpisode": "1165",
+			},
+		},
+		"episode:tmdb:tv:37854:s23e10": {
+			ID:            "episode:tmdb:tv:37854:s23e10",
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:37854:s23e10",
+			SeriesID:      "tmdb:tv:37854",
+			SeriesName:    "One Piece",
+			SeasonNumber:  23,
+			EpisodeNumber: 10,
+			Watched:       false,
+			WatchedAt:     newer,
+			UpdatedAt:     newer,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt0388629",
+				"tmdb":            "37854",
+				"tvdb":            "81797",
+				"episodeTvdb":     "11700062",
+				"absoluteEpisode": "1165",
+			},
+		},
+	}
+
+	if !reconcileEquivalentEpisodeWatchHistoryLocked(perUser) {
+		t.Fatal("expected reconciliation to update stale duplicate")
+	}
+	if perUser["episode:tvdb:series:81797:s23e10"].Watched {
+		t.Fatalf("expected newest unwatched state to win: %+v", perUser["episode:tvdb:series:81797:s23e10"])
+	}
+	if perUser["episode:tmdb:tv:37854:s23e10"].Watched {
+		t.Fatalf("expected canonical row to keep newest unwatched state: %+v", perUser["episode:tmdb:tv:37854:s23e10"])
+	}
+}
+
 // TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent verifies that the
 // surviving key is the canonical TMDB one regardless of which provider scheme
 // wrote last — i.e. a TVDB-first sync followed by a native TMDB play converges

@@ -3450,6 +3450,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		}
 
 		perUser[key] = item
+		syncEquivalentEpisodeWatchHistoryLocked(perUser, key, item)
 
 		// Update cross-provider index so subsequent items in this batch can find this entry
 		if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
@@ -3520,6 +3521,59 @@ func episodeScopedIndexKeys(externalIDs map[string]string) []string {
 	return keys
 }
 
+func reconcileEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHistoryItem) bool {
+	if len(perUser) < 2 {
+		return false
+	}
+	items := make([]models.WatchHistoryItem, 0, len(perUser))
+	for _, item := range perUser {
+		if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 && len(item.ExternalIDs) > 0 {
+			items = append(items, item)
+		}
+	}
+	if len(items) < 2 {
+		return false
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].UpdatedAt.Before(items[j].UpdatedAt)
+	})
+
+	changed := false
+	for _, item := range items {
+		before := make(map[string]models.WatchHistoryItem, len(perUser))
+		for key, candidate := range perUser {
+			before[key] = candidate
+		}
+		perUser[item.ID] = item
+		syncEquivalentEpisodeWatchHistoryLocked(perUser, item.ID, item)
+		for key, candidate := range perUser {
+			if previous, ok := before[key]; !ok || watchHistoryItemsDiffer(previous, candidate) {
+				changed = true
+				break
+			}
+		}
+	}
+	return changed
+}
+
+func watchHistoryItemsDiffer(a, b models.WatchHistoryItem) bool {
+	if a.Watched != b.Watched ||
+		!a.WatchedAt.Equal(b.WatchedAt) ||
+		!a.UpdatedAt.Equal(b.UpdatedAt) ||
+		len(a.ExternalIDs) != len(b.ExternalIDs) {
+		return true
+	}
+	for k, v := range a.ExternalIDs {
+		if b.ExternalIDs[k] != v {
+			return true
+		}
+	}
+	return false
+}
+
 func syncEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHistoryItem, canonicalKey string, item models.WatchHistoryItem) {
 	if item.MediaType != "episode" || item.SeasonNumber <= 0 || item.EpisodeNumber <= 0 || len(item.ExternalIDs) == 0 {
 		return
@@ -3583,6 +3637,7 @@ func (s *Service) loadWatchHistory() error {
 				key := makeWatchKey(item.MediaType, item.ItemID)
 				perUser[key] = item
 			}
+			reconcileEquivalentEpisodeWatchHistoryLocked(perUser)
 			s.watchHistory[userID] = perUser
 		}
 		return nil
@@ -3671,6 +3726,9 @@ func (s *Service) loadWatchHistory() error {
 			} else {
 				perUser[key] = item
 			}
+		}
+		if reconcileEquivalentEpisodeWatchHistoryLocked(perUser) {
+			needsSave = true
 		}
 		s.watchHistory[userID] = perUser
 	}
