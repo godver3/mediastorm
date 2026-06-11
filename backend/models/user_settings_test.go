@@ -9,6 +9,17 @@ func TestStringPtr(t *testing.T) {
 	}
 }
 
+func TestDefaultUserSettingsDisablesMatchFrameRate(t *testing.T) {
+	settings := DefaultUserSettings()
+
+	if settings.Playback.MatchFrameRate == nil {
+		t.Fatal("expected match frame rate default to be set")
+	}
+	if *settings.Playback.MatchFrameRate {
+		t.Fatal("expected match frame rate to default to disabled")
+	}
+}
+
 func newGlobal() *ResolvedLiveSource {
 	return &ResolvedLiveSource{
 		Mode:                  "m3u",

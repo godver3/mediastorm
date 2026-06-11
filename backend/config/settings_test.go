@@ -29,6 +29,31 @@ func TestLoadMigratesCreditsDetectionToCreditsAutoSkip(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsDisablesMatchFrameRate(t *testing.T) {
+	settings := DefaultSettings()
+
+	if settings.Playback.MatchFrameRate {
+		t.Fatal("expected match frame rate to default to disabled")
+	}
+}
+
+func TestLoadDefaultsMissingMatchFrameRateToDisabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"playback":{"preferredPlayer":"native"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Playback.MatchFrameRate {
+		t.Fatal("expected missing matchFrameRate to default to disabled")
+	}
+}
+
 func TestLoadMigratesYouTubeProxyURLFromMetadataToPlayback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"metadata":{"youtubeProxyUrl":"http://gluetun:8888"},"playback":{"preferredPlayer":"native"}}`)

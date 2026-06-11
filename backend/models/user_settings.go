@@ -587,7 +587,7 @@ func DefaultUserSettings() UserSettings {
 			SeekBackwardSeconds:        10,
 			IgnoreDVCompatibilityCheck: BoolPtr(false),
 			CreditsDetectionEnabled:    BoolPtr(true),
-			MatchFrameRate:             BoolPtr(true),
+			MatchFrameRate:             BoolPtr(false),
 		},
 		HomeShelves: HomeShelvesSettings{
 			Shelves:                         DefaultHomeShelfConfigs(),
