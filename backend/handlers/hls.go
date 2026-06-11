@@ -766,7 +766,14 @@ func inputLooksLikeHLS(rawURL string) bool {
 	if i := strings.IndexAny(lower, "?#"); i >= 0 {
 		lower = lower[:i]
 	}
-	return strings.HasSuffix(lower, ".m3u8") || strings.Contains(lower, ".m3u8")
+	if strings.HasSuffix(lower, ".m3u8") || strings.Contains(lower, ".m3u8") {
+		return true
+	}
+	// Some Stremio live providers resolve stream resources to signed playlist
+	// endpoints without a .m3u8 suffix, e.g. /playlist/<token>. FFmpeg still
+	// selects the HLS demuxer from the response body, so it needs the HLS
+	// demuxer options that permit extensionless or disguised segment URLs.
+	return strings.Contains(lower, "/playlist/")
 }
 
 // NewHLSManager creates a new HLS session manager

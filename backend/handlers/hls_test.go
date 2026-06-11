@@ -950,6 +950,8 @@ func TestInputLooksLikeHLS(t *testing.T) {
 		{"http://host/live/u/p/31930.m3u8", true},
 		{"http://host/path/playlist.m3u8?token=abc", true},
 		{"http://host/path/master.M3U8", true},
+		{"https://sports.highfly.dev/playlist/signed-token", true},
+		{"https://sports.highfly.dev/playlist/signed-token?expires=123", true},
 		{"http://host/stream.mp4", false},
 		{"http://host/live/u/p/31930.ts?x=1#frag", false},
 		{"", false},
