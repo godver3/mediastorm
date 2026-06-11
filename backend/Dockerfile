@@ -1,6 +1,38 @@
 # syntax=docker/dockerfile:1.7
 # mediastorm Backend Dockerfile
 
+# Web app build stage
+FROM node:22-bookworm-slim AS web-builder
+
+WORKDIR /frontend
+
+# Install JavaScript dependencies first so Docker can cache npm ci across app
+# source changes. Local file: modules are limited by .dockerignore to package
+# metadata plus src/, which is enough for the web export.
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+COPY frontend/patches ./patches
+COPY frontend/modules ./modules
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+
+COPY frontend/app.config.js frontend/babel.config.js frontend/metro.config.js frontend/tsconfig.json frontend/version.ts frontend/wdyr.ts ./
+COPY frontend/app ./app
+COPY frontend/assets ./assets
+COPY frontend/components ./components
+COPY frontend/config ./config
+COPY frontend/constants ./constants
+COPY frontend/hooks ./hooks
+COPY frontend/locales ./locales
+COPY frontend/plugins ./plugins
+COPY frontend/public ./public
+COPY frontend/services ./services
+COPY frontend/styles ./styles
+COPY frontend/theme ./theme
+COPY frontend/types ./types
+COPY frontend/utils ./utils
+COPY frontend/web_icons ./web_icons
+RUN npm run web:export
+
 # Build stage
 FROM golang:1.24.5-bookworm AS builder
 
@@ -111,6 +143,10 @@ WORKDIR /root/
 
 # Copy the binary from builder stage
 COPY --from=builder /app/mediastorm .
+
+# Copy the exported Expo web app. The backend serves it from /watch.
+COPY --from=web-builder /frontend/dist /opt/strmr-web
+ENV STRMR_WEB_APP_DIR=/opt/strmr-web
 
 # Copy the iroh remote-access bridge binary. MEDIASTORM_IROH_DIRECT_DIR points the
 # host manager at this dir; it runs <dir>/iroh-direct-spike directly (no cargo needed).

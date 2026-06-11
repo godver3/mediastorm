@@ -2,6 +2,58 @@
 !backend/
 !backend/**
 
+# Expo web export source. Keep this list narrow because frontend/ is a separate
+# repo with large native build artifacts and vendored player code.
+!frontend/
+frontend/**
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/.npmrc
+!frontend/app.config.js
+!frontend/babel.config.js
+!frontend/metro.config.js
+!frontend/tsconfig.json
+!frontend/version.ts
+!frontend/wdyr.ts
+!frontend/app/
+!frontend/app/**
+!frontend/assets/
+!frontend/assets/**
+!frontend/components/
+!frontend/components/**
+!frontend/config/
+!frontend/config/**
+!frontend/constants/
+!frontend/constants/**
+!frontend/hooks/
+!frontend/hooks/**
+!frontend/locales/
+!frontend/locales/**
+!frontend/patches/
+!frontend/patches/**
+!frontend/plugins/
+!frontend/plugins/**
+!frontend/public/
+!frontend/public/**
+!frontend/services/
+!frontend/services/**
+!frontend/styles/
+!frontend/styles/**
+!frontend/theme/
+!frontend/theme/**
+!frontend/types/
+!frontend/types/**
+!frontend/utils/
+!frontend/utils/**
+!frontend/web_icons/
+!frontend/web_icons/**
+!frontend/modules/
+!frontend/modules/*/
+frontend/modules/*/**
+!frontend/modules/*/package.json
+!frontend/modules/*/src/
+!frontend/modules/*/src/**
+
 # iroh remote-access bridge (Rust): needed by the iroh-builder stage in
 # backend/Dockerfile. Exclude the local build output (target/) — the image
 # compiles its own Linux binary.
