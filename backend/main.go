@@ -197,7 +197,12 @@ func main() {
 		Enabled:        settings.MDBList.Enabled,
 		EnabledRatings: settings.MDBList.EnabledRatings,
 	}
-	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, settings.Metadata.GeminiAPIKey)
+	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, metadata.AIConfig{
+		Provider: settings.Metadata.AIProvider,
+		APIKey:   settings.Metadata.AIAPIKey,
+		Model:    settings.Metadata.AIModel,
+		BaseURL:  settings.Metadata.AIBaseURL,
+	})
 	metadataService.SetAllowAdultSearch(settings.Metadata.AllowAdultSearch)
 	metadataService.SetYTDLPProxyURL(settings.Playback.YouTubeProxyURL)
 	metadataHandler := handlers.NewMetadataHandler(metadataService, cfgManager)

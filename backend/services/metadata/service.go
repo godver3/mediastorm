@@ -31,7 +31,7 @@ import (
 type Service struct {
 	client  *tvdbClient
 	tmdb    *tmdbClient
-	gemini  *geminiClient
+	ai      *geminiClient
 	mdblist *mdblistClient
 	cache   *fileCache
 	// Separate cache for stable ID mappings (TMDB↔IMDB) with 7x longer TTL
@@ -170,7 +170,7 @@ type MDBListConfig struct {
 // stableIDCacheTTLMultiplier is used for ID mappings (TMDB↔IMDB) that rarely change
 const stableIDCacheTTLMultiplier = 7
 
-func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig, geminiAPIKey ...string) *Service {
+func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int, demo bool, mdblistCfg MDBListConfig, aiConfigs ...AIConfig) *Service {
 	// Use a dedicated subdirectory for metadata cache to avoid conflicts with
 	// other data stored in the cache directory (users, watchlists, history, etc.)
 	metadataCacheDir := filepath.Join(cacheDir, "metadata")
@@ -184,16 +184,15 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 		log.Printf("[metadata] WARNING: failed to initialize trailer prequeue manager: %v", err)
 	}
 
-	// Extract optional Gemini API key
-	var geminiKey string
-	if len(geminiAPIKey) > 0 {
-		geminiKey = geminiAPIKey[0]
+	var aiConfig AIConfig
+	if len(aiConfigs) > 0 {
+		aiConfig = aiConfigs[0]
 	}
 
 	svc := &Service{
 		client:           newTVDBClient(tvdbAPIKey, language, &http.Client{}, ttlHours),
 		tmdb:             newTMDBClient(tmdbAPIKey, language, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
-		gemini:           newGeminiClient(geminiKey, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
+		ai:               newAIClient(aiConfig, &http.Client{}, newFileCache(metadataCacheDir, ttlHours)),
 		mdblist:          newMDBListClient(mdblistCfg.APIKey, mdblistCfg.EnabledRatings, mdblistCfg.Enabled, ttlHours),
 		cache:            newFileCache(metadataCacheDir, ttlHours),
 		idCache:          newFileCache(idCacheDir, ttlHours*stableIDCacheTTLMultiplier),
@@ -901,13 +900,13 @@ func (s *Service) warmRatingsForCachedItems(ctx context.Context) {
 	log.Printf("[metadata] cache manager: ratings warm complete — fetched %d, total cached %d", fetched, len(seen))
 }
 
-// UpdateAPIKeys updates the API keys for TVDB, TMDB, and Gemini clients
+// UpdateAPIKeys updates the API keys for TVDB, TMDB, and AI recommendation clients
 // This allows hot reloading when settings change
-func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string, geminiAPIKey ...string) {
+func (s *Service) UpdateAPIKeys(tvdbAPIKey, tmdbAPIKey, language string, aiConfigs ...AIConfig) {
 	s.client = newTVDBClient(tvdbAPIKey, language, &http.Client{}, s.ttlHours)
 	s.tmdb = newTMDBClient(tmdbAPIKey, language, &http.Client{}, s.cache)
-	if len(geminiAPIKey) > 0 {
-		s.gemini = newGeminiClient(geminiAPIKey[0], &http.Client{}, s.cache)
+	if len(aiConfigs) > 0 {
+		s.ai = newAIClient(aiConfigs[0], &http.Client{}, s.cache)
 	}
 
 	// Clear all cached metadata so fresh data is fetched with new API keys
@@ -5288,24 +5287,26 @@ func (s *Service) discoverShelfWithOptions(ctx context.Context, mediaType string
 	return items, total, nil
 }
 
-// GetAIRecommendations generates personalized recommendations using Gemini AI
+// GetAIRecommendations generates personalized recommendations using the configured AI provider
 // based on the user's watched titles. Results are cached for 24 hours per user.
 func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []string, mediaTypes []string, userID string) ([]models.TrendingItem, error) {
-	if s.gemini == nil || !s.gemini.isConfigured() {
-		return nil, fmt.Errorf("gemini api key not configured")
+	if s.ai == nil || !s.ai.isConfigured() {
+		return nil, fmt.Errorf("AI provider API key not configured")
 	}
 
 	if len(watchedTitles) == 0 {
 		return nil, fmt.Errorf("no watched titles provided")
 	}
 
-	// Get fresh recommendations from Gemini (no cache — each request should feel unique)
-	recs, err := s.gemini.getRecommendations(ctx, watchedTitles, mediaTypes)
+	providerLabel := s.ai.providerLabel()
+
+	// Get fresh recommendations from the configured AI provider (no cache — each request should feel unique)
+	recs, err := s.ai.getRecommendations(ctx, watchedTitles, mediaTypes)
 	if err != nil {
-		return nil, fmt.Errorf("gemini recommendations: %w", err)
+		return nil, fmt.Errorf("%s recommendations: %w", providerLabel, err)
 	}
 
-	log.Printf("[metadata] gemini returned %d recommendations for user=%s", len(recs), userID)
+	log.Printf("[metadata] %s returned %d recommendations for user=%s", providerLabel, len(recs), userID)
 
 	// Build a set of watched titles (lowercased) to filter out from results
 	watchedSet := make(map[string]bool, len(watchedTitles))
@@ -5325,11 +5326,11 @@ func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []stri
 
 		title, err := s.tmdb.searchByTitle(ctx, rec.Title, rec.Year, apiType)
 		if err != nil {
-			log.Printf("[metadata] gemini rec %q: tmdb search failed: %v", rec.Title, err)
+			log.Printf("[metadata] AI rec %q: tmdb search failed: %v", rec.Title, err)
 			continue
 		}
 		if title == nil {
-			log.Printf("[metadata] gemini rec %q (%d): no tmdb match", rec.Title, rec.Year)
+			log.Printf("[metadata] AI rec %q (%d): no tmdb match", rec.Title, rec.Year)
 			continue
 		}
 
@@ -5338,7 +5339,7 @@ func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []stri
 			continue
 		}
 		if watchedSet[strings.ToLower(title.Name)] {
-			log.Printf("[metadata] gemini rec %q: skipping (user already watched)", title.Name)
+			log.Printf("[metadata] AI rec %q: skipping (user already watched)", title.Name)
 			continue
 		}
 		seenTMDB[title.TMDBID] = true
@@ -5354,30 +5355,31 @@ func (s *Service) GetAIRecommendations(ctx context.Context, watchedTitles []stri
 		return nil, fmt.Errorf("no recommendations could be resolved to TMDB titles")
 	}
 
-	log.Printf("[metadata] gemini recommendations resolved user=%s count=%d", userID, len(items))
+	log.Printf("[metadata] AI recommendations resolved user=%s count=%d", userID, len(items))
 	return items, nil
 }
 
-// GetAISimilar generates recommendations similar to a specific title using Gemini AI.
+// GetAISimilar generates recommendations similar to a specific title using the configured AI provider.
 func (s *Service) GetAISimilar(ctx context.Context, seedTitle string, mediaType string) ([]models.TrendingItem, error) {
-	if s.gemini == nil || !s.gemini.isConfigured() {
-		return nil, fmt.Errorf("gemini api key not configured")
+	if s.ai == nil || !s.ai.isConfigured() {
+		return nil, fmt.Errorf("AI provider API key not configured")
 	}
 
 	// Check cache first
-	cacheID := cacheKey("gemini", "similar", mediaType, seedTitle, s.client.language)
+	providerLabel := s.ai.providerLabel()
+	cacheID := cacheKey("ai", s.ai.provider, s.ai.modelName(), "similar", mediaType, seedTitle, s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
-		log.Printf("[metadata] gemini similar cache hit seed=%q count=%d", seedTitle, len(cached))
+		log.Printf("[metadata] AI similar cache hit seed=%q count=%d", seedTitle, len(cached))
 		return cached, nil
 	}
 
-	recs, err := s.gemini.getSimilarRecommendations(ctx, seedTitle, mediaType)
+	recs, err := s.ai.getSimilarRecommendations(ctx, seedTitle, mediaType)
 	if err != nil {
-		return nil, fmt.Errorf("gemini similar: %w", err)
+		return nil, fmt.Errorf("%s similar: %w", providerLabel, err)
 	}
 
-	log.Printf("[metadata] gemini returned %d similar recs for %q", len(recs), seedTitle)
+	log.Printf("[metadata] %s returned %d similar recs for %q", providerLabel, len(recs), seedTitle)
 
 	var items []models.TrendingItem
 	seenTMDB := make(map[int64]bool)
@@ -5411,32 +5413,33 @@ func (s *Service) GetAISimilar(ctx context.Context, seedTitle string, mediaType 
 	}
 
 	if err := s.cache.set(cacheID, items); err != nil {
-		log.Printf("[metadata] failed to cache gemini similar: %v", err)
+		log.Printf("[metadata] failed to cache AI similar: %v", err)
 	}
 
 	return items, nil
 }
 
-// GetAICustomRecommendations generates recommendations from a free-text user query using Gemini AI.
+// GetAICustomRecommendations generates recommendations from a free-text user query using the configured AI provider.
 func (s *Service) GetAICustomRecommendations(ctx context.Context, query string) ([]models.TrendingItem, error) {
-	if s.gemini == nil || !s.gemini.isConfigured() {
-		return nil, fmt.Errorf("gemini api key not configured")
+	if s.ai == nil || !s.ai.isConfigured() {
+		return nil, fmt.Errorf("AI provider API key not configured")
 	}
 
 	// Check cache (hash the query for a stable key)
-	cacheID := cacheKey("gemini", "custom", fmt.Sprintf("%x", sha1.Sum([]byte(strings.ToLower(strings.TrimSpace(query))))), s.client.language)
+	providerLabel := s.ai.providerLabel()
+	cacheID := cacheKey("ai", s.ai.provider, s.ai.modelName(), "custom", fmt.Sprintf("%x", sha1.Sum([]byte(strings.ToLower(strings.TrimSpace(query))))), s.client.language)
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {
-		log.Printf("[metadata] gemini custom cache hit query=%q count=%d", query, len(cached))
+		log.Printf("[metadata] AI custom cache hit query=%q count=%d", query, len(cached))
 		return cached, nil
 	}
 
-	recs, err := s.gemini.getCustomRecommendations(ctx, query)
+	recs, err := s.ai.getCustomRecommendations(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("gemini custom: %w", err)
+		return nil, fmt.Errorf("%s custom: %w", providerLabel, err)
 	}
 
-	log.Printf("[metadata] gemini returned %d custom recs for query=%q", len(recs), query)
+	log.Printf("[metadata] %s returned %d custom recs for query=%q", providerLabel, len(recs), query)
 
 	var items []models.TrendingItem
 	seenTMDB := make(map[int64]bool)
@@ -5469,22 +5472,23 @@ func (s *Service) GetAICustomRecommendations(ctx context.Context, query string) 
 	}
 
 	if err := s.cache.set(cacheID, items); err != nil {
-		log.Printf("[metadata] failed to cache gemini custom: %v", err)
+		log.Printf("[metadata] failed to cache AI custom: %v", err)
 	}
 
 	return items, nil
 }
 
-// GetAISurprise returns a single random movie/show recommendation via Gemini AI.
+// GetAISurprise returns a single random movie/show recommendation via the configured AI provider.
 // Not cached — each call produces a different result.
 func (s *Service) GetAISurprise(ctx context.Context, decade, mediaType string) (*models.TrendingItem, error) {
-	if s.gemini == nil || !s.gemini.isConfigured() {
-		return nil, fmt.Errorf("gemini api key not configured")
+	if s.ai == nil || !s.ai.isConfigured() {
+		return nil, fmt.Errorf("AI provider API key not configured")
 	}
 
-	recs, err := s.gemini.getSurpriseRecommendation(ctx, decade, mediaType)
+	providerLabel := s.ai.providerLabel()
+	recs, err := s.ai.getSurpriseRecommendation(ctx, decade, mediaType)
 	if err != nil {
-		return nil, fmt.Errorf("gemini surprise: %w", err)
+		return nil, fmt.Errorf("%s surprise: %w", providerLabel, err)
 	}
 
 	for _, rec := range recs {

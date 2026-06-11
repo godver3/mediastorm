@@ -71,6 +71,68 @@ func TestLoadMigratesYouTubeProxyURLFromMetadataToPlayback(t *testing.T) {
 	}
 }
 
+func TestLoadMigratesGeminiAPIKeyToAISettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"metadata":{"geminiApiKey":"legacy-gemini-key","language":"eng"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Metadata.AIProvider != "gemini" {
+		t.Fatalf("AIProvider = %q, want gemini", settings.Metadata.AIProvider)
+	}
+	if settings.Metadata.AIAPIKey != "legacy-gemini-key" {
+		t.Fatalf("AIAPIKey = %q, want legacy-gemini-key", settings.Metadata.AIAPIKey)
+	}
+	if settings.Metadata.GeminiAPIKey != "legacy-gemini-key" {
+		t.Fatalf("GeminiAPIKey = %q, want legacy-gemini-key", settings.Metadata.GeminiAPIKey)
+	}
+}
+
+func TestSaveMirrorsGeminiAIKeyToLegacyField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	settings := DefaultSettings()
+	settings.Metadata.AIProvider = "gemini"
+	settings.Metadata.AIAPIKey = "new-gemini-key"
+
+	if err := NewManager(path).Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	reloaded, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("reload settings: %v", err)
+	}
+	if reloaded.Metadata.GeminiAPIKey != "new-gemini-key" {
+		t.Fatalf("GeminiAPIKey = %q, want mirrored key", reloaded.Metadata.GeminiAPIKey)
+	}
+}
+
+func TestLoadDoesNotOverrideExplicitAIProviderWithLegacyGeminiKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"metadata":{"aiProvider":"openai","geminiApiKey":"legacy-gemini-key","language":"eng"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Metadata.AIProvider != "openai" {
+		t.Fatalf("AIProvider = %q, want openai", settings.Metadata.AIProvider)
+	}
+	if settings.Metadata.AIAPIKey != "" {
+		t.Fatalf("AIAPIKey = %q, want empty", settings.Metadata.AIAPIKey)
+	}
+}
+
 func TestLoadBackfillsUnknownTrackPolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"filtering":{"unknownTrackPolicy":"invalid"}}`)

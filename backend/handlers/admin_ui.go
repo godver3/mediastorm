@@ -877,19 +877,37 @@ var SettingsSchema = map[string]interface{}{
 		"order":    0,
 		"testable": true,
 		"fields": map[string]interface{}{
-			"tvdbApiKey":   map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
-			"tmdbApiKey":   map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
-			"geminiApiKey": map[string]interface{}{"type": "password", "label": "Gemini API Key", "description": "Google Gemini API key for AI-powered recommendations (optional, free tier available)"},
+			"tvdbApiKey": map[string]interface{}{"type": "password", "label": "TVDB API Key", "description": "TheTVDB API key"},
+			"tmdbApiKey": map[string]interface{}{"type": "password", "label": "TMDB API Key", "description": "TheMovieDB API key"},
+			"aiProvider": map[string]interface{}{
+				"type":        "select",
+				"label":       "AI Provider",
+				"description": "Provider used for AI-powered recommendations",
+				"order":       2,
+				"options": []map[string]interface{}{
+					{"value": "", "label": "Disabled"},
+					{"value": "gemini", "label": "Gemini"},
+					{"value": "openai", "label": "OpenAI / ChatGPT API"},
+					{"value": "anthropic", "label": "Anthropic Claude"},
+					{"value": "openrouter", "label": "OpenRouter"},
+					{"value": "nanogpt", "label": "NanoGPT"},
+					{"value": "linkapi", "label": "LinkAPI"},
+				},
+			},
+			"aiApiKey":  map[string]interface{}{"type": "password", "label": "AI API Key", "description": "API key for the selected AI provider", "order": 3},
+			"aiModel":   map[string]interface{}{"type": "text", "label": "AI Model", "description": "Optional. Leave blank to use the default model for the selected provider.", "order": 4},
+			"aiBaseUrl": map[string]interface{}{"type": "text", "label": "AI Base URL", "description": "Optional OpenAI-compatible base URL override for providers that need a custom endpoint.", "order": 5},
 			"allowAdultSearch": map[string]interface{}{
 				"type":        "boolean",
 				"label":       "Allow Adult Search Results",
 				"description": "Permit adult titles in search results. Disabled by default for all profiles.",
-				"order":       3,
+				"order":       6,
 			},
 			"language": map[string]interface{}{
 				"type":        "select",
 				"label":       "Metadata Language",
 				"description": "Language for movie/TV titles, descriptions, and episode names (3-letter ISO 639-2 code)",
+				"order":       7,
 				"options": []map[string]interface{}{
 					{"value": "eng", "label": "English"},
 					{"value": "spa", "label": "Spanish (Espa\u00f1ol)"},
@@ -5893,7 +5911,84 @@ func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 type TestMetadataRequest struct {
 	TVDBApiKey   string `json:"tvdbApiKey"`
 	TMDBApiKey   string `json:"tmdbApiKey"`
+	AIProvider   string `json:"aiProvider"`
+	AIApiKey     string `json:"aiApiKey"`
+	AIBaseURL    string `json:"aiBaseUrl"`
 	GeminiApiKey string `json:"geminiApiKey"`
+}
+
+func normalizeAdminAIProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "gemini", "google", "google-gemini":
+		return "gemini"
+	case "openai", "chatgpt", "gpt":
+		return "openai"
+	case "anthropic", "claude":
+		return "anthropic"
+	case "openrouter", "open-router":
+		return "openrouter"
+	case "nanogpt", "nano-gpt", "nano_gpt":
+		return "nanogpt"
+	case "linkapi", "link-api", "link_api":
+		return "linkapi"
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+func buildAIValidationRequest(provider, apiKey, baseURL string) (string, *http.Request) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	providerName := "AI"
+	endpoint := ""
+	headers := map[string]string{}
+
+	switch provider {
+	case "openai":
+		providerName = "OpenAI"
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		endpoint = baseURL + "/models"
+		headers["Authorization"] = "Bearer " + apiKey
+	case "anthropic":
+		providerName = "Anthropic"
+		if baseURL == "" {
+			baseURL = "https://api.anthropic.com/v1"
+		}
+		endpoint = baseURL + "/models"
+		headers["x-api-key"] = apiKey
+		headers["anthropic-version"] = "2023-06-01"
+	case "openrouter":
+		providerName = "OpenRouter"
+		if baseURL == "" {
+			baseURL = "https://openrouter.ai/api/v1"
+		}
+		endpoint = baseURL + "/models"
+		headers["Authorization"] = "Bearer " + apiKey
+	case "nanogpt":
+		providerName = "NanoGPT"
+		if baseURL == "" {
+			baseURL = "https://nano-gpt.com/api/v1"
+		}
+		endpoint = baseURL + "/models"
+		headers["Authorization"] = "Bearer " + apiKey
+	case "linkapi":
+		providerName = "LinkAPI"
+		if baseURL == "" {
+			baseURL = "https://api.linkapi.org/v1"
+		}
+		endpoint = baseURL + "/models"
+		headers["Authorization"] = "Bearer " + apiKey
+	default:
+		providerName = "Gemini"
+		endpoint = "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return providerName, req
 }
 
 // TestMetadata tests metadata provider API keys by making lightweight validation requests
@@ -5906,7 +6001,12 @@ func (h *AdminUIHandler) TestMetadata(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if req.TVDBApiKey == "" && req.TMDBApiKey == "" && req.GeminiApiKey == "" {
+	if req.AIApiKey == "" && req.GeminiApiKey != "" {
+		req.AIProvider = "gemini"
+		req.AIApiKey = req.GeminiApiKey
+	}
+
+	if req.TVDBApiKey == "" && req.TMDBApiKey == "" && req.AIApiKey == "" {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   "No API keys configured",
@@ -5967,24 +6067,25 @@ func (h *AdminUIHandler) TestMetadata(w http.ResponseWriter, r *http.Request) {
 		results = append(results, providerResult{Provider: "TMDB", Success: true, Message: "Not configured"})
 	}
 
-	// Test Gemini API key
-	if req.GeminiApiKey != "" {
-		geminiReq, _ := http.NewRequest(http.MethodGet, "https://generativelanguage.googleapis.com/v1beta/models?key="+req.GeminiApiKey, nil)
-		resp, err := client.Do(geminiReq)
+	// Test AI provider key
+	if req.AIApiKey != "" {
+		aiProvider := normalizeAdminAIProvider(req.AIProvider)
+		providerName, aiReq := buildAIValidationRequest(aiProvider, req.AIApiKey, req.AIBaseURL)
+		resp, err := client.Do(aiReq)
 		if err != nil {
-			results = append(results, providerResult{Provider: "Gemini", Success: false, Error: err.Error()})
+			results = append(results, providerResult{Provider: providerName, Success: false, Error: err.Error()})
 			allSuccess = false
 		} else {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				results = append(results, providerResult{Provider: "Gemini", Success: true, Message: "Valid"})
+				results = append(results, providerResult{Provider: providerName, Success: true, Message: "Valid"})
 			} else {
-				results = append(results, providerResult{Provider: "Gemini", Success: false, Error: fmt.Sprintf("Authentication failed (%s)", resp.Status)})
+				results = append(results, providerResult{Provider: providerName, Success: false, Error: fmt.Sprintf("Authentication failed (%s)", resp.Status)})
 				allSuccess = false
 			}
 		}
 	} else {
-		results = append(results, providerResult{Provider: "Gemini", Success: true, Message: "Not configured"})
+		results = append(results, providerResult{Provider: "AI", Success: true, Message: "Not configured"})
 	}
 
 	// Build summary message

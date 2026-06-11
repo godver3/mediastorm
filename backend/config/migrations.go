@@ -14,6 +14,7 @@ func MigrateRawSettings(raw map[string]interface{}) {
 	migratePrioritizeHdrToPreferredTerms(raw)
 	migrateRemoveHdrRankingCriterion(raw)
 	migratePrewarmFrequencyClear(raw)
+	migrateGeminiAISettings(raw)
 }
 
 // MigrateRawUserSettings applies migrations to a single user's raw settings map.
@@ -53,6 +54,28 @@ func migrateFieldToSection(raw map[string]interface{}, fromSection, toSection, f
 	dstMap[field] = val
 	delete(srcMap, field)
 	log.Printf("[config] migrated %s.%s → %s.%s", fromSection, field, toSection, field)
+}
+
+func migrateGeminiAISettings(raw map[string]interface{}) {
+	metadata, ok := raw["metadata"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	geminiKey, _ := metadata["geminiApiKey"].(string)
+	aiKey, _ := metadata["aiApiKey"].(string)
+	aiProvider, _ := metadata["aiProvider"].(string)
+
+	if aiKey == "" && geminiKey != "" && aiProvider == "" {
+		metadata["aiApiKey"] = geminiKey
+		metadata["aiProvider"] = "gemini"
+		log.Printf("[config] migrated metadata.geminiApiKey → metadata.aiApiKey")
+	}
+	if aiProvider == "" {
+		if key, _ := metadata["aiApiKey"].(string); key != "" {
+			metadata["aiProvider"] = "gemini"
+		}
+	}
 }
 
 // migratePrioritizeHdrToPreferredTerms removes the deprecated prioritizeHdr

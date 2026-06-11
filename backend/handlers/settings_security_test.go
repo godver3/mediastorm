@@ -25,6 +25,7 @@ func TestRedactSettings(t *testing.T) {
 		Metadata: config.MetadataSettings{
 			TVDBAPIKey:   "tvdb-key",
 			TMDBAPIKey:   "tmdb-key",
+			AIAPIKey:     "ai-key",
 			GeminiAPIKey: "gemini-key",
 		},
 		Playback: config.PlaybackSettings{
@@ -75,6 +76,9 @@ func TestRedactSettings(t *testing.T) {
 	}
 	if s.Metadata.TMDBAPIKey != redacted {
 		t.Errorf("TMDBAPIKey not redacted: %q", s.Metadata.TMDBAPIKey)
+	}
+	if s.Metadata.AIAPIKey != redacted {
+		t.Errorf("AIAPIKey not redacted: %q", s.Metadata.AIAPIKey)
 	}
 	if s.Metadata.GeminiAPIKey != redacted {
 		t.Errorf("GeminiAPIKey not redacted: %q", s.Metadata.GeminiAPIKey)
@@ -130,6 +134,7 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 		Metadata: config.MetadataSettings{
 			TVDBAPIKey:   "real-tvdb-key",
 			TMDBAPIKey:   "real-tmdb-key",
+			AIAPIKey:     "real-ai-key",
 			GeminiAPIKey: "real-gemini-key",
 		},
 		Playback: config.PlaybackSettings{
@@ -169,6 +174,7 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 		Metadata: config.MetadataSettings{
 			TVDBAPIKey:   redactedPlaceholder,
 			TMDBAPIKey:   redactedPlaceholder,
+			AIAPIKey:     redactedPlaceholder,
 			GeminiAPIKey: redactedPlaceholder,
 		},
 		Playback: config.PlaybackSettings{
@@ -211,6 +217,9 @@ func TestPreserveRedactedFields_RestoresRealCredentials(t *testing.T) {
 	}
 	if incoming.Metadata.TMDBAPIKey != "real-tmdb-key" {
 		t.Errorf("TMDBAPIKey not restored: got %q", incoming.Metadata.TMDBAPIKey)
+	}
+	if incoming.Metadata.AIAPIKey != "real-ai-key" {
+		t.Errorf("AIAPIKey not restored: got %q", incoming.Metadata.AIAPIKey)
 	}
 	if incoming.Playback.YouTubeProxyURL != "http://real-proxy:8888" {
 		t.Errorf("YouTubeProxyURL not restored: got %q", incoming.Playback.YouTubeProxyURL)

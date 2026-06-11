@@ -264,7 +264,7 @@ function buildCards() {
 
     testCards.push(createCard('Metadata Services', 'TVDB', createBadge('META', 'conn-card-badge-meta'), 'metadata:tvdb'));
     testCards.push(createCard('Metadata Services', 'TMDB', createBadge('META', 'conn-card-badge-meta'), 'metadata:tmdb'));
-    testCards.push(createCard('Metadata Services', 'Gemini', createBadge('META', 'conn-card-badge-meta'), 'metadata:gemini'));
+    testCards.push(createCard('Metadata Services', 'AI', createBadge('META', 'conn-card-badge-meta'), 'metadata:ai'));
 
     testCards.push(createCard('Content Services', 'OpenSubtitles', createBadge('META', 'conn-card-badge-meta'), 'subtitles'));
     testCards.push(createCard('Content Services', 'MDBList', createBadge('META', 'conn-card-badge-meta'), 'mdblist'));
@@ -517,6 +517,9 @@ async function runAllTests() {
                 promises._metadataPromise = testPost(basePath + '/api/test/metadata', {
                     tvdbApiKey: settings.metadata?.tvdbApiKey || '',
                     tmdbApiKey: settings.metadata?.tmdbApiKey || '',
+                    aiProvider: settings.metadata?.aiProvider || '',
+                    aiApiKey: settings.metadata?.aiApiKey || '',
+                    aiBaseUrl: settings.metadata?.aiBaseUrl || '',
                     geminiApiKey: settings.metadata?.geminiApiKey || ''
                 }).then(result => ({
                     result,
@@ -524,10 +527,12 @@ async function runAllTests() {
                 }));
             }
             p = promises._metadataPromise.then(({ result, durationMs }) => {
-                const providerMap = { 'TVDB': 0, 'TMDB': 1, 'Gemini': 2 };
+                const providerMap = { 'TVDB': 0, 'TMDB': 1, 'AI': 2 };
                 const idx = providerMap[card.name];
-                if (result.results && result.results[idx]) {
-                    const providerResult = result.results[idx];
+                const providerResult = Array.isArray(result.results) && card.name === 'AI'
+                    ? result.results.find(item => !['TVDB', 'TMDB'].includes(String(item.provider || '').toUpperCase()))
+                    : (result.results && result.results[idx]);
+                if (providerResult) {
                     if (providerResult.message === 'Not configured') {
                         return { unconfigured: true, message: providerResult.message, durationMs };
                     }

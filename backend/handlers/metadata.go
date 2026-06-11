@@ -1895,9 +1895,9 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: total})
 }
 
-// GetAIRecommendations returns Gemini-powered personalized recommendations.
+// GetAIRecommendations returns AI-powered personalized recommendations.
 // It collects the user's watched titles from history and watchlist, then
-// asks Gemini for recommendations and resolves them to TMDB titles.
+// asks the configured AI provider for recommendations and resolves them to TMDB titles.
 func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	if userID == "" {

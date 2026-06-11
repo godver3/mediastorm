@@ -41,11 +41,11 @@ var logRedactionPatterns = []struct {
 		replacement: `${1}` + logRedacted,
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*["'])([^"']+)(["'])`),
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*["'])([^"']+)(["'])`),
 		replacement: `${1}` + logRedacted + `${3}`,
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*)[^\s"',;}]+`),
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL)["']?\s*[:=]\s*)[^\s"',;}]+`),
 		replacement: `${1}` + logRedacted,
 	},
 	{

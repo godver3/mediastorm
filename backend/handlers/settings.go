@@ -424,6 +424,7 @@ func redactSettings(s *config.Settings) {
 	// Metadata API keys
 	mask(&s.Metadata.TVDBAPIKey)
 	mask(&s.Metadata.TMDBAPIKey)
+	mask(&s.Metadata.AIAPIKey)
 	mask(&s.Metadata.GeminiAPIKey)
 	mask(&s.Playback.YouTubeProxyURL)
 
@@ -523,6 +524,7 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 	// Metadata
 	restore(&incoming.Metadata.TVDBAPIKey, existing.Metadata.TVDBAPIKey)
 	restore(&incoming.Metadata.TMDBAPIKey, existing.Metadata.TMDBAPIKey)
+	restore(&incoming.Metadata.AIAPIKey, existing.Metadata.AIAPIKey)
 	restore(&incoming.Metadata.GeminiAPIKey, existing.Metadata.GeminiAPIKey)
 	restore(&incoming.Playback.YouTubeProxyURL, existing.Playback.YouTubeProxyURL)
 
@@ -866,7 +868,12 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 	if h.MetadataService != nil {
 		h.MetadataService.SetYTDLPProxyURL(s.Playback.YouTubeProxyURL)
 		h.MetadataService.SetAllowAdultSearch(s.Metadata.AllowAdultSearch)
-		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language, s.Metadata.GeminiAPIKey)
+		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language, metadata.AIConfig{
+			Provider: s.Metadata.AIProvider,
+			APIKey:   s.Metadata.AIAPIKey,
+			Model:    s.Metadata.AIModel,
+			BaseURL:  s.Metadata.AIBaseURL,
+		})
 		log.Printf("[settings] reloaded metadata service API keys")
 
 		// Reload MDBList settings (rating sources, API key, enabled state)

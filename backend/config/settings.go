@@ -93,9 +93,50 @@ type TorrentScraperConfig struct {
 type MetadataSettings struct {
 	TVDBAPIKey       string `json:"tvdbApiKey"`
 	TMDBAPIKey       string `json:"tmdbApiKey"`
+	AIProvider       string `json:"aiProvider,omitempty"`
+	AIAPIKey         string `json:"aiApiKey,omitempty"`
+	AIModel          string `json:"aiModel,omitempty"`
+	AIBaseURL        string `json:"aiBaseUrl,omitempty"`
 	GeminiAPIKey     string `json:"geminiApiKey,omitempty"`
 	Language         string `json:"language"`
 	AllowAdultSearch bool   `json:"allowAdultSearch"`
+}
+
+func normalizeAIProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "none":
+		return ""
+	case "gemini", "google", "google-gemini":
+		return "gemini"
+	case "openai", "chatgpt", "gpt":
+		return "openai"
+	case "anthropic", "claude":
+		return "anthropic"
+	case "openrouter", "open-router":
+		return "openrouter"
+	case "nanogpt", "nano-gpt", "nano_gpt":
+		return "nanogpt"
+	case "linkapi", "link-api", "link_api":
+		return "linkapi"
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+// NormalizeAISettings keeps the newer provider-agnostic AI settings and the
+// legacy geminiApiKey field in sync for older saved configs and clients.
+func (m *MetadataSettings) NormalizeAISettings() {
+	m.AIProvider = normalizeAIProvider(m.AIProvider)
+	if m.AIProvider == "" && strings.TrimSpace(m.AIAPIKey) == "" && strings.TrimSpace(m.GeminiAPIKey) != "" {
+		m.AIProvider = "gemini"
+		m.AIAPIKey = m.GeminiAPIKey
+	}
+	if strings.TrimSpace(m.AIProvider) == "" && strings.TrimSpace(m.AIAPIKey) != "" {
+		m.AIProvider = "gemini"
+	}
+	if m.AIProvider == "gemini" && strings.TrimSpace(m.AIAPIKey) != "" {
+		m.GeminiAPIKey = m.AIAPIKey
+	}
 }
 
 type CacheSettings struct {
@@ -1469,6 +1510,8 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	// Backfill defaults for newly introduced settings when config predates them
+	s.Metadata.NormalizeAISettings()
+
 	if !s.Transmux.Enabled && strings.TrimSpace(s.Transmux.FFmpegPath) == "" && strings.TrimSpace(s.Transmux.FFprobePath) == "" {
 		s.Transmux = TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"}
 	} else {
@@ -1880,6 +1923,7 @@ func (m *Manager) Save(s Settings) error {
 	if m.path == "" {
 		return errors.New("config path not set")
 	}
+	s.Metadata.NormalizeAISettings()
 	if err := m.EnsureDir(); err != nil {
 		return err
 	}
