@@ -21,6 +21,7 @@ import (
 // defaultStartupShelfLimit caps list data in the startup bundle to reduce payload
 // size on low-power devices. Full lists are fetched on demand (e.g. explore page).
 const defaultStartupShelfLimit = 20
+const startupExploreCollageItemCount = 4
 
 // startupTrendingTimeout limits how long the startup handler waits for trending
 // data. On cold start, Trending() can take 20-30s enriching metadata from TMDB.
@@ -148,9 +149,11 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	if resp.UserSettings != nil && resp.UserSettings.HomeShelves.ItemCap > 0 {
 		startupShelfLimit = resp.UserSettings.HomeShelves.ItemCap
 	}
+	startupPayloadLimit := startupShelfLimit + startupExploreCollageItemCount
 	var wg sync.WaitGroup
 
-	// 2. Watchlist (capped to startupShelfLimit — full list fetched on demand)
+	// 2. Watchlist (capped to the home shelf plus Explore collage overflow;
+	// full list is fetched on demand)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -160,8 +163,8 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.WatchlistTotal = len(items)
-		if len(items) > startupShelfLimit {
-			items = items[:startupShelfLimit]
+		if len(items) > startupPayloadLimit {
+			items = items[:startupPayloadLimit]
 		}
 		enrichWatchlistArtwork(items, h.metadata)
 		resp.Watchlist = items
@@ -169,7 +172,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Continue watching + playback progress (merged server-side so the
 	// frontend doesn't need to build progress maps on the JS thread,
-	// capped to startupShelfLimit)
+	// capped to the home shelf plus Explore collage overflow)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -190,15 +193,15 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		snapshot := loadHistorySnapshot()
 		if snapshot.playbackProgressErr != nil {
 			log.Printf("[startup] playback progress error for %s: %v", userID, snapshot.playbackProgressErr)
-			if len(items) > startupShelfLimit {
-				items = items[:startupShelfLimit]
+			if len(items) > startupPayloadLimit {
+				items = items[:startupPayloadLimit]
 			}
 			resp.ContinueWatching = items
 			return
 		}
 		merged := mergeProgressIntoContinueWatching(items, snapshot.playbackProgress)
-		if len(merged) > startupShelfLimit {
-			merged = merged[:startupShelfLimit]
+		if len(merged) > startupPayloadLimit {
+			merged = merged[:startupPayloadLimit]
 		}
 		resp.ContinueWatching = merged
 	}()
@@ -276,8 +279,8 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 					}
 					items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
 					total := len(items)
-					if len(items) > startupShelfLimit {
-						items = items[:startupShelfLimit]
+					if len(items) > startupPayloadLimit {
+						items = items[:startupPayloadLimit]
 					}
 					items = slimTrendingItems(items)
 					mu.Lock()
@@ -298,8 +301,8 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 					}
 					items = h.applyFilters(items, userID, hideUnreleased, hideWatched)
 					total := len(items)
-					if len(items) > startupShelfLimit {
-						items = items[:startupShelfLimit]
+					if len(items) > startupPayloadLimit {
+						items = items[:startupPayloadLimit]
 					}
 					items = slimTrendingItems(items)
 					mu.Lock()
@@ -355,7 +358,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	// Enrich items with pre-computed watch state (after all concurrent fetches complete)
 	idx := buildWatchStateIndex(watchHistory, resp.ContinueWatching, playbackProgress)
 	enrichWatchlistItems(resp.Watchlist, idx)
-	// Enrich with MDBList ratings for sort-by-rating support (bounded by startupShelfLimit)
+	// Enrich with MDBList ratings for sort-by-rating support (bounded by startupPayloadLimit)
 	enrichWatchlistRatings(r.Context(), resp.Watchlist, h.metadata)
 	if resp.TrendingMovies != nil {
 		enrichTrendingItems(resp.TrendingMovies.Items, idx)

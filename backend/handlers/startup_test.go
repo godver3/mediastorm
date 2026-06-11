@@ -410,14 +410,14 @@ func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if got := len(resp.Watchlist); got != 25 {
-		t.Fatalf("watchlist startup count = %d, want 25", got)
+	if got := len(resp.Watchlist); got != 29 {
+		t.Fatalf("watchlist startup count = %d, want 29", got)
 	}
 	if resp.WatchlistTotal != 30 {
 		t.Fatalf("watchlistTotal = %d, want 30", resp.WatchlistTotal)
 	}
-	if got := len(resp.ContinueWatching); got != 25 {
-		t.Fatalf("continueWatching startup count = %d, want 25", got)
+	if got := len(resp.ContinueWatching); got != 29 {
+		t.Fatalf("continueWatching startup count = %d, want 29", got)
 	}
 	if resp.ContinueWatchingTotal != 30 {
 		t.Fatalf("continueWatchingTotal = %d, want 30", resp.ContinueWatchingTotal)
@@ -425,8 +425,8 @@ func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
 	if resp.TrendingMovies == nil {
 		t.Fatal("trendingMovies is nil")
 	}
-	if got := len(resp.TrendingMovies.Items); got != 25 {
-		t.Fatalf("trendingMovies startup count = %d, want 25", got)
+	if got := len(resp.TrendingMovies.Items); got != 29 {
+		t.Fatalf("trendingMovies startup count = %d, want 29", got)
 	}
 	if resp.TrendingMovies.Total != 30 {
 		t.Fatalf("trendingMovies total = %d, want 30", resp.TrendingMovies.Total)
