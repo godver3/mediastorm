@@ -884,6 +884,57 @@ func TestBulkUpdateWatchHistoryClearsProgressWhenMarkingUnwatched(t *testing.T) 
 	}
 }
 
+func TestBulkUpdateWatchHistory_UnwatchedClearsSparseCrossProviderProgress(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-sparse-cross-progress"
+	watched := false
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s04e03",
+		Position:      600,
+		Duration:      1200,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		SeasonNumber:  4,
+		EpisodeNumber: 3,
+		EpisodeName:   "Episode 3",
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if _, err := svc.BulkUpdateWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:401003:s04e03",
+		Name:          "Episode 3",
+		Watched:       &watched,
+		SeriesID:      "tvdb:series:401003",
+		SeriesName:    "FROM",
+		SeasonNumber:  4,
+		EpisodeNumber: 3,
+		ExternalIDs: map[string]string{
+			"tmdb": "124364",
+			"tvdb": "401003",
+			"imdb": "tt9813792",
+		},
+	}}); err != nil {
+		t.Fatalf("BulkUpdateWatchHistory() error = %v", err)
+	}
+
+	progressItems, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progressItems) != 0 {
+		t.Fatalf("expected sparse cross-provider progress to be cleared on bulk unwatch, got %d items: %+v", len(progressItems), progressItems)
+	}
+}
+
 func TestCrossIDFormatProgressClearing(t *testing.T) {
 	// Simulates the scenario where:
 	// 1. Player records progress with tmdb:tv:224372 as seriesID

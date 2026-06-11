@@ -2423,7 +2423,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 			progressCleared = true
 		}
 		// Also clear progress by external ID matching (handles cross-ID-format mismatches)
-		if s.clearProgressByExternalIDMatchLocked(userID, item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs) {
+		if s.clearProgressByExternalIDMatchLocked(userID, item.SeriesID, item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs) {
 			progressCleared = true
 		}
 	}
@@ -2510,7 +2510,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
 		// For episodes/movies, also clear any matching progress stored under a different ID format.
 		if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
-			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 				progressCleared = true
 			}
 		} else if update.MediaType == "movie" {
@@ -2547,7 +2547,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 		}
 		// Also clear progress by external ID matching (handles cross-ID-format mismatches,
 		// e.g. Trakt using tvdb:series:X while player uses tmdb:tv:Y for the same show)
-		if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+		if s.clearProgressByExternalIDMatchLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 			progressCleared = true
 		}
 	}
@@ -2651,7 +2651,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 			}
 			// For episodes/movies, also clear any matching progress stored under a different ID format.
 			if update.MediaType == "episode" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
-				if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+				if s.clearProgressByExternalIDMatchLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 					progressCleared = true
 				}
 			} else if update.MediaType == "movie" {
@@ -2687,7 +2687,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 				progressCleared = true
 			}
 			// Also clear progress by external ID matching (handles cross-ID-format mismatches)
-			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 				progressCleared = true
 			}
 		}
@@ -3022,7 +3022,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				progressCleared = true
 			}
 			// Also clear progress by external ID matching (handles cross-ID-format mismatches)
-			if s.clearProgressByExternalIDMatchLocked(userID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
+			if s.clearProgressByExternalIDMatchLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber, update.ExternalIDs) {
 				progressCleared = true
 			}
 		}
@@ -4177,13 +4177,13 @@ func (s *Service) collectExternalIDsForSeriesLocked(userID, seriesID string) map
 	return collected
 }
 
-// clearProgressByExternalIDMatchLocked removes playback progress entries for a specific
-// episode that match by season+episode number and share at least one external ID.
-// This handles cross-ID-format mismatches where the same show uses different ID prefixes
-// (e.g. Trakt imports with tvdb:series:X vs player progress with tmdb:tv:Y).
+// clearProgressByExternalIDMatchLocked removes playback progress entries for a
+// specific episode that match by season+episode number and refer to the same
+// series. It accepts either shared external IDs or compatible series IDs so
+// sparse local progress rows are cleared by bulk manual unwatch actions too.
 // Callers must hold s.mu before invoking this helper.
-func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumber, episodeNumber int, externalIDs map[string]string) bool {
-	if seasonNumber <= 0 || episodeNumber <= 0 || len(externalIDs) == 0 {
+func (s *Service) clearProgressByExternalIDMatchLocked(userID, seriesID string, seasonNumber, episodeNumber int, externalIDs map[string]string) bool {
+	if seasonNumber <= 0 || episodeNumber <= 0 || (strings.TrimSpace(seriesID) == "" && len(externalIDs) == 0) {
 		return false
 	}
 
@@ -4201,8 +4201,7 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 			continue
 		}
 
-		// Check if this progress entry shares any external ID with the update
-		if hasMatchingExternalID(progress.ExternalIDs, externalIDs) {
+		if episodeProgressMatchesSeries(progress, seriesID, externalIDs) {
 			delete(perUser, key)
 			if progress.HiddenFromContinueWatching {
 				s.preserveSeriesHiddenMarkerLocked(perUser, progress)
@@ -4212,6 +4211,36 @@ func (s *Service) clearProgressByExternalIDMatchLocked(userID string, seasonNumb
 	}
 
 	return anyCleared
+}
+
+func episodeProgressMatchesSeries(progress models.PlaybackProgress, seriesID string, externalIDs map[string]string) bool {
+	seriesID = strings.TrimSpace(seriesID)
+	if seriesID != "" {
+		if progress.SeriesID == seriesID {
+			return true
+		}
+		provider, value := providerAndValue(seriesID)
+		if provider != "" && value != "" {
+			if v, ok := progress.ExternalIDs[provider]; ok && v == value {
+				return true
+			}
+		}
+		progressProvider, progressValue := providerAndValue(progress.SeriesID)
+		if progressProvider != "" && progressValue != "" {
+			if v, ok := externalIDs[progressProvider]; ok && v == progressValue {
+				return true
+			}
+		}
+	}
+	return hasMatchingExternalID(progress.ExternalIDs, externalIDs)
+}
+
+func providerAndValue(id string) (string, string) {
+	parts := strings.Split(strings.TrimSpace(id), ":")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return strings.ToLower(parts[0]), parts[len(parts)-1]
 }
 
 func episodeNumbersMatchForProgressClear(progressEpisode, updateEpisode int, progressExternalIDs, updateExternalIDs map[string]string) bool {
