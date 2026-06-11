@@ -1391,9 +1391,9 @@
     let webPlayerActualStartOffset = 0;
     let webPlayerSubtitleStartOffset = null;
     let webPlayerSubtitleTimeOffset = 0;
-    // Subtitle-sync diagnostics panel. Flip to false to hide the live offset readout
-    // below the player, or force it on with ?subtitleDiag=1 / localStorage webPlayerSubtitleDiag=1.
-    const WEB_PLAYER_SUBTITLE_DIAG_DEFAULT = true;
+    // Subtitle-sync diagnostics panel. Hidden by default, but keep the wiring available
+    // with ?subtitleDiag=1 / localStorage webPlayerSubtitleDiag=1 when debugging.
+    const WEB_PLAYER_SUBTITLE_DIAG_DEFAULT = false;
     // Manual subtitle nudge (seconds) applied on top of the computed offset. Positive moves
     // subtitles EARLIER (shows them sooner); use it only to diagnose residual sync issues.
     let webPlayerSubtitleManualOffset = 0;
