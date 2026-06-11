@@ -692,12 +692,12 @@ func TestShouldUseAccurateRequestedSeekForWebSubtitle(t *testing.T) {
 			want:           true,
 		},
 		{
-			name:           "web H264 copy-compatible video keeps keyframe path",
+			name:           "web H264 copy-compatible video still uses accurate subtitle path",
 			playbackTarget: "web",
 			probe:          &UnifiedProbeResult{VideoCodec: "h264", VideoPixFmt: "yuv420p", VideoProfile: "High"},
 			subtitles:      textSubs,
 			trackIndex:     3,
-			want:           false,
+			want:           true,
 		},
 		{
 			name:           "non-web playback does not use web subtitle seek path",
@@ -730,6 +730,69 @@ func TestShouldUseAccurateRequestedSeekForWebSubtitle(t *testing.T) {
 			got := shouldUseAccurateRequestedSeekForWebSubtitle(tc.playbackTarget, tc.probe, tc.subtitles, tc.trackIndex)
 			if got != tc.want {
 				t.Fatalf("shouldUseAccurateRequestedSeekForWebSubtitle() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldForceWebSubtitleVideoTranscode(t *testing.T) {
+	textSubs := []subtitleStreamInfo{{Index: 3, Codec: "subrip"}}
+
+	tests := []struct {
+		name              string
+		playbackTarget    string
+		subtitles         []subtitleStreamInfo
+		trackIndex        int
+		transcodingOffset float64
+		want              bool
+	}{
+		{
+			name:              "web selected text subtitle at resume offset",
+			playbackTarget:    "web",
+			subtitles:         textSubs,
+			trackIndex:        3,
+			transcodingOffset: 74.51,
+			want:              true,
+		},
+		{
+			name:              "cold start does not force video transcode",
+			playbackTarget:    "web",
+			subtitles:         textSubs,
+			trackIndex:        3,
+			transcodingOffset: 0,
+			want:              false,
+		},
+		{
+			name:              "non-web playback does not force video transcode",
+			playbackTarget:    "ios",
+			subtitles:         textSubs,
+			trackIndex:        3,
+			transcodingOffset: 74.51,
+			want:              false,
+		},
+		{
+			name:              "bitmap subtitle does not force video transcode",
+			playbackTarget:    "web",
+			subtitles:         []subtitleStreamInfo{{Index: 3, Codec: "hdmv_pgs_subtitle"}},
+			trackIndex:        3,
+			transcodingOffset: 74.51,
+			want:              false,
+		},
+		{
+			name:              "unselected text subtitle does not force video transcode",
+			playbackTarget:    "web",
+			subtitles:         textSubs,
+			trackIndex:        4,
+			transcodingOffset: 74.51,
+			want:              false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldForceWebSubtitleVideoTranscode(tc.playbackTarget, tc.subtitles, tc.trackIndex, tc.transcodingOffset)
+			if got != tc.want {
+				t.Fatalf("shouldForceWebSubtitleVideoTranscode() = %v, want %v", got, tc.want)
 			}
 		})
 	}

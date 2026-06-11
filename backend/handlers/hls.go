@@ -549,14 +549,25 @@ func selectedTextSubtitleStream(subtitleStreams []subtitleStreamInfo, trackIndex
 	return subtitleStreamInfo{}, false
 }
 
-func shouldUseAccurateRequestedSeekForWebSubtitle(playbackTarget string, probe *UnifiedProbeResult, subtitleStreams []subtitleStreamInfo, trackIndex int) bool {
+func shouldUseAccurateRequestedSeekForWebSubtitle(playbackTarget string, _ *UnifiedProbeResult, subtitleStreams []subtitleStreamInfo, trackIndex int) bool {
 	if !strings.EqualFold(strings.TrimSpace(playbackTarget), "web") {
 		return false
 	}
 	if _, ok := selectedTextSubtitleStream(subtitleStreams, trackIndex); !ok {
 		return false
 	}
-	return hlsWebVideoWillTranscode(playbackTarget, probe)
+	return true
+}
+
+func shouldForceWebSubtitleVideoTranscode(playbackTarget string, subtitleStreams []subtitleStreamInfo, trackIndex int, transcodingOffset float64) bool {
+	if transcodingOffset <= 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(playbackTarget), "web") {
+		return false
+	}
+	_, ok := selectedTextSubtitleStream(subtitleStreams, trackIndex)
+	return ok
 }
 
 func shouldPreferRequestedTranscodingOffset(playbackTarget string, probe *UnifiedProbeResult, subtitleStreams []subtitleStreamInfo, trackIndex int) bool {
@@ -1129,7 +1140,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	}
 	if startOffset > 0 && shouldPreferRequestedTranscodingOffset(normalizedPlaybackTarget, probeData, subtitleStreamsForSeek, subtitleTrackIndex) {
 		actualTranscodingOffset = startOffset
-		log.Printf("[hls] session %s: using requested start %.3fs instead of probed keyframe %.3fs for accurate web video+subtitle seek",
+		log.Printf("[hls] session %s: using requested start %.3fs instead of probed keyframe %.3fs for accurate web subtitle seek",
 			sessionID, startOffset, transcodingOffset)
 	}
 
@@ -2090,6 +2101,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	videoWillTranscode := hlsWebVideoWillTranscode(session.PlaybackTarget, session.ProbeData)
 	_, subtitleRenditionWanted := selectedTextSubtitleStream(subtitleStreams, session.SubtitleTrackIndex)
 	subtitleRenditionWanted = session.PlaybackTarget == "web" && subtitleRenditionWanted
+	forceVideoTranscodeForWebSubtitleSeek := shouldForceWebSubtitleVideoTranscode(session.PlaybackTarget, subtitleStreams, session.SubtitleTrackIndex, session.TranscodingOffset)
+	if forceVideoTranscodeForWebSubtitleSeek {
+		videoWillTranscode = true
+	}
 
 	// Force INPUT seeking when muxing a same-pass subtitle so the single -ss before -i applies to
 	// BOTH the video and the subtitle output. OUTPUT seeking only seeks the first output, which
@@ -2097,14 +2112,14 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	useOutputSeeking := session.TranscodingOffset > 0 && session.TranscodingOffset < outputSeekThreshold && !subtitleRenditionWanted
 
 	// For INPUT seeking, add -ss before -i.
-	// -noaccurate_seek keeps a COPIED video aligned with the same-pass subtitle (both anchored at
-	// the keyframe; also avoids A/V desync with copied video + transcoded audio). For a TRANSCODED
-	// video, -noaccurate_seek instead makes the video start diverge from the subtitle by the
-	// keyframe gap, so use accurate seek there to keep video + subtitle aligned.
+	// -noaccurate_seek keeps a copied video keyframe-friendly for normal playback. When web
+	// subtitles are selected after a resume/seek, force video transcode and accurate input seek so
+	// video, audio, and the same-pass WebVTT all share the requested timestamp anchor instead of the
+	// earlier keyframe.
 	if session.TranscodingOffset > 0 && !useOutputSeeking {
 		if videoWillTranscode && subtitleRenditionWanted {
 			args = append(args, "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
-			log.Printf("[hls] session %s: using INPUT seeking to %.3fs (accurate; transcoded video + subtitle)", session.ID, session.TranscodingOffset)
+			log.Printf("[hls] session %s: using INPUT seeking to %.3fs (accurate; web video+subtitle)", session.ID, session.TranscodingOffset)
 		} else {
 			args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", session.TranscodingOffset))
 			log.Printf("[hls] session %s: using INPUT seeking to %.3fs with -noaccurate_seek", session.ID, session.TranscodingOffset)
@@ -2273,12 +2288,21 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			log.Printf("[hls] session %s: web target has no video probe data; transcoding to H.264", session.ID)
 		}
 	}
+	if forceVideoTranscodeForWebSubtitleSeek {
+		needsVideoTranscode = true
+		log.Printf("[hls] session %s: web subtitle seek/resume requires video transcode for accurate subtitle sync", session.ID)
+	}
 
 	if needsVideoTranscode {
-		// Transcode incompatible video codec to H.264
+		// Transcode video to H.264 when the source is incompatible or accurate web subtitle seeking
+		// requires decoding away keyframe pre-roll.
 		// Use ultrafast preset + zerolatency tune for fastest possible startup
 		// Quality is slightly lower than veryfast but startup is significantly faster
-		log.Printf("[hls] session %s: incompatible video codec %q detected, transcoding to H.264 (ultrafast)", session.ID, videoCodec)
+		if forceVideoTranscodeForWebSubtitleSeek {
+			log.Printf("[hls] session %s: transcoding video codec %q to H.264 for accurate web subtitle seek/resume (ultrafast)", session.ID, videoCodec)
+		} else {
+			log.Printf("[hls] session %s: video transcode required for codec %q, transcoding to H.264 (ultrafast)", session.ID, videoCodec)
+		}
 		args = append(args,
 			"-c:v", "libx264",
 			"-preset", "ultrafast",
