@@ -162,6 +162,78 @@ func TestGetActiveStreams_UsesCanonicalMediaMetadataForProgressMatch(t *testing.
 	}
 }
 
+func TestGetActiveStreams_UsesDefaultProfileProgressForWebPlaybackAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	hlsMgr := NewHLSManager(tmpDir, "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+	tracker := GetStreamTracker()
+	for _, active := range tracker.GetActiveStreams() {
+		tracker.EndStream(active.ID)
+	}
+	progress := map[string][]models.PlaybackProgress{
+		"default": {
+			{
+				ID:             "episode:tmdb:tv:37854:s23e10",
+				MediaType:      "episode",
+				ItemID:         "tmdb:tv:37854:s23e10",
+				Position:       398,
+				Duration:       1415,
+				PercentWatched: 28.1,
+				UpdatedAt:      time.Now().UTC(),
+				ExternalIDs: map[string]string{
+					"imdb":    "tt0388629",
+					"titleId": "tmdb:tv:37854",
+					"tvdb":    "81797",
+				},
+				SeasonNumber:  23,
+				EpisodeNumber: 10,
+				SeriesID:      "tmdb:tv:37854",
+				SeriesName:    "One Piece",
+				EpisodeName:   "A Welcome with Friends' Cups and Intruders Seeking Loki",
+			},
+		},
+	}
+	handler.SetProgressService(&mockProgressService{
+		all: progress,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/stream?profileId=f2bbe488-7f3b-430e-9e35-1d5c13d6159d&profileName=godver3&mediaType=episode&itemId=tmdb:tv:37854&title=One%20Piece&seasonNumber=23&episodeNumber=10&seriesId=tmdb:tv:37854&seriesName=One%20Piece&episodeName=A%20Welcome%20with%20Friends%27%20Cups%20and%20Intruders%20Seeking%20Loki&imdb=tt0388629&tvdb=81797",
+		nil,
+	)
+	streamID, bytesCounter, activityCounter := tracker.StartStream(req, "/media/one-piece-obfuscated.mkv", 1000000, 0, 999999)
+	atomic.StoreInt64(bytesCounter, 50000)
+	atomic.StoreInt64(activityCounter, time.Now().UnixNano())
+	defer tracker.EndStream(streamID)
+
+	rec := httptest.NewRecorder()
+	handler.GetActiveStreams(rec, httptest.NewRequest(http.MethodGet, "/api/streams", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp StreamsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(resp.Streams))
+	}
+
+	stream := resp.Streams[0]
+	if stream.CurrentPosition != 398 {
+		t.Fatalf("expected default-profile progress position 398, got %v", stream.CurrentPosition)
+	}
+	if stream.PercentWatched != 28.1 {
+		t.Fatalf("expected default-profile progress percent 28.1, got %v", stream.PercentWatched)
+	}
+	if stream.Duration != 1415 {
+		t.Fatalf("expected default-profile progress duration 1415, got %v", stream.Duration)
+	}
+}
+
 func TestGetActiveStreams_UsesCanonicalMetadataWithoutFilenameInference(t *testing.T) {
 	tmpDir := t.TempDir()
 	hlsMgr := NewHLSManager(tmpDir, "", "", nil)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/mediaidentity"
 	"novastream/models"
 	"novastream/services/playback"
 
@@ -204,22 +205,45 @@ type StreamsResponse struct {
 }
 
 func findProgressByMediaMetadata(allProgress map[string][]models.PlaybackProgress, profileID, profileName string, meta StreamMediaMetadata, nameToUserID map[string]string) *models.PlaybackProgress {
-	userIDsToTry := []string{}
+	userIDsToTry := make([]string, 0, 3)
+	addUserID := func(userID string) {
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			return
+		}
+		for _, existing := range userIDsToTry {
+			if existing == userID {
+				return
+			}
+		}
+		userIDsToTry = append(userIDsToTry, userID)
+	}
 	if profileID != "" {
-		userIDsToTry = append(userIDsToTry, profileID)
+		addUserID(profileID)
 	}
 	if profileName != "" {
 		if mappedID, ok := nameToUserID[strings.ToLower(profileName)]; ok && mappedID != profileID {
-			userIDsToTry = append(userIDsToTry, mappedID)
+			addUserID(mappedID)
 		}
 	}
+	// Web playback historically writes progress under the default profile even
+	// when the stream session carries the account profile UUID.
+	addUserID("default")
 
 	if meta.ItemID == "" {
 		return nil
 	}
 
-	normalizedItemID := strings.ToLower(strings.TrimSpace(meta.ItemID))
-	normalizedMediaType := strings.ToLower(strings.TrimSpace(meta.MediaType))
+	target := streamMediaIdentity(meta)
+	if target.MediaType == "" || target.ID == "" {
+		return nil
+	}
+	targetKeys := make(map[string]struct{}, len(target.CandidateKeys)+1)
+	targetKeys[target.Key] = struct{}{}
+	for _, key := range target.CandidateKeys {
+		targetKeys[key] = struct{}{}
+	}
+
 	for _, userID := range userIDsToTry {
 		progressList, ok := allProgress[userID]
 		if !ok {
@@ -227,14 +251,52 @@ func findProgressByMediaMetadata(allProgress map[string][]models.PlaybackProgres
 		}
 		for i := range progressList {
 			progress := &progressList[i]
-			if strings.ToLower(strings.TrimSpace(progress.ItemID)) == normalizedItemID &&
-				(normalizedMediaType == "" || strings.ToLower(strings.TrimSpace(progress.MediaType)) == normalizedMediaType) {
+			if playbackProgressMatchesStreamIdentity(*progress, target, targetKeys) {
 				return progress
 			}
 		}
 	}
 
 	return nil
+}
+
+func streamMediaIdentity(meta StreamMediaMetadata) mediaidentity.Identity {
+	externalIDs := streamExternalIDs(meta.ItemID, meta.ExternalIDs)
+	mediaType := meta.MediaType
+	if mediaType == "" && meta.SeasonNumber > 0 && meta.EpisodeNumber > 0 {
+		mediaType = "episode"
+	}
+	return mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     mediaType,
+		ID:            meta.ItemID,
+		SeriesID:      meta.SeriesID,
+		SeasonNumber:  meta.SeasonNumber,
+		EpisodeNumber: meta.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+}
+
+func playbackProgressMatchesStreamIdentity(progress models.PlaybackProgress, target mediaidentity.Identity, targetKeys map[string]struct{}) bool {
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     progress.MediaType,
+		ID:            progress.ItemID,
+		SeriesID:      progress.SeriesID,
+		SeasonNumber:  progress.SeasonNumber,
+		EpisodeNumber: progress.EpisodeNumber,
+		ExternalIDs:   streamExternalIDs(progress.ItemID, progress.ExternalIDs),
+	})
+	if identity.MediaType != target.MediaType {
+		return false
+	}
+	if _, ok := targetKeys[identity.Key]; ok {
+		return true
+	}
+	for _, key := range identity.CandidateKeys {
+		if _, ok := targetKeys[key]; ok {
+			return true
+		}
+	}
+	return mediaidentity.Equivalent(identity, target)
 }
 
 func findProgressByFilename(allProgress map[string][]models.PlaybackProgress, profileID, profileName, filename string, nameToUserID map[string]string) *models.PlaybackProgress {
@@ -467,8 +529,13 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 		}
 		info := rs.info
 		matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
-			MediaType: info.MediaType,
-			ItemID:    info.ItemID,
+			MediaType:     info.MediaType,
+			ItemID:        info.ItemID,
+			SeasonNumber:  info.SeasonNumber,
+			EpisodeNumber: info.EpisodeNumber,
+			Title:         info.Title,
+			EpisodeName:   info.EpisodeName,
+			ExternalIDs:   info.ExternalIDs,
 		}, nameToUserID)
 
 		// Apply matched progress including media identification
@@ -511,6 +578,16 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 			// Keep duration if we have it
 			if info.Duration > 0 && existing.Duration == 0 {
 				existing.Duration = info.Duration
+			}
+			if info.CurrentPosition > 0 || info.PercentWatched > 0 {
+				existing.CurrentPosition = info.CurrentPosition
+				existing.PercentWatched = info.PercentWatched
+				if info.Duration > 0 {
+					existing.Duration = info.Duration
+				}
+				if info.ItemID != "" {
+					existing.ItemID = info.ItemID
+				}
 			}
 			// Add this profile to the list if not already present
 			profileID := info.ProfileID
@@ -579,8 +656,13 @@ func (h *AdminHandler) GetActiveStreams(w http.ResponseWriter, r *http.Request) 
 		}
 
 		matchedProgress := findProgressByMediaMetadata(allProgress, info.ProfileID, info.ProfileName, StreamMediaMetadata{
-			MediaType: info.MediaType,
-			ItemID:    info.ItemID,
+			MediaType:     info.MediaType,
+			ItemID:        info.ItemID,
+			SeasonNumber:  info.SeasonNumber,
+			EpisodeNumber: info.EpisodeNumber,
+			Title:         info.Title,
+			EpisodeName:   info.EpisodeName,
+			ExternalIDs:   info.ExternalIDs,
 		}, nameToUserID)
 		// Prefer fresh progress heartbeats; once they go stale (e.g. a client
 		// stops scrobbling after crossing the 90% watched threshold) fall back to

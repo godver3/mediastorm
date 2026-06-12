@@ -2165,11 +2165,11 @@ func streamExternalIDs(itemID string, ids map[string]string) map[string]string {
 		switch parts[0] {
 		case "tmdb":
 			if merged["tmdb"] == "" {
-				merged["tmdb"] = parts[len(parts)-1]
+				merged["tmdb"] = parts[2]
 			}
 		case "tvdb":
 			if merged["tvdb"] == "" {
-				merged["tvdb"] = parts[len(parts)-1]
+				merged["tvdb"] = parts[2]
 			}
 		}
 	}
