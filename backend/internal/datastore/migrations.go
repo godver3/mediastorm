@@ -132,6 +132,7 @@ func runDataMigrationsWithMarkerStore(ctx context.Context, pool *pgxpool.Pool, m
 		{name: "media_identity_reconcile_v1", run: reconcileMediaIdentityDataMigration},
 		{name: "media_identity_reconcile_v2", run: reconcileMediaIdentityDataMigration},
 		{name: "media_identity_reconcile_v3", run: reconcileMediaIdentityDataMigration},
+		{name: "media_identity_reconcile_v4", run: reconcileMediaIdentityDataMigration},
 	}
 
 	// Several marker names can point at the same (idempotent) reconcile

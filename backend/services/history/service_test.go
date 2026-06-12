@@ -1819,6 +1819,198 @@ func TestReconcileEquivalentEpisodeWatchHistoryNewestStateWins(t *testing.T) {
 	}
 }
 
+func TestSyncEquivalentEpisodeWatchHistoryPreservesNewerManualUnwatch(t *testing.T) {
+	watchedAt := time.Date(2026, 6, 12, 8, 52, 12, 0, time.UTC)
+	manualUnwatchAt := time.Date(2026, 6, 12, 16, 43, 5, 0, time.UTC)
+	sourceKey := "episode:tmdb:tv:220102:s01e04"
+	targetKey := "episode:tmdb:tv:220102:s01e05"
+	perUser := map[string]models.WatchHistoryItem{
+		sourceKey: {
+			ID:            sourceKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:220102:s01e04",
+			Name:          "A Mistake I'll Never Make Again",
+			SeriesID:      "tmdb:tv:220102",
+			SeriesName:    "Spider-Noir",
+			SeasonNumber:  1,
+			EpisodeNumber: 4,
+			Watched:       true,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     watchedAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt30460310",
+				"tmdb":            "220102",
+				"tvdb":            "450033",
+				"episodeTvdb":     "11610259",
+				"absoluteEpisode": "4",
+			},
+		},
+		targetKey: {
+			ID:            targetKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:220102:s01e05",
+			Name:          "Betrayal",
+			SeriesID:      "tmdb:tv:220102",
+			SeriesName:    "Spider-Noir",
+			SeasonNumber:  1,
+			EpisodeNumber: 5,
+			Watched:       false,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     manualUnwatchAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt30460310",
+				"tmdb":            "220102",
+				"tvdb":            "450033",
+				"episodeTvdb":     "11610259",
+				"absoluteEpisode": "4",
+			},
+		},
+	}
+
+	syncEquivalentEpisodeWatchHistoryLocked(perUser, sourceKey, perUser[sourceKey])
+
+	target := perUser[targetKey]
+	if target.Watched {
+		t.Fatalf("expected newer manual unwatch to survive equivalent sync: %+v", target)
+	}
+	if !target.UpdatedAt.Equal(manualUnwatchAt) {
+		t.Fatalf("expected target updatedAt %s, got %s", manualUnwatchAt, target.UpdatedAt)
+	}
+}
+
+func TestSyncEquivalentEpisodeWatchHistorySkipsConflictingSeriesIdentity(t *testing.T) {
+	watchedAt := time.Date(2026, 6, 10, 23, 30, 0, 0, time.UTC)
+	manualUnwatchAt := time.Date(2026, 6, 12, 17, 2, 34, 0, time.UTC)
+	sourceKey := "episode:tmdb:tv:220102:s01e05"
+	targetKey := "episode:tmdb:tv:4629:s01e06"
+	perUser := map[string]models.WatchHistoryItem{
+		sourceKey: {
+			ID:            sourceKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:220102:s01e05",
+			Name:          "Betrayal",
+			SeriesID:      "tmdb:tv:220102",
+			SeriesName:    "Spider-Noir",
+			SeasonNumber:  1,
+			EpisodeNumber: 5,
+			Watched:       false,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     manualUnwatchAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt30460310",
+				"tmdb":            "220102",
+				"tvdb":            "450033",
+				"episodeTvdb":     "11610260",
+				"absoluteEpisode": "5",
+			},
+		},
+		targetKey: {
+			ID:            targetKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:4629:s01e06",
+			Name:          "The First Commandment",
+			SeriesID:      "tmdb:tv:4629",
+			SeriesName:    "Stargate SG-1",
+			SeasonNumber:  1,
+			EpisodeNumber: 6,
+			Watched:       true,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     watchedAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt0118480",
+				"tmdb":            "4629",
+				"tvdb":            "72449",
+				"trakt":           "4605",
+				"episodeImdb":     "tt0709188",
+				"episodeTmdb":     "336047",
+				"episodeTvdb":     "11610260",
+				"episodeTrakt":    "344116",
+				"absoluteEpisode": "5",
+			},
+		},
+	}
+
+	syncEquivalentEpisodeWatchHistoryLocked(perUser, sourceKey, perUser[sourceKey])
+
+	target := perUser[targetKey]
+	if !target.Watched {
+		t.Fatalf("expected conflicting Stargate row to keep its watched state: %+v", target)
+	}
+	if target.ExternalIDs["tmdb"] != "4629" || target.ExternalIDs["tvdb"] != "72449" {
+		t.Fatalf("expected conflicting Stargate row to keep series IDs, got %#v", target.ExternalIDs)
+	}
+	if !target.UpdatedAt.Equal(watchedAt) {
+		t.Fatalf("expected target updatedAt %s, got %s", watchedAt, target.UpdatedAt)
+	}
+}
+
+func TestSyncEquivalentEpisodeWatchHistorySkipsAdjacentAbsoluteEpisodeInSameSeries(t *testing.T) {
+	watchedAt := time.Date(2026, 6, 10, 23, 30, 0, 0, time.UTC)
+	manualUnwatchAt := time.Date(2026, 6, 12, 17, 2, 34, 0, time.UTC)
+	sourceKey := "episode:tmdb:tv:4629:s01e06"
+	targetKey := "episode:tmdb:tv:4629:s01e05"
+	perUser := map[string]models.WatchHistoryItem{
+		sourceKey: {
+			ID:            sourceKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:4629:s01e06",
+			Name:          "The First Commandment",
+			SeriesID:      "tmdb:tv:4629",
+			SeriesName:    "Stargate SG-1",
+			SeasonNumber:  1,
+			EpisodeNumber: 6,
+			Watched:       false,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     manualUnwatchAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt0118480",
+				"tmdb":            "4629",
+				"tvdb":            "72449",
+				"trakt":           "4605",
+				"episodeImdb":     "tt0709188",
+				"episodeTmdb":     "336047",
+				"episodeTvdb":     "85755",
+				"episodeTrakt":    "344116",
+				"absoluteEpisode": "5",
+			},
+		},
+		targetKey: {
+			ID:            targetKey,
+			MediaType:     "episode",
+			ItemID:        "tmdb:tv:4629:s01e05",
+			Name:          "The Broca Divide",
+			SeriesID:      "tmdb:tv:4629",
+			SeriesName:    "Stargate SG-1",
+			SeasonNumber:  1,
+			EpisodeNumber: 5,
+			Watched:       true,
+			WatchedAt:     watchedAt,
+			UpdatedAt:     watchedAt,
+			ExternalIDs: map[string]string{
+				"imdb":            "tt0118480",
+				"tmdb":            "4629",
+				"tvdb":            "72449",
+				"trakt":           "4605",
+				"episodeImdb":     "tt0709181",
+				"episodeTmdb":     "336045",
+				"episodeTvdb":     "85754",
+				"episodeTrakt":    "344115",
+				"absoluteEpisode": "4",
+			},
+		},
+	}
+
+	syncEquivalentEpisodeWatchHistoryLocked(perUser, sourceKey, perUser[sourceKey])
+
+	target := perUser[targetKey]
+	if !target.Watched {
+		t.Fatalf("expected adjacent episode to keep its watched state: %+v", target)
+	}
+	if target.ExternalIDs["episodeTvdb"] != "85754" {
+		t.Fatalf("expected adjacent episode to keep its episode IDs, got %#v", target.ExternalIDs)
+	}
+}
+
 // TestUpdatePlaybackProgress_CanonicalKeyIsOrderIndependent verifies that the
 // surviving key is the canonical TMDB one regardless of which provider scheme
 // wrote last — i.e. a TVDB-first sync followed by a native TMDB play converges
@@ -1889,8 +2081,8 @@ func TestBuildCanonicalSeriesIDMap_UsesExternalProviderAliases(t *testing.T) {
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, progressItems)
-	if got := canonical["tvdb:series:360261"]; got != "tmdb:tv:220102" {
-		t.Fatalf("expected stale TVDB series ID to resolve through provider aliases, got %q", got)
+	if got := canonical["tvdb:series:360261"]; got != "tvdb:series:360261" {
+		t.Fatalf("expected contradictory stale TVDB series ID to stay isolated, got %q", got)
 	}
 	if got := canonical["tvdb:series:450033"]; got != "tmdb:tv:220102" {
 		t.Fatalf("expected TVDB alias to resolve to TMDB alias, got %q", got)
@@ -1943,8 +2135,8 @@ func TestBuildCanonicalSeriesIDMap_UsesProviderIDsForContradictoryRows(t *testin
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, progressItems)
-	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:4629" {
-		t.Fatalf("expected stale Spider-Noir TMDB row to resolve through provider IDs, got %q", got)
+	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:220102" {
+		t.Fatalf("expected contradictory Spider-Noir TMDB row to stay on reliable series ID, got %q", got)
 	}
 	if got := canonical["tvdb:series:72449"]; got != "tmdb:tv:4629" {
 		t.Fatalf("expected Stargate row to resolve within its own clean external IDs, got %q", got)
@@ -1973,11 +2165,11 @@ func TestBuildCanonicalSeriesIDMap_ProviderIDsWinOverItemIDBridgeForPollutedRows
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, nil)
-	if got := resolveCanonicalID(canonical, "tvdb:series:450033"); got != "tvdb:series:450033" {
-		t.Fatalf("expected clean TVDB row to stay on its provider series, got %q", got)
+	if got := resolveCanonicalID(canonical, "tvdb:series:450033"); got != "tmdb:tv:220102" {
+		t.Fatalf("expected clean TVDB row to merge through reliable itemID bridge, got %q", got)
 	}
-	if got := resolveCanonicalID(canonical, "tmdb:tv:220102"); got != "tmdb:tv:4629" {
-		t.Fatalf("expected contradictory TMDB row to resolve through provider IDs, got %q", got)
+	if got := resolveCanonicalID(canonical, "tmdb:tv:220102"); got != "tmdb:tv:220102" {
+		t.Fatalf("expected contradictory TMDB row to stay on reliable series ID, got %q", got)
 	}
 }
 

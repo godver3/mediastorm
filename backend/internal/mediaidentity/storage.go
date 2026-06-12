@@ -9,19 +9,39 @@ func StorageExternalIDs(mediaType, itemID, seriesID string, externalIDs map[stri
 	if NormalizeMediaType(mediaType) != "episode" || len(normalized) == 0 {
 		return normalized
 	}
+
+	provider, numericID := SeriesProviderAndID(seriesID)
+	itemProvider, itemNumericID := SeriesProviderAndID(InferSeriesIDFromEpisodeItemID(itemID))
+	titleProvider, titleNumericID := SeriesProviderAndID(normalized["titleId"])
+	if HasContradictorySeriesExternalIDs(seriesID, itemID, normalized) && !titleIDAgreesWithExternalIDs(titleProvider, titleNumericID, normalized) {
+		copied := make(map[string]string, len(normalized))
+		for key, value := range normalized {
+			if value == "" || key == "tmdb" || key == "tvdb" || key == "imdb" {
+				continue
+			}
+			copied[key] = value
+		}
+		if provider != "" && numericID != "" {
+			copied[provider] = numericID
+		}
+		addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+		if len(copied) > 0 {
+			return copied
+		}
+		return nil
+	}
 	if strings.TrimSpace(normalized["titleId"]) != "" {
 		return normalized
 	}
 
 	inferredSeriesID := InferSeriesIDFromEpisodeItemID(itemID)
-	inferredProvider, inferredNumericID := SeriesProviderAndID(inferredSeriesID)
+	inferredProvider, inferredNumericID := itemProvider, itemNumericID
 	if inferredProvider == "" || inferredNumericID == "" {
 		return normalized
 	}
 
-	seriesProvider, seriesNumericID := SeriesProviderAndID(seriesID)
-	bridgesDifferentSeriesID := seriesProvider != "" && seriesNumericID != "" &&
-		(seriesProvider != inferredProvider || seriesNumericID != inferredNumericID)
+	bridgesDifferentSeriesID := provider != "" && numericID != "" &&
+		(provider != inferredProvider || numericID != inferredNumericID)
 	if !bridgesDifferentSeriesID && !HasContradictorySeriesExternalIDs(seriesID, itemID, normalized) {
 		return normalized
 	}
@@ -74,13 +94,28 @@ func CanonicalSeriesExternalIDs(seriesID, itemID string, extIDs map[string]strin
 		return nil
 	}
 
-	if copied := copySeriesExternalIDs(extIDs); len(copied) > 0 {
-		return copied
-	}
-
 	provider, numericID := SeriesProviderAndID(seriesID)
 	itemProvider, itemNumericID := SeriesProviderAndID(InferSeriesIDFromEpisodeItemID(itemID))
 	titleProvider, titleNumericID := SeriesProviderAndID(extIDs["titleId"])
+
+	if HasContradictorySeriesExternalIDs(seriesID, itemID, extIDs) {
+		if titleIDAgreesWithExternalIDs(titleProvider, titleNumericID, extIDs) {
+			return copySeriesExternalIDs(extIDs)
+		}
+		copied := make(map[string]string, 2)
+		if provider != "" && numericID != "" {
+			copied[provider] = numericID
+		}
+		addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
+		if len(copied) > 0 {
+			return copied
+		}
+		return nil
+	}
+
+	if copied := copySeriesExternalIDs(extIDs); len(copied) > 0 {
+		return copied
+	}
 
 	if provider != "" && numericID != "" {
 		copied := make(map[string]string, 1)
@@ -95,6 +130,14 @@ func CanonicalSeriesExternalIDs(seriesID, itemID string, extIDs map[string]strin
 	}
 
 	return copySeriesExternalIDs(extIDs)
+}
+
+func titleIDAgreesWithExternalIDs(titleProvider, titleNumericID string, extIDs map[string]string) bool {
+	if titleProvider == "" || titleNumericID == "" {
+		return false
+	}
+	value := strings.TrimSpace(extIDs[titleProvider])
+	return value != "" && strings.EqualFold(value, titleNumericID)
 }
 
 func HasContradictorySeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) bool {
@@ -176,7 +219,7 @@ func copySeriesExternalIDs(extIDs map[string]string) map[string]string {
 	}
 	copied := make(map[string]string, len(extIDs))
 	for k, v := range extIDs {
-		if v == "" || k == "titleId" || strings.HasPrefix(k, "episode") {
+		if v == "" || !isSeriesExternalIDKey(k) {
 			continue
 		}
 		copied[k] = v
@@ -185,4 +228,13 @@ func copySeriesExternalIDs(extIDs map[string]string) map[string]string {
 		return nil
 	}
 	return copied
+}
+
+func isSeriesExternalIDKey(key string) bool {
+	switch key {
+	case "tmdb", "tvdb", "imdb", "trakt", "simkl":
+		return true
+	default:
+		return false
+	}
 }

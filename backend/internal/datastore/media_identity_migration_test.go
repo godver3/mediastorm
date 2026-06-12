@@ -91,7 +91,7 @@ func TestReconcileWatchHistoryIdentityItemsNewestStateWins(t *testing.T) {
 	}
 }
 
-func TestReconcileWatchHistoryIdentityItemsRekeysContradictoryEpisodeProviderIDs(t *testing.T) {
+func TestReconcileWatchHistoryIdentityItemsKeepsContradictoryEpisodeOnReliableKey(t *testing.T) {
 	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
 	items := []models.WatchHistoryItem{
 		{
@@ -117,21 +117,27 @@ func TestReconcileWatchHistoryIdentityItemsRekeysContradictoryEpisodeProviderIDs
 	}
 
 	reconciled, stats := reconcileWatchHistoryIdentityItems(items)
-	if _, exists := reconciled["episode:tmdb:tv:4629:s02e09"]; exists {
-		t.Fatalf("expected stale key to be removed: %+v", reconciled)
-	}
-	item, exists := reconciled["episode:tmdb:tv:250307:s02e09"]
+	item, exists := reconciled["episode:tmdb:tv:4629:s02e09"]
 	if !exists {
-		t.Fatalf("expected provider canonical key to be present: %+v", reconciled)
+		t.Fatalf("expected reliable stored key to remain present: %+v", reconciled)
 	}
-	if item.SeriesID != "tmdb:tv:250307" || item.ItemID != "tmdb:tv:250307:s02e09" {
-		t.Fatalf("expected provider canonical episode, got seriesID=%q itemID=%q", item.SeriesID, item.ItemID)
+	if item.SeriesID != "tmdb:tv:4629" || item.ItemID != "tmdb:tv:4629:s02e09" {
+		t.Fatalf("expected reliable stored episode, got seriesID=%q itemID=%q", item.SeriesID, item.ItemID)
 	}
 	if !item.Watched {
-		t.Fatal("expected watched state to survive rekey")
+		t.Fatal("expected watched state to survive reconciliation")
 	}
-	if stats.rekeyed != 1 {
-		t.Fatalf("expected one rekey, got stats %+v", stats)
+	if stats.rekeyed != 0 {
+		t.Fatalf("expected no rekey, got stats %+v", stats)
+	}
+	if item.ExternalIDs["tmdb"] != "4629" {
+		t.Fatalf("expected conflicting tmdb ID to be scrubbed to reliable value, got %#v", item.ExternalIDs)
+	}
+	if item.ExternalIDs["tvdb"] == "448176" || item.ExternalIDs["imdb"] == "tt31938062" {
+		t.Fatalf("expected conflicting title provider IDs to be removed, got %#v", item.ExternalIDs)
+	}
+	if item.ExternalIDs["episodeTmdb"] != "6768687" {
+		t.Fatalf("expected episode-scoped IDs to survive, got %#v", item.ExternalIDs)
 	}
 }
 

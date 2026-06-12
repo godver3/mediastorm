@@ -95,7 +95,7 @@ func TestResolveEpisodeUsesTitleIDWhenParsedSeriesContradictsExternalIDs(t *test
 	}
 }
 
-func TestResolveEpisodeUsesProviderSeriesIDsWhenTitleIDIsLegacyBridge(t *testing.T) {
+func TestResolveEpisodeUsesReliableItemIDWhenTitleIDConflictsWithExternalIDs(t *testing.T) {
 	identity := Resolve(Input{
 		MediaType:     "episode",
 		ID:            "tmdb:tv:220102:s01e03",
@@ -108,18 +108,18 @@ func TestResolveEpisodeUsesProviderSeriesIDsWhenTitleIDIsLegacyBridge(t *testing
 		},
 	})
 
-	if identity.SeriesID != "tmdb:tv:720" {
-		t.Fatalf("SeriesID = %q, want provider tmdb:tv:720", identity.SeriesID)
+	if identity.SeriesID != "tmdb:tv:220102" {
+		t.Fatalf("SeriesID = %q, want reliable tmdb:tv:220102", identity.SeriesID)
 	}
-	if identity.ID != "tmdb:tv:720:s01e03" {
-		t.Fatalf("ID = %q, want provider episode ID", identity.ID)
+	if identity.ID != "tmdb:tv:220102:s01e03" {
+		t.Fatalf("ID = %q, want reliable episode ID", identity.ID)
 	}
-	if !contains(identity.CandidateKeys, "episode:tmdb:tv:220102:s01e03") {
-		t.Fatalf("CandidateKeys missing legacy bridge key: %#v", identity.CandidateKeys)
+	if contains(identity.CandidateKeys, "episode:tmdb:tv:720:s01e03") {
+		t.Fatalf("CandidateKeys should not include conflicting provider key: %#v", identity.CandidateKeys)
 	}
 }
 
-func TestResolveEpisodeUsesProviderSeriesIDsWhenExplicitSeriesContradictsExternalIDs(t *testing.T) {
+func TestResolveEpisodeUsesReliableSeriesIDWhenExplicitSeriesContradictsExternalIDs(t *testing.T) {
 	identity := Resolve(Input{
 		MediaType:     "episode",
 		ID:            "tmdb:tv:4629:s02e09",
@@ -133,14 +133,75 @@ func TestResolveEpisodeUsesProviderSeriesIDsWhenExplicitSeriesContradictsExterna
 		},
 	})
 
-	if identity.SeriesID != "tmdb:tv:250307" {
-		t.Fatalf("SeriesID = %q, want provider tmdb:tv:250307", identity.SeriesID)
+	if identity.SeriesID != "tmdb:tv:4629" {
+		t.Fatalf("SeriesID = %q, want reliable tmdb:tv:4629", identity.SeriesID)
 	}
-	if identity.ID != "tmdb:tv:250307:s02e09" {
-		t.Fatalf("ID = %q, want provider episode ID", identity.ID)
+	if identity.ID != "tmdb:tv:4629:s02e09" {
+		t.Fatalf("ID = %q, want reliable episode ID", identity.ID)
 	}
-	if !contains(identity.CandidateKeys, "episode:tmdb:tv:4629:s02e09") {
-		t.Fatalf("CandidateKeys missing old explicit series key: %#v", identity.CandidateKeys)
+	if contains(identity.CandidateKeys, "episode:tmdb:tv:250307:s02e09") {
+		t.Fatalf("CandidateKeys should not include conflicting provider key: %#v", identity.CandidateKeys)
+	}
+}
+
+func TestCanonicalSeriesExternalIDsIgnoresConflictingProviderIDs(t *testing.T) {
+	ids := CanonicalSeriesExternalIDs("tmdb:tv:220102", "tmdb:tv:220102:s01e05", map[string]string{
+		"imdb":        "tt0118480",
+		"tmdb":        "4629",
+		"tvdb":        "72449",
+		"titleId":     "tmdb:tv:220102",
+		"episodeTvdb": "85755",
+	})
+
+	if ids["tmdb"] != "220102" {
+		t.Fatalf("tmdb = %q, want 220102 (ids=%#v)", ids["tmdb"], ids)
+	}
+	if ids["tvdb"] == "72449" || ids["imdb"] == "tt0118480" {
+		t.Fatalf("conflicting provider IDs should not survive: %#v", ids)
+	}
+}
+
+func TestStorageExternalIDsScrubsConflictingSeriesProviderIDs(t *testing.T) {
+	ids := StorageExternalIDs("episode", "tmdb:tv:4629:s01e06", "tmdb:tv:4629", map[string]string{
+		"imdb":            "tt30460310",
+		"tmdb":            "220102",
+		"tvdb":            "450033",
+		"trakt":           "4605",
+		"titleId":         "tmdb:tv:4629",
+		"episodeImdb":     "tt0709188",
+		"episodeTmdb":     "336047",
+		"episodeTvdb":     "11610260",
+		"episodeTrakt":    "344116",
+		"absoluteEpisode": "5",
+	})
+
+	if ids["tmdb"] != "4629" {
+		t.Fatalf("tmdb = %q, want reliable 4629 (ids=%#v)", ids["tmdb"], ids)
+	}
+	if ids["tvdb"] == "450033" || ids["imdb"] == "tt30460310" {
+		t.Fatalf("conflicting title provider IDs should be scrubbed: %#v", ids)
+	}
+	if ids["episodeTvdb"] != "11610260" || ids["episodeTrakt"] != "344116" {
+		t.Fatalf("episode-scoped IDs should be preserved: %#v", ids)
+	}
+	if ids["titleId"] != "tmdb:tv:4629" {
+		t.Fatalf("titleId should be preserved for audit/bridge context: %#v", ids)
+	}
+}
+
+func TestCanonicalSeriesExternalIDsExcludesEpisodeNumbering(t *testing.T) {
+	ids := CanonicalSeriesExternalIDs("tmdb:tv:220102", "tmdb:tv:220102:s01e05", map[string]string{
+		"tmdb":            "220102",
+		"tvdb":            "450033",
+		"episodeTvdb":     "11610260",
+		"absoluteEpisode": "5",
+	})
+
+	if ids["absoluteEpisode"] != "" || ids["episodeTvdb"] != "" {
+		t.Fatalf("episode-scoped IDs should not be series IDs: %#v", ids)
+	}
+	if ids["tmdb"] != "220102" || ids["tvdb"] != "450033" {
+		t.Fatalf("series IDs missing from canonical IDs: %#v", ids)
 	}
 }
 

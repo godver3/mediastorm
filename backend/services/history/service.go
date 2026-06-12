@@ -739,6 +739,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	seriesActivityAt := make(map[string]time.Time)
 	seriesInfo := make(map[string]models.WatchHistoryItem) // Track series metadata
 	corruptedUnwatchedBySeries := make(map[string][]models.WatchHistoryItem)
+	promotedCorruptedGapsBySeries := make(map[string]map[string]struct{})
 	watchedEpisodeSetBySeries := make(map[string]map[string]struct{})
 	type episodePosition struct {
 		season  int
@@ -799,6 +800,10 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				item.WatchedAt = watchHistoryActivityTime(item)
 			}
 			seriesEpisodes[seriesID] = append(seriesEpisodes[seriesID], item)
+			if promotedCorruptedGapsBySeries[seriesID] == nil {
+				promotedCorruptedGapsBySeries[seriesID] = make(map[string]struct{})
+			}
+			promotedCorruptedGapsBySeries[seriesID][key] = struct{}{}
 			watchedEpisodeSetBySeries[seriesID][key] = struct{}{}
 			if _, exists := seriesInfo[seriesID]; !exists {
 				seriesInfo[seriesID] = item
@@ -864,6 +869,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		history    []models.WatchHistoryItem
 		activityAt time.Time
 		inProgress *models.PlaybackProgress
+		promoted   map[string]struct{}
 	}
 
 	var seriesTasks []seriesTask
@@ -875,6 +881,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			history:    seriesHistory[seriesID],
 			activityAt: seriesActivityAt[seriesID],
 			inProgress: inProgressBySeriesCache[seriesID],
+			promoted:   promotedCorruptedGapsBySeries[seriesID],
 		})
 	}
 
@@ -1059,7 +1066,10 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					watchedSet := make(map[string]bool)
 					for _, ep := range t.episodes {
 						if ep.SeasonNumber > 0 {
-							watchedSet[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)] = true
+							key := episodeKey(ep.SeasonNumber, ep.EpisodeNumber)
+							if _, promoted := t.promoted[key]; !promoted {
+								watchedSet[key] = true
+							}
 						}
 					}
 					state.WatchedEpisodeCount = len(watchedSet)
@@ -1156,7 +1166,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 					// Calculate episode counts for series completion tracking
 					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
-					state.WatchedEpisodeCount = countWatchedEpisodes(state.WatchedEpisodes)
+					state.WatchedEpisodeCount = countWatchedEpisodesExcluding(state.WatchedEpisodes, t.promoted)
 				}
 			} else {
 				// No episodes and no in-progress (shouldn't happen)
@@ -2250,6 +2260,23 @@ func countWatchedEpisodes(watchedEpisodes map[string]models.EpisodeReference) in
 		if ep.SeasonNumber > 0 {
 			count++
 		}
+	}
+	return count
+}
+
+func countWatchedEpisodesExcluding(watchedEpisodes map[string]models.EpisodeReference, excluded map[string]struct{}) int {
+	if len(excluded) == 0 {
+		return countWatchedEpisodes(watchedEpisodes)
+	}
+	count := 0
+	for _, ep := range watchedEpisodes {
+		if ep.SeasonNumber <= 0 {
+			continue
+		}
+		if _, skip := excluded[episodeKey(ep.SeasonNumber, ep.EpisodeNumber)]; skip {
+			continue
+		}
+		count++
 	}
 	return count
 }
@@ -3372,8 +3399,12 @@ func syncEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHist
 		if key == canonicalKey ||
 			candidate.MediaType != "episode" ||
 			candidate.SeasonNumber != item.SeasonNumber ||
-			!hasMatchingExternalID(candidate.ExternalIDs, item.ExternalIDs) ||
-			!watchHistoryEpisodeNumbersMatch(candidate.EpisodeNumber, item.EpisodeNumber, candidate.ExternalIDs, item.ExternalIDs) {
+			!watchHistorySeriesIdentitiesCompatible(candidate, item) ||
+			!watchHistoryEquivalentEpisodeIDsMatch(candidate, item) {
+			continue
+		}
+
+		if !preferEquivalentEpisodeWatchHistoryState(item, candidate) {
 			continue
 		}
 
@@ -3394,19 +3425,71 @@ func syncEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHist
 	}
 }
 
-func watchHistoryEpisodeNumbersMatch(candidateEpisode, updateEpisode int, candidateExternalIDs, updateExternalIDs map[string]string) bool {
-	if candidateEpisode == updateEpisode {
-		return true
+func preferEquivalentEpisodeWatchHistoryState(source, target models.WatchHistoryItem) bool {
+	sourceTime := watchHistoryImportStateTime(source)
+	targetTime := watchHistoryImportStateTime(target)
+	if !sourceTime.Equal(targetTime) {
+		return sourceTime.After(targetTime)
 	}
+	if source.Watched != target.Watched {
+		return !source.Watched
+	}
+	return false
+}
+
+func watchHistorySeriesIdentitiesCompatible(a, b models.WatchHistoryItem) bool {
+	aIDs := canonicalSeriesExternalIDs(a.SeriesID, a.ItemID, a.ExternalIDs)
+	bIDs := canonicalSeriesExternalIDs(b.SeriesID, b.ItemID, b.ExternalIDs)
+	if len(aIDs) == 0 || len(bIDs) == 0 {
+		return false
+	}
+	for provider, aID := range aIDs {
+		if aID == "" {
+			continue
+		}
+		if bID := bIDs[provider]; bID != "" && strings.EqualFold(aID, bID) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchHistoryEquivalentEpisodeIDsMatch(candidate, item models.WatchHistoryItem) bool {
+	if candidate.EpisodeNumber == item.EpisodeNumber {
+		return hasMatchingExternalID(candidate.ExternalIDs, item.ExternalIDs)
+	}
+	if !watchHistoryAbsoluteEpisodeDuplicateMatch(candidate.EpisodeNumber, item.EpisodeNumber, candidate.ExternalIDs, item.ExternalIDs) {
+		return false
+	}
+	return hasMatchingEpisodeScopedExternalID(candidate.ExternalIDs, item.ExternalIDs) ||
+		hasMatchingExternalID(candidate.ExternalIDs, item.ExternalIDs)
+}
+
+func hasMatchingEpisodeScopedExternalID(a, b map[string]string) bool {
+	a = mediaidentity.NormalizeExternalIDs(a)
+	b = mediaidentity.NormalizeExternalIDs(b)
+	for _, key := range []string{"episodeTvdb", "episodeTmdb", "episodeImdb", "episodeTrakt"} {
+		if a[key] != "" && strings.EqualFold(a[key], b[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func watchHistoryAbsoluteEpisodeDuplicateMatch(candidateEpisode, updateEpisode int, candidateExternalIDs, updateExternalIDs map[string]string) bool {
 	candidateAbsolute, candidateHasAbsolute := positiveExternalIDInt(candidateExternalIDs, "absoluteEpisode")
 	updateAbsolute, updateHasAbsolute := positiveExternalIDInt(updateExternalIDs, "absoluteEpisode")
-	if updateHasAbsolute && candidateEpisode == updateAbsolute {
+	smallerEpisode := candidateEpisode
+	if updateEpisode < smallerEpisode {
+		smallerEpisode = updateEpisode
+	}
+	if updateHasAbsolute && candidateEpisode == updateAbsolute && updateAbsolute > smallerEpisode {
 		return true
 	}
-	if candidateHasAbsolute && updateEpisode == candidateAbsolute {
+	if candidateHasAbsolute && updateEpisode == candidateAbsolute && candidateAbsolute > smallerEpisode {
 		return true
 	}
-	return candidateHasAbsolute && updateHasAbsolute && candidateAbsolute == updateAbsolute
+	return candidateHasAbsolute && updateHasAbsolute && candidateAbsolute == updateAbsolute && candidateAbsolute > smallerEpisode
 }
 
 func (s *Service) loadWatchHistory() error {
