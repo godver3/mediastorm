@@ -3,6 +3,9 @@ package handlers
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +19,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"novastream/internal/datastore"
+	"novastream/models"
 )
 
 const (
@@ -113,6 +119,7 @@ type LogsHandler struct {
 	logFile         string // path to the backend log file
 	frontendLogsDir string
 	frontendLogsMu  sync.RWMutex
+	dataStore       *datastore.DataStore
 }
 
 type submitLogsRequest struct {
@@ -124,6 +131,10 @@ type uploadFrontendLogsRequest struct {
 	DeviceType   string `json:"deviceType,omitempty"`
 	OS           string `json:"os,omitempty"`
 	AppVersion   string `json:"appVersion,omitempty"`
+}
+
+type submitDatabaseSnapshotRequest struct {
+	UserID string `json:"userId,omitempty"`
 }
 
 type frontendLogSnapshot struct {
@@ -157,6 +168,32 @@ type submitLogsResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+type deidentifiedDatabaseSnapshot struct {
+	SchemaVersion       int                                  `json:"schemaVersion"`
+	SubmittedAt         time.Time                            `json:"submittedAt"`
+	Scope               string                               `json:"scope"`
+	Notes               []string                             `json:"notes"`
+	Users               []deidentifiedSnapshotUser           `json:"users"`
+	PlaybackProgress    []deidentifiedPlaybackProgressRecord `json:"playbackProgress"`
+	WatchHistory        []deidentifiedWatchHistoryRecord     `json:"watchHistory"`
+	PlaybackProgressCnt int                                  `json:"playbackProgressCount"`
+	WatchHistoryCnt     int                                  `json:"watchHistoryCount"`
+}
+
+type deidentifiedSnapshotUser struct {
+	Alias string `json:"alias"`
+}
+
+type deidentifiedPlaybackProgressRecord struct {
+	User string `json:"user"`
+	models.PlaybackProgress
+}
+
+type deidentifiedWatchHistoryRecord struct {
+	User string `json:"user"`
+	models.WatchHistoryItem
+}
+
 func NewLogsHandler(logger *log.Logger, logFile string) *LogsHandler {
 	h := &LogsHandler{
 		logger:  logger,
@@ -167,6 +204,10 @@ func NewLogsHandler(logger *log.Logger, logFile string) *LogsHandler {
 	}
 	h.frontendLogsDir = h.defaultFrontendLogsDir()
 	return h
+}
+
+func (h *LogsHandler) SetDataStore(store *datastore.DataStore) {
+	h.dataStore = store
 }
 
 func (h *LogsHandler) Submit(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +290,38 @@ func (h *LogsHandler) UploadFrontendLogs(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (h *LogsHandler) SubmitDatabaseSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		h.respondError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload submitDatabaseSnapshotRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	if err := decoder.Decode(&payload); err != nil && err != io.EOF {
+		h.respondError(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	pasteURL, err := h.SubmitDatabaseSnapshotPackage(r.Context(), payload.UserID)
+	if err != nil {
+		h.logger.Printf("[logs] Failed to submit deidentified database snapshot: %v", err)
+		h.respondError(w, fmt.Sprintf("failed to submit database snapshot: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Printf("[logs] Successfully submitted deidentified database snapshot to %s", pasteURL)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(submitLogsResponse{URL: pasteURL})
+}
+
 func (h *LogsHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
@@ -324,6 +397,111 @@ func (h *LogsHandler) SubmitStoredLogsPackage(clientID string) (string, error) {
 	pasteContent := h.buildCombinedStoredLogsPackage(frontendLogs, summaries)
 	pasteContent = redactLogUploadContent(pasteContent)
 	return h.submitToPaste(pasteContent)
+}
+
+func (h *LogsHandler) SubmitDatabaseSnapshotPackage(ctx context.Context, userID string) (string, error) {
+	snapshot, err := h.buildDeidentifiedDatabaseSnapshot(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal database snapshot: %w", err)
+	}
+
+	var content strings.Builder
+	content.WriteString("STRMR DE-IDENTIFIED DATABASE SNAPSHOT\n")
+	content.WriteString("=====================================\n")
+	content.WriteString("This diagnostic package excludes accounts, sessions, API keys, settings, and raw database connection data.\n")
+	content.WriteString("Media IDs and titles are preserved so watch-state bugs can be reproduced.\n\n")
+	content.Write(data)
+
+	return h.submitToPaste(redactLogUploadContent(content.String()))
+}
+
+func (h *LogsHandler) buildDeidentifiedDatabaseSnapshot(ctx context.Context, userID string) (*deidentifiedDatabaseSnapshot, error) {
+	if h.dataStore == nil {
+		return nil, fmt.Errorf("database snapshot export is unavailable: datastore is not configured")
+	}
+
+	userID = strings.TrimSpace(userID)
+	var progressByUser map[string][]models.PlaybackProgress
+	var historyByUser map[string][]models.WatchHistoryItem
+	var err error
+
+	if userID != "" {
+		progress, progressErr := h.dataStore.PlaybackProgress().ListByUser(ctx, userID)
+		if progressErr != nil {
+			return nil, progressErr
+		}
+		history, historyErr := h.dataStore.WatchHistory().ListByUser(ctx, userID)
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		progressByUser = map[string][]models.PlaybackProgress{userID: progress}
+		historyByUser = map[string][]models.WatchHistoryItem{userID: history}
+	} else {
+		progressByUser, err = h.dataStore.PlaybackProgress().ListAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+		historyByUser, err = h.dataStore.WatchHistory().ListAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	aliases := buildDeidentifiedUserAliases(progressByUser, historyByUser)
+	users := make([]deidentifiedSnapshotUser, 0, len(aliases))
+	userIDs := make([]string, 0, len(aliases))
+	for id := range aliases {
+		userIDs = append(userIDs, id)
+	}
+	sort.Strings(userIDs)
+	for _, id := range userIDs {
+		users = append(users, deidentifiedSnapshotUser{Alias: aliases[id]})
+	}
+
+	progressRows := make([]deidentifiedPlaybackProgressRecord, 0)
+	for _, id := range userIDs {
+		for _, item := range progressByUser[id] {
+			progressRows = append(progressRows, deidentifiedPlaybackProgressRecord{
+				User:             aliases[id],
+				PlaybackProgress: deidentifyPlaybackProgress(item),
+			})
+		}
+	}
+
+	historyRows := make([]deidentifiedWatchHistoryRecord, 0)
+	for _, id := range userIDs {
+		for _, item := range historyByUser[id] {
+			historyRows = append(historyRows, deidentifiedWatchHistoryRecord{
+				User:             aliases[id],
+				WatchHistoryItem: deidentifyWatchHistoryItem(item),
+			})
+		}
+	}
+
+	scope := "all-users"
+	if userID != "" {
+		scope = "single-user"
+	}
+	return &deidentifiedDatabaseSnapshot{
+		SchemaVersion: 1,
+		SubmittedAt:   time.Now().UTC(),
+		Scope:         scope,
+		Notes: []string{
+			"Real user IDs are replaced with stable aliases in this snapshot only.",
+			"Accounts, sessions, credentials, API keys, and application settings are not included.",
+			"Filesystem-like local media identifiers are replaced with stable redacted hashes.",
+		},
+		Users:               users,
+		PlaybackProgress:    progressRows,
+		WatchHistory:        historyRows,
+		PlaybackProgressCnt: len(progressRows),
+		WatchHistoryCnt:     len(historyRows),
+	}, nil
 }
 
 func (h *LogsHandler) ReadCombinedLogEntries(linesCount int, source, clientID string) ([]logEntry, error) {
@@ -545,6 +723,109 @@ func countLogLines(logs string) int {
 func urlSafeFileName(value string) string {
 	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "..", "_")
 	return replacer.Replace(strings.TrimSpace(value))
+}
+
+func buildDeidentifiedUserAliases(
+	progressByUser map[string][]models.PlaybackProgress,
+	historyByUser map[string][]models.WatchHistoryItem,
+) map[string]string {
+	ids := make([]string, 0, len(progressByUser)+len(historyByUser))
+	seen := make(map[string]struct{}, len(progressByUser)+len(historyByUser))
+	for id := range progressByUser {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	for id := range historyByUser {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+
+	aliases := make(map[string]string, len(ids))
+	for i, id := range ids {
+		aliases[id] = fmt.Sprintf("user_%d", i+1)
+	}
+	return aliases
+}
+
+func deidentifyPlaybackProgress(item models.PlaybackProgress) models.PlaybackProgress {
+	item.ItemID = deidentifyMediaIdentifier(item.ItemID)
+	item.ID = deidentifyMediaKey(item.MediaType, item.ItemID)
+	item.SeriesID = deidentifyMediaIdentifier(item.SeriesID)
+	item.ExternalIDs = deidentifyExternalIDs(item.ExternalIDs)
+	item.AllowedToContinue = nil
+	return item
+}
+
+func deidentifyWatchHistoryItem(item models.WatchHistoryItem) models.WatchHistoryItem {
+	item.ItemID = deidentifyMediaIdentifier(item.ItemID)
+	item.ID = deidentifyMediaKey(item.MediaType, item.ItemID)
+	item.SeriesID = deidentifyMediaIdentifier(item.SeriesID)
+	item.ExternalIDs = deidentifyExternalIDs(item.ExternalIDs)
+	return item
+}
+
+func deidentifyMediaKey(mediaType, itemID string) string {
+	mediaType = strings.TrimSpace(mediaType)
+	itemID = strings.TrimSpace(itemID)
+	if mediaType == "" {
+		return itemID
+	}
+	if itemID == "" {
+		return mediaType
+	}
+	return mediaType + ":" + itemID
+}
+
+func deidentifyExternalIDs(ids map[string]string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(ids))
+	for key, value := range ids {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		result[key] = deidentifyMediaIdentifier(value)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func deidentifyMediaIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if looksLikeFilesystemIdentifier(value) {
+		return "redacted-local:" + stableDiagnosticHash(value)
+	}
+	return value
+}
+
+func looksLikeFilesystemIdentifier(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.HasPrefix(lower, "file:") ||
+		strings.HasPrefix(lower, "localmedia:") ||
+		strings.HasPrefix(lower, "/") ||
+		strings.HasPrefix(lower, "\\") ||
+		strings.Contains(lower, "://") ||
+		strings.Contains(lower, ":\\") ||
+		strings.Contains(lower, "/volumes/") ||
+		strings.Contains(lower, "/users/") ||
+		strings.Contains(lower, "/home/")
+}
+
+func stableDiagnosticHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func redactLogUploadContent(content string) string {

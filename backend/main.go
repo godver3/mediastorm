@@ -416,6 +416,7 @@ func main() {
 
 	debugHandler := handlers.NewDebugHandler(log.New(os.Stdout, "[debug] ", log.LstdFlags))
 	logsHandler := handlers.NewLogsHandler(log.New(os.Stdout, "[logs] ", log.LstdFlags), settings.Log.File)
+	logsHandler.SetDataStore(store)
 
 	var watchlistService *watchlist.Service
 	if store != nil {

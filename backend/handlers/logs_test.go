@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"novastream/models"
 )
 
 func TestLogsHandler_TryPasteService_DirectURL(t *testing.T) {
@@ -253,6 +255,34 @@ func TestLogsHandler_SubmitToPaste_AllFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "all paste services failed") {
 		t.Errorf("expected 'all paste services failed' error, got: %v", err)
+	}
+}
+
+func TestDeidentifyPlaybackProgressRedactsLocalIdentifiers(t *testing.T) {
+	item := models.PlaybackProgress{
+		ID:        "episode:localmedia:/Users/alice/Shows/The Office/S02E08.mkv",
+		MediaType: "episode",
+		ItemID:    "localmedia:/Users/alice/Shows/The Office/S02E08.mkv",
+		SeriesID:  "/Users/alice/Shows/The Office",
+		ExternalIDs: map[string]string{
+			"imdb":  "tt0386676",
+			"local": "/Volumes/Media/The Office/S02E08.mkv",
+		},
+	}
+
+	got := deidentifyPlaybackProgress(item)
+
+	if strings.Contains(got.ID, "/Users/alice") || strings.Contains(got.ItemID, "/Users/alice") || strings.Contains(got.SeriesID, "/Users/alice") {
+		t.Fatalf("expected local identifiers to be redacted, got: %+v", got)
+	}
+	if !strings.HasPrefix(got.ItemID, "redacted-local:") {
+		t.Fatalf("expected item ID to be redacted, got %q", got.ItemID)
+	}
+	if got.ExternalIDs["imdb"] != "tt0386676" {
+		t.Fatalf("expected public media ID to remain intact, got %q", got.ExternalIDs["imdb"])
+	}
+	if !strings.HasPrefix(got.ExternalIDs["local"], "redacted-local:") {
+		t.Fatalf("expected local external ID to be redacted, got %q", got.ExternalIDs["local"])
 	}
 }
 

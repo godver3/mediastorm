@@ -436,6 +436,8 @@ func Register(
 	protected.HandleFunc("/logs/submit", logsHandler.Options).Methods(http.MethodOptions)
 	protected.HandleFunc("/logs/frontend", logsHandler.UploadFrontendLogs).Methods(http.MethodPost)
 	protected.HandleFunc("/logs/frontend", logsHandler.Options).Methods(http.MethodOptions)
+	protected.HandleFunc("/logs/database", logsHandler.SubmitDatabaseSnapshot).Methods(http.MethodPost)
+	protected.HandleFunc("/logs/database", logsHandler.Options).Methods(http.MethodOptions)
 
 	// Version endpoint (public)
 	versionHandler := handlers.NewVersionHandler()
