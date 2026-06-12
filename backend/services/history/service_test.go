@@ -1653,12 +1653,18 @@ func TestImportWatchHistory_UnwatchedSyncsCrossProviderEpisodeDuplicate(t *testi
 	if duplicate.Watched {
 		t.Fatalf("expected TMDB survivor to be unwatched: %+v", duplicate)
 	}
-	oldDuplicate, err := svc.GetWatchHistoryItem(userID, "episode", "tvdb:series:81797:s23e10")
-	if err != nil {
-		t.Fatalf("GetWatchHistoryItem() old duplicate error = %v", err)
+	svc.mu.RLock()
+	_, oldKeyExists := svc.watchHistory[userID][makeWatchKey("episode", "tvdb:series:81797:s23e10")]
+	svc.mu.RUnlock()
+	if oldKeyExists {
+		t.Fatal("expected TVDB duplicate storage row to be rekeyed away")
 	}
-	if oldDuplicate != nil {
-		t.Fatalf("expected TVDB duplicate to be rekeyed away, got %+v", oldDuplicate)
+	alias, err := svc.GetWatchHistoryItem(userID, "episode", "tvdb:series:81797:s23e10")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() alias lookup error = %v", err)
+	}
+	if alias == nil || alias.ItemID != "tmdb:tv:37854:s23e10" {
+		t.Fatalf("expected TVDB alias lookup to resolve to TMDB survivor, got %+v", alias)
 	}
 }
 
@@ -1787,8 +1793,8 @@ func TestBuildCanonicalSeriesIDMap_UsesExternalProviderAliases(t *testing.T) {
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, progressItems)
-	if got := canonical["tvdb:series:360261"]; got != "tvdb:series:360261" {
-		t.Fatalf("expected contradictory stale TVDB series ID to stay isolated, got %q", got)
+	if got := canonical["tvdb:series:360261"]; got != "tmdb:tv:220102" {
+		t.Fatalf("expected stale TVDB series ID to resolve through provider aliases, got %q", got)
 	}
 	if got := canonical["tvdb:series:450033"]; got != "tmdb:tv:220102" {
 		t.Fatalf("expected TVDB alias to resolve to TMDB alias, got %q", got)
@@ -1798,7 +1804,7 @@ func TestBuildCanonicalSeriesIDMap_UsesExternalProviderAliases(t *testing.T) {
 	}
 }
 
-func TestBuildCanonicalSeriesIDMap_IgnoresContradictoryExternalIDs(t *testing.T) {
+func TestBuildCanonicalSeriesIDMap_UsesProviderIDsForContradictoryRows(t *testing.T) {
 	items := []models.WatchHistoryItem{
 		{
 			MediaType:  "episode",
@@ -1841,8 +1847,8 @@ func TestBuildCanonicalSeriesIDMap_IgnoresContradictoryExternalIDs(t *testing.T)
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, progressItems)
-	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:220102" {
-		t.Fatalf("expected Spider-Noir TMDB row to stay isolated from bad external IDs, got %q", got)
+	if got := canonical["tmdb:tv:220102"]; got != "tmdb:tv:4629" {
+		t.Fatalf("expected stale Spider-Noir TMDB row to resolve through provider IDs, got %q", got)
 	}
 	if got := canonical["tvdb:series:72449"]; got != "tmdb:tv:4629" {
 		t.Fatalf("expected Stargate row to resolve within its own clean external IDs, got %q", got)
@@ -1852,7 +1858,7 @@ func TestBuildCanonicalSeriesIDMap_IgnoresContradictoryExternalIDs(t *testing.T)
 	}
 }
 
-func TestBuildCanonicalSeriesIDMap_UsesEpisodeItemIDBridgeForPollutedRows(t *testing.T) {
+func TestBuildCanonicalSeriesIDMap_ProviderIDsWinOverItemIDBridgeForPollutedRows(t *testing.T) {
 	items := []models.WatchHistoryItem{
 		{
 			MediaType:   "episode",
@@ -1871,12 +1877,15 @@ func TestBuildCanonicalSeriesIDMap_UsesEpisodeItemIDBridgeForPollutedRows(t *tes
 	}
 
 	canonical := buildCanonicalSeriesIDMap(items, nil)
-	if got := resolveCanonicalID(canonical, "tvdb:series:450033"); got != "tmdb:tv:220102" {
-		t.Fatalf("expected TVDB item-key bridge to merge into TMDB canonical ID, got %q", got)
+	if got := resolveCanonicalID(canonical, "tvdb:series:450033"); got != "tvdb:series:450033" {
+		t.Fatalf("expected clean TVDB row to stay on its provider series, got %q", got)
+	}
+	if got := resolveCanonicalID(canonical, "tmdb:tv:220102"); got != "tmdb:tv:4629" {
+		t.Fatalf("expected contradictory TMDB row to resolve through provider IDs, got %q", got)
 	}
 }
 
-func TestContinueWatching_PromotesCorruptedUnwatchedGapsBeforeLaterWatchedEpisode(t *testing.T) {
+func TestContinueWatching_IgnoresContradictoryExternalIDGapsBeforeLaterWatchedEpisode(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
 	if err != nil {
@@ -1924,8 +1933,8 @@ func TestContinueWatching_PromotesCorruptedUnwatchedGapsBeforeLaterWatchedEpisod
 	if len(items) != 1 {
 		t.Fatalf("expected one Spider-Noir item, got %d: %+v", len(items), items)
 	}
-	if items[0].WatchedEpisodeCount != 4 {
-		t.Fatalf("expected corrupted E2/E3 gaps to count as watched, got %d", items[0].WatchedEpisodeCount)
+	if items[0].WatchedEpisodeCount != 2 {
+		t.Fatalf("expected contradictory E2/E3 gaps not to count as watched, got %d", items[0].WatchedEpisodeCount)
 	}
 	if items[0].NextEpisode == nil || items[0].NextEpisode.EpisodeNumber != 5 {
 		t.Fatalf("expected next episode S01E05, got %+v", items[0].NextEpisode)
@@ -2011,8 +2020,8 @@ func TestContinueWatching_CorruptedFutureRowsDoNotRewindNextEpisode(t *testing.T
 	if len(items) != 1 {
 		t.Fatalf("expected one Pitt item, got %d: %+v", len(items), items)
 	}
-	if items[0].WatchedEpisodeCount != 13 {
-		t.Fatalf("expected corrupted S02E10-S02E12 gaps to count as watched, got %d", items[0].WatchedEpisodeCount)
+	if items[0].WatchedEpisodeCount != 10 {
+		t.Fatalf("expected corrupted S02E10-S02E12 gaps not to count as watched, got %d", items[0].WatchedEpisodeCount)
 	}
 	if items[0].NextEpisode == nil || items[0].NextEpisode.EpisodeNumber != 14 {
 		t.Fatalf("expected next episode to advance to S02E14, got %+v", items[0].NextEpisode)
@@ -2668,6 +2677,9 @@ func TestContinueWatching_IgnoresVisibleSeriesMarkerRows(t *testing.T) {
 	}
 	if items[0].LastWatched.SeasonNumber != 1 || items[0].LastWatched.EpisodeNumber != 12 {
 		t.Fatalf("expected visible marker row to be ignored, got lastWatched S%02dE%02d", items[0].LastWatched.SeasonNumber, items[0].LastWatched.EpisodeNumber)
+	}
+	if items[0].PercentWatched != 8.1 || items[0].ResumePercent != 8.1 {
+		t.Fatalf("expected in-progress percent to survive, got percent=%.2f resume=%.2f", items[0].PercentWatched, items[0].ResumePercent)
 	}
 }
 
@@ -4371,6 +4383,77 @@ func TestImportWatchHistory_CrossProviderMovieClearsPlaybackProgress(t *testing.
 	}
 	if len(progress) != 0 {
 		t.Fatalf("expected cross-provider watched movie import to clear playback progress, got %d rows", len(progress))
+	}
+}
+
+func TestIsWatchedProgressUpdate_MovieCrossProvider(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:12429",
+		Name:        "Ponyo",
+		Watched:     &watched,
+		ExternalIDs: map[string]string{"tmdb": "12429", "imdb": "tt0876563"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	if !svc.IsWatchedProgressUpdate(userID, models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tvdb:movie:370",
+		ExternalIDs: map[string]string{"tvdb": "370", "imdb": "tt0876563"},
+	}) {
+		t.Fatal("expected cross-provider movie progress to match watched history")
+	}
+}
+
+func TestIsWatchedProgressUpdate_EpisodeTitleIDContradiction(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "test-user"
+	watched := true
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:1187404:s06e09",
+		Name:          "Battle of the Bastards",
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tmdb": "1399", "tvdb": "121361", "titleId": "tmdb:tv:1399"},
+		SeasonNumber:  6,
+		EpisodeNumber: 9,
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	item, err := svc.GetWatchHistoryItem(userID, "episode", "tmdb:tv:1399:s06e09")
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected normalized watched episode")
+	}
+	if item.ItemID != "tmdb:tv:1399:s06e09" || item.SeriesID != "tmdb:tv:1399" {
+		t.Fatalf("expected titleId-backed identity, got itemID=%q seriesID=%q", item.ItemID, item.SeriesID)
+	}
+
+	if !svc.IsWatchedProgressUpdate(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:1187404:s06e09",
+		ExternalIDs:   map[string]string{"tmdb": "1399", "tvdb": "121361", "titleId": "tmdb:tv:1399"},
+		SeasonNumber:  6,
+		EpisodeNumber: 9,
+	}) {
+		t.Fatal("expected legacy-prefixed progress to match normalized watched history")
 	}
 }
 

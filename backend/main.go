@@ -156,6 +156,9 @@ func main() {
 		if migrateErr := datastore.MigrateFromJSON(context.Background(), store, settings.Cache.Directory); migrateErr != nil {
 			log.Printf("Warning: JSON migration encountered errors: %v", migrateErr)
 		}
+		if migrateErr := datastore.RunDataMigrations(context.Background(), store); migrateErr != nil {
+			log.Printf("Warning: datastore data migration encountered errors: %v", migrateErr)
+		}
 	} else {
 		fmt.Println("")
 		fmt.Println("╔══════════════════════════════════════════════════════════════════════╗")

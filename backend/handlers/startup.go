@@ -163,9 +163,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.WatchlistTotal = len(items)
-		if len(items) > startupPayloadLimit {
-			items = items[:startupPayloadLimit]
-		}
+		items = selectStartupWatchlistItems(items, startupShelfLimit, startupExploreCollageItemCount)
 		enrichWatchlistArtwork(items, h.metadata)
 		resp.Watchlist = items
 	}()
@@ -193,16 +191,12 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		snapshot := loadHistorySnapshot()
 		if snapshot.playbackProgressErr != nil {
 			log.Printf("[startup] playback progress error for %s: %v", userID, snapshot.playbackProgressErr)
-			if len(items) > startupPayloadLimit {
-				items = items[:startupPayloadLimit]
-			}
+			items = selectStartupContinueWatchingItems(items, startupShelfLimit, startupExploreCollageItemCount)
 			resp.ContinueWatching = items
 			return
 		}
 		merged := mergeProgressIntoContinueWatching(items, snapshot.playbackProgress)
-		if len(merged) > startupPayloadLimit {
-			merged = merged[:startupPayloadLimit]
-		}
+		merged = selectStartupContinueWatchingItems(merged, startupShelfLimit, startupExploreCollageItemCount)
 		resp.ContinueWatching = merged
 	}()
 
@@ -400,6 +394,178 @@ func startupPrequeueMatchesContinueWatchingItem(entry *playback.PrequeueEntry, i
 	}
 	return entry.TargetEpisode.SeasonNumber == item.NextEpisode.SeasonNumber &&
 		entry.TargetEpisode.EpisodeNumber == item.NextEpisode.EpisodeNumber
+}
+
+func selectStartupWatchlistItems(items []models.WatchlistItem, shelfLimit, overflowCount int) []models.WatchlistItem {
+	if shelfLimit <= 0 || len(items) <= shelfLimit || overflowCount <= 0 {
+		if shelfLimit > 0 && len(items) > shelfLimit {
+			return items[:shelfLimit]
+		}
+		return items
+	}
+
+	result := append([]models.WatchlistItem(nil), items[:shelfLimit]...)
+	seen := make(map[string]struct{}, len(result)*2)
+	for _, item := range result {
+		addStartupIdentityKeys(seen, startupWatchlistIdentityKeys(item))
+	}
+
+	fallback := make([]models.WatchlistItem, 0, overflowCount)
+	fallbackSeen := make(map[string]struct{}, overflowCount*2)
+	for _, item := range items[shelfLimit:] {
+		keys := startupWatchlistIdentityKeys(item)
+		if hasStartupIdentityKey(seen, keys) {
+			continue
+		}
+		if !startupWatchlistHasUsableExploreArtwork(item) {
+			if !hasStartupIdentityKey(fallbackSeen, keys) {
+				fallback = append(fallback, item)
+				addStartupIdentityKeys(fallbackSeen, keys)
+			}
+			continue
+		}
+		result = append(result, item)
+		addStartupIdentityKeys(seen, keys)
+		if len(result) >= shelfLimit+overflowCount {
+			break
+		}
+	}
+	for _, item := range fallback {
+		if len(result) >= shelfLimit+overflowCount {
+			break
+		}
+		keys := startupWatchlistIdentityKeys(item)
+		if hasStartupIdentityKey(seen, keys) {
+			continue
+		}
+		result = append(result, item)
+		addStartupIdentityKeys(seen, keys)
+	}
+	return result
+}
+
+func selectStartupContinueWatchingItems(items []models.SeriesWatchState, shelfLimit, overflowCount int) []models.SeriesWatchState {
+	if shelfLimit <= 0 || len(items) <= shelfLimit || overflowCount <= 0 {
+		if shelfLimit > 0 && len(items) > shelfLimit {
+			return items[:shelfLimit]
+		}
+		return items
+	}
+
+	result := append([]models.SeriesWatchState(nil), items[:shelfLimit]...)
+	seen := make(map[string]struct{}, len(result)*2)
+	for _, item := range result {
+		addStartupIdentityKeys(seen, startupContinueWatchingIdentityKeys(item))
+	}
+
+	fallback := make([]models.SeriesWatchState, 0, overflowCount)
+	fallbackSeen := make(map[string]struct{}, overflowCount*2)
+	for _, item := range items[shelfLimit:] {
+		keys := startupContinueWatchingIdentityKeys(item)
+		if hasStartupIdentityKey(seen, keys) {
+			continue
+		}
+		if !startupContinueWatchingHasUsableExploreArtwork(item) {
+			if !hasStartupIdentityKey(fallbackSeen, keys) {
+				fallback = append(fallback, item)
+				addStartupIdentityKeys(fallbackSeen, keys)
+			}
+			continue
+		}
+		result = append(result, item)
+		addStartupIdentityKeys(seen, keys)
+		if len(result) >= shelfLimit+overflowCount {
+			break
+		}
+	}
+	for _, item := range fallback {
+		if len(result) >= shelfLimit+overflowCount {
+			break
+		}
+		keys := startupContinueWatchingIdentityKeys(item)
+		if hasStartupIdentityKey(seen, keys) {
+			continue
+		}
+		result = append(result, item)
+		addStartupIdentityKeys(seen, keys)
+	}
+	return result
+}
+
+func startupWatchlistHasUsableExploreArtwork(item models.WatchlistItem) bool {
+	return isUsableStartupExploreArtworkURL(item.PosterURL)
+}
+
+func startupContinueWatchingHasUsableExploreArtwork(item models.SeriesWatchState) bool {
+	return isUsableStartupExploreArtworkURL(item.PosterURL) ||
+		isUsableStartupExploreArtworkURL(item.TextPosterURL) ||
+		isUsableStartupExploreArtworkURL(item.BackdropURL)
+}
+
+func isUsableStartupExploreArtworkURL(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "metadata-static.plex.tv") ||
+		strings.Contains(lower, "via.placeholder.com") ||
+		strings.Contains(lower, "text=no+image") ||
+		strings.Contains(lower, "text=loading") {
+		return false
+	}
+	return true
+}
+
+func startupWatchlistIdentityKeys(item models.WatchlistItem) []string {
+	return startupMediaIdentityKeys(item.MediaType, item.ID, item.Name, item.Year, item.ExternalIDs)
+}
+
+func startupContinueWatchingIdentityKeys(item models.SeriesWatchState) []string {
+	return startupMediaIdentityKeys("series", item.SeriesID, item.SeriesTitle, item.Year, item.ExternalIDs)
+}
+
+func startupMediaIdentityKeys(mediaType, id, name string, year int, externalIDs map[string]string) []string {
+	media := strings.ToLower(strings.TrimSpace(mediaType))
+	if media == "" {
+		media = "unknown"
+	}
+	keys := make([]string, 0, 5)
+	if normalizedName := normalizeStartupIdentityPart(name); normalizedName != "" {
+		if year > 0 {
+			keys = append(keys, fmt.Sprintf("%s:title:%s:%d", media, normalizedName, year))
+		} else {
+			keys = append(keys, fmt.Sprintf("%s:title:%s", media, normalizedName))
+		}
+	}
+	for _, provider := range []string{"tmdb", "tvdb", "imdb"} {
+		if value := normalizeStartupIdentityPart(externalIDs[provider]); value != "" {
+			keys = append(keys, fmt.Sprintf("%s:%s:%s", media, provider, value))
+		}
+	}
+	if normalizedID := normalizeStartupIdentityPart(id); normalizedID != "" {
+		keys = append(keys, fmt.Sprintf("%s:id:%s", media, normalizedID))
+	}
+	return keys
+}
+
+func normalizeStartupIdentityPart(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func addStartupIdentityKeys(seen map[string]struct{}, keys []string) {
+	for _, key := range keys {
+		seen[key] = struct{}{}
+	}
+}
+
+func hasStartupIdentityKey(seen map[string]struct{}, keys []string) bool {
+	for _, key := range keys {
+		if _, ok := seen[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // SetUsersProvider sets the users service for kids profile filtering.

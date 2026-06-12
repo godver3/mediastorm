@@ -3,10 +3,14 @@ package datastore
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -16,6 +20,13 @@ import (
 
 //go:embed migrations/*.sql
 var embedMigrations embed.FS
+
+const dataMigrationAdvisoryLockKey int64 = 6472188516902220156
+
+type dataMigrationMarkerStore interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	// goose needs a *sql.DB, so wrap the pgx pool via stdlib
@@ -37,7 +48,38 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-func runDataMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+// RunDataMigrations runs idempotent Go data migrations against an initialized
+// datastore. It is safe to call after JSON import so freshly imported rows also
+// receive data repairs whose SQL schema migrations already ran at startup.
+func RunDataMigrations(ctx context.Context, ds *DataStore) error {
+	if ds == nil || ds.pool == nil {
+		return nil
+	}
+	return runDataMigrations(ctx, ds.pool)
+}
+
+func rerunDataMigrations(ctx context.Context, pool *pgxpool.Pool, names ...string) error {
+	cleaned := make([]string, 0, len(names))
+	for _, name := range names {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	if err := ensureDataMigrationTable(ctx, pool); err != nil {
+		return err
+	}
+	return withDataMigrationMarkerStore(ctx, pool, func(markerStore dataMigrationMarkerStore) error {
+		if _, err := markerStore.Exec(ctx, `DELETE FROM app_data_migrations WHERE name = ANY($1)`, cleaned); err != nil {
+			return fmt.Errorf("clear data migration markers %s: %w", strings.Join(cleaned, ","), err)
+		}
+		return runDataMigrationsWithMarkerStore(ctx, pool, markerStore)
+	})
+}
+
+func ensureDataMigrationTable(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS app_data_migrations (
 			name TEXT PRIMARY KEY,
@@ -45,29 +87,74 @@ func runDataMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		)`); err != nil {
 		return fmt.Errorf("ensure app_data_migrations: %w", err)
 	}
+	return nil
+}
 
+func runDataMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	if err := ensureDataMigrationTable(ctx, pool); err != nil {
+		return err
+	}
+	return withDataMigrationMarkerStore(ctx, pool, func(markerStore dataMigrationMarkerStore) error {
+		return runDataMigrationsWithMarkerStore(ctx, pool, markerStore)
+	})
+}
+
+func withDataMigrationMarkerStore(ctx context.Context, pool *pgxpool.Pool, fn func(dataMigrationMarkerStore) error) error {
+	if pool.Stat().MaxConns() <= 1 {
+		return fn(pool)
+	}
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire data migration lock connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, dataMigrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("lock data migrations: %w", err)
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, `SELECT pg_advisory_unlock($1)`, dataMigrationAdvisoryLockKey)
+	}()
+
+	return fn(conn)
+}
+
+func runDataMigrationsWithMarkerStore(ctx context.Context, pool *pgxpool.Pool, markerStore dataMigrationMarkerStore) error {
 	ds := &DataStore{pool: pool}
 	migrations := []struct {
 		name string
 		run  func(context.Context, *DataStore) error
 	}{
 		{name: "watchlist_reconcile_v1", run: reconcileWatchlistDataMigration},
+		{name: "media_identity_reconcile_v1", run: reconcileMediaIdentityDataMigration},
+		{name: "media_identity_reconcile_v2", run: reconcileMediaIdentityDataMigration},
+		{name: "media_identity_reconcile_v3", run: reconcileMediaIdentityDataMigration},
 	}
 
+	// Several marker names can point at the same (idempotent) reconcile
+	// function; run each function at most once per pass.
+	ranThisPass := make(map[uintptr]bool, len(migrations))
 	for _, migration := range migrations {
 		var appliedAt time.Time
-		err := pool.QueryRow(ctx, `SELECT applied_at FROM app_data_migrations WHERE name = $1`, migration.name).Scan(&appliedAt)
+		err := markerStore.QueryRow(ctx, `SELECT applied_at FROM app_data_migrations WHERE name = $1`, migration.name).Scan(&appliedAt)
 		if err == nil {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(err.Error()), "no rows") {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("check data migration %s: %w", migration.name, err)
 		}
 
-		if err := migration.run(ctx, ds); err != nil {
-			return fmt.Errorf("run %s: %w", migration.name, err)
+		fnKey := reflect.ValueOf(migration.run).Pointer()
+		if !ranThisPass[fnKey] {
+			if err := migration.run(ctx, ds); err != nil {
+				return fmt.Errorf("run %s: %w", migration.name, err)
+			}
+			ranThisPass[fnKey] = true
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO app_data_migrations (name) VALUES ($1)`, migration.name); err != nil {
+		if _, err := markerStore.Exec(ctx, `INSERT INTO app_data_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, migration.name); err != nil {
 			return fmt.Errorf("record data migration %s: %w", migration.name, err)
 		}
 	}

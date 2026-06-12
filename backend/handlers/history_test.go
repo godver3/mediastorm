@@ -67,6 +67,10 @@ func (f *fakeHistoryService) BulkUpdateWatchHistory(userID string, updates []mod
 	return nil, f.err
 }
 
+func (f *fakeHistoryService) DeleteWatchHistoryItem(userID, mediaType, itemID string) error {
+	return f.err
+}
+
 func (f *fakeHistoryService) IsWatched(userID, mediaType, itemID string) (bool, error) {
 	return false, f.err
 }

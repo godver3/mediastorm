@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,6 +102,9 @@ func (m *mockHistoryService) UpdateWatchHistory(userID string, update models.Wat
 }
 func (m *mockHistoryService) BulkUpdateWatchHistory(userID string, updates []models.WatchHistoryUpdate) ([]models.WatchHistoryItem, error) {
 	return nil, nil
+}
+func (m *mockHistoryService) DeleteWatchHistoryItem(userID, mediaType, itemID string) error {
+	return nil
 }
 func (m *mockHistoryService) IsWatched(userID, mediaType, itemID string) (bool, error) {
 	return false, nil
@@ -374,9 +379,9 @@ func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
 	continueWatchingItems := make([]models.SeriesWatchState, 30)
 	trendingItems := make([]models.TrendingItem, 30)
 	for i := 0; i < 30; i++ {
-		watchlistItems[i] = models.WatchlistItem{ID: fmt.Sprintf("m%d", i), MediaType: "movie", Name: "Movie"}
-		continueWatchingItems[i] = models.SeriesWatchState{SeriesID: fmt.Sprintf("s%d", i), SeriesTitle: "Series"}
-		trendingItems[i] = models.TrendingItem{Rank: i + 1, Title: models.Title{ID: fmt.Sprintf("t%d", i), Name: "Trending"}}
+		watchlistItems[i] = models.WatchlistItem{ID: fmt.Sprintf("m%d", i), MediaType: "movie", Name: fmt.Sprintf("Movie %d", i)}
+		continueWatchingItems[i] = models.SeriesWatchState{SeriesID: fmt.Sprintf("s%d", i), SeriesTitle: fmt.Sprintf("Series %d", i)}
+		trendingItems[i] = models.TrendingItem{Rank: i + 1, Title: models.Title{ID: fmt.Sprintf("t%d", i), Name: fmt.Sprintf("Trending %d", i)}}
 	}
 
 	h := handlers.NewStartupHandler(
@@ -430,6 +435,124 @@ func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
 	}
 	if resp.TrendingMovies.Total != 30 {
 		t.Fatalf("trendingMovies total = %d, want 30", resp.TrendingMovies.Total)
+	}
+}
+
+func TestStartupHandler_WatchlistOverflowSkipsDisplayedDuplicates(t *testing.T) {
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+	watchlistItems := []models.WatchlistItem{
+		{ID: "series-one-piece-visible", MediaType: "series", Name: "One Piece", Year: 1999},
+		{ID: "series-rake-visible", MediaType: "series", Name: "Rake", Year: 2010},
+		{ID: "series-one-piece-overflow", MediaType: "series", Name: "One Piece", Year: 1999},
+		{ID: "series-rake-overflow", MediaType: "series", Name: "Rake", Year: 2010},
+		{ID: "series-overflow-a", MediaType: "series", Name: "Overflow A", Year: 2020},
+		{ID: "series-overflow-b", MediaType: "series", Name: "Overflow B", Year: 2021},
+		{ID: "series-overflow-c", MediaType: "series", Name: "Overflow C", Year: 2022},
+		{ID: "series-overflow-d", MediaType: "series", Name: "Overflow D", Year: 2023},
+	}
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{
+			withDefault: models.UserSettings{
+				Playback: models.PlaybackSettings{PreferredPlayer: "native"},
+				HomeShelves: models.HomeShelvesSettings{
+					Shelves: models.DefaultHomeShelfConfigs(),
+					ItemCap: 2,
+				},
+			},
+		},
+		&mockWatchlistService{items: watchlistItems},
+		&mockHistoryService{},
+		&mockMetadataServiceStartup{},
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/startup?includeTrendingMovies=false&includeTrendingSeries=false", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetStartup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp handlers.StartupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got := len(resp.Watchlist); got != 6 {
+		t.Fatalf("watchlist startup count = %d, want 6", got)
+	}
+	if resp.WatchlistTotal != len(watchlistItems) {
+		t.Fatalf("watchlistTotal = %d, want %d", resp.WatchlistTotal, len(watchlistItems))
+	}
+	for _, item := range resp.Watchlist[2:] {
+		if item.Name == "One Piece" || item.Name == "Rake" {
+			t.Fatalf("overflow item %q duplicates a displayed watchlist title", item.Name)
+		}
+	}
+}
+
+func TestStartupHandler_WatchlistOverflowPrefersUsableArtwork(t *testing.T) {
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+	watchlistItems := []models.WatchlistItem{
+		{ID: "series-one-piece-visible", MediaType: "series", Name: "One Piece", Year: 1999, PosterURL: "https://image.tmdb.org/t/p/w780/one-piece.jpg"},
+		{ID: "series-rake-visible", MediaType: "series", Name: "Rake", Year: 2010, PosterURL: "https://image.tmdb.org/t/p/w780/rake.jpg"},
+		{ID: "movie-static-a", MediaType: "movie", Name: "Static A", Year: 2025, PosterURL: "https://metadata-static.plex.tv/poster-a.jpg", TextPosterURL: "https://image.tmdb.org/t/p/w780/static-a-text.jpg"},
+		{ID: "movie-static-b", MediaType: "movie", Name: "Static B", Year: 2025, PosterURL: "https://via.placeholder.com/300x450?text=No+Image", BackdropURL: "https://image.tmdb.org/t/p/w780/static-b-backdrop.jpg"},
+		{ID: "series-overflow-a", MediaType: "series", Name: "Overflow A", Year: 2020, PosterURL: "https://image.tmdb.org/t/p/w780/overflow-a.jpg"},
+		{ID: "series-overflow-b", MediaType: "series", Name: "Overflow B", Year: 2021, PosterURL: "https://image.tmdb.org/t/p/w780/overflow-b.jpg"},
+		{ID: "series-overflow-c", MediaType: "series", Name: "Overflow C", Year: 2022, PosterURL: "https://image.tmdb.org/t/p/w780/overflow-c.jpg"},
+		{ID: "series-overflow-d", MediaType: "series", Name: "Overflow D", Year: 2023, PosterURL: "https://image.tmdb.org/t/p/w780/overflow-d.jpg"},
+	}
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{
+			withDefault: models.UserSettings{
+				Playback: models.PlaybackSettings{PreferredPlayer: "native"},
+				HomeShelves: models.HomeShelvesSettings{
+					Shelves: models.DefaultHomeShelfConfigs(),
+					ItemCap: 2,
+				},
+			},
+		},
+		&mockWatchlistService{items: watchlistItems},
+		&mockHistoryService{},
+		&mockMetadataServiceStartup{},
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/startup?includeTrendingMovies=false&includeTrendingSeries=false", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetStartup(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp handlers.StartupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got := len(resp.Watchlist); got != 6 {
+		t.Fatalf("watchlist startup count = %d, want 6", got)
+	}
+	gotNames := []string{}
+	for _, item := range resp.Watchlist[2:] {
+		gotNames = append(gotNames, item.Name)
+		if strings.Contains(strings.ToLower(item.PosterURL), "metadata-static.plex.tv") ||
+			strings.Contains(strings.ToLower(item.PosterURL), "via.placeholder.com") {
+			t.Fatalf("overflow item %q used unusable artwork URL %q", item.Name, item.PosterURL)
+		}
+	}
+	wantNames := []string{"Overflow A", "Overflow B", "Overflow C", "Overflow D"}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("overflow names = %v, want %v", gotNames, wantNames)
 	}
 }
 

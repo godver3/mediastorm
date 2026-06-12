@@ -642,6 +642,7 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/history/watched/bulk", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.GetWatchHistoryItem).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.UpdateWatchHistory).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.DeleteWatchHistoryItem).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}/toggle", historyHandler.ToggleWatched).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.Options).Methods(http.MethodOptions)
 

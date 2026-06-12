@@ -1270,8 +1270,8 @@ func TestSyncMDBListWatchlistToLocal_MirrorModeKeepsCanonicalMergedItem(t *testi
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ID != "tvdb:movie:344109" {
-		t.Fatalf("item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	if items[0].ID != "tmdb:movie:1084242" {
+		t.Fatalf("item ID = %q, want %q", items[0].ID, "tmdb:movie:1084242")
 	}
 	if items[0].SyncSource != "mdblist:acc-1:task-1" {
 		t.Fatalf("sync source = %q, want %q", items[0].SyncSource, "mdblist:acc-1:task-1")
@@ -1365,8 +1365,8 @@ func TestSyncPlexToLocal_MirrorModeKeepsCanonicalMergedItem(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ID != "tvdb:movie:344109" {
-		t.Fatalf("item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	if items[0].ID != "tmdb:movie:1084242" {
+		t.Fatalf("item ID = %q, want %q", items[0].ID, "tmdb:movie:1084242")
 	}
 	if got := items[0].ExternalIDs["plex"]; got != "plex-zootopia-2" {
 		t.Fatalf("expected plex external ID to be merged, got %q", got)
@@ -1473,8 +1473,8 @@ func TestExecuteJellyfinFavoritesSync_MirrorModeKeepsCanonicalMergedItem(t *test
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ID != "tvdb:movie:344109" {
-		t.Fatalf("item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	if items[0].ID != "tmdb:movie:1084242" {
+		t.Fatalf("item ID = %q, want %q", items[0].ID, "tmdb:movie:1084242")
 	}
 	if got := items[0].ExternalIDs["jellyfin"]; got != "jf-zootopia-2" {
 		t.Fatalf("expected jellyfin external ID to be merged, got %q", got)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"novastream/internal/datastore"
+	"novastream/internal/mediaidentity"
 	"novastream/models"
 	"novastream/services/calendar"
 )
@@ -651,7 +652,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// (e.g., player uses "tvdb:series:353546" while Trakt sync uses "tmdb:tv:82728" for the same show)
 	// This must happen before any grouping by seriesID.
 	canonicalSeriesID := buildCanonicalSeriesIDMap(items, progressItems)
-	logContinueDebugCanonicalMap("build", canonicalSeriesID, items, progressItems)
 
 	// Build set of hidden series IDs from progress items
 	hiddenSeriesIDs := make(map[string]bool)
@@ -718,7 +718,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 		}
 
 		// Resolve to canonical ID so player and Trakt entries merge
-		originalSeriesID := seriesID
 		seriesID = resolveCanonicalID(canonicalSeriesID, seriesID)
 
 		if isEpisode && seriesID != "" && prog.PercentWatched < 90 && !hiddenSeriesIDs[seriesID] {
@@ -731,9 +730,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				}
 				inProgressBySeriesCache[seriesID] = prog
 			}
-			logContinueDebugProgress("in-progress accepted", *prog, originalSeriesID, seriesID, existing != nil)
-		} else {
-			logContinueDebugProgressSkip(*prog, originalSeriesID, seriesID, isEpisode, hiddenSeriesIDs[seriesID])
 		}
 	}
 	// Filter to watched episodes from the past 365 days
@@ -753,7 +749,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	for _, item := range items {
 		if item.MediaType == "episode" && item.SeriesID != "" {
 			resolvedID := resolveCanonicalID(canonicalSeriesID, item.SeriesID)
-			logContinueDebugHistory("history candidate", item, resolvedID, hiddenSeriesIDs[resolvedID])
 			// Skip hidden series
 			if hiddenSeriesIDs[resolvedID] {
 				continue
@@ -808,7 +803,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			if _, exists := seriesInfo[seriesID]; !exists {
 				seriesInfo[seriesID] = item
 			}
-			logContinueDebugHistory("promoted corrupted unwatched gap", item, seriesID, false)
 		}
 	}
 
@@ -824,7 +818,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				SeasonNumber:  prog.SeasonNumber,
 				EpisodeNumber: prog.EpisodeNumber,
 			}
-			logContinueDebugProgress("seriesInfo from progress", *prog, prog.SeriesID, seriesID, false)
 		}
 	}
 
@@ -900,7 +893,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 			// Fetch series metadata once (cached) so the in-progress reconciliation,
 			// next-episode lookup, and enrichment below can all reuse it.
 			seriesDetails, seriesErr := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
-			logContinueDebugTask("task metadata", t.seriesID, t.info, t.inProgress, len(t.episodes), len(t.history), seriesErr)
 			numbering := newEpisodeNumberingIndex(seriesDetails)
 			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
 
@@ -939,7 +931,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					inProgressStaleBehindLatestWatched = true
 				}
 				if inProgressAlreadyWatched || inProgressStaleBehindLatestWatched {
-					logContinueDebugTaskDecision("in-progress stale", t.seriesID, t.info, t.inProgress, inProgressAlreadyWatched, inProgressStaleBehindLatestWatched, len(t.episodes))
 					// Clean up all stale progress entries for this series where
 					// the episode is already in watch history, or stale progress
 					// points behind the furthest watched episode for the series.
@@ -987,7 +978,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					EpisodeNumber: t.inProgress.EpisodeNumber,
 					Title:         t.inProgress.EpisodeName,
 				}
-				logContinueDebugTaskDecision("in-progress selected", t.seriesID, t.info, t.inProgress, false, false, len(t.episodes))
 
 				// Use the most recent timestamp between the in-progress entry and
 				// any watched episode (e.g. a Trakt sync may mark many episodes
@@ -1009,13 +999,15 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					extIDs[k] = v
 				}
 				state = models.SeriesWatchState{
-					SeriesID:    t.seriesID,
-					SeriesTitle: t.inProgress.SeriesName,
-					Year:        t.inProgress.Year,
-					ExternalIDs: extIDs,
-					UpdatedAt:   updatedAt,
-					LastWatched: *nextEpisode,
-					NextEpisode: nextEpisode,
+					SeriesID:       t.seriesID,
+					SeriesTitle:    t.inProgress.SeriesName,
+					Year:           t.inProgress.Year,
+					ExternalIDs:    extIDs,
+					UpdatedAt:      updatedAt,
+					LastWatched:    *nextEpisode,
+					NextEpisode:    nextEpisode,
+					PercentWatched: t.inProgress.PercentWatched,
+					ResumePercent:  t.inProgress.PercentWatched,
 				}
 
 				// Use full series details for poster, backdrop, IDs, and episode counts
@@ -1087,7 +1079,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				// Series details (with all episodes) are required to find next unwatched
 				if seriesErr != nil {
 					// Skip this series if metadata unavailable
-					logContinueDebugTaskSkip("metadata unavailable", t.seriesID, t.info, t.inProgress, seriesErr)
 					return
 				}
 
@@ -1095,7 +1086,6 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				nextEpisode = s.findNextUnwatchedEpisode(seriesDetails, mostRecentEpisode, episodes)
 				if nextEpisode == nil && onlyInProgress {
 					// No next episode available and only in-progress requested, skip this series
-					logContinueDebugTaskSkip("no next episode", t.seriesID, t.info, t.inProgress, nil)
 					return
 				}
 
@@ -1170,12 +1160,10 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 				}
 			} else {
 				// No episodes and no in-progress (shouldn't happen)
-				logContinueDebugTaskSkip("no episodes or in-progress", t.seriesID, t.info, t.inProgress, nil)
 				return
 			}
 
 			// Add to results
-			logContinueDebugState("append", state)
 			mu.Lock()
 			continueWatching = append(continueWatching, state)
 			mu.Unlock()
@@ -1909,7 +1897,7 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 	tmdbToSeries := make(map[string][]string)
 	seriesExternalIDCount := make(map[string]int) // track richness
 
-	recordIDs := func(seriesID string, extIDs map[string]string) {
+	recordIDs := func(seriesID string, extIDs map[string]string, countOverride ...int) {
 		if seriesID == "" || extIDs == nil {
 			return
 		}
@@ -1926,6 +1914,9 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 			tmdbToSeries[id] = append(tmdbToSeries[id], seriesID)
 			count++
 		}
+		if len(countOverride) > 0 {
+			count = countOverride[0]
+		}
 		if existing, ok := seriesExternalIDCount[seriesID]; !ok || count > existing {
 			seriesExternalIDCount[seriesID] = count
 		}
@@ -1933,10 +1924,23 @@ func buildCanonicalSeriesIDMap(items []models.WatchHistoryItem, progressItems []
 
 	recordSeriesAliases := func(seriesID, itemID string, extIDs map[string]string) {
 		canonicalExtIDs := canonicalSeriesExternalIDs(seriesID, itemID, extIDs)
-		recordIDs(seriesID, canonicalExtIDs)
+		canonicalSeriesID := mediaidentity.Resolve(mediaidentity.Input{
+			MediaType:   "series",
+			ID:          seriesID,
+			ExternalIDs: canonicalExtIDs,
+		}).ID
+		if canonicalSeriesID == "" {
+			canonicalSeriesID = seriesID
+		}
+		if seriesID != canonicalSeriesID {
+			recordIDs(seriesID, canonicalExtIDs, 0)
+		} else {
+			recordIDs(seriesID, canonicalExtIDs)
+		}
 		if canonicalExtIDs == nil {
 			return
 		}
+		recordIDs(canonicalSeriesID, canonicalExtIDs)
 		if id := strings.TrimSpace(canonicalExtIDs["tmdb"]); id != "" {
 			recordIDs("tmdb:tv:"+id, canonicalExtIDs)
 		}
@@ -2035,369 +2039,19 @@ func resolveCanonicalID(canonical map[string]string, seriesID string) string {
 }
 
 func canonicalSeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) map[string]string {
-	if len(extIDs) == 0 {
-		return nil
-	}
-
-	provider, numericID := seriesProviderAndID(seriesID)
-	itemProvider, itemNumericID := seriesProviderAndID(inferSeriesIDFromEpisodeItemID(itemID))
-	titleProvider, titleNumericID := seriesProviderAndID(extIDs["titleId"])
-
-	if provider != "" && numericID != "" {
-		if id := strings.TrimSpace(extIDs[provider]); id != "" {
-			if id == numericID {
-				copied := copySeriesExternalIDs(extIDs)
-				addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
-				return copied
-			}
-			copied := map[string]string{provider: numericID}
-			addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
-			return copied
-		}
-		if titleProvider == provider && titleNumericID == numericID {
-			copied := copySeriesExternalIDs(extIDs)
-			if copied == nil {
-				copied = make(map[string]string, 1)
-			}
-			copied[provider] = numericID
-			addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
-			return copied
-		}
-		copied := map[string]string{provider: numericID}
-		addEpisodeItemSeriesExternalID(copied, provider, itemProvider, itemNumericID)
-		return copied
-	}
-
-	if titleProvider != "" && titleNumericID != "" {
-		return map[string]string{titleProvider: titleNumericID}
-	}
-
-	return copySeriesExternalIDs(extIDs)
-}
-
-func addEpisodeItemSeriesExternalID(extIDs map[string]string, seriesProvider, itemProvider, itemNumericID string) {
-	if extIDs == nil || itemProvider == "" || itemNumericID == "" || itemProvider == seriesProvider {
-		return
-	}
-	if existing := strings.TrimSpace(extIDs[itemProvider]); existing == "" {
-		extIDs[itemProvider] = itemNumericID
-	}
-}
-
-func copySeriesExternalIDs(extIDs map[string]string) map[string]string {
-	if len(extIDs) == 0 {
-		return nil
-	}
-	copied := make(map[string]string, len(extIDs))
-	for k, v := range extIDs {
-		if v == "" || k == "titleId" || strings.HasPrefix(k, "episode") {
-			continue
-		}
-		copied[k] = v
-	}
-	if len(copied) == 0 {
-		return nil
-	}
-	return copied
+	return mediaidentity.CanonicalSeriesExternalIDs(seriesID, itemID, extIDs)
 }
 
 func seriesProviderAndID(seriesID string) (string, string) {
-	seriesID = strings.TrimSpace(seriesID)
-	if seriesID == "" {
-		return "", ""
-	}
-	parts := strings.Split(seriesID, ":")
-	if len(parts) < 2 {
-		if strings.HasPrefix(strings.ToLower(seriesID), "tt") {
-			return "imdb", seriesID
-		}
-		return "", ""
-	}
-	provider := strings.ToLower(strings.TrimSpace(parts[0]))
-	numericID := strings.TrimSpace(parts[len(parts)-1])
-	switch provider {
-	case "tmdb", "tvdb", "imdb":
-		return provider, numericID
-	default:
-		return "", ""
-	}
+	return mediaidentity.SeriesProviderAndID(seriesID)
 }
 
 func inferSeriesIDFromEpisodeItemID(itemID string) string {
-	itemID = strings.TrimSpace(itemID)
-	if itemID == "" {
-		return ""
-	}
-	parts := strings.Split(itemID, ":")
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := strings.ToLower(strings.TrimSpace(parts[i]))
-		if len(part) > 1 && strings.HasPrefix(part, "s") {
-			return strings.Join(parts[:i], ":")
-		}
-	}
-	return ""
+	return mediaidentity.InferSeriesIDFromEpisodeItemID(itemID)
 }
 
 func hasContradictorySeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) bool {
-	if len(extIDs) == 0 {
-		return false
-	}
-	for _, reliableID := range []string{seriesID, inferSeriesIDFromEpisodeItemID(itemID)} {
-		provider, numericID := seriesProviderAndID(reliableID)
-		if provider == "" || numericID == "" {
-			continue
-		}
-		externalID := strings.TrimSpace(extIDs[provider])
-		if externalID != "" && !strings.EqualFold(externalID, numericID) {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldLogContinueDebug(parts ...string) bool {
-	for _, part := range parts {
-		lower := strings.ToLower(strings.TrimSpace(part))
-		if lower == "" {
-			continue
-		}
-		if strings.Contains(lower, "450033") ||
-			strings.Contains(lower, "220102") ||
-			strings.Contains(lower, "448176") ||
-			strings.Contains(lower, "250307") ||
-			strings.Contains(lower, "tt30460310") {
-			return true
-		}
-	}
-	return false
-}
-
-func continueDebugExternalIDs(extIDs map[string]string) string {
-	if len(extIDs) == 0 {
-		return "{}"
-	}
-	keys := make([]string, 0, len(extIDs))
-	for key := range extIDs {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", key, extIDs[key]))
-	}
-	return strings.Join(parts, ",")
-}
-
-func shouldLogContinueDebugProgress(progress models.PlaybackProgress) bool {
-	return shouldLogContinueDebug(
-		progress.ID,
-		progress.ItemID,
-		progress.SeriesID,
-		progress.SeriesName,
-		progress.EpisodeName,
-		continueDebugExternalIDs(progress.ExternalIDs),
-	)
-}
-
-func shouldLogContinueDebugHistory(item models.WatchHistoryItem) bool {
-	return shouldLogContinueDebug(
-		item.ItemID,
-		item.SeriesID,
-		item.SeriesName,
-		item.Name,
-		continueDebugExternalIDs(item.ExternalIDs),
-	)
-}
-
-func shouldLogContinueDebugState(item models.SeriesWatchState) bool {
-	next := ""
-	last := ""
-	if item.NextEpisode != nil {
-		next = fmt.Sprintf("s%02de%02d %s", item.NextEpisode.SeasonNumber, item.NextEpisode.EpisodeNumber, item.NextEpisode.Title)
-	}
-	last = fmt.Sprintf("s%02de%02d %s", item.LastWatched.SeasonNumber, item.LastWatched.EpisodeNumber, item.LastWatched.Title)
-	return shouldLogContinueDebug(
-		item.SeriesID,
-		item.SeriesTitle,
-		next,
-		last,
-		continueDebugExternalIDs(item.ExternalIDs),
-	)
-}
-
-func logContinueDebugCanonicalMap(stage string, canonical map[string]string, items []models.WatchHistoryItem, progressItems []models.PlaybackProgress) {
-	seen := make(map[string]bool)
-	logID := func(id string, extIDs map[string]string, source string) {
-		if !shouldLogContinueDebug(id, continueDebugExternalIDs(extIDs)) {
-			return
-		}
-		resolved := resolveCanonicalID(canonical, id)
-		key := source + "|" + id + "|" + resolved
-		if seen[key] {
-			return
-		}
-		seen[key] = true
-		log.Printf("[history][continue-debug] %s canonical source=%s id=%q resolved=%q extIDs={%s}", stage, source, id, resolved, continueDebugExternalIDs(extIDs))
-	}
-	for _, item := range items {
-		if item.MediaType == "episode" {
-			logID(item.SeriesID, item.ExternalIDs, "history")
-		}
-	}
-	for _, progress := range progressItems {
-		if progress.MediaType == "episode" || progress.SeasonNumber > 0 {
-			logID(progress.SeriesID, progress.ExternalIDs, "progress")
-		}
-	}
-}
-
-func logContinueDebugProgress(stage string, progress models.PlaybackProgress, originalSeriesID, resolvedSeriesID string, replacedExisting bool) {
-	if !shouldLogContinueDebugProgress(progress) && !shouldLogContinueDebug(originalSeriesID, resolvedSeriesID) {
-		return
-	}
-	log.Printf("[history][continue-debug] %s progress id=%q itemID=%q originalSeriesID=%q resolvedSeriesID=%q seriesName=%q s=%d e=%d pct=%.2f hidden=%t updated=%s replacedExisting=%t extIDs={%s}",
-		stage,
-		progress.ID,
-		progress.ItemID,
-		originalSeriesID,
-		resolvedSeriesID,
-		progress.SeriesName,
-		progress.SeasonNumber,
-		progress.EpisodeNumber,
-		progress.PercentWatched,
-		progress.HiddenFromContinueWatching,
-		progress.UpdatedAt.Format(time.RFC3339Nano),
-		replacedExisting,
-		continueDebugExternalIDs(progress.ExternalIDs),
-	)
-}
-
-func logContinueDebugProgressSkip(progress models.PlaybackProgress, originalSeriesID, resolvedSeriesID string, isEpisode, hidden bool) {
-	if !shouldLogContinueDebugProgress(progress) && !shouldLogContinueDebug(originalSeriesID, resolvedSeriesID) {
-		return
-	}
-	reason := "unknown"
-	switch {
-	case progress.HiddenFromContinueWatching:
-		reason = "progress hidden"
-	case isSeriesLevelPlaybackMarker(progress):
-		reason = "series-level marker"
-	case !isEpisode:
-		reason = "not episode"
-	case resolvedSeriesID == "":
-		reason = "empty resolved series id"
-	case progress.PercentWatched >= 90:
-		reason = "percent >= 90"
-	case hidden:
-		reason = "series hidden"
-	}
-	log.Printf("[history][continue-debug] in-progress skipped reason=%q id=%q itemID=%q originalSeriesID=%q resolvedSeriesID=%q seriesName=%q s=%d e=%d pct=%.2f hidden=%t isEpisode=%t seriesHidden=%t extIDs={%s}",
-		reason,
-		progress.ID,
-		progress.ItemID,
-		originalSeriesID,
-		resolvedSeriesID,
-		progress.SeriesName,
-		progress.SeasonNumber,
-		progress.EpisodeNumber,
-		progress.PercentWatched,
-		progress.HiddenFromContinueWatching,
-		isEpisode,
-		hidden,
-		continueDebugExternalIDs(progress.ExternalIDs),
-	)
-}
-
-func logContinueDebugHistory(stage string, item models.WatchHistoryItem, resolvedSeriesID string, hidden bool) {
-	if !shouldLogContinueDebugHistory(item) && !shouldLogContinueDebug(resolvedSeriesID) {
-		return
-	}
-	log.Printf("[history][continue-debug] %s history itemID=%q seriesID=%q resolvedSeriesID=%q seriesName=%q name=%q s=%d e=%d watched=%t watchedAt=%s updated=%s hiddenSeries=%t extIDs={%s}",
-		stage,
-		item.ItemID,
-		item.SeriesID,
-		resolvedSeriesID,
-		item.SeriesName,
-		item.Name,
-		item.SeasonNumber,
-		item.EpisodeNumber,
-		item.Watched,
-		item.WatchedAt.Format(time.RFC3339Nano),
-		item.UpdatedAt.Format(time.RFC3339Nano),
-		hidden,
-		continueDebugExternalIDs(item.ExternalIDs),
-	)
-}
-
-func logContinueDebugTask(stage, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, episodeCount, historyCount int, err error) {
-	progressText := ""
-	if inProgress != nil {
-		progressText = fmt.Sprintf(" itemID=%q seriesID=%q s=%d e=%d pct=%.2f updated=%s extIDs={%s}",
-			inProgress.ItemID,
-			inProgress.SeriesID,
-			inProgress.SeasonNumber,
-			inProgress.EpisodeNumber,
-			inProgress.PercentWatched,
-			inProgress.UpdatedAt.Format(time.RFC3339Nano),
-			continueDebugExternalIDs(inProgress.ExternalIDs),
-		)
-	}
-	errText := "<nil>"
-	if err != nil {
-		errText = err.Error()
-	}
-	if !shouldLogContinueDebug(seriesID, info.SeriesID, info.SeriesName, info.Name, continueDebugExternalIDs(info.ExternalIDs), progressText) {
-		return
-	}
-	log.Printf("[history][continue-debug] %s task seriesID=%q infoSeriesID=%q infoName=%q infoSeriesName=%q episodes=%d history=%d metadataErr=%q inProgress={%s} infoExtIDs={%s}",
-		stage,
-		seriesID,
-		info.SeriesID,
-		info.Name,
-		info.SeriesName,
-		episodeCount,
-		historyCount,
-		errText,
-		strings.TrimSpace(progressText),
-		continueDebugExternalIDs(info.ExternalIDs),
-	)
-}
-
-func logContinueDebugTaskDecision(stage, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, alreadyWatched, staleBehind bool, episodeCount int) {
-	logContinueDebugTask(stage+fmt.Sprintf(" alreadyWatched=%t staleBehind=%t", alreadyWatched, staleBehind), seriesID, info, inProgress, episodeCount, 0, nil)
-}
-
-func logContinueDebugTaskSkip(reason, seriesID string, info models.WatchHistoryItem, inProgress *models.PlaybackProgress, err error) {
-	if err == nil {
-		err = errors.New(reason)
-	} else {
-		err = fmt.Errorf("%s: %w", reason, err)
-	}
-	logContinueDebugTask("task skipped", seriesID, info, inProgress, 0, 0, err)
-}
-
-func logContinueDebugState(stage string, state models.SeriesWatchState) {
-	if !shouldLogContinueDebugState(state) {
-		return
-	}
-	next := "<nil>"
-	if state.NextEpisode != nil {
-		next = fmt.Sprintf("S%02dE%02d %q", state.NextEpisode.SeasonNumber, state.NextEpisode.EpisodeNumber, state.NextEpisode.Title)
-	}
-	log.Printf("[history][continue-debug] %s state seriesID=%q title=%q updated=%s last=S%02dE%02d %q next=%s watched=%d total=%d pct=%.2f extIDs={%s}",
-		stage,
-		state.SeriesID,
-		state.SeriesTitle,
-		state.UpdatedAt.Format(time.RFC3339Nano),
-		state.LastWatched.SeasonNumber,
-		state.LastWatched.EpisodeNumber,
-		state.LastWatched.Title,
-		next,
-		state.WatchedEpisodeCount,
-		state.TotalEpisodeCount,
-		state.PercentWatched,
-		continueDebugExternalIDs(state.ExternalIDs),
-	)
+	return mediaidentity.HasContradictorySeriesExternalIDs(seriesID, itemID, extIDs)
 }
 
 // countTotalEpisodes counts the total number of released episodes in a series,
@@ -2779,9 +2433,19 @@ func (s *Service) GetWatchHistoryItem(userID, mediaType, itemID string) (*models
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := makeWatchKey(mediaType, itemID)
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
 	if perUser, ok := s.watchHistory[userID]; ok {
-		if item, ok := perUser[key]; ok {
+		for _, key := range identity.CandidateKeys {
+			if item, ok := perUser[key]; ok {
+				return &item, nil
+			}
+		}
+		for _, item := range perUser {
+			if watchHistoryItemMatchesIdentity(item, identity) {
+				return &item, nil
+			}
+		}
+		if item, ok := perUser[identity.Key]; ok {
 			return &item, nil
 		}
 	}
@@ -2799,12 +2463,14 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	update = normalizeWatchHistoryUpdate(update)
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
 	// Normalize itemID to lowercase for consistent key matching
-	normalizedItemID := strings.ToLower(update.ItemID)
-	key := makeWatchKey(update.MediaType, normalizedItemID)
-	item, exists := perUser[key]
+	identity := watchHistoryUpdateIdentity(update)
+	normalizedItemID := identity.ID
+	key := identity.Key
+	item, exists := takeWatchHistoryItemLocked(perUser, identity)
 
 	now := time.Now().UTC()
 	if !exists {
@@ -2907,12 +2573,14 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	update = normalizeWatchHistoryUpdate(update)
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
 	// Normalize itemID to lowercase for consistent key matching
-	normalizedItemID := strings.ToLower(update.ItemID)
-	key := makeWatchKey(update.MediaType, normalizedItemID)
-	item, exists := perUser[key]
+	identity := watchHistoryUpdateIdentity(update)
+	normalizedItemID := identity.ID
+	key := identity.Key
+	item, exists := takeWatchHistoryItemLocked(perUser, identity)
 
 	now := time.Now().UTC()
 	if !exists {
@@ -3038,6 +2706,48 @@ func (s *Service) IsWatched(userID, mediaType, itemID string) (bool, error) {
 	return item.Watched, nil
 }
 
+// DeleteWatchHistoryItem removes a watch-history row, matching equivalent
+// provider aliases for the supplied identifier.
+func (s *Service) DeleteWatchHistoryItem(userID, mediaType, itemID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ErrUserIDRequired
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	perUser, ok := s.watchHistory[userID]
+	if !ok {
+		return nil
+	}
+
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
+	removed := false
+	for _, key := range identity.CandidateKeys {
+		if _, exists := perUser[key]; exists {
+			delete(perUser, key)
+			removed = true
+		}
+	}
+	for key, item := range perUser {
+		if !watchHistoryItemMatchesIdentity(item, identity) {
+			continue
+		}
+		delete(perUser, key)
+		removed = true
+	}
+	if !removed {
+		return nil
+	}
+
+	if err := s.saveWatchHistoryLocked(); err != nil {
+		return err
+	}
+	s.invalidateContinueWatchingLocked(userID)
+	return nil
+}
+
 // BulkUpdateWatchHistory marks multiple episodes as watched/unwatched in a single operation.
 func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHistoryUpdate) ([]models.WatchHistoryItem, error) {
 	userID = strings.TrimSpace(userID)
@@ -3055,10 +2765,12 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 	progressCleared := false
 
 	for _, update := range updates {
+		update = normalizeWatchHistoryUpdate(update)
 		// Normalize itemID to lowercase for consistent key matching
-		normalizedItemID := strings.ToLower(update.ItemID)
-		key := makeWatchKey(update.MediaType, normalizedItemID)
-		item, exists := perUser[key]
+		identity := watchHistoryUpdateIdentity(update)
+		normalizedItemID := identity.ID
+		key := identity.Key
+		item, exists := takeWatchHistoryItemLocked(perUser, identity)
 
 		if !exists {
 			item = models.WatchHistoryItem{
@@ -3213,7 +2925,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 	}
 
 	for _, update := range updates {
-		normalizedItemID := strings.ToLower(update.ItemID)
+		update = normalizeWatchHistoryUpdate(update)
+		normalizedItemID := update.ItemID
 		key := makeWatchKey(update.MediaType, normalizedItemID)
 		existing, exists := perUser[key]
 
@@ -3634,7 +3347,8 @@ func (s *Service) loadWatchHistory() error {
 		for userID, items := range allItems {
 			perUser := make(map[string]models.WatchHistoryItem, len(items))
 			for _, item := range items {
-				key := makeWatchKey(item.MediaType, item.ItemID)
+				item = normalizeWatchHistoryItem(item)
+				key := item.ID
 				perUser[key] = item
 			}
 			reconcileEquivalentEpisodeWatchHistoryLocked(perUser)
@@ -3710,7 +3424,12 @@ func (s *Service) loadWatchHistory() error {
 				}
 			}
 
-			key := makeWatchKey(item.MediaType, item.ItemID)
+			normalized := normalizeWatchHistoryItem(item)
+			if normalized.ID != item.ID || normalized.ItemID != item.ItemID || normalized.SeriesID != item.SeriesID {
+				needsSave = true
+			}
+			item = normalized
+			key := item.ID
 			// If duplicate exists, keep the one that is watched (or most recently watched)
 			if existing, exists := perUser[key]; exists {
 				// Prefer watched over unwatched
@@ -3780,7 +3499,233 @@ func (s *Service) saveWatchHistoryLocked() error {
 }
 
 func makeWatchKey(mediaType, itemID string) string {
-	return strings.ToLower(mediaType) + ":" + strings.ToLower(itemID)
+	return mediaidentity.Key(mediaType, itemID)
+}
+
+func storageIdentityExternalIDs(mediaType, itemID, seriesID string, externalIDs map[string]string) map[string]string {
+	return mediaidentity.IdentityExternalIDs(mediaType, itemID, seriesID, externalIDs)
+}
+
+func normalizeStorageExternalIDs(mediaType, itemID, seriesID string, externalIDs map[string]string) map[string]string {
+	return mediaidentity.StorageExternalIDs(mediaType, itemID, seriesID, externalIDs)
+}
+
+func normalizeWatchHistoryUpdate(update models.WatchHistoryUpdate) models.WatchHistoryUpdate {
+	normalizedExternalIDs := normalizeStorageExternalIDs(update.MediaType, update.ItemID, update.SeriesID, update.ExternalIDs)
+	externalIDs := storageIdentityExternalIDs(update.MediaType, update.ItemID, update.SeriesID, normalizedExternalIDs)
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     update.MediaType,
+		ID:            update.ItemID,
+		SeriesID:      update.SeriesID,
+		SeasonNumber:  update.SeasonNumber,
+		EpisodeNumber: update.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	update.MediaType = identity.MediaType
+	update.ItemID = identity.ID
+	update.ExternalIDs = normalizedExternalIDs
+	if identity.MediaType == "episode" {
+		update.SeriesID = identity.SeriesID
+		update.SeasonNumber = identity.SeasonNumber
+		update.EpisodeNumber = identity.EpisodeNumber
+	}
+	return update
+}
+
+func normalizeWatchHistoryItem(item models.WatchHistoryItem) models.WatchHistoryItem {
+	normalizedExternalIDs := normalizeStorageExternalIDs(item.MediaType, item.ItemID, item.SeriesID, item.ExternalIDs)
+	externalIDs := storageIdentityExternalIDs(item.MediaType, item.ItemID, item.SeriesID, normalizedExternalIDs)
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     item.MediaType,
+		ID:            item.ItemID,
+		SeriesID:      item.SeriesID,
+		SeasonNumber:  item.SeasonNumber,
+		EpisodeNumber: item.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	item.ID = identity.Key
+	item.MediaType = identity.MediaType
+	item.ItemID = identity.ID
+	item.ExternalIDs = normalizedExternalIDs
+	if identity.MediaType == "episode" {
+		item.SeriesID = identity.SeriesID
+		item.SeasonNumber = identity.SeasonNumber
+		item.EpisodeNumber = identity.EpisodeNumber
+	}
+	return item
+}
+
+func normalizePlaybackProgressUpdate(update models.PlaybackProgressUpdate) models.PlaybackProgressUpdate {
+	normalizedExternalIDs := normalizeStorageExternalIDs(update.MediaType, update.ItemID, update.SeriesID, update.ExternalIDs)
+	externalIDs := storageIdentityExternalIDs(update.MediaType, update.ItemID, update.SeriesID, normalizedExternalIDs)
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     update.MediaType,
+		ID:            update.ItemID,
+		SeriesID:      update.SeriesID,
+		SeasonNumber:  update.SeasonNumber,
+		EpisodeNumber: update.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	update.MediaType = identity.MediaType
+	update.ItemID = identity.ID
+	update.ExternalIDs = normalizedExternalIDs
+	if identity.MediaType == "episode" {
+		update.SeriesID = identity.SeriesID
+		update.SeasonNumber = identity.SeasonNumber
+		update.EpisodeNumber = identity.EpisodeNumber
+	}
+	return update
+}
+
+func normalizePlaybackProgressItem(progress models.PlaybackProgress) models.PlaybackProgress {
+	normalizedExternalIDs := normalizeStorageExternalIDs(progress.MediaType, progress.ItemID, progress.SeriesID, progress.ExternalIDs)
+	externalIDs := storageIdentityExternalIDs(progress.MediaType, progress.ItemID, progress.SeriesID, normalizedExternalIDs)
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     progress.MediaType,
+		ID:            progress.ItemID,
+		SeriesID:      progress.SeriesID,
+		SeasonNumber:  progress.SeasonNumber,
+		EpisodeNumber: progress.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	progress.ID = identity.Key
+	progress.MediaType = identity.MediaType
+	progress.ItemID = identity.ID
+	progress.ExternalIDs = normalizedExternalIDs
+	if identity.MediaType == "episode" {
+		progress.SeriesID = identity.SeriesID
+		progress.SeasonNumber = identity.SeasonNumber
+		progress.EpisodeNumber = identity.EpisodeNumber
+	}
+	return progress
+}
+
+// mayMatchMediaIdentity is a cheap pre-filter so full identity resolution is
+// skipped for rows that cannot match the target. Episodes with known but
+// different season/episode numbers can only be equivalent through
+// episode-scoped external IDs (absolute-numbering aliases); everything else is
+// rejected without allocating.
+func mayMatchMediaIdentity(mediaType string, seasonNumber, episodeNumber int, externalIDs map[string]string, target mediaidentity.Identity) bool {
+	if mediaidentity.NormalizeMediaType(mediaType) != target.MediaType {
+		return false
+	}
+	if target.MediaType != "episode" {
+		return true
+	}
+	if episodeNumber <= 0 || target.EpisodeNumber <= 0 {
+		return true
+	}
+	if seasonNumber == target.SeasonNumber && episodeNumber == target.EpisodeNumber {
+		return true
+	}
+	return hasEpisodeScopedExternalIDs(externalIDs) && hasEpisodeScopedExternalIDs(target.ExternalIDs)
+}
+
+func hasEpisodeScopedExternalIDs(externalIDs map[string]string) bool {
+	for key, value := range externalIDs {
+		if value == "" {
+			continue
+		}
+		if len(key) >= len("episode") && strings.EqualFold(key[:len("episode")], "episode") {
+			return true
+		}
+	}
+	return false
+}
+
+func watchHistoryItemMatchesIdentity(item models.WatchHistoryItem, target mediaidentity.Identity) bool {
+	if !mayMatchMediaIdentity(item.MediaType, item.SeasonNumber, item.EpisodeNumber, item.ExternalIDs, target) {
+		return false
+	}
+	externalIDs := storageIdentityExternalIDs(item.MediaType, item.ItemID, item.SeriesID, item.ExternalIDs)
+	current := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     item.MediaType,
+		ID:            item.ItemID,
+		SeriesID:      item.SeriesID,
+		SeasonNumber:  item.SeasonNumber,
+		EpisodeNumber: item.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	if current.Key == target.Key {
+		return true
+	}
+	for _, key := range current.CandidateKeys {
+		if key == target.Key {
+			return true
+		}
+	}
+	return mediaidentity.Equivalent(current, target)
+}
+
+func watchHistoryUpdateIdentity(update models.WatchHistoryUpdate) mediaidentity.Identity {
+	externalIDs := storageIdentityExternalIDs(update.MediaType, update.ItemID, update.SeriesID, update.ExternalIDs)
+	return mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     update.MediaType,
+		ID:            update.ItemID,
+		SeriesID:      update.SeriesID,
+		SeasonNumber:  update.SeasonNumber,
+		EpisodeNumber: update.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+}
+
+func playbackProgressUpdateIdentity(update models.PlaybackProgressUpdate) mediaidentity.Identity {
+	externalIDs := storageIdentityExternalIDs(update.MediaType, update.ItemID, update.SeriesID, update.ExternalIDs)
+	return mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     update.MediaType,
+		ID:            update.ItemID,
+		SeriesID:      update.SeriesID,
+		SeasonNumber:  update.SeasonNumber,
+		EpisodeNumber: update.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+}
+
+func takeWatchHistoryItemLocked(perUser map[string]models.WatchHistoryItem, identity mediaidentity.Identity) (models.WatchHistoryItem, bool) {
+	for _, key := range identity.CandidateKeys {
+		item, ok := perUser[key]
+		if !ok {
+			continue
+		}
+		if key != identity.Key {
+			delete(perUser, key)
+		}
+		return item, true
+	}
+	for key, item := range perUser {
+		if !watchHistoryItemMatchesIdentity(item, identity) {
+			continue
+		}
+		if key != identity.Key {
+			delete(perUser, key)
+		}
+		return item, true
+	}
+	return models.WatchHistoryItem{}, false
+}
+
+func playbackProgressMatchesIdentity(progress models.PlaybackProgress, target mediaidentity.Identity) bool {
+	if !mayMatchMediaIdentity(progress.MediaType, progress.SeasonNumber, progress.EpisodeNumber, progress.ExternalIDs, target) {
+		return false
+	}
+	externalIDs := storageIdentityExternalIDs(progress.MediaType, progress.ItemID, progress.SeriesID, progress.ExternalIDs)
+	current := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:     progress.MediaType,
+		ID:            progress.ItemID,
+		SeriesID:      progress.SeriesID,
+		SeasonNumber:  progress.SeasonNumber,
+		EpisodeNumber: progress.EpisodeNumber,
+		ExternalIDs:   externalIDs,
+	})
+	if current.Key == target.Key {
+		return true
+	}
+	for _, key := range current.CandidateKeys {
+		if key == target.Key {
+			return true
+		}
+	}
+	return mediaidentity.Equivalent(current, target)
 }
 
 // Playback Progress Methods
@@ -3801,13 +3746,15 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		return models.PlaybackProgress{}, fmt.Errorf("position cannot be negative")
 	}
 
+	update = normalizePlaybackProgressUpdate(update)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	perUser := s.ensurePlaybackProgressUserLocked(userID)
 	staleWatchedEpisodeUpdate := s.isWatchedEpisodeProgressUpdateLocked(userID, update)
 	// Normalize itemID to lowercase for consistent key matching
-	normalizedItemID := strings.ToLower(update.ItemID)
+	normalizedItemID := update.ItemID
 	key := makeWatchKey(update.MediaType, normalizedItemID)
 
 	// Calculate percent watched
@@ -3993,12 +3940,46 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	return progress, nil
 }
 
+func (s *Service) isWatchedProgressUpdateLocked(userID string, update models.PlaybackProgressUpdate) bool {
+	perUserHistory, ok := s.watchHistory[userID]
+	if !ok || len(perUserHistory) == 0 {
+		return false
+	}
+
+	update = normalizePlaybackProgressUpdate(update)
+	target := playbackProgressUpdateIdentity(update)
+
+	// Fast path: stored keys are canonical after load normalization, so the
+	// vast majority of watched rows are found by direct candidate-key lookup
+	// without scanning.
+	for _, key := range target.CandidateKeys {
+		if item, ok := perUserHistory[key]; ok && item.Watched {
+			return true
+		}
+	}
+
+	for _, item := range perUserHistory {
+		if !item.Watched || item.MediaType != target.MediaType {
+			continue
+		}
+		if watchHistoryItemMatchesIdentity(item, target) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (s *Service) isWatchedEpisodeProgressUpdateLocked(userID string, update models.PlaybackProgressUpdate) bool {
 	if strings.ToLower(strings.TrimSpace(update.MediaType)) != "episode" {
 		return false
 	}
 	if update.SeasonNumber <= 0 || update.EpisodeNumber <= 0 {
 		return false
+	}
+
+	if s.isWatchedProgressUpdateLocked(userID, update) {
+		return true
 	}
 
 	perUserHistory, ok := s.watchHistory[userID]
@@ -4044,6 +4025,20 @@ func (s *Service) isWatchedEpisodeProgressUpdateLocked(userID string, update mod
 	}
 
 	return false
+}
+
+// IsWatchedProgressUpdate reports whether the supplied playback update refers
+// to a movie or episode already marked watched in local history.
+func (s *Service) IsWatchedProgressUpdate(userID string, update models.PlaybackProgressUpdate) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.isWatchedProgressUpdateLocked(userID, update)
 }
 
 // IsWatchedEpisodeProgressUpdate reports whether the supplied progress update
@@ -4096,9 +4091,19 @@ func (s *Service) GetPlaybackProgress(userID, mediaType, itemID string) (*models
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := makeWatchKey(mediaType, itemID)
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
 	if perUser, ok := s.playbackProgress[userID]; ok {
-		if progress, ok := perUser[key]; ok {
+		for _, key := range identity.CandidateKeys {
+			if progress, ok := perUser[key]; ok {
+				return &progress, nil
+			}
+		}
+		for _, progress := range perUser {
+			if playbackProgressMatchesIdentity(progress, identity) {
+				return &progress, nil
+			}
+		}
+		if progress, ok := perUser[identity.Key]; ok {
 			return &progress, nil
 		}
 	}
@@ -4235,18 +4240,31 @@ func (s *Service) DeletePlaybackProgress(userID, mediaType, itemID string) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := makeWatchKey(mediaType, itemID)
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
+	removed := false
 	if perUser, ok := s.playbackProgress[userID]; ok {
-		if entry, exists := perUser[key]; exists {
-			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
-		} else {
-			s.clearActivePlaybackProgressKeyLocked(userID, key)
+		for _, key := range identity.CandidateKeys {
+			if entry, exists := perUser[key]; exists {
+				s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+				removed = true
+			}
 		}
+		for key, entry := range perUser {
+			if !playbackProgressMatchesIdentity(entry, identity) {
+				continue
+			}
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+			removed = true
+		}
+		s.clearActivePlaybackProgressIdentityLocked(userID, identity)
 		// Invalidate continue watching cache for this user since progress changed
-		s.invalidateContinueWatchingLocked(userID)
-		return s.savePlaybackProgressLocked()
+		if removed {
+			s.invalidateContinueWatchingLocked(userID)
+			return s.savePlaybackProgressLocked()
+		}
+		return nil
 	}
-	s.clearActivePlaybackProgressKeyLocked(userID, key)
+	s.clearActivePlaybackProgressIdentityLocked(userID, identity)
 
 	return nil
 }
@@ -4274,7 +4292,8 @@ func (s *Service) loadPlaybackProgress() error {
 		for userID, items := range allItems {
 			perUser := make(map[string]models.PlaybackProgress, len(items))
 			for _, item := range items {
-				key := makeWatchKey(item.MediaType, item.ItemID)
+				item = normalizePlaybackProgressItem(item)
+				key := item.ID
 				perUser[key] = item
 			}
 			s.playbackProgress[userID] = perUser
@@ -4325,7 +4344,12 @@ func (s *Service) loadPlaybackProgress() error {
 				item.ID = normalizedID
 			}
 
-			key := makeWatchKey(item.MediaType, item.ItemID)
+			normalized := normalizePlaybackProgressItem(item)
+			if normalized.ID != item.ID || normalized.ItemID != item.ItemID || normalized.SeriesID != item.SeriesID {
+				needsSave = true
+			}
+			item = normalized
+			key := item.ID
 			// If duplicate exists, keep the most recent one
 			if existing, exists := perUser[key]; exists {
 				if item.UpdatedAt.After(existing.UpdatedAt) {
@@ -4557,22 +4581,24 @@ func (s *Service) clearPlaybackProgressEntryLocked(userID, mediaType, itemID str
 		return false
 	}
 
-	key := makeWatchKey(mediaType, itemID)
-	if entry, exists := perUser[key]; exists {
-		s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
-		return true
-	}
-
-	// Fall back to case-insensitive match (handles S/E casing differences)
-	target := strings.ToLower(key)
-	for existingKey, entry := range perUser {
-		if strings.ToLower(existingKey) == target {
-			s.removePlaybackProgressEntryLocked(userID, perUser, existingKey, entry)
-			return true
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
+	removed := false
+	for _, key := range identity.CandidateKeys {
+		if entry, exists := perUser[key]; exists {
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+			removed = true
 		}
 	}
 
-	return false
+	for existingKey, entry := range perUser {
+		if !playbackProgressMatchesIdentity(entry, identity) {
+			continue
+		}
+		s.removePlaybackProgressEntryLocked(userID, perUser, existingKey, entry)
+		removed = true
+	}
+
+	return removed
 }
 
 func (s *Service) removePlaybackProgressEntryLocked(userID string, perUser map[string]models.PlaybackProgress, key string, entry models.PlaybackProgress) {
@@ -4588,6 +4614,24 @@ func (s *Service) clearActivePlaybackProgressKeyLocked(userID, key string) {
 		if len(perUser) == 0 {
 			delete(s.activePlaybackProgress, userID)
 		}
+	}
+}
+
+func (s *Service) clearActivePlaybackProgressIdentityLocked(userID string, identity mediaidentity.Identity) {
+	perUser, ok := s.activePlaybackProgress[userID]
+	if !ok {
+		return
+	}
+	for _, key := range identity.CandidateKeys {
+		delete(perUser, key)
+	}
+	for key, progress := range perUser {
+		if playbackProgressMatchesIdentity(progress, identity) {
+			delete(perUser, key)
+		}
+	}
+	if len(perUser) == 0 {
+		delete(s.activePlaybackProgress, userID)
 	}
 }
 
@@ -5085,22 +5129,7 @@ func (s *Service) preserveSeriesHiddenMarkerLocked(perUser map[string]models.Pla
 // hasMatchingExternalID returns true if two external ID maps share at least one
 // common key+value pair (excluding non-standard keys like "titleId").
 func hasMatchingExternalID(a, b map[string]string) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	for k, v := range a {
-		if v == "" {
-			continue
-		}
-		// Skip non-standard keys that aren't reliable for matching
-		if k == "titleId" {
-			continue
-		}
-		if bv, ok := b[k]; ok && bv == v {
-			return true
-		}
-	}
-	return false
+	return mediaidentity.HasMatchingExternalID(a, b)
 }
 
 func isSeriesLevelPlaybackMarker(progress models.PlaybackProgress) bool {

@@ -75,6 +75,13 @@ func MigrateFromJSON(ctx context.Context, store *DataStore, cacheDir string) err
 
 	if migrated > 0 {
 		log.Info("json migration finished", "tables_migrated", migrated)
+		if err := rerunDataMigrations(ctx, store.pool,
+			"media_identity_reconcile_v1",
+			"media_identity_reconcile_v2",
+			"media_identity_reconcile_v3",
+		); err != nil {
+			return fmt.Errorf("post-json media identity migration: %w", err)
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("migration errors: %s", strings.Join(errs, "; "))
@@ -264,7 +271,7 @@ func migrateWatchlist(ctx context.Context, store *DataStore, filePath string) er
 
 // customListsPersisted matches the JSON structure in custom_lists.json
 type customListsPersisted struct {
-	Lists []models.CustomList              `json:"lists"`
+	Lists []models.CustomList               `json:"lists"`
 	Items map[string][]models.WatchlistItem `json:"items,omitempty"`
 }
 

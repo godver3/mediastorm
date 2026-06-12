@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"novastream/internal/mediaidentity"
 	"novastream/models"
 	"novastream/services/history"
 	"novastream/services/playback"
@@ -27,6 +28,7 @@ type historyService interface {
 	ToggleWatched(userID string, update models.WatchHistoryUpdate) (models.WatchHistoryItem, error)
 	UpdateWatchHistory(userID string, update models.WatchHistoryUpdate) (models.WatchHistoryItem, error)
 	BulkUpdateWatchHistory(userID string, updates []models.WatchHistoryUpdate) ([]models.WatchHistoryItem, error)
+	DeleteWatchHistoryItem(userID, mediaType, itemID string) error
 	IsWatched(userID, mediaType, itemID string) (bool, error)
 
 	// Playback Progress methods
@@ -289,15 +291,29 @@ func (h *HistoryHandler) ListWatchHistory(w http.ResponseWriter, r *http.Request
 				Watched []string `json:"watched"`
 			}
 			watched := make([]string, 0, len(items))
+			seen := make(map[string]struct{}, len(items))
 			for _, item := range items {
 				if !item.Watched {
 					continue
 				}
-				key := strings.ToLower(strings.TrimSpace(item.MediaType)) + ":" + strings.ToLower(strings.TrimSpace(item.ItemID))
-				if key == ":" {
-					continue
+				identity := mediaidentity.Resolve(mediaidentity.Input{
+					MediaType:     item.MediaType,
+					ID:            item.ItemID,
+					SeriesID:      item.SeriesID,
+					SeasonNumber:  item.SeasonNumber,
+					EpisodeNumber: item.EpisodeNumber,
+					ExternalIDs:   item.ExternalIDs,
+				})
+				for _, key := range identity.CandidateKeys {
+					if key == "" {
+						continue
+					}
+					if _, exists := seen[key]; exists {
+						continue
+					}
+					seen[key] = struct{}{}
+					watched = append(watched, key)
 				}
-				watched = append(watched, key)
 			}
 			json.NewEncoder(w).Encode(watchStatusKeysProjection{Watched: watched})
 			return
@@ -456,6 +472,30 @@ func (h *HistoryHandler) BulkUpdateWatchHistory(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+// DeleteWatchHistoryItem removes a watch-history item entirely.
+func (h *HistoryHandler) DeleteWatchHistoryItem(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	vars := mux.Vars(r)
+	mediaType := strings.TrimSpace(vars["mediaType"])
+	itemID := strings.TrimSpace(vars["id"])
+
+	if mediaType == "" || itemID == "" {
+		http.Error(w, "mediaType and id are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.Service.DeleteWatchHistoryItem(userID, mediaType, itemID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // UpdatePlaybackProgress updates the playback progress for a media item

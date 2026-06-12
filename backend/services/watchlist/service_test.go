@@ -265,8 +265,8 @@ func TestServiceCanonicalizesIDsAndMergesVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to add second item: %v", err)
 	}
-	if second.ID != "tvdb:movie:344109" {
-		t.Fatalf("second canonical ID = %q, want %q", second.ID, "tvdb:movie:344109")
+	if second.ID != "tmdb:movie:1084242" {
+		t.Fatalf("second canonical ID = %q, want %q", second.ID, "tmdb:movie:1084242")
 	}
 
 	items, err := svc.List(models.DefaultUserID)
@@ -276,8 +276,8 @@ func TestServiceCanonicalizesIDsAndMergesVariants(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 merged item, got %d", len(items))
 	}
-	if items[0].ID != "tvdb:movie:344109" {
-		t.Fatalf("merged item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	if items[0].ID != "tmdb:movie:1084242" {
+		t.Fatalf("merged item ID = %q, want %q", items[0].ID, "tmdb:movie:1084242")
 	}
 	if items[0].SyncSource != "plex:task" {
 		t.Fatalf("expected sync source to be preserved, got %q", items[0].SyncSource)
@@ -343,8 +343,8 @@ func TestServiceReconcileMergesRowsWithSharedExternalIDs(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 reconciled item, got %d", len(items))
 	}
-	if items[0].ID != "tvdb:movie:344109" {
-		t.Fatalf("reconciled item ID = %q, want %q", items[0].ID, "tvdb:movie:344109")
+	if items[0].ID != "tmdb:movie:1084242" {
+		t.Fatalf("reconciled item ID = %q, want %q", items[0].ID, "tmdb:movie:1084242")
 	}
 	if items[0].SyncSource != "plex:task" {
 		t.Fatalf("expected sync source to survive reconcile, got %q", items[0].SyncSource)

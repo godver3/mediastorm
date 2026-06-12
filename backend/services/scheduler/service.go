@@ -3037,7 +3037,7 @@ func (s *Service) syncPlaybackFromTrakt(traktAccount *config.TraktAccount, profi
 				continue
 			}
 
-			if s.historyService.IsWatchedEpisodeProgressUpdate(profileID, *update) {
+			if s.historyService.IsWatchedProgressUpdate(profileID, *update) {
 				continue
 			}
 
@@ -3298,10 +3298,10 @@ func (s *Service) traktPlaybackItemToUpdate(item trakt.PlaybackItem) *models.Pla
 		ids := trakt.IDsToMap(item.Movie.IDs)
 		// Use prefixed IDs to match the player's format (e.g. "tmdb:movie:603")
 		var itemID string
-		if tvdbID, ok := ids["tvdb"]; ok && tvdbID != "" {
-			itemID = fmt.Sprintf("tvdb:movie:%s", tvdbID)
-		} else if tmdbID, ok := ids["tmdb"]; ok && tmdbID != "" {
+		if tmdbID, ok := ids["tmdb"]; ok && tmdbID != "" {
 			itemID = fmt.Sprintf("tmdb:movie:%s", tmdbID)
+		} else if tvdbID, ok := ids["tvdb"]; ok && tvdbID != "" {
+			itemID = fmt.Sprintf("tvdb:movie:%s", tvdbID)
 		} else if imdbID, ok := ids["imdb"]; ok && imdbID != "" {
 			itemID = imdbID
 		}
@@ -3319,12 +3319,12 @@ func (s *Service) traktPlaybackItemToUpdate(item trakt.PlaybackItem) *models.Pla
 		episodeIDs := trakt.IDsToMap(item.Episode.IDs)
 		addEpisodeExternalIDs(showIDs, episodeIDs, item.Episode.NumberAbs)
 		var seriesID, itemID string
-		if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
-			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
-			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
-		} else if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
+		if tmdbID, ok := showIDs["tmdb"]; ok && tmdbID != "" {
 			seriesID = fmt.Sprintf("tmdb:tv:%s", tmdbID)
 			itemID = fmt.Sprintf("tmdb:tv:%s:s%02de%02d", tmdbID, item.Episode.Season, item.Episode.Number)
+		} else if tvdbID, ok := showIDs["tvdb"]; ok && tvdbID != "" {
+			seriesID = fmt.Sprintf("tvdb:series:%s", tvdbID)
+			itemID = fmt.Sprintf("tvdb:series:%s:s%02de%02d", tvdbID, item.Episode.Season, item.Episode.Number)
 		} else if imdbID, ok := showIDs["imdb"]; ok && imdbID != "" {
 			seriesID = fmt.Sprintf("imdb:%s", imdbID)
 			itemID = fmt.Sprintf("imdb:%s:s%02de%02d", imdbID, item.Episode.Season, item.Episode.Number)

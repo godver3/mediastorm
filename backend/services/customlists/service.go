@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"novastream/internal/datastore"
+	"novastream/internal/mediaidentity"
 	"novastream/models"
 )
 
@@ -274,18 +275,22 @@ func (s *Service) AddItem(userID, listID string, input models.WatchlistUpsert) (
 		user.items[listID] = byList
 	}
 
-	mediaType := strings.ToLower(strings.TrimSpace(input.MediaType))
-	key := mediaType + ":" + input.ID
-	item, exists := byList[key]
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   input.MediaType,
+		ID:          input.ID,
+		ExternalIDs: input.ExternalIDs,
+	})
+	item, exists := takeListItem(byList, identity)
 	if !exists {
 		item = models.WatchlistItem{
-			ID:        input.ID,
-			MediaType: mediaType,
+			ID:        identity.ID,
+			MediaType: identity.MediaType,
 			AddedAt:   time.Now().UTC(),
 		}
 	}
 
-	item.MediaType = mediaType
+	item.ID = identity.ID
+	item.MediaType = identity.MediaType
 	if strings.TrimSpace(input.Name) != "" {
 		item.Name = input.Name
 	}
@@ -302,15 +307,7 @@ func (s *Service) AddItem(userID, listID string, input models.WatchlistUpsert) (
 		item.BackdropURL = input.BackdropURL
 	}
 	if input.ExternalIDs != nil {
-		if len(input.ExternalIDs) == 0 {
-			item.ExternalIDs = nil
-		} else {
-			copyIDs := make(map[string]string, len(input.ExternalIDs))
-			for k, v := range input.ExternalIDs {
-				copyIDs[k] = v
-			}
-			item.ExternalIDs = copyIDs
-		}
+		item.ExternalIDs = mediaidentity.MergeExternalIDs(input.ExternalIDs, item.ExternalIDs)
 	}
 	if len(input.Genres) > 0 {
 		item.Genres = append([]string{}, input.Genres...)
@@ -319,7 +316,8 @@ func (s *Service) AddItem(userID, listID string, input models.WatchlistUpsert) (
 		item.RuntimeMinutes = input.RuntimeMinutes
 	}
 
-	byList[key] = item
+	item = normaliseItem(item)
+	byList[item.Key()] = item
 	list.UpdatedAt = time.Now().UTC()
 	user.lists[listID] = list
 
@@ -358,12 +356,35 @@ func (s *Service) RemoveItem(userID, listID, mediaType, id string) (bool, error)
 		return false, nil
 	}
 
-	key := mediaType + ":" + id
-	if _, exists := byList[key]; !exists {
+	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: id})
+	removed := false
+	for _, key := range identity.CandidateKeys {
+		if _, exists := byList[key]; exists {
+			delete(byList, key)
+			removed = true
+		}
+	}
+	if !removed {
+		targetKey := identity.Key
+		for key, item := range byList {
+			current := mediaidentity.Resolve(mediaidentity.Input{
+				MediaType:   item.MediaType,
+				ID:          item.ID,
+				ExternalIDs: item.ExternalIDs,
+			})
+			for _, candidate := range current.CandidateKeys {
+				if candidate == targetKey {
+					delete(byList, key)
+					removed = true
+					break
+				}
+			}
+		}
+	}
+	if !removed {
 		return false, nil
 	}
 
-	delete(byList, key)
 	list.UpdatedAt = time.Now().UTC()
 	user.lists[listID] = list
 
@@ -403,6 +424,10 @@ func (s *Service) load() error {
 				}
 				byKey := make(map[string]models.WatchlistItem, len(items))
 				for _, item := range items {
+					item = normaliseItem(item)
+					if existing, ok := byKey[item.Key()]; ok {
+						item = mergeListItems(existing, item)
+					}
 					byKey[item.Key()] = item
 				}
 				collection.items[list.ID] = byKey
@@ -470,6 +495,9 @@ func (s *Service) load() error {
 			byList := make(map[string]models.WatchlistItem, len(items))
 			for _, item := range items {
 				item = normaliseItem(item)
+				if existing, ok := byList[item.Key()]; ok {
+					item = mergeListItems(existing, item)
+				}
 				byList[item.Key()] = item
 			}
 			collection.items[listID] = byList
@@ -631,11 +659,73 @@ func (s *Service) ensureUserLocked(userID string) *userCollection {
 }
 
 func normaliseItem(item models.WatchlistItem) models.WatchlistItem {
-	item.MediaType = strings.ToLower(strings.TrimSpace(item.MediaType))
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   item.MediaType,
+		ID:          item.ID,
+		ExternalIDs: item.ExternalIDs,
+	})
+	item.MediaType = identity.MediaType
+	item.ID = identity.ID
+	item.ExternalIDs = identity.ExternalIDs
 	if item.AddedAt.IsZero() {
 		item.AddedAt = time.Now().UTC()
 	}
 	return item
+}
+
+// mergeListItems combines two normalized rows that resolved to the same
+// identity, keeping the earliest AddedAt and filling gaps from the newer row.
+func mergeListItems(base, incoming models.WatchlistItem) models.WatchlistItem {
+	if base.Name == "" {
+		base.Name = incoming.Name
+	}
+	if base.Overview == "" {
+		base.Overview = incoming.Overview
+	}
+	if base.Year == 0 {
+		base.Year = incoming.Year
+	}
+	if base.PosterURL == "" {
+		base.PosterURL = incoming.PosterURL
+	}
+	if base.BackdropURL == "" {
+		base.BackdropURL = incoming.BackdropURL
+	}
+	if base.RuntimeMinutes == 0 {
+		base.RuntimeMinutes = incoming.RuntimeMinutes
+	}
+	if len(base.Genres) == 0 && len(incoming.Genres) > 0 {
+		base.Genres = append([]string{}, incoming.Genres...)
+	}
+	if !incoming.AddedAt.IsZero() && (base.AddedAt.IsZero() || incoming.AddedAt.Before(base.AddedAt)) {
+		base.AddedAt = incoming.AddedAt
+	}
+	base.ExternalIDs = mediaidentity.MergeExternalIDs(base.ExternalIDs, incoming.ExternalIDs)
+	return normaliseItem(base)
+}
+
+// takeListItem finds and removes an existing row equivalent to the supplied
+// identity, matching legacy provider-alias keys.
+func takeListItem(byList map[string]models.WatchlistItem, identity mediaidentity.Identity) (models.WatchlistItem, bool) {
+	for _, key := range identity.CandidateKeys {
+		if item, ok := byList[key]; ok {
+			delete(byList, key)
+			return item, true
+		}
+	}
+	for key, item := range byList {
+		current := mediaidentity.Resolve(mediaidentity.Input{
+			MediaType:   item.MediaType,
+			ID:          item.ID,
+			ExternalIDs: item.ExternalIDs,
+		})
+		if !mediaidentity.Equivalent(current, identity) {
+			continue
+		}
+		delete(byList, key)
+		return item, true
+	}
+	return models.WatchlistItem{}, false
 }
 
 func generateListID() string {

@@ -196,6 +196,9 @@ func (m *mockHistoryServiceDetailsBundle) UpdateWatchHistory(_ string, _ models.
 func (m *mockHistoryServiceDetailsBundle) BulkUpdateWatchHistory(_ string, _ []models.WatchHistoryUpdate) ([]models.WatchHistoryItem, error) {
 	return nil, nil
 }
+func (m *mockHistoryServiceDetailsBundle) DeleteWatchHistoryItem(_, _, _ string) error {
+	return nil
+}
 func (m *mockHistoryServiceDetailsBundle) IsWatched(_, _, _ string) (bool, error) {
 	return false, nil
 }
