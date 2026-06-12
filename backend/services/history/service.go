@@ -5379,19 +5379,27 @@ func (s *Service) clearEarlierEpisodesProgressLocked(userID, seriesID string, se
 // Callers must hold s.mu before invoking this helper.
 func (s *Service) collectExternalIDsForSeriesLocked(userID, seriesID string) map[string]string {
 	collected := make(map[string]string)
+	target := mediaidentity.Resolve(mediaidentity.Input{MediaType: "series", ID: seriesID})
+	collect := func(ids map[string]string) {
+		for _, k := range []string{"imdb", "tvdb", "tmdb"} {
+			if v, ok := ids[k]; ok && v != "" {
+				if _, exists := collected[k]; !exists {
+					collected[k] = v
+				}
+			}
+		}
+	}
 
 	// Check watch history
 	if perUser, ok := s.watchHistory[userID]; ok {
 		for _, item := range perUser {
-			if item.SeriesID == seriesID {
-				for _, k := range []string{"imdb", "tvdb", "tmdb"} {
-					if v, ok := item.ExternalIDs[k]; ok && v != "" {
-						collected[k] = v
-					}
-				}
-				if len(collected) > 0 {
-					break // one match is enough
-				}
+			itemIdentity := mediaidentity.Resolve(mediaidentity.Input{
+				MediaType:   "series",
+				ID:          item.SeriesID,
+				ExternalIDs: item.ExternalIDs,
+			})
+			if identitiesReferToSameTitle(itemIdentity, target) {
+				collect(item.ExternalIDs)
 			}
 		}
 	}
@@ -5399,14 +5407,8 @@ func (s *Service) collectExternalIDsForSeriesLocked(userID, seriesID string) map
 	// Also check playback progress
 	if perUser, ok := s.playbackProgress[userID]; ok {
 		for _, prog := range perUser {
-			if prog.SeriesID == seriesID {
-				for _, k := range []string{"imdb", "tvdb", "tmdb"} {
-					if v, ok := prog.ExternalIDs[k]; ok && v != "" {
-						if _, exists := collected[k]; !exists {
-							collected[k] = v
-						}
-					}
-				}
+			if progressSeriesMatchesIdentity(prog, target) {
+				collect(prog.ExternalIDs)
 			}
 		}
 	}
@@ -5686,9 +5688,15 @@ func (s *Service) preserveSeriesHiddenMarkerLocked(perUser map[string]models.Pla
 		return
 	}
 
+	target := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   "series",
+		ID:          seriesID,
+		ExternalIDs: canonicalSeriesExternalIDs(seriesID, deleted.ItemID, deleted.ExternalIDs),
+	})
+
 	// Check if another hidden entry already covers this series
 	for _, p := range perUser {
-		if p.HiddenFromContinueWatching && p.SeriesID == seriesID {
+		if p.HiddenFromContinueWatching && progressSeriesMatchesIdentity(p, target) {
 			return // already covered
 		}
 	}
@@ -5704,6 +5712,7 @@ func (s *Service) preserveSeriesHiddenMarkerLocked(perUser map[string]models.Pla
 		MediaType:                  mediaType,
 		ItemID:                     seriesID,
 		SeriesID:                   seriesID,
+		ExternalIDs:                canonicalSeriesExternalIDs(seriesID, deleted.ItemID, deleted.ExternalIDs),
 		UpdatedAt:                  deleted.UpdatedAt,
 		HiddenFromContinueWatching: true,
 	}

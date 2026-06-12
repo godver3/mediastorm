@@ -2623,6 +2623,69 @@ func TestHideFromContinueWatching_SurvivesProgressClear(t *testing.T) {
 	}
 }
 
+func TestHideFromContinueWatching_ResetProgressPreservesIdentityAcrossReload(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tvdb:series:371980"
+	episodeID := seriesID + ":S01E01"
+	externalIDs := map[string]string{"imdb": "tt9817258", "tmdb": "91363", "tvdb": "371980"}
+
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         episodeID,
+		Position:       300,
+		Duration:       1200,
+		SeriesID:       seriesID,
+		SeriesName:     "MF Ghost",
+		SeasonNumber:   1,
+		EpisodeNumber:  1,
+		ExternalIDs:    externalIDs,
+		PercentWatched: 25,
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+	if err := svc.DeletePlaybackProgress(userID, "episode", episodeID); err != nil {
+		t.Fatalf("DeletePlaybackProgress() error = %v", err)
+	}
+
+	reloaded, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() reload error = %v", err)
+	}
+	progress, err := reloaded.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+
+	var marker *models.PlaybackProgress
+	for i := range progress {
+		if progress[i].HiddenFromContinueWatching &&
+			progress[i].SeasonNumber == 0 &&
+			progress[i].EpisodeNumber == 0 &&
+			progress[i].ItemID == progress[i].SeriesID {
+			marker = &progress[i]
+			break
+		}
+	}
+	if marker == nil {
+		t.Fatalf("expected persisted hidden series marker after reset, got %+v", progress)
+	}
+	for key, want := range externalIDs {
+		if got := marker.ExternalIDs[key]; got != want {
+			t.Fatalf("marker externalIDs[%q] = %q, want %q (marker=%+v)", key, got, want, *marker)
+		}
+	}
+}
+
 func TestHideFromContinueWatching_ExistingEpisodeProgressCreatesSeriesMarker(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -2862,7 +2925,11 @@ func TestUpdatePlaybackProgress_StaleWatchedEpisodeKeepsHiddenMarker(t *testing.
 
 	hiddenMarkerFound := false
 	for _, p := range progress {
-		if p.ItemID == seriesID && p.SeriesID == seriesID && p.HiddenFromContinueWatching {
+		if p.HiddenFromContinueWatching &&
+			p.SeasonNumber == 0 &&
+			p.EpisodeNumber == 0 &&
+			p.ItemID == p.SeriesID &&
+			p.ExternalIDs["tvdb"] == "393810" {
 			hiddenMarkerFound = true
 		}
 	}
