@@ -1342,6 +1342,102 @@ func TestImportWatchHistory_PreservesManualUnwatchAgainstOlderOrEqualImport(t *t
 	}
 }
 
+func TestImportWatchHistory_PreservesManualUnwatchFromEquivalentRow(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-spider-noir"
+	watched := true
+	canonicalItemID := "tmdb:tv:220102:s01e05"
+	legacyItemID := "tmdb:tv:4629:s01e05"
+	canonicalKey := makeWatchKey("episode", canonicalItemID)
+	legacyKey := makeWatchKey("episode", legacyItemID)
+	staleWatchedAt := time.Date(2026, 6, 10, 21, 3, 0, 0, time.UTC)
+	importWatchedAt := time.Date(2026, 6, 12, 8, 52, 0, 0, time.UTC)
+	manualUnwatchAt := time.Date(2026, 6, 12, 8, 52, 15, 0, time.UTC)
+	externalIDs := map[string]string{
+		"tmdb":            "220102",
+		"tvdb":            "450033",
+		"imdb":            "tt30460310",
+		"episodeTvdb":     "11610260",
+		"episodeTmdb":     "6540113",
+		"episodeTrakt":    "13527583",
+		"absoluteEpisode": "5",
+		"titleId":         "tmdb:tv:220102",
+	}
+
+	svc.mu.Lock()
+	perUser := svc.ensureWatchHistoryUserLocked(userID)
+	perUser[canonicalKey] = models.WatchHistoryItem{
+		ID:            canonicalKey,
+		MediaType:     "episode",
+		ItemID:        canonicalItemID,
+		Name:          "Betrayal",
+		Watched:       true,
+		WatchedAt:     staleWatchedAt,
+		UpdatedAt:     staleWatchedAt,
+		SeriesID:      "tmdb:tv:220102",
+		SeriesName:    "Spider-Noir",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+		ExternalIDs:   externalIDs,
+	}
+	perUser[legacyKey] = models.WatchHistoryItem{
+		ID:            legacyKey,
+		MediaType:     "episode",
+		ItemID:        legacyItemID,
+		Name:          "Betrayal",
+		Watched:       false,
+		WatchedAt:     importWatchedAt,
+		UpdatedAt:     manualUnwatchAt,
+		SeriesID:      "tmdb:tv:4629",
+		SeriesName:    "Spider-Noir",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+		ExternalIDs:   externalIDs,
+	}
+	svc.mu.Unlock()
+
+	if _, err := svc.ImportWatchHistory(userID, []models.WatchHistoryUpdate{{
+		MediaType:     "episode",
+		ItemID:        canonicalItemID,
+		Name:          "Betrayal",
+		Watched:       &watched,
+		WatchedAt:     importWatchedAt,
+		SeriesID:      "tmdb:tv:220102",
+		SeriesName:    "Spider-Noir",
+		SeasonNumber:  1,
+		EpisodeNumber: 5,
+		ExternalIDs:   externalIDs,
+	}}); err != nil {
+		t.Fatalf("ImportWatchHistory() error = %v", err)
+	}
+
+	item, err := svc.GetWatchHistoryItem(userID, "episode", canonicalItemID)
+	if err != nil {
+		t.Fatalf("GetWatchHistoryItem() error = %v", err)
+	}
+	if item == nil {
+		t.Fatal("expected canonical history item")
+	}
+	if item.Watched {
+		t.Fatalf("expected newer equivalent manual unwatch to be preserved: %+v", item)
+	}
+	if !item.UpdatedAt.Equal(manualUnwatchAt) {
+		t.Fatalf("expected updatedAt %s, got %s", manualUnwatchAt.Format(time.RFC3339), item.UpdatedAt.Format(time.RFC3339))
+	}
+
+	svc.mu.RLock()
+	_, legacyExists := svc.watchHistory[userID][legacyKey]
+	svc.mu.RUnlock()
+	if legacyExists {
+		t.Fatal("expected legacy equivalent row to be rekeyed away")
+	}
+}
+
 func TestImportWatchHistory_AllowsNewerExternalRewatchAfterManualUnwatch(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

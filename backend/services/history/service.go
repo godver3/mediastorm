@@ -2904,36 +2904,127 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 	// This lets us find existing entries for the same episode imported under a different ID format.
 	type episodeIndex struct {
 		watchKey string
+		stateAt  time.Time
+		watched  bool
 	}
 	crossProviderIndex := make(map[string]episodeIndex)
 	episodeScopedIDIndex := make(map[string]episodeIndex)
-	for key, item := range perUser {
+	putEpisodeIndex := func(index map[string]episodeIndex, indexKey, watchKey string, item models.WatchHistoryItem) {
+		next := episodeIndex{
+			watchKey: watchKey,
+			stateAt:  watchHistoryImportStateTime(item),
+			watched:  item.Watched,
+		}
+		current, ok := index[indexKey]
+		if !ok ||
+			next.stateAt.After(current.stateAt) ||
+			(next.stateAt.Equal(current.stateAt) && current.watched && !next.watched) ||
+			(next.stateAt.Equal(current.stateAt) && current.watched == next.watched && next.watchKey < current.watchKey) {
+			index[indexKey] = next
+		}
+	}
+	removeEpisodeIndexes := func(item models.WatchHistoryItem) {
 		if item.MediaType != "episode" || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
-			continue
+			return
+		}
+		epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
+		for oldIDType, oldIDValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
+			if oldIDValue == "" {
+				continue
+			}
+			delete(crossProviderIndex, epKey+":"+oldIDType+":"+oldIDValue)
+		}
+		for _, oldIndexKey := range episodeScopedIndexKeys(item.ExternalIDs) {
+			delete(episodeScopedIDIndex, oldIndexKey)
+		}
+	}
+	putItemEpisodeIndexes := func(key string, item models.WatchHistoryItem) {
+		if item.MediaType != "episode" || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+			return
 		}
 		epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
 		for idType, idValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
 			if idValue == "" {
 				continue
 			}
-			indexKey := epKey + ":" + idType + ":" + idValue
-			crossProviderIndex[indexKey] = episodeIndex{watchKey: key}
+			putEpisodeIndex(crossProviderIndex, epKey+":"+idType+":"+idValue, key, item)
 		}
 		for _, indexKey := range episodeScopedIndexKeys(item.ExternalIDs) {
-			episodeScopedIDIndex[indexKey] = episodeIndex{watchKey: key}
+			putEpisodeIndex(episodeScopedIDIndex, indexKey, key, item)
 		}
+	}
+	for key, item := range perUser {
+		putItemEpisodeIndexes(key, item)
 	}
 
 	for _, update := range updates {
 		update = normalizeWatchHistoryUpdate(update)
-		normalizedItemID := update.ItemID
-		key := makeWatchKey(update.MediaType, normalizedItemID)
-		existing, exists := perUser[key]
+		identity := watchHistoryUpdateIdentity(update)
+		normalizedItemID := identity.ID
+		key := identity.Key
+		matchedKey, existing, exists := bestWatchHistoryImportMatchLocked(perUser, identity)
 
 		// crossProviderRekeyed is set when dedup finds the item under a different key and
 		// deletes the old entry. In that case the SKIP path must re-save under the new key
 		// to prevent the item from disappearing and triggering a re-scrobble loop.
 		crossProviderRekeyed := false
+		dedupedEquivalent := false
+		if exists && matchedKey != key {
+			dedupedEquivalent = true
+			if preferProgressID(existing.ItemID, normalizedItemID) {
+				key = matchedKey
+				normalizedItemID = existing.ItemID
+				log.Printf("[history] import: DEDUP identity %s %q (attaching to canonical key %s)",
+					update.MediaType, update.Name, key)
+			} else {
+				crossProviderRekeyed = true
+				delete(perUser, matchedKey)
+				removeEpisodeIndexes(existing)
+				log.Printf("[history] import: DEDUP identity %s %q (old key %s -> new key %s)",
+					update.MediaType, update.Name, matchedKey, key)
+			}
+		}
+		persistDedupedSkip := func() {
+			if crossProviderRekeyed {
+				existing.ID = key
+				existing.ItemID = normalizedItemID
+				existing.MediaType = strings.ToLower(update.MediaType)
+				if update.Name != "" {
+					existing.Name = update.Name
+				}
+				if update.Year > 0 {
+					existing.Year = update.Year
+				}
+				if update.ExternalIDs != nil {
+					if existing.ExternalIDs == nil {
+						existing.ExternalIDs = make(map[string]string)
+					}
+					for k, v := range update.ExternalIDs {
+						if v != "" {
+							existing.ExternalIDs[k] = v
+						}
+					}
+				}
+				if update.SeasonNumber > 0 {
+					existing.SeasonNumber = update.SeasonNumber
+				}
+				if update.EpisodeNumber > 0 {
+					existing.EpisodeNumber = update.EpisodeNumber
+				}
+				if update.SeriesID != "" {
+					existing.SeriesID = update.SeriesID
+				}
+				if update.SeriesName != "" {
+					existing.SeriesName = update.SeriesName
+				}
+			}
+			perUser[key] = existing
+			syncEquivalentEpisodeWatchHistoryLocked(perUser, key, existing)
+			putItemEpisodeIndexes(key, existing)
+			if crossProviderRekeyed {
+				imported++
+			}
+		}
 
 		// Cross-provider dedup: if no direct match, look for an existing entry
 		// with matching external IDs and same season/episode numbers.
@@ -2946,7 +3037,11 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				indexKey := epKey + ":" + idType + ":" + idValue
 				if idx, found := crossProviderIndex[indexKey]; found && idx.watchKey != key {
 					// Found a match under a different key — merge into existing entry.
-					existing = perUser[idx.watchKey]
+					existingItem, ok := perUser[idx.watchKey]
+					if !ok {
+						continue
+					}
+					existing = existingItem
 					exists = true
 					if preferProgressID(existing.ItemID, normalizedItemID) {
 						// Existing entry's key is the canonical (TMDB-preferred)
@@ -2955,23 +3050,16 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 						key = idx.watchKey
 						normalizedItemID = existing.ItemID
 						crossProviderRekeyed = false
+						dedupedEquivalent = true
 						log.Printf("[history] import: DEDUP cross-provider %s %q (attaching to canonical key %s)",
 							update.MediaType, update.Name, key)
 					} else {
 						// Incoming key is canonical; drop the old row and re-key
 						// onto the incoming key below.
 						crossProviderRekeyed = true
+						dedupedEquivalent = true
 						delete(perUser, idx.watchKey)
-						for oldIDType, oldIDValue := range canonicalSeriesExternalIDs(existing.SeriesID, existing.ItemID, existing.ExternalIDs) {
-							if oldIDValue == "" {
-								continue
-							}
-							oldIndexKey := epKey + ":" + oldIDType + ":" + oldIDValue
-							delete(crossProviderIndex, oldIndexKey)
-						}
-						for _, oldIndexKey := range episodeScopedIndexKeys(existing.ExternalIDs) {
-							delete(episodeScopedIDIndex, oldIndexKey)
-						}
+						removeEpisodeIndexes(existing)
 						log.Printf("[history] import: DEDUP cross-provider %s %q (old key %s -> new key %s)",
 							update.MediaType, update.Name, idx.watchKey, key)
 					}
@@ -2988,9 +3076,14 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		if !exists && update.MediaType == "episode" && len(update.ExternalIDs) > 0 {
 			for _, indexKey := range episodeScopedIndexKeys(update.ExternalIDs) {
 				if idx, found := episodeScopedIDIndex[indexKey]; found && idx.watchKey != key {
-					existing = perUser[idx.watchKey]
+					existingItem, ok := perUser[idx.watchKey]
+					if !ok {
+						continue
+					}
+					existing = existingItem
 					exists = true
 					crossProviderRekeyed = false
+					dedupedEquivalent = true
 					normalizedItemID = existing.ItemID
 					key = idx.watchKey
 					update.SeasonNumber = existing.SeasonNumber
@@ -3052,11 +3145,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339))
 				// If cross-provider dedup deleted the old key, re-save under the new canonical
 				// key so the item isn't lost, which would cause a re-scrobble loop.
-				if crossProviderRekeyed {
-					existing.ID = key
-					existing.ItemID = normalizedItemID
-					perUser[key] = existing
-					imported++
+				if crossProviderRekeyed || dedupedEquivalent {
+					persistDedupedSkip()
 				}
 				continue
 			}
@@ -3071,11 +3161,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				log.Printf("[history] import: SKIP (manual unwatch newer/equal) %s %q localWatchedAt=%s importedWatchedAt=%s seriesID=%s",
 					update.MediaType, update.Name, existing.UpdatedAt.Format(time.RFC3339), incomingStateTime.Format(time.RFC3339), update.SeriesID)
 				// If cross-provider dedup deleted the old key, re-save under the new canonical key.
-				if crossProviderRekeyed {
-					existing.ID = key
-					existing.ItemID = normalizedItemID
-					perUser[key] = existing
-					imported++
+				if crossProviderRekeyed || dedupedEquivalent {
+					persistDedupedSkip()
 				}
 				continue
 			}
@@ -3089,11 +3176,8 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		if update.Watched != nil && *update.Watched && s.hasHighInProgressPlaybackLocked(userID, update) {
 			log.Printf("[history] import: SKIP (preserve local in-progress) %s %q watchedAt=%s seriesID=%s",
 				update.MediaType, update.Name, update.WatchedAt.Format(time.RFC3339), update.SeriesID)
-			if crossProviderRekeyed {
-				existing.ID = key
-				existing.ItemID = normalizedItemID
-				perUser[key] = existing
-				imported++
+			if crossProviderRekeyed || dedupedEquivalent {
+				persistDedupedSkip()
 			}
 			continue
 		}
@@ -3107,6 +3191,9 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				Watched:   false,
 			}
 		}
+		item.ID = key
+		item.MediaType = strings.ToLower(update.MediaType)
+		item.ItemID = normalizedItemID
 
 		// Update fields
 		if update.Name != "" {
@@ -3166,18 +3253,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 		syncEquivalentEpisodeWatchHistoryLocked(perUser, key, item)
 
 		// Update cross-provider index so subsequent items in this batch can find this entry
-		if item.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
-			epKey := episodeKey(item.SeasonNumber, item.EpisodeNumber)
-			for idType, idValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
-				if idValue == "" {
-					continue
-				}
-				crossProviderIndex[epKey+":"+idType+":"+idValue] = episodeIndex{watchKey: key}
-			}
-			for _, indexKey := range episodeScopedIndexKeys(item.ExternalIDs) {
-				episodeScopedIDIndex[indexKey] = episodeIndex{watchKey: key}
-			}
-		}
+		putItemEpisodeIndexes(key, item)
 
 		if update.Watched != nil && *update.Watched && update.MediaType == "episode" && update.SeriesID != "" && update.SeasonNumber > 0 && update.EpisodeNumber > 0 {
 			if s.clearEarlierEpisodesProgressLocked(userID, update.SeriesID, update.SeasonNumber, update.EpisodeNumber) {
@@ -3667,6 +3743,77 @@ func watchHistoryUpdateIdentity(update models.WatchHistoryUpdate) mediaidentity.
 		EpisodeNumber: update.EpisodeNumber,
 		ExternalIDs:   externalIDs,
 	})
+}
+
+func bestWatchHistoryImportMatchLocked(perUser map[string]models.WatchHistoryItem, identity mediaidentity.Identity) (string, models.WatchHistoryItem, bool) {
+	var bestKey string
+	var best models.WatchHistoryItem
+	found := false
+
+	consider := func(key string, item models.WatchHistoryItem, force bool) {
+		if mediaidentity.NormalizeMediaType(item.MediaType) != identity.MediaType {
+			return
+		}
+		if identity.MediaType == "episode" && !sameEpisodeWatchHistoryImportSlot(item, identity) {
+			return
+		}
+		if !force && !watchHistoryItemMatchesIdentity(item, identity) {
+			return
+		}
+		if !found || preferWatchHistoryImportMatch(item, best) {
+			bestKey = key
+			best = item
+			found = true
+		}
+	}
+
+	if item, ok := perUser[identity.Key]; ok {
+		consider(identity.Key, item, true)
+	}
+	for _, key := range identity.CandidateKeys {
+		if key == identity.Key {
+			continue
+		}
+		if item, ok := perUser[key]; ok {
+			consider(key, item, true)
+		}
+	}
+	for key, item := range perUser {
+		consider(key, item, false)
+	}
+	if !found {
+		return "", models.WatchHistoryItem{}, false
+	}
+	return bestKey, best, true
+}
+
+func sameEpisodeWatchHistoryImportSlot(item models.WatchHistoryItem, identity mediaidentity.Identity) bool {
+	if identity.MediaType != "episode" {
+		return true
+	}
+	if item.SeasonNumber <= 0 || item.EpisodeNumber <= 0 || identity.SeasonNumber <= 0 || identity.EpisodeNumber <= 0 {
+		return true
+	}
+	return item.SeasonNumber == identity.SeasonNumber && item.EpisodeNumber == identity.EpisodeNumber
+}
+
+func preferWatchHistoryImportMatch(candidate, current models.WatchHistoryItem) bool {
+	candidateTime := watchHistoryImportStateTime(candidate)
+	currentTime := watchHistoryImportStateTime(current)
+	if !candidateTime.Equal(currentTime) {
+		return candidateTime.After(currentTime)
+	}
+	if candidate.Watched != current.Watched {
+		return !candidate.Watched
+	}
+	return candidate.ID < current.ID
+}
+
+func watchHistoryImportStateTime(item models.WatchHistoryItem) time.Time {
+	if !item.UpdatedAt.IsZero() {
+		return item.UpdatedAt
+	}
+	return item.WatchedAt
 }
 
 func playbackProgressUpdateIdentity(update models.PlaybackProgressUpdate) mediaidentity.Identity {
