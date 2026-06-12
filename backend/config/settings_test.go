@@ -37,6 +37,49 @@ func TestDefaultSettingsDisablesMatchFrameRate(t *testing.T) {
 	}
 }
 
+func TestLoadMigratesNavigationTabVisibilitySystemTabs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"ui":{"loadingAnimationEnabled":true},"display":{"navigationTabVisibility":["home","search","lists","live","profiles","downloads"]}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !settings.UI.NavigationTabVisibilityIncludesSystemTabs {
+		t.Fatal("expected navigation tab visibility migration marker to be set")
+	}
+	if !containsString(settings.Display.NavigationTabVisibility, "settings") {
+		t.Fatalf("navigationTabVisibility = %#v, want settings tab added", settings.Display.NavigationTabVisibility)
+	}
+	if !containsString(settings.Display.NavigationTabVisibility, "admin") {
+		t.Fatalf("navigationTabVisibility = %#v, want admin tab added", settings.Display.NavigationTabVisibility)
+	}
+}
+
+func TestLoadPreservesHiddenSystemTabsAfterNavigationTabVisibilityMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"ui":{"loadingAnimationEnabled":true,"navigationTabVisibilityIncludesSystemTabs":true},"display":{"navigationTabVisibility":["home","search","lists","live","profiles","downloads"]}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if containsString(settings.Display.NavigationTabVisibility, "settings") {
+		t.Fatalf("navigationTabVisibility = %#v, settings should remain hidden after migration marker", settings.Display.NavigationTabVisibility)
+	}
+	if containsString(settings.Display.NavigationTabVisibility, "admin") {
+		t.Fatalf("navigationTabVisibility = %#v, admin should remain hidden after migration marker", settings.Display.NavigationTabVisibility)
+	}
+}
+
 func TestLoadDefaultsMissingMatchFrameRateToDisabled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"playback":{"preferredPlayer":"native"}}`)
@@ -340,4 +383,13 @@ func TestSavePreservesClearedLiveSourceProxyURL(t *testing.T) {
 	if loaded.Live.Sources[0].ProxyURL != "" {
 		t.Fatalf("Live.Sources[0].ProxyURL = %q, want cleared value", loaded.Live.Sources[0].ProxyURL)
 	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

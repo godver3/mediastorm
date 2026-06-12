@@ -186,7 +186,13 @@ func (s *Service) load() error {
 		if err != nil {
 			return fmt.Errorf("load client settings from db: %w", err)
 		}
+		needsSave := normalizeNavigationTabVisibilitySystemTabs(settings)
 		s.settings = settings
+		if needsSave {
+			if err := s.saveLocked(); err != nil {
+				return fmt.Errorf("persist client settings migration: %w", err)
+			}
+		}
 		return nil
 	}
 
@@ -214,8 +220,33 @@ func (s *Service) load() error {
 		return fmt.Errorf("decode client settings: %w", err)
 	}
 
+	needsSave := normalizeNavigationTabVisibilitySystemTabs(settings)
 	s.settings = settings
+	if needsSave {
+		if err := s.saveLocked(); err != nil {
+			return fmt.Errorf("persist client settings migration: %w", err)
+		}
+	}
 	return nil
+}
+
+func normalizeNavigationTabVisibilitySystemTabs(settings map[string]models.ClientFilterSettings) bool {
+	needsSave := false
+	for clientID, cs := range settings {
+		if cs.NavigationTabVisibilityIncludesSystemTabs != nil && *cs.NavigationTabVisibilityIncludesSystemTabs {
+			continue
+		}
+		if cs.NavigationTabVisibility != nil {
+			if tabs, changed := models.AddMissingSystemNavigationTabs(*cs.NavigationTabVisibility); changed {
+				cs.NavigationTabVisibility = &tabs
+			}
+		}
+		migrated := true
+		cs.NavigationTabVisibilityIncludesSystemTabs = &migrated
+		settings[clientID] = cs
+		needsSave = true
+	}
+	return needsSave
 }
 
 func (s *Service) saveLocked() error {

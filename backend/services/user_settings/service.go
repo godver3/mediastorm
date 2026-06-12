@@ -783,6 +783,14 @@ func (s *Service) load() error {
 	// Migrate: force hideUnreleased=false on trending shelves (curated lists handle this now)
 	for userID, us := range settings {
 		changed := false
+		if !us.Display.NavigationTabVisibilityIncludesSystemTabs {
+			if tabs, tabsChanged := models.AddMissingSystemNavigationTabs(us.Display.NavigationTabVisibility); tabsChanged {
+				us.Display.NavigationTabVisibility = tabs
+			}
+			us.Display.NavigationTabVisibilityIncludesSystemTabs = true
+			changed = true
+			needsSave = true
+		}
 		if reconcileProfileHomeShelves(&us) {
 			changed = true
 			needsSave = true

@@ -82,8 +82,10 @@ type DisplaySettings struct {
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
 	// NavigationTabVisibility controls which navigation tabs are shown in the client UI.
-	// Valid values: "home", "search", "lists", "live", "profiles", "downloads"
+	// Valid values: "home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"
 	NavigationTabVisibility []string `json:"navigationTabVisibility,omitempty"`
+	// NavigationTabVisibilityIncludesSystemTabs marks the one-time migration that added settings/admin to existing visibility lists.
+	NavigationTabVisibilityIncludesSystemTabs bool `json:"navigationTabVisibilityIncludesSystemTabs,omitempty"`
 	// WatchStateIconStyle controls the color of watch state icons.
 	// "colored" (default) = green/yellow circles, "white" = all white circles
 	WatchStateIconStyle string `json:"watchStateIconStyle,omitempty"`
@@ -95,6 +97,30 @@ type DisplaySettings struct {
 	AppLanguage string `json:"appLanguage,omitempty"`
 	// Appearance controls app-wide visual accessibility and theming preferences.
 	Appearance AppearanceSettings `json:"appearance,omitempty"`
+}
+
+// AddMissingSystemNavigationTabs appends tabs that became configurable after
+// the original navigation visibility setting shipped. It only changes non-empty
+// lists; empty lists keep their existing "use defaults" behavior.
+func AddMissingSystemNavigationTabs(tabs []string) ([]string, bool) {
+	if len(tabs) == 0 {
+		return tabs, false
+	}
+
+	existing := make(map[string]struct{}, len(tabs))
+	for _, tab := range tabs {
+		existing[tab] = struct{}{}
+	}
+
+	changed := false
+	for _, tab := range []string{"settings", "admin"} {
+		if _, ok := existing[tab]; !ok {
+			tabs = append(tabs, tab)
+			changed = true
+		}
+	}
+
+	return tabs, changed
 }
 
 // AppearanceSettings controls app-wide visual accessibility and theming preferences.
@@ -609,10 +635,11 @@ func DefaultUserSettings() UserSettings {
 			SelectedCategories: []string{},
 		},
 		Display: DisplaySettings{
-			BadgeVisibility:          []string{"watchProgress"},
-			NavigationTabVisibility:  []string{"home", "search", "lists", "live", "profiles", "downloads"},
-			WatchStateIconStyle:      "colored",
-			DisableMobileTopCarousel: BoolPtr(false),
+			BadgeVisibility:                           []string{"watchProgress"},
+			NavigationTabVisibility:                   []string{"home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"},
+			NavigationTabVisibilityIncludesSystemTabs: true,
+			WatchStateIconStyle:                       "colored",
+			DisableMobileTopCarousel:                  BoolPtr(false),
 			Appearance: AppearanceSettings{
 				FontScale:    FloatPtr(1.0),
 				ButtonStyle:  "soft",

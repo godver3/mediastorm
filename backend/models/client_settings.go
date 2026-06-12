@@ -24,10 +24,11 @@ type ClientFilterSettings struct {
 	RemoteBackendUrl *string `json:"remoteBackendUrl,omitempty"`
 
 	// Display overrides
-	BypassFilteringForAIOStreamsOnly *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
-	DisableMobileTopCarousel         *bool               `json:"disableMobileTopCarousel,omitempty"`
-	NavigationTabVisibility          *[]string           `json:"navigationTabVisibility,omitempty"`
-	Appearance                       *AppearanceSettings `json:"appearance,omitempty"`
+	BypassFilteringForAIOStreamsOnly          *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	DisableMobileTopCarousel                  *bool               `json:"disableMobileTopCarousel,omitempty"`
+	NavigationTabVisibility                   *[]string           `json:"navigationTabVisibility,omitempty"`
+	NavigationTabVisibilityIncludesSystemTabs *bool               `json:"navigationTabVisibilityIncludesSystemTabs,omitempty"`
+	Appearance                                *AppearanceSettings `json:"appearance,omitempty"`
 
 	// Playback overrides
 	PreferredPlayer            *string  `json:"preferredPlayer,omitempty"`

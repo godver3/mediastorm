@@ -665,7 +665,7 @@ var SettingsSchema = map[string]interface{}{
 			"navigationTabVisibility": map[string]interface{}{
 				"type":        "checkboxes",
 				"label":       "Visible Navigation Tabs",
-				"description": "Choose which app navigation tabs are shown to this scope",
+				"description": "Choose which app navigation tabs are shown to this scope. Admin is web only.",
 				"order":       1,
 				"options": []map[string]interface{}{
 					{"value": "home", "label": "Home"},
@@ -674,6 +674,8 @@ var SettingsSchema = map[string]interface{}{
 					{"value": "live", "label": "Live"},
 					{"value": "profiles", "label": "Profiles"},
 					{"value": "downloads", "label": "Downloads"},
+					{"value": "settings", "label": "Settings"},
+					{"value": "admin", "label": "Admin (web only)"},
 				},
 			},
 			"watchStateIconStyle": map[string]interface{}{

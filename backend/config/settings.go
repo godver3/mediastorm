@@ -698,13 +698,14 @@ type AnimeFilteringSettings struct {
 
 // UISettings captures user interface preferences shared with the clients.
 type UISettings struct {
-	LoadingAnimationEnabled     bool   `json:"loadingAnimationEnabled"`
-	OnboardingCompleted         bool   `json:"onboardingCompleted,omitempty"`
-	OnboardingSkipped           bool   `json:"onboardingSkipped,omitempty"`
-	OnboardingCompletedAt       string `json:"onboardingCompletedAt,omitempty"`
-	OnboardingSkippedAt         string `json:"onboardingSkippedAt,omitempty"`
-	AdminWalkthroughDismissed   bool   `json:"adminWalkthroughDismissed,omitempty"`
-	AdminWalkthroughDismissedAt string `json:"adminWalkthroughDismissedAt,omitempty"`
+	LoadingAnimationEnabled                   bool   `json:"loadingAnimationEnabled"`
+	NavigationTabVisibilityIncludesSystemTabs bool   `json:"navigationTabVisibilityIncludesSystemTabs,omitempty"`
+	OnboardingCompleted                       bool   `json:"onboardingCompleted,omitempty"`
+	OnboardingSkipped                         bool   `json:"onboardingSkipped,omitempty"`
+	OnboardingCompletedAt                     string `json:"onboardingCompletedAt,omitempty"`
+	OnboardingSkippedAt                       string `json:"onboardingSkippedAt,omitempty"`
+	AdminWalkthroughDismissed                 bool   `json:"adminWalkthroughDismissed,omitempty"`
+	AdminWalkthroughDismissedAt               string `json:"adminWalkthroughDismissedAt,omitempty"`
 }
 
 // DisplaySettings controls UI display preferences.
@@ -713,7 +714,7 @@ type DisplaySettings struct {
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
 	// NavigationTabVisibility controls which app navigation tabs are shown.
-	// Valid values: "home", "search", "lists", "live", "profiles", "downloads"
+	// Valid values: "home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"
 	NavigationTabVisibility []string `json:"navigationTabVisibility,omitempty"`
 	// WatchStateIconStyle controls the color of watch state icons.
 	// "colored" (default) = green/yellow circles, "white" = all white circles
@@ -1194,11 +1195,12 @@ func DefaultSettings() Settings {
 		},
 		AnimeFiltering: AnimeFilteringSettings{},
 		UI: UISettings{
-			LoadingAnimationEnabled: true,
+			LoadingAnimationEnabled:                   true,
+			NavigationTabVisibilityIncludesSystemTabs: true,
 		},
 		Display: DisplaySettings{
 			BadgeVisibility:           []string{"watchProgress"},
-			NavigationTabVisibility:   []string{"home", "search", "lists", "live", "profiles", "downloads"},
+			NavigationTabVisibility:   []string{"home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"},
 			WatchStateIconStyle:       "colored",
 			AlwaysShowProfileSelector: true,
 			Appearance: AppearanceSettings{
@@ -1367,6 +1369,7 @@ func (m *Manager) Load() (Settings, error) {
 	}
 
 	migrateLiveSourcesRaw(raw)
+	migrateNavigationTabVisibilitySystemTabs(raw)
 
 	// Apply versioned migrations (settings field relocations)
 	MigrateRawSettings(raw)
@@ -1725,7 +1728,7 @@ func (m *Manager) Load() (Settings, error) {
 		s.Display.BadgeVisibility = []string{"watchProgress"}
 	}
 	if len(s.Display.NavigationTabVisibility) == 0 {
-		s.Display.NavigationTabVisibility = []string{"home", "search", "lists", "live", "profiles", "downloads"}
+		s.Display.NavigationTabVisibility = []string{"home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"}
 	}
 	if s.Display.WatchStateIconStyle == "" {
 		s.Display.WatchStateIconStyle = "colored"
@@ -1874,6 +1877,36 @@ func migrateLiveSourcesRaw(raw map[string]interface{}) {
 	} {
 		copyIfMissing(key)
 	}
+}
+
+func migrateNavigationTabVisibilitySystemTabs(raw map[string]interface{}) {
+	uiMap, ok := raw["ui"].(map[string]interface{})
+	if !ok {
+		uiMap = map[string]interface{}{"loadingAnimationEnabled": true}
+		raw["ui"] = uiMap
+	}
+	if migrated, _ := uiMap["navigationTabVisibilityIncludesSystemTabs"].(bool); migrated {
+		return
+	}
+
+	if displayMap, ok := raw["display"].(map[string]interface{}); ok {
+		if tabs, ok := displayMap["navigationTabVisibility"].([]interface{}); ok && len(tabs) > 0 {
+			existing := make(map[string]struct{}, len(tabs))
+			for _, tab := range tabs {
+				if key, ok := tab.(string); ok {
+					existing[key] = struct{}{}
+				}
+			}
+			for _, key := range []string{"settings", "admin"} {
+				if _, ok := existing[key]; !ok {
+					tabs = append(tabs, key)
+				}
+			}
+			displayMap["navigationTabVisibility"] = tabs
+		}
+	}
+
+	uiMap["navigationTabVisibilityIncludesSystemTabs"] = true
 }
 
 func liveHasLegacySourceConfig(liveRaw map[string]interface{}) bool {
