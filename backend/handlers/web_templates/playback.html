@@ -23,6 +23,7 @@
     html,
     body {
       width: 100%;
+      height: 100%;
       min-height: 100%;
       margin: 0;
       background: var(--bg);
@@ -44,9 +45,12 @@
     }
 
     .page {
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      min-height: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
     }
 
     .topbar {
@@ -103,9 +107,13 @@
     .shell {
       display: grid;
       gap: 0.8rem;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-height: 0;
+      height: 100%;
       width: min(1420px, calc(100vw - 1.5rem));
       margin: 0 auto;
       padding: clamp(0.5rem, 1.5vw, 1rem) 0 1.25rem;
+      overflow: hidden;
     }
 
     .meta {
@@ -141,6 +149,7 @@
     }
 
     .player-panel {
+      min-height: 0;
       background: #000;
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: var(--radius);
@@ -150,6 +159,8 @@
 
     #videoHost {
       position: relative;
+      height: 100%;
+      min-height: 0;
       padding: clamp(0.35rem, 1vw, 0.75rem);
       background: #000;
     }
@@ -159,9 +170,9 @@
       display: grid;
       place-items: center;
       width: 100%;
+      height: 100%;
       aspect-ratio: 16 / 9;
-      max-height: calc(100vh - 11rem);
-      max-height: calc(100dvh - 11rem);
+      max-height: none;
       background: #000;
       border-radius: var(--radius);
       overflow: hidden;
@@ -238,30 +249,56 @@
       transition: opacity 0.18s ease, transform 0.18s ease;
     }
 
+    .track-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
+      display: none;
+      background: rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(3px);
+    }
+
     .track-controls {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.6rem;
+      flex-direction: column;
+      gap: 0.85rem;
       align-items: center;
       position: absolute;
-      top: clamp(0.75rem, 2.5vw, 1.5rem);
-      right: clamp(0.75rem, 2.5vw, 1.5rem);
-      z-index: 4;
-      max-width: min(620px, calc(100% - 1.5rem));
-      padding: 0.5rem;
+      top: 50%;
+      left: 50%;
+      z-index: 7;
+      width: min(420px, calc(100% - 2rem));
+      max-height: min(520px, calc(100% - 2rem));
+      padding: 1rem;
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: var(--radius);
-      background: rgba(0, 0, 0, 0.55);
-      backdrop-filter: blur(16px);
+      background: rgba(8, 10, 14, 0.96);
+      box-shadow: 0 24px 72px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(18px);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -48%) scale(0.98);
       transition: opacity 0.18s ease, transform 0.18s ease;
     }
 
     .track-controls label {
-      display: inline-flex;
+      display: flex;
+      width: 100%;
       gap: 0.4rem;
-      align-items: center;
+      flex-direction: column;
+      align-items: stretch;
       color: var(--muted);
       font-size: 0.82rem;
+    }
+
+    #videoHost.tracks-open .track-backdrop {
+      display: block;
+    }
+
+    #videoHost.tracks-open .track-controls {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, -50%) scale(1);
     }
 
     .btn {
@@ -397,6 +434,7 @@
     }
 
     .select {
+      width: 100%;
       max-width: min(330px, 76vw);
       padding: 0.42rem 0.55rem;
       border: 1px solid var(--border);
@@ -510,7 +548,6 @@
     }
 
     #videoHost.controls-hidden .controls,
-    #videoHost.controls-hidden .track-controls,
     #videoHost.controls-hidden .player-back {
       opacity: 0;
       pointer-events: none;
@@ -534,7 +571,8 @@
     }
 
     .track-sheet-header {
-      display: none;
+      display: flex;
+      width: 100%;
       justify-content: space-between;
       align-items: center;
       color: var(--text);
@@ -616,18 +654,20 @@
         display: inline-flex;
       }
 
-      .track-sheet-header.mobile-only {
-        display: flex;
-      }
-
       /* Audio/subtitle selectors as a bottom sheet, hidden until the tracks
          button toggles `.tracks-open` on the host. */
+      .track-backdrop {
+        z-index: 6;
+      }
+
       .track-controls {
         top: auto;
         left: 0;
         right: 0;
         bottom: 0;
         max-width: none;
+        width: auto;
+        max-height: min(70vh, 520px);
         flex-direction: column;
         align-items: stretch;
         gap: 0.85rem;
@@ -662,6 +702,7 @@
       #videoHost.controls-hidden .track-controls {
         transform: translateY(110%);
         opacity: 1;
+        pointer-events: none;
       }
 
       #videoHost.controls-hidden.tracks-open .track-controls {
@@ -768,6 +809,7 @@
 
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        closeTrackSheet();
         setFullscreen(false);
         setTheater(false);
       }
@@ -1074,7 +1116,7 @@
             <span id="volumeIcon" class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
           </button>
           <input id="volumeSlider" class="volume-slider desktop-only" type="range" min="0" max="1" step="0.05" value="1" oninput="setWebPlayerVolume(this.value)" aria-label="Volume" title="Volume">
-          ${isLive ? '' : `<button class="btn icon-btn mobile-only tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
+          ${isLive ? '' : `<button class="btn icon-btn tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4"/><path d="M14 15h3"/><path d="M7 11h2"/><path d="M12 11h5"/></svg></span>
           </button>`}
           <button class="btn icon-btn desktop-only" onclick="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen">
@@ -1085,8 +1127,9 @@
           <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)">
           <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>`}
         </div>
-        ${isLive ? '' : `<div class="track-controls">
-          <div class="track-sheet-header mobile-only">
+        ${isLive ? '' : `<div class="track-backdrop" onclick="closeTrackSheet()" aria-hidden="true"></div>
+        <div class="track-controls" role="dialog" aria-modal="true" aria-label="Audio and subtitles">
+          <div class="track-sheet-header">
             <span>Audio &amp; Subtitles</span>
             <button class="btn icon-btn" onclick="closeTrackSheet()" aria-label="Close" title="Close">
               <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span>
@@ -1553,7 +1596,7 @@
       if (webPlayerControlsHideTimer) clearTimeout(webPlayerControlsHideTimer);
       webPlayerControlsHideTimer = window.setTimeout(() => {
         const video = document.getElementById('webPlayer');
-        if (host.classList.contains('is-fullscreen') && video && !video.paused) {
+        if (!host.classList.contains('tracks-open') && video && !video.paused) {
           host.classList.add('controls-hidden');
         }
       }, 3000);
