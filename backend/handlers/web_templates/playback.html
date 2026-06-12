@@ -1636,9 +1636,20 @@
         if (loadToken !== webPlayerSubtitleLoadToken) return;
         const subtitleExtracting = response.headers.get('X-Subtitle-Extracting') === 'true';
         const subtitleSynced = response.headers.get('X-Subtitle-Synced') === 'true';
+        const parsedCues = parseWebVttCues(text);
         if (subtitleSynced) {
-          webPlayerSubtitleStartOffset = Number(hlsPlaybackOffset);
+          const basis = inferSyncedSubtitleBasis(parsedCues);
+          webPlayerSubtitleStartOffset = basis === 'absolute' ? 0 : Number(hlsPlaybackOffset);
           recomputeSubtitleTimeOffset();
+          if (typeof webPlayerDebug === 'function') {
+            webPlayerDebug('subtitleOffset.syncedBasis', {
+              basis,
+              firstCueStart: parsedCues[0]?.start ?? null,
+              playbackOffset: hlsPlaybackOffset,
+              subtitleStartOffset: webPlayerSubtitleStartOffset,
+              subtitleTimeOffset: webPlayerSubtitleTimeOffset,
+            });
+          }
         } else {
           const subtitleStartHeader = Number(response.headers.get('X-Subtitle-Start-Offset'));
           if (Number.isFinite(subtitleStartHeader)) {
@@ -1654,7 +1665,7 @@
             }
           }
         }
-        webPlayerSubtitleCues = parseWebVttCues(text);
+        webPlayerSubtitleCues = parsedCues;
         renderSubtitles();
         scheduleSubtitleRefresh(video, subtitleExtracting ? 500 : undefined);
       } catch (error) {
@@ -1665,6 +1676,15 @@
         }
         scheduleSubtitleRefresh(video);
       }
+    }
+
+    function inferSyncedSubtitleBasis(cues) {
+      const firstCueStart = Number(cues?.[0]?.start);
+      const playbackOffset = Number(hlsPlaybackOffset);
+      if (!Number.isFinite(firstCueStart) || !Number.isFinite(playbackOffset) || playbackOffset < 30) {
+        return 'zero';
+      }
+      return firstCueStart >= Math.max(0, playbackOffset - 5) ? 'absolute' : 'zero';
     }
 
     function clearSubtitleRefresh() {

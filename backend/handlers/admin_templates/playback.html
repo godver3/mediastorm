@@ -4287,12 +4287,18 @@
             if (loadToken !== webPlayerSubtitleLoadToken) return;
             const subtitleExtracting = response.headers.get('X-Subtitle-Extracting') === 'true';
             const subtitleSynced = response.headers.get('X-Subtitle-Synced') === 'true';
+            const parsedCues = parseWebVttCues(text);
             if (subtitleSynced) {
-                // VTT is muxed in the video's timeline — cue times already match video.currentTime,
-                // so the offset is 0. Ignore X-Subtitle-Start-Offset entirely (it can carry a stale
-                // value that would skew the overlay).
-                webPlayerSubtitleStartOffset = Number(hlsPlaybackOffset);
+                const basis = inferSyncedWebPlayerSubtitleBasis(parsedCues);
+                webPlayerSubtitleStartOffset = basis === 'absolute' ? 0 : Number(hlsPlaybackOffset);
                 recomputeWebPlayerSubtitleTimeOffset('subtitle-synced');
+                webPlayerDebug('subtitleOffset.syncedBasis', {
+                    basis,
+                    firstCueStart: parsedCues[0]?.start ?? null,
+                    playbackOffset: hlsPlaybackOffset,
+                    subtitleStartOffset: webPlayerSubtitleStartOffset,
+                    subtitleTimeOffset: webPlayerSubtitleTimeOffset,
+                });
             } else {
                 const subtitleStartHeader = Number(response.headers.get('X-Subtitle-Start-Offset'));
                 if (Number.isFinite(subtitleStartHeader)) {
@@ -4311,10 +4317,11 @@
                     }
                 }
             }
-            webPlayerSubtitleCues = parseWebVttCues(text);
+            webPlayerSubtitleCues = parsedCues;
             webPlayerDebug('subtitleTrack.loaded', {
                 cueCount: webPlayerSubtitleCues.length,
                 extracting: subtitleExtracting,
+                synced: subtitleSynced,
                 contentLength: text.length,
                 firstCue: webPlayerSubtitleCues[0] || null,
                 lastCue: webPlayerSubtitleCues[webPlayerSubtitleCues.length - 1] || null,
@@ -4333,6 +4340,18 @@
             }
             scheduleWebPlayerSubtitleRefresh(video);
         }
+    }
+
+    function inferSyncedWebPlayerSubtitleBasis(cues) {
+        const firstCueStart = Number(cues?.[0]?.start);
+        const playbackOffset = Number(hlsPlaybackOffset);
+        if (!Number.isFinite(firstCueStart) || !Number.isFinite(playbackOffset) || playbackOffset < 30) {
+            return 'zero';
+        }
+        // FFmpeg's same-pass WebVTT output can still preserve original media timestamps
+        // after an input seek. If the first cue sits near the absolute playback offset,
+        // look it up on the absolute media timeline; otherwise treat it as player-local.
+        return firstCueStart >= Math.max(0, playbackOffset - 5) ? 'absolute' : 'zero';
     }
 
     function syncWebPlayerSubtitleOffset(requestedOffset, actualOffset, reason) {
