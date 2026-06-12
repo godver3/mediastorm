@@ -1213,6 +1213,52 @@
     </div>
 </div>
 
+<!-- TROUBLESHOOTING CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">Troubleshooting</div>
+
+    <div class="section" id="troubleshootingSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 8v4"/>
+                    <path d="M12 16h.01"/>
+                </svg>
+                Diagnostic Uploads
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Use these when sharing diagnostic details for support. Database snapshots are de-identified before upload.
+            </p>
+            <div class="troubleshooting-actions">
+                <button class="btn btn-secondary" id="share-logs-btn" onclick="shareLogsPackage()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                    </svg>
+                    Share Logs
+                </button>
+                <button class="btn btn-secondary" id="upload-database-snapshot-btn" onclick="uploadDatabaseSnapshot()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Upload Database Snapshot
+                </button>
+            </div>
+            <div id="troubleshooting-upload-status" class="text-muted" style="margin-top: 0.75rem; font-size: 0.875rem;"></div>
+        </div>
+    </div>
+</div>
+
 <style>
     /* Link styling - consistent light grey with underline */
     a {
@@ -1274,6 +1320,15 @@
     }
     .section.open .section-content {
         display: block;
+    }
+    .troubleshooting-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+    }
+    .troubleshooting-actions .btn {
+        min-width: 0;
     }
     .import-card {
         background: var(--bg-tertiary);
@@ -1663,6 +1718,12 @@
     }
     /* Mobile adjustments */
     @media (max-width: 480px) {
+        .troubleshooting-actions {
+            align-items: stretch;
+        }
+        .troubleshooting-actions .btn {
+            width: 100%;
+        }
         .client-card-body {
             flex-direction: column;
             align-items: stretch;
@@ -1713,6 +1774,79 @@
             }
         } catch (e) {
             showToast('Error clearing cache: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    async function uploadDatabaseSnapshot() {
+        const btn = document.getElementById('upload-database-snapshot-btn');
+        if (!btn) return;
+
+        if (!confirm('Upload a de-identified database snapshot for debugging?')) {
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Uploading...';
+
+        try {
+            const response = await fetch(basePath + '/api/logs/database', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: '{}'
+            });
+            const result = await response.json();
+            if (response.ok && result.url) {
+                try {
+                    await navigator.clipboard.writeText(result.url);
+                    showToast('Database snapshot uploaded. Link copied to clipboard.');
+                } catch (_) {
+                    showToast('Database snapshot uploaded: ' + result.url);
+                }
+            } else {
+                showToast(result.error || 'Failed to upload database snapshot', 'error');
+            }
+        } catch (e) {
+            showToast('Error uploading database snapshot: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    async function shareLogsPackage() {
+        const btn = document.getElementById('share-logs-btn');
+        const status = document.getElementById('troubleshooting-upload-status');
+        if (!btn) return;
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Sharing...';
+        if (status) status.textContent = 'Submitting logs package...';
+
+        try {
+            const response = await fetch(basePath + '/api/logs/package', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: '{}'
+            });
+            const result = await response.json();
+            if (!response.ok || !result.url) {
+                throw new Error(result.error || 'Failed to share logs');
+            }
+
+            if (status) {
+                status.innerHTML = `Shared logs: <a href="${result.url}" target="_blank" rel="noopener noreferrer">${result.url}</a>`;
+            }
+            showToast('Logs shared successfully');
+        } catch (e) {
+            if (status) status.textContent = 'Failed to share logs: ' + e.message;
+            showToast('Failed to share logs: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
