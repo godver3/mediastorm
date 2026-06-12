@@ -284,3 +284,52 @@ func TestIndexKeysDoNotCollideAcrossProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeIDStripsRedundantMediaTypePrefixes(t *testing.T) {
+	cases := map[string]string{
+		"movie:tvdb:movie:10702":       "tvdb:movie:10702",
+		"movie:movie:tvdb:movie:10702": "tvdb:movie:10702",
+		"episode:tmdb:tv:95396:s01e01": "tmdb:tv:95396:s01e01",
+		"series:tmdb:tv:95396":         "tmdb:tv:95396",
+		"tvdb:movie:10702":             "tvdb:movie:10702",
+		"tmdb:tv:95396":                "tmdb:tv:95396",
+		"tt0133093":                    "tt0133093",
+		"movie:":                       "movie:",
+	}
+	for input, want := range cases {
+		if got := SanitizeID(input); got != want {
+			t.Errorf("SanitizeID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestSanitizeIDStripsURLAccessTokens(t *testing.T) {
+	cases := map[string]string{
+		"http://192.168.1.100:7777/api/live/recordings/abc/stream?token=SECRET":            "http://192.168.1.100:7777/api/live/recordings/abc/stream",
+		"/api/live/recordings/abc/stream?token=SECRET&profileid=default":                   "/api/live/recordings/abc/stream?profileid=default",
+		"https://host/api/live/recordings/abc/stream?profileid=x&token=SECRET&title=show":  "https://host/api/live/recordings/abc/stream?profileid=x&title=show",
+		"https://host/api/live/recordings/abc/stream?profileid=x&token=SECRET":             "https://host/api/live/recordings/abc/stream?profileid=x",
+		"some title with token= in it":                                                     "some title with token= in it",
+		"tmdb:movie:603":                                                                   "tmdb:movie:603",
+	}
+	for input, want := range cases {
+		if got := SanitizeID(input); got != want {
+			t.Errorf("SanitizeID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestResolveSanitizesDoublePrefixedAndTokenIDs(t *testing.T) {
+	identity := Resolve(Input{MediaType: "movie", ID: "movie:tvdb:movie:10702"})
+	if identity.Key != "movie:tvdb:movie:10702" {
+		t.Fatalf("Key = %q, want movie:tvdb:movie:10702", identity.Key)
+	}
+	if identity.ID != "tvdb:movie:10702" {
+		t.Fatalf("ID = %q, want tvdb:movie:10702", identity.ID)
+	}
+
+	urlIdentity := Resolve(Input{MediaType: "movie", ID: "http://host/api/live/recordings/abc/stream?token=SECRET"})
+	if urlIdentity.ID != "http://host/api/live/recordings/abc/stream" {
+		t.Fatalf("URL ID = %q, want token stripped", urlIdentity.ID)
+	}
+}

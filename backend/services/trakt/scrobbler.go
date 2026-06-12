@@ -106,10 +106,18 @@ func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID stri
 	return s.client.AddMovieToHistory(accessToken, tmdbID, tvdbID, imdbID, watchedAtStr)
 }
 
-// ScrobbleEpisode syncs a watched episode to Trakt using show TVDB ID + season/episode for the given user.
+// ScrobbleEpisode syncs a watched episode to Trakt using any available show ID
+// (TVDB preferred, falling back to TMDB/IMDB/Trakt from externalIDs) plus
+// season/episode for the given user.
 func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, watchedAt time.Time, externalIDs map[string]string) error {
 	if !s.IsEnabledForUser(userID) {
 		log.Printf("[trakt] scrobbling not enabled for user %s", userID)
+		return nil
+	}
+
+	showIDs := ShowSyncIDs(showTVDBID, externalIDs)
+	if showIDs == (SyncIDs{}) {
+		log.Printf("[trakt] skipping episode scrobble for user %s: no show IDs available (s%02de%02d)", userID, season, episode)
 		return nil
 	}
 
@@ -126,7 +134,7 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 
 	watchedAtStr := watchedAt.UTC().Format(time.RFC3339)
 	episodeIDs := episodeSyncIDs(externalIDs)
-	err = s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, episode, watchedAtStr, episodeIDs)
+	err = s.client.AddEpisodeToHistoryForShow(accessToken, showIDs, season, episode, watchedAtStr, episodeIDs)
 	if !errors.Is(err, ErrNotFound) {
 		return err
 	}
@@ -136,7 +144,35 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 		return err
 	}
 	log.Printf("[trakt] canonical history scrobble failed for S%02dE%02d; retrying absolute episode %d", season, episode, absoluteEpisode)
-	return s.client.AddEpisodeToHistory(accessToken, showTVDBID, season, absoluteEpisode, watchedAtStr, episodeIDs)
+	return s.client.AddEpisodeToHistoryForShow(accessToken, showIDs, season, absoluteEpisode, watchedAtStr, episodeIDs)
+}
+
+// ShowSyncIDs builds show-level Trakt sync IDs from an explicit TVDB ID plus
+// whatever show identifiers are present in an external-ID map. Episodes from
+// tmdb-only metadata sources must still be addressable on Trakt.
+func ShowSyncIDs(showTVDBID int, externalIDs map[string]string) SyncIDs {
+	ids := SyncIDs{}
+	if showTVDBID > 0 {
+		ids.TVDB = showTVDBID
+	}
+	if externalIDs == nil {
+		return ids
+	}
+	if ids.TVDB == 0 {
+		if v, err := strconv.Atoi(externalIDs["tvdb"]); err == nil && v > 0 {
+			ids.TVDB = v
+		}
+	}
+	if v, err := strconv.Atoi(externalIDs["tmdb"]); err == nil && v > 0 {
+		ids.TMDB = v
+	}
+	if v, err := strconv.Atoi(externalIDs["trakt"]); err == nil && v > 0 {
+		ids.Trakt = v
+	}
+	if imdb := externalIDs["imdb"]; imdb != "" {
+		ids.IMDB = imdb
+	}
+	return ids
 }
 
 // ScrobbleMovieLegacy is for backward compatibility - scrobbles without user context.

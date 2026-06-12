@@ -640,6 +640,10 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/history/watched", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/watched/bulk", historyHandler.BulkUpdateWatchHistory).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/history/watched/bulk", historyHandler.Options).Methods(http.MethodOptions)
+	// Body-based delete: legacy rows keyed by URLs/file paths cannot be addressed
+	// via {mediaType}/{id} path params (encoded slashes get normalised away).
+	profileProtected.HandleFunc("/{userID}/history/watched/delete", historyHandler.DeleteWatchHistoryItemByBody).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/watched/delete", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.GetWatchHistoryItem).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.UpdateWatchHistory).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/history/watched/{mediaType}/{id}", historyHandler.DeleteWatchHistoryItem).Methods(http.MethodDelete)
@@ -650,6 +654,8 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.ListPlaybackProgress).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/history/progress", historyHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/history/progress/delete", historyHandler.DeletePlaybackProgressByBody).Methods(http.MethodPost)
+	profileProtected.HandleFunc("/{userID}/history/progress/delete", historyHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.GetPlaybackProgress).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.UpdatePlaybackProgress).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/history/progress/{mediaType}/{id}", historyHandler.DeletePlaybackProgress).Methods(http.MethodDelete)

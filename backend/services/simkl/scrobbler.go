@@ -99,16 +99,21 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 	if account == nil || account.ClientID == "" || account.AccessToken == "" {
 		return nil
 	}
-	if showTVDBID <= 0 || season <= 0 || episode <= 0 {
+	if season <= 0 || episode <= 0 {
 		return nil
 	}
-	if s.wasRecentlyStopped(userID, "episode", 0, showTVDBID, "", season, episode) {
+	showIDs := showSyncIDs(showTVDBID, externalIDs)
+	if showIDs == (IDs{}) {
+		log.Printf("[simkl] skipping episode sync for user %s: no show IDs available (s%02de%02d)", userID, season, episode)
+		return nil
+	}
+	if s.wasRecentlyStopped(userID, "episode", showIDs.TMDB, showIDs.TVDB, showIDs.IMDB, season, episode) {
 		return nil
 	}
 
 	req := SyncHistoryRequest{
 		Shows: []SyncHistoryShow{{
-			IDs: IDs{TVDB: showTVDBID},
+			IDs: showIDs,
 			Seasons: []SyncHistorySeason{{
 				Number: season,
 				Episodes: []SyncHistoryEpisode{{
@@ -119,8 +124,35 @@ func (s *Scrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode i
 		}},
 	}
 
-	log.Printf("[simkl] syncing watched episode for user %s (tvdb=%d s%02de%02d)", userID, showTVDBID, season, episode)
+	log.Printf("[simkl] syncing watched episode for user %s (tvdb=%d tmdb=%d imdb=%s s%02de%02d)", userID, showIDs.TVDB, showIDs.TMDB, showIDs.IMDB, season, episode)
 	return s.client.SyncHistory(account.ClientID, account.AccessToken, req)
+}
+
+// showSyncIDs builds show-level Simkl IDs from the explicit TVDB ID plus any
+// show identifiers in the external-ID map, so tvdb-less episodes still sync.
+func showSyncIDs(showTVDBID int, externalIDs map[string]string) IDs {
+	ids := IDs{}
+	if showTVDBID > 0 {
+		ids.TVDB = showTVDBID
+	}
+	if externalIDs == nil {
+		return ids
+	}
+	if ids.TVDB == 0 {
+		if v, err := strconv.Atoi(externalIDs["tvdb"]); err == nil && v > 0 {
+			ids.TVDB = v
+		}
+	}
+	if v, err := strconv.Atoi(externalIDs["tmdb"]); err == nil && v > 0 {
+		ids.TMDB = v
+	}
+	if v, err := strconv.Atoi(externalIDs["simkl"]); err == nil && v > 0 {
+		ids.Simkl = v
+	}
+	if imdb := externalIDs["imdb"]; imdb != "" {
+		ids.IMDB = imdb
+	}
+	return ids
 }
 
 func (s *Scrobbler) noteRecentStop(userID string, update models.PlaybackProgressUpdate) {

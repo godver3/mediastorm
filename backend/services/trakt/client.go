@@ -763,12 +763,17 @@ func (c *Client) AddMovieToHistory(accessToken string, tmdbID, tvdbID int, imdbI
 // AddEpisodeToHistory adds a single episode to the user's Trakt watch history
 // using the show's TVDB ID and season/episode numbers
 func (c *Client) AddEpisodeToHistory(accessToken string, showTVDBID, season, episode int, watchedAt string, episodeIDs SyncIDs) error {
+	return c.AddEpisodeToHistoryForShow(accessToken, SyncIDs{TVDB: showTVDBID}, season, episode, watchedAt, episodeIDs)
+}
+
+// AddEpisodeToHistoryForShow adds a single episode to the user's Trakt watch
+// history, identifying the show by any combination of Trakt/TVDB/TMDB/IMDB IDs
+// so episodes from tvdb-less metadata sources can still be synced.
+func (c *Client) AddEpisodeToHistoryForShow(accessToken string, showIDs SyncIDs, season, episode int, watchedAt string, episodeIDs SyncIDs) error {
 	request := SyncHistoryRequest{
 		Shows: []SyncShow{
 			{
-				IDs: SyncIDs{
-					TVDB: showTVDBID,
-				},
+				IDs: showIDs,
 				Seasons: []SyncSeason{
 					{
 						Number: season,

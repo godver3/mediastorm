@@ -43,3 +43,41 @@ func TestRecentStopExpires(t *testing.T) {
 		t.Fatal("expired recent stop should not suppress watched sync")
 	}
 }
+
+func TestShowSyncIDs(t *testing.T) {
+	tests := []struct {
+		name       string
+		tvdbID     int
+		externalID map[string]string
+		want       IDs
+	}{
+		{
+			name:       "explicit tvdb wins and other IDs are preserved",
+			tvdbID:     153021,
+			externalID: map[string]string{"tvdb": "999999", "tmdb": "1402", "imdb": "tt1520211", "simkl": "41086"},
+			want:       IDs{TVDB: 153021, TMDB: 1402, IMDB: "tt1520211", Simkl: 41086},
+		},
+		{
+			name:       "falls back to external IDs without tvdb param",
+			externalID: map[string]string{"tvdb": "401003", "tmdb": "124364", "imdb": "tt9813792", "simkl": "1481305"},
+			want:       IDs{TVDB: 401003, TMDB: 124364, IMDB: "tt9813792", Simkl: 1481305},
+		},
+		{
+			name:       "tmdb imdb and simkl work without tvdb",
+			externalID: map[string]string{"tmdb": "124364", "imdb": "tt9813792", "simkl": "1481305"},
+			want:       IDs{TMDB: 124364, IMDB: "tt9813792", Simkl: 1481305},
+		},
+		{
+			name: "empty map returns zero value",
+			want: IDs{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := showSyncIDs(tt.tvdbID, tt.externalID); got != tt.want {
+				t.Fatalf("showSyncIDs() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}

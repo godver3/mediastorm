@@ -8,6 +8,53 @@ import (
 
 var episodeSuffixPattern = regexp.MustCompile(`(?i):s(\d{1,3})e(\d{1,4})$`)
 
+var urlTokenQueryPattern = regexp.MustCompile(`(?i)([?&])token=[^&]*`)
+
+// SanitizeID strips artifacts that must never become part of a stored media ID:
+// redundant media-type key prefixes (a caller passing a storage key like
+// "movie:tvdb:movie:10702" as the ID) and access tokens embedded in URL-shaped
+// IDs (live-TV/recording stream URLs carrying session tokens).
+func SanitizeID(id string) string {
+	id = strings.TrimSpace(id)
+	id = stripMediaTypeKeyPrefixes(id)
+	return stripURLAccessToken(id)
+}
+
+func stripMediaTypeKeyPrefixes(id string) string {
+	for {
+		lower := strings.ToLower(id)
+		var rest string
+		switch {
+		case strings.HasPrefix(lower, "movie:"):
+			rest = id[len("movie:"):]
+		case strings.HasPrefix(lower, "episode:"):
+			rest = id[len("episode:"):]
+		case strings.HasPrefix(lower, "series:"):
+			rest = id[len("series:"):]
+		default:
+			return id
+		}
+		if strings.TrimSpace(rest) == "" {
+			return id
+		}
+		id = rest
+	}
+}
+
+func stripURLAccessToken(id string) string {
+	lower := strings.ToLower(id)
+	if !strings.Contains(lower, "token=") {
+		return id
+	}
+	if !strings.Contains(lower, "://") && !strings.HasPrefix(lower, "/") {
+		return id
+	}
+	id = urlTokenQueryPattern.ReplaceAllString(id, "$1")
+	id = strings.ReplaceAll(id, "?&", "?")
+	id = strings.ReplaceAll(id, "&&", "&")
+	return strings.TrimRight(id, "?&")
+}
+
 // Input is the provider-agnostic shape used to resolve media identity before
 // services decide which DB row to read, update, merge, or delete.
 type Input struct {
@@ -39,9 +86,9 @@ type Identity struct {
 func Resolve(input Input) Identity {
 	mediaType := NormalizeMediaType(input.MediaType)
 	ids := NormalizeExternalIDs(input.ExternalIDs)
-	itemID := strings.TrimSpace(input.ID)
+	itemID := SanitizeID(input.ID)
 	originalItemID := normalizeID(itemID)
-	seriesID := strings.TrimSpace(input.SeriesID)
+	seriesID := SanitizeID(input.SeriesID)
 	originalSeriesID := normalizeID(seriesID)
 	seasonNumber := input.SeasonNumber
 	episodeNumber := input.EpisodeNumber

@@ -399,12 +399,24 @@ func (h *HistoryHandler) ToggleWatched(w http.ResponseWriter, r *http.Request) {
 
 	item, err := h.Service.ToggleWatched(userID, update)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), watchHistoryErrorStatus(err))
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(item)
+}
+
+// watchHistoryErrorStatus maps known service validation errors to client error
+// codes; everything else stays a 500.
+func watchHistoryErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, history.ErrUserIDRequired),
+		errors.Is(err, history.ErrEpisodeNotAddressable):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // UpdateWatchHistory updates or creates a watch history item
@@ -437,7 +449,7 @@ func (h *HistoryHandler) UpdateWatchHistory(w http.ResponseWriter, r *http.Reque
 
 	item, err := h.Service.UpdateWatchHistory(userID, update)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), watchHistoryErrorStatus(err))
 		return
 	}
 
@@ -529,7 +541,7 @@ func (h *HistoryHandler) UpdatePlaybackProgress(w http.ResponseWriter, r *http.R
 
 	progress, err := h.Service.UpdatePlaybackProgress(userID, update)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), watchHistoryErrorStatus(err))
 		return
 	}
 	allowedToContinue := !GetStreamTracker().ShouldStopPlayback(userID, update)
@@ -585,6 +597,64 @@ func (h *HistoryHandler) ListPlaybackProgress(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
+}
+
+// deleteByBodyRequest identifies an item for the body-based delete endpoints.
+// IDs containing slashes or query strings (legacy stream-URL/file-path keys)
+// cannot round-trip through path parameters — the router normalises encoded
+// slashes — so deletion must be possible via a JSON body instead.
+type deleteByBodyRequest struct {
+	MediaType string `json:"mediaType"`
+	ItemID    string `json:"itemId"`
+}
+
+func (h *HistoryHandler) decodeDeleteByBody(w http.ResponseWriter, r *http.Request) (deleteByBodyRequest, bool) {
+	var req deleteByBodyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return req, false
+	}
+	req.MediaType = strings.TrimSpace(req.MediaType)
+	req.ItemID = strings.TrimSpace(req.ItemID)
+	if req.MediaType == "" || req.ItemID == "" {
+		http.Error(w, "mediaType and itemId are required", http.StatusBadRequest)
+		return req, false
+	}
+	return req, true
+}
+
+// DeleteWatchHistoryItemByBody removes a watch-history item identified by a JSON body.
+func (h *HistoryHandler) DeleteWatchHistoryItemByBody(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	req, ok := h.decodeDeleteByBody(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Service.DeleteWatchHistoryItem(userID, req.MediaType, req.ItemID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeletePlaybackProgressByBody removes a playback-progress row identified by a JSON body.
+func (h *HistoryHandler) DeletePlaybackProgressByBody(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	req, ok := h.decodeDeleteByBody(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Service.DeletePlaybackProgress(userID, req.MediaType, req.ItemID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // DeletePlaybackProgress removes playback progress for a specific media item

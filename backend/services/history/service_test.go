@@ -2623,6 +2623,63 @@ func TestHideFromContinueWatching_SurvivesProgressClear(t *testing.T) {
 	}
 }
 
+func TestHideFromContinueWatching_ExistingEpisodeProgressCreatesSeriesMarker(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	seriesID := "tmdb:tv:60625"
+
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         seriesID + ":s09e01",
+		Position:       0,
+		Duration:       0,
+		PercentWatched: 5.6,
+		SeriesID:       seriesID,
+		SeriesName:     "Rick and Morty",
+		SeasonNumber:   9,
+		EpisodeNumber:  1,
+		ExternalIDs:    map[string]string{"imdb": "tt2861424", "tmdb": "60625", "tvdb": "275274"},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, seriesID); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+
+	var hiddenEpisode, seriesMarker *models.PlaybackProgress
+	for i := range progress {
+		p := progress[i]
+		if p.ItemID == seriesID+":s09e01" {
+			hiddenEpisode = &p
+		}
+		if p.ItemID == seriesID && p.SeriesID == seriesID && p.SeasonNumber == 0 && p.EpisodeNumber == 0 {
+			seriesMarker = &p
+		}
+	}
+
+	if hiddenEpisode == nil || !hiddenEpisode.HiddenFromContinueWatching {
+		t.Fatalf("expected existing episode progress to be hidden, got %+v", hiddenEpisode)
+	}
+	if seriesMarker == nil || !seriesMarker.HiddenFromContinueWatching {
+		t.Fatalf("expected series-level hidden marker, got %+v", seriesMarker)
+	}
+	if seriesMarker.ExternalIDs["tvdb"] != "275274" || seriesMarker.ExternalIDs["tmdb"] != "60625" {
+		t.Fatalf("expected marker external IDs to be preserved, got %+v", seriesMarker.ExternalIDs)
+	}
+}
+
 func TestHideFromContinueWatching_CanonicalIDMismatch(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
@@ -5114,5 +5171,597 @@ func TestImportWatchHistory_CrossProviderDedupSkipPreservesItem(t *testing.T) {
 	tvdbItem, _ := svc.GetWatchHistoryItem(userID, "movie", "tvdb:movie:370")
 	if tvdbItem != nil {
 		t.Error("expected no separate TVDB-keyed entry; incoming event should attach to canonical TMDB key")
+	}
+}
+
+// --- ID cross-pollution regression tests (2026-06 audit) ---
+
+// A narrower update (tmdb-only) must not wipe previously-known external IDs;
+// a later alias-form unwatch must toggle the same row instead of forking a
+// contradictory tombstone under the alias key.
+func TestUpdateWatchHistoryMergesExternalIDsAcrossNarrowUpdates(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:603",
+		Name:        "The Matrix",
+		Watched:     &watched,
+		ExternalIDs: map[string]string{"tmdb": "603", "imdb": "tt0133093"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	// Redundant update from a client that only knows the tmdb id.
+	item, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:603",
+		Name:        "The Matrix",
+		Watched:     &watched,
+		ExternalIDs: map[string]string{"tmdb": "603"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateWatchHistory() narrow update error = %v", err)
+	}
+	if item.ExternalIDs["imdb"] != "tt0133093" {
+		t.Fatalf("imdb mapping clobbered by narrow update: %v", item.ExternalIDs)
+	}
+
+	// Unwatch via the imdb alias must hit the same row.
+	unwatched := false
+	tombstone, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "movie",
+		ItemID:      "tt0133093",
+		Watched:     &unwatched,
+		ExternalIDs: map[string]string{"imdb": "tt0133093"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateWatchHistory() unwatch error = %v", err)
+	}
+	if tombstone.ID != "movie:tmdb:movie:603" {
+		t.Fatalf("unwatch forked a new row %q instead of matching movie:tmdb:movie:603", tombstone.ID)
+	}
+
+	items, err := svc.ListWatchHistory(userID)
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected a single row after alias unwatch, got %d: %+v", len(items), items)
+	}
+	if items[0].Watched {
+		t.Fatalf("row should be unwatched after alias unwatch: %+v", items[0])
+	}
+}
+
+// When an update matches an existing row through an episode-scoped alias with
+// different numbering (absolute vs aired), the stored row must stay coherent:
+// map key == item.ID, retrievable and deletable via its own reported ID.
+func TestUpdateWatchHistoryRekeyKeepsRowCoherent(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:81797:s02e01",
+		SeriesID:      "tvdb:series:81797",
+		SeasonNumber:  2,
+		EpisodeNumber: 1,
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tvdb": "81797", "episodeTvdb": "999001", "absoluteEpisode": "13"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() seed error = %v", err)
+	}
+
+	// Absolute-order client unwatches the same physical episode as S1E13.
+	unwatched := false
+	item, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:81797:s01e13",
+		SeriesID:      "tvdb:series:81797",
+		SeasonNumber:  1,
+		EpisodeNumber: 13,
+		Watched:       &unwatched,
+		ExternalIDs:   map[string]string{"tvdb": "81797", "episodeTvdb": "999001", "absoluteEpisode": "13"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateWatchHistory() unwatch error = %v", err)
+	}
+	if item.ID != "episode:tvdb:series:81797:s02e01" || item.ItemID != "tvdb:series:81797:s02e01" {
+		t.Fatalf("expected canonical aired-order identity to survive, got ID=%q ItemID=%q", item.ID, item.ItemID)
+	}
+	if item.SeasonNumber != 2 || item.EpisodeNumber != 1 {
+		t.Fatalf("numbering desynced from key: S%dE%d on %q", item.SeasonNumber, item.EpisodeNumber, item.ID)
+	}
+
+	// The row must be retrievable via its own reported ID...
+	got, err := svc.GetWatchHistoryItem(userID, "episode", "tvdb:series:81797:s02e01")
+	if err != nil || got == nil {
+		t.Fatalf("GetWatchHistoryItem() by reported id = %v, %v", got, err)
+	}
+	if got.Watched {
+		t.Fatalf("expected unwatched row, got %+v", got)
+	}
+
+	// ...and deletable via it.
+	if err := svc.DeleteWatchHistoryItem(userID, "episode", "tvdb:series:81797:s02e01"); err != nil {
+		t.Fatalf("DeleteWatchHistoryItem() error = %v", err)
+	}
+	items, err := svc.ListWatchHistory(userID)
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected row deleted via its reported ID, still have %+v", items)
+	}
+}
+
+type capturedEpisodeScrobble struct {
+	userID     string
+	showTVDBID int
+	season     int
+	episode    int
+	externalID map[string]string
+}
+
+type captureTraktScrobbler struct {
+	episodeCalls chan capturedEpisodeScrobble
+}
+
+func (c *captureTraktScrobbler) ScrobbleMovie(string, int, int, string, time.Time) error {
+	return nil
+}
+
+func (c *captureTraktScrobbler) ScrobbleEpisode(userID string, showTVDBID, season, episode int, _ time.Time, externalIDs map[string]string) error {
+	cloned := make(map[string]string, len(externalIDs))
+	for key, value := range externalIDs {
+		cloned[key] = value
+	}
+	c.episodeCalls <- capturedEpisodeScrobble{
+		userID:     userID,
+		showTVDBID: showTVDBID,
+		season:     season,
+		episode:    episode,
+		externalID: cloned,
+	}
+	return nil
+}
+
+func (c *captureTraktScrobbler) IsEnabled() bool { return true }
+
+func (c *captureTraktScrobbler) IsEnabledForUser(string) bool { return true }
+
+func TestUpdateWatchHistoryScrobblesTMDBOnlyEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	scrobbler := &captureTraktScrobbler{episodeCalls: make(chan capturedEpisodeScrobble, 1)}
+	svc.SetTraktScrobbler(scrobbler)
+
+	watched := true
+	if _, err := svc.UpdateWatchHistory("user-1", models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		Watched:       &watched,
+		WatchedAt:     time.Date(2026, 6, 12, 18, 15, 0, 0, time.UTC),
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"imdb":        "tt9813792",
+			"episodeTmdb": "4244886",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	select {
+	case call := <-scrobbler.episodeCalls:
+		if call.userID != "user-1" || call.showTVDBID != 0 || call.season != 1 || call.episode != 1 {
+			t.Fatalf("unexpected scrobble call: %+v", call)
+		}
+		if call.externalID["tmdb"] != "124364" || call.externalID["imdb"] != "tt9813792" {
+			t.Fatalf("expected tmdb/imdb external IDs to reach scrobbler, got %+v", call.externalID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for tmdb-only episode scrobble")
+	}
+}
+
+// Hiding a movie via an alias ID form must hide the canonical row, and must
+// not fabricate an episode-typed marker for a movie.
+func TestHideFromContinueWatchingMovieAliasHidesCanonicalRow(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:438631",
+		MovieName:   "Dune",
+		Position:    1200,
+		Duration:    9300,
+		Timestamp:   time.Now().UTC(),
+		ExternalIDs: map[string]string{"tmdb": "438631", "imdb": "tt1160419"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, "tt1160419"); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	var hiddenCanonical bool
+	for _, p := range progress {
+		if p.MediaType == "episode" {
+			t.Fatalf("movie hide created an episode-typed marker: %+v", p)
+		}
+		if p.ItemID == "tmdb:movie:438631" && p.HiddenFromContinueWatching {
+			hiddenCanonical = true
+		}
+	}
+	if !hiddenCanonical {
+		t.Fatalf("canonical movie row was not hidden: %+v", progress)
+	}
+}
+
+// Pure hidden markers must be explicitly deletable; re-creating them on delete
+// made junk markers immortal.
+func TestDeletePlaybackProgressRemovesPureHiddenMarker(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	if err := svc.HideFromContinueWatching(userID, "tmdb:tv:124364"); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+	progress, err := svc.ListPlaybackProgress(userID)
+	if err != nil || len(progress) != 1 {
+		t.Fatalf("expected exactly one marker row, got %v (err=%v)", progress, err)
+	}
+
+	if err := svc.DeletePlaybackProgress(userID, progress[0].MediaType, progress[0].ItemID); err != nil {
+		t.Fatalf("DeletePlaybackProgress() error = %v", err)
+	}
+	progress, err = svc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 0 {
+		t.Fatalf("hidden marker resurrected after explicit delete: %+v", progress)
+	}
+}
+
+// Episode writes that cannot be tied to a concrete episode (no number, no
+// sNNeNN suffix, no episode-scoped external ID) are rejected; season-0
+// specials with an episode number remain valid.
+func TestEpisodeWritesRequireAddressableEpisode(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	_, err = svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:   "episode",
+		ItemID:      "Some Anime Title: The Sequel",
+		SeriesID:    "tmdb:tv:209867",
+		Watched:     &watched,
+		ExternalIDs: map[string]string{"imdb": "tt22248376"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "episode") {
+		t.Fatalf("expected ErrEpisodeNotAddressable from UpdateWatchHistory, got %v", err)
+	}
+
+	_, err = svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType: "episode",
+		ItemID:    "Some Anime Title: The Sequel",
+		SeriesID:  "tmdb:tv:209867",
+		Position:  10,
+		Duration:  100,
+		Timestamp: time.Now().UTC(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "episode") {
+		t.Fatalf("expected ErrEpisodeNotAddressable from UpdatePlaybackProgress, got %v", err)
+	}
+
+	// Season 0 special with a real episode number must pass.
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:95396:s00e05",
+		SeriesID:      "tvdb:series:95396",
+		SeasonNumber:  0,
+		EpisodeNumber: 5,
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tvdb": "95396"},
+	}); err != nil {
+		t.Fatalf("season-0 special rejected: %v", err)
+	}
+}
+
+// URL-shaped item IDs must not persist embedded access tokens, and key-form
+// item IDs ("movie:tvdb:movie:N") must lose the redundant media-type prefix.
+func TestItemIDSanitizationOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	progress, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType: "movie",
+		ItemID:    "http://192.168.1.100:7777/api/live/recordings/abc/stream?token=SECRET123",
+		MovieName: "Some Recording",
+		Position:  50,
+		Duration:  1000,
+		Timestamp: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+	if strings.Contains(progress.ItemID, "token=") || strings.Contains(progress.ID, "token=") {
+		t.Fatalf("access token persisted in item ID: %q / %q", progress.ItemID, progress.ID)
+	}
+
+	doublePrefixed, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType: "movie",
+		ItemID:    "movie:tvdb:movie:10702",
+		MovieName: "Junk",
+		Position:  100,
+		Duration:  5000,
+		Timestamp: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+	if doublePrefixed.ID != "movie:tvdb:movie:10702" || doublePrefixed.ItemID != "tvdb:movie:10702" {
+		t.Fatalf("double media-type prefix not stripped: ID=%q ItemID=%q", doublePrefixed.ID, doublePrefixed.ItemID)
+	}
+}
+
+func crossProviderSeriesDetails() *models.SeriesDetails {
+	return &models.SeriesDetails{
+		Title: models.Title{
+			ID:     "tmdb:tv:95396",
+			Name:   "Severance",
+			TMDBID: 95396,
+			TVDBID: 371980,
+			IMDBID: "tt11280740",
+		},
+		Seasons: []models.SeriesSeason{
+			{
+				ID:     "season-1",
+				Name:   "Season 1",
+				Number: 1,
+				Episodes: []models.SeriesEpisode{
+					{ID: "ep-1", Name: "Good News About Hell", SeasonNumber: 1, EpisodeNumber: 1},
+					{ID: "ep-2", Name: "Half Loop", SeasonNumber: 1, EpisodeNumber: 2},
+					{ID: "ep-3", Name: "In Perpetuity", SeasonNumber: 1, EpisodeNumber: 3},
+				},
+			},
+		},
+	}
+}
+
+func newCrossProviderService(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	details := crossProviderSeriesDetails()
+	svc.SetMetadataService(&mockMetadataService{
+		seriesByID: map[string]*models.SeriesDetails{
+			"tmdb:tv:95396":      details,
+			"tvdb:series:371980": details,
+		},
+	})
+	return svc
+}
+
+// The same show queried by either provider form must return the same series
+// watch state; the state list advertises whichever form the rows carried.
+func TestGetSeriesWatchStateMatchesAliasIDForms(t *testing.T) {
+	svc := newCrossProviderService(t)
+
+	userID := "user-1"
+	watched := true
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:371980:s01e01",
+		SeriesID:      "tvdb:series:371980",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tvdb": "371980"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	byTvdb, err := svc.GetSeriesWatchState(userID, "tvdb:series:371980")
+	if err != nil || byTvdb == nil {
+		t.Fatalf("GetSeriesWatchState(tvdb form) = %v, %v", byTvdb, err)
+	}
+
+	byTmdb, err := svc.GetSeriesWatchState(userID, "tmdb:tv:95396")
+	if err != nil {
+		t.Fatalf("GetSeriesWatchState(tmdb form) error = %v", err)
+	}
+	if byTmdb == nil {
+		t.Fatalf("GetSeriesWatchState(tmdb form) = nil; alias form not matched")
+	}
+	if byTmdb.SeriesID != byTvdb.SeriesID {
+		t.Fatalf("alias lookups returned different states: %q vs %q", byTmdb.SeriesID, byTvdb.SeriesID)
+	}
+	if byTmdb.LastWatched.SeasonNumber != 1 || byTmdb.LastWatched.EpisodeNumber != 1 {
+		t.Fatalf("unexpected last watched: %+v", byTmdb.LastWatched)
+	}
+}
+
+// Hiding a show must suppress it in Continue Watching even when an orphaned
+// progress row keyed under the other provider (sharing no stored external IDs
+// with the hide marker) would otherwise resurrect it.
+func TestHideFromContinueWatchingSuppressesCrossProviderGroup(t *testing.T) {
+	svc := newCrossProviderService(t)
+
+	userID := "user-1"
+	watched := true
+	// Watched S1E1 under tvdb-only rows (e.g. Trakt sync without tmdb mapping).
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:371980:s01e01",
+		SeriesID:      "tvdb:series:371980",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tvdb": "371980"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+	// Orphan in-progress S1E2 under tmdb-only rows (player metadata).
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:95396:s01e02",
+		SeriesID:      "tmdb:tv:95396",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 2,
+		Position:      900,
+		Duration:      3300,
+		Timestamp:     time.Now().UTC(),
+		ExternalIDs:   map[string]string{"tmdb": "95396"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	if err := svc.HideFromContinueWatching(userID, "tvdb:series:371980"); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	for _, item := range items {
+		if strings.Contains(item.SeriesID, "95396") || strings.Contains(item.SeriesID, "371980") {
+			t.Fatalf("hidden show resurfaced in continue watching as %q", item.SeriesID)
+		}
+	}
+
+	// Resuming playback must still unhide: new progress is newer than the marker.
+	time.Sleep(10 * time.Millisecond)
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:95396:s01e02",
+		SeriesID:      "tmdb:tv:95396",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 2,
+		Position:      1200,
+		Duration:      3300,
+		Timestamp:     time.Now().UTC(),
+		ExternalIDs:   map[string]string{"tmdb": "95396"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() resume error = %v", err)
+	}
+	items, err = svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() after resume error = %v", err)
+	}
+	found := false
+	for _, item := range items {
+		if strings.Contains(item.SeriesID, "95396") || strings.Contains(item.SeriesID, "371980") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("show did not reappear in continue watching after resuming playback: %+v", items)
+	}
+}
+
+// An episode marked watched under one provider's rows must not surface as a
+// resume point through an orphaned progress row keyed under the other provider.
+func TestContinueWatchingReconcilesCrossProviderWatchedProgress(t *testing.T) {
+	svc := newCrossProviderService(t)
+
+	userID := "user-1"
+	watched := true
+	// S1E1 watched via tvdb-only rows.
+	if _, err := svc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tvdb:series:371980:s01e01",
+		SeriesID:      "tvdb:series:371980",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		Watched:       &watched,
+		ExternalIDs:   map[string]string{"tvdb": "371980"},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+	// Orphaned in-progress row for the SAME episode under tmdb-only keys.
+	if _, err := svc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:95396:s01e01",
+		SeriesID:      "tmdb:tv:95396",
+		SeriesName:    "Severance",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		Position:      1200,
+		Duration:      3400,
+		Timestamp:     time.Now().UTC().Add(-time.Hour),
+		ExternalIDs:   map[string]string{"tmdb": "95396"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+
+	items, err := svc.ListContinueWatching(userID)
+	if err != nil {
+		t.Fatalf("ListContinueWatching() error = %v", err)
+	}
+	var entries []models.SeriesWatchState
+	for _, item := range items {
+		if strings.Contains(item.SeriesID, "95396") || strings.Contains(item.SeriesID, "371980") {
+			entries = append(entries, item)
+		}
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one continue-watching entry for the show, got %d: %+v", len(entries), entries)
+	}
+	next := entries[0].NextEpisode
+	if next == nil || next.SeasonNumber != 1 || next.EpisodeNumber != 2 {
+		t.Fatalf("expected next episode S1E2 (watched S1E1 must not resurface as resume), got %+v", next)
 	}
 }

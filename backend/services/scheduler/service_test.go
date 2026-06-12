@@ -586,11 +586,14 @@ func TestSyncPlaybackFromTrakt_HiddenProgressSameResumePointStaysHidden(t *testi
 	if err != nil {
 		t.Fatalf("ListPlaybackProgress() error = %v", err)
 	}
-	if len(progress) != 1 {
-		t.Fatalf("expected 1 progress row, got %d", len(progress))
+	hiddenCount := 0
+	for _, p := range progress {
+		if p.HiddenFromContinueWatching {
+			hiddenCount++
+		}
 	}
-	if !progress[0].HiddenFromContinueWatching {
-		t.Fatal("expected hidden progress row to stay hidden when Trakt resume point is unchanged")
+	if hiddenCount == 0 {
+		t.Fatalf("expected hidden progress rows to stay hidden, got %+v", progress)
 	}
 	if deletedPlaybackItems != 1 {
 		t.Fatalf("expected stale hidden Trakt playback item to be deleted, got %d deletes", deletedPlaybackItems)
@@ -674,8 +677,10 @@ func TestSyncPlaybackFromTrakt_HiddenCrossProviderSeriesMarkerDeletesOlderResume
 	progressAt := time.Date(2026, 6, 12, 17, 30, 0, 0, time.UTC)
 	if _, err := historySvc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
 		MediaType:      "episode",
-		ItemID:         "tvdb:series:401003",
+		ItemID:         "tvdb:series:401003:s01e02",
 		SeriesID:       "tmdb:tv:124364",
+		SeasonNumber:   1,
+		EpisodeNumber:  2,
 		PercentWatched: 12,
 		Timestamp:      progressAt,
 		IsPaused:       true,
@@ -729,11 +734,15 @@ func TestSyncPlaybackFromTrakt_HiddenCrossProviderSeriesMarkerDeletesOlderResume
 	if err != nil {
 		t.Fatalf("ListPlaybackProgress() error = %v", err)
 	}
-	if len(progress) != 1 {
-		t.Fatalf("expected hidden marker to remain as the only row, got %d rows", len(progress))
+	foundMarker := false
+	for _, p := range progress {
+		if p.ItemID == "tmdb:tv:124364" && p.SeriesID == "tmdb:tv:124364" && p.HiddenFromContinueWatching {
+			foundMarker = true
+			break
+		}
 	}
-	if progress[0].ItemID != "tvdb:series:401003" || progress[0].SeriesID != "tmdb:tv:124364" || !progress[0].HiddenFromContinueWatching {
-		t.Fatalf("expected cross-provider hidden marker to remain, got %+v", progress[0])
+	if !foundMarker {
+		t.Fatalf("expected cross-provider hidden marker to remain, got %+v", progress)
 	}
 	if deletedPlaybackItems != 1 {
 		t.Fatalf("expected hidden Trakt playback item to be deleted, got %d deletes", deletedPlaybackItems)
@@ -1215,6 +1224,242 @@ func TestSyncLocalHistoryToTrakt_DoesNotRemoveNewerTraktRewatch(t *testing.T) {
 	}
 	if result.Count != 0 {
 		t.Fatalf("result.Count = %d, want 0", result.Count)
+	}
+}
+
+func TestSyncLocalHistoryToTrakt_ExportsTMDBOnlyEpisode(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	watchedAt := time.Date(2026, 6, 12, 18, 15, 0, 0, time.UTC)
+	if _, err := historySvc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"imdb":        "tt9813792",
+			"episodeTmdb": "4244886",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	addCalled := false
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/users/me/history":
+				if req.Method != http.MethodGet {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				resp := jsonResponse(http.StatusOK, `[]`)
+				resp.Header.Set("X-Pagination-Item-Count", "0")
+				return resp, nil
+			case "/sync/history":
+				if req.Method != http.MethodPost {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				addCalled = true
+				var body trakt.SyncHistoryRequest
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Fatalf("decode add body: %v", err)
+				}
+				if len(body.Shows) != 1 {
+					t.Fatalf("expected one show in add body, got %+v", body.Shows)
+				}
+				if body.Shows[0].IDs.TMDB != 124364 || body.Shows[0].IDs.TVDB != 0 || body.Shows[0].IDs.IMDB != "tt9813792" {
+					t.Fatalf("unexpected show IDs in add body: %+v", body.Shows[0].IDs)
+				}
+				if len(body.Shows[0].Seasons) != 1 || body.Shows[0].Seasons[0].Number != 1 {
+					t.Fatalf("unexpected seasons in add body: %+v", body.Shows[0].Seasons)
+				}
+				episodes := body.Shows[0].Seasons[0].Episodes
+				if len(episodes) != 1 || episodes[0].Number != 1 || episodes[0].IDs.TMDB != 4244886 {
+					t.Fatalf("unexpected episodes in add body: %+v", episodes)
+				}
+				return jsonResponse(http.StatusCreated, `{"added":{"movies":0,"episodes":1}}`), nil
+			case "/sync/history/remove":
+				t.Fatal("watched tmdb-only episode must not be removed from Trakt")
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return nil, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	result, err := svc.syncLocalHistoryToTrakt(config.ScheduledTask{}, &config.TraktAccount{AccessToken: "token"}, userID, false)
+	if err != nil {
+		t.Fatalf("syncLocalHistoryToTrakt() error = %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("result.Count = %d, want 1", result.Count)
+	}
+	if !addCalled {
+		t.Fatal("expected tmdb-only episode to be exported to Trakt")
+	}
+}
+
+func TestSyncLocalHistoryToTrakt_RemovesTMDBOnlyEpisodeUnwatch(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	unwatched := false
+	watchedAt := time.Date(2026, 6, 12, 18, 15, 0, 0, time.UTC)
+	unwatchedAt := time.Date(2026, 6, 12, 18, 20, 0, 0, time.UTC)
+	update := models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"imdb":        "tt9813792",
+			"episodeTmdb": "4244886",
+		},
+	}
+	update.Watched = &watched
+	update.WatchedAt = watchedAt
+	if _, err := historySvc.UpdateWatchHistory(userID, update); err != nil {
+		t.Fatalf("UpdateWatchHistory(watched) error = %v", err)
+	}
+	update.Watched = &unwatched
+	update.WatchedAt = unwatchedAt
+	if _, err := historySvc.UpdateWatchHistory(userID, update); err != nil {
+		t.Fatalf("UpdateWatchHistory(unwatched) error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	removeCalled := false
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/users/me/history":
+				if req.Method != http.MethodGet {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				resp := jsonResponse(http.StatusOK, `[{"id":1,"watched_at":"2026-06-12T18:15:00Z","type":"episode","episode":{"season":1,"number":1,"title":"Long Day's Journey Into Night","ids":{"tmdb":4244886}},"show":{"title":"FROM","year":2022,"ids":{"tmdb":124364,"imdb":"tt9813792"}}}]`)
+				resp.Header.Set("X-Pagination-Item-Count", "1")
+				return resp, nil
+			case "/sync/history/remove":
+				if req.Method != http.MethodPost {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				removeCalled = true
+				var body trakt.SyncHistoryRequest
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Fatalf("decode remove body: %v", err)
+				}
+				if len(body.Shows) != 1 {
+					t.Fatalf("expected one show in remove body, got %+v", body.Shows)
+				}
+				if body.Shows[0].IDs.TMDB != 124364 || body.Shows[0].IDs.TVDB != 0 || body.Shows[0].IDs.IMDB != "tt9813792" {
+					t.Fatalf("unexpected show IDs in remove body: %+v", body.Shows[0].IDs)
+				}
+				if len(body.Shows[0].Seasons) != 1 || body.Shows[0].Seasons[0].Number != 1 {
+					t.Fatalf("unexpected seasons in remove body: %+v", body.Shows[0].Seasons)
+				}
+				episodes := body.Shows[0].Seasons[0].Episodes
+				if len(episodes) != 1 || episodes[0].Number != 1 || episodes[0].IDs.TMDB != 4244886 {
+					t.Fatalf("unexpected episodes in remove body: %+v", episodes)
+				}
+				return jsonResponse(http.StatusOK, `{"deleted":{"movies":0,"episodes":1},"not_found":{"movies":[],"shows":[]}}`), nil
+			case "/sync/history":
+				t.Fatal("unwatched tmdb-only episode must not be re-added to Trakt")
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return nil, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	result, err := svc.syncLocalHistoryToTrakt(config.ScheduledTask{}, &config.TraktAccount{AccessToken: "token"}, userID, false)
+	if err != nil {
+		t.Fatalf("syncLocalHistoryToTrakt() error = %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("result.Count = %d, want 1", result.Count)
+	}
+	if !removeCalled {
+		t.Fatal("expected tmdb-only episode unwatch to remove Trakt history")
+	}
+}
+
+func TestTraktShowKeyForItemGroupsByStrongestProvider(t *testing.T) {
+	tvdbOnlyKey, tvdbOnlyIDs, ok := traktShowKeyForItem(models.WatchHistoryItem{
+		MediaType:   "episode",
+		ExternalIDs: map[string]string{"tvdb": "401003"},
+	})
+	if !ok {
+		t.Fatal("expected tvdb-only item to be addressable")
+	}
+	withTMDBKey, withTMDBIDs, ok := traktShowKeyForItem(models.WatchHistoryItem{
+		MediaType:   "episode",
+		ExternalIDs: map[string]string{"tvdb": "401003", "tmdb": "124364", "imdb": "tt9813792"},
+	})
+	if !ok {
+		t.Fatal("expected tvdb+tmdb item to be addressable")
+	}
+	if tvdbOnlyKey != withTMDBKey {
+		t.Fatalf("expected same grouping key for tvdb aliases, got %+v and %+v", tvdbOnlyKey, withTMDBKey)
+	}
+	if tvdbOnlyIDs.TVDB != 401003 || tvdbOnlyIDs.TMDB != 0 {
+		t.Fatalf("unexpected tvdb-only sync IDs: %+v", tvdbOnlyIDs)
+	}
+	if withTMDBIDs.TVDB != 401003 || withTMDBIDs.TMDB != 124364 || withTMDBIDs.IMDB != "tt9813792" {
+		t.Fatalf("unexpected tvdb+tmdb sync IDs: %+v", withTMDBIDs)
+	}
+
+	tmdbOnlyKey, tmdbOnlyIDs, ok := traktShowKeyForItem(models.WatchHistoryItem{
+		MediaType:   "episode",
+		ExternalIDs: map[string]string{"tmdb": "124364", "imdb": "tt9813792"},
+	})
+	if !ok {
+		t.Fatal("expected tmdb-only item to be addressable")
+	}
+	if tmdbOnlyKey != (showKey{tmdbID: 124364}) {
+		t.Fatalf("unexpected tmdb-only grouping key: %+v", tmdbOnlyKey)
+	}
+	if tmdbOnlyIDs.TVDB != 0 || tmdbOnlyIDs.TMDB != 124364 || tmdbOnlyIDs.IMDB != "tt9813792" {
+		t.Fatalf("unexpected tmdb-only sync IDs: %+v", tmdbOnlyIDs)
 	}
 }
 

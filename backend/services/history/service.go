@@ -25,6 +25,11 @@ var (
 	ErrStorageDirRequired = errors.New("storage directory not provided")
 	ErrUserIDRequired     = errors.New("user id is required")
 	ErrSeriesIDRequired   = errors.New("series id is required")
+	// ErrEpisodeNotAddressable rejects episode writes that cannot be tied to a
+	// specific episode: no episode number, no sNNeNN item-id suffix, and no
+	// episode-scoped external ID. Persisting them creates rows that can never be
+	// matched, updated, or deleted by ID (e.g. title-string episode keys).
+	ErrEpisodeNotAddressable = errors.New("episode updates require an episode number, an sNNeNN item id, or an episode-scoped external id")
 )
 
 const (
@@ -294,8 +299,11 @@ func (s *Service) doScrobble(scrobbler TraktScrobbler, userID string, item model
 			}()
 		}
 	case "episode":
-		// For episodes, we need the show's TVDB ID plus season/episode numbers
-		if tvdbID > 0 && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
+		// For episodes we need season/episode numbers plus at least one show
+		// identifier. The scrobblers receive the full external-ID map and pick
+		// whatever provider IDs they support (tvdb/tmdb/imdb), so a tvdb-less
+		// row (e.g. tmdb-only player metadata) must not be dropped here.
+		if (tvdbID > 0 || tmdbID > 0 || imdbID != "") && item.SeasonNumber > 0 && item.EpisodeNumber > 0 {
 			season := item.SeasonNumber
 			episode := item.EpisodeNumber
 			seriesName := item.SeriesName
@@ -307,7 +315,7 @@ func (s *Service) doScrobble(scrobbler TraktScrobbler, userID string, item model
 				}
 			}()
 		} else {
-			log.Printf("[trakt] skipping episode scrobble: missing tvdbID=%d, season=%d, or episode=%d", tvdbID, item.SeasonNumber, item.EpisodeNumber)
+			log.Printf("[trakt] skipping episode scrobble: missing show IDs (tvdb=%d tmdb=%d imdb=%q), season=%d, or episode=%d", tvdbID, tmdbID, imdbID, item.SeasonNumber, item.EpisodeNumber)
 		}
 	}
 }
@@ -424,13 +432,55 @@ func (s *Service) GetSeriesWatchState(userID, seriesID string) (*models.SeriesWa
 		return nil, err
 	}
 
+	// Exact match first so identical-form lookups stay cheap and deterministic.
 	for _, state := range states {
 		if state.SeriesID == seriesID {
 			return &state, nil
 		}
 	}
 
+	// Fall back to identity matching: the state list advertises whichever ID
+	// form the most recent rows carried (e.g. tvdb:series:X from a Trakt sync),
+	// while clients may query by the tmdb:tv:Y form they know the show as.
+	target := mediaidentity.Resolve(mediaidentity.Input{MediaType: "series", ID: seriesID})
+	for _, state := range states {
+		if seriesWatchStateMatchesIdentity(state, target) {
+			return &state, nil
+		}
+	}
+
 	return nil, nil
+}
+
+// seriesWatchStateMatchesIdentity reports whether a series watch state refers to
+// the same show as the target identity, using the state's external IDs (which
+// the continue-watching builder enriches from metadata) to bridge provider forms.
+func seriesWatchStateMatchesIdentity(state models.SeriesWatchState, target mediaidentity.Identity) bool {
+	current := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   "series",
+		ID:          state.SeriesID,
+		ExternalIDs: state.ExternalIDs,
+	})
+	return identitiesReferToSameTitle(current, target)
+}
+
+// identitiesReferToSameTitle compares two resolved identities of the same media
+// type across canonical keys, alias candidate keys, and identity tokens.
+func identitiesReferToSameTitle(a, b mediaidentity.Identity) bool {
+	if a.Key != "" && a.Key == b.Key {
+		return true
+	}
+	for _, key := range a.CandidateKeys {
+		if key == b.Key {
+			return true
+		}
+	}
+	for _, key := range b.CandidateKeys {
+		if key == a.Key {
+			return true
+		}
+	}
+	return mediaidentity.Equivalent(a, b)
 }
 
 // ListContinueWatching returns series where a follow-up episode is available.
@@ -652,6 +702,53 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	// (e.g., player uses "tvdb:series:353546" while Trakt sync uses "tmdb:tv:82728" for the same show)
 	// This must happen before any grouping by seriesID.
 	canonicalSeriesID := buildCanonicalSeriesIDMap(items, progressItems)
+
+	// Global watched-episode index keyed by provider-scoped tokens
+	// ("tvdb:371980:s01e01"). Series groups that share no stored external IDs
+	// (tmdb-only progress vs tvdb-only history for the same show) can't be
+	// merged by the canonical map above; this index lets the per-series pass
+	// recognise — via its metadata-enriched IDs — that an in-progress episode
+	// was already watched under the other provider's rows.
+	watchedEpisodeProviderTokens := make(map[string]time.Time)
+	for _, item := range items {
+		if item.MediaType != "episode" || !item.Watched || item.EpisodeNumber <= 0 {
+			continue
+		}
+		for idType, idValue := range canonicalSeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) {
+			if idValue == "" {
+				continue
+			}
+			token := idType + ":" + strings.ToLower(idValue) + ":" + episodeKey(item.SeasonNumber, item.EpisodeNumber)
+			if at := watchHistoryActivityTime(item); at.After(watchedEpisodeProviderTokens[token]) {
+				watchedEpisodeProviderTokens[token] = at
+			}
+		}
+	}
+
+	// Collect hidden markers for the late suppression pass below. Early
+	// suppression (hiddenSeriesIDs) only catches rows the canonical map can
+	// link; once states are metadata-enriched we can also suppress groups that
+	// match a marker only through metadata external IDs.
+	type hiddenMarkerInfo struct {
+		mediaType   string
+		seriesID    string
+		itemID      string
+		externalIDs map[string]string
+		updatedAt   time.Time
+	}
+	var hiddenMarkers []hiddenMarkerInfo
+	for _, prog := range progressItems {
+		if !prog.HiddenFromContinueWatching {
+			continue
+		}
+		hiddenMarkers = append(hiddenMarkers, hiddenMarkerInfo{
+			mediaType:   prog.MediaType,
+			seriesID:    prog.SeriesID,
+			itemID:      prog.ItemID,
+			externalIDs: prog.ExternalIDs,
+			updatedAt:   prog.UpdatedAt,
+		})
+	}
 
 	// Build set of hidden series IDs from progress items
 	hiddenSeriesIDs := make(map[string]bool)
@@ -936,6 +1033,48 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					compareEpisodeOrder(furthestSeason, furthestEpisode, inProgressSeason, inProgressEpisode) > 0 &&
 					!t.inProgress.UpdatedAt.After(latestWatchedAt) {
 					inProgressStaleBehindLatestWatched = true
+				}
+				// Cross-provider check: the episode may be marked watched under
+				// rows keyed by another provider that share no external IDs with
+				// this group. Use the metadata-enriched provider IDs to look it
+				// up in the global watched-episode index.
+				if !inProgressAlreadyWatched {
+					groupProviderIDs := make(map[string]string, 4)
+					for k, v := range t.inProgress.ExternalIDs {
+						switch k {
+						case "imdb", "tmdb", "tvdb":
+							groupProviderIDs[k] = v
+						}
+					}
+					if seriesErr == nil && seriesDetails != nil {
+						if seriesDetails.Title.IMDBID != "" {
+							groupProviderIDs["imdb"] = seriesDetails.Title.IMDBID
+						}
+						if seriesDetails.Title.TMDBID > 0 {
+							groupProviderIDs["tmdb"] = fmt.Sprintf("%d", seriesDetails.Title.TMDBID)
+						}
+						if seriesDetails.Title.TVDBID > 0 {
+							groupProviderIDs["tvdb"] = fmt.Sprintf("%d", seriesDetails.Title.TVDBID)
+						}
+					}
+					episodeKeys := []string{episodeKey(inProgressSeason, inProgressEpisode)}
+					if rawKey := episodeKey(t.inProgress.SeasonNumber, t.inProgress.EpisodeNumber); rawKey != episodeKeys[0] {
+						episodeKeys = append(episodeKeys, rawKey)
+					}
+					for idType, idValue := range groupProviderIDs {
+						if idValue == "" {
+							continue
+						}
+						for _, ek := range episodeKeys {
+							if _, ok := watchedEpisodeProviderTokens[idType+":"+strings.ToLower(idValue)+":"+ek]; ok {
+								inProgressAlreadyWatched = true
+								break
+							}
+						}
+						if inProgressAlreadyWatched {
+							break
+						}
+					}
 				}
 				if inProgressAlreadyWatched || inProgressStaleBehindLatestWatched {
 					// Clean up all stale progress entries for this series where
@@ -1271,6 +1410,70 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 	wg.Wait()
 
 	continueWatching = dedupeContinueWatchingEntries(continueWatching)
+
+	// Late hidden-marker suppression: now that states carry metadata-enriched
+	// external IDs, drop any state the user hid even when the hide marker and
+	// the surviving rows are keyed under different providers and share no
+	// stored external IDs ("dismissed but came back" under the other ID form).
+	// Newer activity beats the marker so resuming playback still unhides.
+	if len(hiddenMarkers) > 0 && len(continueWatching) > 0 {
+		type resolvedMarker struct {
+			movie     mediaidentity.Identity
+			series    mediaidentity.Identity
+			isMovie   bool
+			updatedAt time.Time
+		}
+		resolved := make([]resolvedMarker, 0, len(hiddenMarkers))
+		for _, m := range hiddenMarkers {
+			markerID := strings.TrimSpace(m.seriesID)
+			if markerID == "" {
+				markerID = strings.TrimSpace(m.itemID)
+			}
+			if markerID == "" {
+				continue
+			}
+			resolved = append(resolved, resolvedMarker{
+				movie:     mediaidentity.Resolve(mediaidentity.Input{MediaType: "movie", ID: markerID, ExternalIDs: m.externalIDs}),
+				series:    mediaidentity.Resolve(mediaidentity.Input{MediaType: "series", ID: markerID, ExternalIDs: m.externalIDs}),
+				isMovie:   strings.EqualFold(m.mediaType, "movie"),
+				updatedAt: m.updatedAt,
+			})
+		}
+		filtered := make([]models.SeriesWatchState, 0, len(continueWatching))
+		for _, state := range continueWatching {
+			suppressed := false
+			stateIsMovie := state.NextEpisode == nil && len(state.WatchedEpisodes) == 0 && state.LastWatched.EpisodeNumber == 0
+			for _, m := range resolved {
+				if state.UpdatedAt.After(m.updatedAt) {
+					continue
+				}
+				if m.isMovie != stateIsMovie {
+					continue
+				}
+				target := m.series
+				mediaType := "series"
+				if m.isMovie {
+					target = m.movie
+					mediaType = "movie"
+				}
+				current := mediaidentity.Resolve(mediaidentity.Input{
+					MediaType:   mediaType,
+					ID:          state.SeriesID,
+					ExternalIDs: state.ExternalIDs,
+				})
+				if identitiesReferToSameTitle(current, target) {
+					suppressed = true
+					break
+				}
+			}
+			if suppressed {
+				log.Printf("[history] continue-watching: suppressed %q (%s) via hidden marker", state.SeriesTitle, state.SeriesID)
+				continue
+			}
+			filtered = append(filtered, state)
+		}
+		continueWatching = filtered
+	}
 
 	// Sort by most recently updated (in-progress items will naturally sort first if more recent)
 	sort.Slice(continueWatching, func(i, j int) bool {
@@ -2491,13 +2694,15 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	defer s.mu.Unlock()
 
 	update = normalizeWatchHistoryUpdate(update)
+	if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
+		return models.WatchHistoryItem{}, ErrEpisodeNotAddressable
+	}
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
 	// Normalize itemID to lowercase for consistent key matching
 	identity := watchHistoryUpdateIdentity(update)
-	normalizedItemID := identity.ID
-	key := identity.Key
 	item, exists := takeWatchHistoryItemLocked(perUser, identity)
+	key, normalizedItemID := canonicalWatchHistorySurvivor(item, exists, identity, &update)
 
 	now := time.Now().UTC()
 	if !exists {
@@ -2518,6 +2723,10 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 		}
 		item.UpdatedAt = now
 	}
+	// Keep the row coherent with the key it is stored under (see UpdateWatchHistory).
+	item.ID = key
+	item.ItemID = normalizedItemID
+	item.MediaType = strings.ToLower(update.MediaType)
 
 	// Update metadata if provided
 	if update.Name != "" {
@@ -2526,9 +2735,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	if update.Year > 0 {
 		item.Year = update.Year
 	}
-	if update.ExternalIDs != nil {
-		item.ExternalIDs = update.ExternalIDs
-	}
+	mergeWatchHistoryExternalIDs(&item, update.ExternalIDs)
 
 	// Episode-specific fields
 	if update.SeasonNumber > 0 {
@@ -2601,13 +2808,15 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	defer s.mu.Unlock()
 
 	update = normalizeWatchHistoryUpdate(update)
+	if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
+		return models.WatchHistoryItem{}, ErrEpisodeNotAddressable
+	}
 	perUser := s.ensureWatchHistoryUserLocked(userID)
 
 	// Normalize itemID to lowercase for consistent key matching
 	identity := watchHistoryUpdateIdentity(update)
-	normalizedItemID := identity.ID
-	key := identity.Key
 	item, exists := takeWatchHistoryItemLocked(perUser, identity)
+	key, normalizedItemID := canonicalWatchHistorySurvivor(item, exists, identity, &update)
 
 	now := time.Now().UTC()
 	if !exists {
@@ -2618,6 +2827,12 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 			Watched:   false,
 		}
 	}
+	// Keep the row coherent with the key it is stored under: a stale ID/ItemID
+	// from a previous key scheme makes the row unfindable via its own reported
+	// ID (GET 404s, DELETE silently no-ops) and desyncs the DB row from memory.
+	item.ID = key
+	item.ItemID = normalizedItemID
+	item.MediaType = strings.ToLower(update.MediaType)
 
 	progressCleared := false
 	wasAlreadyWatched := item.Watched
@@ -2662,9 +2877,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 			}
 		}
 	}
-	if update.ExternalIDs != nil {
-		item.ExternalIDs = update.ExternalIDs
-	}
+	mergeWatchHistoryExternalIDs(&item, update.ExternalIDs)
 
 	// Episode-specific fields
 	if update.SeasonNumber > 0 {
@@ -2793,11 +3006,13 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 
 	for _, update := range updates {
 		update = normalizeWatchHistoryUpdate(update)
+		if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
+			return nil, ErrEpisodeNotAddressable
+		}
 		// Normalize itemID to lowercase for consistent key matching
 		identity := watchHistoryUpdateIdentity(update)
-		normalizedItemID := identity.ID
-		key := identity.Key
 		item, exists := takeWatchHistoryItemLocked(perUser, identity)
+		key, normalizedItemID := canonicalWatchHistorySurvivor(item, exists, identity, &update)
 
 		if !exists {
 			item = models.WatchHistoryItem{
@@ -2807,6 +3022,10 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 				Watched:   false,
 			}
 		}
+		// Keep the row coherent with the key it is stored under (see UpdateWatchHistory).
+		item.ID = key
+		item.ItemID = normalizedItemID
+		item.MediaType = strings.ToLower(update.MediaType)
 
 		wasAlreadyWatched = append(wasAlreadyWatched, item.Watched)
 
@@ -2847,9 +3066,7 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 				}
 			}
 		}
-		if update.ExternalIDs != nil {
-			item.ExternalIDs = update.ExternalIDs
-		}
+		mergeWatchHistoryExternalIDs(&item, update.ExternalIDs)
 
 		// Episode-specific fields
 		if update.SeasonNumber > 0 {
@@ -2986,6 +3203,10 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 
 	for _, update := range updates {
 		update = normalizeWatchHistoryUpdate(update)
+		if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
+			log.Printf("[history] import: SKIP (unaddressable episode) %q itemID=%q seriesID=%q", update.Name, update.ItemID, update.SeriesID)
+			continue
+		}
 		identity := watchHistoryUpdateIdentity(update)
 		normalizedItemID := identity.ID
 		key := identity.Key
@@ -3911,6 +4132,83 @@ func playbackProgressUpdateIdentity(update models.PlaybackProgressUpdate) mediai
 	})
 }
 
+// canonicalWatchHistorySurvivor decides which storage key a matched watch-history
+// row keeps when an update arrives under a different identity key. The stored
+// row wins when its provider form is preferred (mirrors ImportWatchHistory's
+// dedup) or when the match came through an episode-scoped alias with different
+// numbering (absolute vs aired order), in which case the stored canonical
+// season/episode are copied back onto the update so the row stays coherent.
+func canonicalWatchHistorySurvivor(item models.WatchHistoryItem, exists bool, identity mediaidentity.Identity, update *models.WatchHistoryUpdate) (key, itemID string) {
+	key = identity.Key
+	itemID = identity.ID
+	if !exists {
+		return key, itemID
+	}
+	existingKey := makeWatchKey(item.MediaType, item.ItemID)
+	if existingKey == "" || existingKey == key {
+		return key, itemID
+	}
+
+	keepExisting := false
+	if identity.MediaType == "episode" && item.SeasonNumber > 0 && item.EpisodeNumber > 0 &&
+		(item.SeasonNumber != identity.SeasonNumber || item.EpisodeNumber != identity.EpisodeNumber) {
+		keepExisting = true
+	} else if preferProgressID(item.ItemID, identity.ID) {
+		keepExisting = true
+	}
+	if !keepExisting {
+		return key, itemID
+	}
+
+	key = existingKey
+	itemID = item.ItemID
+	if update != nil && identity.MediaType == "episode" {
+		if item.SeasonNumber > 0 || item.EpisodeNumber > 0 {
+			update.SeasonNumber = item.SeasonNumber
+			update.EpisodeNumber = item.EpisodeNumber
+		}
+		if item.SeriesID != "" {
+			update.SeriesID = item.SeriesID
+		}
+	}
+	return key, itemID
+}
+
+// mergeWatchHistoryExternalIDs folds the update's external IDs into the stored
+// row without dropping previously-known mappings. Incoming values win per key;
+// keys absent from the update are preserved so a narrower update (e.g. a
+// tmdb-only client) cannot strip the imdb/tvdb bridges that later alias-form
+// lookups depend on.
+func mergeWatchHistoryExternalIDs(item *models.WatchHistoryItem, incoming map[string]string) {
+	if len(incoming) == 0 {
+		return
+	}
+	if item.ExternalIDs == nil {
+		item.ExternalIDs = make(map[string]string, len(incoming))
+	}
+	for k, v := range incoming {
+		if v != "" {
+			item.ExternalIDs[k] = v
+		}
+	}
+}
+
+// isAddressableEpisodeUpdate reports whether an episode write can be tied to a
+// concrete episode. Season 0 (specials) is valid as long as an episode number,
+// an sNNeNN item-id suffix, or an episode-scoped external ID is present.
+func isAddressableEpisodeUpdate(mediaType, itemID string, episodeNumber int, externalIDs map[string]string) bool {
+	if mediaidentity.NormalizeMediaType(mediaType) != "episode" {
+		return true
+	}
+	if episodeNumber > 0 {
+		return true
+	}
+	if _, _, _, ok := mediaidentity.ParseEpisodeID(itemID); ok {
+		return true
+	}
+	return hasEpisodeScopedExternalIDs(mediaidentity.NormalizeExternalIDs(externalIDs))
+}
+
 func takeWatchHistoryItemLocked(perUser map[string]models.WatchHistoryItem, identity mediaidentity.Identity) (models.WatchHistoryItem, bool) {
 	for _, key := range identity.CandidateKeys {
 		item, ok := perUser[key]
@@ -3958,6 +4256,29 @@ func playbackProgressMatchesIdentity(progress models.PlaybackProgress, target me
 	return mediaidentity.Equivalent(current, target)
 }
 
+// progressSeriesMatchesIdentity reports whether a playback-progress row belongs
+// to the series described by target. It resolves the row's series identity from
+// its SeriesID (or the series portion of an episode item ID, or the item ID
+// itself for series-level markers) plus its external IDs.
+func progressSeriesMatchesIdentity(progress models.PlaybackProgress, target mediaidentity.Identity) bool {
+	seriesID := strings.TrimSpace(progress.SeriesID)
+	if seriesID == "" {
+		seriesID = mediaidentity.InferSeriesIDFromEpisodeItemID(progress.ItemID)
+	}
+	if seriesID == "" && progress.MediaType == "episode" && progress.SeasonNumber == 0 && progress.EpisodeNumber == 0 {
+		seriesID = strings.TrimSpace(progress.ItemID)
+	}
+	if seriesID == "" {
+		return false
+	}
+	current := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   "series",
+		ID:          seriesID,
+		ExternalIDs: canonicalSeriesExternalIDs(seriesID, progress.ItemID, progress.ExternalIDs),
+	})
+	return identitiesReferToSameTitle(current, target)
+}
+
 // Playback Progress Methods
 
 // UpdatePlaybackProgress updates the playback progress for a media item.
@@ -3977,6 +4298,9 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	}
 
 	update = normalizePlaybackProgressUpdate(update)
+	if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
+		return models.PlaybackProgress{}, ErrEpisodeNotAddressable
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -4473,9 +4797,19 @@ func (s *Service) DeletePlaybackProgress(userID, mediaType, itemID string) error
 	identity := mediaidentity.Resolve(mediaidentity.Input{MediaType: mediaType, ID: itemID})
 	removed := false
 	if perUser, ok := s.playbackProgress[userID]; ok {
+		// An explicit delete that targets a pure hidden marker (no playback
+		// position, just hidden state) removes it outright; re-creating the
+		// marker here would make junk markers impossible to ever clean up.
+		removeEntry := func(key string, entry models.PlaybackProgress) {
+			if entry.HiddenFromContinueWatching && entry.Position == 0 {
+				delete(perUser, key)
+				return
+			}
+			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+		}
 		for _, key := range identity.CandidateKeys {
 			if entry, exists := perUser[key]; exists {
-				s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+				removeEntry(key, entry)
 				removed = true
 			}
 		}
@@ -4483,7 +4817,7 @@ func (s *Service) DeletePlaybackProgress(userID, mediaType, itemID string) error
 			if !playbackProgressMatchesIdentity(entry, identity) {
 				continue
 			}
-			s.removePlaybackProgressEntryLocked(userID, perUser, key, entry)
+			removeEntry(key, entry)
 			removed = true
 		}
 		s.clearActivePlaybackProgressIdentityLocked(userID, identity)
@@ -4882,33 +5216,37 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 
 	perUser := s.ensurePlaybackProgressUserLocked(userID)
 
-	// Extract provider and numeric ID from the seriesID being hidden
-	// (e.g., "tmdb:tv:958" → provider="tmdb", numericID="958";
-	//  "tvdb:series:73562" → provider="tvdb", numericID="73562")
-	// This lets us match progress entries that use a different ID format
-	// for the same show by checking their externalIDs map.
-	var hideProvider, hideNumericID string
-	parts := strings.Split(seriesID, ":")
-	if len(parts) >= 2 {
-		hideProvider = strings.ToLower(parts[0])
-		hideNumericID = parts[len(parts)-1]
-	}
-
-	// Find any progress entries for this series (both movies and episodes)
-	found := false
-	markedCount := 0
+	// Collect every external ID we already know for this series/movie so the
+	// incoming ID can be resolved to its canonical form and matched against
+	// rows stored under any alias (tmdb:tv:X vs tvdb:series:Y vs imdb).
 	hiddenAt := time.Now().UTC()
+	markerExternalIDs := s.collectExternalIDsForSeriesLocked(userID, seriesID)
+	movieTarget := mediaidentity.Resolve(mediaidentity.Input{MediaType: "movie", ID: seriesID, ExternalIDs: markerExternalIDs})
+	seriesTarget := mediaidentity.Resolve(mediaidentity.Input{MediaType: "series", ID: seriesID, ExternalIDs: markerExternalIDs})
+
+	found := false
+	movieMatched := false
+	markedCount := 0
 	for key, progress := range perUser {
-		// For movies, the itemID matches seriesID directly
-		// For episodes, the seriesID field matches
-		match := progress.ItemID == seriesID || progress.SeriesID == seriesID
-		// Also match by external ID (handles canonical ID mismatches like tmdb:tv:958 vs tvdb:series:73562)
-		if !match && hideProvider != "" && hideNumericID != "" {
-			if extVal, ok := progress.ExternalIDs[hideProvider]; ok && extVal == hideNumericID {
-				match = true
-			}
+		match := false
+		if progress.MediaType != "episode" && playbackProgressMatchesIdentity(progress, movieTarget) {
+			match = true
+			movieMatched = true
+		}
+		if !match && progressSeriesMatchesIdentity(progress, seriesTarget) {
+			match = true
 		}
 		if match {
+			if markerExternalIDs == nil {
+				markerExternalIDs = make(map[string]string)
+			}
+			for _, k := range []string{"imdb", "tvdb", "tmdb"} {
+				if v, ok := progress.ExternalIDs[k]; ok && v != "" {
+					if _, exists := markerExternalIDs[k]; !exists {
+						markerExternalIDs[k] = v
+					}
+				}
+			}
 			progress.HiddenFromContinueWatching = true
 			progress.UpdatedAt = hiddenAt
 			perUser[key] = progress
@@ -4918,30 +5256,45 @@ func (s *Service) HideFromContinueWatching(userID, seriesID string) error {
 		}
 	}
 
-	// If no progress entry exists, create a minimal one just to track the hidden state
+	// Movie hides are tracked by the hidden flag on the matched rows themselves;
+	// series hides additionally keep a series-level marker so the hidden state
+	// survives episode-row churn (e.g. Trakt sync clearing watched progress).
+	isMovieHide := movieMatched || strings.Contains(strings.ToLower(seriesID), ":movie:")
+	markerSeriesID := seriesTarget.ID
+	markerMediaType := "episode"
+	if isMovieHide {
+		markerSeriesID = movieTarget.ID
+		markerMediaType = "movie"
+	}
+
 	if !found {
-		// Determine if this is a movie or series based on the ID format
-		mediaType := "episode"
-		if strings.Contains(seriesID, ":movie:") {
-			mediaType = "movie"
-		}
-
-		// Collect external IDs from watch history entries for this series
-		// so the marker can be found by IMDB/TVDB when unhiding via a different ID format
-		markerExternalIDs := s.collectExternalIDsForSeriesLocked(userID, seriesID)
-
-		key := makeWatchKey(mediaType, seriesID)
+		// No progress entry exists — create a minimal marker just to track the
+		// hidden state, keyed under the canonical ID form.
+		key := makeWatchKey(markerMediaType, markerSeriesID)
 		perUser[key] = models.PlaybackProgress{
 			ID:                         key,
-			MediaType:                  mediaType,
-			ItemID:                     seriesID,
-			SeriesID:                   seriesID,
+			MediaType:                  markerMediaType,
+			ItemID:                     markerSeriesID,
+			SeriesID:                   markerSeriesID,
 			ExternalIDs:                markerExternalIDs,
-			UpdatedAt:                  time.Now().UTC(),
+			UpdatedAt:                  hiddenAt,
 			HiddenFromContinueWatching: true,
 		}
-		log.Printf("[history] HideFromContinueWatching: no existing entry found, created marker key=%q for seriesID=%q externalIDs=%v", key, seriesID, markerExternalIDs)
+		log.Printf("[history] HideFromContinueWatching: no existing entry found, created marker key=%q for seriesID=%q externalIDs=%v", key, markerSeriesID, markerExternalIDs)
 	} else {
+		if !isMovieHide {
+			key := makeWatchKey("episode", markerSeriesID)
+			perUser[key] = models.PlaybackProgress{
+				ID:                         key,
+				MediaType:                  "episode",
+				ItemID:                     markerSeriesID,
+				SeriesID:                   markerSeriesID,
+				ExternalIDs:                markerExternalIDs,
+				UpdatedAt:                  hiddenAt,
+				HiddenFromContinueWatching: true,
+			}
+			log.Printf("[history] HideFromContinueWatching: upserted series hidden marker key=%q for seriesID=%q externalIDs=%v", key, markerSeriesID, markerExternalIDs)
+		}
 		log.Printf("[history] HideFromContinueWatching: marked %d existing entries hidden for seriesID=%q", markedCount, seriesID)
 	}
 

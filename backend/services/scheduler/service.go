@@ -2216,9 +2216,6 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	}
 
 	// Group episodes by show for batch API call
-	type showKey struct {
-		tvdbID int
-	}
 	showEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	absoluteShowEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	showIDs := make(map[showKey]trakt.SyncIDs)
@@ -2280,13 +2277,8 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 				})
 				removed++
 			} else if item.MediaType == "episode" {
-				var tvdbID int
-				if item.ExternalIDs != nil {
-					if id, ok := item.ExternalIDs["tvdb"]; ok {
-						tvdbID, _ = strconv.Atoi(id)
-					}
-				}
-				if tvdbID == 0 || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+				sk, syncIDs, ok := traktShowKeyForItem(item)
+				if !ok || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
 					continue
 				}
 				if dryRun {
@@ -2298,7 +2290,6 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 					removed++
 					continue
 				}
-				sk := showKey{tvdbID: tvdbID}
 				if removeShowEpisodes[sk] == nil {
 					removeShowEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
 				}
@@ -2307,7 +2298,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 					IDs:    episodeIDsToSyncIDs(item.ExternalIDs),
 				})
 				if _, exists := removeShowIDs[sk]; !exists {
-					removeShowIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
+					removeShowIDs[sk] = syncIDs
 				}
 				removed++
 			}
@@ -2363,13 +2354,8 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 			})
 			exported++
 		} else if item.MediaType == "episode" {
-			var tvdbID int
-			if item.ExternalIDs != nil {
-				if id, ok := item.ExternalIDs["tvdb"]; ok {
-					tvdbID, _ = strconv.Atoi(id)
-				}
-			}
-			if tvdbID == 0 || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+			sk, syncIDs, ok := traktShowKeyForItem(item)
+			if !ok || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
 				continue
 			}
 
@@ -2383,7 +2369,6 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 				continue
 			}
 
-			sk := showKey{tvdbID: tvdbID}
 			if showEpisodes[sk] == nil {
 				showEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
 			}
@@ -2403,7 +2388,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 				})
 			}
 			if _, exists := showIDs[sk]; !exists {
-				showIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
+				showIDs[sk] = syncIDs
 			}
 			expectedEpisodes++
 			exported++
@@ -3791,6 +3776,45 @@ func seriesIDToSyncIDs(seriesID string, extIDs map[string]string) trakt.SyncIDs 
 
 // traktHistoryItemToUpdate converts a Trakt HistoryItem to a WatchHistoryUpdate.
 // Returns nil if the item can't be mapped (missing IDs).
+// showKey groups episodes by show for batched Trakt sync calls. It carries
+// every show identifier we know so shows without a TVDB ID (tmdb-only player
+// metadata) can still be exported/removed instead of being silently skipped.
+type showKey struct {
+	tvdbID int
+	tmdbID int
+	imdbID string
+}
+
+// traktShowKeyForItem derives the show grouping key and Trakt sync IDs for a
+// local episode history item. ok is false when no show identifier is known.
+func traktShowKeyForItem(item models.WatchHistoryItem) (showKey, trakt.SyncIDs, bool) {
+	var sk showKey
+	if item.ExternalIDs != nil {
+		if id, ok := item.ExternalIDs["tvdb"]; ok {
+			sk.tvdbID, _ = strconv.Atoi(id)
+		}
+		if id, ok := item.ExternalIDs["tmdb"]; ok {
+			sk.tmdbID, _ = strconv.Atoi(id)
+		}
+		sk.imdbID = strings.ToLower(strings.TrimSpace(item.ExternalIDs["imdb"]))
+	}
+	if sk.tvdbID == 0 && sk.tmdbID == 0 && sk.imdbID == "" {
+		return sk, trakt.SyncIDs{}, false
+	}
+	// Collapse aliases: a show keyed once with {tvdb} and once with {tvdb,tmdb}
+	// must group together, so prefer the single strongest identifier.
+	syncIDs := trakt.SyncIDs{TVDB: sk.tvdbID, TMDB: sk.tmdbID, IMDB: sk.imdbID}
+	switch {
+	case sk.tvdbID != 0:
+		sk = showKey{tvdbID: sk.tvdbID}
+	case sk.tmdbID != 0:
+		sk = showKey{tmdbID: sk.tmdbID}
+	default:
+		sk = showKey{imdbID: sk.imdbID}
+	}
+	return sk, syncIDs, true
+}
+
 func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool) *models.WatchHistoryUpdate {
 	update := &models.WatchHistoryUpdate{
 		Watched:   watched,
