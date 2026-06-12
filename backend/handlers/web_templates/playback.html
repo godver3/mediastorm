@@ -1646,7 +1646,10 @@
             const cueCount = (text.match(/-->/g) || []).length;
             const looksLikePlaceholderStart = hlsPlaybackOffset > 5 && subtitleStart <= 0.05 && cueCount < 2;
             if (!looksLikePlaceholderStart) {
-              webPlayerSubtitleStartOffset = subtitleStart;
+              const keyframeAlignedStart =
+                Math.abs(subtitleStart - webPlayerActualStartOffset) < 0.25 &&
+                Math.abs(webPlayerActualStartOffset - hlsPlaybackOffset) >= 0.05;
+              webPlayerSubtitleStartOffset = keyframeAlignedStart ? hlsPlaybackOffset : subtitleStart;
               recomputeSubtitleTimeOffset();
             }
           }
