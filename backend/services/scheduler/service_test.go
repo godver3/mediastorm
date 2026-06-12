@@ -663,6 +663,83 @@ func TestSyncPlaybackFromTrakt_HiddenMarkerBlocksOlderResumeImport(t *testing.T)
 	}
 }
 
+func TestSyncPlaybackFromTrakt_HiddenCrossProviderSeriesMarkerDeletesOlderResume(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	progressAt := time.Date(2026, 6, 12, 17, 30, 0, 0, time.UTC)
+	if _, err := historySvc.UpdatePlaybackProgress(userID, models.PlaybackProgressUpdate{
+		MediaType:      "episode",
+		ItemID:         "tvdb:series:401003",
+		SeriesID:       "tmdb:tv:124364",
+		PercentWatched: 12,
+		Timestamp:      progressAt,
+		IsPaused:       true,
+		ExternalIDs:    map[string]string{"imdb": "tt9813792", "tmdb": "124364", "tvdb": "401003"},
+	}); err != nil {
+		t.Fatalf("UpdatePlaybackProgress() error = %v", err)
+	}
+	if err := historySvc.HideFromContinueWatching(userID, "tmdb:tv:124364"); err != nil {
+		t.Fatalf("HideFromContinueWatching() error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	deletedPlaybackItems := 0
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var body string
+			statusCode := http.StatusOK
+			switch {
+			case req.Method == http.MethodGet && req.URL.Path == "/sync/playback/movies":
+				body = `[]`
+			case req.Method == http.MethodGet && req.URL.Path == "/sync/playback/episodes":
+				body = `[{"id":99,"progress":18.0,"paused_at":"2026-06-12T17:31:00Z","type":"episode","show":{"title":"FROM","ids":{"tvdb":401003,"tmdb":124364,"imdb":"tt9813792"}},"episode":{"season":1,"number":2,"title":"The Way Things Are Now","ids":{"tvdb":8808274}}}]`
+			case req.Method == http.MethodDelete && req.URL.Path == "/sync/playback/99":
+				deletedPlaybackItems++
+				statusCode = http.StatusNoContent
+			default:
+				t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: statusCode,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	if _, err := svc.syncPlaybackFromTrakt(&config.TraktAccount{AccessToken: "token"}, userID, nil); err != nil {
+		t.Fatalf("syncPlaybackFromTrakt() error = %v", err)
+	}
+
+	progress, err := historySvc.ListPlaybackProgress(userID)
+	if err != nil {
+		t.Fatalf("ListPlaybackProgress() error = %v", err)
+	}
+	if len(progress) != 1 {
+		t.Fatalf("expected hidden marker to remain as the only row, got %d rows", len(progress))
+	}
+	if progress[0].ItemID != "tvdb:series:401003" || progress[0].SeriesID != "tmdb:tv:124364" || !progress[0].HiddenFromContinueWatching {
+		t.Fatalf("expected cross-provider hidden marker to remain, got %+v", progress[0])
+	}
+	if deletedPlaybackItems != 1 {
+		t.Fatalf("expected hidden Trakt playback item to be deleted, got %d deletes", deletedPlaybackItems)
+	}
+}
+
 func TestSyncPlaybackFromTrakt_HiddenMovieMarkerDeletesOlderTraktPlayback(t *testing.T) {
 	dir := t.TempDir()
 	historySvc, err := history.NewService(dir)
@@ -945,6 +1022,199 @@ func TestSyncLocalHistoryToTrakt_SkipsCrossProviderMovieAlreadyOnTrakt(t *testin
 	}
 	if addToHistoryCalled {
 		t.Fatal("expected AddToHistory to be skipped when Trakt already has the same movie under another provider ID")
+	}
+}
+
+func TestSyncLocalHistoryToTrakt_RemovesNewerLocalUnwatchFromTrakt(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	unwatched := false
+	watchedAt := time.Date(2026, 6, 12, 17, 40, 0, 0, time.UTC)
+	unwatchedAt := time.Date(2026, 6, 12, 17, 40, 35, 0, time.UTC)
+
+	if _, err := historySvc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		Watched:       &watched,
+		WatchedAt:     watchedAt,
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"tvdb":        "401003",
+			"imdb":        "tt9813792",
+			"episodeTvdb": "8808273",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory(watched) error = %v", err)
+	}
+	if _, err := historySvc.UpdateWatchHistory(userID, models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		Watched:       &unwatched,
+		WatchedAt:     unwatchedAt,
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"tvdb":        "401003",
+			"imdb":        "tt9813792",
+			"episodeTvdb": "8808273",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateWatchHistory(unwatched) error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	removeCalled := false
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/users/me/history":
+				if req.Method != http.MethodGet {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				resp := jsonResponse(http.StatusOK, `[{"id":1,"watched_at":"2026-06-12T17:40:00Z","type":"episode","episode":{"season":1,"number":1,"title":"Long Day's Journey Into Night","ids":{"tvdb":8808273}},"show":{"title":"FROM","year":2022,"ids":{"tmdb":124364,"tvdb":401003,"imdb":"tt9813792"}}}]`)
+				resp.Header.Set("X-Pagination-Item-Count", "1")
+				return resp, nil
+			case "/sync/history/remove":
+				if req.Method != http.MethodPost {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				removeCalled = true
+				var body trakt.SyncHistoryRequest
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Fatalf("decode remove body: %v", err)
+				}
+				if len(body.Shows) != 1 || body.Shows[0].IDs.TVDB != 401003 {
+					t.Fatalf("unexpected remove shows: %+v", body.Shows)
+				}
+				if len(body.Shows[0].Seasons) != 1 || body.Shows[0].Seasons[0].Number != 1 {
+					t.Fatalf("unexpected remove seasons: %+v", body.Shows[0].Seasons)
+				}
+				episodes := body.Shows[0].Seasons[0].Episodes
+				if len(episodes) != 1 || episodes[0].Number != 1 || episodes[0].IDs.TVDB != 8808273 {
+					t.Fatalf("unexpected remove episodes: %+v", episodes)
+				}
+				return jsonResponse(http.StatusOK, `{"deleted":{"movies":0,"episodes":1},"not_found":{"movies":[],"shows":[]}}`), nil
+			case "/sync/history":
+				t.Fatal("unwatched item must not be re-added to Trakt history")
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return nil, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	result, err := svc.syncLocalHistoryToTrakt(config.ScheduledTask{}, &config.TraktAccount{AccessToken: "token"}, userID, false)
+	if err != nil {
+		t.Fatalf("syncLocalHistoryToTrakt() error = %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("result.Count = %d, want 1", result.Count)
+	}
+	if !removeCalled {
+		t.Fatal("expected Trakt history removal for newer local unwatch")
+	}
+}
+
+func TestSyncLocalHistoryToTrakt_DoesNotRemoveNewerTraktRewatch(t *testing.T) {
+	dir := t.TempDir()
+	historySvc, err := history.NewService(dir)
+	if err != nil {
+		t.Fatalf("history.NewService() error = %v", err)
+	}
+
+	userID := "user-1"
+	watched := true
+	unwatched := false
+	watchedAt := time.Date(2026, 6, 12, 17, 40, 0, 0, time.UTC)
+	unwatchedAt := time.Date(2026, 6, 12, 17, 40, 35, 0, time.UTC)
+
+	update := models.WatchHistoryUpdate{
+		MediaType:     "episode",
+		ItemID:        "tmdb:tv:124364:s01e01",
+		Name:          "Long Day's Journey Into Night",
+		SeasonNumber:  1,
+		EpisodeNumber: 1,
+		SeriesID:      "tmdb:tv:124364",
+		SeriesName:    "FROM",
+		ExternalIDs: map[string]string{
+			"tmdb":        "124364",
+			"tvdb":        "401003",
+			"imdb":        "tt9813792",
+			"episodeTvdb": "8808273",
+		},
+	}
+	update.Watched = &watched
+	update.WatchedAt = watchedAt
+	if _, err := historySvc.UpdateWatchHistory(userID, update); err != nil {
+		t.Fatalf("UpdateWatchHistory(watched) error = %v", err)
+	}
+	update.Watched = &unwatched
+	update.WatchedAt = unwatchedAt
+	if _, err := historySvc.UpdateWatchHistory(userID, update); err != nil {
+		t.Fatalf("UpdateWatchHistory(unwatched) error = %v", err)
+	}
+
+	origURL := trakt.GetBaseURLForTest()
+	trakt.SetBaseURLForTest("https://trakt.example")
+	defer trakt.SetBaseURLForTest(origURL)
+
+	traktClient := trakt.NewClient("id", "secret")
+	traktClient.SetHTTPClientForTest(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/users/me/history":
+				if req.Method != http.MethodGet {
+					t.Fatalf("unexpected method %s", req.Method)
+				}
+				resp := jsonResponse(http.StatusOK, `[{"id":1,"watched_at":"2026-06-12T17:41:00Z","type":"episode","episode":{"season":1,"number":1,"title":"Long Day's Journey Into Night","ids":{"tvdb":8808273}},"show":{"title":"FROM","year":2022,"ids":{"tmdb":124364,"tvdb":401003,"imdb":"tt9813792"}}}]`)
+				resp.Header.Set("X-Pagination-Item-Count", "1")
+				return resp, nil
+			case "/sync/history/remove":
+				t.Fatal("newer Trakt rewatch must not be removed")
+			case "/sync/history":
+				t.Fatal("unwatched item must not be re-added to Trakt history")
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			return nil, nil
+		}),
+	})
+
+	svc := &Service{
+		historyService: historySvc,
+		traktClient:    traktClient,
+	}
+
+	result, err := svc.syncLocalHistoryToTrakt(config.ScheduledTask{}, &config.TraktAccount{AccessToken: "token"}, userID, false)
+	if err != nil {
+		t.Fatalf("syncLocalHistoryToTrakt() error = %v", err)
+	}
+	if result.Count != 0 {
+		t.Fatalf("result.Count = %d, want 0", result.Count)
 	}
 }
 

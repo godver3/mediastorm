@@ -88,6 +88,10 @@ type SyncResult struct {
 	Config   map[string]string
 }
 
+type traktHistoryState struct {
+	watchedAt time.Time
+}
+
 const (
 	traktPlaybackWatchedThreshold = 90.0
 )
@@ -2159,6 +2163,28 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		return result, fmt.Errorf("fetch trakt history for dedup: %w", err)
 	}
 
+	hasRecentLocalUnwatch := false
+	for _, item := range items {
+		if item.Watched {
+			continue
+		}
+		if since.IsZero() || !item.UpdatedAt.Before(since) {
+			hasRecentLocalUnwatch = true
+			break
+		}
+	}
+
+	// An unwatch can be recent while the original Trakt watched event is old.
+	// Use full history for deletion matching so bidirectional sync can remove
+	// stale Trakt watched rows instead of missing them outside the incremental window.
+	deletionTraktItems := traktItems
+	if hasRecentLocalUnwatch && !since.IsZero() {
+		deletionTraktItems, err = s.traktClient.GetWatchHistorySince(traktAccount.AccessToken, time.Time{})
+		if err != nil {
+			return result, fmt.Errorf("fetch full trakt history for unwatch sync: %w", err)
+		}
+	}
+
 	// Build a set of items already on Trakt, including alternate provider IDs,
 	// so local export does not re-scrobble the same movie/show under a different key.
 	watched := true
@@ -2174,6 +2200,21 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	}
 	log.Printf("[scheduler] Found %d unique items already on Trakt history", len(alreadyOnTrakt))
 
+	traktHistoryByKey := make(map[string]traktHistoryState)
+	for _, ti := range deletionTraktItems {
+		update := s.traktHistoryItemToUpdate(ti, &watched)
+		if update == nil {
+			continue
+		}
+		for _, id := range alternateItemIDs(update.MediaType, update.ItemID, update.ExternalIDs) {
+			key := strings.ToLower(update.MediaType) + ":" + strings.ToLower(id)
+			existing, ok := traktHistoryByKey[key]
+			if !ok || ti.WatchedAt.After(existing.watchedAt) {
+				traktHistoryByKey[key] = traktHistoryState{watchedAt: ti.WatchedAt}
+			}
+		}
+	}
+
 	// Group episodes by show for batch API call
 	type showKey struct {
 		tvdbID int
@@ -2181,13 +2222,95 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 	showEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	absoluteShowEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
 	showIDs := make(map[showKey]trakt.SyncIDs)
+	removeShowEpisodes := make(map[showKey]map[int][]trakt.SyncEpisode)
+	removeShowIDs := make(map[showKey]trakt.SyncIDs)
 	var movies []trakt.SyncMovie
+	var removeMovies []trakt.SyncMovie
 	exported := 0
+	removed := 0
 	skipped := 0
 	expectedEpisodes := 0
 
 	for _, item := range items {
 		if !item.Watched {
+			if !since.IsZero() && item.UpdatedAt.Before(since) {
+				continue
+			}
+
+			traktState, existsOnTrakt := localItemTraktHistoryState(item, traktHistoryByKey)
+			if !existsOnTrakt {
+				continue
+			}
+			if !item.UpdatedAt.IsZero() && item.UpdatedAt.Before(traktState.watchedAt) {
+				continue
+			}
+
+			if item.MediaType == "movie" {
+				var tmdbID, tvdbID int
+				var imdbID string
+				if item.ExternalIDs != nil {
+					if id, ok := item.ExternalIDs["tmdb"]; ok {
+						tmdbID, _ = strconv.Atoi(id)
+					}
+					if id, ok := item.ExternalIDs["tvdb"]; ok {
+						tvdbID, _ = strconv.Atoi(id)
+					}
+					if id, ok := item.ExternalIDs["imdb"]; ok {
+						imdbID = id
+					}
+				}
+				if tmdbID == 0 && tvdbID == 0 && imdbID == "" {
+					continue
+				}
+				if dryRun {
+					result.ToRemove = append(result.ToRemove, config.DryRunItem{
+						Name:      item.Name,
+						MediaType: "movie",
+						ID:        item.ItemID,
+					})
+					removed++
+					continue
+				}
+				removeMovies = append(removeMovies, trakt.SyncMovie{
+					IDs: trakt.SyncIDs{
+						TMDB: tmdbID,
+						TVDB: tvdbID,
+						IMDB: imdbID,
+					},
+				})
+				removed++
+			} else if item.MediaType == "episode" {
+				var tvdbID int
+				if item.ExternalIDs != nil {
+					if id, ok := item.ExternalIDs["tvdb"]; ok {
+						tvdbID, _ = strconv.Atoi(id)
+					}
+				}
+				if tvdbID == 0 || item.SeasonNumber == 0 || item.EpisodeNumber == 0 {
+					continue
+				}
+				if dryRun {
+					result.ToRemove = append(result.ToRemove, config.DryRunItem{
+						Name:      fmt.Sprintf("%s S%02dE%02d", item.SeriesName, item.SeasonNumber, item.EpisodeNumber),
+						MediaType: "episode",
+						ID:        item.ItemID,
+					})
+					removed++
+					continue
+				}
+				sk := showKey{tvdbID: tvdbID}
+				if removeShowEpisodes[sk] == nil {
+					removeShowEpisodes[sk] = make(map[int][]trakt.SyncEpisode)
+				}
+				removeShowEpisodes[sk][item.SeasonNumber] = append(removeShowEpisodes[sk][item.SeasonNumber], trakt.SyncEpisode{
+					Number: item.EpisodeNumber,
+					IDs:    episodeIDsToSyncIDs(item.ExternalIDs),
+				})
+				if _, exists := removeShowIDs[sk]; !exists {
+					removeShowIDs[sk] = trakt.SyncIDs{TVDB: tvdbID}
+				}
+				removed++
+			}
 			continue
 		}
 
@@ -2287,15 +2410,15 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		}
 	}
 
-	log.Printf("[scheduler] Local→Trakt: %d to export, %d skipped (already on Trakt)", exported, skipped)
+	log.Printf("[scheduler] Local→Trakt: %d to export, %d to remove, %d skipped (already on Trakt)", exported, removed, skipped)
 
 	if dryRun {
-		result.Count = exported
+		result.Count = exported + removed
 		return result, nil
 	}
 
 	// Build SyncShow batch structure
-	buildShows := func(grouped map[showKey]map[int][]trakt.SyncEpisode) []trakt.SyncShow {
+	buildShows := func(grouped map[showKey]map[int][]trakt.SyncEpisode, ids map[showKey]trakt.SyncIDs) []trakt.SyncShow {
 		var shows []trakt.SyncShow
 		for sk, seasonEps := range grouped {
 			var seasons []trakt.SyncSeason
@@ -2307,14 +2430,27 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 			}
 
 			shows = append(shows, trakt.SyncShow{
-				IDs:     showIDs[sk],
+				IDs:     ids[sk],
 				Seasons: seasons,
 			})
 		}
 		return shows
 	}
 
-	shows := buildShows(showEpisodes)
+	removeShows := buildShows(removeShowEpisodes, removeShowIDs)
+	if len(removeMovies) > 0 || len(removeShows) > 0 {
+		removeReq := trakt.SyncHistoryRequest{
+			Movies: removeMovies,
+			Shows:  removeShows,
+		}
+		resp, err := s.traktClient.RemoveFromHistory(traktAccount.AccessToken, removeReq)
+		if err != nil {
+			return result, fmt.Errorf("remove from trakt history: %w", err)
+		}
+		log.Printf("[scheduler] Removed from Trakt history: %d movies, %d episodes", resp.Deleted.Movies, resp.Deleted.Episodes)
+	}
+
+	shows := buildShows(showEpisodes, showIDs)
 
 	if len(movies) > 0 || len(shows) > 0 {
 		syncReq := trakt.SyncHistoryRequest{
@@ -2328,7 +2464,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		log.Printf("[scheduler] Synced to Trakt: %d movies, %d episodes added", resp.Added.Movies, resp.Added.Episodes)
 
 		if resp.Added.Episodes < expectedEpisodes && len(absoluteShowEpisodes) > 0 {
-			absoluteShows := buildShows(absoluteShowEpisodes)
+			absoluteShows := buildShows(absoluteShowEpisodes, showIDs)
 			retryReq := trakt.SyncHistoryRequest{Shows: absoluteShows}
 			retryResp, retryErr := s.traktClient.AddToHistory(traktAccount.AccessToken, retryReq)
 			if retryErr != nil {
@@ -2339,7 +2475,7 @@ func (s *Service) syncLocalHistoryToTrakt(task config.ScheduledTask, traktAccoun
 		}
 	}
 
-	result.Count = exported
+	result.Count = exported + removed
 	return result, nil
 }
 
@@ -2351,6 +2487,17 @@ func itemAlreadyOnTrakt(item models.WatchHistoryItem, alreadyOnTrakt map[string]
 		}
 	}
 	return false
+}
+
+func localItemTraktHistoryState(item models.WatchHistoryItem, traktHistoryByKey map[string]traktHistoryState) (traktHistoryState, bool) {
+	var zero traktHistoryState
+	for _, id := range alternateItemIDs(item.MediaType, item.ItemID, item.ExternalIDs) {
+		key := strings.ToLower(item.MediaType) + ":" + strings.ToLower(id)
+		if state, ok := traktHistoryByKey[key]; ok {
+			return state, true
+		}
+	}
+	return zero, false
 }
 
 // syncHistoryBidirectional syncs watch history in both directions
@@ -3203,7 +3350,7 @@ func (s *Service) findHiddenPlaybackMarker(profileID string, update models.Playb
 				continue
 			}
 			if marker.HiddenFromContinueWatching &&
-				marker.ItemID == marker.SeriesID &&
+				marker.MediaType == "episode" &&
 				marker.SeasonNumber == 0 &&
 				marker.EpisodeNumber == 0 {
 				return marker

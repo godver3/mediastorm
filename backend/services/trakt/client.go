@@ -665,6 +665,10 @@ type SyncHistoryResponse struct {
 		Movies   int `json:"movies"`
 		Episodes int `json:"episodes"`
 	} `json:"added"`
+	Deleted struct {
+		Movies   int `json:"movies"`
+		Episodes int `json:"episodes"`
+	} `json:"deleted"`
 	NotFound struct {
 		Movies []SyncMovie `json:"movies"`
 		Shows  []SyncShow  `json:"shows"`
@@ -694,6 +698,39 @@ func (c *Client) AddToHistory(accessToken string, request SyncHistoryRequest) (*
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("trakt sync history failed: %s - %s", resp.Status, string(respBody))
+	}
+
+	var syncResp SyncHistoryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &syncResp, nil
+}
+
+// RemoveFromHistory removes movies and/or episodes from the user's Trakt watch history.
+func (c *Client) RemoveFromHistory(accessToken string, request SyncHistoryRequest) (*SyncHistoryResponse, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, traktAPIBaseURL+"/sync/history/remove", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	c.setTraktHeaders(req, accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trakt api request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("trakt remove history failed: %s - %s", resp.Status, string(respBody))
 	}
 
 	var syncResp SyncHistoryResponse
