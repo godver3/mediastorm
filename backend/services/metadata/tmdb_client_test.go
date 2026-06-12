@@ -7,7 +7,6 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"testing"
 
 	xdraw "golang.org/x/image/draw"
@@ -198,40 +197,12 @@ func TestIsImageDark_FetchError(t *testing.T) {
 }
 
 func TestFetchImages_LogoLanguagePreference(t *testing.T) {
-	// selectLogo mirrors the logo selection logic from fetchImages:
-	// filter to preferred lang + English + no-language, then sort by preference tier.
 	selectLogo := func(logos []tmdbImageItem, preferredLang string) string {
-		var usable []tmdbImageItem
-		for _, l := range logos {
-			if l.ISO6391 == preferredLang || l.ISO6391 == "en" || l.ISO6391 == "" {
-				usable = append(usable, l)
-			}
-		}
-		if len(usable) == 0 {
+		selected, ok := selectLogoCandidate(logos, preferredLang, func(tmdbImageItem) bool { return false })
+		if !ok {
 			return ""
 		}
-		sort.Slice(usable, func(i, j int) bool {
-			li, lj := usable[i], usable[j]
-			if preferredLang != "" && preferredLang != "en" {
-				iPref := li.ISO6391 == preferredLang
-				jPref := lj.ISO6391 == preferredLang
-				if iPref != jPref {
-					return iPref
-				}
-			}
-			iEng := li.ISO6391 == "en"
-			jEng := lj.ISO6391 == "en"
-			if iEng != jEng {
-				return iEng
-			}
-			iNull := li.ISO6391 == ""
-			jNull := lj.ISO6391 == ""
-			if iNull != jNull {
-				return iNull
-			}
-			return li.VoteAverage > lj.VoteAverage
-		})
-		return usable[0].FilePath
+		return selected.FilePath
 	}
 
 	tests := []struct {
@@ -365,6 +336,78 @@ func TestFetchImages_LogoLanguagePreference(t *testing.T) {
 			got := selectLogo(tc.logos, tc.preferredLang)
 			if got != tc.wantPath {
 				t.Errorf("selected %q, want %q\n  %s", got, tc.wantPath, tc.description)
+			}
+		})
+	}
+}
+
+func TestSelectLogoCandidate_SkipsWhiteOnlySVGWithinSameLanguageTier(t *testing.T) {
+	logos := []tmdbImageItem{
+		{FilePath: "/white.svg", ISO6391: "en", VoteAverage: 9.0},
+		{FilePath: "/colored.png", ISO6391: "en", VoteAverage: 5.0},
+		{FilePath: "/fallback.png", ISO6391: "", VoteAverage: 10.0},
+	}
+
+	selected, ok := selectLogoCandidate(logos, "en", func(item tmdbImageItem) bool {
+		return item.FilePath == "/white.svg"
+	})
+	if !ok {
+		t.Fatal("expected a selected logo")
+	}
+	if selected.FilePath != "/colored.png" {
+		t.Fatalf("selected %q, want colored same-language logo", selected.FilePath)
+	}
+}
+
+func TestSelectLogoCandidate_KeepsWhiteOnlySVGWhenOnlyLowerLanguageTierAlternativesExist(t *testing.T) {
+	logos := []tmdbImageItem{
+		{FilePath: "/white.svg", ISO6391: "en", VoteAverage: 9.0},
+		{FilePath: "/fallback.png", ISO6391: "", VoteAverage: 10.0},
+	}
+
+	selected, ok := selectLogoCandidate(logos, "en", func(item tmdbImageItem) bool {
+		return item.FilePath == "/white.svg"
+	})
+	if !ok {
+		t.Fatal("expected a selected logo")
+	}
+	if selected.FilePath != "/white.svg" {
+		t.Fatalf("selected %q, want preferred-language logo", selected.FilePath)
+	}
+}
+
+func TestIsWhiteOnlySVGXML(t *testing.T) {
+	tests := []struct {
+		name string
+		svg  string
+		want bool
+	}{
+		{
+			name: "white class fill",
+			svg:  `<svg><style>.st0{fill:#FFFFFF;}</style><path class="st0"/></svg>`,
+			want: true,
+		},
+		{
+			name: "colored class fill",
+			svg:  `<svg><style>.st0{fill:#FEE303;}.st1{fill:#FFFFFF;}</style><path class="st0"/><path class="st1"/></svg>`,
+			want: false,
+		},
+		{
+			name: "rgb white fill",
+			svg:  `<svg><path fill="rgb(255,255,255)"/></svg>`,
+			want: true,
+		},
+		{
+			name: "no fill",
+			svg:  `<svg><path d="M0 0"/></svg>`,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isWhiteOnlySVGXML(tc.svg); got != tc.want {
+				t.Fatalf("isWhiteOnlySVGXML() = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -5728,8 +5728,12 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		if tmdbIDForImages == 0 {
 			tmdbIDForImages = req.TMDBID
 		}
-		// Only fetch logo if missing - don't replace existing poster to avoid visual flash
-		if cached.Logo == nil && tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		// Only refresh the logo if missing or if an older cache selected a white-only SVG variant.
+		shouldRefreshLogo := cached.Logo == nil
+		if !shouldRefreshLogo && s.tmdb != nil && s.tmdb.isConfigured() {
+			shouldRefreshLogo = s.tmdb.isWhiteOnlySVGURL(ctx, cached.Logo.URL)
+		}
+		if shouldRefreshLogo && tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
 			if images, err := s.cachedFetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
 				if images.Logo != nil {
 					cached.Logo = images.Logo
@@ -6931,7 +6935,7 @@ func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbI
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "images", "v4", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "images", "v5", mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached tmdbImagesResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil

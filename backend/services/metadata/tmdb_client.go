@@ -374,42 +374,11 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 	// Find best logo: prefer user's language, then English, then no-language.
 	// Skip logos in other languages to avoid showing translated text.
 	if len(payload.Logos) > 0 {
-		var usable []tmdbImageItem
-		for _, l := range payload.Logos {
-			if l.ISO6391 == preferredLang || l.ISO6391 == "en" || l.ISO6391 == "" {
-				usable = append(usable, l)
-			}
-		}
-		if len(usable) > 0 {
-			sort.Slice(usable, func(i, j int) bool {
-				li, lj := usable[i], usable[j]
-				// Prefer user's language first
-				if preferredLang != "" && preferredLang != "en" {
-					iPref := li.ISO6391 == preferredLang
-					jPref := lj.ISO6391 == preferredLang
-					if iPref != jPref {
-						return iPref
-					}
-				}
-				// Then English
-				iEng := li.ISO6391 == "en"
-				jEng := lj.ISO6391 == "en"
-				if iEng != jEng {
-					return iEng
-				}
-				// Then no-language over anything else
-				iNull := li.ISO6391 == ""
-				jNull := lj.ISO6391 == ""
-				if iNull != jNull {
-					return iNull
-				}
-				// Finally sort by vote average
-				return li.VoteAverage > lj.VoteAverage
-			})
-			result.Logo = buildTMDBImage(usable[0].FilePath, tmdbLogoSize, "logo")
+		if selectedLogo, ok := c.selectLogoCandidate(ctx, payload.Logos, preferredLang); ok {
+			result.Logo = buildTMDBImage(selectedLogo.FilePath, tmdbLogoSize, "logo")
 			if result.Logo != nil {
-				result.Logo.Language = usable[0].ISO6391
-				result.Logo.IsFallbackLanguage = usable[0].ISO6391 != preferredLang
+				result.Logo.Language = selectedLogo.ISO6391
+				result.Logo.IsFallbackLanguage = selectedLogo.ISO6391 != preferredLang
 				result.Logo.IsDark = c.isImageDark(ctx, result.Logo.URL)
 			}
 		}
@@ -506,6 +475,130 @@ func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID i
 	}
 
 	return result, nil
+}
+
+func (c *tmdbClient) selectLogoCandidate(ctx context.Context, logos []tmdbImageItem, preferredLang string) (tmdbImageItem, bool) {
+	return selectLogoCandidate(logos, preferredLang, func(item tmdbImageItem) bool {
+		return c.isWhiteOnlySVGLogo(ctx, item)
+	})
+}
+
+func selectLogoCandidate(logos []tmdbImageItem, preferredLang string, isWhiteOnly func(tmdbImageItem) bool) (tmdbImageItem, bool) {
+	var usable []tmdbImageItem
+	for _, l := range logos {
+		if logoLanguageRank(l, preferredLang) >= 0 {
+			usable = append(usable, l)
+		}
+	}
+	if len(usable) == 0 {
+		return tmdbImageItem{}, false
+	}
+
+	sort.Slice(usable, func(i, j int) bool {
+		li, lj := usable[i], usable[j]
+		iRank := logoLanguageRank(li, preferredLang)
+		jRank := logoLanguageRank(lj, preferredLang)
+		if iRank != jRank {
+			return iRank < jRank
+		}
+		return li.VoteAverage > lj.VoteAverage
+	})
+
+	selected := usable[0]
+	if !isWhiteOnly(selected) {
+		return selected, true
+	}
+
+	selectedRank := logoLanguageRank(selected, preferredLang)
+	for _, candidate := range usable[1:] {
+		if logoLanguageRank(candidate, preferredLang) != selectedRank {
+			break
+		}
+		if !isWhiteOnly(candidate) {
+			log.Printf("[metadata] logo selection: skipped white-only svg %s in favor of %s", selected.FilePath, candidate.FilePath)
+			return candidate, true
+		}
+	}
+
+	return selected, true
+}
+
+func logoLanguageRank(item tmdbImageItem, preferredLang string) int {
+	if preferredLang != "" && preferredLang != "en" && item.ISO6391 == preferredLang {
+		return 0
+	}
+	if item.ISO6391 == "en" {
+		return 1
+	}
+	if item.ISO6391 == "" {
+		return 2
+	}
+	return -1
+}
+
+func (c *tmdbClient) isWhiteOnlySVGLogo(ctx context.Context, item tmdbImageItem) bool {
+	if !strings.HasSuffix(strings.ToLower(item.FilePath), ".svg") {
+		return false
+	}
+	img := buildTMDBImage(item.FilePath, tmdbLogoSize, "logo")
+	if img == nil {
+		return false
+	}
+	return c.isWhiteOnlySVGURL(ctx, img.URL)
+}
+
+func (c *tmdbClient) isWhiteOnlySVGURL(ctx context.Context, imageURL string) bool {
+	if !strings.HasSuffix(strings.ToLower(strings.Split(imageURL, "?")[0]), ".svg") {
+		return false
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		log.Printf("[metadata] logo svg color: failed to create request: %v", err)
+		return false
+	}
+
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		log.Printf("[metadata] logo svg color: fetch failed: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[metadata] logo svg color: fetch returned %d", resp.StatusCode)
+		return false
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		log.Printf("[metadata] logo svg color: read failed: %v", err)
+		return false
+	}
+	return isWhiteOnlySVGXML(string(body))
+}
+
+func isWhiteOnlySVGXML(svg string) bool {
+	fillMatches := regexp.MustCompile(`(?i)\bfill\s*[:=]\s*["']?\s*(#[0-9a-f]{3,8}|white|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))`).FindAllStringSubmatch(svg, -1)
+	if len(fillMatches) == 0 {
+		return false
+	}
+
+	hasWhiteFill := false
+	for _, match := range fillMatches {
+		if len(match) < 2 {
+			continue
+		}
+		color := strings.ToLower(strings.TrimSpace(match[1]))
+		if color == "#fff" || color == "#ffffff" || color == "#ffffffff" || color == "white" || strings.HasPrefix(color, "rgb(") {
+			hasWhiteFill = true
+			continue
+		}
+		if color != "none" {
+			return false
+		}
+	}
+	return hasWhiteFill
 }
 
 type backdropVisualSignature struct {
