@@ -409,6 +409,96 @@ func TestServiceSamplingStrategy(t *testing.T) {
 	}
 }
 
+func TestServiceSamplingPrefersPayloadFiles(t *testing.T) {
+	cfg := config.DefaultSettings()
+	cfg.Usenet = []config.UsenetSettings{
+		{
+			Name:        "Test Provider",
+			Host:        "news.example",
+			Port:        563,
+			SSL:         true,
+			Username:    "user",
+			Password:    "pass",
+			Connections: 8,
+			Enabled:     true,
+		},
+	}
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(cfg); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	sampleNZB := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<nzb>
+  <file subject="[001/004] - &quot;movie.par2&quot; yEnc">
+    <segments>
+      <segment bytes="123" number="1">&lt;par2@test&gt;</segment>
+    </segments>
+  </file>
+  <file subject="[002/004] - &quot;movie.nfo&quot; yEnc">
+    <segments>
+      <segment bytes="123" number="1">&lt;nfo@test&gt;</segment>
+    </segments>
+  </file>
+  <file subject="[003/004] - &quot;movie.r00&quot; yEnc">
+    <segments>
+      <segment bytes="123" number="1">&lt;rar00a@test&gt;</segment>
+      <segment bytes="124" number="2">&lt;rar00b@test&gt;</segment>
+    </segments>
+  </file>
+  <file subject="[004/004] - &quot;movie.r01&quot; yEnc">
+    <segments>
+      <segment bytes="125" number="1">&lt;rar01a@test&gt;</segment>
+      <segment bytes="126" number="2">&lt;rar01b@test&gt;</segment>
+    </segments>
+  </file>
+</nzb>`)
+
+	stub := &stubClient{results: map[string]bool{
+		"<par2@test>":   true,
+		"<nfo@test>":    true,
+		"<rar00a@test>": true,
+		"<rar00b@test>": true,
+		"<rar01a@test>": true,
+		"<rar01b@test>": true,
+	}}
+
+	svc := NewService(mgr, nil)
+	svc.dialer = func(ctx context.Context, settings config.UsenetSettings) (statClient, error) {
+		return stub, nil
+	}
+	svc.httpClient = newStaticHTTPClient(t, http.StatusOK, sampleNZB, http.Header{
+		"Content-Type": {"application/xml"},
+	})
+	svc.rand = rand.New(rand.NewSource(1))
+	svc.maxSegments = 3
+
+	candidate := models.NZBResult{Title: "Movie", DownloadURL: "https://example.com/movie.nzb"}
+
+	res, err := svc.CheckHealth(context.Background(), candidate)
+	if err != nil {
+		t.Fatalf("CheckHealth returned error: %v", err)
+	}
+	if !res.Healthy {
+		t.Fatalf("expected healthy result, got status %s", res.Status)
+	}
+	if res.CheckedSegments != 3 {
+		t.Fatalf("expected 3 sampled payload segments, got %d", res.CheckedSegments)
+	}
+	if !res.Sampled {
+		t.Fatalf("expected sampled flag to be true")
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	for _, id := range stub.calls {
+		if id == "<par2@test>" || id == "<nfo@test>" {
+			t.Fatalf("sampled non-payload segment %s; calls=%v", id, stub.calls)
+		}
+	}
+}
+
 func TestServiceSamplingStrategyLargeNZB(t *testing.T) {
 	cfg := config.DefaultSettings()
 	cfg.Usenet = []config.UsenetSettings{

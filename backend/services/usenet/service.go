@@ -41,7 +41,7 @@ type Service struct {
 }
 
 const (
-	defaultSegmentSample  = 1
+	defaultSegmentSample  = 3
 	defaultRequestTimeout = 60 * time.Second
 	edgeSampleCount       = 1 // always pick the first and last article
 	randomSampleCount     = 1 // sample a single article from the middle slice
@@ -105,23 +105,25 @@ func (s *Service) CheckHealthWithNZB(ctx context.Context, candidate models.NZBRe
 }
 
 func (s *Service) evaluateNZBHealth(ctx context.Context, settings config.Settings, candidate models.NZBResult, nzbBytes []byte, fileName string, start time.Time) (*models.NZBHealthCheck, error) {
-	allSegments, totalSegments, hasSevenZip, fileSubjects, err := extractSegmentIDs(nzbBytes)
+	nzbMeta, err := extractNZBMetadata(nzbBytes)
 	if err != nil {
 		return nil, err
 	}
+	allSegments := nzbMeta.SegmentIDs
+	totalSegments := len(allSegments)
 	if totalSegments == 0 {
 		return nil, fmt.Errorf("nzb did not contain any segments")
 	}
 
 	trimmedName := strings.TrimSpace(fileName)
-	if len(fileSubjects) > 0 {
-		log.Printf("[usenet] files title=%q count=%d list=%s", strings.TrimSpace(candidate.Title), len(fileSubjects), summarizeNZBFileList(fileSubjects))
+	if len(nzbMeta.FileSubjects) > 0 {
+		log.Printf("[usenet] files title=%q count=%d list=%s", strings.TrimSpace(candidate.Title), len(nzbMeta.FileSubjects), summarizeNZBFileList(nzbMeta.FileSubjects))
 	}
 	// Note: 7z archives are now supported (for uncompressed/store mode)
 	// Compressed 7z archives will be rejected during import, not during health check
-	_ = hasSevenZip // suppress unused variable warning
+	_ = nzbMeta.HasSevenZip // suppress unused variable warning
 
-	sampleSegments := s.sampleSegments(allSegments)
+	sampleSegments := s.sampleSegmentsForHealth(nzbMeta)
 
 	enabledProviders := filterEnabledUsenetProviders(settings.Usenet)
 	if len(enabledProviders) == 0 {
@@ -220,18 +222,31 @@ type nzbSegment struct {
 	ID string `xml:",chardata"`
 }
 
-func extractSegmentIDs(data []byte) ([]string, int, bool, []string, error) {
+type nzbMetadata struct {
+	Files        []nzbFileSegments
+	SegmentIDs   []string
+	FileSubjects []string
+	HasSevenZip  bool
+}
+
+type nzbFileSegments struct {
+	Subject  string
+	Segments []string
+}
+
+func extractNZBMetadata(data []byte) (nzbMetadata, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = false
 
 	var doc nzbDocument
 	if err := dec.Decode(&doc); err != nil {
-		return nil, 0, false, nil, fmt.Errorf("parse nzb: %w", err)
+		return nzbMetadata{}, fmt.Errorf("parse nzb: %w", err)
 	}
 
 	ids := make([]string, 0)
 	hasSevenZip := false
 	subjects := make([]string, 0, len(doc.Files))
+	files := make([]nzbFileSegments, 0, len(doc.Files))
 
 	for _, file := range doc.Files {
 		trimmedSubject := strings.TrimSpace(file.Subject)
@@ -241,16 +256,34 @@ func extractSegmentIDs(data []byte) ([]string, int, bool, []string, error) {
 		if containsSevenZipIndicator(trimmedSubject) {
 			hasSevenZip = true
 		}
+		fileSegments := nzbFileSegments{Subject: trimmedSubject}
 		for _, segment := range file.Segments {
 			id := strings.TrimSpace(segment.ID)
 			if id == "" {
 				continue
 			}
 			ids = append(ids, id)
+			fileSegments.Segments = append(fileSegments.Segments, id)
+		}
+		if len(fileSegments.Segments) > 0 {
+			files = append(files, fileSegments)
 		}
 	}
 
-	return ids, len(ids), hasSevenZip, subjects, nil
+	return nzbMetadata{
+		Files:        files,
+		SegmentIDs:   ids,
+		FileSubjects: subjects,
+		HasSevenZip:  hasSevenZip,
+	}, nil
+}
+
+func extractSegmentIDs(data []byte) ([]string, int, bool, []string, error) {
+	meta, err := extractNZBMetadata(data)
+	if err != nil {
+		return nil, 0, false, nil, err
+	}
+	return meta.SegmentIDs, len(meta.SegmentIDs), meta.HasSevenZip, meta.FileSubjects, nil
 }
 
 func containsSevenZipIndicator(subject string) bool {
@@ -416,6 +449,95 @@ func (s *Service) sampleSegments(all []string) []string {
 	return selected
 }
 
+func (s *Service) sampleSegmentsForHealth(meta nzbMetadata) []string {
+	preferred := make([]string, 0, len(meta.SegmentIDs))
+	fallback := make([]string, 0, len(meta.SegmentIDs))
+
+	for _, file := range meta.Files {
+		if isLikelyPayloadSubject(file.Subject) {
+			preferred = append(preferred, file.Segments...)
+			continue
+		}
+		fallback = append(fallback, file.Segments...)
+	}
+
+	if len(preferred) > 0 {
+		return s.sampleSegments(preferred)
+	}
+	if len(fallback) > 0 {
+		return s.sampleSegments(fallback)
+	}
+	return s.sampleSegments(meta.SegmentIDs)
+}
+
+func isLikelyPayloadSubject(subject string) bool {
+	name := strings.ToLower(extractSubjectFileName(subject))
+	if name == "" {
+		name = strings.ToLower(subject)
+	}
+
+	ignoredSuffixes := []string{
+		".par2", ".sfv", ".srr", ".srs", ".nfo", ".txt", ".url",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp",
+	}
+	for _, suffix := range ignoredSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return false
+		}
+	}
+
+	payloadSuffixes := []string{
+		".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".m2ts", ".iso",
+		".rar", ".7z", ".zip",
+	}
+	for _, suffix := range payloadSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+
+	if isSplitArchiveName(name) {
+		return true
+	}
+
+	return false
+}
+
+func extractSubjectFileName(subject string) string {
+	trimmed := strings.TrimSpace(subject)
+	if trimmed == "" {
+		return ""
+	}
+	if start := strings.Index(trimmed, `"`); start >= 0 {
+		if end := strings.Index(trimmed[start+1:], `"`); end >= 0 {
+			return strings.TrimSpace(trimmed[start+1 : start+1+end])
+		}
+	}
+
+	fields := strings.Fields(trimmed)
+	for i := len(fields) - 1; i >= 0; i-- {
+		candidate := strings.Trim(fields[i], `"'()[]`)
+		lower := strings.ToLower(candidate)
+		if strings.Contains(lower, ".") && lower != "yenc" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func isSplitArchiveName(name string) bool {
+	if len(name) < 4 {
+		return false
+	}
+	if len(name) >= 4 {
+		suffix := name[len(name)-4:]
+		if suffix[0] == '.' && suffix[1] == 'r' && suffix[2] >= '0' && suffix[2] <= '9' && suffix[3] >= '0' && suffix[3] <= '9' {
+			return true
+		}
+	}
+	return strings.Contains(name, ".part") && strings.HasSuffix(name, ".rar")
+}
+
 // TODO: Consider removing this health check entirely since RAR analysis serves as
 // implicit validation - if the RAR structure can be read from Usenet, the data is healthy.
 // This would save ~5 seconds on playback initiation.
@@ -520,33 +642,22 @@ func (s *Service) checkSegmentsWithDialer(ctx context.Context, segments []string
 		return nil, nil
 	}
 
-	// Check segments one at a time against all providers for fast-fail behavior
-	// If any single segment is missing from all providers, fail immediately
-	for _, segment := range remaining {
-		segmentFound := false
-
-		for _, provider := range providers {
-			missing, err := s.checkSegmentsOnProvider(ctx, []string{segment}, provider)
-			if err != nil {
-				return nil, err
-			}
-
-			// If this provider has the segment (missing is empty), mark as found
-			if len(missing) == 0 {
-				segmentFound = true
-				break // No need to check other providers for this segment
-			}
+	// Carry only missing segments forward to the next provider. This keeps the
+	// "present on any provider" semantics while avoiding a fresh NNTP login per
+	// sampled segment.
+	for _, provider := range providers {
+		missing, err := s.checkSegmentsOnProvider(ctx, remaining, provider)
+		if err != nil {
+			return nil, err
 		}
-
-		// If this segment wasn't found on any provider, fail immediately
-		if !segmentFound {
-			log.Printf("[usenet] segment %s missing from all providers - failing fast", segment)
-			return []string{segment}, nil
+		remaining = missing
+		if len(remaining) == 0 {
+			return nil, nil
 		}
 	}
 
-	// All segments found across providers
-	return nil, nil
+	log.Printf("[usenet] %d segment(s) missing from all providers", len(remaining))
+	return remaining, nil
 }
 
 func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string, provider config.UsenetSettings) ([]string, error) {

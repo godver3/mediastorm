@@ -570,8 +570,10 @@ func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate mo
 	log.Printf("[search-stats] NZB fetch #%d started (title=%q, indexer=%q)", fetchNum, strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Indexer))
 	log.Printf("[playback] fetching nzb url=%q title=%q", downloadURL, strings.TrimSpace(candidate.Title))
 
-	// Create a context with timeout for the entire fetch operation
-	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Large NZBs for full-disc releases can be 10+ MB and some indexers stream
+	// them slowly. Keep the bound finite, but avoid failing valid releases while
+	// reading the body.
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, downloadURL, nil)
