@@ -8353,6 +8353,8 @@ var topTenNetworkLists = []struct {
 	{"hbo-shows", "https://mdblist.com/lists/snoak/hbo-top-10-tv-shows/json"},
 	{"hulu-movies", "https://mdblist.com/lists/snoak/top-hulu-movies/json"},
 	{"hulu-shows", "https://mdblist.com/lists/snoak/top-tv-shows-hulu/json"},
+	{"crunchyroll-movies", "https://mdblist.com/lists/snoak/trending-anime-movies/json"},
+	{"crunchyroll-shows", "https://mdblist.com/lists/snoak/trending-anime-shows/json"},
 }
 
 // topTenDailyPopularityLists are broad daily popularity charts. They catch
