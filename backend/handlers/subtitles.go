@@ -76,6 +76,8 @@ type SubtitleSearchParams struct {
 	Language              string `json:"language"`
 	OpenSubtitlesUsername string `json:"opensubtitles_username,omitempty"`
 	OpenSubtitlesPassword string `json:"opensubtitles_password,omitempty"`
+	SubDLAPIKey           string `json:"subdl_api_key,omitempty"`
+	SubSourceAPIKey       string `json:"subsource_api_key,omitempty"`
 }
 
 // SubtitleResult represents a single subtitle search result
@@ -112,6 +114,8 @@ func (h *SubtitlesHandler) Search(w http.ResponseWriter, r *http.Request) {
 		if settings, err := h.configManager.Load(); err == nil {
 			params.OpenSubtitlesUsername = settings.Subtitles.OpenSubtitlesUsername
 			params.OpenSubtitlesPassword = settings.Subtitles.OpenSubtitlesPassword
+			params.SubDLAPIKey = settings.Subtitles.SubDLAPIKey
+			params.SubSourceAPIKey = settings.Subtitles.SubSourceAPIKey
 		}
 	}
 
@@ -180,6 +184,8 @@ type SubtitleDownloadParams struct {
 	Provider              string `json:"provider"`
 	OpenSubtitlesUsername string `json:"opensubtitles_username,omitempty"`
 	OpenSubtitlesPassword string `json:"opensubtitles_password,omitempty"`
+	SubDLAPIKey           string `json:"subdl_api_key,omitempty"`
+	SubSourceAPIKey       string `json:"subsource_api_key,omitempty"`
 }
 
 // Download downloads a specific subtitle and returns VTT content
@@ -216,6 +222,8 @@ func (h *SubtitlesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		if settings, err := h.configManager.Load(); err == nil {
 			params.OpenSubtitlesUsername = settings.Subtitles.OpenSubtitlesUsername
 			params.OpenSubtitlesPassword = settings.Subtitles.OpenSubtitlesPassword
+			params.SubDLAPIKey = settings.Subtitles.SubDLAPIKey
+			params.SubSourceAPIKey = settings.Subtitles.SubSourceAPIKey
 		}
 	}
 

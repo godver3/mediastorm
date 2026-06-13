@@ -6,6 +6,11 @@ Accepts JSON input and outputs VTT content.
 import sys
 import json
 import re
+import base64
+import io
+import urllib.parse
+import urllib.request
+import zipfile
 from babelfish import Language
 from subliminal import region
 from subliminal.core import ProviderPool
@@ -13,6 +18,94 @@ from subliminal.video import Episode, Movie
 
 # Configure cache
 region.configure('dogpile.cache.memory')
+
+SUBSOURCE_API_URL = "https://api.subsource.net/api/v1"
+
+
+def decode_external_id(value):
+    padding = '=' * (-len(value) % 4)
+    raw = base64.urlsafe_b64decode((value + padding).encode('ascii'))
+    return json.loads(raw.decode('utf-8'))
+
+
+def fetch_url(url, api_key="", timeout=20):
+    headers = {
+        "Accept": "*/*",
+        "User-Agent": "Mozilla/5.0 (compatible; mediastorm/1.0; +https://github.com/godver3/mediastorm)",
+    }
+    if api_key:
+        headers["x-api-key"] = api_key
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        query.setdefault("api_key", [api_key])
+        url = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query, doseq=True)))
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(), resp.headers.get("content-type", "")
+
+
+def fetch_subsource_subtitle(subtitle_id, api_key, timeout=20):
+    if not api_key:
+        raise ValueError("SubSource requires an API key")
+    if not subtitle_id:
+        raise ValueError("invalid SubSource subtitle id")
+    url = f"{SUBSOURCE_API_URL}/subtitles/{urllib.parse.quote(str(subtitle_id))}/download"
+    req = urllib.request.Request(url, headers={
+        "Accept": "*/*",
+        "User-Agent": "mediastorm/1.0",
+        "X-API-Key": api_key,
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(), resp.headers.get("content-type", "")
+
+
+def pick_zip_subtitle(content, season=None, episode=None):
+    priority_exts = ('.srt', '.vtt', '.ass', '.ssa')
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        names = [name for name in zf.namelist() if not name.endswith('/')]
+        ranked = []
+        for ext in priority_exts:
+            for name in names:
+                if name.lower().endswith(ext):
+                    ranked.append((score_zip_subtitle_name(name, ext, season, episode), name))
+        if ranked:
+            ranked.sort(key=lambda item: item[0], reverse=True)
+            return zf.read(ranked[0][1])
+    return b""
+
+
+def score_zip_subtitle_name(name, ext, season=None, episode=None):
+    base = name.rsplit('/', 1)[-1].lower()
+    score = {
+        '.srt': 40,
+        '.vtt': 30,
+        '.ass': 20,
+        '.ssa': 10,
+    }.get(ext, 0)
+
+    try:
+        season_num = int(season) if season is not None else None
+        episode_num = int(episode) if episode is not None else None
+    except (TypeError, ValueError):
+        season_num = None
+        episode_num = None
+
+    if episode_num is not None:
+        episode_patterns = [
+            rf"s{season_num:02d}e{episode_num:02d}" if season_num is not None else "",
+            rf"s{season_num}e{episode_num:02d}" if season_num is not None else "",
+            rf"{season_num}x{episode_num:02d}" if season_num is not None else "",
+            rf"episode[\s._-]*{episode_num:02d}",
+            rf"ep[\s._-]*{episode_num:02d}",
+            rf"e{episode_num:02d}",
+        ]
+        if any(pattern and re.search(pattern, base) for pattern in episode_patterns):
+            score += 1000
+        elif re.search(rf"(?<!\d){episode_num:02d}(?!\d)", base):
+            score += 200
+    if season_num is not None and re.search(rf"s{season_num:02d}|season[\s._-]*{season_num}", base):
+        score += 50
+    return score
 
 
 def ass_to_vtt(ass_content: str) -> str:
@@ -142,6 +235,30 @@ def convert_to_vtt(content: str) -> str:
     return srt_to_vtt(content)
 
 
+def download_external_provider(provider, subtitle_id, subdl_api_key="", subsource_api_key=""):
+    payload = decode_external_id(subtitle_id)
+    if payload.get("provider") != provider:
+        raise ValueError("invalid subtitle id")
+
+    if provider == "subsource":
+        content, content_type = fetch_subsource_subtitle(payload.get("subtitle_id"), subsource_api_key)
+        filename = (payload.get("name") or "subsource.zip").lower()
+    else:
+        url = payload.get("url") or ""
+        if not url:
+            raise ValueError("invalid subtitle id")
+        content, content_type = fetch_url(url, api_key=subdl_api_key)
+        filename = (payload.get("name") or url).lower()
+    if zipfile.is_zipfile(io.BytesIO(content)) or filename.endswith('.zip') or 'zip' in (content_type or '').lower():
+        content = pick_zip_subtitle(content, season=payload.get("season"), episode=payload.get("episode"))
+    if not content:
+        raise ValueError("failed to download subtitle content")
+    text = content.decode('utf-8-sig', errors='replace')
+    if text.lstrip().startswith("WEBVTT"):
+        return text
+    return convert_to_vtt(text)
+
+
 def main():
     # Read params from stdin to avoid exposing credentials in process listings
     try:
@@ -166,10 +283,25 @@ def main():
     # OpenSubtitles credentials (optional)
     os_username = params.get("opensubtitles_username", "")
     os_password = params.get("opensubtitles_password", "")
+    subdl_api_key = params.get("subdl_api_key", "")
+    subsource_api_key = params.get("subsource_api_key", "")
 
     if not subtitle_id or not provider:
         print(json.dumps({"error": "subtitle_id and provider are required"}), file=sys.stderr)
         sys.exit(1)
+
+    if provider in ("subdl", "subsource"):
+        try:
+            print(download_external_provider(
+                provider,
+                subtitle_id,
+                subdl_api_key=subdl_api_key,
+                subsource_api_key=subsource_api_key,
+            ))
+            return
+        except Exception as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
 
     # Determine if this is a TV show or movie
     if season is not None and episode is not None:
@@ -210,7 +342,7 @@ def main():
     provider_configs = {}
 
     # Validate provider - opensubtitles requires credentials
-    supported_providers = ['podnapisi', 'opensubtitles']
+    supported_providers = ['podnapisi', 'opensubtitles', 'subdl', 'subsource']
     if provider not in supported_providers:
         print(json.dumps({"error": f"Provider '{provider}' not supported. Supported: {', '.join(supported_providers)}"}), file=sys.stderr)
         sys.exit(1)

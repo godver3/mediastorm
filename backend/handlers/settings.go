@@ -441,6 +441,8 @@ func redactSettings(s *config.Settings) {
 
 	// Subtitles
 	mask(&s.Subtitles.OpenSubtitlesPassword)
+	mask(&s.Subtitles.SubDLAPIKey)
+	mask(&s.Subtitles.SubSourceAPIKey)
 
 	// MDBList
 	mask(&s.MDBList.APIKey)
@@ -543,6 +545,8 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 
 	// Subtitles
 	restore(&incoming.Subtitles.OpenSubtitlesPassword, existing.Subtitles.OpenSubtitlesPassword)
+	restore(&incoming.Subtitles.SubDLAPIKey, existing.Subtitles.SubDLAPIKey)
+	restore(&incoming.Subtitles.SubSourceAPIKey, existing.Subtitles.SubSourceAPIKey)
 
 	// MDBList
 	restore(&incoming.MDBList.APIKey, existing.MDBList.APIKey)

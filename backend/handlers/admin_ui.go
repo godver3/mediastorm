@@ -977,7 +977,7 @@ var SettingsSchema = map[string]interface{}{
 		},
 	},
 	"subtitles": map[string]interface{}{
-		"label":    "OpenSubtitles",
+		"label":    "Subtitles",
 		"icon":     "key",
 		"group":    "services",
 		"order":    2,
@@ -985,7 +985,9 @@ var SettingsSchema = map[string]interface{}{
 		"fields": map[string]interface{}{
 			"openSubtitlesUsername": map[string]interface{}{"type": "text", "label": "OpenSubtitles Username", "description": "OpenSubtitles.org username (optional, enables more results)", "order": 0},
 			"openSubtitlesPassword": map[string]interface{}{"type": "password", "label": "OpenSubtitles Password", "description": "OpenSubtitles.org password", "order": 1},
-			"enableTranslatedSubs":  map[string]interface{}{"type": "boolean", "label": "Enable Translated Subtitles", "description": "Allow automatic translation of embedded English subtitles into the preferred subtitle language", "order": 2},
+			"subdlApiKey":           map[string]interface{}{"type": "password", "label": "SubDL API Key", "description": "SubDL API key (enables SubDL subtitle search and downloads)", "order": 2},
+			"subsourceApiKey":       map[string]interface{}{"type": "password", "label": "SubSource API Key", "description": "SubSource API key (enables SubSource subtitle search and downloads)", "order": 3},
+			"enableTranslatedSubs":  map[string]interface{}{"type": "boolean", "label": "Enable Translated Subtitles", "description": "Allow automatic translation of embedded English subtitles into the preferred subtitle language", "order": 4},
 		},
 	},
 	"mdblist": map[string]interface{}{
@@ -5853,13 +5855,22 @@ func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(items)
 }
 
-// TestSubtitlesRequest represents a request to test OpenSubtitles credentials
+// TestSubtitlesRequest represents a request to test subtitle provider credentials.
 type TestSubtitlesRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	SubDLAPIKey     string `json:"subdlApiKey"`
+	SubSourceAPIKey string `json:"subsourceApiKey"`
 }
 
-// TestSubtitles tests OpenSubtitles.org credentials by attempting to log in
+type subtitleProviderTestResult struct {
+	Provider string `json:"provider"`
+	Success  bool   `json:"success"`
+	Message  string `json:"message,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// TestSubtitles tests configured subtitle provider credentials.
 func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 	var req TestSubtitlesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -5869,43 +5880,86 @@ func (h *AdminUIHandler) TestSubtitles(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if req.Username == "" || req.Password == "" {
+	results := make([]subtitleProviderTestResult, 0, 3)
+
+	if strings.TrimSpace(req.Username) != "" || strings.TrimSpace(req.Password) != "" {
+		if strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
+			results = append(results, subtitleProviderTestResult{
+				Provider: "OpenSubtitles",
+				Success:  false,
+				Error:    "OpenSubtitles username and password are required",
+			})
+		} else {
+			success, msg := testOpenSubtitlesCredentials(req.Username, req.Password)
+			result := subtitleProviderTestResult{Provider: "OpenSubtitles", Success: success}
+			if success {
+				result.Message = msg
+			} else {
+				result.Error = msg
+			}
+			results = append(results, result)
+		}
+	}
+
+	if strings.TrimSpace(req.SubDLAPIKey) != "" {
+		success, msg := testSubDLAPIKey(req.SubDLAPIKey)
+		result := subtitleProviderTestResult{Provider: "SubDL", Success: success}
+		if success {
+			result.Message = msg
+		} else {
+			result.Error = msg
+		}
+		results = append(results, result)
+	}
+
+	if strings.TrimSpace(req.SubSourceAPIKey) != "" {
+		success, msg := testSubSourceAPIKey(req.SubSourceAPIKey)
+		result := subtitleProviderTestResult{Provider: "SubSource", Success: success}
+		if success {
+			result.Message = msg
+		} else {
+			result.Error = msg
+		}
+		results = append(results, result)
+	}
+
+	if len(results) == 0 {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
-			"error":   "Username and password are required",
+			"error":   "No subtitle providers configured",
+			"results": results,
 		})
 		return
 	}
 
-	// Try XML-RPC first, fall back to subliminal library if that fails
-	success, xmlErr := testOpenSubtitlesXMLRPC(req.Username, req.Password)
+	success := true
+	failures := make([]string, 0)
+	successes := make([]string, 0)
+	for _, result := range results {
+		if result.Success {
+			successes = append(successes, result.Provider)
+			continue
+		}
+		success = false
+		if result.Error != "" {
+			failures = append(failures, fmt.Sprintf("%s: %s", result.Provider, result.Error))
+		} else {
+			failures = append(failures, result.Provider)
+		}
+	}
 	if success {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": "OpenSubtitles login successful",
+			"message": fmt.Sprintf("Subtitle provider test successful: %s", strings.Join(successes, ", ")),
+			"results": results,
 		})
 		return
 	}
 
-	// XML-RPC failed, try using subliminal library as fallback
-	// This matches exactly what the actual subtitle search uses
-	success, subliminalErr := testOpenSubtitlesSubliminal(req.Username, req.Password)
-	if success {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "OpenSubtitles login successful (via subliminal)",
-		})
-		return
-	}
-
-	// Both methods failed - return the more specific error
-	errMsg := xmlErr
-	if subliminalErr != "" && subliminalErr != "unknown error" {
-		errMsg = subliminalErr
-	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": false,
-		"error":   errMsg,
+		"error":   strings.Join(failures, "; "),
+		"results": results,
 	})
 }
 
@@ -6723,6 +6777,109 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			"error":   "No Live TV mode configured",
 		})
 	}
+}
+
+func testOpenSubtitlesCredentials(username, password string) (bool, string) {
+	// Try XML-RPC first, fall back to subliminal library if that fails.
+	success, xmlErr := testOpenSubtitlesXMLRPC(username, password)
+	if success {
+		return true, "OpenSubtitles login successful"
+	}
+
+	// XML-RPC failed, try using subliminal library as fallback. This matches
+	// exactly what the actual subtitle search uses.
+	success, subliminalErr := testOpenSubtitlesSubliminal(username, password)
+	if success {
+		return true, "OpenSubtitles login successful (via subliminal)"
+	}
+
+	if subliminalErr != "" && subliminalErr != "unknown error" {
+		return false, subliminalErr
+	}
+	return false, xmlErr
+}
+
+func testSubDLAPIKey(apiKey string) (bool, string) {
+	endpoint := "https://api.subdl.com/api/v1/subtitles?" + url.Values{
+		"api_key":       {apiKey},
+		"imdb_id":       {"tt1375666"},
+		"languages":     {"EN"},
+		"type":          {"movie"},
+		"subs_per_page": {"1"},
+	}.Encode()
+	return testSubtitleJSONEndpoint(endpoint, nil, "SubDL")
+}
+
+func testSubSourceAPIKey(apiKey string) (bool, string) {
+	endpoint := "https://api.subsource.net/api/v1/movies/search?" + url.Values{
+		"searchType": {"imdb"},
+		"imdb":       {"tt1375666"},
+	}.Encode()
+	return testSubtitleJSONEndpoint(endpoint, map[string]string{"X-API-Key": apiKey}, "SubSource")
+}
+
+func testSubtitleJSONEndpoint(endpoint string, headers map[string]string, provider string) (bool, string) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "mediastorm/1.0")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("Connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return false, fmt.Sprintf("Failed to read response: %v", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errResp struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(body, &errResp) == nil {
+			if errResp.Message != "" {
+				return false, errResp.Message
+			}
+			if errResp.Error != "" {
+				return false, errResp.Error
+			}
+		}
+		return false, fmt.Sprintf("%s API returned HTTP %d", provider, resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return false, fmt.Sprintf("Failed to parse %s response", provider)
+	}
+	if success, ok := result["success"].(bool); ok && !success {
+		if msg, ok := result["message"].(string); ok && msg != "" {
+			return false, msg
+		}
+		if msg, ok := result["error"].(string); ok && msg != "" {
+			return false, msg
+		}
+		return false, fmt.Sprintf("%s API rejected the key", provider)
+	}
+	if status, ok := result["status"].(bool); ok && !status {
+		if msg, ok := result["message"].(string); ok && msg != "" {
+			return false, msg
+		}
+		if msg, ok := result["error"].(string); ok && msg != "" {
+			return false, msg
+		}
+		return false, fmt.Sprintf("%s API rejected the key", provider)
+	}
+
+	return true, provider + " API key valid"
 }
 
 // testOpenSubtitlesXMLRPC tests credentials using direct XML-RPC call

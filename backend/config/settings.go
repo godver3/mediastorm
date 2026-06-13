@@ -765,6 +765,8 @@ type AppearanceSettings struct {
 type SubtitleSettings struct {
 	OpenSubtitlesUsername string `json:"openSubtitlesUsername"`
 	OpenSubtitlesPassword string `json:"openSubtitlesPassword"`
+	SubDLAPIKey           string `json:"subdlApiKey,omitempty"`
+	SubSourceAPIKey       string `json:"subsourceApiKey,omitempty"`
 	EnableTranslatedSubs  bool   `json:"enableTranslatedSubs"`
 }
 
@@ -1212,6 +1214,8 @@ func DefaultSettings() Settings {
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
 			OpenSubtitlesPassword: "",
+			SubDLAPIKey:           "",
+			SubSourceAPIKey:       "",
 			EnableTranslatedSubs:  true,
 		},
 		MDBList: MDBListSettings{

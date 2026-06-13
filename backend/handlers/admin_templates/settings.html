@@ -7132,7 +7132,9 @@
                 endpoint = basePath + '/api/test/subtitles';
                 payload = {
                     username: sectionData.openSubtitlesUsername || '',
-                    password: sectionData.openSubtitlesPassword || ''
+                    password: sectionData.openSubtitlesPassword || '',
+                    subdlApiKey: sectionData.subdlApiKey || '',
+                    subsourceApiKey: sectionData.subsourceApiKey || ''
                 };
                 break;
             case 'metadata':

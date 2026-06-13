@@ -543,7 +543,9 @@ async function runAllTests() {
         } else if (card.key === 'subtitles') {
             p = testPost(basePath + '/api/test/subtitles', {
                 username: settings.subtitles?.openSubtitlesUsername || '',
-                password: settings.subtitles?.openSubtitlesPassword || ''
+                password: settings.subtitles?.openSubtitlesPassword || '',
+                subdlApiKey: settings.subtitles?.subdlApiKey || '',
+                subsourceApiKey: settings.subtitles?.subsourceApiKey || ''
             });
         } else if (card.key === 'mdblist') {
             p = testPost(basePath + '/api/test/mdblist', {
