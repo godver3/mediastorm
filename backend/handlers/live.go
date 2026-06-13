@@ -293,19 +293,23 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), liveStreamTimeout)
 	defer cancel()
 
+	var stremioRequestHeaders map[string]string
+
 	// Stremio sources hand us a stream *resource* URL (.../stream/{type}/{id}.json)
 	// rather than a playable URL. Resolve it to a concrete (often expiring) stream
 	// URL at tune-in time before handing it to the proxy/transmux paths below.
 	if isStremioStreamResourceURL(targetURL) {
-		resolved, err := h.resolveStremioStream(ctx, targetURL.String(), h.resolveProxyURLForStream(r, targetURL))
+		selectedIndex := parseOptionalStremioStreamIndex(r.URL.Query().Get("stremioStreamIndex"))
+		resolved, err := h.resolveStremioStream(ctx, targetURL.String(), h.resolveProxyURLForStream(r, targetURL), selectedIndex)
 		if err != nil {
 			log.Printf("[live] failed to resolve stremio stream %q: %v", targetURL.String(), err)
 			http.Error(w, "live stream unavailable", http.StatusBadGateway)
 			return
 		}
-		targetURL, err = h.parseRemoteURL(resolved)
+		stremioRequestHeaders = resolved.RequestHeaders
+		targetURL, err = h.parseRemoteURL(resolved.URL)
 		if err != nil {
-			log.Printf("[live] resolved stremio stream is invalid %q: %v", resolved, err)
+			log.Printf("[live] resolved stremio stream is invalid %q: %v", resolved.URL, err)
 			http.Error(w, "live stream unavailable", http.StatusBadGateway)
 			return
 		}
@@ -334,6 +338,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Header.Set("User-Agent", liveStreamUserAgent)
+		applyRequestHeaders(req.Header, stremioRequestHeaders)
 		resp, err := h.liveStreamHTTPClient(proxyURL).Do(req)
 		if err != nil {
 			log.Printf("[live] proxied stream request failed for %q via %q: %v", targetURL.String(), proxyURL, err)
@@ -381,12 +386,17 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	// exit status 8) — the Go client already handles the User-Agent, redirects,
 	// and reconnection there.
 	if proxyBody == nil {
+		if !hasRequestHeader(stremioRequestHeaders, "User-Agent") {
+			args = append(args, "-user_agent", liveStreamUserAgent)
+		}
 		args = append(args,
-			"-user_agent", liveStreamUserAgent,
 			"-reconnect", "1",
 			"-reconnect_streamed", "1",
 			"-reconnect_delay_max", "3",
 		)
+		if headerArg := ffmpegHeadersArg(stremioRequestHeaders); headerArg != "" {
+			args = append(args, "-headers", headerArg)
+		}
 	}
 
 	args = append(args,

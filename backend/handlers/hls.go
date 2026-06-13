@@ -432,6 +432,7 @@ type LiveTuningSettings struct {
 	ProbeSizeMB        int
 	AnalyzeDurationSec int
 	LowLatency         bool
+	RequestHeaders     map[string]string
 	// ProxyURL, when set, routes the upstream live fetch through this proxy.
 	// SOCKS5 proxies (which ffmpeg cannot use natively) are honored by fetching
 	// the stream with the Go HTTP client and piping it into ffmpeg's stdin.
@@ -1552,6 +1553,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 			return fmt.Errorf("prepare proxied live request: %w", err)
 		}
 		req.Header.Set("User-Agent", liveStreamUserAgent)
+		applyRequestHeaders(req.Header, session.LiveTuning.RequestHeaders)
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("open proxied live stream: %w", err)
@@ -1596,12 +1598,17 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	// ffmpeg reads the provider URL directly. On the proxied path the input is
 	// pipe:0 and these options are rejected ("Option reconnect not found").
 	if proxyBody == nil {
+		if !hasRequestHeader(session.LiveTuning.RequestHeaders, "User-Agent") {
+			args = append(args, "-user_agent", liveStreamUserAgent)
+		}
 		args = append(args,
-			"-user_agent", liveStreamUserAgent,
 			"-reconnect", "1",
 			"-reconnect_streamed", "1",
 			"-reconnect_delay_max", "3",
 		)
+		if headerArg := ffmpegHeadersArg(session.LiveTuning.RequestHeaders); headerArg != "" {
+			args = append(args, "-headers", headerArg)
+		}
 		// These are HLS-demuxer-private options. Some Stremio/live providers proxy
 		// HLS segments through signed URLs without .ts/.m4s extensions, which the
 		// HLS demuxer rejects by default. Only apply them for actual .m3u8 inputs —

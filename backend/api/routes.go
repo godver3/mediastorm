@@ -335,6 +335,8 @@ func Register(
 	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/channels", liveHandler.GetChannels).Methods(http.MethodGet)
 	protected.HandleFunc("/live/channels", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/stremio/streams", liveHandler.GetStremioStreamOptions).Methods(http.MethodGet)
+	protected.HandleFunc("/live/stremio/streams", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/categories", liveHandler.GetCategories).Methods(http.MethodGet)
 	protected.HandleFunc("/live/categories", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/cache/clear", liveHandler.ClearCache).Methods(http.MethodPost)

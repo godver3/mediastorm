@@ -67,7 +67,16 @@ func stremioTestServer(t *testing.T, hits *int32) *httptest.Server {
 		]}`))
 	})
 	mux.HandleFunc("/stream/sport/sf:skyf1.json", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"streams":[{"name":"F1","url":"http://cdn.test/f1.m3u8"}]}`))
+		_, _ = w.Write([]byte(`{"streams":[
+			{"name":"M3U8","description":"SONYLIV ENG","url":"http://cdn.test/f1-source-1.m3u8","behaviorHints":{"proxyHeaders":{"request":{"Referer":"https://example.test/","Origin":"https://example.test","Bad\r\nHeader":"ignored"}}}},
+			{"name":"Subscribe","url":"https://stremverse.invalid/subscribe"},
+			{"name":"M3U8","description":"SONYLIV HIN","title":"Backup","url":"http://cdn.test/f1-source-2.m3u8","behaviorHints":{"proxyHeaders":{"request":{"Referer":"https://backup.example.test/"}}}}
+		]}`))
+	})
+	mux.HandleFunc("/stream/sport/sf:proxy.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"streams":[
+			{"name":"M3U8","description":"Proxy Wrapped","url":"http://10.0.6.130:8888/proxy/hls/manifest.m3u8?d=https%3A%2F%2Fcdn.test%2Fwrapped.m3u8&h_User-Agent=StremioUA&h_Referer=https%3A%2F%2Fsonyliv.test%2F&h_Origin=https%3A%2F%2Fsonyliv.test&api_password=flow","behaviorHints":{"proxyHeaders":{"request":{"User-Agent":"BehaviorUA","x-playback-session-id":"abc123"}}}}
+		]}`))
 	})
 	mux.HandleFunc("/stream/sport/ev:nostream.json", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"streams":[]}`))
@@ -205,19 +214,83 @@ func TestResolveStremioStream(t *testing.T) {
 	defer srv.Close()
 
 	h := newStremioTestHandler()
-	got, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/sf:skyf1.json", "")
+	got, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/sf:skyf1.json", "", -1)
 	if err != nil {
 		t.Fatalf("resolveStremioStream error: %v", err)
 	}
-	if got != "http://cdn.test/f1.m3u8" {
-		t.Errorf("resolved = %q", got)
+	if got.URL != "http://cdn.test/f1-source-1.m3u8" {
+		t.Errorf("resolved URL = %q", got.URL)
+	}
+	if got.RequestHeaders["Referer"] != "https://example.test/" {
+		t.Errorf("resolved headers = %+v, want Referer", got.RequestHeaders)
+	}
+	if _, ok := got.RequestHeaders["Bad\r\nHeader"]; ok {
+		t.Errorf("unsafe header was not filtered: %+v", got.RequestHeaders)
 	}
 
-	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:nostream.json", ""); err == nil {
+	got, err = h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/sf:skyf1.json", "", 2)
+	if err != nil {
+		t.Fatalf("resolveStremioStream selected source error: %v", err)
+	}
+	if got.URL != "http://cdn.test/f1-source-2.m3u8" {
+		t.Errorf("selected resolved URL = %q", got.URL)
+	}
+	if got.RequestHeaders["Referer"] != "https://backup.example.test/" {
+		t.Errorf("selected headers = %+v, want backup Referer", got.RequestHeaders)
+	}
+
+	got, err = h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/sf:proxy.json", "", -1)
+	if err != nil {
+		t.Fatalf("resolveStremioStream proxy-wrapped source error: %v", err)
+	}
+	if got.URL != "https://cdn.test/wrapped.m3u8" {
+		t.Errorf("proxy-wrapped URL = %q, want decoded target", got.URL)
+	}
+	if got.RequestHeaders["User-Agent"] != "BehaviorUA" {
+		t.Errorf("proxy-wrapped headers = %+v, want behavior User-Agent to win", got.RequestHeaders)
+	}
+	if got.RequestHeaders["Referer"] != "https://sonyliv.test/" {
+		t.Errorf("proxy-wrapped headers = %+v, want Referer from h_ query", got.RequestHeaders)
+	}
+	if got.RequestHeaders["Origin"] != "https://sonyliv.test" {
+		t.Errorf("proxy-wrapped headers = %+v, want Origin from h_ query", got.RequestHeaders)
+	}
+	if got.RequestHeaders["x-playback-session-id"] != "abc123" {
+		t.Errorf("proxy-wrapped headers = %+v, want behavior session header", got.RequestHeaders)
+	}
+
+	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:nostream.json", "", -1); err == nil {
 		t.Error("expected error for empty streams, got nil")
 	}
-	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:subscribe.json", ""); err == nil {
+	if _, err := h.resolveStremioStream(context.Background(), srv.URL+"/stream/sport/ev:subscribe.json", "", -1); err == nil {
 		t.Error("expected error for subscription placeholder, got nil")
+	}
+}
+
+func TestGetStremioStreamOptions(t *testing.T) {
+	srv := stremioTestServer(t, nil)
+	defer srv.Close()
+
+	h := newStremioTestHandler()
+	req := httptest.NewRequest(http.MethodGet, "/live/stremio/streams?url="+url.QueryEscape(srv.URL+"/stream/sport/sf:skyf1.json"), nil)
+	rec := httptest.NewRecorder()
+	h.GetStremioStreamOptions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp StremioStreamOptionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Streams) != 2 {
+		t.Fatalf("streams length = %d, want 2: %+v", len(resp.Streams), resp.Streams)
+	}
+	if resp.Streams[0].Index != 0 || resp.Streams[0].Label != "SONYLIV ENG" {
+		t.Fatalf("first stream = %+v, want source 1 at original index 0", resp.Streams[0])
+	}
+	if resp.Streams[1].Index != 2 || resp.Streams[1].Label != "SONYLIV HIN" {
+		t.Fatalf("second stream = %+v, want source 2 at original index 2", resp.Streams[1])
 	}
 }
 

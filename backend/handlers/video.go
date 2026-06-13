@@ -3699,13 +3699,13 @@ func (h *VideoHandler) ytdlpCookiesPath() string {
 	return ""
 }
 
-func resolveStremioLiveStreamResource(ctx context.Context, streamResourceURL, proxyURL string) (string, error) {
+func resolveStremioLiveStreamResource(ctx context.Context, streamResourceURL, proxyURL string, selectedIndex int) (resolvedStremioStream, error) {
 	parsed, err := url.Parse(streamResourceURL)
 	if err != nil {
-		return "", err
+		return resolvedStremioStream{}, err
 	}
 	if !isStremioStreamResourceURL(parsed) {
-		return streamResourceURL, nil
+		return resolvedStremioStream{URL: streamResourceURL}, nil
 	}
 
 	client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{
@@ -3720,12 +3720,12 @@ func resolveStremioLiveStreamResource(ctx context.Context, streamResourceURL, pr
 
 	var resp stremioStreamResponse
 	if err := getStremioJSON(ctx, client, streamResourceURL, &resp); err != nil {
-		return "", fmt.Errorf("stremio: resolve stream: %w", err)
+		return resolvedStremioStream{}, fmt.Errorf("stremio: resolve stream: %w", err)
 	}
-	if u, ok := firstPlayableStremioStreamURL(resp.Streams); ok {
-		return u, nil
+	if stream, ok := playableStremioStream(resp.Streams, selectedIndex); ok {
+		return stream, nil
 	}
-	return "", fmt.Errorf("stremio: no playable stream for %s", streamResourceURL)
+	return resolvedStremioStream{}, fmt.Errorf("stremio: no playable stream for %s", streamResourceURL)
 }
 
 // StartLiveHLSSession creates a new HLS session for live TV streams
@@ -3809,6 +3809,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		if targetParam := strings.TrimSpace(r.URL.Query().Get("target")); targetParam != "" {
 			proxyParams.Set("target", targetParam)
 		}
+		if streamIndex := strings.TrimSpace(r.URL.Query().Get("stremioStreamIndex")); streamIndex != "" {
+			proxyParams.Set("stremioStreamIndex", streamIndex)
+		}
 		addStreamMediaMetadataParams(proxyParams, mediaMetadata)
 		directURL := fmt.Sprintf("/live/stream?%s", proxyParams.Encode())
 
@@ -3826,13 +3829,16 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	// HLS mode: create a segmented HLS session
-	if resolvedURL, err := resolveStremioLiveStreamResource(r.Context(), liveURL, target.ProxyURL); err != nil {
+	selectedStremioStreamIndex := parseOptionalStremioStreamIndex(r.URL.Query().Get("stremioStreamIndex"))
+	var stremioRequestHeaders map[string]string
+	if resolved, err := resolveStremioLiveStreamResource(r.Context(), liveURL, target.ProxyURL, selectedStremioStreamIndex); err != nil {
 		log.Printf("[video] failed to resolve stremio live HLS stream %q: %v", liveURL, err)
 		http.Error(w, "failed to resolve live stream", http.StatusBadGateway)
 		return
-	} else if resolvedURL != liveURL {
-		log.Printf("[video] resolved stremio live HLS stream resource: %s -> %s", liveURL, resolvedURL)
-		liveURL = resolvedURL
+	} else if resolved.URL != liveURL {
+		log.Printf("[video] resolved stremio live HLS stream resource: %s -> %s", liveURL, resolved.URL)
+		liveURL = resolved.URL
+		stremioRequestHeaders = resolved.RequestHeaders
 	}
 
 	log.Printf("[video] creating live HLS session for URL: %s (provider=%s bucket=%s profile=%s)", liveURL, target.Provider, target.BucketKey, profileID)
@@ -3842,6 +3848,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		AnalyzeDurationSec: target.AnalyzeDurationSec,
 		LowLatency:         target.LowLatency,
 		ProxyURL:           target.ProxyURL,
+		RequestHeaders:     stremioRequestHeaders,
 	}
 	session, err := h.hlsManager.CreateLiveSession(r.Context(), liveURL, target.Provider, target.BucketKey, profileID, profileName, getClientIP(r), tuning)
 	if err != nil {

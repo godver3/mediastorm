@@ -252,7 +252,7 @@ func TestStartLiveHLSSessionResolvesStremioStreamResource(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"streams":[{"url":"https://cdn.example/live/event.m3u8"}]}`))
+		_, _ = w.Write([]byte(`{"streams":[{"url":"https://cdn.example/live/event.m3u8","behaviorHints":{"proxyHeaders":{"request":{"Referer":"https://stremio.example/","Origin":"https://stremio.example"}}}}]}`))
 	}))
 	defer stremio.Close()
 
@@ -298,6 +298,9 @@ func TestStartLiveHLSSessionResolvesStremioStreamResource(t *testing.T) {
 	}
 	if session.Path != "https://cdn.example/live/event.m3u8" {
 		t.Fatalf("session path = %q, want resolved stream URL", session.Path)
+	}
+	if session.LiveTuning.RequestHeaders["Referer"] != "https://stremio.example/" {
+		t.Fatalf("session stremio headers = %+v, want Referer", session.LiveTuning.RequestHeaders)
 	}
 	handler.hlsManager.CleanupSession(body.SessionID)
 }
