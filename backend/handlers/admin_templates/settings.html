@@ -5166,6 +5166,20 @@
                 sort: defaultMyUpcomingSort(),
             });
         }
+        if (!shelves.some((s) => s.id === 'my-recommended') && !shelves.some((s) => s.id === 'gemini-recs')) {
+            const continueShelf = shelves.find((s) => s.id === 'continue-watching');
+            const insertOrder = continueShelf ? (continueShelf.order || 0) + 1 : 2;
+            shelves.forEach((s) => {
+                if ((s.order || 0) >= insertOrder) s.order = (s.order || 0) + 1;
+            });
+            shelves.push({
+                id: 'my-recommended',
+                name: 'My Recommended',
+                enabled: true,
+                order: insertOrder,
+                type: 'builtin',
+            });
+        }
         if (shelves.some((s) => s.id === 'my-recently-aired')) return shelves;
 
         const calendarShelf = shelves.find((s) => s.id === 'calendar');

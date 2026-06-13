@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,16 +24,19 @@ import (
 )
 
 type fakeMetadataService struct {
-	trendingResp []models.TrendingItem
-	trendingErr  error
-	searchResp   []models.SearchResult
-	searchErr    error
-	youtubeResp  []models.YouTubeVideoSearchResult
-	youtubeErr   error
-	seriesResp   *models.SeriesDetails
-	seriesErr    error
-	movieResp    *models.Title
-	movieErr     error
+	trendingResp   []models.TrendingItem
+	trendingErr    error
+	trendingByType map[string][]models.TrendingItem
+	topTenByType   map[string][]models.TrendingItem
+	similarByKey   map[string][]models.Title
+	searchResp     []models.SearchResult
+	searchErr      error
+	youtubeResp    []models.YouTubeVideoSearchResult
+	youtubeErr     error
+	seriesResp     *models.SeriesDetails
+	seriesErr      error
+	movieResp      *models.Title
+	movieErr       error
 
 	discoverByGenreResp  []models.TrendingItem
 	discoverByGenreTotal int
@@ -41,11 +45,11 @@ type fakeMetadataService struct {
 	discoverByDecadeResp  []models.TrendingItem
 	discoverByDecadeTotal int
 	discoverByDecadeErr   error
-	curatedResp          []models.TrendingItem
-	customListResp       []models.TrendingItem
-	customListTotal      int
-	customListUnfiltered int
-	customListErr        error
+	curatedResp           []models.TrendingItem
+	customListResp        []models.TrendingItem
+	customListTotal       int
+	customListUnfiltered  int
+	customListErr         error
 
 	lastTrendingType         string
 	lastTrendingOptions      metadata.ShelfLoadOptions
@@ -66,14 +70,19 @@ type fakeMetadataService struct {
 	lastDiscoverDecadeLimit   int
 	lastDiscoverDecadeOffset  int
 	lastDiscoverDecadeOptions metadata.ShelfLoadOptions
-	lastCuratedItems         []metadata.CuratedItem
-	lastCuratedLabel         string
-	lastCustomListURL        string
-	lastCustomListOptions    metadata.CustomListOptions
+	lastCuratedItems          []metadata.CuratedItem
+	lastCuratedLabel          string
+	lastCustomListURL         string
+	lastCustomListOptions     metadata.CustomListOptions
 }
 
 func (f *fakeMetadataService) Trending(_ context.Context, mediaType string) ([]models.TrendingItem, error) {
 	f.lastTrendingType = mediaType
+	if f.trendingByType != nil {
+		if items, ok := f.trendingByType[mediaType]; ok {
+			return items, f.trendingErr
+		}
+	}
 	return f.trendingResp, f.trendingErr
 }
 
@@ -217,7 +226,17 @@ func (f *fakeMetadataService) PersonDetails(_ context.Context, _ int64) (*models
 	return nil, nil
 }
 
-func (f *fakeMetadataService) Similar(_ context.Context, _ string, _ int64) ([]models.Title, error) {
+func (f *fakeMetadataService) similarKey(mediaType string, tmdbID int64) string {
+	if mediaType != "movie" {
+		mediaType = "series"
+	}
+	return mediaType + ":" + strconv.FormatInt(tmdbID, 10)
+}
+
+func (f *fakeMetadataService) Similar(_ context.Context, mediaType string, tmdbID int64) ([]models.Title, error) {
+	if f.similarByKey != nil {
+		return f.similarByKey[f.similarKey(mediaType, tmdbID)], nil
+	}
 	return nil, nil
 }
 
@@ -303,7 +322,12 @@ func (f *fakeMetadataService) GetCachedOverview(_ string, _ int64, _ int64) stri
 	return ""
 }
 
-func (f *fakeMetadataService) GetTopTen(_ context.Context, _ string, _ []string) ([]models.TrendingItem, error) {
+func (f *fakeMetadataService) GetTopTen(_ context.Context, mediaType string, _ []string) ([]models.TrendingItem, error) {
+	if f.topTenByType != nil {
+		if items, ok := f.topTenByType[mediaType]; ok {
+			return items, f.trendingErr
+		}
+	}
 	return f.trendingResp, f.trendingErr
 }
 
@@ -324,6 +348,32 @@ type fakeAccountsServiceForMetadata struct {
 func (f *fakeAccountsServiceForMetadata) Get(id string) (models.Account, bool) {
 	account, ok := f.accounts[id]
 	return account, ok
+}
+
+type fakeMetadataHistoryService struct {
+	history  []models.WatchHistoryItem
+	progress []models.PlaybackProgress
+	err      error
+}
+
+func (f *fakeMetadataHistoryService) GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error) {
+	return nil, f.err
+}
+
+func (f *fakeMetadataHistoryService) ListWatchHistory(userID string) ([]models.WatchHistoryItem, error) {
+	return f.history, f.err
+}
+
+func (f *fakeMetadataHistoryService) ListContinueWatching(userID string) ([]models.SeriesWatchState, error) {
+	return nil, f.err
+}
+
+func (f *fakeMetadataHistoryService) ListSeriesStates(userID string) ([]models.SeriesWatchState, error) {
+	return nil, f.err
+}
+
+func (f *fakeMetadataHistoryService) ListPlaybackProgress(userID string) ([]models.PlaybackProgress, error) {
+	return f.progress, f.err
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1289,6 +1339,166 @@ func TestMetadataHandler_GetAIRecommendationsEmptyHistory(t *testing.T) {
 	}
 	if len(payload.Items) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(payload.Items))
+	}
+}
+
+func TestMetadataHandler_GetPersonalizedRecommendations_UsesSimilarAndExcludesKnownItems(t *testing.T) {
+	now := time.Now().UTC()
+	title := func(mediaType string, tmdbID int64, name string, popularity float64) models.Title {
+		idKind := "movie"
+		if mediaType == "series" {
+			idKind = "tv"
+		}
+		return models.Title{
+			ID:         "tmdb:" + idKind + ":" + strconv.FormatInt(tmdbID, 10),
+			Name:       name,
+			MediaType:  mediaType,
+			TMDBID:     tmdbID,
+			Popularity: popularity,
+		}
+	}
+
+	fake := &fakeMetadataService{
+		similarByKey: map[string][]models.Title{
+			"movie:1": {
+				title("movie", 101, "Recommended Movie A", 30),
+				title("movie", 2, "Progress Movie", 80),
+				title("movie", 99, "Old Watched Movie", 90),
+			},
+			"movie:2": {
+				title("movie", 102, "Recommended Movie B", 35),
+			},
+			"series:10": {
+				title("series", 201, "Recommended Series A", 40),
+			},
+			"series:20": {
+				title("series", 202, "Recommended Series B", 45),
+			},
+		},
+		topTenByType: map[string][]models.TrendingItem{
+			"all": {
+				{Rank: 1, Title: title("movie", 102, "Recommended Movie B", 95)},
+				{Rank: 2, Title: title("series", 202, "Recommended Series B", 93)},
+			},
+			"movie": {
+				{Rank: 1, Title: title("movie", 102, "Recommended Movie B", 95)},
+			},
+			"tv": {
+				{Rank: 1, Title: title("series", 202, "Recommended Series B", 93)},
+			},
+		},
+		trendingByType: map[string][]models.TrendingItem{
+			"movie": {
+				{Rank: 1, Title: title("movie", 103, "Trending Movie", 70)},
+			},
+			"series": {
+				{Rank: 1, Title: title("series", 203, "Trending Series", 70)},
+			},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.HistoryService = &fakeMetadataHistoryService{
+		history: []models.WatchHistoryItem{
+			{
+				MediaType:   "movie",
+				ItemID:      "tmdb:movie:1",
+				Name:        "Watched Movie",
+				Watched:     true,
+				WatchedAt:   now.Add(-24 * time.Hour),
+				ExternalIDs: map[string]string{"tmdb": "1"},
+			},
+			{
+				MediaType:   "episode",
+				ItemID:      "episode:1",
+				Name:        "Pilot",
+				Watched:     true,
+				WatchedAt:   now.Add(-48 * time.Hour),
+				SeriesID:    "tmdb:tv:10",
+				SeriesName:  "Watched Series",
+				ExternalIDs: map[string]string{"tmdb": "10"},
+			},
+			{
+				MediaType:   "movie",
+				ItemID:      "tmdb:movie:99",
+				Name:        "Old Watched Movie",
+				Watched:     true,
+				WatchedAt:   now.AddDate(0, 0, -60),
+				ExternalIDs: map[string]string{"tmdb": "99"},
+			},
+		},
+		progress: []models.PlaybackProgress{
+			{
+				MediaType:      "movie",
+				ItemID:         "tmdb:movie:2",
+				MovieName:      "Progress Movie",
+				PercentWatched: 50,
+				UpdatedAt:      now.Add(-12 * time.Hour),
+				ExternalIDs:    map[string]string{"tmdb": "2"},
+			},
+			{
+				MediaType:      "episode",
+				ItemID:         "episode:2",
+				SeriesID:       "tmdb:tv:20",
+				SeriesName:     "Progress Series",
+				PercentWatched: 40,
+				UpdatedAt:      now.Add(-6 * time.Hour),
+				ExternalIDs:    map[string]string{"tmdb": "20"},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations/personalized?userId=user1&limitPerType=2", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetPersonalizedRecommendations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload PersonalizedRecommendationsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Movies) != 2 {
+		t.Fatalf("expected 2 movies, got %d (%+v)", len(payload.Movies), payload.Movies)
+	}
+	if len(payload.Series) != 2 {
+		t.Fatalf("expected 2 series, got %d (%+v)", len(payload.Series), payload.Series)
+	}
+	if len(payload.Items) != 4 {
+		t.Fatalf("expected 4 mixed items, got %d (%+v)", len(payload.Items), payload.Items)
+	}
+	if payload.Explanation == nil {
+		t.Fatal("expected explanation payload")
+	}
+	if !strings.Contains(payload.Explanation.Summary, "Because you watched") {
+		t.Fatalf("expected explanation summary to describe watched seeds, got %q", payload.Explanation.Summary)
+	}
+	if payload.Explanation.SeedCount == 0 || len(payload.Explanation.Seeds) == 0 {
+		t.Fatalf("expected explanation seeds, got %+v", payload.Explanation)
+	}
+	seedSources := map[string]bool{}
+	for _, seed := range payload.Explanation.Seeds {
+		seedSources[seed.Source] = true
+	}
+	if !seedSources["watched"] || !seedSources["progress"] {
+		t.Fatalf("expected watched and progress explanation seeds, got %+v", payload.Explanation.Seeds)
+	}
+
+	seen := map[int64]string{}
+	for _, item := range payload.Items {
+		seen[item.Title.TMDBID] = item.Title.Name
+	}
+	for _, tmdbID := range []int64{1, 2, 10, 20, 99} {
+		if name, ok := seen[tmdbID]; ok {
+			t.Fatalf("known item %d (%s) should have been excluded", tmdbID, name)
+		}
+	}
+	for _, tmdbID := range []int64{101, 102, 201, 202} {
+		if _, ok := seen[tmdbID]; !ok {
+			t.Fatalf("expected recommendation tmdb=%d in mixed items, got %+v", tmdbID, seen)
+		}
 	}
 }
 

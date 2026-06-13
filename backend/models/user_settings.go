@@ -397,13 +397,14 @@ func DefaultHomeShelfConfigs() []ShelfConfig {
 	return []ShelfConfig{
 		{ID: "top-ten", Name: "Top 10 Today", Enabled: true, Order: 0},
 		{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 1},
-		{ID: "my-upcoming", Name: "My Upcoming", Enabled: true, Order: 2, Sort: "air-date-asc"},
-		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 3},
-		{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 4, CalendarSources: CalendarSettings{Watchlist: BoolPtr(true), History: BoolPtr(false), Trending: BoolPtr(false), TopTrending: BoolPtr(false), MDBLists: BoolPtr(false)}},
-		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 5},
-		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 6},
-		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 7},
-		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 8},
+		{ID: "my-recommended", Name: "My Recommended", Enabled: true, Order: 2},
+		{ID: "my-upcoming", Name: "My Upcoming", Enabled: true, Order: 3, Sort: "air-date-asc"},
+		{ID: "calendar", Name: "Coming Up", Enabled: true, Order: 4},
+		{ID: "my-recently-aired", Name: "My Recently Aired", Enabled: true, Order: 5, CalendarSources: CalendarSettings{Watchlist: BoolPtr(true), History: BoolPtr(false), Trending: BoolPtr(false), TopTrending: BoolPtr(false), MDBLists: BoolPtr(false)}},
+		{ID: "watchlist", Name: "Your Watchlist", Enabled: true, Order: 6},
+		{ID: "trending-movies", Name: "Trending Movies", Enabled: true, Order: 7},
+		{ID: "trending-tv", Name: "Trending TV Shows", Enabled: true, Order: 8},
+		{ID: "streaming-services", Name: "Streaming Services", Enabled: true, Order: 9},
 	}
 }
 
@@ -425,30 +426,6 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 		return false
 	}
 
-	if !hasShelf("calendar") {
-		insertOrder := 1
-		for _, shelf := range nextShelves {
-			if shelf.ID == "continue-watching" {
-				insertOrder = shelf.Order + 1
-				break
-			}
-		}
-
-		for i := range nextShelves {
-			if nextShelves[i].Order >= insertOrder {
-				nextShelves[i].Order++
-			}
-		}
-
-		nextShelves = append(nextShelves, ShelfConfig{
-			ID:      "calendar",
-			Name:    "Coming Up",
-			Enabled: true,
-			Order:   insertOrder,
-		})
-		changed = true
-	}
-
 	if !hasShelf("top-ten") {
 		// Insert at the very top (order 0), shifting everything else down
 		for i := range nextShelves {
@@ -463,36 +440,7 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 		})
 		changed = true
 	}
-	if !hasShelf("my-recently-aired") {
-		insertOrder := 3
-		for _, shelf := range nextShelves {
-			if shelf.ID == "calendar" {
-				insertOrder = shelf.Order + 1
-				break
-			}
-		}
 
-		for i := range nextShelves {
-			if nextShelves[i].Order >= insertOrder {
-				nextShelves[i].Order++
-			}
-		}
-
-		nextShelves = append(nextShelves, ShelfConfig{
-			ID:      "my-recently-aired",
-			Name:    "My Recently Aired",
-			Enabled: true,
-			Order:   insertOrder,
-			CalendarSources: CalendarSettings{
-				Watchlist:   BoolPtr(true),
-				History:     BoolPtr(false),
-				Trending:    BoolPtr(false),
-				TopTrending: BoolPtr(false),
-				MDBLists:    BoolPtr(false),
-			},
-		})
-		changed = true
-	}
 	if !hasShelf("my-upcoming") {
 		insertOrder := 2
 		for _, shelf := range nextShelves {
@@ -523,6 +471,85 @@ func EnsureDefaultHomeShelves(shelves []ShelfConfig) ([]ShelfConfig, bool) {
 				changed = true
 			}
 		}
+	}
+
+	if !hasShelf("my-recommended") && !hasShelf("gemini-recs") {
+		insertOrder := 2
+		for _, shelf := range nextShelves {
+			if shelf.ID == "continue-watching" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "my-recommended",
+			Name:    "My Recommended",
+			Enabled: true,
+			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	if !hasShelf("calendar") {
+		insertOrder := 4
+		for _, shelf := range nextShelves {
+			if shelf.ID == "my-upcoming" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "calendar",
+			Name:    "Coming Up",
+			Enabled: true,
+			Order:   insertOrder,
+		})
+		changed = true
+	}
+
+	if !hasShelf("my-recently-aired") {
+		insertOrder := 5
+		for _, shelf := range nextShelves {
+			if shelf.ID == "calendar" {
+				insertOrder = shelf.Order + 1
+				break
+			}
+		}
+
+		for i := range nextShelves {
+			if nextShelves[i].Order >= insertOrder {
+				nextShelves[i].Order++
+			}
+		}
+
+		nextShelves = append(nextShelves, ShelfConfig{
+			ID:      "my-recently-aired",
+			Name:    "My Recently Aired",
+			Enabled: true,
+			Order:   insertOrder,
+			CalendarSources: CalendarSettings{
+				Watchlist:   BoolPtr(true),
+				History:     BoolPtr(false),
+				Trending:    BoolPtr(false),
+				TopTrending: BoolPtr(false),
+				MDBLists:    BoolPtr(false),
+			},
+		})
+		changed = true
 	}
 
 	if !hasShelf("streaming-services") {

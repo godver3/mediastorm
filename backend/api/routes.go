@@ -252,6 +252,8 @@ func Register(
 	protected.HandleFunc("/discover/top-ten", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations", metadataHandler.GetAIRecommendations).Methods(http.MethodGet)
 	protected.HandleFunc("/recommendations", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/recommendations/personalized", metadataHandler.GetPersonalizedRecommendations).Methods(http.MethodGet)
+	protected.HandleFunc("/recommendations/personalized", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations/similar", metadataHandler.GetAISimilar).Methods(http.MethodGet)
 	protected.HandleFunc("/recommendations/similar", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/recommendations/custom", metadataHandler.GetAICustomRecommendations).Methods(http.MethodGet)
