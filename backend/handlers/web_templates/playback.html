@@ -1124,7 +1124,7 @@
             <span class="icon fullscreen-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
           </button>
           ${isLive ? `<div class="seek-spacer"></div>
-          <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)">
+          <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" onmousedown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)" onblur="cancelSeekInput()">
           <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>`}
         </div>
         ${isLive ? '' : `<div class="track-backdrop" onclick="closeTrackSheet()" aria-hidden="true"></div>
@@ -1336,6 +1336,8 @@
 
       if (!hlsSessionId) {
         video.currentTime = absoluteTarget;
+        webPlayerDisplayedSeekTarget = null;
+        updateControls();
         return;
       }
       if (webPlayerSeekInProgress) {
@@ -1443,17 +1445,30 @@
 
     function beginSeekInput() {
       webPlayerSeekInputActive = true;
+      const seek = document.getElementById('seek');
+      const target = Number(seek?.value ?? currentControlTime());
+      if (Number.isFinite(target)) webPlayerDisplayedSeekTarget = target;
     }
 
     function previewSeek(value) {
       webPlayerSeekInputActive = true;
       const target = Number(value || 0);
-      document.getElementById('time').textContent = `${formatTime(target)} / ${formatTime(currentDuration())}`;
+      if (Number.isFinite(target)) {
+        webPlayerDisplayedSeekTarget = target;
+      }
+      updateControls();
     }
 
     function commitSeek(value) {
       webPlayerSeekInputActive = false;
       seekWebPlayer(Number(value || 0));
+    }
+
+    function cancelSeekInput() {
+      if (!webPlayerSeekInputActive) return;
+      webPlayerSeekInputActive = false;
+      webPlayerDisplayedSeekTarget = null;
+      updateControls();
     }
 
     function updateControls() {
