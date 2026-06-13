@@ -741,7 +741,7 @@ type DisplaySettings struct {
 
 // BrandingSettings controls runtime-customizable app branding images.
 type BrandingSettings struct {
-	HomeTVImageURL     string `json:"homeTvImageUrl,omitempty"`     // Recommended 3319x1236 or equivalent wide landscape image
+	HomeTVImageURL     string `json:"homeTvImageUrl,omitempty"`     // Recommended 2330x1000 or equivalent 2.33:1 TV-safe crop
 	HomeMobileLogoURL  string `json:"homeMobileLogoUrl,omitempty"`  // Recommended 1280x768 to match the bundled mobile branding image
 	SettingsTVImageURL string `json:"settingsTvImageUrl,omitempty"` // Recommended 1200x1200 square image
 	LoadingLogoURL     string `json:"loadingLogoUrl,omitempty"`     // Recommended 800x320 transparent PNG or wide logo

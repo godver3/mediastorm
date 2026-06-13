@@ -797,13 +797,13 @@ var SettingsSchema = map[string]interface{}{
 			"branding.homeTvImageUrl": map[string]interface{}{
 				"type":        "text",
 				"label":       "TV Home Branding Image URL",
-				"description": "Image shown behind the Explore card on TV. Recommended: 3319x1236 or a similarly wide JPG/PNG to match the bundled default.",
+				"description": "Image shown behind the Explore card on TV. Recommended: 2330x1000 JPG/PNG, or another 2.33:1 TV-safe crop.",
 				"order":       30,
 			},
 			"branding.homeTvImageUpload": map[string]interface{}{
 				"type":        "file_upload",
 				"label":       "Upload TV Home Branding Image",
-				"description": "Uploads a JPG/PNG and fills TV Home Branding Image URL. Recommended: 3319x1236.",
+				"description": "Uploads a JPG/PNG and fills TV Home Branding Image URL. Recommended: 2330x1000.",
 				"order":       31,
 				"endpoint":    "/admin/api/settings/branding/home-tv/image",
 				"accept":      "image/png,image/jpeg",
