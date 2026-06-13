@@ -525,11 +525,13 @@ func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
 	results := mergeSearchResults([]models.SearchResult{
 		{
 			Title: models.Title{
-				ID:        "tmdb:tv:123",
-				Name:      "Test Show",
-				MediaType: "series",
-				TMDBID:    123,
-				Poster:    &models.Image{URL: "https://image.tmdb.org/t/p/w780/poster.jpg", Type: "poster"},
+				ID:         "tmdb:tv:123",
+				Name:       "Test Show",
+				MediaType:  "series",
+				TMDBID:     123,
+				Poster:     &models.Image{URL: "https://image.tmdb.org/t/p/w780/poster.jpg", Type: "poster"},
+				Popularity: 77,
+				VoteCount:  1234,
 			},
 			Score: 80,
 		},
@@ -557,6 +559,12 @@ func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
 	}
 	if title.Poster == nil {
 		t.Fatal("expected poster to be preserved from TMDB result")
+	}
+	if title.Popularity != 77 || title.VoteCount != 1234 {
+		t.Fatalf("expected TMDB ranking metadata to be preserved, got popularity=%.1f voteCount=%d", title.Popularity, title.VoteCount)
+	}
+	if results[0].Score != 80 {
+		t.Fatalf("expected higher merged score to be preserved, got %d", results[0].Score)
 	}
 }
 
@@ -674,6 +682,57 @@ func TestSearchBlocksAdultResultsByDefaultAndAllowsWhenEnabled(t *testing.T) {
 	}
 	if len(tmdbIncludeAdult) != 2 || tmdbIncludeAdult[1] != "true" {
 		t.Fatalf("TMDB include_adult calls = %v, want second true", tmdbIncludeAdult)
+	}
+}
+
+func TestSearchTMDBVoteCountBoostsCanonicalMatch(t *testing.T) {
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/v4/login":
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			case "/v4/search":
+				body := `{"data":[]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/search/movie":
+				body := `{"results":[
+					{"id":120,"title":"The Lord of the Rings: The Fellowship of the Ring","release_date":"2001-12-18","popularity":78,"vote_average":8.4,"vote_count":26000,"adult":false},
+					{"id":999,"title":"Fellowship of the Ring","release_date":"2020-01-01","popularity":80,"vote_average":5.0,"vote_count":4,"adult":false}
+				]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			default:
+				t.Fatalf("unexpected request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	cacheDir := t.TempDir()
+	svc := &Service{
+		client: newTVDBClient("test-tvdb-key", "eng", httpc, 24),
+		tmdb:   newTMDBClient("test-tmdb-key", "eng", httpc, newFileCache(cacheDir, 24)),
+		cache:  newFileCache(cacheDir, 24),
+	}
+	svc.client.minInterval = 0
+
+	results, err := svc.Search(context.Background(), "fellowship of the ring", "movie")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d: %+v", len(results), results)
+	}
+
+	canonical := results[0]
+	shortTitle := results[1]
+	if canonical.Title.TMDBID != 120 {
+		t.Fatalf("expected canonical LOTR result first from TMDB payload, got tmdb=%d title=%q", canonical.Title.TMDBID, canonical.Title.Name)
+	}
+	if canonical.Title.VoteCount != 26000 {
+		t.Fatalf("canonical vote count = %d, want 26000", canonical.Title.VoteCount)
+	}
+	if canonical.Score <= shortTitle.Score {
+		t.Fatalf("expected vote count to boost canonical score above short-title score, got canonical=%d short=%d", canonical.Score, shortTitle.Score)
 	}
 }
 

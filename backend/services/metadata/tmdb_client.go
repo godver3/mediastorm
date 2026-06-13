@@ -1417,6 +1417,7 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 			FirstAirDate     string  `json:"first_air_date"`
 			Popularity       float64 `json:"popularity"`
 			VoteAverage      float64 `json:"vote_average"`
+			VoteCount        int     `json:"vote_count"`
 			Adult            bool    `json:"adult"`
 		} `json:"results"`
 	}
@@ -1452,6 +1453,7 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 			MediaType:    resultMediaType,
 			TMDBID:       r.ID,
 			Popularity:   scoreFallback(r.Popularity, r.VoteAverage),
+			VoteCount:    r.VoteCount,
 			Adult:        r.Adult,
 		}
 		if title.Name == "" {
@@ -1470,13 +1472,21 @@ func (c *tmdbClient) searchTitles(ctx context.Context, query, mediaType string, 
 			title.Backdrop = backdrop
 		}
 
-		score := int(math.Round(title.Popularity))
+		score := int(math.Round(searchRankScore(title.Popularity, title.VoteCount)))
 		if score <= 0 {
 			score = len(payload.Results) - len(results)
 		}
 		results = append(results, models.SearchResult{Title: title, Score: score})
 	}
 	return results, nil
+}
+
+func searchRankScore(popularity float64, voteCount int) float64 {
+	score := popularity
+	if voteCount > 0 {
+		score += math.Log1p(float64(voteCount)) * 8
+	}
+	return score
 }
 
 // logoLanguage returns the 2-letter ISO 639-1 language code for logo filtering.

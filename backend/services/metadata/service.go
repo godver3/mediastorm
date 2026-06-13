@@ -2443,7 +2443,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if allowAdultSearch {
 		adultPolicy = "adult-allowed"
 	}
-	key := cacheKey("metadata", "search", "v3", mediaType, q, s.client.language, adultPolicy)
+	key := cacheKey("metadata", "search", "v4", mediaType, q, s.client.language, adultPolicy)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -2718,9 +2718,15 @@ func mergeSearchResults(results []models.SearchResult) []models.SearchResult {
 			existing := &merged[idx]
 			if shouldReplaceSearchResult(*existing, result) {
 				replacement := result
+				if existing.Score > replacement.Score {
+					replacement.Score = existing.Score
+				}
 				mergeSearchTitleIDs(&replacement.Title, existing.Title)
 				*existing = replacement
 			} else {
+				if result.Score > existing.Score {
+					existing.Score = result.Score
+				}
 				mergeSearchTitleIDs(&existing.Title, result.Title)
 			}
 			continue
@@ -2777,6 +2783,12 @@ func mergeSearchTitleIDs(dst *models.Title, src models.Title) {
 	}
 	if dst.Backdrop == nil {
 		dst.Backdrop = src.Backdrop
+	}
+	if dst.Popularity == 0 {
+		dst.Popularity = src.Popularity
+	}
+	if dst.VoteCount == 0 {
+		dst.VoteCount = src.VoteCount
 	}
 }
 

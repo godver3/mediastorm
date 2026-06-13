@@ -63,6 +63,7 @@ type Title struct {
 	IMDBID          string      `json:"imdbId,omitempty"`
 	TMDBID          int64       `json:"tmdbId,omitempty"`
 	Popularity      float64     `json:"popularity,omitempty"`
+	VoteCount       int         `json:"voteCount,omitempty"`
 	Network         string      `json:"network,omitempty"`
 	AirsTime        string      `json:"airsTime,omitempty"`      // e.g. "21:00" — local air time from TVDB
 	AirsTimezone    string      `json:"airsTimezone,omitempty"`  // IANA timezone inferred from network/country
