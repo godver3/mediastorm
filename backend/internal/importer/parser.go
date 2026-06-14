@@ -1,8 +1,8 @@
 package importer
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,7 +20,6 @@ import (
 	metapb "novastream/internal/nzb/metadata/proto"
 	"novastream/internal/pool"
 	"github.com/javi11/nntpcli"
-	"github.com/javi11/nntppool"
 	"github.com/javi11/nzbparser"
 	concpool "github.com/sourcegraph/conc/pool"
 )
@@ -45,6 +44,11 @@ type ParsedNzb struct {
 	Files         []ParsedFile
 	SegmentsCount int
 	SegmentSize   int64
+	// Par2Files holds the PAR2 files that were filtered out of Files. They carry no
+	// playable content but their FileDesc packets enumerate the recovery set, used for
+	// completeness verification. Only identity fields (Filename/Segments/Groups) are
+	// populated — these are not yEnc-normalized like Files.
+	Par2Files []ParsedFile
 }
 
 // ParsedFile represents a file extracted from the NZB
@@ -68,7 +72,82 @@ var (
 	sevenZipPattern = regexp.MustCompile(`(?i)\.7z(\.\d+)?$`)
 	// Pattern to detect PAR2 files
 	par2Pattern = regexp.MustCompile(`(?i)\.par2$|\.p\d+$|\.vol\d+\+\d+\.par2$`)
+	// Pattern to detect optional recovery/parity volumes (PAR2 parity + RAR .rev recovery).
+	// These exist only to repair damaged content; the main archive extracts without them.
+	// If their articles are missing we can still play the content, so parse failures on
+	// these files must never abort the whole import.
+	// Matches a .par2 or .rev extension at a token boundary (end of string or
+	// followed by a non-alphanumeric char) so it works on both bare filenames
+	// ("Movie.part002.rev") and raw NZB subjects ("... \"Movie.part002.rev\" -").
+	recoveryPattern = regexp.MustCompile(`(?i)\.(par2|rev)($|[^a-z0-9])`)
 )
+
+var (
+	// Matches each <file ...> opening tag in an NZB.
+	nzbFileTagRE = regexp.MustCompile(`(?is)<file\b[^>]*>`)
+	// Captures the value of the poster / subject attribute within a <file> tag.
+	nzbPosterAttrRE  = regexp.MustCompile(`(?is)\bposter\s*=\s*"([^"]*)"`)
+	nzbSubjectAttrRE = regexp.MustCompile(`(?is)\bsubject\s*=\s*"([^"]*)"`)
+	// A poster value that actually carries the file description (yEnc part info and/or a
+	// quoted filename), signalling a malformed NZB whose subject was left empty/absent.
+	nzbPosterLooksLikeSubjectRE = regexp.MustCompile(`(?i)yenc|&quot;|"|\.par2|\.rar|\.rev`)
+)
+
+// normalizeNzbSubjects repairs malformed NZBs that store the file description (filename + yEnc
+// part info) in the <file> element's poster attribute while leaving subject empty or absent.
+// nzbparser derives filenames from subject AND de-duplicates files keyed on subject, so an
+// empty subject both loses the filename and collapses every such file into a single unusable
+// blob (all segments merged). When we detect a poster that looks like a real subject, we copy
+// it into subject so each file parses with its correct, unique name. Standard NZBs (non-empty
+// subject) are left untouched. Returns the possibly-rewritten bytes and the number of files fixed.
+func normalizeNzbSubjects(raw []byte) ([]byte, int) {
+	fixed := 0
+	out := nzbFileTagRE.ReplaceAllFunc(raw, func(tag []byte) []byte {
+		subjIdx := nzbSubjectAttrRE.FindSubmatchIndex(tag)
+		if subjIdx != nil && len(bytes.TrimSpace(tag[subjIdx[2]:subjIdx[3]])) > 0 {
+			return tag // standard NZB: subject already present
+		}
+		posterMatch := nzbPosterAttrRE.FindSubmatch(tag)
+		if posterMatch == nil {
+			return tag
+		}
+		poster := posterMatch[1]
+		if len(bytes.TrimSpace(poster)) == 0 || !nzbPosterLooksLikeSubjectRE.Match(poster) {
+			return tag // poster is an ordinary uploader id, not a file description
+		}
+		fixed++
+		if subjIdx != nil {
+			// Replace the empty subject="" value in place (avoids regexp $-expansion).
+			newTag := make([]byte, 0, len(tag)+len(poster))
+			newTag = append(newTag, tag[:subjIdx[2]]...)
+			newTag = append(newTag, poster...)
+			newTag = append(newTag, tag[subjIdx[3]:]...)
+			return newTag
+		}
+		// No subject attribute at all — inject one right after "<file".
+		const anchor = "<file"
+		idx := bytes.Index(tag, []byte(anchor)) + len(anchor)
+		newTag := make([]byte, 0, len(tag)+len(poster)+12)
+		newTag = append(newTag, tag[:idx]...)
+		newTag = append(newTag, ` subject="`...)
+		newTag = append(newTag, poster...)
+		newTag = append(newTag, '"')
+		newTag = append(newTag, tag[idx:]...)
+		return newTag
+	})
+	return out, fixed
+}
+
+// isRecoveryFile reports whether the given name (filename or NZB subject) refers to an
+// optional recovery/parity volume that is not required to extract the main content.
+func isRecoveryFile(names ...string) bool {
+	for _, name := range names {
+		if recoveryPattern.MatchString(strings.ToLower(strings.TrimSpace(name))) {
+			return true
+		}
+	}
+	return false
+}
 
 // Parser handles NZB file parsing
 type Parser struct {
@@ -100,7 +179,19 @@ func (p *Parser) ParseFileWithContext(ctx context.Context, r io.Reader, nzbPath 
 	default:
 	}
 
-	n, err := nzbparser.Parse(r)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, NewNonRetryableError("failed to read NZB", err)
+	}
+	// Repair malformed NZBs that carry filenames in the poster attribute with an empty
+	// subject; left unfixed, nzbparser collapses all such files into one unusable blob.
+	if normalized, repaired := normalizeNzbSubjects(raw); repaired > 0 {
+		p.log.Info("repaired malformed NZB: copied poster attribute into empty subject",
+			"files_repaired", repaired)
+		raw = normalized
+	}
+
+	n, err := nzbparser.Parse(bytes.NewReader(raw))
 	if err != nil {
 		return nil, NewNonRetryableError("failed to parse NZB XML", err)
 	}
@@ -125,12 +216,14 @@ func (p *Parser) ParseFileWithContext(ctx context.Context, r io.Reader, nzbPath 
 	}
 
 	// Process each file in the NZB in parallel
-	// Filter out PAR2 files first
+	// Filter out PAR2 files first, but retain their identity for completeness checks.
 	var validFiles []nzbparser.NzbFile
 	for _, file := range n.Files {
-		if !par2Pattern.MatchString(file.Filename) {
-			validFiles = append(validFiles, file)
+		if par2Pattern.MatchString(file.Filename) {
+			parsed.Par2Files = append(parsed.Par2Files, par2IdentityFile(file))
+			continue
 		}
+		validFiles = append(validFiles, file)
 	}
 
 	if len(validFiles) == 0 {
@@ -238,6 +331,12 @@ func (p *Parser) parseFileWithContext(ctx context.Context, file nzbparser.NzbFil
 
 	sort.Sort(file.Segments)
 
+	// Recovery/parity volumes (.par2, .rev) are optional repair data, not playable
+	// content. Their articles are often the first to be DMCA'd or to fall out of
+	// retention, so we must tolerate yEnc-header fetch failures on them and fall back
+	// to the NZB-declared segment sizes rather than aborting the entire import.
+	isRecovery := isRecoveryFile(file.Filename, file.Subject)
+
 	// Fetch yEnc headers from the first segment to get correct filename and file size, some nzbs have wrong filename in the segments
 	var yencFilename string
 	var yencFileSize int64
@@ -255,20 +354,23 @@ func (p *Parser) parseFileWithContext(ctx context.Context, file nzbparser.NzbFil
 
 		firstPartHeaders, err := p.fetchYencHeaders(file.Segments[0], nil)
 		if err != nil {
-			// If we can't fetch yEnc headers, log and continue with original sizes
-			return nil, fmt.Errorf("failed to fetch first segment yEnc part size: %w", err)
+			// A transiently missing first article must not abort the import: the
+			// filename comes from the (now-repaired) subject and the uniform body
+			// size is recovered from another segment during normalization below.
+			p.log.Warn("first segment yEnc header unavailable; will recover sizing from other segments",
+				"filename", file.Filename, "recovery", isRecovery, "error", err)
+		} else {
+			yencFilename = firstPartHeaders.FileName
+			yencFileSize = int64(firstPartHeaders.FileSize)
+			firstPartSize = int64(firstPartHeaders.PartSize)
 		}
-
-		yencFilename = firstPartHeaders.FileName
-		yencFileSize = int64(firstPartHeaders.FileSize)
-		firstPartSize = int64(firstPartHeaders.PartSize)
 	}
 
 	// Normalize segment sizes using yEnc PartSize headers if needed
 	// This handles cases where NZB segment sizes include yEnc encoding overhead
 	// This is required for all file types including RAR/7z since archive analysis
 	// depends on accurate segment sizes for seeking within files
-	if p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) >= 2 {
+	if p.poolManager != nil && p.poolManager.HasPool() && len(file.Segments) >= 2 && !isRecovery {
 		// Check for context cancellation before network call
 		select {
 		case <-ctx.Done():
@@ -276,20 +378,17 @@ func (p *Parser) parseFileWithContext(ctx context.Context, file nzbparser.NzbFil
 		default:
 		}
 
-		// Reuse the already-fetched segment-0 PartSize; only the last segment
-		// still needs a network fetch inside normalizeSegmentSizesWithYenc.
+		// Reuse the already-fetched segment-0 PartSize when available; normalization
+		// recovers the uniform body size from other segments if it was not.
 		err := p.normalizeSegmentSizesWithYenc(file.Segments, firstPartSize)
 		if err != nil {
-			// Log the error but continue with original segment sizes
-			// This ensures processing continues even if yEnc header fetching fails
-			p.log.Debug("Failed to normalize segment sizes with yEnc headers",
-				"error", err,
-				"segments", len(file.Segments),
-				"filename", file.Filename)
-
-			if errors.Is(err, nntppool.ErrArticleNotFoundInProviders) {
-				return nil, NewNonRetryableError("failed to fetch yEnc headers: missing articles in all providers", err)
-			}
+			// Normalization only errors when the uniform body part size could not be
+			// resolved from ANY sampled segment — i.e. a genuinely damaged volume, not
+			// a single transiently-missing article. Falling back to the overhead-laden
+			// declared sizes would misalign every offset in this file, so abort it.
+			p.log.Warn("could not normalize segment sizes; volume appears damaged",
+				"error", err, "segments", len(file.Segments), "filename", file.Filename)
+			return nil, NewNonRetryableError("failed to resolve yEnc segment sizes", err)
 		}
 	}
 
@@ -551,26 +650,47 @@ func (p *Parser) normalizeSegmentSizesWithYenc(segments []nzbparser.NzbSegment, 
 		return nil
 	}
 
-	// Fall back to fetching segment 0 only if the caller did not supply its size
-	// (e.g. the first-segment header lacked a PartSize).
+	// Resolve the uniform body part size. Every non-last segment shares this size,
+	// so if the caller's segment-0 fetch was missing we can recover it from any other
+	// leading segment — a single transiently-absent article must not defeat sizing.
 	if firstPartSize <= 0 {
-		firstPartHeaders, err := p.fetchYencHeaders(segments[0], nil)
-		if err != nil {
-			return fmt.Errorf("failed to fetch first segment yEnc part size: %w", err)
+		firstPartSize = p.fetchUniformPartSize(segments)
+		if firstPartSize <= 0 {
+			return fmt.Errorf("could not resolve uniform yEnc part size from any leading segment")
 		}
-		firstPartSize = int64(firstPartHeaders.PartSize)
 	}
 
-	// Fetch PartSize from last segment (its size differs from the uniform body parts)
-	lastSegmentIndex := len(segments) - 1
-	lastPartHeaders, err := p.fetchYencHeaders(segments[lastSegmentIndex], nil)
-	if err != nil {
-		// If we can't fetch yEnc headers, log and continue with original sizes
-		return fmt.Errorf("failed to fetch last segment yEnc part size: %w", err)
+	// Fetch PartSize from the last segment (its size differs from the uniform body
+	// parts). If that single article is unavailable, fall back to its declared size:
+	// the inaccuracy is confined to this file's final segment, which is far preferable
+	// to failing the entire multi-volume import over one missing article.
+	var lastPartSize int64
+	if lastPartHeaders, err := p.fetchYencHeaders(segments[len(segments)-1], nil); err != nil {
+		p.log.Warn("last segment yEnc header unavailable; keeping declared size for final segment",
+			"error", err, "segments", len(segments))
+	} else {
+		lastPartSize = int64(lastPartHeaders.PartSize)
 	}
 
-	applyNormalizedSizes(segments, firstPartSize, int64(lastPartHeaders.PartSize))
+	applyNormalizedSizes(segments, firstPartSize, lastPartSize)
 	return nil
+}
+
+// fetchUniformPartSize resolves the yEnc part size shared by a file's uniform body
+// segments, trying several leading segments so that a single transiently-missing
+// article does not defeat size normalization. The last segment is never sampled
+// because its size differs from the body. Returns 0 if none could be resolved.
+func (p *Parser) fetchUniformPartSize(segments []nzbparser.NzbSegment) int64 {
+	maxTries := 5
+	if limit := len(segments) - 1; maxTries > limit {
+		maxTries = limit
+	}
+	for i := 0; i < maxTries; i++ {
+		if h, err := p.fetchYencHeaders(segments[i], nil); err == nil && h.PartSize > 0 {
+			return int64(h.PartSize)
+		}
+	}
+	return 0
 }
 
 // applyNormalizedSizes overrides segment byte counts with the resolved yEnc part
