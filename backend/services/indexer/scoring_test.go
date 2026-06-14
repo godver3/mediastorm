@@ -88,7 +88,9 @@ func TestScoreResult_Resolution(t *testing.T) {
 	}
 }
 
-func TestScoreResult_LanguageBonusIsCapped(t *testing.T) {
+func TestScoreResult_HigherPriorityCriterionDominates(t *testing.T) {
+	// Resolution (priority 0) must outrank Language (priority 1): a 2160p result
+	// with no preferred language must beat a 720p result that has it.
 	ctx := ScoringContext{
 		RankingCriteria: []config.RankingCriterion{
 			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 0},
@@ -110,10 +112,13 @@ func TestScoreResult_LanguageBonusIsCapped(t *testing.T) {
 		t.Fatalf("expected 2160p without language (%d) > 720p with language (%d)", s2160, s720)
 	}
 
+	// Language sits one band below resolution: matched level (levelMax) times its
+	// band weight (bandBase^1, since it is the lowest of two enabled criteria).
+	wantLang := levelMax * ipow(bandBase, 1)
 	for _, item := range breakdown {
 		if item.Criterion == "Language" {
-			if item.Points != languageMatchMaxPoints {
-				t.Fatalf("language points = %d, want %d", item.Points, languageMatchMaxPoints)
+			if item.Points != wantLang {
+				t.Fatalf("language points = %d, want %d", item.Points, wantLang)
 			}
 			return
 		}
@@ -136,6 +141,50 @@ func TestScoreResult_Size(t *testing.T) {
 
 	if sBig <= sSmall {
 		t.Fatalf("expected bigger file (%d) > smaller file (%d)", sBig, sSmall)
+	}
+}
+
+func TestScoreResult_SizeTopPriorityBeatsHigherResolution(t *testing.T) {
+	// With File Size as the #1 criterion, the largest file must win even when a
+	// smaller file has higher resolution (the bug: a 35GB 4K file outranking a
+	// 50GB 1080p file when size was supposedly top priority).
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingSize, Name: "File Size", Enabled: true, Order: 0},
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 1},
+		},
+	}
+
+	big1080 := models.NZBResult{Title: "Movie 1080p", SizeBytes: 50 * 1024 * 1024 * 1024}
+	small4k := models.NZBResult{Title: "Movie 2160p", SizeBytes: 35 * 1024 * 1024 * 1024}
+
+	sBig, _ := ScoreResult(big1080, ctx)
+	sSmall, _ := ScoreResult(small4k, ctx)
+
+	if sBig <= sSmall {
+		t.Fatalf("expected larger 1080p file (%d) > smaller 4K file (%d) when size is top priority", sBig, sSmall)
+	}
+}
+
+func TestScoreResult_LowerPriorityBreaksTie(t *testing.T) {
+	// When the top criterion (size) is equal, the lower criterion (resolution)
+	// must break the tie.
+	ctx := ScoringContext{
+		RankingCriteria: []config.RankingCriterion{
+			{ID: config.RankingSize, Name: "File Size", Enabled: true, Order: 0},
+			{ID: config.RankingResolution, Name: "Resolution", Enabled: true, Order: 1},
+		},
+	}
+
+	sameSize := int64(40 * 1024 * 1024 * 1024)
+	r4k := models.NZBResult{Title: "Movie 2160p", SizeBytes: sameSize}
+	r1080 := models.NZBResult{Title: "Movie 1080p", SizeBytes: sameSize}
+
+	s4k, _ := ScoreResult(r4k, ctx)
+	s1080, _ := ScoreResult(r1080, ctx)
+
+	if s4k <= s1080 {
+		t.Fatalf("expected 4K (%d) > 1080p (%d) as tiebreaker when size is equal", s4k, s1080)
 	}
 }
 
