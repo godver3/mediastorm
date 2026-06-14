@@ -72,6 +72,10 @@ type localMediaScanner interface {
 
 type schedulerMetadataService interface {
 	SeriesDetailsLite(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+	// Artwork warming for watchlist items imported without posters.
+	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
+	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
+	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 }
 
 type livePlaylistWarmer interface {
@@ -342,6 +346,46 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 
 	// Update task status in settings
 	s.updateTaskStatus(task.ID, err, result)
+
+	// After a successful watchlist sync, enrich items that were imported without
+	// artwork. External sources (Plex/Trakt/MDBList/Jellyfin) provide only IDs,
+	// so the metadata cache is cold and thumbnails stay blank until warmed. This
+	// makes re-running the sync populate posters without a manual remove/re-add.
+	if err == nil && isWatchlistSyncTask(task.Type) {
+		s.enrichSyncedWatchlistArtwork(task)
+	}
+}
+
+// isWatchlistSyncTask reports whether a task imports items into the local
+// watchlist (and therefore may need artwork enrichment afterwards).
+func isWatchlistSyncTask(t config.ScheduledTaskType) bool {
+	switch t {
+	case config.ScheduledTaskTypePlexWatchlistSync,
+		config.ScheduledTaskTypeTraktListSync,
+		config.ScheduledTaskTypeMDBListWatchlistSync,
+		config.ScheduledTaskTypeJellyfinFavoritesSync:
+		return true
+	default:
+		return false
+	}
+}
+
+// enrichSyncedWatchlistArtwork warms the metadata cache and persists artwork for
+// the synced profile's watchlist items that arrived without a poster.
+func (s *Service) enrichSyncedWatchlistArtwork(task config.ScheduledTask) {
+	s.mu.RLock()
+	meta := s.metadataService
+	s.mu.RUnlock()
+	if meta == nil || s.watchlistService == nil {
+		return
+	}
+	profileID, err := s.resolveTaskProfileID(task)
+	if err != nil {
+		return
+	}
+	if n := s.watchlistService.EnrichMissingArtwork([]string{profileID}, meta); n > 0 {
+		log.Printf("[scheduler] Enriched artwork for %d watchlist items after %s", n, task.Type)
+	}
 }
 
 func (s *Service) executeLocalMediaScan(task config.ScheduledTask) (SyncResult, error) {

@@ -76,6 +76,16 @@ func (f *fakeSchedulerMetadataService) SeriesDetailsLite(ctx context.Context, re
 	return f.details, nil
 }
 
+func (f *fakeSchedulerMetadataService) GetTextPosterURL(string, int64, int64) string { return "" }
+
+func (f *fakeSchedulerMetadataService) MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error) {
+	return nil, nil
+}
+
+func (f *fakeSchedulerMetadataService) SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return f.details, nil
+}
+
 func TestExecutePlaylistRefreshClearsAndWarmsCache(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.MkdirAll("cache/live", 0755); err != nil {

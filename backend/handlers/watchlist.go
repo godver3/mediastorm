@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"novastream/models"
@@ -20,6 +19,7 @@ type watchlistService interface {
 	AddOrUpdate(userID string, input models.WatchlistUpsert) (models.WatchlistItem, error)
 	UpdateState(userID, mediaType, id string, watched *bool, progress interface{}) (models.WatchlistItem, error)
 	Remove(userID, mediaType, id string) (bool, error)
+	EnrichMissingArtwork(userIDs []string, meta watchlist.ArtworkMetadataProvider) int
 }
 
 var _ watchlistService = (*watchlist.Service)(nil)
@@ -208,54 +208,22 @@ func (h *WatchlistHandler) requireUser(w http.ResponseWriter, r *http.Request) (
 	return userID, true
 }
 
-// BackfillTextPosters is a one-time startup task that fills in TextPosterURL
-// for existing watchlist items that are missing it, using the metadata cache.
-// It only writes back items that actually get enriched.
-func (h *WatchlistHandler) BackfillTextPosters(userIDs []string) {
+// EnrichMissingArtwork is a one-time startup task that fills in artwork for
+// existing watchlist items that lack it. It supersedes the old cache-only
+// backfill: items imported from an external source (Trakt/MDBList/Plex/Jellyfin
+// sync) arrive with only IDs and no poster, and the metadata cache is cold for
+// them, so a pure cache lookup never finds artwork. The user's reported symptom
+// is a missing thumbnail that only populates after manually removing and
+// re-adding the item (which warms the cache via the details page).
+//
+// The actual enrichment lives on the watchlist service so the scheduler can
+// reuse it after each watchlist sync; this just supplies the metadata provider.
+func (h *WatchlistHandler) EnrichMissingArtwork(userIDs []string) {
 	if h.MetadataService == nil {
 		return
 	}
-	updated := 0
-	for _, userID := range userIDs {
-		items, err := h.Service.List(userID)
-		if err != nil {
-			continue
-		}
-		for _, item := range items {
-			if item.TextPosterURL != "" {
-				continue // already has a text poster
-			}
-			var tmdbID, tvdbID int64
-			if v, ok := item.ExternalIDs["tmdb"]; ok {
-				if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-					tmdbID = id
-				}
-			}
-			if v, ok := item.ExternalIDs["tvdb"]; ok {
-				if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-					tvdbID = id
-				}
-			}
-			if tmdbID == 0 && tvdbID == 0 {
-				continue
-			}
-			url := h.MetadataService.GetTextPosterURL(item.MediaType, tmdbID, tvdbID)
-			if url == "" {
-				continue
-			}
-			// Write back the enriched text poster URL
-			h.Service.AddOrUpdate(userID, models.WatchlistUpsert{
-				ID:            item.ID,
-				MediaType:     item.MediaType,
-				Name:          item.Name,
-				TextPosterURL: url,
-				ExternalIDs:   item.ExternalIDs,
-			})
-			updated++
-		}
-	}
-	if updated > 0 {
-		log.Printf("[watchlist] backfilled text poster URLs for %d items", updated)
+	if n := h.Service.EnrichMissingArtwork(userIDs, h.MetadataService); n > 0 {
+		log.Printf("[watchlist] enriched artwork for %d watchlist items", n)
 	}
 }
 
@@ -267,17 +235,7 @@ func enrichWatchlistArtwork(items []models.WatchlistItem, meta metadataService) 
 		return
 	}
 	for i := range items {
-		var tmdbID, tvdbID int64
-		if v, ok := items[i].ExternalIDs["tmdb"]; ok {
-			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-				tmdbID = id
-			}
-		}
-		if v, ok := items[i].ExternalIDs["tvdb"]; ok {
-			if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-				tvdbID = id
-			}
-		}
+		tmdbID, tvdbID := watchlist.NumericIDs(items[i].ExternalIDs)
 		if tmdbID > 0 || tvdbID > 0 {
 			if isPlaceholderOverview(items[i].Overview) {
 				if overview := cleanCachedOverview(meta.GetCachedOverview(items[i].MediaType, tmdbID, tvdbID)); overview != "" {

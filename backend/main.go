@@ -558,13 +558,16 @@ func main() {
 	settingsHandler.SetMDBListListsClient(mdblistListsClient)
 	metadataHandler.SetLetterboxdClient(letterboxd.NewClient())
 
-	// Backfill text poster URLs for existing watchlist items (one-time, background)
+	// Enrich missing artwork for existing watchlist items (one-time, background).
+	// Warms the metadata cache for externally-synced items (Trakt/MDBList/Plex)
+	// that arrive with only IDs, so their thumbnails populate without a manual
+	// remove-and-re-add.
 	go func() {
 		var userIDs []string
 		for _, u := range userService.ListAll() {
 			userIDs = append(userIDs, u.ID)
 		}
-		watchlistHandler.BackfillTextPosters(userIDs)
+		watchlistHandler.EnrichMissingArtwork(userIDs)
 	}()
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)

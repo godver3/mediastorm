@@ -213,3 +213,92 @@ func TestWatchlistUpdateAndRemove(t *testing.T) {
 		t.Fatalf("expected empty watchlist after removal, got %d", len(items))
 	}
 }
+
+// TestEnrichMissingArtwork_WarmsColdCache reproduces the reported Trakt-import
+// bug: an item arrives with only IDs (no poster) and a cold metadata cache, so
+// the cheap cache-only lookup finds no artwork. The enrichment must warm the
+// cache via a details fetch and then persist the resolved text poster URL.
+func TestEnrichMissingArtwork_WarmsColdCache(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create watchlist service: %v", err)
+	}
+	userSvc, err := users.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create users service: %v", err)
+	}
+	userID := userSvc.ListAll()[0].ID
+
+	// Bare item, exactly as a Trakt sync would store it: IDs but no artwork.
+	if _, err := svc.AddOrUpdate(userID, models.WatchlistUpsert{
+		ID:          "550",
+		MediaType:   "movie",
+		Name:        "Greenland 2",
+		ExternalIDs: map[string]string{"tmdb": "550"},
+	}); err != nil {
+		t.Fatalf("failed to seed watchlist: %v", err)
+	}
+
+	meta := &mockMetadataServiceStartup{
+		textPosterURL: "https://image.example/poster.jpg",
+		warmOnDetails: true, // cache only warms after a details fetch
+	}
+
+	h := handlers.NewWatchlistHandler(svc, userSvc, false)
+	h.SetMetadataService(meta)
+
+	h.EnrichMissingArtwork([]string{userID})
+
+	if meta.detailsCalls != 1 {
+		t.Fatalf("expected exactly 1 details fetch to warm the cache, got %d", meta.detailsCalls)
+	}
+
+	items, err := svc.List(userID)
+	if err != nil {
+		t.Fatalf("list returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].TextPosterURL != "https://image.example/poster.jpg" {
+		t.Fatalf("expected text poster to be persisted, got %q", items[0].TextPosterURL)
+	}
+}
+
+// TestEnrichMissingArtwork_SkipsItemsWithThumbnail ensures we don't spend an API
+// call warming the cache for items that already render a thumbnail.
+func TestEnrichMissingArtwork_SkipsItemsWithThumbnail(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create watchlist service: %v", err)
+	}
+	userSvc, err := users.NewService(dir)
+	if err != nil {
+		t.Fatalf("failed to create users service: %v", err)
+	}
+	userID := userSvc.ListAll()[0].ID
+
+	// Item already has a plain poster but no text poster — cache-only path only.
+	if _, err := svc.AddOrUpdate(userID, models.WatchlistUpsert{
+		ID:          "551",
+		MediaType:   "movie",
+		Name:        "Has Poster",
+		PosterURL:   "https://image.example/plain.jpg",
+		ExternalIDs: map[string]string{"tmdb": "551"},
+	}); err != nil {
+		t.Fatalf("failed to seed watchlist: %v", err)
+	}
+
+	meta := &mockMetadataServiceStartup{warmOnDetails: true}
+
+	h := handlers.NewWatchlistHandler(svc, userSvc, false)
+	h.SetMetadataService(meta)
+
+	h.EnrichMissingArtwork([]string{userID})
+
+	if meta.detailsCalls != 0 {
+		t.Fatalf("expected no details fetch for an item with a thumbnail, got %d", meta.detailsCalls)
+	}
+}

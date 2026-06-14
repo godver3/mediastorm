@@ -18,6 +18,7 @@ import (
 	"novastream/handlers"
 	"novastream/models"
 	metadatapkg "novastream/services/metadata"
+	"novastream/services/watchlist"
 
 	"github.com/gorilla/mux"
 )
@@ -60,6 +61,9 @@ func (m *mockWatchlistService) UpdateState(userID, mediaType, id string, watched
 }
 func (m *mockWatchlistService) Remove(userID, mediaType, id string) (bool, error) {
 	return false, nil
+}
+func (m *mockWatchlistService) EnrichMissingArtwork(userIDs []string, meta watchlist.ArtworkMetadataProvider) int {
+	return 0
 }
 
 type mockHistoryService struct {
@@ -134,6 +138,16 @@ type mockMetadataServiceStartup struct {
 	seriesDelay time.Duration
 	mu          sync.Mutex
 	calls       []string
+
+	// Artwork-cache simulation for EnrichMissingArtwork tests.
+	// textPosterURL is the URL returned by GetTextPosterURL once the cache is
+	// "warm". When warmOnDetails is true, the cache starts cold and only warms
+	// after a MovieDetails/SeriesDetails call (mirroring a real cold cache for
+	// an externally-synced item). detailsCalls counts those warming fetches.
+	textPosterURL string
+	warmOnDetails bool
+	warmed        bool
+	detailsCalls  int
 }
 
 func (m *mockMetadataServiceStartup) Trending(ctx context.Context, mediaType string) ([]models.TrendingItem, error) {
@@ -169,6 +183,10 @@ func (m *mockMetadataServiceStartup) SearchYouTubeVideos(context.Context, string
 	return nil, nil
 }
 func (m *mockMetadataServiceStartup) SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.mu.Lock()
+	m.detailsCalls++
+	m.warmed = true
+	m.mu.Unlock()
 	return nil, nil
 }
 func (m *mockMetadataServiceStartup) BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem {
@@ -178,6 +196,10 @@ func (m *mockMetadataServiceStartup) BatchSeriesTitleFields(context.Context, []m
 	return nil
 }
 func (m *mockMetadataServiceStartup) MovieDetails(context.Context, models.MovieDetailsQuery) (*models.Title, error) {
+	m.mu.Lock()
+	m.detailsCalls++
+	m.warmed = true
+	m.mu.Unlock()
 	return nil, nil
 }
 func (m *mockMetadataServiceStartup) BatchMovieReleases(context.Context, []models.BatchMovieReleasesQuery) []models.BatchMovieReleasesItem {
@@ -253,7 +275,12 @@ func (m *mockMetadataServiceStartup) GetMDBListAllRatingsCached(_ string, _ stri
 	return nil
 }
 func (m *mockMetadataServiceStartup) GetTextPosterURL(_ string, _ int64, _ int64) string {
-	return ""
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warmOnDetails && !m.warmed {
+		return ""
+	}
+	return m.textPosterURL
 }
 
 func (m *mockMetadataServiceStartup) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
