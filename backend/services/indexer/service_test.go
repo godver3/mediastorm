@@ -1065,6 +1065,8 @@ func TestSanitizeNewznabQuery(t *testing.T) {
 		{"multiple   spaces", "multiple spaces"},                                // space collapse
 		{"(brackets) [and] {braces}", "brackets and braces"},                    // brackets
 		{"Udachi, vesel'ia, ne sdokhni 2026", "Udachi veselia ne sdokhni 2026"}, // transliterated apostrophe + commas
+		{"Once Upon a Time... in Hollywood", "Once Upon a Time in Hollywood"},   // ellipsis collapses to space
+		{"S.W.A.T.", "S W A T"},                                                 // dotted initialism
 	}
 	for _, tt := range tests {
 		got := sanitizeNewznabQuery(tt.input)

@@ -32,9 +32,11 @@ import (
 
 // newznabQuerySanitizer removes special characters that interfere with newznab/torznab search APIs.
 // Characters like !, ?, :, &, etc. are often interpreted as search operators or cause empty results.
+// Periods are included because release names use them as word separators, so a title like
+// "Once Upon a Time... in Hollywood" otherwise sends literal dots that break matching.
 // Apostrophes/single quotes are handled separately (stripped without adding spaces) to keep
 // contractions intact (e.g. "Don't" → "Dont" not "Don t").
-var newznabQuerySanitizer = regexp.MustCompile(`[!?:&,;"()[\]{}]+`)
+var newznabQuerySanitizer = regexp.MustCompile(`[!?:&,;"()[\]{}.]+`)
 
 // xmlEntityPattern matches valid XML entity references: &name; &#NNN; &#xHHH;
 var xmlEntityPattern = regexp.MustCompile(`^([a-zA-Z]+;|#[0-9]+;|#x[0-9a-fA-F]+;)`)
