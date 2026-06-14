@@ -581,7 +581,12 @@ func (s *Service) checkSegmentsWithPool(ctx context.Context, segments []string, 
 			defer wg.Done()
 
 			normalizedID := normalizeMessageID(segmentID)
-			code, err := pool.Stat(ctx, normalizedID, nil)
+			// Fetch the actual article body rather than STAT. Some providers keep an
+			// article in their overview index (STAT returns 223) long after the body
+			// has been purged/DMCA'd, so STAT yields false-positive health checks that
+			// then fail mid-playback. A body fetch is the only reliable availability
+			// signal; the health sample is tiny (a few segments) so the cost is trivial.
+			_, err := pool.Body(ctx, normalizedID, io.Discard, nil)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -605,11 +610,6 @@ func (s *Service) checkSegmentsWithPool(ctx context.Context, segments []string, 
 				log.Printf("[usenet] warning: failed to check segment %s: %v", segmentID, err)
 				retryIDs = append(retryIDs, segmentID)
 				return
-			}
-
-			if code != 223 {
-				// Non-found response - queue for retry with fresh connections
-				retryIDs = append(retryIDs, segmentID)
 			}
 		}()
 	}

@@ -36,11 +36,17 @@ func TestNNTPClientCheckArticle(t *testing.T) {
 			switch {
 			case strings.HasPrefix(cmd, "AUTHINFO USER"):
 				fmt.Fprintf(writer, "281 ok\r\n")
-			case strings.HasPrefix(cmd, "STAT "):
+			case strings.HasPrefix(cmd, "BODY "):
 				id := strings.TrimSpace(cmd[5:])
 				if id == "<item1@test>" || id == "<bare@test>" {
-					fmt.Fprintf(writer, "223 0 %s\r\n", id)
+					// Article body present: 222 + dot-terminated multiline body.
+					fmt.Fprintf(writer, "222 0 %s body follows\r\n", id)
+					fmt.Fprintf(writer, "=ybegin line=128 size=8 name=x\r\n")
+					fmt.Fprintf(writer, "payloaddata\r\n")
+					fmt.Fprintf(writer, ".\r\n")
 				} else {
+					// Includes the case where STAT would have returned 223 but the
+					// body has been purged — BODY reports it missing.
 					fmt.Fprintf(writer, "430 no such article\r\n")
 				}
 			case cmd == "QUIT":

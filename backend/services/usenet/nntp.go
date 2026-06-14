@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/textproto"
 	"strconv"
@@ -110,13 +111,22 @@ func (c *nntpClient) CheckArticle(ctx context.Context, messageID string) (bool, 
 		normalizedID = "<" + normalizedID + ">"
 	}
 
-	code, _, err := c.sendCommand(ctx, "STAT %s", normalizedID)
+	// Use BODY rather than STAT. STAT only consults the provider's overview index,
+	// which can still list an article (223) whose body has been purged/DMCA'd —
+	// producing false-positive health checks that fail mid-playback. BODY confirms
+	// the article body is actually retrievable. We drain and discard the body.
+	code, _, err := c.sendCommand(ctx, "BODY %s", normalizedID)
 	if err != nil {
 		return false, err
 	}
 
 	switch code {
-	case 223:
+	case 222:
+		// Multiline body follows; must be fully consumed to keep the connection
+		// usable for the next command.
+		if _, err := io.Copy(io.Discard, c.reader.DotReader()); err != nil {
+			return false, fmt.Errorf("drain article body: %w", err)
+		}
 		return true, nil
 	case 430, 411, 412:
 		return false, nil
