@@ -2770,6 +2770,30 @@
         }
         return '';
     }
+    // Detect when an API-key field has had a full URL/query string pasted into it
+    // instead of the bare key. Newznab/debrid keys are plain tokens; if the value
+    // carries URL or query syntax the backend will send it verbatim as apikey= and
+    // the indexer rejects it (e.g. nzbgeek "Invalid API Key") with no obvious error.
+    function looksLikeUrlNotApiKey(value) {
+        if (typeof value !== 'string') return false;
+        const s = value.trim();
+        if (!s) return false;
+        return /:\/\//.test(s) || /[?&]/.test(s) || /\s/.test(s) || /api_?key=/i.test(s);
+    }
+    function renderApiKeyFormatWarning(fieldKey, value) {
+        if (!/api_?key/i.test(fieldKey)) return '';
+        if (!looksLikeUrlNotApiKey(value)) return '';
+        // Best-effort: pull the real key out of a pasted "...&apikey=XXXX" URL to suggest it.
+        const m = String(value).match(/api_?key=([^&\s?#]+)/i);
+        const suggested = m ? m[1] : '';
+        const suggestion = suggested
+            ? ' It looks like the key is <code>' + escapeHtml(suggested) + '</code> — paste just that.'
+            : ' Enter only the key token, not the full URL.';
+        return '<div class="form-group-warning" style="margin-top:0.5rem;padding:0.6rem 0.75rem;background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:6px;font-size:0.8rem;color:var(--warning);display:flex;align-items:flex-start;gap:0.5rem;">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+            '<span>This looks like a URL, not an API key.' + suggestion + '</span>' +
+            '</div>';
+    }
     function handleTagInput(event, basePath, fieldKey) {
         if (event.key === 'Enter' || event.key === ',') {
             event.preventDefault();
@@ -4687,7 +4711,7 @@
                 } else {
                     fieldValue = item[fieldKey];
                 }
-                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+'</div>';
+                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+renderApiKeyFormatWarning(fieldKey, fieldValue)+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
             const hiddenChannelsBtn = (sectionKey === 'live.sources' || sectionKey === 'liveTV.sources')
@@ -7069,7 +7093,7 @@
                     group: fieldDef.group || '',
                     groupLabel: fieldDef.groupLabel || '',
                     groupDescription: fieldDef.groupDescription || '',
-                    html: '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+errorHtml+'</div>',
+                    html: '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+invalidClass+inheritanceClass+'"><label class="form-label"><span>'+fieldDef.label+'</span>'+inheritanceBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, sectionKey, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+renderApiKeyFormatWarning(fieldKey, fieldValue)+errorHtml+'</div>',
                 };
             })
             .filter(Boolean);

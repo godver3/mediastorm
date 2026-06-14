@@ -95,6 +95,7 @@
 .search-diagnostics-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .search-diagnostics-table .empty-row { color: var(--text-secondary, #888); text-align: center; }
 .diag-status-pass { color: var(--success-color, #4caf50); }
+.diag-status-warn { color: var(--warning-color, #ff9800); }
 .diag-status-fail { color: var(--error-color, #f44336); max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .connections-grid { display: flex; flex-direction: column; gap: 24px; }
 .conn-group h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary, #888); margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid var(--border-color, #333); }
@@ -461,7 +462,7 @@ async function runSearchDiagnostics() {
                     <td>${escapeHtml((source.group || '') + (source.type ? ' / ' + source.type : ''))}</td>
                     <td class="num">${Number(source.count || 0).toLocaleString()}</td>
                     <td class="num">${formatDuration(source.durationMs || 0)}</td>
-                    <td class="${source.success ? 'diag-status-pass' : 'diag-status-fail'}">${source.success ? 'OK' : escapeHtml(source.error || 'Failed')}</td>
+                    <td class="${!source.success ? 'diag-status-fail' : (source.count > 0 ? 'diag-status-pass' : 'diag-status-warn')}">${!source.success ? escapeHtml(source.error || 'Failed') : (source.count > 0 ? 'OK' : 'Reachable, 0 results')}</td>
                 </tr>
             `).join('');
             renderTimeoutRecommendation();

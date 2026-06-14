@@ -3248,6 +3248,19 @@ func (h *AdminUIHandler) TestIndexer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// newznab/torznab indexers report failures (bad API key, exhausted request
+	// limit, etc.) with a 200 status and an <error> body. Surface those as a
+	// failed test instead of a misleading "reachable and responding".
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if msg, isErr := parseNewznabError(body); isErr {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   msg,
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -3286,6 +3299,44 @@ type diagnosticsRSSFeed struct {
 	Channel struct {
 		Items []struct{} `xml:"item"`
 	} `xml:"channel"`
+}
+
+// newznabErrorResponse models the error element that newznab/torznab indexers
+// return — with an HTTP 200 status — when a request cannot be served (bad API
+// key, daily request limit reached, missing parameter, etc). XMLName captures
+// the root element name so we can tell an error document apart from a normal
+// <rss> feed without xml.Unmarshal failing on the root mismatch.
+type newznabErrorResponse struct {
+	XMLName     xml.Name
+	Code        string `xml:"code,attr"`
+	Description string `xml:"description,attr"`
+}
+
+// parseNewznabError inspects an indexer response body for a newznab/torznab
+// <error> element. These come back with HTTP 200, so without this check a bad
+// API key or an exhausted daily request limit silently looks like an empty
+// result set. Returns a human-readable message and true when the body is an
+// error document.
+func parseNewznabError(body []byte) (string, bool) {
+	var e newznabErrorResponse
+	if err := xml.Unmarshal(body, &e); err != nil {
+		return "", false
+	}
+	if !strings.EqualFold(e.XMLName.Local, "error") {
+		return "", false
+	}
+	desc := strings.TrimSpace(e.Description)
+	code := strings.TrimSpace(e.Code)
+	switch {
+	case desc != "" && code != "":
+		return fmt.Sprintf("API error %s: %s", code, desc), true
+	case desc != "":
+		return desc, true
+	case code != "":
+		return fmt.Sprintf("API error %s", code), true
+	default:
+		return "indexer returned an API error", true
+	}
 }
 
 func (h *AdminUIHandler) RunSearchDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -3419,6 +3470,15 @@ func (h *AdminUIHandler) runIndexerSearchDiagnostic(ctx context.Context, idx con
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		result.Error = err.Error()
+		result.DurationMS = time.Since(startedAt).Milliseconds()
+		return result
+	}
+
+	// A 200 response may still be a newznab/torznab API error (bad key, request
+	// limit reached, etc.) rather than a feed. Treat it as a failed source so the
+	// diagnostics table shows the reason instead of a healthy "0 results".
+	if msg, isErr := parseNewznabError(body); isErr {
+		result.Error = msg
 		result.DurationMS = time.Since(startedAt).Milliseconds()
 		return result
 	}
