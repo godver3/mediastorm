@@ -35,6 +35,7 @@ type ImportConfig struct {
 	RarMaxCacheSizeMB              int
 	RarEnableMemoryPreload         bool
 	RarMaxMemoryGB                 int
+	VerifyPar2Completeness         bool
 }
 
 // SABnzbdConfig represents SABnzbd fallback configuration
@@ -130,6 +131,7 @@ func (ca *ConfigAdapter) GetConfig() *AltMountConfig {
 			RarMaxCacheSizeMB:              settings.Import.RarMaxCacheSizeMB,
 			RarEnableMemoryPreload:         settings.Import.RarEnableMemoryPreload,
 			RarMaxMemoryGB:                 settings.Import.RarMaxMemoryGB,
+			VerifyPar2Completeness:         settings.Import.VerifyPar2Completeness,
 		},
 		SABnzbd: SABnzbdConfig{
 			Enabled:        settings.SABnzbd.Enabled,

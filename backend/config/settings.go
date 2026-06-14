@@ -244,7 +244,8 @@ type ImportSettings struct {
 	RarMaxCacheSizeMB              int  `json:"rarMaxCacheSizeMb"`
 	RarEnableMemoryPreload         bool `json:"rarEnableMemoryPreload"`
 	RarMaxMemoryGB                 int  `json:"rarMaxMemoryGB"`
-	SkipHealthCheck                bool `json:"skipHealthCheck"` // Skip segment health check for faster playback
+	SkipHealthCheck                bool `json:"skipHealthCheck"`        // Skip segment health check for faster playback
+	VerifyPar2Completeness         bool `json:"verifyPar2Completeness"` // Reject structurally-incomplete releases via the PAR2 recovery-set manifest before RAR indexing
 }
 
 // SABnzbdSettings defines SABnzbd fallback configuration

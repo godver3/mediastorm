@@ -81,6 +81,15 @@ func NewProcessor(metadataService *metadata.MetadataService, poolManager pool.Ma
 	return p
 }
 
+// completenessCheckEnabled reports whether PAR2 completeness verification is turned on.
+func (proc *Processor) completenessCheckEnabled() bool {
+	if proc.configGetter == nil {
+		return false
+	}
+	cfg := proc.configGetter()
+	return cfg != nil && cfg.Import.VerifyPar2Completeness
+}
+
 func (proc *Processor) ensureRarProcessorConfig() {
 	if proc.configGetter == nil {
 		return
@@ -203,6 +212,17 @@ func (proc *Processor) ProcessNzbFile(ctx context.Context, filePath, relativePat
 	case <-ctx.Done():
 		return "", ctx.Err()
 	default:
+	}
+
+	// Fail fast on structurally-incomplete releases using PAR2's recovery-set manifest,
+	// before the costly RAR volume indexing. Opt-in via config; fail-open by design.
+	if proc.completenessCheckEnabled() {
+		if problems := proc.verifyPar2Completeness(ctx, parsed); len(problems) > 0 {
+			proc.log.Warn("rejecting incomplete release (par2 completeness)",
+				"file_path", filePath, "problems", strings.Join(problems, "; "))
+			return "", NewNonRetryableError(
+				fmt.Sprintf("incomplete release: %s", strings.Join(problems, "; ")), nil)
+		}
 	}
 
 	// Process based on file type

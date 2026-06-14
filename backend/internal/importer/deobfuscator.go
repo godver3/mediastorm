@@ -503,6 +503,48 @@ func (d *Deobfuscator) streamParsePAR2(r io.Reader, targetFilename string) strin
 	return ""
 }
 
+// par2MaxCompletenessPackets bounds packet iteration when collecting the full file
+// list from a PAR2 stream, guarding against malformed/huge inputs.
+const par2MaxCompletenessPackets = 100000
+
+// collectAllPar2FileDescriptors streams through a PAR2 byte stream and returns every
+// unique FileDesc it declares (deduplicated by FileID). Unlike streamParsePAR2 — which
+// returns the first usable filename for deobfuscation — this collects the complete
+// recovery-set file list (names + lengths) used for completeness verification. Parsing
+// stops at the first malformed packet, returning whatever was gathered so far, so a
+// truncated index still yields the descriptors that were readable.
+func (d *Deobfuscator) collectAllPar2FileDescriptors(r io.Reader) []PAR2FileDesc {
+	fileDescType := [16]byte{'P', 'A', 'R', ' ', '2', '.', '0', 0, 'F', 'i', 'l', 'e', 'D', 'e', 's', 'c'}
+	seen := make(map[[16]byte]struct{})
+	var out []PAR2FileDesc
+
+	for i := 0; i < par2MaxCompletenessPackets; i++ {
+		header, err := d.parsePAR2Header(r)
+		if err != nil {
+			break
+		}
+		if header.Length < 64 {
+			break // malformed: packet shorter than its own header
+		}
+		if header.Type == fileDescType {
+			desc, err := d.parseFileDescPacket(r, header.Length)
+			if err != nil {
+				break
+			}
+			if _, dup := seen[desc.FileID]; dup {
+				continue
+			}
+			seen[desc.FileID] = struct{}{}
+			if strings.TrimSpace(desc.Filename) != "" {
+				out = append(out, *desc)
+			}
+		} else if err := d.skipBytes(r, header.Length-64); err != nil {
+			break
+		}
+	}
+	return out
+}
+
 // isProbablyObfuscated returns true if the filename (or full path) appears to be
 // obfuscated, following heuristics translated from the provided Python logic.
 // Default outcome is true (assume obfuscated) unless clear patterns indicate otherwise.
