@@ -225,13 +225,19 @@ func (t *TorrentioScraper) searchByIMDBID(ctx context.Context, req SearchRequest
 					ServiceType: models.ServiceTypeDebrid,
 				}
 
-				// For daily shows, check if this result matches the target date
+				// For daily shows, accept the result if it matches the target
+				// air date (date-named releases like talk shows) OR if its
+				// SxxExx code matches the primary target episode (S/E-named
+				// releases like SNL: "Saturday Night Live - S51E20 - ...").
+				// The ±1 neighbor probes stay safe: neighbor titles parse to a
+				// different episode and are rejected.
 				if isDailySearch {
-					if mediaresolve.CandidateMatchesDailyDate(stream.titleText, req.TargetAirDate, 0) {
+					if mediaresolve.CandidateMatchesDailyDate(stream.titleText, req.TargetAirDate, 0) ||
+						mediaresolve.CandidateMatchesEpisode(stream.titleText, mediaresolve.EpisodeCode{Season: req.Parsed.Season, Episode: req.Parsed.Episode}) {
 						foundCorrectDate = true
 						batchResults = append(batchResults, result)
 					}
-					// Skip results that don't match the target date
+					// Skip results that don't match the target date or episode
 				} else {
 					batchResults = append(batchResults, result)
 				}

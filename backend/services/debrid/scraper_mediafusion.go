@@ -149,8 +149,13 @@ func (m *MediaFusionScraper) Search(ctx context.Context, req SearchRequest) ([]S
 					result.TorrentURL = stream.url
 				}
 
+				// Accept daily-show results matching the target air date
+				// (date-named talk shows) OR the primary target episode's
+				// SxxExx code (S/E-named releases like SNL). Neighbor probes
+				// parse to a different episode and are rejected.
 				if isDailySearch {
-					if mediaresolve.CandidateMatchesDailyDate(stream.titleText, req.TargetAirDate, 0) {
+					if mediaresolve.CandidateMatchesDailyDate(stream.titleText, req.TargetAirDate, 0) ||
+						mediaresolve.CandidateMatchesEpisode(stream.titleText, mediaresolve.EpisodeCode{Season: req.Parsed.Season, Episode: req.Parsed.Episode}) {
 						foundCorrectDate = true
 						batchResults = append(batchResults, result)
 					}

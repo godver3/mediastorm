@@ -246,8 +246,12 @@ func (z *ZileanScraper) searchDailyTV(ctx context.Context, title string, season,
 			}
 			seen[infoHash] = struct{}{}
 
-			// Check if this result matches the target date
-			if mediaresolve.CandidateMatchesDailyDate(result.Title, targetAirDate, 0) {
+			// Accept if the result matches the target air date (date-named
+			// talk shows) OR the primary target episode's SxxExx code
+			// (S/E-named releases like SNL). Neighbor probes parse to a
+			// different episode and are rejected.
+			if mediaresolve.CandidateMatchesDailyDate(result.Title, targetAirDate, 0) ||
+				mediaresolve.CandidateMatchesEpisode(result.Title, mediaresolve.EpisodeCode{Season: season, Episode: episode}) {
 				foundCorrectDate = true
 				dateMatchResults = append(dateMatchResults, result)
 			}
