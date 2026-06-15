@@ -116,9 +116,17 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 	var err error
 
 	if req.IsDaily && req.TargetAirDate != "" {
-		// Daily show search: use date-based query instead of S##E## format
-		// Scene releases use format: "Title.2026.01.21.Guest.mkv"
+		// Daily show search: try both naming conventions and merge.
+		// Some scene releases use date format ("Title.2026.05.16.Guest.mkv"),
+		// while others (e.g. SNL) use S##E## + guest ("Title.S51E20.Guest.mkv").
+		// Searching only by date misses the S/E-named releases entirely.
 		results, err = j.searchDailyTV(ctx, cleanTitle, req.TargetAirDate)
+		if err == nil && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
+			seResults, seErr := j.searchTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode)
+			if seErr == nil {
+				results = mergeScrapeResults(results, seResults)
+			}
+		}
 	} else if req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
 		// TV show search: title + SxxExx
 		results, err = j.searchTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode)
@@ -155,6 +163,34 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 
 	log.Printf("[%s] Returning %d results for %q", strings.ToLower(j.Name()), len(results), cleanTitle)
 	return results, nil
+}
+
+// mergeScrapeResults appends src onto dst, skipping duplicates. Results are
+// deduplicated by infohash when available, otherwise by torrent URL or title.
+func mergeScrapeResults(dst, src []ScrapeResult) []ScrapeResult {
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	key := func(r ScrapeResult) string {
+		switch {
+		case r.InfoHash != "":
+			return "h:" + strings.ToLower(r.InfoHash)
+		case r.TorrentURL != "":
+			return "u:" + r.TorrentURL
+		default:
+			return "t:" + strings.ToLower(r.Title)
+		}
+	}
+	for _, r := range dst {
+		seen[key(r)] = struct{}{}
+	}
+	for _, r := range src {
+		k := key(r)
+		if _, exists := seen[k]; exists {
+			continue
+		}
+		seen[k] = struct{}{}
+		dst = append(dst, r)
+	}
+	return dst
 }
 
 func sportsEventSearchQuery(title string) string {

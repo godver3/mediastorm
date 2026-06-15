@@ -146,13 +146,22 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 					ServiceType: models.ServiceTypeDebrid,
 				}
 
-				// For daily shows, check if this result matches the target date
+				// For daily shows, accept the result if it matches the target
+				// air date (date-named releases like talk shows) OR if its
+				// SxxExx code matches the primary target episode (S/E-named
+				// releases like SNL: "Saturday Night Live - S51E20 - ...").
+				// Check both filename and title since AIOStreams formats vary.
+				// The ±1 neighbor probes stay safe: neighbor titles parse to a
+				// different episode and are rejected.
 				if isDailySearch {
-					if mediaresolve.CandidateMatchesDailyDate(stream.filename, req.TargetAirDate, 0) {
+					targetCode := mediaresolve.EpisodeCode{Season: req.Parsed.Season, Episode: req.Parsed.Episode}
+					if mediaresolve.CandidateMatchesDailyDate(stream.filename, req.TargetAirDate, 0) ||
+						mediaresolve.CandidateMatchesEpisode(stream.filename, targetCode) ||
+						mediaresolve.CandidateMatchesEpisode(stream.title, targetCode) {
 						foundCorrectDate = true
 						batchResults = append(batchResults, result)
 					}
-					// Skip results that don't match the target date
+					// Skip results that don't match the target date or episode
 				} else {
 					batchResults = append(batchResults, result)
 				}
