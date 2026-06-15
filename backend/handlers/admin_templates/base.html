@@ -587,12 +587,15 @@
         }
 
         .toggle-slider {
+            display: inline-block;
+            flex-shrink: 0;
             width: 44px;
             height: 24px;
             background: var(--bg-tertiary);
+            border: 1px solid var(--border);
             border-radius: 9999px;
             position: relative;
-            transition: background 0.2s;
+            transition: background 0.2s, border-color 0.2s;
         }
 
         .toggle-slider::before {
@@ -602,8 +605,8 @@
             height: 18px;
             border-radius: 50%;
             background: var(--text-secondary);
-            top: 3px;
-            left: 3px;
+            top: 2px;
+            left: 2px;
             transition: all 0.2s;
         }
 
