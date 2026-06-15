@@ -268,7 +268,7 @@
             <button class="test-modal-close" onclick="closeBrandingWizard()">&times;</button>
         </div>
         <div class="test-modal-body">
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Choose one high-resolution image, then crop it for each app surface. The wizard uploads PNG crops for all four targets.</p>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Choose one high-resolution image, then crop it for each app surface. The wizard uploads PNG crops for all four targets. Your source image is saved and reloaded automatically next time so you can re-crop without re-selecting it.</p>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem;">
                 <label class="btn btn-primary" style="cursor: pointer; margin: 0;">
                     <input id="brandingWizardFile" type="file" accept="image/png,image/jpeg" style="display: none;" onchange="handleBrandingWizardFile(this)">
@@ -3109,7 +3109,9 @@
         image: null,
         objectUrl: '',
         activeTarget: 'home-tv',
-        crops: {}
+        crops: {},
+        sourceFile: null,   // original File chosen this session (pending save)
+        sourceDirty: false  // true when a newly chosen source needs persisting
     };
 
     Object.keys(brandingWizardTargets).forEach(key => {
@@ -3125,6 +3127,28 @@
         syncBrandingWizardControls();
         renderBrandingWizardPreview();
         document.getElementById('brandingWizardModal').classList.add('visible');
+        // Reuse the previously saved source image so it can be re-cropped
+        // without re-selecting the file from disk.
+        if (!brandingWizardState.image && getGlobalValue('display.branding.wizardSourceUrl')) {
+            loadSavedBrandingSource();
+        }
+    }
+
+    function loadSavedBrandingSource() {
+        const url = resolveFileUploadEndpoint('/api/branding/images/wizard-source') + '?t=' + Date.now();
+        const img = new Image();
+        img.onload = () => {
+            // Don't clobber an image the user just picked while this was loading.
+            if (brandingWizardState.sourceDirty) return;
+            brandingWizardState.image = img;
+            brandingWizardState.sourceFile = null;
+            brandingWizardState.sourceDirty = false;
+            document.getElementById('brandingWizardFileName').textContent = 'Using saved branding image';
+            document.getElementById('brandingWizardUploadBtn').disabled = false;
+            renderBrandingWizardPreview();
+        };
+        img.onerror = () => { /* no saved source available — leave the empty state */ };
+        img.src = url;
     }
 
     function closeBrandingWizard(event) {
@@ -3167,6 +3191,8 @@
         const img = new Image();
         img.onload = () => {
             brandingWizardState.image = img;
+            brandingWizardState.sourceFile = file;
+            brandingWizardState.sourceDirty = true;
             document.getElementById('brandingWizardFileName').textContent = file.name;
             document.getElementById('brandingWizardUploadBtn').disabled = false;
             document.getElementById('brandingWizardStatus').textContent = '';
@@ -3290,6 +3316,28 @@
                 const data = await response.json();
                 if (data.url) {
                     setValue('display.' + target.settingPath, data.url);
+                }
+            }
+            // Persist the original source image so it can be re-cropped later
+            // without re-selecting the file. A failure here is non-fatal — the
+            // crops have already been applied.
+            if (brandingWizardState.sourceDirty && brandingWizardState.sourceFile) {
+                statusEl.textContent = 'Saving source image...';
+                try {
+                    const srcForm = new FormData();
+                    srcForm.append('image', brandingWizardState.sourceFile, brandingWizardState.sourceFile.name || 'source.png');
+                    const srcResp = await fetch(resolveFileUploadEndpoint('/admin/api/settings/branding/wizard-source/image'), {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: srcForm
+                    });
+                    if (srcResp.ok) {
+                        const srcData = await srcResp.json();
+                        if (srcData.url) setValue('display.branding.wizardSourceUrl', srcData.url);
+                        brandingWizardState.sourceDirty = false;
+                    }
+                } catch (srcErr) {
+                    console.warn('Failed to save branding wizard source image:', srcErr);
                 }
             }
             statusEl.textContent = 'Branding images uploaded';

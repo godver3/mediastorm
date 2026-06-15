@@ -163,6 +163,13 @@ var brandingSlots = map[string]brandingSlot{
 		Get:      func(s config.Settings) string { return s.Display.Branding.LoadingLogoURL },
 		Set:      func(s *config.Settings, v string) { s.Display.Branding.LoadingLogoURL = v },
 	},
+	// wizard-source stores the original uncropped image so the branding wizard
+	// can reload and re-crop it later without re-selecting the file.
+	"wizard-source": {
+		FileName: "wizard-source",
+		Get:      func(s config.Settings) string { return s.Display.Branding.WizardSourceURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.WizardSourceURL = v },
+	},
 }
 
 func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +382,16 @@ func (h *SettingsHandler) brandingSlotFromRequest(r *http.Request) (brandingSlot
 }
 
 func (h *SettingsHandler) brandingImageDir(settings config.Settings) string {
+	return brandingImageDir(settings)
+}
+
+func (h *SettingsHandler) brandingImagePath(settings config.Settings, slot brandingSlot) (string, error) {
+	return brandingImagePath(settings, slot)
+}
+
+// brandingImageDir returns the on-disk directory where uploaded branding
+// images are stored for the given settings.
+func brandingImageDir(settings config.Settings) string {
 	baseDir := strings.TrimSpace(settings.Cache.Directory)
 	if baseDir == "" {
 		baseDir = "cache"
@@ -382,8 +399,10 @@ func (h *SettingsHandler) brandingImageDir(settings config.Settings) string {
 	return filepath.Join(baseDir, "branding")
 }
 
-func (h *SettingsHandler) brandingImagePath(settings config.Settings, slot brandingSlot) (string, error) {
-	dir := h.brandingImageDir(settings)
+// brandingImagePath returns the path to an uploaded branding image for the
+// given slot, or os.ErrNotExist if none has been uploaded.
+func brandingImagePath(settings config.Settings, slot brandingSlot) (string, error) {
+	dir := brandingImageDir(settings)
 	for _, ext := range []string{".png", ".jpg"} {
 		localPath := filepath.Join(dir, slot.FileName+ext)
 		if _, err := os.Stat(localPath); err == nil {
@@ -391,6 +410,24 @@ func (h *SettingsHandler) brandingImagePath(settings config.Settings, slot brand
 		}
 	}
 	return "", os.ErrNotExist
+}
+
+// webUIBrandingURL returns the public URL for an admin webui branding surface,
+// preferring a custom uploaded branding image (slotName) when present and
+// falling back to the bundled static asset (defaultStatic). base is the server
+// base-path prefix (may be empty). A cache-busting mtime is appended to custom
+// images so updates are picked up immediately.
+func webUIBrandingURL(settings config.Settings, base, slotName, defaultStatic string) string {
+	if slot, ok := brandingSlots[slotName]; ok {
+		if localPath, err := brandingImagePath(settings, slot); err == nil {
+			v := int64(0)
+			if info, statErr := os.Stat(localPath); statErr == nil {
+				v = info.ModTime().Unix()
+			}
+			return fmt.Sprintf("%s/api/branding/images/%s?v=%d", base, slot.FileName, v)
+		}
+	}
+	return base + "/api/static/" + defaultStatic
 }
 
 // redactSettings replaces sensitive credentials with a placeholder so

@@ -1382,6 +1382,24 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 			return f.HDRDVPolicy != "" && f.HDRDVPolicy != config.HDRDVPolicyNoExclusion || f.MaxSizeMovieGB > 0 || len(f.FilterOutTerms) > 0
 		},
 		"join": strings.Join,
+		// brandingURL resolves an admin webui branding surface to a custom
+		// uploaded image (reusing the app branding slots) when one is present,
+		// otherwise falls back to the bundled static asset. The server base
+		// path is derived from current settings so it stays correct at runtime.
+		"brandingURL": func(slotName, defaultStatic string) string {
+			settings, err := configManager.Load()
+			if err != nil {
+				return "/api/static/" + defaultStatic
+			}
+			base := ""
+			if settings.Server.BasePath != "" {
+				base = "/" + strings.Trim(settings.Server.BasePath, "/")
+				if base == "/" {
+					base = ""
+				}
+			}
+			return webUIBrandingURL(settings, base, slotName, defaultStatic)
+		},
 	}
 
 	// Read base template
@@ -1417,7 +1435,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 	if err != nil {
 		fmt.Printf("Error reading login.html: %v\n", err)
 	} else {
-		loginTmpl, err = template.New("login").Parse(string(loginContent))
+		loginTmpl, err = template.New("login").Funcs(funcMap).Parse(string(loginContent))
 		if err != nil {
 			fmt.Printf("Error parsing login.html: %v\n", err)
 		}

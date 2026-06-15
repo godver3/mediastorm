@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,5 +76,55 @@ func TestBrandingImageUploadPersistsSettingAndServesImage(t *testing.T) {
 	}
 	if contentType := serveRec.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "image/png") {
 		t.Fatalf("content type = %q, want image/png", contentType)
+	}
+}
+
+func TestWebUIBrandingURLFallsBackToStatic(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.Cache.Directory = t.TempDir()
+
+	// No uploaded image -> bundled static asset, with server base path applied.
+	got := webUIBrandingURL(settings, "/mediastorm", "settings-tv", "favicon-32.png")
+	if got != "/mediastorm/api/static/favicon-32.png" {
+		t.Fatalf("fallback URL = %q", got)
+	}
+
+	// Empty base path produces a root-relative static URL.
+	got = webUIBrandingURL(settings, "", "loading-logo", "app-logo-wide.png")
+	if got != "/api/static/app-logo-wide.png" {
+		t.Fatalf("fallback URL = %q", got)
+	}
+}
+
+func TestWizardSourceBrandingSlotRoundTrips(t *testing.T) {
+	slot, ok := brandingSlots["wizard-source"]
+	if !ok {
+		t.Fatal("wizard-source branding slot not registered")
+	}
+	var settings config.Settings
+	slot.Set(&settings, "/branding/images/wizard-source?v=1")
+	if got := slot.Get(settings); got != "/branding/images/wizard-source?v=1" {
+		t.Fatalf("wizard-source slot get = %q", got)
+	}
+	if settings.Display.Branding.WizardSourceURL != "/branding/images/wizard-source?v=1" {
+		t.Fatalf("wizard-source slot did not back WizardSourceURL: %q", settings.Display.Branding.WizardSourceURL)
+	}
+}
+
+func TestWebUIBrandingURLPrefersUploadedImage(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.Cache.Directory = t.TempDir()
+
+	dir := brandingImageDir(settings)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir branding dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings-tv.png"), []byte("png"), 0o644); err != nil {
+		t.Fatalf("write branding image: %v", err)
+	}
+
+	got := webUIBrandingURL(settings, "", "settings-tv", "favicon-32.png")
+	if !strings.HasPrefix(got, "/api/branding/images/settings-tv?v=") {
+		t.Fatalf("custom branding URL = %q", got)
 	}
 }

@@ -773,6 +773,10 @@ type BrandingSettings struct {
 	HomeMobileLogoURL  string `json:"homeMobileLogoUrl,omitempty"`  // Recommended 1280x768 to match the bundled mobile branding image
 	SettingsTVImageURL string `json:"settingsTvImageUrl,omitempty"` // Recommended 1200x1200 square image
 	LoadingLogoURL     string `json:"loadingLogoUrl,omitempty"`     // Recommended 800x320 transparent PNG or wide logo
+	// WizardSourceURL holds the original uncropped image uploaded via the
+	// branding wizard so it can be reloaded and re-cropped later without
+	// re-selecting the file. Not a user-facing branding surface.
+	WizardSourceURL string `json:"wizardSourceUrl,omitempty"`
 }
 
 // AppearanceSettings controls app-wide visual accessibility and theming preferences.
