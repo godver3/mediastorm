@@ -40,7 +40,18 @@ const (
 	// providers redirect .ts requests to tokenized CDN nodes that drop any
 	// connection lacking a User-Agent, so this must always be set.
 	liveStreamUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
+
+	// liveBrowserUserAgent is a fallback for the Xtream metadata API. Some
+	// providers whitelist only real browser User-Agents and stall every other
+	// request (including VLC) until it times out. When the primary UA fails we
+	// retry with this so testing/category fetches still work.
+	liveBrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+
+// xtreamUserAgents is the ordered list of User-Agents tried when fetching the
+// Xtream metadata API: the VLC UA used for stream playback first, then a
+// browser UA as a fallback for providers that whitelist only browsers.
+var xtreamUserAgents = []string{liveStreamUserAgent, liveBrowserUserAgent}
 
 // LiveChannel represents a parsed channel from an M3U playlist.
 type LiveChannel struct {
@@ -1132,6 +1143,9 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL, pr
 	if err != nil {
 		return "", fmt.Errorf("failed to construct playlist request: %w", err)
 	}
+	// Some providers block requests lacking a recognized player/browser
+	// User-Agent, so set the same UA used for stream playback.
+	req.Header.Set("User-Agent", liveStreamUserAgent)
 
 	resp, err := h.liveHTTPClient(proxyURL).Do(req)
 	if err != nil {
@@ -1332,6 +1346,49 @@ func (h *LiveHandler) WarmPlaylistCache(ctx context.Context) (int, error) {
 	return totalChannels, nil
 }
 
+// fetchXtreamWithUAFallback performs a GET against an Xtream metadata URL,
+// trying each candidate User-Agent until one returns a usable (non-error)
+// response. It returns the live response, the User-Agent that worked (so the
+// caller can reuse it for follow-up requests), or the last error encountered.
+// The caller owns closing the returned body.
+func (h *LiveHandler) fetchXtreamWithUAFallback(ctx context.Context, client *http.Client, requestURL string) (*http.Response, string, error) {
+	var lastErr error
+	for _, ua := range xtreamUserAgents {
+		// Stop early if the caller's context is already done — retrying with a
+		// different UA won't help a cancelled/expired request.
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, "", lastErr
+			}
+			return nil, "", err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("User-Agent", ua)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			log.Printf("[live] Xtream request failed with UA %q: %v", ua, err)
+			continue
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("request returned status %d", resp.StatusCode)
+			log.Printf("[live] Xtream request returned status %d with UA %q", resp.StatusCode, ua)
+			continue
+		}
+		return resp, ua, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no User-Agent candidates configured")
+	}
+	return nil, "", lastErr
+}
+
 // fetchXtreamChannels fetches live channels from the Xtream Codes API.
 func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, password, proxyURL string) ([]LiveChannel, error) {
 	host = strings.TrimRight(host, "/")
@@ -1342,21 +1399,17 @@ func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, p
 
 	log.Printf("[live] fetching Xtream categories from: %s", categoriesURL)
 
-	catReq, err := http.NewRequestWithContext(ctx, http.MethodGet, categoriesURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create categories request: %w", err)
-	}
-
 	client := h.liveHTTPClient(proxyURL)
-	catResp, err := client.Do(catReq)
+
+	// Try each candidate User-Agent in turn: some providers whitelist only VLC,
+	// others only real browsers, and stall every other request until it times
+	// out. Remember whichever UA succeeded so the streams call reuses it instead
+	// of paying the fallback cost twice.
+	catResp, workingUA, err := h.fetchXtreamWithUAFallback(ctx, client, categoriesURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch categories: %w", err)
 	}
 	defer catResp.Body.Close()
-
-	if catResp.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("categories fetch returned status %d", catResp.StatusCode)
-	}
 
 	var categories []XtreamCategory
 	if err := json.NewDecoder(catResp.Body).Decode(&categories); err != nil {
@@ -1379,6 +1432,7 @@ func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, p
 	if err != nil {
 		return nil, fmt.Errorf("failed to create streams request: %w", err)
 	}
+	streamReq.Header.Set("User-Agent", workingUA)
 
 	streamResp, err := client.Do(streamReq)
 	if err != nil {

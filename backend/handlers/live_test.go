@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -631,5 +632,91 @@ func TestStreamChannelWebRequestUsesProxyAndUserAgent(t *testing.T) {
 	}
 	if sawUA != liveStreamUserAgent {
 		t.Fatalf("upstream User-Agent = %q, want %q", sawUA, liveStreamUserAgent)
+	}
+}
+
+// TestFetchXtreamChannelsSendsUserAgent verifies the Xtream player_api.php
+// category and stream requests carry a recognized player User-Agent. Some
+// providers stall requests lacking one (the default Go-http-client UA) until
+// the request times out, surfacing as "context deadline exceeded".
+func TestFetchXtreamChannelsSendsUserAgent(t *testing.T) {
+	var catUA, streamUA string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("action") {
+		case "get_live_categories":
+			catUA = r.Header.Get("User-Agent")
+			_, _ = w.Write([]byte(`[{"category_id":"1","category_name":"News"}]`))
+		case "get_live_streams":
+			streamUA = r.Header.Get("User-Agent")
+			_, _ = w.Write([]byte(`[{"stream_id":10,"name":"Channel One","stream_type":"live","category_id":"1"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer provider.Close()
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	h := NewLiveHandler(provider.Client(), false, "", 24, 0, 0, false, mgr, nil)
+
+	channels, err := h.fetchXtreamChannels(context.Background(), provider.URL, "user", "pass", "")
+	if err != nil {
+		t.Fatalf("fetchXtreamChannels: %v", err)
+	}
+	if len(channels) != 1 || channels[0].Name != "Channel One" || channels[0].Group != "News" {
+		t.Fatalf("channels = %+v, want one News channel", channels)
+	}
+	if catUA != liveStreamUserAgent {
+		t.Fatalf("categories User-Agent = %q, want %q", catUA, liveStreamUserAgent)
+	}
+	if streamUA != liveStreamUserAgent {
+		t.Fatalf("streams User-Agent = %q, want %q", streamUA, liveStreamUserAgent)
+	}
+}
+
+// TestFetchXtreamChannelsFallsBackToBrowserUA verifies that when a provider
+// rejects the VLC UA, the fetch retries with a browser UA and reuses that
+// working UA for the follow-up streams request.
+func TestFetchXtreamChannelsFallsBackToBrowserUA(t *testing.T) {
+	var catUAs, streamUAs []string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua := r.Header.Get("User-Agent")
+		// Simulate a provider that whitelists only real browsers.
+		if ua != liveBrowserUserAgent {
+			http.Error(w, "not permitted", http.StatusForbidden)
+			if r.URL.Query().Get("action") == "get_live_categories" {
+				catUAs = append(catUAs, ua)
+			}
+			return
+		}
+		switch r.URL.Query().Get("action") {
+		case "get_live_categories":
+			catUAs = append(catUAs, ua)
+			_, _ = w.Write([]byte(`[{"category_id":"1","category_name":"News"}]`))
+		case "get_live_streams":
+			streamUAs = append(streamUAs, ua)
+			_, _ = w.Write([]byte(`[{"stream_id":10,"name":"Channel One","stream_type":"live","category_id":"1"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer provider.Close()
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	h := NewLiveHandler(provider.Client(), false, "", 24, 0, 0, false, mgr, nil)
+
+	channels, err := h.fetchXtreamChannels(context.Background(), provider.URL, "user", "pass", "")
+	if err != nil {
+		t.Fatalf("fetchXtreamChannels: %v", err)
+	}
+	if len(channels) != 1 || channels[0].Group != "News" {
+		t.Fatalf("channels = %+v, want one News channel", channels)
+	}
+	// Categories should have tried VLC first, then succeeded on the browser UA.
+	if len(catUAs) != 2 || catUAs[0] != liveStreamUserAgent || catUAs[1] != liveBrowserUserAgent {
+		t.Fatalf("category UA attempts = %v, want [VLC, browser]", catUAs)
+	}
+	// Streams should reuse the working browser UA directly (no wasted VLC retry).
+	if len(streamUAs) != 1 || streamUAs[0] != liveBrowserUserAgent {
+		t.Fatalf("stream UA attempts = %v, want [browser]", streamUAs)
 	}
 }
