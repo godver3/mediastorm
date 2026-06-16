@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -439,5 +441,45 @@ func TestGetActiveStreams_StaleHeartbeatActiveTransportKept(t *testing.T) {
 	}
 	if resp.Streams[0].IsPaused {
 		t.Fatalf("expected actively-streaming entry to not be marked paused")
+	}
+}
+
+func TestRestartServer_RespondsAcceptedAndSignals(t *testing.T) {
+	hlsMgr := NewHLSManager(t.TempDir(), "", "", nil)
+	handler := NewAdminHandler(hlsMgr)
+
+	// Stub signalSelf so the test runner is not actually terminated.
+	gotSignal := make(chan os.Signal, 1)
+	orig := signalSelf
+	signalSelf = func(sig os.Signal) error {
+		gotSignal <- sig
+		return nil
+	}
+	defer func() { signalSelf = orig }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/restart", nil)
+	rec := httptest.NewRecorder()
+	handler.RestartServer(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "restarting" {
+		t.Errorf("expected status 'restarting', got %v", resp["status"])
+	}
+
+	// The signal is sent asynchronously after a short delay.
+	select {
+	case sig := <-gotSignal:
+		if sig != syscall.SIGTERM {
+			t.Errorf("expected SIGTERM, got %v", sig)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected process to be signalled, but it was not")
 	}
 }

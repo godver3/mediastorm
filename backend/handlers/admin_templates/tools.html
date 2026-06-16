@@ -1257,6 +1257,37 @@
             <div id="troubleshooting-upload-status" class="text-muted" style="margin-top: 0.75rem; font-size: 0.875rem;"></div>
         </div>
     </div>
+
+    <div class="section" id="restartBackendSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+                Restart Backend
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Gracefully restart the backend process. Active streams and background tasks
+                are drained first. This only restarts automatically when the server is run
+                with a restart policy (the bundled Docker setup uses
+                <code>restart: unless-stopped</code>) — otherwise the backend will stop and
+                must be started manually.
+            </p>
+            <button class="btn btn-secondary" id="restart-backend-btn" onclick="restartBackend()" style="color: var(--danger);">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+                Restart Backend
+            </button>
+        </div>
+    </div>
 </div>
 
 <style>
@@ -1815,6 +1846,45 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
+        }
+    }
+
+    async function restartBackend() {
+        const btn = document.getElementById('restart-backend-btn');
+        if (!btn) return;
+
+        if (!confirm('Restart the backend now? Active streams will be interrupted. The backend will be unavailable for a few seconds while it restarts.')) {
+            return;
+        }
+
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Restarting...';
+
+        try {
+            const response = await fetch(basePath + '/api/admin/restart', {
+                method: 'POST',
+                credentials: 'same-origin'
+            });
+            if (response.ok) {
+                showToast('Backend is restarting...');
+                // The process is shutting down; reload once it is back up.
+                setTimeout(() => window.location.reload(), 5000);
+            } else {
+                let message = 'Failed to restart backend';
+                try {
+                    const result = await response.json();
+                    message = result.error || message;
+                } catch (_) {}
+                showToast(message, 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        } catch (e) {
+            // A dropped connection here is expected — the server may shut down
+            // before the response is fully delivered. Treat it as success.
+            showToast('Backend is restarting...');
+            setTimeout(() => window.location.reload(), 5000);
         }
     }
 

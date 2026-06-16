@@ -3,9 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"novastream/internal/mediaidentity"
@@ -738,4 +741,46 @@ func cleanFilenameForConsolidation(filename string) string {
 // formatSeasonEpisode returns a pattern like "s01e01" for matching
 func formatSeasonEpisode(season, episode int) string {
 	return fmt.Sprintf("s%02de%02d", season, episode)
+}
+
+// signalSelf delivers sig to the current process. It is a variable so tests can
+// stub it without actually terminating the test runner.
+var signalSelf = func(sig os.Signal) error {
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return err
+	}
+	return p.Signal(sig)
+}
+
+// RestartServer triggers a graceful shutdown of the backend process. When the
+// container is run with a restart policy (the bundled docker-compose uses
+// "restart: unless-stopped"), Docker brings the process back up automatically.
+//
+// The shutdown is performed by sending the process the same SIGTERM it already
+// handles in main(), so in-flight requests and background workers drain
+// cleanly. We respond to the client first, then signal after a short delay so
+// the HTTP response is flushed before the server begins tearing down.
+func (h *AdminHandler) RestartServer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "restarting",
+		"message": "Backend is restarting. It will be available again shortly if a restart policy is configured.",
+	})
+
+	// Flush the response so the client sees it before the server shuts down.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	log.Println("🔄 Restart requested via admin API; sending SIGTERM for graceful shutdown")
+
+	go func() {
+		// Give the response a moment to reach the client before tearing down.
+		time.Sleep(500 * time.Millisecond)
+		if err := signalSelf(syscall.SIGTERM); err != nil {
+			log.Printf("Restart: failed to signal process for shutdown: %v", err)
+		}
+	}()
 }

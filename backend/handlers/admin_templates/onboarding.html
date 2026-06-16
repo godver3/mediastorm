@@ -521,7 +521,7 @@ async function testStreamingSource() {
 }
 
 const searchSourceTypes = {
-  torrentio: { label: 'Torrentio', group: 'torrent', type: 'torrentio', name: 'Torrentio', url: false, key: false, options: true, optionsDefault: 'sort=qualitysize|qualityfilter=480p,scr,cam' },
+  torrentio: { label: 'Torrentio', group: 'torrent', type: 'torrentio', name: 'Torrentio', url: false, key: false, options: true, optionsDefault: 'sort=qualitysize|qualityfilter=480p,scr,cam', optionsHint: 'Use the <a href="https://torrentio.strem.fun/configure" target="_blank" rel="noopener noreferrer">Torrentio configurator</a>, then copy only the options segment before /stream.' },
   'prowlarr-torrent': { label: 'Prowlarr (Torrent)', group: 'torrent', type: 'prowlarr', name: 'Prowlarr', url: true, key: true },
   jackett: { label: 'Jackett', group: 'torrent', type: 'jackett', name: 'Jackett', url: true, key: true },
   zilean: { label: 'Zilean', group: 'torrent', type: 'zilean', name: 'Zilean', url: true, key: false },
@@ -574,6 +574,7 @@ function addSearchSourceRow(source = {}) {
     <div class="form-group source-extra source-options">
       <label class="form-label">Options</label>
       <input class="form-input source-options-input" value="${escapeHtml(source.options || def.optionsDefault || '')}">
+      <p class="form-hint source-options-hint"></p>
     </div>
     <div class="form-group source-extra source-categories">
       <label class="form-label">Categories</label>
@@ -603,6 +604,11 @@ function updateSearchSourceRow(id) {
   if (!name.value.trim()) name.value = def.name;
   const options = row.querySelector('.source-options-input');
   if (def.options && !options.value.trim() && def.optionsDefault) options.value = def.optionsDefault;
+  const optionsHint = row.querySelector('.source-options-hint');
+  if (optionsHint) {
+    optionsHint.innerHTML = def.optionsHint || '';
+    optionsHint.style.display = def.optionsHint ? '' : 'none';
+  }
 }
 
 function removeSearchSourceRow(id) {

@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -10,9 +12,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +22,33 @@ import (
 
 	"golang.org/x/image/draw"
 )
+
+const imageProxyDefaultQuality = 80
+
+type imageWarmRequest struct {
+	Images []imageWarmItem `json:"images"`
+}
+
+type imageWarmItem struct {
+	URL     string `json:"url"`
+	Width   int    `json:"width,omitempty"`
+	Quality int    `json:"quality,omitempty"`
+}
+
+type imageWarmResult struct {
+	URL     string `json:"url"`
+	Width   int    `json:"width,omitempty"`
+	Quality int    `json:"quality,omitempty"`
+	Cached  bool   `json:"cached"`
+	Error   string `json:"error,omitempty"`
+}
+
+type imageWarmResponse struct {
+	Results []imageWarmResult `json:"results"`
+	Warmed  int               `json:"warmed"`
+	Cached  int               `json:"cached"`
+	Failed  int               `json:"failed"`
+}
 
 // ImageHandler handles image proxying with resize and caching
 type ImageHandler struct {
@@ -59,21 +88,8 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate URL is from allowed image sources (exact hostname match)
-	allowedImageHosts := map[string]struct{}{
-		"image.tmdb.org":          {},
-		"img.youtube.com":         {},
-		"artworks.thetvdb.com":    {},
-		"thetvdb.com":             {},
-		"www.thetvdb.com":         {},
-	}
-	parsedSource, err := url.Parse(sourceURL)
-	if err != nil || parsedSource.Host == "" {
+	if err := validateProxyImageURL(sourceURL); err != nil {
 		http.Error(w, "invalid URL", http.StatusBadRequest)
-		return
-	}
-	if _, ok := allowedImageHosts[parsedSource.Hostname()]; !ok {
-		http.Error(w, "URL not allowed", http.StatusForbidden)
 		return
 	}
 
@@ -86,24 +102,70 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// JPEG quality (default 80, good balance of size and quality)
-	quality := 80
+	quality := imageProxyDefaultQuality
 	if qStr := r.URL.Query().Get("q"); qStr != "" {
 		if q, err := strconv.Atoi(qStr); err == nil && q >= 1 && q <= 100 {
 			quality = q
 		}
 	}
 
-	// Generate cache key from URL + width + quality
+	_, data, cached, err := h.ensureCached(sourceURL, targetWidth, quality)
+	if err != nil {
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "decode") || strings.Contains(err.Error(), "encode") {
+			status = http.StatusInternalServerError
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=2592000") // 30 days
+	if cached {
+		w.Header().Set("X-Cache", "HIT")
+	} else {
+		w.Header().Set("X-Cache", "MISS")
+	}
+	w.Write(data)
+}
+
+func validateProxyImageURL(sourceURL string) error {
+	allowedImageHosts := map[string]struct{}{
+		"image.tmdb.org":       {},
+		"img.youtube.com":      {},
+		"artworks.thetvdb.com": {},
+		"thetvdb.com":          {},
+		"www.thetvdb.com":      {},
+	}
+	parsedSource, err := url.Parse(sourceURL)
+	if err != nil || parsedSource.Host == "" {
+		return fmt.Errorf("invalid URL")
+	}
+	if _, ok := allowedImageHosts[parsedSource.Hostname()]; !ok {
+		return fmt.Errorf("URL not allowed")
+	}
+	return nil
+}
+
+func normalizeProxyWidth(width int) int {
+	if width > 0 && width <= 2000 {
+		return width
+	}
+	return 0
+}
+
+func normalizeProxyQuality(quality int) int {
+	if quality >= 1 && quality <= 100 {
+		return quality
+	}
+	return imageProxyDefaultQuality
+}
+
+func (h *ImageHandler) ensureCached(sourceURL string, targetWidth, quality int) (string, []byte, bool, error) {
 	cacheKey := h.cacheKey(sourceURL, targetWidth, quality)
 	cachePath := filepath.Join(h.cacheDir, cacheKey+".jpg")
-
-	// Check cache first
 	if data, err := os.ReadFile(cachePath); err == nil {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=2592000") // 30 days
-		w.Header().Set("X-Cache", "HIT")
-		w.Write(data)
-		return
+		return cachePath, data, true, nil
 	}
 
 	// Prevent duplicate fetches for the same image
@@ -114,14 +176,9 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		<-ch
 		// Now try to serve from cache
 		if data, err := os.ReadFile(cachePath); err == nil {
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "public, max-age=2592000")
-			w.Header().Set("X-Cache", "HIT")
-			w.Write(data)
-			return
+			return cachePath, data, true, nil
 		}
-		http.Error(w, "Failed to load image", http.StatusInternalServerError)
-		return
+		return cachePath, nil, false, fmt.Errorf("failed to load image")
 	}
 	// Mark as in progress
 	ch := make(chan struct{})
@@ -139,23 +196,20 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.httpc.Get(sourceURL)
 	if err != nil {
 		log.Printf("[ImageProxy] Fetch error for %s: %v", sourceURL, err)
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
-		return
+		return cachePath, nil, false, fmt.Errorf("failed to fetch image")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[ImageProxy] Fetch returned %d for %s", resp.StatusCode, sourceURL)
-		http.Error(w, "Image source error", resp.StatusCode)
-		return
+		return cachePath, nil, false, fmt.Errorf("image source error")
 	}
 
 	// Decode the image
 	img, _, err := image.Decode(resp.Body)
 	if err != nil {
 		log.Printf("[ImageProxy] Decode error for %s: %v", sourceURL, err)
-		http.Error(w, "Failed to decode image", http.StatusInternalServerError)
-		return
+		return cachePath, nil, false, fmt.Errorf("failed to decode image")
 	}
 
 	// Resize if requested
@@ -183,11 +237,11 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		log.Printf("[ImageProxy] Cache create error: %v", err)
-		// Still serve the image, just don't cache
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("X-Cache", "MISS-NOCACHE")
-		jpeg.Encode(w, img, &jpeg.Options{Quality: quality})
-		return
+		var buf bytes.Buffer
+		if encodeErr := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); encodeErr != nil {
+			return cachePath, nil, false, fmt.Errorf("failed to encode image")
+		}
+		return cachePath, buf.Bytes(), false, nil
 	}
 
 	// Encode to temp file
@@ -195,8 +249,7 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 		f.Close()
 		os.Remove(tmpPath)
 		log.Printf("[ImageProxy] Encode error: %v", err)
-		http.Error(w, "Failed to encode image", http.StatusInternalServerError)
-		return
+		return cachePath, nil, false, fmt.Errorf("failed to encode image")
 	}
 	f.Close()
 
@@ -209,14 +262,66 @@ func (h *ImageHandler) Proxy(w http.ResponseWriter, r *http.Request) {
 	// Serve from cache
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		http.Error(w, "Failed to read cached image", http.StatusInternalServerError)
-		return
+		return cachePath, nil, false, fmt.Errorf("failed to read cached image")
 	}
 
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=2592000") // 30 days
-	w.Header().Set("X-Cache", "MISS")
-	w.Write(data)
+	return cachePath, data, false, nil
+}
+
+// Warm pre-fills the image proxy cache for a batch of source URLs and resize widths.
+func (h *ImageHandler) Warm(w http.ResponseWriter, r *http.Request) {
+	var req imageWarmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+	if len(req.Images) > 64 {
+		req.Images = req.Images[:64]
+	}
+
+	response := imageWarmResponse{Results: make([]imageWarmResult, 0, len(req.Images))}
+	seen := make(map[string]struct{})
+	for _, item := range req.Images {
+		sourceURL := strings.TrimSpace(item.URL)
+		width := normalizeProxyWidth(item.Width)
+		quality := normalizeProxyQuality(item.Quality)
+		result := imageWarmResult{URL: sourceURL, Width: width, Quality: quality}
+		key := h.cacheKey(sourceURL, width, quality)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		if sourceURL == "" {
+			result.Error = "url required"
+			response.Failed++
+			response.Results = append(response.Results, result)
+			continue
+		}
+		if err := validateProxyImageURL(sourceURL); err != nil {
+			result.Error = err.Error()
+			response.Failed++
+			response.Results = append(response.Results, result)
+			continue
+		}
+
+		_, _, cached, err := h.ensureCached(sourceURL, width, quality)
+		if err != nil {
+			result.Error = err.Error()
+			response.Failed++
+		} else if cached {
+			result.Cached = true
+			response.Cached++
+		} else {
+			response.Warmed++
+		}
+		response.Results = append(response.Results, result)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // cacheKey generates a unique cache key for the image

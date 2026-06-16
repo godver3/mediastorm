@@ -463,6 +463,8 @@ func Register(
 
 	// Image proxy endpoint (public - no auth required for image loading)
 	if imageHandler != nil {
+		protected.HandleFunc("/images/warm", imageHandler.Warm).Methods(http.MethodPost)
+		protected.HandleFunc("/images/warm", imageHandler.Options).Methods(http.MethodOptions)
 		api.HandleFunc("/images/proxy", imageHandler.Proxy).Methods(http.MethodGet, http.MethodHead)
 		api.HandleFunc("/images/proxy", imageHandler.Options).Methods(http.MethodOptions)
 	}
@@ -474,6 +476,8 @@ func Register(
 	adminRouter := protected.PathPrefix("/admin").Subrouter()
 	adminRouter.Use(MasterOnlyMiddleware())
 	adminRouter.HandleFunc("/streams", adminHandler.GetActiveStreams).Methods(http.MethodGet, http.MethodOptions)
+	adminRouter.HandleFunc("/restart", adminHandler.RestartServer).Methods(http.MethodPost)
+	adminRouter.HandleFunc("/restart", handleOptions).Methods(http.MethodOptions)
 
 	// Pprof debug endpoints for profiling (localhost only, no auth required for debugging)
 	// These are essential for diagnosing production issues and are safe since they're read-only
