@@ -773,6 +773,7 @@ type BrandingSettings struct {
 	HomeTVImageURL     string `json:"homeTvImageUrl,omitempty"`     // Recommended 2330x1000 or equivalent 2.33:1 TV-safe crop
 	HomeMobileLogoURL  string `json:"homeMobileLogoUrl,omitempty"`  // Recommended 1280x768 to match the bundled mobile branding image
 	SettingsTVImageURL string `json:"settingsTvImageUrl,omitempty"` // Recommended 1200x1200 square image
+	WebIconURL         string `json:"webIconUrl,omitempty"`         // Recommended 256x256 square icon for web UI favicon/nav
 	LoadingLogoURL     string `json:"loadingLogoUrl,omitempty"`     // Recommended 800x320 transparent PNG or wide logo
 	// WizardSourceURL holds the original uncropped image uploaded via the
 	// branding wizard so it can be reloaded and re-cropped later without

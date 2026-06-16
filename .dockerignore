@@ -25,6 +25,8 @@ frontend/**
 !frontend/config/**
 !frontend/constants/
 !frontend/constants/**
+!frontend/features/
+!frontend/features/**
 !frontend/hooks/
 !frontend/hooks/**
 !frontend/locales/

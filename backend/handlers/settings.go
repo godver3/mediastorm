@@ -158,6 +158,11 @@ var brandingSlots = map[string]brandingSlot{
 		Get:      func(s config.Settings) string { return s.Display.Branding.SettingsTVImageURL },
 		Set:      func(s *config.Settings, v string) { s.Display.Branding.SettingsTVImageURL = v },
 	},
+	"web-icon": {
+		FileName: "web-icon",
+		Get:      func(s config.Settings) string { return s.Display.Branding.WebIconURL },
+		Set:      func(s *config.Settings, v string) { s.Display.Branding.WebIconURL = v },
+	},
 	"loading-logo": {
 		FileName: "loading-logo",
 		Get:      func(s config.Settings) string { return s.Display.Branding.LoadingLogoURL },

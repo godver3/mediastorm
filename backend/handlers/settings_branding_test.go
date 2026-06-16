@@ -84,7 +84,7 @@ func TestWebUIBrandingURLFallsBackToStatic(t *testing.T) {
 	settings.Cache.Directory = t.TempDir()
 
 	// No uploaded image -> bundled static asset, with server base path applied.
-	got := webUIBrandingURL(settings, "/mediastorm", "settings-tv", "favicon-32.png")
+	got := webUIBrandingURL(settings, "/mediastorm", "web-icon", "favicon-32.png")
 	if got != "/mediastorm/api/static/favicon-32.png" {
 		t.Fatalf("fallback URL = %q", got)
 	}
@@ -111,6 +111,21 @@ func TestWizardSourceBrandingSlotRoundTrips(t *testing.T) {
 	}
 }
 
+func TestWebIconBrandingSlotRoundTrips(t *testing.T) {
+	slot, ok := brandingSlots["web-icon"]
+	if !ok {
+		t.Fatal("web-icon branding slot not registered")
+	}
+	var settings config.Settings
+	slot.Set(&settings, "/branding/images/web-icon?v=1")
+	if got := slot.Get(settings); got != "/branding/images/web-icon?v=1" {
+		t.Fatalf("web-icon slot get = %q", got)
+	}
+	if settings.Display.Branding.WebIconURL != "/branding/images/web-icon?v=1" {
+		t.Fatalf("web-icon slot did not back WebIconURL: %q", settings.Display.Branding.WebIconURL)
+	}
+}
+
 func TestWebUIBrandingURLPrefersUploadedImage(t *testing.T) {
 	settings := config.DefaultSettings()
 	settings.Cache.Directory = t.TempDir()
@@ -119,12 +134,12 @@ func TestWebUIBrandingURLPrefersUploadedImage(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir branding dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "settings-tv.png"), []byte("png"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "web-icon.png"), []byte("png"), 0o644); err != nil {
 		t.Fatalf("write branding image: %v", err)
 	}
 
-	got := webUIBrandingURL(settings, "", "settings-tv", "favicon-32.png")
-	if !strings.HasPrefix(got, "/api/branding/images/settings-tv?v=") {
+	got := webUIBrandingURL(settings, "", "web-icon", "favicon-32.png")
+	if !strings.HasPrefix(got, "/api/branding/images/web-icon?v=") {
 		t.Fatalf("custom branding URL = %q", got)
 	}
 }

@@ -268,7 +268,7 @@
             <button class="test-modal-close" onclick="closeBrandingWizard()">&times;</button>
         </div>
         <div class="test-modal-body">
-            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Choose one high-resolution image, then crop it for each app surface. The wizard uploads PNG crops for all four targets. Your source image is saved and reloaded automatically next time so you can re-crop without re-selecting it.</p>
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">Choose one high-resolution image, then crop it for each app surface. The wizard uploads PNG crops for all five targets. Your source image is saved and reloaded automatically next time so you can re-crop without re-selecting it.</p>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem;">
                 <label class="btn btn-primary" style="cursor: pointer; margin: 0;">
                     <input id="brandingWizardFile" type="file" accept="image/png,image/jpeg" style="display: none;" onchange="handleBrandingWizardFile(this)">
@@ -3094,6 +3094,14 @@
             height: 1200,
             endpoint: '/admin/api/settings/branding/settings-tv/image',
             settingPath: 'branding.settingsTvImageUrl'
+        },
+        'web-icon': {
+            label: 'Web Icon',
+            hint: '256x256',
+            width: 256,
+            height: 256,
+            endpoint: '/admin/api/settings/branding/web-icon/image',
+            settingPath: 'branding.webIconUrl'
         },
         'loading-logo': {
             label: 'Loading Logo',

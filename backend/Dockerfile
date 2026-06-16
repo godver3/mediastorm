@@ -23,6 +23,7 @@ COPY frontend/assets ./assets
 COPY frontend/components ./components
 COPY frontend/config ./config
 COPY frontend/constants ./constants
+COPY frontend/features ./features
 COPY frontend/hooks ./hooks
 COPY frontend/locales ./locales
 COPY frontend/plugins ./plugins
