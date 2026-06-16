@@ -64,6 +64,20 @@ func NewAccountUIHandler(accountsSvc *accounts.Service, sessionsSvc *sessions.Se
 			}
 			return s[start:end]
 		},
+		"brandingURL": func(slotName, defaultStatic string) string {
+			if configManager == nil {
+				return staticBrandingURL("", defaultStatic)
+			}
+			settings, err := configManager.Load()
+			if err != nil {
+				return staticBrandingURL("", defaultStatic)
+			}
+			base := "/" + strings.Trim(settings.Server.BasePath, "/")
+			if base == "/" {
+				base = ""
+			}
+			return webUIBrandingURL(settings, base, slotName, defaultStatic)
+		},
 	}
 
 	// Parse base template first

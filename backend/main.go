@@ -1336,6 +1336,10 @@ func main() {
 	fmt.Println("🎬 Web app available at /watch")
 	fmt.Println("🎬 Web playback handoff available at /watch/playback.html")
 
+	r.HandleFunc("/favicon.ico", settingsHandler.ServeWebIcon).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc("/apple-touch-icon.png", settingsHandler.ServeAppleTouchIcon).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc("/apple-touch-icon-precomposed.png", settingsHandler.ServeAppleTouchIcon).Methods(http.MethodGet, http.MethodHead)
+
 	// Redirect root to admin dashboard
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusFound)

@@ -1,5 +1,5 @@
 <p align="center">
-<img width="400" height="240" alt="mediastorm" src="https://github.com/godver3/mediastorm/blob/master/mediastorm-tv.jpg?raw=true" />
+<img width="400" height="240" alt="mediastorm logo with yellow lightning bolt" src="backend/handlers/static/app-logo-wide.png" />
 </p>
 
 # mediastorm

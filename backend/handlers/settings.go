@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -136,6 +137,20 @@ type SettingsResponseWithLive struct {
 	Live LiveSettingsWithEffectiveURL `json:"live"`
 }
 
+// PublicBrandingResponse exposes only display branding URLs for unauthenticated
+// shells such as the dedicated /watch login page.
+type PublicBrandingResponse struct {
+	Branding PublicBrandingSettings `json:"branding"`
+}
+
+type PublicBrandingSettings struct {
+	HomeTVImageURL     string `json:"homeTvImageUrl,omitempty"`
+	HomeMobileLogoURL  string `json:"homeMobileLogoUrl,omitempty"`
+	SettingsTVImageURL string `json:"settingsTvImageUrl,omitempty"`
+	WebIconURL         string `json:"webIconUrl,omitempty"`
+	LoadingLogoURL     string `json:"loadingLogoUrl,omitempty"`
+}
+
 type brandingSlot struct {
 	FileName string
 	Get      func(config.Settings) string
@@ -202,6 +217,28 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *SettingsHandler) GetPublicBranding(w http.ResponseWriter, r *http.Request) {
+	s, err := h.Manager.Load()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	branding := s.Display.Branding
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(PublicBrandingResponse{
+		Branding: PublicBrandingSettings{
+			HomeTVImageURL:     branding.HomeTVImageURL,
+			HomeMobileLogoURL:  branding.HomeMobileLogoURL,
+			SettingsTVImageURL: branding.SettingsTVImageURL,
+			WebIconURL:         branding.WebIconURL,
+			LoadingLogoURL:     branding.LoadingLogoURL,
+		},
+	})
 }
 
 func (h *SettingsHandler) GetBrandingImageStatus(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +414,50 @@ func (h *SettingsHandler) ServeBrandingImage(w http.ResponseWriter, r *http.Requ
 	http.ServeFile(w, r, localPath)
 }
 
+func (h *SettingsHandler) ServeWebIcon(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.Manager.Load()
+	if err == nil {
+		if localPath, pathErr := h.brandingImagePath(settings, brandingSlots["web-icon"]); pathErr == nil {
+			w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+			w.Header().Set("Content-Type", "image/png")
+			http.ServeFile(w, r, localPath)
+			return
+		}
+	}
+
+	data, readErr := staticAssets.ReadFile("static/favicon-32.png")
+	if readErr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *SettingsHandler) ServeAppleTouchIcon(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.Manager.Load()
+	if err == nil {
+		if localPath, pathErr := h.brandingImagePath(settings, brandingSlots["web-icon"]); pathErr == nil {
+			w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+			w.Header().Set("Content-Type", "image/png")
+			http.ServeFile(w, r, localPath)
+			return
+		}
+	}
+
+	data, readErr := staticAssets.ReadFile("static/icon-80.png")
+	if readErr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
 func (h *SettingsHandler) brandingSlotFromRequest(r *http.Request) (brandingSlot, bool) {
 	name := strings.TrimSpace(mux.Vars(r)["slot"])
 	if name == "" {
@@ -420,8 +501,8 @@ func brandingImagePath(settings config.Settings, slot brandingSlot) (string, err
 // webUIBrandingURL returns the public URL for an admin webui branding surface,
 // preferring a custom uploaded branding image (slotName) when present and
 // falling back to the bundled static asset (defaultStatic). base is the server
-// base-path prefix (may be empty). A cache-busting mtime is appended to custom
-// images so updates are picked up immediately.
+// base-path prefix (may be empty). Cache-busting versions are appended so
+// updates are picked up immediately.
 func webUIBrandingURL(settings config.Settings, base, slotName, defaultStatic string) string {
 	if slot, ok := brandingSlots[slotName]; ok {
 		if localPath, err := brandingImagePath(settings, slot); err == nil {
@@ -432,7 +513,24 @@ func webUIBrandingURL(settings config.Settings, base, slotName, defaultStatic st
 			return fmt.Sprintf("%s/api/branding/images/%s?v=%d", base, slot.FileName, v)
 		}
 	}
-	return base + "/api/static/" + defaultStatic
+	return staticBrandingURL(base, defaultStatic)
+}
+
+func staticBrandingURL(base, defaultStatic string) string {
+	url := base + "/api/static/" + defaultStatic
+	if version := staticAssetVersion(defaultStatic); version != "" {
+		url += "?v=" + version
+	}
+	return url
+}
+
+func staticAssetVersion(defaultStatic string) string {
+	data, err := staticAssets.ReadFile("static/" + defaultStatic)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum)[:12]
 }
 
 // redactSettings replaces sensitive credentials with a placeholder so

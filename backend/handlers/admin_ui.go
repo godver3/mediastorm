@@ -1409,7 +1409,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		"brandingURL": func(slotName, defaultStatic string) string {
 			settings, err := configManager.Load()
 			if err != nil {
-				return "/api/static/" + defaultStatic
+				return staticBrandingURL("", defaultStatic)
 			}
 			base := ""
 			if settings.Server.BasePath != "" {
@@ -1467,7 +1467,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 	if err != nil {
 		fmt.Printf("Error reading register.html: %v\n", err)
 	} else {
-		registerTmpl, err = template.New("register").Parse(string(registerContent))
+		registerTmpl, err = template.New("register").Funcs(funcMap).Parse(string(registerContent))
 		if err != nil {
 			fmt.Printf("Error parsing register.html: %v\n", err)
 		}

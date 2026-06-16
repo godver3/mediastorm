@@ -156,6 +156,8 @@ func Register(
 	// Must be registered before protected routes to avoid auth middleware
 	api.HandleFunc("/users/{userID}/icon", usersHandler.ServeProfileIcon).Methods(http.MethodGet)
 	api.HandleFunc("/users/{userID}/icon", handleOptions).Methods(http.MethodOptions)
+	api.HandleFunc("/branding", settingsHandler.GetPublicBranding).Methods(http.MethodGet)
+	api.HandleFunc("/branding", handleOptions).Methods(http.MethodOptions)
 	api.HandleFunc("/debug/speed-test", handlers.ServeSpeedTest).Methods(http.MethodGet, http.MethodHead)
 	api.HandleFunc("/debug/speed-test", handleOptions).Methods(http.MethodOptions)
 	if videoHandler != nil {

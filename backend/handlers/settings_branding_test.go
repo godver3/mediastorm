@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -85,13 +86,13 @@ func TestWebUIBrandingURLFallsBackToStatic(t *testing.T) {
 
 	// No uploaded image -> bundled static asset, with server base path applied.
 	got := webUIBrandingURL(settings, "/mediastorm", "web-icon", "favicon-32.png")
-	if got != "/mediastorm/api/static/favicon-32.png" {
+	if got != "/mediastorm/api/static/favicon-32.png?v="+staticAssetVersion("favicon-32.png") {
 		t.Fatalf("fallback URL = %q", got)
 	}
 
 	// Empty base path produces a root-relative static URL.
 	got = webUIBrandingURL(settings, "", "loading-logo", "app-logo-wide.png")
-	if got != "/api/static/app-logo-wide.png" {
+	if got != "/api/static/app-logo-wide.png?v="+staticAssetVersion("app-logo-wide.png") {
 		t.Fatalf("fallback URL = %q", got)
 	}
 }
@@ -141,5 +142,57 @@ func TestWebUIBrandingURLPrefersUploadedImage(t *testing.T) {
 	got := webUIBrandingURL(settings, "", "web-icon", "favicon-32.png")
 	if !strings.HasPrefix(got, "/api/branding/images/web-icon?v=") {
 		t.Fatalf("custom branding URL = %q", got)
+	}
+}
+
+func TestGetPublicBrandingReturnsOnlyBrandingURLs(t *testing.T) {
+	tmp := t.TempDir()
+	settingsPath := filepath.Join(tmp, "settings.json")
+	settings := config.DefaultSettings()
+	settings.Cache.Directory = filepath.Join(tmp, "cache")
+	settings.Display.Branding.HomeMobileLogoURL = "/branding/images/home-mobile-logo?v=123"
+	settings.Display.Branding.LoadingLogoURL = "/branding/images/loading-logo?v=456"
+	settings.Display.Branding.WebIconURL = "/branding/images/web-icon?v=789"
+
+	mgr := config.NewManager(settingsPath)
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := NewSettingsHandler(mgr)
+	req := httptest.NewRequest(http.MethodGet, "/api/branding", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetPublicBranding(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.Bytes()
+	var got PublicBrandingResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Branding.HomeMobileLogoURL != "/branding/images/home-mobile-logo?v=123" {
+		t.Fatalf("home mobile logo URL = %q", got.Branding.HomeMobileLogoURL)
+	}
+	if got.Branding.LoadingLogoURL != "/branding/images/loading-logo?v=456" {
+		t.Fatalf("loading logo URL = %q", got.Branding.LoadingLogoURL)
+	}
+	if got.Branding.WebIconURL != "/branding/images/web-icon?v=789" {
+		t.Fatalf("web icon URL = %q", got.Branding.WebIconURL)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("unmarshal raw response: %v", err)
+	}
+	if _, ok := raw["server"]; ok {
+		t.Fatal("public branding response exposed full settings")
+	}
+	if branding, ok := raw["branding"].(map[string]interface{}); ok {
+		if _, ok := branding["wizardSourceUrl"]; ok {
+			t.Fatal("public branding response exposed wizard source URL")
+		}
 	}
 }
