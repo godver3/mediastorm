@@ -399,6 +399,7 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 			if globalSettings.Playback.SubtitleSize != 0 {
 				defaults.Playback.SubtitleSize = globalSettings.Playback.SubtitleSize
 			}
+			defaults.Playback.SubtitleUseCropDetectPosition = models.BoolPtr(globalSettings.Playback.SubtitleUseCropDetectPosition)
 			if globalSettings.Playback.SubtitleColor != "" {
 				defaults.Playback.SubtitleColor = globalSettings.Playback.SubtitleColor
 			}

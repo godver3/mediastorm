@@ -496,6 +496,18 @@ function renderSettings() {
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
+                            <h4>Crop-Detect Subtitle Position</h4>
+                            <p>Place subtitles using detected video letterbox bars</p>
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="subtitleUseCropDetectPosition" ${(s.playback.subtitleUseCropDetectPosition ?? true) ? 'checked' : ''} onchange="markChanged()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <h4>Subtitle Color</h4>
                             <p>Text color and transparency</p>
                         </div>
@@ -716,6 +728,7 @@ function collectSettings() {
             preferredSubtitleLanguage: document.getElementById('subtitleLanguage').value,
             preferredSubtitleMode: document.getElementById('subtitleMode').value,
             subtitleSize: parseFloat(document.getElementById('subtitleSize').value) || 1.0,
+            subtitleUseCropDetectPosition: document.getElementById('subtitleUseCropDetectPosition').checked,
             subtitleColor: document.getElementById('subtitleColor').value || '#FFFFFF',
             subtitleOpacity: Number.isFinite(subtitleOpacity) ? subtitleOpacity : 1.0,
             subtitleFont: document.getElementById('subtitleFont').value,

@@ -180,6 +180,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.SubtitleSize == 0 {
 			settings.Playback.SubtitleSize = defaults.Playback.SubtitleSize
 		}
+		if settings.Playback.SubtitleUseCropDetectPosition == nil {
+			settings.Playback.SubtitleUseCropDetectPosition = defaults.Playback.SubtitleUseCropDetectPosition
+		}
 		if settings.Playback.SubtitleColor == "" {
 			settings.Playback.SubtitleColor = defaults.Playback.SubtitleColor
 		}
@@ -493,6 +496,7 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Playback.PauseWhenAppInactive ||
 		s.Playback.UseLoadingScreen ||
 		s.Playback.SubtitleSize != 0 ||
+		s.Playback.SubtitleUseCropDetectPosition != nil ||
 		s.Playback.SubtitleColor != "" ||
 		s.Playback.SubtitleOpacity != nil ||
 		s.Playback.SubtitleFont != "" ||

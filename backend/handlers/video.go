@@ -143,11 +143,6 @@ type VideoHandler struct {
 	// Key: path, Value: channel that closes when probe completes
 	probeInFlight sync.Map
 
-	// Cropdetect cache — stores detected letterbox fractions per path
-	cropDetectCacheMu  sync.RWMutex
-	cropDetectCache    map[string]*cropDetectCacheEntry
-	cropDetectInFlight sync.Map
-
 	// Read-ahead range cache — prevents seek storms from hammering the debrid CDN.
 	// When ExoPlayer seeks rapidly through DV files with interleaved tracks, it generates
 	// hundreds of tiny (2-byte) range requests. The cache fetches a larger chunk on the first
@@ -361,7 +356,6 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		failures:               defaultStreamFailureRegistry,
 		subtitleExtractManager: subtitleMgr,
 		metadataCache:          make(map[string]*cachedMetadataEntry),
-		cropDetectCache:        make(map[string]*cropDetectCacheEntry),
 		streamPool:             newStreamPool(defaultStreamFailureRegistry),
 	}
 	if resolvedFFmpeg != "" {
@@ -5243,14 +5237,6 @@ func (h *VideoHandler) checkDVPolicyViolation(response videoMetadataResponse, pr
 
 // ===================== Cropdetect endpoint =====================
 
-// cropDetectCacheEntry stores cropdetect results with expiration
-type cropDetectCacheEntry struct {
-	result    cropDetectResponse
-	expiresAt time.Time
-}
-
-const cropDetectCacheTTL = 2 * time.Hour
-
 type cropDetectResponse struct {
 	LetterboxTop    float64 `json:"letterboxTop"`
 	LetterboxBottom float64 `json:"letterboxBottom"`
@@ -5275,47 +5261,7 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clean the path (same as ProbeVideo)
-	cleanPath := filePath
-	if strings.HasPrefix(cleanPath, "/webdav/") {
-		cleanPath = strings.TrimPrefix(cleanPath, "/webdav")
-	} else if strings.HasPrefix(cleanPath, "webdav/") {
-		cleanPath = "/" + strings.TrimPrefix(cleanPath, "webdav/")
-	}
-
-	// Check cache first
-	h.cropDetectCacheMu.RLock()
-	if entry, ok := h.cropDetectCache[cleanPath]; ok && time.Now().Before(entry.expiresAt) {
-		h.cropDetectCacheMu.RUnlock()
-		log.Printf("[cropdetect] cache hit for %q", cleanPath)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(entry.result)
-		return
-	}
-	h.cropDetectCacheMu.RUnlock()
-
-	// Deduplicate in-flight requests
-	doneChan := make(chan struct{})
-	if existing, loaded := h.cropDetectInFlight.LoadOrStore(cleanPath, doneChan); loaded {
-		existingChan := existing.(chan struct{})
-		select {
-		case <-existingChan:
-			h.cropDetectCacheMu.RLock()
-			if entry, ok := h.cropDetectCache[cleanPath]; ok && time.Now().Before(entry.expiresAt) {
-				h.cropDetectCacheMu.RUnlock()
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(entry.result)
-				return
-			}
-			h.cropDetectCacheMu.RUnlock()
-		case <-r.Context().Done():
-			return
-		}
-	}
-	defer func() {
-		h.cropDetectInFlight.Delete(cleanPath)
-		close(doneChan)
-	}()
+	cleanPath := cleanCropDetectPath(filePath)
 
 	// Resolve a seekable URL for the file
 	probeURL, err := h.resolveSeekableURL(r.Context(), cleanPath)
@@ -5419,12 +5365,17 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 
 			if err := cmd.Run(); err != nil {
 				atomic.AddInt32(&sampleErrors, 1)
-				log.Printf("[cropdetect] ffmpeg failed at %.1fs for %q: %v", seekTime, cleanPath, err)
+				stderrText := strings.TrimSpace(stderr.String())
+				if len(stderrText) > 1200 {
+					stderrText = stderrText[len(stderrText)-1200:]
+				}
+				log.Printf("[cropdetect] ffmpeg failed at %.1fs for %q: %v stderr_tail=%q", seekTime, cleanPath, err, stderrText)
 				return
 			}
 
 			// Parse the last crop= line from stderr
-			lines := strings.Split(stderr.String(), "\n")
+			stderrText := stderr.String()
+			lines := strings.Split(stderrText, "\n")
 			for j := len(lines) - 1; j >= 0; j-- {
 				if m := cropdetectRegex.FindStringSubmatch(lines[j]); m != nil {
 					cw, _ := strconv.Atoi(m[1])
@@ -5436,6 +5387,11 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			atomic.AddInt32(&sampleErrors, 1)
+			stderrTail := strings.TrimSpace(stderrText)
+			if len(stderrTail) > 1200 {
+				stderrTail = stderrTail[len(stderrTail)-1200:]
+			}
+			log.Printf("[cropdetect] no crop line at %.1fs for %q stderr_tail=%q", seekTime, cleanPath, stderrTail)
 		}(i, seekTime)
 	}
 	wg.Wait()
@@ -5480,17 +5436,19 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 		resp.LetterboxBottom = math.Round(medianBottom*1000) / 1000
 	}
 
-	// Cache the result
-	h.cropDetectCacheMu.Lock()
-	h.cropDetectCache[cleanPath] = &cropDetectCacheEntry{
-		result:    resp,
-		expiresAt: time.Now().Add(cropDetectCacheTTL),
-	}
-	h.cropDetectCacheMu.Unlock()
-
 	log.Printf("[cropdetect] result for %q: top=%.3f bottom=%.3f (from %d samples)", cleanPath, resp.LetterboxTop, resp.LetterboxBottom, len(topFractions))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func cleanCropDetectPath(filePath string) string {
+	if strings.HasPrefix(filePath, "/webdav/") {
+		return strings.TrimPrefix(filePath, "/webdav")
+	}
+	if strings.HasPrefix(filePath, "webdav/") {
+		return "/" + strings.TrimPrefix(filePath, "webdav/")
+	}
+	return filePath
 }
 
 // resolveSeekableURL returns a direct/WebDAV URL suitable for ffmpeg seeking.

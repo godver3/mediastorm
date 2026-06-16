@@ -115,35 +115,36 @@ func (s *Service) computeEffectiveProfile(userID string, global config.Settings)
 func globalToUserSettings(g config.Settings) models.UserSettings {
 	return models.UserSettings{
 		Playback: models.PlaybackSettings{
-			PreferredPlayer:            g.Playback.PreferredPlayer,
-			PreferredAudioLanguage:     g.Playback.PreferredAudioLanguage,
-			PreferredSubtitleLanguage:  g.Playback.PreferredSubtitleLanguage,
-			PreferredSubtitleMode:      g.Playback.PreferredSubtitleMode,
-			PauseWhenAppInactive:       g.Playback.PauseWhenAppInactive,
-			UseLoadingScreen:           g.Playback.UseLoadingScreen,
-			SubtitleSize:               g.Playback.SubtitleSize,
-			SubtitleColor:              g.Playback.SubtitleColor,
-			SubtitleOpacity:            models.FloatPtr(g.Playback.SubtitleOpacity),
-			SubtitleFont:               g.Playback.SubtitleFont,
-			SubtitleBold:               models.BoolPtr(g.Playback.SubtitleBold),
-			SubtitleOutlineEnabled:     models.BoolPtr(g.Playback.SubtitleOutlineEnabled),
-			SubtitleOutlineColor:       g.Playback.SubtitleOutlineColor,
-			SubtitleOutlineWeight:      models.FloatPtr(g.Playback.SubtitleOutlineWeight),
-			SubtitleBackgroundEnabled:  models.BoolPtr(g.Playback.SubtitleBackgroundEnabled),
-			SubtitleBackgroundColor:    g.Playback.SubtitleBackgroundColor,
-			SubtitleBackgroundOpacity:  models.FloatPtr(g.Playback.SubtitleBackgroundOpacity),
-			SeekForwardSeconds:         g.Playback.SeekForwardSeconds,
-			SeekBackwardSeconds:        g.Playback.SeekBackwardSeconds,
-			ForceAACTranscoding:        g.Playback.ForceAACTranscoding,
-			AutoPlayTrailersTV:         g.Playback.AutoPlayTrailersTV,
-			RewindOnResumeFromPause:    g.Playback.RewindOnResumeFromPause,
-			RewindOnPlaybackStart:      g.Playback.RewindOnPlaybackStart,
-			DisablePrequeue:            g.Playback.DisablePrequeue,
-			IgnoreDVCompatibilityCheck: models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck),
-			CreditsDetectionEnabled:    models.BoolPtr(g.Playback.CreditsDetectionEnabled),
-			CreditsAutoSkip:            g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
-			MatchFrameRate:             models.BoolPtr(g.Playback.MatchFrameRate),
-			MaxResultsPerResolution:    models.IntPtr(g.Playback.MaxResultsPerResolution),
+			PreferredPlayer:               g.Playback.PreferredPlayer,
+			PreferredAudioLanguage:        g.Playback.PreferredAudioLanguage,
+			PreferredSubtitleLanguage:     g.Playback.PreferredSubtitleLanguage,
+			PreferredSubtitleMode:         g.Playback.PreferredSubtitleMode,
+			PauseWhenAppInactive:          g.Playback.PauseWhenAppInactive,
+			UseLoadingScreen:              g.Playback.UseLoadingScreen,
+			SubtitleSize:                  g.Playback.SubtitleSize,
+			SubtitleUseCropDetectPosition: models.BoolPtr(g.Playback.SubtitleUseCropDetectPosition),
+			SubtitleColor:                 g.Playback.SubtitleColor,
+			SubtitleOpacity:               models.FloatPtr(g.Playback.SubtitleOpacity),
+			SubtitleFont:                  g.Playback.SubtitleFont,
+			SubtitleBold:                  models.BoolPtr(g.Playback.SubtitleBold),
+			SubtitleOutlineEnabled:        models.BoolPtr(g.Playback.SubtitleOutlineEnabled),
+			SubtitleOutlineColor:          g.Playback.SubtitleOutlineColor,
+			SubtitleOutlineWeight:         models.FloatPtr(g.Playback.SubtitleOutlineWeight),
+			SubtitleBackgroundEnabled:     models.BoolPtr(g.Playback.SubtitleBackgroundEnabled),
+			SubtitleBackgroundColor:       g.Playback.SubtitleBackgroundColor,
+			SubtitleBackgroundOpacity:     models.FloatPtr(g.Playback.SubtitleBackgroundOpacity),
+			SeekForwardSeconds:            g.Playback.SeekForwardSeconds,
+			SeekBackwardSeconds:           g.Playback.SeekBackwardSeconds,
+			ForceAACTranscoding:           g.Playback.ForceAACTranscoding,
+			AutoPlayTrailersTV:            g.Playback.AutoPlayTrailersTV,
+			RewindOnResumeFromPause:       g.Playback.RewindOnResumeFromPause,
+			RewindOnPlaybackStart:         g.Playback.RewindOnPlaybackStart,
+			DisablePrequeue:               g.Playback.DisablePrequeue,
+			IgnoreDVCompatibilityCheck:    models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck),
+			CreditsDetectionEnabled:       models.BoolPtr(g.Playback.CreditsDetectionEnabled),
+			CreditsAutoSkip:               g.Playback.CreditsAutoSkip || g.Playback.CreditsDetection,
+			MatchFrameRate:                models.BoolPtr(g.Playback.MatchFrameRate),
+			MaxResultsPerResolution:       models.IntPtr(g.Playback.MaxResultsPerResolution),
 		},
 		Filtering: models.FilterSettings{
 			MaxSizeMovieGB:         models.FloatPtr(g.Filtering.MaxSizeMovieGB),
@@ -257,6 +258,9 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.SubtitleSize == 0 {
 		eff.Playback.SubtitleSize = g.Playback.SubtitleSize
+	}
+	if eff.Playback.SubtitleUseCropDetectPosition == nil {
+		eff.Playback.SubtitleUseCropDetectPosition = models.BoolPtr(g.Playback.SubtitleUseCropDetectPosition)
 	}
 	if eff.Playback.SubtitleColor == "" {
 		eff.Playback.SubtitleColor = g.Playback.SubtitleColor
@@ -517,6 +521,10 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.SubtitleSize != 0 && p.SubtitleSize == g.SubtitleSize {
 		p.SubtitleSize = 0
+		changed = true
+	}
+	if p.SubtitleUseCropDetectPosition != nil && *p.SubtitleUseCropDetectPosition == g.SubtitleUseCropDetectPosition {
+		p.SubtitleUseCropDetectPosition = nil
 		changed = true
 	}
 	if p.SubtitleColor != "" && p.SubtitleColor == g.SubtitleColor {
@@ -858,6 +866,10 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.SubtitleSize != nil && *cs.SubtitleSize == eff.Playback.SubtitleSize {
 		cs.SubtitleSize = nil
+		changed = true
+	}
+	if cs.SubtitleUseCropDetectPosition != nil && eff.Playback.SubtitleUseCropDetectPosition != nil && *cs.SubtitleUseCropDetectPosition == *eff.Playback.SubtitleUseCropDetectPosition {
+		cs.SubtitleUseCropDetectPosition = nil
 		changed = true
 	}
 	if cs.SubtitleColor != nil && *cs.SubtitleColor == eff.Playback.SubtitleColor {

@@ -5,13 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestCropDetect_MissingPath(t *testing.T) {
 	h := &VideoHandler{
-		metadataCache:   make(map[string]*cachedMetadataEntry),
-		cropDetectCache: make(map[string]*cropDetectCacheEntry),
+		metadataCache: make(map[string]*cachedMetadataEntry),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/video/cropdetect", nil)
@@ -25,8 +23,7 @@ func TestCropDetect_MissingPath(t *testing.T) {
 
 func TestCropDetect_Options(t *testing.T) {
 	h := &VideoHandler{
-		metadataCache:   make(map[string]*cachedMetadataEntry),
-		cropDetectCache: make(map[string]*cropDetectCacheEntry),
+		metadataCache: make(map[string]*cachedMetadataEntry),
 	}
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/video/cropdetect?path=/test.mkv", nil)
@@ -38,45 +35,9 @@ func TestCropDetect_Options(t *testing.T) {
 	}
 }
 
-func TestCropDetect_CacheHit(t *testing.T) {
-	h := &VideoHandler{
-		metadataCache:   make(map[string]*cachedMetadataEntry),
-		cropDetectCache: make(map[string]*cropDetectCacheEntry),
-	}
-
-	// Pre-populate cache
-	h.cropDetectCacheMu.Lock()
-	h.cropDetectCache["/test.mkv"] = &cropDetectCacheEntry{
-		result:    cropDetectResponse{LetterboxTop: 0.125, LetterboxBottom: 0.125},
-		expiresAt: time.Now().Add(1 * time.Hour),
-	}
-	h.cropDetectCacheMu.Unlock()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/video/cropdetect?path=/test.mkv", nil)
-	w := httptest.NewRecorder()
-	h.CropDetect(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp cropDetectResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if resp.LetterboxTop != 0.125 {
-		t.Errorf("expected letterboxTop=0.125, got %f", resp.LetterboxTop)
-	}
-	if resp.LetterboxBottom != 0.125 {
-		t.Errorf("expected letterboxBottom=0.125, got %f", resp.LetterboxBottom)
-	}
-}
-
 func TestCropDetect_NoProvider(t *testing.T) {
 	h := &VideoHandler{
-		metadataCache:   make(map[string]*cachedMetadataEntry),
-		cropDetectCache: make(map[string]*cropDetectCacheEntry),
+		metadataCache: make(map[string]*cachedMetadataEntry),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/video/cropdetect?path=/test.mkv", nil)
@@ -98,33 +59,23 @@ func TestCropDetect_NoProvider(t *testing.T) {
 	}
 }
 
-func TestCropDetect_WebDAVPathCleaning(t *testing.T) {
-	h := &VideoHandler{
-		metadataCache:   make(map[string]*cachedMetadataEntry),
-		cropDetectCache: make(map[string]*cropDetectCacheEntry),
+func TestCleanCropDetectPath(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "absolute webdav prefix", in: "/webdav/movies/test.mkv", want: "/movies/test.mkv"},
+		{name: "relative webdav prefix", in: "webdav/movies/test.mkv", want: "/movies/test.mkv"},
+		{name: "plain path", in: "/movies/test.mkv", want: "/movies/test.mkv"},
 	}
 
-	// Pre-populate cache with cleaned path
-	h.cropDetectCacheMu.Lock()
-	h.cropDetectCache["/movies/test.mkv"] = &cropDetectCacheEntry{
-		result:    cropDetectResponse{LetterboxTop: 0.1, LetterboxBottom: 0.1},
-		expiresAt: time.Now().Add(1 * time.Hour),
-	}
-	h.cropDetectCacheMu.Unlock()
-
-	// Request with /webdav/ prefix
-	req := httptest.NewRequest(http.MethodGet, "/api/video/cropdetect?path=/webdav/movies/test.mkv", nil)
-	w := httptest.NewRecorder()
-	h.CropDetect(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-
-	var resp cropDetectResponse
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.LetterboxTop != 0.1 {
-		t.Errorf("expected letterboxTop=0.1, got %f", resp.LetterboxTop)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanCropDetectPath(tt.in); got != tt.want {
+				t.Fatalf("cleanCropDetectPath(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 
