@@ -93,6 +93,135 @@ func TestServiceUpdateAndRemove(t *testing.T) {
 	}
 }
 
+func TestServiceTombstonesManualRemovalAgainstSyncedReadd(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("expected service, got error: %v", err)
+	}
+
+	_, err = svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "tmdb:movie:1058694",
+		MediaType: "movie",
+		Name:      "Iron Lung",
+		ExternalIDs: map[string]string{
+			"tmdb": "1058694",
+			"imdb": "tt28768836",
+		},
+		SyncSource: "plex:acc:task",
+	})
+	if err != nil {
+		t.Fatalf("seed AddOrUpdate() error = %v", err)
+	}
+
+	removed, err := svc.Remove(models.DefaultUserID, "movie", "tmdb:movie:1058694")
+	if err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if !removed {
+		t.Fatal("Remove() returned false")
+	}
+
+	_, err = svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "plex-iron-lung",
+		MediaType: "movie",
+		Name:      "Iron Lung",
+		ExternalIDs: map[string]string{
+			"tmdb": "1058694",
+			"imdb": "tt28768836",
+			"plex": "plex-iron-lung",
+		},
+		SyncSource: "plex:acc:task",
+	})
+	if err == nil {
+		t.Fatal("expected tombstoned synced re-add to fail")
+	}
+
+	items, err := svc.List(models.DefaultUserID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected tombstoned item to stay removed, got %d item(s)", len(items))
+	}
+
+	reloaded, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("reload service error = %v", err)
+	}
+	_, err = reloaded.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "imdb:tt28768836",
+		MediaType: "movie",
+		Name:      "Iron Lung",
+		ExternalIDs: map[string]string{
+			"tmdb": "1058694",
+			"imdb": "tt28768836",
+		},
+		SyncSource: "mdblist:acc:task",
+	})
+	if err == nil {
+		t.Fatal("expected tombstone to survive reload and block synced re-add")
+	}
+
+	item, err := reloaded.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "tmdb:movie:1058694",
+		MediaType: "movie",
+		Name:      "Iron Lung",
+		ExternalIDs: map[string]string{
+			"tmdb": "1058694",
+			"imdb": "tt28768836",
+		},
+	})
+	if err != nil {
+		t.Fatalf("manual AddOrUpdate() should clear tombstone, got %v", err)
+	}
+	if item.ID != "tmdb:movie:1058694" {
+		t.Fatalf("manual item ID = %q, want tmdb:movie:1058694", item.ID)
+	}
+}
+
+func TestServiceRemoveSyncedDoesNotTombstone(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := watchlist.NewService(dir)
+	if err != nil {
+		t.Fatalf("expected service, got error: %v", err)
+	}
+
+	_, err = svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "tmdb:movie:1084242",
+		MediaType: "movie",
+		Name:      "Zootopia 2",
+		ExternalIDs: map[string]string{
+			"tmdb": "1084242",
+		},
+		SyncSource: "plex:acc:task",
+	})
+	if err != nil {
+		t.Fatalf("seed AddOrUpdate() error = %v", err)
+	}
+
+	removed, err := svc.RemoveSynced(models.DefaultUserID, "movie", "tmdb:movie:1084242")
+	if err != nil {
+		t.Fatalf("RemoveSynced() error = %v", err)
+	}
+	if !removed {
+		t.Fatal("RemoveSynced() returned false")
+	}
+
+	_, err = svc.AddOrUpdate(models.DefaultUserID, models.WatchlistUpsert{
+		ID:        "tmdb:movie:1084242",
+		MediaType: "movie",
+		Name:      "Zootopia 2",
+		ExternalIDs: map[string]string{
+			"tmdb": "1084242",
+		},
+		SyncSource: "plex:acc:task",
+	})
+	if err != nil {
+		t.Fatalf("synced re-add after sync cleanup should be allowed, got %v", err)
+	}
+}
+
 func TestServiceIsolatesUsers(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := watchlist.NewService(dir)

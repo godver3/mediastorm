@@ -98,11 +98,16 @@ type WatchlistRepository interface {
 	Get(ctx context.Context, userID, itemKey string) (*models.WatchlistItem, error)
 	ListByUser(ctx context.Context, userID string) ([]models.WatchlistItem, error)
 	ListAll(ctx context.Context) (map[string][]models.WatchlistItem, error)
+	ListTombstonesAll(ctx context.Context) (map[string][]models.WatchlistTombstone, error)
 	Upsert(ctx context.Context, userID string, item *models.WatchlistItem) error
+	UpsertTombstone(ctx context.Context, userID string, tombstone *models.WatchlistTombstone) error
 	Delete(ctx context.Context, userID, itemKey string) error
+	DeleteTombstone(ctx context.Context, userID, itemKey string) error
 	DeleteByUser(ctx context.Context, userID string) error
+	DeleteTombstonesByUser(ctx context.Context, userID string) error
 	DeleteBySyncSource(ctx context.Context, userID, syncSource string) error
 	BulkUpsert(ctx context.Context, userID string, items []models.WatchlistItem) error
+	BulkUpsertTombstones(ctx context.Context, userID string, tombstones []models.WatchlistTombstone) error
 	Count(ctx context.Context) (int64, error)
 }
 

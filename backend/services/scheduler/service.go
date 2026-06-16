@@ -743,6 +743,14 @@ func plexAuthError(err error) error {
 	return err
 }
 
+func logWatchlistImportError(source, title string, err error) {
+	if errors.Is(err, watchlist.ErrTombstoned) {
+		log.Printf("[scheduler] Skipped %s from %s: explicitly removed from local watchlist", title, source)
+		return
+	}
+	log.Printf("[scheduler] Failed to import %s from %s: %v", title, source, err)
+}
+
 // syncPlexToLocal imports items from Plex watchlist to local watchlist
 func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavior string, dryRun bool) (SyncResult, error) {
 	now := time.Now().UTC()
@@ -824,7 +832,7 @@ func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavi
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import watchlist item %s: %v", item.Title, err)
+			logWatchlistImportError("Plex", item.Title, err)
 			continue
 		}
 
@@ -863,7 +871,7 @@ func (s *Service) syncPlexToLocal(authToken, profileID, syncSource, deleteBehavi
 				}
 
 				// Remove from local watchlist
-				if ok, err := s.watchlistService.Remove(profileID, localItem.MediaType, localItem.ID); err != nil {
+				if ok, err := s.watchlistService.RemoveSynced(profileID, localItem.MediaType, localItem.ID); err != nil {
 					log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
 				} else if ok {
 					removed++
@@ -1100,7 +1108,7 @@ func (s *Service) syncBidirectional(authToken, profileID, syncSource, deleteBeha
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import %s from Plex: %v", plexItem.Title, err)
+			logWatchlistImportError("Plex", plexItem.Title, err)
 			continue
 		}
 
@@ -1425,7 +1433,7 @@ func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID,
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import Trakt item %s: %v", item.Title, err)
+			logWatchlistImportError("Trakt", item.Title, err)
 			continue
 		}
 
@@ -1464,7 +1472,7 @@ func (s *Service) syncTraktToLocal(traktAccount *config.TraktAccount, profileID,
 				}
 
 				// Remove from local watchlist
-				if ok, err := s.watchlistService.Remove(profileID, localItem.MediaType, localItem.ID); err != nil {
+				if ok, err := s.watchlistService.RemoveSynced(profileID, localItem.MediaType, localItem.ID); err != nil {
 					log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
 				} else if ok {
 					removed++
@@ -1777,7 +1785,7 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import %s from Trakt: %v", traktItem.Title, err)
+			logWatchlistImportError("Trakt", traktItem.Title, err)
 			continue
 		}
 
@@ -4188,7 +4196,7 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import Jellyfin favorite %s: %v", item.Name, err)
+			logWatchlistImportError("Jellyfin", item.Name, err)
 			continue
 		}
 
@@ -4220,7 +4228,7 @@ func (s *Service) executeJellyfinFavoritesSync(task config.ScheduledTask) (SyncR
 					continue
 				}
 
-				if ok, err := s.watchlistService.Remove(profileID, localItem.MediaType, localItem.ID); err != nil {
+				if ok, err := s.watchlistService.RemoveSynced(profileID, localItem.MediaType, localItem.ID); err != nil {
 					log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
 				} else if ok {
 					removed++
@@ -4528,7 +4536,7 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 		}
 
 		if _, err := s.watchlistService.AddOrUpdate(profileID, input); err != nil {
-			log.Printf("[scheduler] Failed to import MDBList watchlist item %s: %v", item.Title, err)
+			logWatchlistImportError("MDBList", item.Title, err)
 			continue
 		}
 		imported++
@@ -4540,7 +4548,7 @@ func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, pr
 		if err == nil {
 			for _, item := range localItems {
 				if item.SyncSource == syncSource && !schedulerWatchlistHasAnyKey(mdblistItemKeys, item.MediaType, item.ID, item.ExternalIDs) {
-					if _, err := s.watchlistService.Remove(profileID, item.MediaType, item.ID); err != nil {
+					if _, err := s.watchlistService.RemoveSynced(profileID, item.MediaType, item.ID); err != nil {
 						log.Printf("[scheduler] Failed to remove stale MDBList watchlist item: %v", err)
 					}
 				}

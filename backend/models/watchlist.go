@@ -25,6 +25,17 @@ type WatchlistItem struct {
 	Ratings         []Rating          `json:"ratings,omitempty"`        // hydrated at response time from MDBList
 }
 
+// WatchlistTombstone records an explicit user removal so source syncs do not
+// silently re-add the same item under a different provider ID.
+type WatchlistTombstone struct {
+	ID          string            `json:"id"`
+	MediaType   string            `json:"mediaType"`
+	Name        string            `json:"name,omitempty"`
+	Year        int               `json:"year,omitempty"`
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	RemovedAt   time.Time         `json:"removedAt"`
+}
+
 // WatchlistUpsert captures data required to insert or update a watchlist item.
 type WatchlistUpsert struct {
 	ID             string            `json:"id"`
@@ -49,5 +60,10 @@ func (w WatchlistUpsert) Key() string {
 
 // Key returns a stable identifier for the watchlist item combining media type and ID.
 func (w WatchlistItem) Key() string {
+	return w.MediaType + ":" + w.ID
+}
+
+// Key returns a stable identifier for the removed watchlist item.
+func (w WatchlistTombstone) Key() string {
 	return w.MediaType + ":" + w.ID
 }

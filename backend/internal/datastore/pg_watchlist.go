@@ -62,6 +62,30 @@ func (r *pgWatchlistRepo) ListAll(ctx context.Context) (map[string][]models.Watc
 	return result, rows.Err()
 }
 
+func (r *pgWatchlistRepo) ListTombstonesAll(ctx context.Context) (map[string][]models.WatchlistTombstone, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT user_id, item_key, media_type, item_id, name, year, external_ids, removed_at
+		FROM watchlist_tombstones ORDER BY user_id, removed_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list all watchlist tombstones: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]models.WatchlistTombstone)
+	for rows.Next() {
+		var userID, itemKey string
+		var tombstone models.WatchlistTombstone
+		var idsJSON []byte
+		if err := rows.Scan(&userID, &itemKey, &tombstone.MediaType, &tombstone.ID, &tombstone.Name,
+			&tombstone.Year, &idsJSON, &tombstone.RemovedAt); err != nil {
+			return nil, fmt.Errorf("scan watchlist tombstone: %w", err)
+		}
+		_ = json.Unmarshal(idsJSON, &tombstone.ExternalIDs)
+		result[userID] = append(result[userID], tombstone)
+	}
+	return result, rows.Err()
+}
+
 func (r *pgWatchlistRepo) Upsert(ctx context.Context, userID string, item *models.WatchlistItem) error {
 	idsJSON, _ := json.Marshal(item.ExternalIDs)
 	genresJSON, _ := json.Marshal(item.Genres)
@@ -82,13 +106,39 @@ func (r *pgWatchlistRepo) Upsert(ctx context.Context, userID string, item *model
 	return nil
 }
 
+func (r *pgWatchlistRepo) UpsertTombstone(ctx context.Context, userID string, tombstone *models.WatchlistTombstone) error {
+	idsJSON, _ := json.Marshal(tombstone.ExternalIDs)
+	itemKey := tombstone.Key()
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO watchlist_tombstones (user_id, item_key, media_type, item_id, name, year, external_ids, removed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (user_id, item_key) DO UPDATE SET
+		name=$5, year=$6, external_ids=$7, removed_at=$8`,
+		userID, itemKey, tombstone.MediaType, tombstone.ID, tombstone.Name, tombstone.Year,
+		idsJSON, tombstone.RemovedAt)
+	if err != nil {
+		return fmt.Errorf("upsert watchlist tombstone: %w", err)
+	}
+	return nil
+}
+
 func (r *pgWatchlistRepo) Delete(ctx context.Context, userID, itemKey string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM watchlist WHERE user_id = $1 AND item_key = $2`, userID, itemKey)
 	return err
 }
 
+func (r *pgWatchlistRepo) DeleteTombstone(ctx context.Context, userID, itemKey string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM watchlist_tombstones WHERE user_id = $1 AND item_key = $2`, userID, itemKey)
+	return err
+}
+
 func (r *pgWatchlistRepo) DeleteByUser(ctx context.Context, userID string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM watchlist WHERE user_id = $1`, userID)
+	return err
+}
+
+func (r *pgWatchlistRepo) DeleteTombstonesByUser(ctx context.Context, userID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM watchlist_tombstones WHERE user_id = $1`, userID)
 	return err
 }
 
@@ -100,6 +150,15 @@ func (r *pgWatchlistRepo) DeleteBySyncSource(ctx context.Context, userID, syncSo
 func (r *pgWatchlistRepo) BulkUpsert(ctx context.Context, userID string, items []models.WatchlistItem) error {
 	for _, item := range items {
 		if err := r.Upsert(ctx, userID, &item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *pgWatchlistRepo) BulkUpsertTombstones(ctx context.Context, userID string, tombstones []models.WatchlistTombstone) error {
+	for _, tombstone := range tombstones {
+		if err := r.UpsertTombstone(ctx, userID, &tombstone); err != nil {
 			return err
 		}
 	}

@@ -24,14 +24,17 @@ var (
 	ErrIDRequired         = errors.New("id is required")
 	ErrMediaTypeRequired  = errors.New("media type is required")
 	ErrIdentifierRequired = errors.New("id and media type are required")
+	ErrTombstoned         = errors.New("watchlist item was explicitly removed")
 )
 
 // Service manages persistence and retrieval of user watchlist items.
 type Service struct {
-	mu    sync.RWMutex
-	path  string
-	store *datastore.DataStore
-	items map[string]map[string]models.WatchlistItem
+	mu             sync.RWMutex
+	path           string
+	tombstonesPath string
+	store          *datastore.DataStore
+	items          map[string]map[string]models.WatchlistItem
+	tombstones     map[string]map[string]models.WatchlistTombstone
 }
 
 // useDB returns true when the service is backed by PostgreSQL.
@@ -40,8 +43,9 @@ func (s *Service) useDB() bool { return s.store != nil }
 // NewServiceWithStore creates a watchlist service backed by PostgreSQL.
 func NewServiceWithStore(store *datastore.DataStore) (*Service, error) {
 	svc := &Service{
-		store: store,
-		items: make(map[string]map[string]models.WatchlistItem),
+		store:      store,
+		items:      make(map[string]map[string]models.WatchlistItem),
+		tombstones: make(map[string]map[string]models.WatchlistTombstone),
 	}
 	if err := svc.load(); err != nil {
 		return nil, err
@@ -60,8 +64,10 @@ func NewService(storageDir string) (*Service, error) {
 	}
 
 	svc := &Service{
-		path:  filepath.Join(storageDir, "watchlist.json"),
-		items: make(map[string]map[string]models.WatchlistItem),
+		path:           filepath.Join(storageDir, "watchlist.json"),
+		tombstonesPath: filepath.Join(storageDir, "watchlist_tombstones.json"),
+		items:          make(map[string]map[string]models.WatchlistItem),
+		tombstones:     make(map[string]map[string]models.WatchlistTombstone),
 	}
 
 	if err := svc.load(); err != nil {
@@ -146,11 +152,17 @@ func (s *Service) AddOrUpdate(userID string, input models.WatchlistUpsert) (mode
 	item, exists := s.takeMergedItemLocked(perUser, mediaType, input.ID, input.ExternalIDs)
 
 	if !exists {
+		if strings.TrimSpace(input.SyncSource) != "" && s.isTombstonedLocked(userID, mediaType, input.ID, input.ExternalIDs) {
+			return models.WatchlistItem{}, ErrTombstoned
+		}
 		item = models.WatchlistItem{
 			ID:        input.ID,
 			MediaType: mediaType,
 			AddedAt:   time.Now().UTC(),
 		}
+	}
+	if strings.TrimSpace(input.SyncSource) == "" {
+		s.clearTombstonesLocked(userID, mediaType, input.ID, input.ExternalIDs)
 	}
 
 	item.MediaType = mediaType
@@ -257,6 +269,16 @@ func (s *Service) UpdateState(userID, mediaType, id string, watched *bool, progr
 
 // Remove deletes an item from the watchlist.
 func (s *Service) Remove(userID, mediaType, id string) (bool, error) {
+	return s.remove(userID, mediaType, id, true)
+}
+
+// RemoveSynced deletes an item as part of sync reconciliation without creating
+// a user-removal tombstone.
+func (s *Service) RemoveSynced(userID, mediaType, id string) (bool, error) {
+	return s.remove(userID, mediaType, id, false)
+}
+
+func (s *Service) remove(userID, mediaType, id string, tombstone bool) (bool, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return false, ErrUserIDRequired
@@ -273,8 +295,10 @@ func (s *Service) Remove(userID, mediaType, id string) (bool, error) {
 	perUser := s.ensureUserLocked(userID)
 
 	removed := false
+	var removedItem models.WatchlistItem
 	for _, key := range watchlistCandidateKeys(mediaType, id, nil) {
-		if _, exists := perUser[key]; exists {
+		if existing, exists := perUser[key]; exists {
+			removedItem = mergeWatchlistItems(removedItem, existing)
 			delete(perUser, key)
 			removed = true
 		}
@@ -283,11 +307,15 @@ func (s *Service) Remove(userID, mediaType, id string) (bool, error) {
 		if !watchlistItemMatchesIdentifier(existing, mediaType, id) {
 			continue
 		}
+		removedItem = mergeWatchlistItems(removedItem, existing)
 		delete(perUser, key)
 		removed = true
 	}
 	if !removed {
 		return false, nil
+	}
+	if tombstone {
+		s.upsertTombstoneLocked(userID, removedItem)
 	}
 
 	if err := s.saveLocked(); err != nil {
@@ -306,6 +334,10 @@ func (s *Service) load() error {
 		if err != nil {
 			return fmt.Errorf("load watchlist from db: %w", err)
 		}
+		allTombstones, err := s.store.Watchlist().ListTombstonesAll(context.Background())
+		if err != nil {
+			return fmt.Errorf("load watchlist tombstones from db: %w", err)
+		}
 		s.items = make(map[string]map[string]models.WatchlistItem, len(allItems))
 		for userID, items := range allItems {
 			perUser := make(map[string]models.WatchlistItem, len(items))
@@ -314,7 +346,21 @@ func (s *Service) load() error {
 			}
 			s.items[userID] = perUser
 		}
+		s.tombstones = make(map[string]map[string]models.WatchlistTombstone, len(allTombstones))
+		for userID, tombstones := range allTombstones {
+			perUser := make(map[string]models.WatchlistTombstone, len(tombstones))
+			for _, tombstone := range tombstones {
+				normalised := normaliseTombstone(tombstone)
+				perUser[normalised.Key()] = normalised
+			}
+			s.tombstones[userID] = perUser
+		}
 		return nil
+	}
+
+	s.tombstones = make(map[string]map[string]models.WatchlistTombstone)
+	if err := s.loadTombstonesLocked(); err != nil {
+		return err
 	}
 
 	file, err := os.Open(s.path)
@@ -372,6 +418,47 @@ func (s *Service) load() error {
 	return nil
 }
 
+func (s *Service) loadTombstonesLocked() error {
+	if strings.TrimSpace(s.tombstonesPath) == "" {
+		return nil
+	}
+
+	file, err := os.Open(s.tombstonesPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open watchlist tombstones: %w", err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("read watchlist tombstones: %w", err)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+
+	var multi map[string][]models.WatchlistTombstone
+	if err := json.Unmarshal(data, &multi); err != nil {
+		return fmt.Errorf("decode watchlist tombstones: %w", err)
+	}
+	for userID, tombstones := range multi {
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			continue
+		}
+		perUser := make(map[string]models.WatchlistTombstone, len(tombstones))
+		for _, tombstone := range tombstones {
+			normalised := normaliseTombstone(tombstone)
+			perUser[normalised.Key()] = normalised
+		}
+		s.tombstones[userID] = perUser
+	}
+	return nil
+}
+
 func (s *Service) saveLocked() error {
 	if s.useDB() {
 		return s.syncToDB()
@@ -421,6 +508,60 @@ func (s *Service) saveLocked() error {
 
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("replace watchlist file: %w", err)
+	}
+
+	return s.saveTombstonesLocked()
+}
+
+func (s *Service) saveTombstonesLocked() error {
+	if strings.TrimSpace(s.tombstonesPath) == "" {
+		return nil
+	}
+
+	byUser := make(map[string][]models.WatchlistTombstone, len(s.tombstones))
+	for userID, collection := range s.tombstones {
+		tombstones := make([]models.WatchlistTombstone, 0, len(collection))
+		for _, tombstone := range collection {
+			tombstones = append(tombstones, tombstone)
+		}
+
+		sort.Slice(tombstones, func(i, j int) bool {
+			if tombstones[i].RemovedAt.Equal(tombstones[j].RemovedAt) {
+				return tombstones[i].Key() < tombstones[j].Key()
+			}
+			return tombstones[i].RemovedAt.Before(tombstones[j].RemovedAt)
+		})
+
+		byUser[userID] = tombstones
+	}
+
+	tmp := s.tombstonesPath + ".tmp"
+	file, err := os.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("create watchlist tombstones temp file: %w", err)
+	}
+
+	enc := json.NewEncoder(file)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(byUser); err != nil {
+		file.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("encode watchlist tombstones: %w", err)
+	}
+
+	if err := file.Sync(); err != nil {
+		file.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sync watchlist tombstones: %w", err)
+	}
+
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close watchlist tombstones temp file: %w", err)
+	}
+
+	if err := os.Rename(tmp, s.tombstonesPath); err != nil {
+		return fmt.Errorf("replace watchlist tombstones file: %w", err)
 	}
 
 	return nil
@@ -476,6 +617,43 @@ func (s *Service) syncToDB() error {
 			}
 		}
 
+		existingTombstones, err := tx.Watchlist().ListTombstonesAll(ctx)
+		if err != nil {
+			return err
+		}
+		dbTombstoneKeys := make(map[string]map[string]bool, len(existingTombstones))
+		for userID, tombstones := range existingTombstones {
+			keys := make(map[string]bool, len(tombstones))
+			for _, tombstone := range tombstones {
+				keys[tombstone.Key()] = true
+			}
+			dbTombstoneKeys[userID] = keys
+		}
+		for userID, perUser := range s.tombstones {
+			tombstones := make([]models.WatchlistTombstone, 0, len(perUser))
+			for _, tombstone := range perUser {
+				tombstones = append(tombstones, tombstone)
+			}
+			if err := tx.Watchlist().BulkUpsertTombstones(ctx, userID, tombstones); err != nil {
+				return err
+			}
+			if existing, ok := dbTombstoneKeys[userID]; ok {
+				for key := range existing {
+					if _, inMem := perUser[key]; !inMem {
+						if err := tx.Watchlist().DeleteTombstone(ctx, userID, key); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			delete(dbTombstoneKeys, userID)
+		}
+		for userID := range dbTombstoneKeys {
+			if err := tx.Watchlist().DeleteTombstonesByUser(ctx, userID); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 }
@@ -487,6 +665,67 @@ func (s *Service) ensureUserLocked(userID string) map[string]models.WatchlistIte
 		s.items[userID] = perUser
 	}
 	return perUser
+}
+
+func (s *Service) ensureTombstonesLocked(userID string) map[string]models.WatchlistTombstone {
+	perUser, ok := s.tombstones[userID]
+	if !ok {
+		perUser = make(map[string]models.WatchlistTombstone)
+		s.tombstones[userID] = perUser
+	}
+	return perUser
+}
+
+func (s *Service) upsertTombstoneLocked(userID string, item models.WatchlistItem) {
+	tombstone := normaliseTombstone(models.WatchlistTombstone{
+		ID:          item.ID,
+		MediaType:   item.MediaType,
+		Name:        item.Name,
+		Year:        item.Year,
+		ExternalIDs: item.ExternalIDs,
+		RemovedAt:   time.Now().UTC(),
+	})
+	perUser := s.ensureTombstonesLocked(userID)
+	if existing, found := takeMergedTombstone(perUser, tombstone.MediaType, tombstone.ID, tombstone.ExternalIDs); found {
+		tombstone = mergeTombstones(existing, tombstone)
+	}
+	perUser[tombstone.Key()] = tombstone
+}
+
+func (s *Service) isTombstonedLocked(userID, mediaType, canonicalID string, externalIDs map[string]string) bool {
+	perUser, ok := s.tombstones[userID]
+	if !ok {
+		return false
+	}
+	for _, key := range watchlistCandidateKeys(mediaType, canonicalID, externalIDs) {
+		if _, exists := perUser[key]; exists {
+			return true
+		}
+	}
+	for _, tombstone := range perUser {
+		if tombstoneMatchesIdentifier(tombstone, mediaType, canonicalID, externalIDs) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) clearTombstonesLocked(userID, mediaType, canonicalID string, externalIDs map[string]string) {
+	perUser, ok := s.tombstones[userID]
+	if !ok {
+		return
+	}
+	for _, key := range watchlistCandidateKeys(mediaType, canonicalID, externalIDs) {
+		delete(perUser, key)
+	}
+	for key, tombstone := range perUser {
+		if tombstoneMatchesIdentifier(tombstone, mediaType, canonicalID, externalIDs) {
+			delete(perUser, key)
+		}
+	}
+	if len(perUser) == 0 {
+		delete(s.tombstones, userID)
+	}
 }
 
 func normaliseItem(item models.WatchlistItem) models.WatchlistItem {
@@ -502,6 +741,21 @@ func normaliseItem(item models.WatchlistItem) models.WatchlistItem {
 		item.AddedAt = time.Now().UTC()
 	}
 	return item
+}
+
+func normaliseTombstone(tombstone models.WatchlistTombstone) models.WatchlistTombstone {
+	identity := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   tombstone.MediaType,
+		ID:          tombstone.ID,
+		ExternalIDs: tombstone.ExternalIDs,
+	})
+	tombstone.MediaType = identity.MediaType
+	tombstone.ExternalIDs = identity.ExternalIDs
+	tombstone.ID = identity.ID
+	if tombstone.RemovedAt.IsZero() {
+		tombstone.RemovedAt = time.Now().UTC()
+	}
+	return tombstone
 }
 
 // Reconcile normalizes watchlist identities, merges equivalent variants, and
@@ -528,6 +782,20 @@ func (s *Service) Reconcile() error {
 		reconciled[userID] = perUser
 	}
 	s.items = reconciled
+	reconciledTombstones := make(map[string]map[string]models.WatchlistTombstone, len(s.tombstones))
+	for userID, tombstones := range s.tombstones {
+		perUser := make(map[string]models.WatchlistTombstone, len(tombstones))
+		for _, tombstone := range tombstones {
+			normalised := normaliseTombstone(tombstone)
+			merged, found := takeMergedTombstone(perUser, normalised.MediaType, normalised.ID, normalised.ExternalIDs)
+			if found {
+				normalised = mergeTombstones(merged, normalised)
+			}
+			perUser[normalised.Key()] = normalised
+		}
+		reconciledTombstones[userID] = perUser
+	}
+	s.tombstones = reconciledTombstones
 	return s.saveLocked()
 }
 
@@ -609,6 +877,60 @@ func mergeWatchlistItems(base, incoming models.WatchlistItem) models.WatchlistIt
 	return base
 }
 
+func takeMergedTombstone(perUser map[string]models.WatchlistTombstone, mediaType, canonicalID string, externalIDs map[string]string) (models.WatchlistTombstone, bool) {
+	var merged models.WatchlistTombstone
+	found := false
+	for _, key := range watchlistCandidateKeys(mediaType, canonicalID, externalIDs) {
+		existing, ok := perUser[key]
+		if !ok {
+			continue
+		}
+		if !found {
+			merged = existing
+			found = true
+		} else {
+			merged = mergeTombstones(merged, existing)
+		}
+		delete(perUser, key)
+	}
+	for key, existing := range perUser {
+		if !tombstoneMatchesIdentifier(existing, mediaType, canonicalID, externalIDs) {
+			continue
+		}
+		if !found {
+			merged = existing
+			found = true
+		} else {
+			merged = mergeTombstones(merged, existing)
+		}
+		delete(perUser, key)
+	}
+	return merged, found
+}
+
+func mergeTombstones(base, incoming models.WatchlistTombstone) models.WatchlistTombstone {
+	base.ExternalIDs = normaliseExternalIDs(base.ExternalIDs)
+	incoming.ExternalIDs = normaliseExternalIDs(incoming.ExternalIDs)
+	if base.ID == "" {
+		base.ID = incoming.ID
+	}
+	if base.MediaType == "" {
+		base.MediaType = incoming.MediaType
+	}
+	if base.Name == "" {
+		base.Name = incoming.Name
+	}
+	if base.Year == 0 {
+		base.Year = incoming.Year
+	}
+	if base.RemovedAt.IsZero() || (!incoming.RemovedAt.IsZero() && incoming.RemovedAt.After(base.RemovedAt)) {
+		base.RemovedAt = incoming.RemovedAt
+	}
+	base.ExternalIDs = mergeStringMaps(base.ExternalIDs, incoming.ExternalIDs)
+	base.ID = canonicalWatchlistID(base.MediaType, base.ID, base.ExternalIDs)
+	return base
+}
+
 func mergeStringMaps(base, incoming map[string]string) map[string]string {
 	return mediaidentity.MergeExternalIDs(base, incoming)
 }
@@ -634,6 +956,20 @@ func watchlistCandidateKeys(mediaType, canonicalID string, externalIDs map[strin
 }
 
 func watchlistItemsEquivalent(mediaType, canonicalID string, externalIDs map[string]string, existing models.WatchlistItem) bool {
+	incoming := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   mediaType,
+		ID:          canonicalID,
+		ExternalIDs: externalIDs,
+	})
+	current := mediaidentity.Resolve(mediaidentity.Input{
+		MediaType:   existing.MediaType,
+		ID:          existing.ID,
+		ExternalIDs: existing.ExternalIDs,
+	})
+	return mediaidentity.Equivalent(incoming, current)
+}
+
+func tombstoneMatchesIdentifier(existing models.WatchlistTombstone, mediaType, canonicalID string, externalIDs map[string]string) bool {
 	incoming := mediaidentity.Resolve(mediaidentity.Input{
 		MediaType:   mediaType,
 		ID:          canonicalID,
