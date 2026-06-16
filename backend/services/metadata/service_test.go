@@ -186,6 +186,70 @@ func TestEnrichLiteCustomListItemFallsBackToTMDBGenres(t *testing.T) {
 	}
 }
 
+func TestGetCachedArtworkURLsResolvesSeriesTMDBToTVDBCache(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+	}
+
+	if err := cache.set(cacheKey("tvdb", "resolve", "tmdb", "71712"), int64(328634)); err != nil {
+		t.Fatalf("set resolve cache: %v", err)
+	}
+	if err := cache.set(cacheKey("tvdb", "series", "details", "v10", "eng", "328634"), models.SeriesDetails{
+		Title: models.Title{
+			TextPoster:   &models.Image{URL: "https://example.test/text-poster.jpg", Type: "poster"},
+			TextBackdrop: &models.Image{URL: "https://example.test/text-backdrop.jpg", Type: "backdrop"},
+			Backdrops: []models.Image{
+				{URL: "https://example.test/alt-1.jpg", Type: "backdrop"},
+				{URL: "https://example.test/alt-2.jpg", Type: "backdrop"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set series cache: %v", err)
+	}
+
+	textPoster, textBackdrop, backdrops := svc.GetCachedArtworkURLs("series", 71712, 0)
+	if textPoster != "https://example.test/text-poster.jpg" {
+		t.Fatalf("textPoster = %q", textPoster)
+	}
+	if textBackdrop != "https://example.test/text-backdrop.jpg" {
+		t.Fatalf("textBackdrop = %q", textBackdrop)
+	}
+	if len(backdrops) != 2 || backdrops[0] != "https://example.test/alt-1.jpg" {
+		t.Fatalf("backdrops = %#v", backdrops)
+	}
+}
+
+func TestGetCachedArtworkURLsResolvesMovieTMDBToTVDBCache(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+	}
+
+	if err := cache.set(cacheKey("tvdb", "resolve", "movie", "tmdb", "752"), int64(528)); err != nil {
+		t.Fatalf("set resolve cache: %v", err)
+	}
+	if err := cache.set(cacheKey("tvdb", "movie", "details", "v5", "eng", "528"), models.Title{
+		TextBackdrop: &models.Image{URL: "https://example.test/movie-text-backdrop.jpg", Type: "backdrop"},
+		Backdrops: []models.Image{
+			{URL: "https://example.test/movie-alt-1.jpg", Type: "backdrop"},
+			{URL: "https://example.test/movie-alt-2.jpg", Type: "backdrop"},
+		},
+	}); err != nil {
+		t.Fatalf("set movie cache: %v", err)
+	}
+
+	_, textBackdrop, backdrops := svc.GetCachedArtworkURLs("movie", 752, 0)
+	if textBackdrop != "https://example.test/movie-text-backdrop.jpg" {
+		t.Fatalf("textBackdrop = %q", textBackdrop)
+	}
+	if len(backdrops) != 2 || backdrops[0] != "https://example.test/movie-alt-1.jpg" {
+		t.Fatalf("backdrops = %#v", backdrops)
+	}
+}
+
 // TestGetCustomListFetchesTranslations verifies that GetCustomList fetches translations
 // for series items when the base TVDB data has non-English content.
 func TestGetCustomListFetchesTranslations(t *testing.T) {

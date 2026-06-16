@@ -16,6 +16,8 @@ type CalendarItem struct {
 	PosterURL       string            `json:"posterUrl,omitempty"`
 	TextPosterURL   string            `json:"textPosterUrl,omitempty"` // Poster with title text when PosterURL is textless
 	BackdropURL     string            `json:"backdropUrl,omitempty"`
+	TextBackdropURL string            `json:"textBackdropUrl,omitempty"` // Backdrop with title text when BackdropURL is textless
+	BackdropURLs    []string          `json:"backdropUrls,omitempty"`    // Ranked alternate backdrops
 	Year            int               `json:"year,omitempty"`
 	ExternalIDs     map[string]string `json:"externalIds,omitempty"` // imdb, tvdb, tmdb
 	Source          string            `json:"source"`                // "watchlist" | "history" | "trending" | "top-trending" | "mdblist"

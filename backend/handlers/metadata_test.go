@@ -50,6 +50,11 @@ type fakeMetadataService struct {
 	customListTotal       int
 	customListUnfiltered  int
 	customListErr         error
+	cachedArtwork         map[string]struct {
+		textPoster   string
+		textBackdrop string
+		backdrops    []string
+	}
 
 	lastTrendingType         string
 	lastTrendingOptions      metadata.ShelfLoadOptions
@@ -314,7 +319,12 @@ func (f *fakeMetadataService) GetTextPosterURL(_ string, _ int64, _ int64) strin
 	return ""
 }
 
-func (f *fakeMetadataService) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
+func (f *fakeMetadataService) GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID int64) (string, string, []string) {
+	if f.cachedArtwork != nil {
+		if artwork, ok := f.cachedArtwork[mediaType+":"+strconv.FormatInt(tmdbID, 10)+":"+strconv.FormatInt(tvdbID, 10)]; ok {
+			return artwork.textPoster, artwork.textBackdrop, artwork.backdrops
+		}
+	}
 	return "", "", nil
 }
 
@@ -1395,6 +1405,21 @@ func TestMetadataHandler_GetPersonalizedRecommendations_UsesSimilarAndExcludesKn
 				{Rank: 1, Title: title("series", 203, "Trending Series", 70)},
 			},
 		},
+		cachedArtwork: map[string]struct {
+			textPoster   string
+			textBackdrop string
+			backdrops    []string
+		}{
+			"movie:101:0": {
+				textPoster:   "https://example.test/movie-text-poster.jpg",
+				textBackdrop: "https://example.test/movie-text-backdrop.jpg",
+				backdrops:    []string{"https://example.test/movie-alt-1.jpg", "https://example.test/movie-alt-2.jpg"},
+			},
+			"series:201:0": {
+				textBackdrop: "https://example.test/series-text-backdrop.jpg",
+				backdrops:    []string{"https://example.test/series-alt-1.jpg"},
+			},
+		},
 	}
 	handler := NewMetadataHandler(fake, testConfigManager(t))
 	handler.HistoryService = &fakeMetadataHistoryService{
@@ -1499,6 +1524,32 @@ func TestMetadataHandler_GetPersonalizedRecommendations_UsesSimilarAndExcludesKn
 		if _, ok := seen[tmdbID]; !ok {
 			t.Fatalf("expected recommendation tmdb=%d in mixed items, got %+v", tmdbID, seen)
 		}
+	}
+
+	var movieA *models.Title
+	var seriesA *models.Title
+	for i := range payload.Items {
+		switch payload.Items[i].Title.TMDBID {
+		case 101:
+			movieA = &payload.Items[i].Title
+		case 201:
+			seriesA = &payload.Items[i].Title
+		}
+	}
+	if movieA == nil || movieA.TextBackdrop == nil || movieA.TextBackdrop.URL != "https://example.test/movie-text-backdrop.jpg" {
+		t.Fatalf("expected movie recommendation text backdrop enrichment, got %+v", movieA)
+	}
+	if movieA.TextPoster == nil || movieA.TextPoster.URL != "https://example.test/movie-text-poster.jpg" {
+		t.Fatalf("expected movie recommendation text poster enrichment, got %+v", movieA)
+	}
+	if len(movieA.Backdrops) != 2 || movieA.Backdrops[0].URL != "https://example.test/movie-alt-1.jpg" {
+		t.Fatalf("expected movie recommendation alternate backdrops, got %+v", movieA.Backdrops)
+	}
+	if seriesA == nil || seriesA.TextBackdrop == nil || seriesA.TextBackdrop.URL != "https://example.test/series-text-backdrop.jpg" {
+		t.Fatalf("expected series recommendation text backdrop enrichment, got %+v", seriesA)
+	}
+	if len(seriesA.Backdrops) != 1 || seriesA.Backdrops[0].URL != "https://example.test/series-alt-1.jpg" {
+		t.Fatalf("expected series recommendation alternate backdrops, got %+v", seriesA.Backdrops)
 	}
 }
 

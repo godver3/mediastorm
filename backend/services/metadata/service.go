@@ -1083,8 +1083,16 @@ func (s *Service) GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID in
 			}
 		}
 	} else {
-		if tvdbID > 0 {
-			cacheID := cacheKey("tvdb", "series", "details", "v10", s.client.language, strconv.FormatInt(tvdbID, 10))
+		seriesTVDBID := tvdbID
+		if seriesTVDBID <= 0 && tmdbID > 0 {
+			resolveKey := cacheKey("tvdb", "resolve", "tmdb", fmt.Sprintf("%d", tmdbID))
+			var resolved int64
+			if ok, _ := s.cache.get(resolveKey, &resolved); ok && resolved > 0 {
+				seriesTVDBID = resolved
+			}
+		}
+		if seriesTVDBID > 0 {
+			cacheID := cacheKey("tvdb", "series", "details", "v10", s.client.language, strconv.FormatInt(seriesTVDBID, 10))
 			var cached models.SeriesDetails
 			if ok, _ := s.cache.get(cacheID, &cached); ok {
 				mergeTitle(cached.Title)
@@ -7688,6 +7696,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, li
 					}
 					if ext, err := s.cachedMovieExtended(tvdbID, []string{"artwork"}); err == nil {
 						applyTVDBMovieExtendedMetadata(&title, ext)
+						applyTVDBRemoteIDs(&title, ext.RemoteIDs)
 					}
 					if result.Overview != "" {
 						title.Overview = result.Overview
@@ -7746,6 +7755,7 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, li
 					}
 					if ext, err := s.cachedSeriesExtended(tvdbID, []string{"artworks"}); err == nil {
 						applyTVDBArtworks(&title, ext.Artworks)
+						applyTVDBRemoteIDs(&title, ext.RemoteIDs)
 						if title.Status == "" {
 							title.Status = ext.Status.Name
 						}
@@ -7824,8 +7834,8 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, li
 						overviewFilled = true
 					}
 				}
-				// Hydrate genres/runtime from TMDB if missing
-				if len(title.Genres) == 0 || title.RuntimeMinutes == 0 {
+				// Hydrate genres/runtime and clean/text artwork variants from TMDB if missing.
+				if len(title.Genres) == 0 || title.RuntimeMinutes == 0 || title.TextPoster == nil || title.TextBackdrop == nil || len(title.Backdrops) == 0 {
 					artOK = s.maybeHydrateMovieArtworkFromTMDB(ctx, &hydroArtTitle, models.MovieDetailsQuery{TMDBID: int64(tmdbID)})
 				}
 			}()
@@ -7849,6 +7859,10 @@ func (s *Service) enrichCustomListItem(ctx context.Context, item mdblistItem, li
 				if title.Backdrop == nil && hydroArtTitle.Backdrop != nil {
 					title.Backdrop = hydroArtTitle.Backdrop
 				}
+				if title.TextBackdrop == nil && hydroArtTitle.TextBackdrop != nil {
+					title.TextBackdrop = hydroArtTitle.TextBackdrop
+				}
+				title.Backdrops = mergeRankedBackdrops(title.Backdrops, hydroArtTitle.Backdrops, title.Backdrop, title.TextBackdrop)
 				if title.IMDBID == "" && hydroArtTitle.IMDBID != "" {
 					title.IMDBID = hydroArtTitle.IMDBID
 				}
@@ -8104,7 +8118,7 @@ func (s *Service) GetCuratedList(ctx context.Context, items []CuratedItem, label
 	// Build a deterministic cache key from sorted item identities + language
 	sort.Strings(identities)
 	sortedIdentities := strings.Join(identities, ",")
-	cacheID := cacheKey("curated", "v5", sortedIdentities, s.client.language)
+	cacheID := cacheKey("curated", "v6", sortedIdentities, s.client.language)
 
 	var cached []models.TrendingItem
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached) > 0 {

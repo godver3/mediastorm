@@ -366,6 +366,8 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 
 	movies := finalizePersonalizedBucket(movieCandidates, limitPerType)
 	series := finalizePersonalizedBucket(seriesCandidates, limitPerType)
+	enrichPersonalizedArtwork(movies, h.Service)
+	enrichPersonalizedArtwork(series, h.Service)
 	items := interleavePersonalizedItems(movies, series, limitPerType)
 	return PersonalizedRecommendationsResponse{
 		Items:       items,
@@ -821,6 +823,39 @@ func finalizePersonalizedBucket(candidates map[string]*personalizedCandidate, li
 		items = append(items, models.TrendingItem{Rank: i + 1, Title: candidate.Title})
 	}
 	return items
+}
+
+func enrichPersonalizedArtwork(items []models.TrendingItem, meta metadataService) {
+	if meta == nil {
+		return
+	}
+
+	for i := range items {
+		title := &items[i].Title
+		if title.TMDBID <= 0 && title.TVDBID <= 0 {
+			continue
+		}
+
+		textPosterURL, textBackdropURL, backdropURLs := meta.GetCachedArtworkURLs(title.MediaType, title.TMDBID, title.TVDBID)
+		if textPosterURL != "" {
+			title.TextPoster = &models.Image{URL: textPosterURL, Type: "poster"}
+		}
+		if textBackdropURL != "" {
+			title.TextBackdrop = &models.Image{URL: textBackdropURL, Type: "backdrop"}
+		}
+		if len(backdropURLs) > 0 {
+			backdrops := make([]models.Image, 0, len(backdropURLs))
+			for _, url := range backdropURLs {
+				if strings.TrimSpace(url) == "" {
+					continue
+				}
+				backdrops = append(backdrops, models.Image{URL: url, Type: "backdrop"})
+			}
+			if len(backdrops) > 0 {
+				title.Backdrops = backdrops
+			}
+		}
+	}
 }
 
 func interleavePersonalizedItems(movies, series []models.TrendingItem, limitPerType int) []models.TrendingItem {

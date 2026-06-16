@@ -1162,16 +1162,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					if seriesDetails.Title.Overview != "" {
 						state.Overview = seriesDetails.Title.Overview
 					}
-					// Add poster/backdrop from metadata
-					if seriesDetails.Title.Poster != nil {
-						state.PosterURL = seriesDetails.Title.Poster.URL
-					}
-					if seriesDetails.Title.TextPoster != nil {
-						state.TextPosterURL = seriesDetails.Title.TextPoster.URL
-					}
-					if seriesDetails.Title.Backdrop != nil {
-						state.BackdropURL = seriesDetails.Title.Backdrop.URL
-					}
+					enrichSeriesWatchStateArtwork(&state, &seriesDetails.Title)
 
 					// Enrich external IDs from metadata (prioritize metadata over history)
 					if state.ExternalIDs == nil {
@@ -1273,16 +1264,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					if seriesDetails.Title.Overview != "" {
 						state.Overview = seriesDetails.Title.Overview
 					}
-					// Add poster/backdrop from metadata
-					if seriesDetails.Title.Poster != nil {
-						state.PosterURL = seriesDetails.Title.Poster.URL
-					}
-					if seriesDetails.Title.TextPoster != nil {
-						state.TextPosterURL = seriesDetails.Title.TextPoster.URL
-					}
-					if seriesDetails.Title.Backdrop != nil {
-						state.BackdropURL = seriesDetails.Title.Backdrop.URL
-					}
+					enrichSeriesWatchStateArtwork(&state, &seriesDetails.Title)
 
 					// Enrich external IDs from metadata (prioritize metadata over history)
 					if state.ExternalIDs == nil {
@@ -1356,16 +1338,7 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 
 			// Apply metadata enrichment if available
 			if movieDetails != nil {
-				// Add poster/backdrop from metadata
-				if movieDetails.Poster != nil {
-					movieState.PosterURL = movieDetails.Poster.URL
-				}
-				if movieDetails.TextPoster != nil {
-					movieState.TextPosterURL = movieDetails.TextPoster.URL
-				}
-				if movieDetails.Backdrop != nil {
-					movieState.BackdropURL = movieDetails.Backdrop.URL
-				}
+				enrichSeriesWatchStateArtwork(&movieState, movieDetails)
 
 				// Use metadata overview (the key fix - populate overview from metadata)
 				if movieDetails.Overview != "" {
@@ -2265,6 +2238,37 @@ func inferSeriesIDFromEpisodeItemID(itemID string) string {
 
 func hasContradictorySeriesExternalIDs(seriesID, itemID string, extIDs map[string]string) bool {
 	return mediaidentity.HasContradictorySeriesExternalIDs(seriesID, itemID, extIDs)
+}
+
+func enrichSeriesWatchStateArtwork(state *models.SeriesWatchState, title *models.Title) {
+	if state == nil || title == nil {
+		return
+	}
+	if title.Poster != nil {
+		state.PosterURL = title.Poster.URL
+	}
+	if title.TextPoster != nil {
+		state.TextPosterURL = title.TextPoster.URL
+	}
+	if title.Backdrop != nil {
+		state.BackdropURL = title.Backdrop.URL
+	}
+	if title.TextBackdrop != nil {
+		state.TextBackdropURL = title.TextBackdrop.URL
+	}
+
+	seen := make(map[string]struct{})
+	state.BackdropURLs = state.BackdropURLs[:0]
+	for _, image := range title.Backdrops {
+		if image.URL == "" {
+			continue
+		}
+		if _, ok := seen[image.URL]; ok {
+			continue
+		}
+		seen[image.URL] = struct{}{}
+		state.BackdropURLs = append(state.BackdropURLs, image.URL)
+	}
 }
 
 // countTotalEpisodes counts the total number of released episodes in a series,
