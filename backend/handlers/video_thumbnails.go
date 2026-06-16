@@ -28,6 +28,7 @@ const (
 	thumbnailMaxCount           = 120
 	thumbnailPreviewLODPasses   = 6
 	thumbnailWorkerCount        = 3
+	thumbnailLowPriorityWorkers = 1
 	thumbnailWidth              = 240
 	thumbnailFrameTimeout       = 45 * time.Second
 	thumbnailFilterVersion      = 14
@@ -533,7 +534,7 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 		log.Printf("[thumbnails] pass start key=%s pass=%d jobs=%d generated=%d/%d", key, passIndex+1, len(pass), manifest.Generated, manifest.Total)
 		results := make(chan thumbnailResult, len(pass))
 		jobs := make(chan thumbnailJob)
-		workerCount := thumbnailWorkerCount
+		workerCount := thumbnailWorkerCountForSource(sourceURL)
 		if len(pass) < workerCount {
 			workerCount = len(pass)
 		}
@@ -581,6 +582,14 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 	}
 	_ = m.writeManifest(manifest)
 	log.Printf("[thumbnails] complete key=%s path=%q generated=%d/%d", key, cleanPath, manifest.Generated, manifest.Total)
+}
+
+func thumbnailWorkerCountForSource(sourceURL string) int {
+	source := strings.ToLower(sourceURL)
+	if strings.Contains(source, "/webdav/") || strings.Contains(source, "/api/video/stream") {
+		return thumbnailLowPriorityWorkers
+	}
+	return thumbnailWorkerCount
 }
 
 func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string) thumbnailResult {
@@ -661,6 +670,18 @@ func (h *VideoHandler) StartThumbnails(w http.ResponseWriter, r *http.Request) {
 	durationSec, _ := strconv.ParseFloat(strings.TrimSpace(r.URL.Query().Get("duration")), 64)
 	intervalSec, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("interval")))
 	dvProfile := parseThumbnailDVProfile(r)
+	deferStart := parseBoolQuery(r.URL.Query().Get("defer"))
+	if deferStart {
+		key := thumbnailKey(cleanPath)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"key":     key,
+			"status":  h.thumbnailStatusForKey(key),
+			"started": false,
+		})
+		return
+	}
 
 	sourceURL, err := h.resolveSeekableURL(r.Context(), cleanPath)
 	if err == nil && sourceURL != "" {

@@ -28,6 +28,7 @@ var (
 )
 
 const defaultDownloadWorkers = 15
+const segmentFetchAttempts = 3
 
 // ActiveReaders returns the current number of active usenet readers.
 func ActiveReaders() int64 {
@@ -486,8 +487,7 @@ func (b *usenetReader) downloadManager(
 				)
 				defer atomic.AddInt64(&activeDownloads, -1)
 
-				// Set the item ready to read with retry logic for incomplete downloads
-				bytesFetched, err := cp.Body(ctx, segmentID, s.Writer(), s.groups)
+				bytesFetched, err := b.fetchSegmentBody(ctx, cp, segmentID, s)
 				duration := time.Since(startedAt)
 				if bytesFetched > 0 {
 					atomic.AddInt64(&downloadedBytes, bytesFetched)
@@ -571,6 +571,56 @@ func (b *usenetReader) downloadManager(
 	case <-ctx.Done():
 		return
 	}
+}
+
+func (b *usenetReader) fetchSegmentBody(ctx context.Context, cp nntppool.UsenetConnectionPool, segmentID string, s *segment) (int64, error) {
+	var lastErr error
+	for attempt := 1; attempt <= segmentFetchAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+
+		bytesFetched, err := cp.Body(ctx, segmentID, s.Writer(), s.groups)
+		if err == nil {
+			if attempt > 1 {
+				b.log.InfoContext(ctx, "usenet.segment.fetch_retry_success",
+					"reader_id", b.id,
+					"segment_id", segmentID,
+					"attempt", attempt,
+					"bytes_fetched", bytesFetched,
+				)
+			}
+			return bytesFetched, nil
+		}
+
+		lastErr = err
+		if bytesFetched > 0 || errors.Is(err, context.Canceled) {
+			return bytesFetched, err
+		}
+		if attempt == segmentFetchAttempts {
+			return 0, err
+		}
+
+		delay := time.Duration(attempt*attempt) * 250 * time.Millisecond
+		b.log.WarnContext(ctx, "usenet.segment.fetch_retry",
+			"reader_id", b.id,
+			"segment_id", segmentID,
+			"attempt", attempt,
+			"next_attempt", attempt+1,
+			"delay", delay.String(),
+			"error", err,
+			"pool", summarizePoolSnapshot(cp),
+		)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return 0, lastErr
 }
 
 func (b *usenetReader) logDownloadProgress(

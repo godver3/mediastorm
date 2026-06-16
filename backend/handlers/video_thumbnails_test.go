@@ -85,6 +85,18 @@ func TestThumbnailGenerationPassesProgressivelyRefineTimeline(t *testing.T) {
 	}
 }
 
+func TestThumbnailWorkerCountForSource(t *testing.T) {
+	if got := thumbnailWorkerCountForSource("http://127.0.0.1:7777/webdav/movie.mkv"); got != thumbnailLowPriorityWorkers {
+		t.Fatalf("webdav worker count = %d, want %d", got, thumbnailLowPriorityWorkers)
+	}
+	if got := thumbnailWorkerCountForSource("http://127.0.0.1:7777/api/video/stream?path=%2Fwebdav%2Fmovie.mkv"); got != thumbnailLowPriorityWorkers {
+		t.Fatalf("stream proxy worker count = %d, want %d", got, thumbnailLowPriorityWorkers)
+	}
+	if got := thumbnailWorkerCountForSource("https://cdn.example/video.mkv"); got != thumbnailWorkerCount {
+		t.Fatalf("cdn worker count = %d, want %d", got, thumbnailWorkerCount)
+	}
+}
+
 func TestThumbnailNeedsToneMap(t *testing.T) {
 	if thumbnailNeedsToneMap(nil) {
 		t.Fatal("nil metadata should not require tone mapping")
