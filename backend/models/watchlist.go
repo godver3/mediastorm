@@ -23,6 +23,8 @@ type WatchlistItem struct {
 	WatchState      string            `json:"watchState,omitempty"`     // "none" | "partial" | "complete"
 	UnwatchedCount  *int              `json:"unwatchedCount,omitempty"` // series only: total - watched
 	Ratings         []Rating          `json:"ratings,omitempty"`        // hydrated at response time from MDBList
+	Theatrical      *Release          `json:"theatricalRelease,omitempty"`
+	HomeRelease     *Release          `json:"homeRelease,omitempty"`
 }
 
 // WatchlistTombstone records an explicit user removal so source syncs do not

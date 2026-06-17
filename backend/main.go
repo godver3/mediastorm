@@ -441,6 +441,7 @@ func main() {
 		log.Fatalf("failed to initialise custom lists: %v", err)
 	}
 	customListsHandler := handlers.NewCustomListsHandler(customListsService, userService)
+	displayListHandler := handlers.NewDisplayListHandler(watchlistService, customListsService, userService)
 
 	var userSettingsService *user_settings.Service
 	if store != nil {
@@ -543,9 +544,12 @@ func main() {
 	// Wire up history service to watchlist handler for watch state enrichment
 	watchlistHandler.SetHistoryService(historyService)
 	customListsHandler.SetHistoryService(historyService)
+	displayListHandler.SetHistoryService(historyService)
 	// Wire up metadata service for MDBList rating enrichment
 	watchlistHandler.SetMetadataService(metadataService)
 	customListsHandler.SetMetadataService(metadataService)
+	displayListHandler.SetMetadataService(metadataService)
+	displayListHandler.SetMetadataHandler(metadataHandler)
 	// Wire up users service to metadata handler for kids profile filtering
 	metadataHandler.SetUsersService(userService)
 	metadataHandler.SetAccountsService(accountsService)
@@ -571,6 +575,7 @@ func main() {
 	}()
 
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
+	displayListHandler.SetHistoryHandler(historyHandler)
 	localMediaService, err := localmedia.NewService(store, metadataService, settings.Transmux.FFprobePath)
 	if err != nil {
 		log.Fatalf("failed to initialise local media service: %v", err)
@@ -769,6 +774,7 @@ func main() {
 		usersHandler,
 		watchlistHandler,
 		customListsHandler,
+		displayListHandler,
 		historyHandler,
 		debugHandler,
 		logsHandler,

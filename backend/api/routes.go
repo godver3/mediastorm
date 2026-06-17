@@ -102,6 +102,7 @@ func Register(
 	usersHandler *handlers.UsersHandler,
 	watchlistHandler *handlers.WatchlistHandler,
 	customListsHandler *handlers.CustomListsHandler,
+	displayListHandler *handlers.DisplayListHandler,
 	historyHandler *handlers.HistoryHandler,
 	debugHandler *handlers.DebugHandler,
 	logsHandler *handlers.LogsHandler,
@@ -619,6 +620,11 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.UpdateState).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Remove).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/watchlist/{mediaType}/{id}", watchlistHandler.Options).Methods(http.MethodOptions)
+	if displayListHandler != nil {
+		profileProtected.HandleFunc("/{userID}/display-list", displayListHandler.Get).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/display-list", displayListHandler.Post).Methods(http.MethodPost)
+		profileProtected.HandleFunc("/{userID}/display-list", displayListHandler.Options).Methods(http.MethodOptions)
+	}
 	profileProtected.HandleFunc("/{userID}/custom-lists", customListsHandler.ListLists).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/custom-lists", customListsHandler.CreateList).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/custom-lists", customListsHandler.Options).Methods(http.MethodOptions)
