@@ -354,6 +354,9 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	enrichWatchlistItems(resp.Watchlist, idx)
 	// Enrich with MDBList ratings for sort-by-rating support (bounded by startupPayloadLimit)
 	enrichWatchlistRatings(r.Context(), resp.Watchlist, h.metadata)
+	// Match display-list watchlist enrichment so the initial home shelf does not
+	// need to repair missing movie release metadata after first paint.
+	enrichDisplayListReleases(r, resp.Watchlist, h.metadata)
 	if resp.TrendingMovies != nil {
 		enrichTrendingItems(resp.TrendingMovies.Items, idx)
 	}
