@@ -685,6 +685,12 @@ func (s *Service) load() error {
 	defer s.mu.Unlock()
 
 	if s.useDB() {
+		if cleared, err := s.store.UserSettings().ClearCleanPostersOverrides(context.Background()); err != nil {
+			log.Printf("[user-settings] warning: failed to clear clean posters overrides: %v", err)
+		} else if cleared > 0 {
+			log.Printf("[user-settings] cleared clean posters overrides for %d users", cleared)
+		}
+
 		settings, err := s.store.UserSettings().List(context.Background())
 		if err != nil {
 			return fmt.Errorf("load user settings from db: %w", err)
@@ -767,6 +773,14 @@ func (s *Service) load() error {
 				needsSave = true
 			} else if _, has := filteringRaw["maxResultsPerResolution"]; has {
 				config.MigrateRawUserSettings(userRaw)
+				migrated, _ := json.Marshal(userRaw)
+				rawMap[userID] = migrated
+				needsSave = true
+			}
+		}
+		if displayRaw, ok := userRaw["display"].(map[string]interface{}); ok {
+			if _, has := displayRaw["cleanPosters"]; has {
+				delete(displayRaw, "cleanPosters")
 				migrated, _ := json.Marshal(userRaw)
 				rawMap[userID] = migrated
 				needsSave = true

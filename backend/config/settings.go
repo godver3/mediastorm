@@ -1238,6 +1238,7 @@ func DefaultSettings() Settings {
 			BadgeVisibility:           []string{"watchProgress"},
 			NavigationTabVisibility:   []string{"home", "search", "lists", "live", "profiles", "downloads", "settings", "admin"},
 			WatchStateIconStyle:       "colored",
+			CleanPosters:              true,
 			AlwaysShowProfileSelector: true,
 			Appearance: AppearanceSettings{
 				FontScale:    floatPtr(1.0),
@@ -1774,6 +1775,7 @@ func (m *Manager) Load() (Settings, error) {
 	if s.Display.WatchStateIconStyle == "" {
 		s.Display.WatchStateIconStyle = "colored"
 	}
+	s.Display.CleanPosters = true
 
 	// Backfill Log settings
 	if strings.TrimSpace(s.Log.File) == "" {

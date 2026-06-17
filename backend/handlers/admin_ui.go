@@ -703,12 +703,11 @@ var SettingsSchema = map[string]interface{}{
 			},
 			"bypassFilteringForAioStreamsOnly": map[string]interface{}{"type": "boolean", "label": "Bypass Filtering for AIOStreams Only", "description": "Skip mediastorm filtering/ranking when AIOStreams is the only enabled scraper in debrid-only mode (use AIOStreams' own ranking). Does not apply in hybrid mode with usenet.", "order": 5},
 			"showParsedBadges":                 map[string]interface{}{"type": "boolean", "label": "Show Parsed Metadata Badges", "description": "Show parsed quality badges (resolution, codec, HDR, audio) instead of raw release titles in manual source selection", "order": 6},
-			"cleanPosters":                     map[string]interface{}{"type": "boolean", "label": "Clean Posters", "description": "Hide title text and gradient overlays on poster cards for a cleaner look on the home and watchlist pages", "order": 7},
 			"appLanguage": map[string]interface{}{
 				"type":        "select",
 				"label":       "App Language",
 				"description": "Language for the app UI. Defaults to the device locale unless you choose an override here.",
-				"order":       8,
+				"order":       7,
 				"options": []map[string]interface{}{
 					{"value": "", "label": "Device Default"},
 					{"value": "en", "label": "English"},

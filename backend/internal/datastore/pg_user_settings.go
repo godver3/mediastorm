@@ -75,6 +75,17 @@ func (r *pgUserSettingsRepo) List(ctx context.Context) (map[string]models.UserSe
 	return result, rows.Err()
 }
 
+func (r *pgUserSettingsRepo) ClearCleanPostersOverrides(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE user_settings
+		SET settings = settings #- '{display,cleanPosters}', updated_at = now()
+		WHERE settings #> '{display,cleanPosters}' IS NOT NULL`)
+	if err != nil {
+		return 0, fmt.Errorf("clear clean posters overrides: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *pgUserSettingsRepo) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM user_settings`).Scan(&count)

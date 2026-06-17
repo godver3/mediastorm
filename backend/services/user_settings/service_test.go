@@ -3,6 +3,7 @@ package user_settings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"novastream/models"
@@ -98,6 +99,45 @@ func TestGetWithDefaults_SanitizesDefaultsFallback(t *testing.T) {
 	}
 	if got.Playback.PreferredSubtitleLanguage != "eng" {
 		t.Errorf("subLang = %q, want %q", got.Playback.PreferredSubtitleLanguage, "eng")
+	}
+}
+
+func TestLoad_RemovesCleanPostersOverrides(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{
+  "user-1": {
+    "display": {
+      "cleanPosters": false,
+      "appLanguage": "fr"
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "user_settings.json"), []byte(raw), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	got, err := svc.Get("user-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected settings")
+	}
+	if got.Display.AppLanguage != "fr" {
+		t.Fatalf("appLanguage = %q, want fr", got.Display.AppLanguage)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "user_settings.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if strings.Contains(string(data), "cleanPosters") {
+		t.Fatalf("expected cleanPosters override to be removed, got %s", string(data))
 	}
 }
 

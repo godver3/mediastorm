@@ -37,6 +37,31 @@ func TestDefaultSettingsDisablesMatchFrameRate(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsEnablesCleanPosters(t *testing.T) {
+	settings := DefaultSettings()
+
+	if !settings.Display.CleanPosters {
+		t.Fatal("expected clean posters to default to enabled")
+	}
+}
+
+func TestLoadForcesCleanPostersEnabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"display":{"cleanPosters":false}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !settings.Display.CleanPosters {
+		t.Fatal("expected clean posters to be forced enabled on load")
+	}
+}
+
 func TestLoadMigratesNavigationTabVisibilitySystemTabs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"ui":{"loadingAnimationEnabled":true},"display":{"navigationTabVisibility":["home","search","lists","live","profiles","downloads"]}}`)

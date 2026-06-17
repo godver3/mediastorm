@@ -166,6 +166,18 @@ func TestAdminUIHandler_GetSchema(t *testing.T) {
 	if liveTV["testable"] != true {
 		t.Errorf("liveTV testable = %v, want true", liveTV["testable"])
 	}
+
+	display, ok := schema["display"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema missing display section")
+	}
+	fields, ok := display["fields"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("display schema missing fields")
+	}
+	if _, exists := fields["cleanPosters"]; exists {
+		t.Fatal("cleanPosters should be hidden from the admin settings schema")
+	}
 }
 
 func TestAdminUIHandler_HasDefaultPassword(t *testing.T) {

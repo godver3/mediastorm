@@ -90,6 +90,7 @@ type UserSettingsRepository interface {
 	Upsert(ctx context.Context, userID string, settings *models.UserSettings) error
 	Delete(ctx context.Context, userID string) error
 	List(ctx context.Context) (map[string]models.UserSettings, error)
+	ClearCleanPostersOverrides(ctx context.Context) (int64, error)
 	Count(ctx context.Context) (int64, error)
 }
 
