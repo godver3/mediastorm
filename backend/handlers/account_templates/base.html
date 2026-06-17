@@ -39,6 +39,7 @@
             color: var(--text-primary);
             min-height: 100vh;
             line-height: 1.5;
+            isolation: isolate;
         }
 
         .navbar {
@@ -127,6 +128,8 @@
             max-width: 1400px;
             margin: 0 auto;
             padding: 1.5rem;
+            position: relative;
+            z-index: 1;
         }
 
         .page-header {
@@ -643,6 +646,72 @@
             padding: 2rem;
         }
 
+        .storm-egg-layer {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+            background:
+                linear-gradient(180deg, rgba(15, 15, 15, 0.02), rgba(15, 15, 15, 0.16)),
+                radial-gradient(circle at 50% 0%, rgba(148, 163, 184, 0.08), transparent 32rem);
+            opacity: 1;
+        }
+
+        .storm-egg-drop {
+            position: absolute;
+            top: -12rem;
+            left: var(--storm-left);
+            width: var(--storm-width);
+            height: var(--storm-length);
+            border-radius: 999px;
+            background: linear-gradient(180deg, rgba(226, 232, 240, 0), rgba(226, 232, 240, var(--storm-opacity)));
+            box-shadow: 0 0 10px rgba(148, 163, 184, 0.18);
+            transform: translate3d(0, 0, 0) rotate(12deg);
+            animation: stormEggRain var(--storm-duration) linear var(--storm-delay) infinite;
+        }
+
+        .storm-egg-title {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            z-index: 2200;
+            transform: translate(-50%, -50%);
+            width: min(42rem, calc(100vw - 2rem));
+            color: rgba(255, 255, 255, 0.92);
+            font-size: clamp(2.5rem, 8vw, 6rem);
+            font-weight: 800;
+            letter-spacing: 0;
+            text-align: center;
+            text-shadow: 0 0 30px rgba(99, 102, 241, 0.55);
+            opacity: 0;
+            animation: stormEggTitle 2.8s ease forwards;
+        }
+
+        @keyframes stormEggRain {
+            to {
+                transform: translate3d(var(--storm-drift), calc(100vh + 16rem), 0) rotate(12deg);
+            }
+        }
+
+        @keyframes stormEggTitle {
+            0% { opacity: 0; transform: translate(-50%, -48%) scale(0.94); }
+            24% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            72% { opacity: 0.86; transform: translate(-50%, -50%) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -52%) scale(1.04); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .storm-egg-title {
+                animation-duration: 0.01ms !important;
+            }
+
+            .storm-egg-drop {
+                animation: none !important;
+                display: none;
+            }
+        }
+
         @media (max-width: 1024px) {
             .grid-4 { grid-template-columns: repeat(2, 1fr); }
             .grid-3 { grid-template-columns: repeat(2, 1fr); }
@@ -846,6 +915,139 @@
             const response = await fetch(url, options);
             return response.json();
         }
+
+        (function initStormEgg() {
+            const sequence = 'storm';
+            const storageKey = 'mediastorm:storm-rain';
+            let buffer = '';
+            let brandPressTimer = null;
+            let brandPressActivated = false;
+
+            function isTypingTarget(target) {
+                return target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]');
+            }
+
+            function persistStormEgg() {
+                try {
+                    window.localStorage.setItem(storageKey, Date.now().toString());
+                } catch (e) {}
+            }
+
+            function clearPersistedStormEgg() {
+                try {
+                    window.localStorage.removeItem(storageKey);
+                } catch (e) {}
+            }
+
+            function isStormEggPersisted() {
+                try {
+                    return window.localStorage.getItem(storageKey) !== null;
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function removeStormEgg(options = {}) {
+                const shouldPersist = options.persist !== false;
+                const shouldAnnounce = options.announce !== false;
+                if (shouldPersist) clearPersistedStormEgg();
+                document.querySelectorAll('.storm-egg-layer').forEach(layer => layer.remove());
+                if (shouldAnnounce && typeof showToast === 'function') showToast('Storm rain disabled', 'info');
+            }
+
+            function toggleStormEgg() {
+                if (document.querySelector('.storm-egg-layer') || isStormEggPersisted()) {
+                    removeStormEgg();
+                } else {
+                    activateStormEgg();
+                }
+            }
+
+            function activateStormEgg(options = {}) {
+                const shouldPersist = options.persist !== false;
+                const shouldAnnounce = options.announce !== false;
+                const shouldShowTitle = options.showTitle !== false && shouldAnnounce;
+                if (document.querySelector('.storm-egg-layer')) return;
+                if (shouldPersist) persistStormEgg();
+
+                const layer = document.createElement('div');
+                layer.className = 'storm-egg-layer';
+                layer.setAttribute('aria-hidden', 'true');
+
+                if (shouldShowTitle) {
+                    const title = document.createElement('div');
+                    title.className = 'storm-egg-title';
+                    title.textContent = 'storm';
+                    document.body.appendChild(title);
+                    title.addEventListener('animationend', () => title.remove(), { once: true });
+                }
+
+                const count = window.matchMedia('(max-width: 768px)').matches ? 72 : 130;
+                for (let i = 0; i < count; i++) {
+                    const drop = document.createElement('div');
+                    drop.className = 'storm-egg-drop';
+                    drop.style.setProperty('--storm-left', Math.round(Math.random() * 98) + 'vw');
+                    drop.style.setProperty('--storm-drift', Math.round((Math.random() - 0.5) * 260) + 'px');
+                    drop.style.setProperty('--storm-duration', (1.6 + Math.random() * 2.4).toFixed(2) + 's');
+                    drop.style.setProperty('--storm-delay', (-Math.random() * 4).toFixed(2) + 's');
+                    drop.style.setProperty('--storm-length', Math.round(46 + Math.random() * 74) + 'px');
+                    drop.style.setProperty('--storm-opacity', (0.26 + Math.random() * 0.34).toFixed(2));
+                    drop.style.setProperty('--storm-width', (1 + Math.random() * 1.4).toFixed(1) + 'px');
+                    layer.appendChild(drop);
+                }
+
+                document.body.appendChild(layer);
+                if (shouldAnnounce && typeof showToast === 'function') showToast('Storm rain enabled', 'info');
+            }
+
+            document.addEventListener('keydown', event => {
+                if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+                if (event.key.length !== 1) return;
+                buffer = (buffer + event.key.toLowerCase()).slice(-sequence.length);
+                if (buffer === sequence) {
+                    buffer = '';
+                    toggleStormEgg();
+                }
+            });
+
+            window.addEventListener('storage', event => {
+                if (event.key === storageKey && event.newValue !== null) {
+                    activateStormEgg({ persist: false, announce: false });
+                } else if (event.key === storageKey && event.newValue === null) {
+                    removeStormEgg({ persist: false, announce: false });
+                }
+            });
+
+            document.addEventListener('DOMContentLoaded', () => {
+                if (isStormEggPersisted()) {
+                    activateStormEgg({ persist: false, announce: false });
+                }
+
+                const brand = document.querySelector('.navbar-brand');
+                if (!brand) return;
+                const clearBrandPress = () => {
+                    window.clearTimeout(brandPressTimer);
+                    brandPressTimer = null;
+                };
+                brand.addEventListener('pointerdown', () => {
+                    clearBrandPress();
+                    brandPressActivated = false;
+                    brandPressTimer = window.setTimeout(() => {
+                        brandPressActivated = true;
+                        toggleStormEgg();
+                    }, 1100);
+                });
+                brand.addEventListener('pointerup', clearBrandPress);
+                brand.addEventListener('pointercancel', clearBrandPress);
+                brand.addEventListener('pointerleave', clearBrandPress);
+                brand.addEventListener('click', event => {
+                    if (brandPressActivated) {
+                        event.preventDefault();
+                        brandPressActivated = false;
+                    }
+                });
+            });
+        })();
     </script>
 
     {{block "scripts" .}}{{end}}
