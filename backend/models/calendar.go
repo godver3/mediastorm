@@ -18,6 +18,13 @@ type CalendarItem struct {
 	BackdropURL     string            `json:"backdropUrl,omitempty"`
 	TextBackdropURL string            `json:"textBackdropUrl,omitempty"` // Backdrop with title text when BackdropURL is textless
 	BackdropURLs    []string          `json:"backdropUrls,omitempty"`    // Ranked alternate backdrops
+	Overview        string            `json:"overview,omitempty"`
+	Logo            *Image            `json:"logo,omitempty"`
+	Ratings         []Rating          `json:"ratings,omitempty"`
+	Genres          []string          `json:"genres,omitempty"`
+	RuntimeMinutes  int               `json:"runtimeMinutes,omitempty"`
+	Theatrical      *Release          `json:"theatricalRelease,omitempty"`
+	HomeRelease     *Release          `json:"homeRelease,omitempty"`
 	Year            int               `json:"year,omitempty"`
 	ExternalIDs     map[string]string `json:"externalIds,omitempty"` // imdb, tvdb, tmdb
 	Source          string            `json:"source"`                // "watchlist" | "history" | "trending" | "top-trending" | "mdblist"

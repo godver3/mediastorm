@@ -1345,6 +1345,8 @@ func (s *Service) buildSeriesStatesFromHistory(ctx context.Context, userID strin
 					movieState.Overview = movieDetails.Overview
 					movieState.LastWatched.Overview = movieDetails.Overview
 				}
+				movieState.Theatrical = movieDetails.Theatrical
+				movieState.HomeRelease = movieDetails.HomeRelease
 
 				// Enrich external IDs from metadata (prioritize metadata over progress)
 				if movieState.ExternalIDs == nil {

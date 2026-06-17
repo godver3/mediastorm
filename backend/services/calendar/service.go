@@ -1185,7 +1185,7 @@ func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, t
 		return models.CalendarItem{}, false
 	}
 
-	return models.CalendarItem{
+	item := models.CalendarItem{
 		Title:           title.Name,
 		MediaType:       "movie",
 		AirDate:         releaseDate.Format("2006-01-02"),
@@ -1198,7 +1198,9 @@ func makeMovieReleaseItem(title *models.Title, rel *models.Release, posterURL, t
 		Year:            title.Year,
 		ExternalIDs:     extIDs,
 		Source:          source,
-	}, true
+	}
+	enrichCalendarItemFromTitle(&item, title)
+	return item, true
 }
 
 // fetchUpcomingEpisodes fetches series details and returns calendar items for future episodes.
@@ -1263,7 +1265,7 @@ func (s *Service) fetchUpcomingEpisodes(
 				continue
 			}
 
-			items = append(items, models.CalendarItem{
+			item := models.CalendarItem{
 				Title:           details.Title.Name,
 				EpisodeTitle:    ep.Name,
 				EpisodeOverview: strings.TrimSpace(ep.Overview),
@@ -1282,10 +1284,45 @@ func (s *Service) fetchUpcomingEpisodes(
 				Year:            details.Title.Year,
 				ExternalIDs:     extIDs,
 				Source:          source,
-			})
+			}
+			enrichCalendarItemFromTitle(&item, &details.Title)
+			items = append(items, item)
 		}
 	}
 	return items
+}
+
+func enrichCalendarItemFromTitle(item *models.CalendarItem, title *models.Title) {
+	if item == nil || title == nil {
+		return
+	}
+	if item.Overview == "" {
+		item.Overview = strings.TrimSpace(title.Overview)
+	}
+	if item.PosterURL == "" && title.Poster != nil {
+		item.PosterURL = title.Poster.URL
+	}
+	if item.TextPosterURL == "" && title.TextPoster != nil {
+		item.TextPosterURL = title.TextPoster.URL
+	}
+	if item.BackdropURL == "" && title.Backdrop != nil {
+		item.BackdropURL = title.Backdrop.URL
+	}
+	if item.TextBackdropURL == "" && title.TextBackdrop != nil {
+		item.TextBackdropURL = title.TextBackdrop.URL
+	}
+	if len(item.BackdropURLs) == 0 {
+		item.BackdropURLs = calendarBackdropURLs(title)
+	}
+	if item.Year == 0 {
+		item.Year = title.Year
+	}
+	item.Logo = title.Logo
+	item.Ratings = title.Ratings
+	item.Genres = title.Genres
+	item.RuntimeMinutes = title.RuntimeMinutes
+	item.Theatrical = title.Theatrical
+	item.HomeRelease = title.HomeRelease
 }
 
 func buildSeriesFetchKey(name string, year int, externalIDs map[string]string) string {
