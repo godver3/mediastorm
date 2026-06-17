@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1265,6 +1266,7 @@ type AdminUIHandler struct {
 type MetadataService interface {
 	ClearCache() error
 	MovieDetails(ctx context.Context, req models.MovieDetailsQuery) (*models.Title, error)
+	SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error)
 	GetCacheManagerStatus() metadata.CacheManagerStatus
 	RefreshTrendingCache()
@@ -2232,6 +2234,372 @@ func (h *AdminUIHandler) GetStreams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(data)
+}
+
+type dashboardRecentWatchItem struct {
+	Title          string    `json:"title"`
+	Subtitle       string    `json:"subtitle,omitempty"`
+	MediaType      string    `json:"mediaType"`
+	ArtworkURL     string    `json:"artworkUrl,omitempty"`
+	ArtworkType    string    `json:"artworkType,omitempty"`
+	ProfileID      string    `json:"profileId"`
+	ProfileName    string    `json:"profileName"`
+	ProfileColor   string    `json:"profileColor,omitempty"`
+	WatchedAt      time.Time `json:"watchedAt"`
+	WatchedSeconds float64   `json:"watchedSeconds,omitempty"`
+}
+
+type dashboardWatchTimeStats struct {
+	WeekSeconds  float64 `json:"weekSeconds"`
+	MonthSeconds float64 `json:"monthSeconds"`
+	EverSeconds  float64 `json:"everSeconds"`
+	HasTracked   bool    `json:"hasTracked"`
+}
+
+type dashboardProfileOption struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+type dashboardRecentWatchSource struct {
+	item         models.WatchHistoryItem
+	profileID    string
+	profileName  string
+	profileColor string
+}
+
+// GetDashboardStats returns scoped account/profile watch stats for the status page.
+func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	w.Header().Set("Content-Type", "application/json")
+
+	if h.historyService == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"recent":    []dashboardRecentWatchItem{},
+			"watchTime": dashboardWatchTimeStats{},
+		})
+		return
+	}
+
+	usersList := h.getScopedUsers(isAdmin, accountID)
+	profiles := make([]dashboardProfileOption, 0, len(usersList))
+	for _, user := range usersList {
+		profileName := user.Name
+		if profileName == "" {
+			profileName = user.ID
+		}
+		profiles = append(profiles, dashboardProfileOption{
+			ID:    user.ID,
+			Name:  profileName,
+			Color: user.Color,
+		})
+	}
+	watchUsers := filterDashboardStatsUsers(usersList, strings.TrimSpace(r.URL.Query().Get("profileId")))
+	watchMediaType := normalizeDashboardWatchMediaType(r.URL.Query().Get("mediaType"))
+	now := time.Now().UTC()
+	weekCutoff := now.AddDate(0, 0, -7)
+	monthCutoff := now.AddDate(0, -1, 0)
+
+	recentSources := make([]dashboardRecentWatchSource, 0, 16)
+	watchTime := dashboardWatchTimeStats{}
+
+	for _, user := range usersList {
+		profileName := user.Name
+		if profileName == "" {
+			profileName = user.ID
+		}
+
+		items, err := h.historyService.ListWatchHistory(user.ID)
+		if err == nil {
+			for _, item := range items {
+				if !item.Watched {
+					continue
+				}
+				recentSources = append(recentSources, dashboardRecentWatchSource{
+					item:         item,
+					profileID:    user.ID,
+					profileName:  profileName,
+					profileColor: user.Color,
+				})
+			}
+		}
+	}
+
+	watchUserIDs := make(map[string]bool, len(watchUsers))
+	for _, user := range watchUsers {
+		watchUserIDs[user.ID] = true
+	}
+	for _, user := range usersList {
+		if !watchUserIDs[user.ID] {
+			continue
+		}
+		items, err := h.historyService.ListWatchHistory(user.ID)
+		if err == nil {
+			for _, item := range items {
+				if !item.Watched {
+					continue
+				}
+				if !dashboardWatchMediaTypeMatches(item.MediaType, watchMediaType) {
+					continue
+				}
+				addDashboardWatchSeconds(&watchTime, item.WatchedSeconds, item.WatchedAt, weekCutoff, monthCutoff)
+			}
+		}
+
+		progressItems, err := h.historyService.ListPlaybackProgress(user.ID)
+		if err == nil {
+			for _, progress := range progressItems {
+				if !dashboardWatchMediaTypeMatches(progress.MediaType, watchMediaType) {
+					continue
+				}
+				addDashboardWatchSeconds(&watchTime, progress.WatchedSeconds, progress.UpdatedAt, weekCutoff, monthCutoff)
+			}
+		}
+	}
+
+	sort.Slice(recentSources, func(i, j int) bool {
+		if recentSources[i].item.WatchedAt.Equal(recentSources[j].item.WatchedAt) {
+			return dashboardHistoryTitle(recentSources[i].item) < dashboardHistoryTitle(recentSources[j].item)
+		}
+		return recentSources[i].item.WatchedAt.After(recentSources[j].item.WatchedAt)
+	})
+	if len(recentSources) > 5 {
+		recentSources = recentSources[:5]
+	}
+
+	recent := make([]dashboardRecentWatchItem, 0, len(recentSources))
+	for _, source := range recentSources {
+		artworkURL, artworkType := h.dashboardRecentArtworkURL(r.Context(), source.item)
+		recent = append(recent, dashboardRecentWatchItem{
+			Title:          dashboardHistoryTitle(source.item),
+			Subtitle:       dashboardHistorySubtitle(source.item),
+			MediaType:      source.item.MediaType,
+			ArtworkURL:     artworkURL,
+			ArtworkType:    artworkType,
+			ProfileID:      source.profileID,
+			ProfileName:    source.profileName,
+			ProfileColor:   source.profileColor,
+			WatchedAt:      source.item.WatchedAt,
+			WatchedSeconds: source.item.WatchedSeconds,
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"recent":    recent,
+		"watchTime": watchTime,
+		"profiles":  profiles,
+	})
+}
+
+func filterDashboardStatsUsers(usersList []models.User, profileID string) []models.User {
+	if profileID == "" || profileID == "all" {
+		return usersList
+	}
+	for _, user := range usersList {
+		if user.ID == profileID {
+			return []models.User{user}
+		}
+	}
+	return usersList
+}
+
+func normalizeDashboardWatchMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "movie", "movies":
+		return "movie"
+	case "episode", "episodes":
+		return "episode"
+	default:
+		return ""
+	}
+}
+
+func dashboardWatchMediaTypeMatches(itemMediaType, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(itemMediaType), filter)
+}
+
+func addDashboardWatchSeconds(stats *dashboardWatchTimeStats, seconds float64, at time.Time, weekCutoff, monthCutoff time.Time) {
+	if seconds <= 0 {
+		return
+	}
+	stats.HasTracked = true
+	stats.EverSeconds += seconds
+	if !at.IsZero() {
+		t := at.UTC()
+		if !t.Before(weekCutoff) {
+			stats.WeekSeconds += seconds
+		}
+		if !t.Before(monthCutoff) {
+			stats.MonthSeconds += seconds
+		}
+	}
+}
+
+func dashboardHistoryTitle(item models.WatchHistoryItem) string {
+	if item.MediaType == "episode" && item.SeriesName != "" {
+		return item.SeriesName
+	}
+	if item.Name != "" {
+		return item.Name
+	}
+	if item.SeriesName != "" {
+		return item.SeriesName
+	}
+	return item.ItemID
+}
+
+func dashboardHistorySubtitle(item models.WatchHistoryItem) string {
+	if item.MediaType != "episode" {
+		if item.Year > 0 {
+			return strconv.Itoa(item.Year)
+		}
+		return ""
+	}
+	episode := ""
+	if item.SeasonNumber > 0 || item.EpisodeNumber > 0 {
+		episode = fmt.Sprintf("S%02dE%02d", item.SeasonNumber, item.EpisodeNumber)
+	}
+	if item.Name != "" && item.SeriesName != "" {
+		if episode != "" {
+			return episode + " - " + item.Name
+		}
+		return item.Name
+	}
+	return episode
+}
+
+func (h *AdminUIHandler) dashboardRecentArtworkURL(ctx context.Context, item models.WatchHistoryItem) (string, string) {
+	if h.metadataService == nil {
+		return "", ""
+	}
+	switch item.MediaType {
+	case "movie":
+		title, err := h.metadataService.MovieDetails(ctx, dashboardMovieDetailsQuery(item))
+		if err != nil || title == nil {
+			return "", ""
+		}
+		return dashboardLandscapeTitleArtwork(*title), "movie"
+	case "episode":
+		details, err := h.metadataService.SeriesDetails(ctx, dashboardSeriesDetailsQuery(item))
+		if err != nil || details == nil {
+			return "", ""
+		}
+		if imageURL := dashboardEpisodeImageURL(*details, item.SeasonNumber, item.EpisodeNumber); imageURL != "" {
+			return imageURL, "episode"
+		}
+		return dashboardLandscapeTitleArtwork(details.Title), "series"
+	default:
+		return "", ""
+	}
+}
+
+func dashboardMovieDetailsQuery(item models.WatchHistoryItem) models.MovieDetailsQuery {
+	tmdbID, tvdbID, imdbID := dashboardHistoryIDs(item)
+	return models.MovieDetailsQuery{
+		TitleID: item.ItemID,
+		Name:    item.Name,
+		Year:    item.Year,
+		IMDBID:  imdbID,
+		TMDBID:  tmdbID,
+		TVDBID:  tvdbID,
+	}
+}
+
+func dashboardSeriesDetailsQuery(item models.WatchHistoryItem) models.SeriesDetailsQuery {
+	tmdbID, tvdbID, imdbID := dashboardHistoryIDs(item)
+	name := item.SeriesName
+	if name == "" {
+		name = item.Name
+	}
+	return models.SeriesDetailsQuery{
+		TitleID: item.SeriesID,
+		Name:    name,
+		Year:    item.Year,
+		IMDBID:  imdbID,
+		TMDBID:  tmdbID,
+		TVDBID:  tvdbID,
+	}
+}
+
+func dashboardHistoryIDs(item models.WatchHistoryItem) (tmdbID, tvdbID int64, imdbID string) {
+	for key, value := range item.ExternalIDs {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "tmdb":
+			tmdbID = parseDashboardInt64(value)
+		case "tvdb":
+			tvdbID = parseDashboardInt64(value)
+		case "imdb":
+			imdbID = strings.TrimSpace(value)
+		}
+	}
+	if tmdbID == 0 {
+		tmdbID = dashboardIDFromStructuredID(item.ItemID, "tmdb")
+	}
+	if tvdbID == 0 {
+		tvdbID = dashboardIDFromStructuredID(item.ItemID, "tvdb")
+	}
+	if tvdbID == 0 {
+		tvdbID = dashboardIDFromStructuredID(item.SeriesID, "tvdb")
+	}
+	if tmdbID == 0 {
+		tmdbID = dashboardIDFromStructuredID(item.SeriesID, "tmdb")
+	}
+	if imdbID == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.ItemID)), "tt") {
+		imdbID = strings.TrimSpace(item.ItemID)
+	}
+	return tmdbID, tvdbID, imdbID
+}
+
+func dashboardIDFromStructuredID(id, provider string) int64 {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(id)), ":")
+	if len(parts) < 2 || parts[0] != provider {
+		return 0
+	}
+	return parseDashboardInt64(parts[len(parts)-1])
+}
+
+func parseDashboardInt64(value string) int64 {
+	n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	return n
+}
+
+func dashboardEpisodeImageURL(details models.SeriesDetails, seasonNumber, episodeNumber int) string {
+	for _, season := range details.Seasons {
+		if season.Number != seasonNumber {
+			continue
+		}
+		for _, episode := range season.Episodes {
+			if episode.EpisodeNumber == episodeNumber && episode.Image != nil && strings.TrimSpace(episode.Image.URL) != "" {
+				return episode.Image.URL
+			}
+		}
+	}
+	return ""
+}
+
+func dashboardLandscapeTitleArtwork(title models.Title) string {
+	if title.TextBackdrop != nil && strings.TrimSpace(title.TextBackdrop.URL) != "" {
+		return title.TextBackdrop.URL
+	}
+	if title.Backdrop != nil && strings.TrimSpace(title.Backdrop.URL) != "" {
+		return title.Backdrop.URL
+	}
+	for _, image := range title.Backdrops {
+		if strings.TrimSpace(image.URL) != "" {
+			return image.URL
+		}
+	}
+	if title.TextPoster != nil && strings.TrimSpace(title.TextPoster.URL) != "" {
+		return title.TextPoster.URL
+	}
+	if title.Poster != nil && strings.TrimSpace(title.Poster.URL) != "" {
+		return title.Poster.URL
+	}
+	return ""
 }
 
 // TerminateStream stops an active stream from the admin/account dashboard.
@@ -5877,7 +6245,7 @@ func (h *AdminUIHandler) RefreshCalendar(w http.ResponseWriter, r *http.Request)
 // GetWatchHistory returns watch history for a user (admin session auth)
 // Supports pagination via query params: page (default 1), pageSize (default 50), mediaType (optional filter)
 func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("userId")
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	if userID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -5909,6 +6277,11 @@ func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request)
 
 	mediaTypeFilter := r.URL.Query().Get("mediaType")
 
+	if userID == "all" {
+		h.getAllScopedWatchHistory(w, r, page, pageSize, mediaTypeFilter)
+		return
+	}
+
 	result, err := h.historyService.ListWatchHistoryPaginated(userID, page, pageSize, mediaTypeFilter)
 	if err != nil {
 		log.Printf("[admin] GetWatchHistory error for user %s: %v", userID, err)
@@ -5922,9 +6295,84 @@ func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(result)
 }
 
+type adminWatchHistoryItem struct {
+	models.WatchHistoryItem
+	ProfileID   string `json:"profileId,omitempty"`
+	ProfileName string `json:"profileName,omitempty"`
+}
+
+type adminWatchHistoryPage struct {
+	Items      []adminWatchHistoryItem `json:"items"`
+	Total      int                     `json:"total"`
+	Page       int                     `json:"page"`
+	PageSize   int                     `json:"pageSize"`
+	TotalPages int                     `json:"totalPages"`
+}
+
+func (h *AdminUIHandler) getAllScopedWatchHistory(w http.ResponseWriter, r *http.Request, page, pageSize int, mediaTypeFilter string) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	scopedUsers := h.getScopedUsers(isAdmin, accountID)
+
+	items := make([]adminWatchHistoryItem, 0)
+	for _, user := range scopedUsers {
+		userItems, err := h.historyService.ListWatchHistory(user.ID)
+		if err != nil {
+			log.Printf("[admin] GetWatchHistory error for user %s: %v", user.ID, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		for _, item := range userItems {
+			if mediaTypeFilter != "" && item.MediaType != mediaTypeFilter {
+				continue
+			}
+			items = append(items, adminWatchHistoryItem{
+				WatchHistoryItem: item,
+				ProfileID:        user.ID,
+				ProfileName:      user.Name,
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].WatchedAt.Equal(items[j].WatchedAt) {
+			if items[i].ProfileID == items[j].ProfileID {
+				return items[i].ID < items[j].ID
+			}
+			return items[i].ProfileID < items[j].ProfileID
+		}
+		return items[i].WatchedAt.After(items[j].WatchedAt)
+	})
+
+	total := len(items)
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(adminWatchHistoryPage{
+		Items:      items[start:end],
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	})
+}
+
 // GetContinueWatching returns continue watching items for a user (admin session auth)
 func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("userId")
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	if userID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -5939,6 +6387,11 @@ func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if userID == "all" {
+		h.getAllScopedContinueWatching(w, r)
+		return
+	}
+
 	items, err := h.historyService.ListContinueWatching(userID)
 	if err != nil {
 		log.Printf("[admin] GetContinueWatching error for user %s: %v", userID, err)
@@ -5947,6 +6400,49 @@ func (h *AdminUIHandler) GetContinueWatching(w http.ResponseWriter, r *http.Requ
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+type adminContinueWatchingItem struct {
+	models.SeriesWatchState
+	ProfileID   string `json:"profileId,omitempty"`
+	ProfileName string `json:"profileName,omitempty"`
+}
+
+func (h *AdminUIHandler) getAllScopedContinueWatching(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
+	scopedUsers := h.getScopedUsers(isAdmin, accountID)
+
+	items := make([]adminContinueWatchingItem, 0)
+	for _, user := range scopedUsers {
+		userItems, err := h.historyService.ListContinueWatching(user.ID)
+		if err != nil {
+			log.Printf("[admin] GetContinueWatching error for user %s: %v", user.ID, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		for _, item := range userItems {
+			items = append(items, adminContinueWatchingItem{
+				SeriesWatchState: item,
+				ProfileID:        user.ID,
+				ProfileName:      user.Name,
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			if items[i].ProfileID == items[j].ProfileID {
+				return items[i].SeriesID < items[j].SeriesID
+			}
+			return items[i].ProfileID < items[j].ProfileID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)

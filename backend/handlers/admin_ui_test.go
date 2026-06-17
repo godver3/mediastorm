@@ -35,6 +35,10 @@ func (m *mockMetadataService) MovieDetails(ctx context.Context, req models.Movie
 	return &models.Title{}, nil
 }
 
+func (m *mockMetadataService) SeriesDetails(ctx context.Context, req models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	return &models.SeriesDetails{}, nil
+}
+
 func (m *mockMetadataService) SeriesInfo(ctx context.Context, req models.SeriesDetailsQuery) (*models.Title, error) {
 	return &models.Title{}, nil
 }

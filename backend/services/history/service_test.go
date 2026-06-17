@@ -401,6 +401,50 @@ func TestListAllPlaybackProgressKeepsActivePositionPast90(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaybackProgressAccumulatesWatchedSeconds(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	movie := func(position float64) models.PlaybackProgressUpdate {
+		return models.PlaybackProgressUpdate{
+			MediaType: "movie",
+			ItemID:    "tmdb:5678",
+			Position:  position,
+			Duration:  200,
+			MovieName: "Short Film",
+			Year:      2026,
+		}
+	}
+
+	for _, position := range []float64{10, 70, 130} {
+		progress, err := svc.UpdatePlaybackProgress("user", movie(position))
+		if err != nil {
+			t.Fatalf("UpdatePlaybackProgress(%.0f) error = %v", position, err)
+		}
+		if progress.WatchedSeconds != position {
+			t.Fatalf("WatchedSeconds after %.0f = %.0f, want %.0f", position, progress.WatchedSeconds, position)
+		}
+	}
+
+	if _, err := svc.UpdatePlaybackProgress("user", movie(185)); err != nil {
+		t.Fatalf("UpdatePlaybackProgress(185) error = %v", err)
+	}
+
+	historyItems, err := svc.ListWatchHistory("user")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(historyItems) != 1 {
+		t.Fatalf("expected 1 watched item, got %d", len(historyItems))
+	}
+	if historyItems[0].WatchedSeconds != 185 {
+		t.Fatalf("history WatchedSeconds = %.0f, want 185", historyItems[0].WatchedSeconds)
+	}
+}
+
 func TestContinueWatchingWithoutMetadata(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)

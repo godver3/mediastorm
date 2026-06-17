@@ -64,15 +64,16 @@ type EpisodeWatchPayload struct {
 
 // WatchHistoryItem represents a unified watch history entry for any media (movie, episode, or series).
 type WatchHistoryItem struct {
-	ID          string            `json:"id"`        // mediaType:itemId (e.g., "movie:tmdb:12345" or "series:tvdb:67890:s01e02")
-	MediaType   string            `json:"mediaType"` // "movie" | "series" | "episode"
-	ItemID      string            `json:"itemId"`    // The actual ID (e.g., "tmdb:12345")
-	Name        string            `json:"name"`
-	Year        int               `json:"year,omitempty"`
-	Watched     bool              `json:"watched"` // Manual watch flag
-	WatchedAt   time.Time         `json:"watchedAt,omitempty"`
-	UpdatedAt   time.Time         `json:"updatedAt,omitempty"`
-	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	ID             string            `json:"id"`        // mediaType:itemId (e.g., "movie:tmdb:12345" or "series:tvdb:67890:s01e02")
+	MediaType      string            `json:"mediaType"` // "movie" | "series" | "episode"
+	ItemID         string            `json:"itemId"`    // The actual ID (e.g., "tmdb:12345")
+	Name           string            `json:"name"`
+	Year           int               `json:"year,omitempty"`
+	Watched        bool              `json:"watched"` // Manual watch flag
+	WatchedAt      time.Time         `json:"watchedAt,omitempty"`
+	UpdatedAt      time.Time         `json:"updatedAt,omitempty"`
+	WatchedSeconds float64           `json:"watchedSeconds,omitempty"` // Accumulated actual playback time in seconds
+	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
@@ -83,13 +84,14 @@ type WatchHistoryItem struct {
 
 // WatchHistoryUpdate represents an update to mark an item as watched/unwatched.
 type WatchHistoryUpdate struct {
-	MediaType   string            `json:"mediaType"`
-	ItemID      string            `json:"itemId"`
-	Name        string            `json:"name,omitempty"`
-	Year        int               `json:"year,omitempty"`
-	Watched     *bool             `json:"watched,omitempty"`
-	WatchedAt   time.Time         `json:"watchedAt,omitempty"` // Optional: use specific timestamp instead of now
-	ExternalIDs map[string]string `json:"externalIds,omitempty"`
+	MediaType      string            `json:"mediaType"`
+	ItemID         string            `json:"itemId"`
+	Name           string            `json:"name,omitempty"`
+	Year           int               `json:"year,omitempty"`
+	Watched        *bool             `json:"watched,omitempty"`
+	WatchedAt      time.Time         `json:"watchedAt,omitempty"` // Optional: use specific timestamp instead of now
+	WatchedSeconds float64           `json:"watchedSeconds,omitempty"`
+	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
@@ -123,14 +125,15 @@ type PlaybackProgressUpdate struct {
 
 // PlaybackProgress stores the current playback progress for a media item.
 type PlaybackProgress struct {
-	ID             string            `json:"id"`             // mediaType:itemId
-	MediaType      string            `json:"mediaType"`      // "movie" | "episode"
-	ItemID         string            `json:"itemId"`         // The media ID
-	Position       float64           `json:"position"`       // Last known position in seconds
-	Duration       float64           `json:"duration"`       // Total duration in seconds
-	PercentWatched float64           `json:"percentWatched"` // Position/Duration * 100
-	UpdatedAt      time.Time         `json:"updatedAt"`      // Last update time
-	IsPaused       bool              `json:"isPaused"`       // Whether playback is currently paused
+	ID             string            `json:"id"`                       // mediaType:itemId
+	MediaType      string            `json:"mediaType"`                // "movie" | "episode"
+	ItemID         string            `json:"itemId"`                   // The media ID
+	Position       float64           `json:"position"`                 // Last known position in seconds
+	Duration       float64           `json:"duration"`                 // Total duration in seconds
+	PercentWatched float64           `json:"percentWatched"`           // Position/Duration * 100
+	UpdatedAt      time.Time         `json:"updatedAt"`                // Last update time
+	IsPaused       bool              `json:"isPaused"`                 // Whether playback is currently paused
+	WatchedSeconds float64           `json:"watchedSeconds,omitempty"` // Accumulated actual playback time in seconds
 	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields

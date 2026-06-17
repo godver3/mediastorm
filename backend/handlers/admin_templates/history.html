@@ -26,6 +26,7 @@
     </div>
     <div style="display: flex; align-items: center; gap: 1rem;">
         <select id="profileSelect" class="form-select" style="min-width: 200px;" onchange="loadHistory()">
+            <option value="all" selected>All Profiles</option>
             {{range .Users}}
             <option value="{{.ID}}">{{.Name}}</option>
             {{end}}
@@ -226,11 +227,15 @@
             return;
         }
 
-        container.innerHTML = '<div class="table-container"><table><thead><tr><th>Title</th><th>Type</th><th>Details</th><th>Watched At</th></tr></thead><tbody>' +
+        const showProfile = getSelectedProfile() === 'all';
+        const profileHeader = showProfile ? '<th>Profile</th>' : '';
+
+        container.innerHTML = '<div class="table-container"><table><thead><tr><th>Title</th><th>Type</th><th>Details</th>' + profileHeader + '<th>Watched At</th></tr></thead><tbody>' +
             items.map(item => {
                 let title = item.name || item.movieName || item.seriesName || '-';
                 let details = '';
                 let typeBadge = '';
+                const profileCell = showProfile ? '<td style="color: var(--text-muted);">' + (item.profileName || '-') + '</td>' : '';
 
                 if (item.mediaType === 'movie') {
                     typeBadge = '<span class="status-badge online">Movie</span>';
@@ -249,7 +254,7 @@
                     typeBadge = '<span class="status-badge">' + (item.mediaType || 'Unknown') + '</span>';
                 }
 
-                return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + title + '">' + title + '</div></td><td>' + typeBadge + '</td><td style="color: var(--text-muted);">' + details + '</td><td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.watchedAt) + '</td></tr>';
+                return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + title + '">' + title + '</div></td><td>' + typeBadge + '</td><td style="color: var(--text-muted);">' + details + '</td>' + profileCell + '<td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.watchedAt) + '</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -357,11 +362,14 @@
             if (continueItems.length === 0) {
                 continueContainer.innerHTML = '<div style="text-align: center; padding: 2rem; color: var(--text-muted);"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem; opacity: 0.5;"><polygon points="5 3 19 12 5 21 5 3"/></svg><p>No series in progress</p></div>';
             } else {
-                continueContainer.innerHTML = '<div class="table-container"><table><thead><tr><th>Series</th><th>Last Watched</th><th>Next Episode</th><th>Updated</th></tr></thead><tbody>' +
+                const showProfile = getSelectedProfile() === 'all';
+                const profileHeader = showProfile ? '<th>Profile</th>' : '';
+                continueContainer.innerHTML = '<div class="table-container"><table><thead><tr><th>Series</th><th>Last Watched</th><th>Next Episode</th>' + profileHeader + '<th>Updated</th></tr></thead><tbody>' +
                     continueItems.map(item => {
                         const lastWatched = item.lastWatched && (item.lastWatched.seasonNumber > 0 || item.lastWatched.episodeNumber > 0) ? ('S' + String(item.lastWatched.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.lastWatched.episodeNumber || 0).padStart(2, '0')) : '-';
                         const nextEp = item.nextEpisode ? ('S' + String(item.nextEpisode.seasonNumber || 0).padStart(2, '0') + 'E' + String(item.nextEpisode.episodeNumber || 0).padStart(2, '0')) : '-';
-                        return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (item.seriesTitle || '-') + '">' + (item.seriesTitle || '-') + '</div><div style="font-size: 0.75rem; color: var(--text-muted);">' + (item.year || '') + '</div></td><td>' + lastWatched + '</td><td style="color: var(--accent);">' + nextEp + '</td><td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.updatedAt) + '</td></tr>';
+                        const profileCell = showProfile ? '<td style="color: var(--text-muted);">' + (item.profileName || '-') + '</td>' : '';
+                        return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (item.seriesTitle || '-') + '">' + (item.seriesTitle || '-') + '</div><div style="font-size: 0.75rem; color: var(--text-muted);">' + (item.year || '') + '</div></td><td>' + lastWatched + '</td><td style="color: var(--accent);">' + nextEp + '</td>' + profileCell + '<td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.updatedAt) + '</td></tr>';
                     }).join('') +
                     '</tbody></table></div>';
             }

@@ -2850,6 +2850,9 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	if update.Year > 0 {
 		item.Year = update.Year
 	}
+	if update.WatchedSeconds > item.WatchedSeconds {
+		item.WatchedSeconds = update.WatchedSeconds
+	}
 	if update.Watched != nil {
 		stateUpdatedAt := now
 		if !update.WatchedAt.IsZero() {
@@ -3041,6 +3044,9 @@ func (s *Service) BulkUpdateWatchHistory(userID string, updates []models.WatchHi
 		}
 		if update.Year > 0 {
 			item.Year = update.Year
+		}
+		if update.WatchedSeconds > item.WatchedSeconds {
+			item.WatchedSeconds = update.WatchedSeconds
 		}
 		if update.Watched != nil {
 			stateUpdatedAt := now
@@ -3604,6 +3610,7 @@ func reconcileEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.Watc
 
 func watchHistoryItemsDiffer(a, b models.WatchHistoryItem) bool {
 	if a.Watched != b.Watched ||
+		a.WatchedSeconds != b.WatchedSeconds ||
 		!a.WatchedAt.Equal(b.WatchedAt) ||
 		!a.UpdatedAt.Equal(b.UpdatedAt) ||
 		len(a.ExternalIDs) != len(b.ExternalIDs) {
@@ -3636,6 +3643,9 @@ func syncEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.WatchHist
 		}
 
 		candidate.Watched = item.Watched
+		if item.WatchedSeconds > candidate.WatchedSeconds {
+			candidate.WatchedSeconds = item.WatchedSeconds
+		}
 		candidate.UpdatedAt = item.UpdatedAt
 		if item.Watched {
 			candidate.WatchedAt = item.WatchedAt
@@ -4387,6 +4397,11 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		progress.ItemID = canonicalItemID
 	}
 	progress.ID = canonicalKey
+	if existing, ok := perUser[canonicalKey]; ok {
+		progress.WatchedSeconds = accumulatedWatchedSeconds(existing, progress)
+	} else {
+		progress.WatchedSeconds = initialWatchedSeconds(progress)
+	}
 
 	// If consolidation chose an existing canonical key, drop any stale row under
 	// the incoming key so a duplicate isn't left behind.
@@ -4486,7 +4501,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		}
 
 		s.mu.Unlock() // Unlock before calling other methods
-		err := s.markAsWatchedFromProgress(userID, update)
+		err := s.markAsWatchedFromProgress(userID, update, progress.WatchedSeconds)
 		s.mu.Lock() // Re-lock after
 		if err != nil {
 			// Log but don't fail the progress update
@@ -4617,17 +4632,18 @@ func (s *Service) IsWatchedEpisodeProgressUpdate(userID string, update models.Pl
 }
 
 // markAsWatchedFromProgress marks an item as watched based on progress threshold.
-func (s *Service) markAsWatchedFromProgress(userID string, update models.PlaybackProgressUpdate) error {
+func (s *Service) markAsWatchedFromProgress(userID string, update models.PlaybackProgressUpdate, watchedSeconds float64) error {
 	watched := true
 	historyUpdate := models.WatchHistoryUpdate{
-		MediaType:     update.MediaType,
-		ItemID:        update.ItemID,
-		Watched:       &watched,
-		ExternalIDs:   update.ExternalIDs,
-		SeasonNumber:  update.SeasonNumber,
-		EpisodeNumber: update.EpisodeNumber,
-		SeriesID:      update.SeriesID,
-		SeriesName:    update.SeriesName,
+		MediaType:      update.MediaType,
+		ItemID:         update.ItemID,
+		Watched:        &watched,
+		WatchedSeconds: watchedSeconds,
+		ExternalIDs:    update.ExternalIDs,
+		SeasonNumber:   update.SeasonNumber,
+		EpisodeNumber:  update.EpisodeNumber,
+		SeriesID:       update.SeriesID,
+		SeriesName:     update.SeriesName,
 	}
 
 	if update.MediaType == "episode" {
@@ -4743,6 +4759,46 @@ func preferPlaybackProgress(candidate, existing models.PlaybackProgress) bool {
 
 func hasMeaningfulProgressValues(position, percentWatched float64) bool {
 	return position > 0.5 || percentWatched > 0.1
+}
+
+const maxWatchedProgressDeltaSeconds = 5 * 60
+
+func initialWatchedSeconds(progress models.PlaybackProgress) float64 {
+	if progress.IsPaused || progress.Position <= 0 {
+		return 0
+	}
+	if progress.Position > maxWatchedProgressDeltaSeconds {
+		return 0
+	}
+	if progress.Duration > 0 && progress.Position > progress.Duration {
+		return progress.Duration
+	}
+	return progress.Position
+}
+
+func accumulatedWatchedSeconds(existing, next models.PlaybackProgress) float64 {
+	total := existing.WatchedSeconds
+	if next.IsPaused {
+		return clampWatchedSeconds(total, next.Duration)
+	}
+	if !next.UpdatedAt.IsZero() && !existing.UpdatedAt.IsZero() && next.UpdatedAt.Before(existing.UpdatedAt) {
+		return clampWatchedSeconds(total, next.Duration)
+	}
+	delta := next.Position - existing.Position
+	if delta <= 0 || delta > maxWatchedProgressDeltaSeconds {
+		return clampWatchedSeconds(total, next.Duration)
+	}
+	return clampWatchedSeconds(total+delta, next.Duration)
+}
+
+func clampWatchedSeconds(seconds, duration float64) float64 {
+	if seconds < 0 {
+		return 0
+	}
+	if duration > 0 && seconds > duration {
+		return duration
+	}
+	return seconds
 }
 
 func findMatchingMeaningfulPlaybackProgress(perUser map[string]models.PlaybackProgress, incomingKey string, update models.PlaybackProgressUpdate) (models.PlaybackProgress, bool) {

@@ -227,6 +227,74 @@
     </div>
 </div>
 
+<!-- User Stats -->
+<div class="grid grid-2" style="margin-bottom: 1.5rem;">
+    <div class="card">
+        <div class="card-header" style="gap: 0.75rem; flex-wrap: wrap;">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                Watch Time
+            </h2>
+            <select id="watchTimeProfileSelect" class="form-select" style="max-width: 220px; min-width: 160px;" onchange="loadDashboardStats()">
+                <option value="all">All Profiles</option>
+            </select>
+            <select id="watchTimeMediaTypeSelect" class="form-select" style="max-width: 180px; min-width: 140px;" onchange="loadDashboardStats()">
+                <option value="all">Movies & Episodes</option>
+                <option value="movie">Movies</option>
+                <option value="episode">Episodes</option>
+            </select>
+        </div>
+        <div class="card-body">
+            <div class="watch-time-grid">
+                <div class="watch-time-stat">
+                    <div class="watch-time-value" id="watchTimeWeek">-</div>
+                    <div class="watch-time-label">Last 7 days</div>
+                </div>
+                <div class="watch-time-stat">
+                    <div class="watch-time-value" id="watchTimeMonth">-</div>
+                    <div class="watch-time-label">Last month</div>
+                </div>
+                <div class="watch-time-stat">
+                    <div class="watch-time-value" id="watchTimeEver">-</div>
+                    <div class="watch-time-label">Ever</div>
+                </div>
+            </div>
+            <div class="watch-time-chart" aria-label="Watch time distribution">
+                <div class="watch-time-chart-header">
+                    <span>Tracked distribution</span>
+                    <span id="watchTimeChartTotal">-</span>
+                </div>
+                <div class="watch-time-chart-bar" id="watchTimeChartBar">
+                    <span class="watch-time-chart-empty">No tracked time yet</span>
+                </div>
+                <div class="watch-time-chart-legend" id="watchTimeChartLegend"></div>
+            </div>
+            <p id="watchTimeNote" class="watch-time-note">Loading watch time...</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12a9 9 0 1 0 3-6.7"/>
+                    <path d="M3 3v6h6"/>
+                    <path d="M12 7v5l3 2"/>
+                </svg>
+                Recently Watched
+            </h2>
+        </div>
+        <div class="card-body">
+            <div id="recentWatchList" class="recent-watch-list">
+                <div style="color: var(--text-muted); padding: 0.5rem 0;">Loading recent activity...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Live Stream Limits -->
 <div class="card live-limits-card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
@@ -690,7 +758,245 @@
         white-space: normal;
     }
 
+    .watch-time-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+
+    .watch-time-stat {
+        padding: 0.875rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-tertiary);
+        min-width: 0;
+    }
+
+    .watch-time-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        line-height: 1.1;
+        white-space: nowrap;
+    }
+
+    .watch-time-label,
+    .watch-time-note {
+        color: var(--text-muted);
+        font-size: 0.75rem;
+    }
+
+    .watch-time-label {
+        margin-top: 0.35rem;
+    }
+
+    .watch-time-note {
+        margin: 0.875rem 0 0;
+    }
+
+    .watch-time-chart {
+        margin-top: 1rem;
+        padding: 0.875rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-secondary);
+    }
+
+    .watch-time-chart-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-bottom: 0.625rem;
+    }
+
+    .watch-time-chart-header span:last-child {
+        color: var(--text-muted);
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
+    .watch-time-chart-bar {
+        position: relative;
+        display: flex;
+        align-items: stretch;
+        height: 2rem;
+        overflow: hidden;
+        border-radius: calc(var(--radius) - 2px);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+    }
+
+    .watch-time-chart-segment {
+        min-width: 2px;
+        transition: width 0.25s ease;
+    }
+
+    .watch-time-chart-segment.week {
+        background: #22c55e;
+    }
+
+    .watch-time-chart-segment.month {
+        background: #38bdf8;
+    }
+
+    .watch-time-chart-segment.earlier {
+        background: #a78bfa;
+    }
+
+    .watch-time-chart-empty {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+    }
+
+    .watch-time-chart-legend {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.625rem;
+        margin-top: 0.75rem;
+    }
+
+    .watch-time-chart-legend-item {
+        min-width: 0;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+    }
+
+    .watch-time-chart-legend-label {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-width: 0;
+        margin-bottom: 0.15rem;
+    }
+
+    .watch-time-chart-swatch {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 999px;
+        flex: 0 0 auto;
+    }
+
+    .watch-time-chart-legend-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .watch-time-chart-legend-value {
+        color: var(--text-secondary);
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .recent-watch-list {
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .recent-watch-item {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr) auto;
+        gap: 0.75rem;
+        align-items: center;
+        padding: 0.65rem 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .recent-watch-item:last-child {
+        border-bottom: 0;
+    }
+
+    .recent-watch-artwork {
+        width: 112px;
+        aspect-ratio: 16 / 9;
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-primary) 100%);
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        flex: 0 0 auto;
+    }
+
+    .recent-watch-artwork img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .recent-watch-artwork svg {
+        width: 28px;
+        height: 28px;
+        opacity: 0.45;
+    }
+
+    .recent-watch-title {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .recent-watch-subtitle {
+        margin-top: 0.2rem;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .recent-watch-profile {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.2rem 0.45rem;
+        border-radius: 999px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-size: 0.72rem;
+        white-space: nowrap;
+    }
+
+    .recent-watch-profile-dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 999px;
+        background: var(--accent);
+    }
+
     @media (max-width: 640px) {
+        .watch-time-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .watch-time-chart-legend {
+            grid-template-columns: 1fr;
+        }
+
+        .recent-watch-item {
+            grid-template-columns: 88px minmax(0, 1fr);
+        }
+
+        .recent-watch-artwork {
+            width: 88px;
+        }
+
+        .recent-watch-profile {
+            grid-column: 2;
+            justify-self: start;
+        }
+
         .live-limits-card .card-header {
             padding: 1rem 1.25rem;
         }
@@ -1246,6 +1552,163 @@
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
+    function formatWatchTime(seconds) {
+        seconds = Number(seconds || 0);
+        if (seconds <= 0) return '0m';
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.round((seconds % 3600) / 60);
+        if (hours <= 0) return `${Math.max(1, mins)}m`;
+        if (mins === 0 || hours >= 24) return `${hours}h`;
+        return `${hours}h ${mins}m`;
+    }
+
+    async function loadDashboardStats() {
+        try {
+            const params = new URLSearchParams();
+            const profileSelect = document.getElementById('watchTimeProfileSelect');
+            if (profileSelect && profileSelect.value && profileSelect.value !== 'all') {
+                params.set('profileId', profileSelect.value);
+            }
+            const mediaTypeSelect = document.getElementById('watchTimeMediaTypeSelect');
+            if (mediaTypeSelect && mediaTypeSelect.value && mediaTypeSelect.value !== 'all') {
+                params.set('mediaType', mediaTypeSelect.value);
+            }
+            const url = basePath + '/api/dashboard/stats' + (params.toString() ? '?' + params.toString() : '');
+            const response = await fetch(url, { credentials: 'same-origin' });
+            if (!response.ok) throw new Error('stats request failed');
+            renderDashboardStats(await response.json());
+        } catch (error) {
+            console.warn('Failed to load dashboard stats:', error);
+            const note = document.getElementById('watchTimeNote');
+            const list = document.getElementById('recentWatchList');
+            if (note) note.textContent = 'Failed to load watch time.';
+            if (list) list.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem 0;">Failed to load recent activity</div>';
+        }
+    }
+
+    function renderDashboardStats(data) {
+        renderWatchTimeProfileOptions(Array.isArray(data?.profiles) ? data.profiles : []);
+        const watchTime = data?.watchTime || {};
+        const weekEl = document.getElementById('watchTimeWeek');
+        const monthEl = document.getElementById('watchTimeMonth');
+        const everEl = document.getElementById('watchTimeEver');
+        const noteEl = document.getElementById('watchTimeNote');
+        if (weekEl) weekEl.textContent = formatWatchTime(watchTime.weekSeconds);
+        if (monthEl) monthEl.textContent = formatWatchTime(watchTime.monthSeconds);
+        if (everEl) everEl.textContent = formatWatchTime(watchTime.everSeconds);
+        renderWatchTimeChart(watchTime);
+        if (noteEl) {
+            noteEl.textContent = watchTime.hasTracked
+                ? 'Based on accumulated playback time from progress updates.'
+                : 'Watch-time totals will start filling in as new playback progress is recorded.';
+        }
+
+        const list = document.getElementById('recentWatchList');
+        if (!list) return;
+        const recent = Array.isArray(data?.recent) ? data.recent : [];
+        if (recent.length === 0) {
+            list.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem 0;">No watched items yet</div>';
+            return;
+        }
+        list.innerHTML = recent.map((item) => {
+            const color = item.profileColor || 'var(--accent)';
+            const subtitleParts = [];
+            if (item.subtitle) subtitleParts.push(escapeHtml(item.subtitle));
+            if (item.watchedAt) subtitleParts.push(escapeHtml(getTimeSince(item.watchedAt)));
+            if (item.watchedSeconds > 0) subtitleParts.push(escapeHtml(formatWatchTime(item.watchedSeconds)));
+            const artwork = item.artworkUrl
+                ? `<div class="recent-watch-artwork"><img src="${escapeHtml(item.artworkUrl)}" alt="${escapeHtml(item.title || 'Artwork')}" loading="lazy" onerror="this.closest('.recent-watch-artwork').innerHTML=recentWatchPlaceholderSvg()"></div>`
+                : `<div class="recent-watch-artwork">${recentWatchPlaceholderSvg()}</div>`;
+            return `
+                <div class="recent-watch-item">
+                    ${artwork}
+                    <div style="min-width: 0;">
+                        <div class="recent-watch-title" title="${escapeHtml(item.title || '-')}">${escapeHtml(item.title || '-')}</div>
+                        <div class="recent-watch-subtitle">${subtitleParts.join(' · ')}</div>
+                    </div>
+                    <span class="recent-watch-profile" title="${escapeHtml(item.profileName || item.profileId || '')}">
+                        <span class="recent-watch-profile-dot" style="background: ${escapeHtml(color)};"></span>
+                        ${escapeHtml(item.profileName || 'Profile')}
+                    </span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderWatchTimeChart(watchTime) {
+        const bar = document.getElementById('watchTimeChartBar');
+        const legend = document.getElementById('watchTimeChartLegend');
+        const totalEl = document.getElementById('watchTimeChartTotal');
+        if (!bar || !legend || !totalEl) return;
+
+        const weekSeconds = Math.max(0, Number(watchTime?.weekSeconds || 0));
+        const monthSeconds = Math.max(weekSeconds, Number(watchTime?.monthSeconds || 0));
+        const everSeconds = Math.max(monthSeconds, Number(watchTime?.everSeconds || 0));
+        const buckets = [
+            {
+                key: 'week',
+                label: 'Last 7 days',
+                color: '#22c55e',
+                seconds: weekSeconds,
+            },
+            {
+                key: 'month',
+                label: 'Prior month',
+                color: '#38bdf8',
+                seconds: Math.max(0, monthSeconds - weekSeconds),
+            },
+            {
+                key: 'earlier',
+                label: 'Earlier',
+                color: '#a78bfa',
+                seconds: Math.max(0, everSeconds - monthSeconds),
+            },
+        ];
+
+        totalEl.textContent = formatWatchTime(everSeconds);
+        if (everSeconds <= 0) {
+            bar.innerHTML = '<span class="watch-time-chart-empty">No tracked time yet</span>';
+            legend.innerHTML = buckets.map((bucket) => watchTimeLegendItem(bucket)).join('');
+            return;
+        }
+
+        bar.innerHTML = buckets
+            .filter((bucket) => bucket.seconds > 0)
+            .map((bucket) => {
+                const width = Math.max(1, (bucket.seconds / everSeconds) * 100);
+                return `<span class="watch-time-chart-segment ${bucket.key}" style="width: ${width.toFixed(3)}%;" title="${escapeHtml(bucket.label)}: ${escapeHtml(formatWatchTime(bucket.seconds))}"></span>`;
+            })
+            .join('');
+        legend.innerHTML = buckets.map((bucket) => watchTimeLegendItem(bucket)).join('');
+    }
+
+    function watchTimeLegendItem(bucket) {
+        return `
+            <div class="watch-time-chart-legend-item">
+                <div class="watch-time-chart-legend-label">
+                    <span class="watch-time-chart-swatch" style="background: ${bucket.color};"></span>
+                    <span class="watch-time-chart-legend-name">${escapeHtml(bucket.label)}</span>
+                </div>
+                <div class="watch-time-chart-legend-value">${escapeHtml(formatWatchTime(bucket.seconds))}</div>
+            </div>
+        `;
+    }
+
+    function renderWatchTimeProfileOptions(profiles) {
+        const select = document.getElementById('watchTimeProfileSelect');
+        if (!select || select.dataset.loaded === '1') return;
+        const current = select.value || 'all';
+        select.innerHTML = '<option value="all">All Profiles</option>' + profiles.map((profile) => (
+            `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`
+        )).join('');
+        select.value = profiles.some((profile) => profile.id === current) ? current : 'all';
+        select.dataset.loaded = '1';
+    }
+
+    function recentWatchPlaceholderSvg() {
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    }
+
     function getCardProfileDisplay(stream) {
         // Use profile_names array if available, otherwise fall back to single profile_name
         const names = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || (stream.profile_id ? [stream.profile_id] : []);
@@ -1577,6 +2040,7 @@
             }
             // Reconnect SSE to get fresh stream data
             connectSSE();
+            loadDashboardStats();
             showToast('Status refreshed');
         } catch (e) {
             showToast('Failed to refresh status', 'error');
@@ -1874,6 +2338,7 @@
         setStreamView(currentStreamView);
         connectSSE();
         startInterpolation();
+        loadDashboardStats();
         if (isAdmin) {
             testEndpoints();
             refreshDebridStatus();
