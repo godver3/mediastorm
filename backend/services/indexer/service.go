@@ -36,7 +36,7 @@ import (
 // "Once Upon a Time... in Hollywood" otherwise sends literal dots that break matching.
 // Apostrophes/single quotes are handled separately (stripped without adding spaces) to keep
 // contractions intact (e.g. "Don't" → "Dont" not "Don t").
-var newznabQuerySanitizer = regexp.MustCompile(`[!?:&,;"()[\]{}.]+`)
+var newznabQuerySanitizer = regexp.MustCompile(`[!?:&,/;"()[\]{}.]+`)
 
 // xmlEntityPattern matches valid XML entity references: &name; &#NNN; &#xHHH;
 var xmlEntityPattern = regexp.MustCompile(`^([a-zA-Z]+;|#[0-9]+;|#x[0-9a-fA-F]+;)`)
@@ -88,8 +88,9 @@ func sanitizeXMLAmpersands(data []byte) ([]byte, int) {
 
 // sanitizeNewznabQuery cleans up a search query for newznab/torznab APIs.
 func sanitizeNewznabQuery(query string) string {
+	cleaned := normalizeToASCII(query)
 	// Strip apostrophes/single quotes without adding spaces (keeps contractions like "Don't" → "Dont")
-	cleaned := strings.ReplaceAll(query, "'", "")
+	cleaned = strings.ReplaceAll(cleaned, "'", "")
 	cleaned = strings.ReplaceAll(cleaned, "\u2019", "") // right single quotation mark (curly apostrophe)
 	cleaned = strings.ReplaceAll(cleaned, "\u2018", "") // left single quotation mark
 	// Remove other problematic special characters (replace with space)
@@ -1770,13 +1771,19 @@ func normalizeToASCII(value string) string {
 		return ""
 	}
 	replacer := strings.NewReplacer(
+		"¼", " 1/4 ", "½", " 1/2 ", "¾", " 3/4 ",
+		"⅐", " 1/7 ", "⅑", " 1/9 ", "⅒", " 1/10 ",
+		"⅓", " 1/3 ", "⅔", " 2/3 ", "⅕", " 1/5 ",
+		"⅖", " 2/5 ", "⅗", " 3/5 ", "⅘", " 4/5 ",
+		"⅙", " 1/6 ", "⅚", " 5/6 ", "⅛", " 1/8 ",
+		"⅜", " 3/8 ", "⅝", " 5/8 ", "⅞", " 7/8 ",
 		"–", "-", "—", "-", "−", "-",
 		"•", " ", "…", " ", "：", ":",
 		"，", ",", "！", "!", "？", "?",
 		"’", "'", "、", " ",
 	)
-	ascii := strings.TrimSpace(unidecode.Unidecode(value))
-	ascii = replacer.Replace(ascii)
+	ascii := replacer.Replace(value)
+	ascii = strings.TrimSpace(unidecode.Unidecode(ascii))
 	ascii = strings.Join(strings.Fields(ascii), " ")
 	return ascii
 }

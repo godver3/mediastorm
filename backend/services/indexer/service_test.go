@@ -1067,11 +1067,26 @@ func TestSanitizeNewznabQuery(t *testing.T) {
 		{"Udachi, vesel'ia, ne sdokhni 2026", "Udachi veselia ne sdokhni 2026"}, // transliterated apostrophe + commas
 		{"Once Upon a Time... in Hollywood", "Once Upon a Time in Hollywood"},   // ellipsis collapses to space
 		{"S.W.A.T.", "S W A T"},                                                 // dotted initialism
+		{"Ranma ½ S01E01", "Ranma 1 2 S01E01"},                                  // Unicode fraction
+		{"Ranma 1/2 S01E01", "Ranma 1 2 S01E01"},                                // ASCII fraction slash
 	}
 	for _, tt := range tests {
 		got := sanitizeNewznabQuery(tt.input)
 		if got != tt.want {
 			t.Errorf("sanitizeNewznabQuery(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTitleVariantsNormalizeUnicodeFractions(t *testing.T) {
+	got := titleVariants("Ranma ½")
+	want := []string{"Ranma 1/2"}
+	if len(got) != len(want) {
+		t.Fatalf("titleVariants returned %d variants, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("titleVariants[%d] = %q, want %q (all: %#v)", i, got[i], want[i], got)
 		}
 	}
 }
