@@ -2019,6 +2019,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			hlsStreamData := map[string]interface{}{
 				"id":               session.ID,
 				"type":             "hls",
+				"is_live":          session.IsLive,
 				"path":             session.Path,
 				"original_path":    session.OriginalPath,
 				"filename":         filename,
@@ -2116,6 +2117,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		streamData := map[string]interface{}{
 			"id":               stream.ID,
 			"type":             "direct",
+			"is_live":          streamMetadataIsLive(stream.MediaMetadata, stream.Path),
 			"path":             stream.Path,
 			"filename":         stream.Filename,
 			"item_id":          stream.MediaMetadata.ItemID,
@@ -2188,6 +2190,16 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		"globalVODLimit":    globalVODLimit,
 		"globalVODCurrent":  globalVODCurrent,
 	})
+}
+
+func streamMetadataIsLive(meta StreamMediaMetadata, path string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(meta.MediaType))
+	if mediaType == "live" || mediaType == "livetv" || mediaType == "live-tv" || mediaType == "channel" || mediaType == "channels" {
+		return true
+	}
+
+	itemID := strings.ToLower(strings.TrimSpace(meta.ItemID))
+	return strings.Contains(itemID, "/live/") || strings.Contains(strings.ToLower(strings.TrimSpace(path)), "/live/")
 }
 
 func streamExternalIDs(itemID string, ids map[string]string) map[string]string {

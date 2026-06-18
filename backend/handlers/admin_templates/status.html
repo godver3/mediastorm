@@ -1037,13 +1037,23 @@
     /* Media card */
     .stream-card {
         background: var(--bg-tertiary);
+        border: 1px solid transparent;
         border-radius: var(--radius-lg);
         overflow: hidden;
-        transition: transform 0.2s, box-shadow 0.2s;
+        transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
     }
     .stream-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 24px var(--shadow);
+    }
+    .stream-card.stream-kind-live {
+        border-color: rgba(34, 197, 94, 0.45);
+    }
+    .stream-card.stream-kind-episode {
+        border-color: rgba(99, 102, 241, 0.36);
+    }
+    .stream-card.stream-kind-movie {
+        border-color: rgba(245, 158, 11, 0.34);
     }
     .stream-card-terminate,
     .stream-table-terminate {
@@ -1270,10 +1280,18 @@
     .stream-card-content {
         padding: 0.875rem;
     }
+    .stream-card-heading {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.35rem;
+        min-width: 0;
+    }
     .stream-card-title {
+        min-width: 0;
+        flex: 1 1 auto;
         font-weight: 600;
         font-size: 0.9375rem;
-        margin-bottom: 0.25rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1314,6 +1332,70 @@
         height: 100%;
         background: var(--accent);
         transition: width 0.3s;
+    }
+    .stream-type-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        max-width: 100%;
+        padding: 0.125rem 0.4rem;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        font-size: 0.625rem;
+        font-weight: 700;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        white-space: nowrap;
+        flex: 0 0 auto;
+        vertical-align: middle;
+    }
+    .stream-type-chip svg {
+        width: 0.75rem;
+        height: 0.75rem;
+        flex: 0 0 auto;
+        stroke: currentColor;
+    }
+    .stream-type-chip.live {
+        background: rgba(34, 197, 94, 0.16);
+        border-color: rgba(34, 197, 94, 0.4);
+        color: #22c55e;
+    }
+    .stream-type-chip.live::before {
+        content: '';
+        width: 0.375rem;
+        height: 0.375rem;
+        border-radius: 999px;
+        background: currentColor;
+        animation: pulse-live 1.5s infinite;
+    }
+    .stream-type-chip.episode {
+        background: rgba(99, 102, 241, 0.16);
+        border-color: rgba(99, 102, 241, 0.38);
+        color: #818cf8;
+    }
+    .stream-type-chip.movie {
+        background: rgba(245, 158, 11, 0.14);
+        border-color: rgba(245, 158, 11, 0.36);
+        color: #f59e0b;
+    }
+    .stream-type-chip.unknown {
+        background: rgba(156, 163, 175, 0.14);
+        border-color: rgba(156, 163, 175, 0.3);
+        color: #9ca3af;
+    }
+    .stream-table-media-heading {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        max-width: 280px;
+        min-width: 0;
+    }
+    .stream-table-media-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 </style>
 <script>
@@ -1426,9 +1508,19 @@
 
     // Get media display info from stream data
     function getMediaInfo(stream) {
+        const kind = getStreamKind(stream);
         // Use data from backend if available (from matched playback progress)
         if (stream.title) {
-            if (stream.media_type === 'episode') {
+            if (kind.key === 'live') {
+                return {
+                    title: stream.title,
+                    subtitle: stream.episode_name || '',
+                    type: 'live',
+                    posterUrl: stream.posterUrl || '',
+                    externalIds: stream.externalIds
+                };
+            }
+            if (kind.key === 'episode') {
                 return {
                     title: stream.title,
                     subtitle: stream.episode_name
@@ -1438,7 +1530,8 @@
                     posterUrl: stream.posterUrl || '',
                     externalIds: stream.externalIds
                 };
-            } else {
+            }
+            if (kind.key === 'movie') {
                 return {
                     title: stream.title,
                     subtitle: stream.year ? String(stream.year) : '',
@@ -1452,7 +1545,45 @@
         // Fallback: clean up filename for display only
         const filename = stream.filename || '';
         const name = filename.replace(/\.[^/.]+$/, '').replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
-        return { title: name || 'Unknown', subtitle: '', type: 'unknown', posterUrl: stream.posterUrl || '', externalIds: null };
+        return { title: stream.title || name || 'Unknown', subtitle: '', type: kind.key, posterUrl: stream.posterUrl || '', externalIds: null };
+    }
+
+    function normalizeStreamMediaType(mediaType) {
+        const value = String(mediaType || '').trim().toLowerCase();
+        if (['live', 'livetv', 'live-tv', 'channel', 'channels'].includes(value)) return 'live';
+        if (['episode', 'series', 'tv', 'show'].includes(value)) return 'episode';
+        if (['movie', 'film'].includes(value)) return 'movie';
+        return '';
+    }
+
+    function getStreamKind(stream) {
+        const mediaType = normalizeStreamMediaType(stream?.media_type);
+        const itemId = String(stream?.item_id || '').toLowerCase();
+        const path = String(stream?.path || stream?.original_path || '').toLowerCase();
+
+        if (stream?.is_live || mediaType === 'live' || itemId.includes('/live/') || path.includes('/live/')) {
+            return { key: 'live', label: 'Live TV' };
+        }
+        if (mediaType === 'episode') return { key: 'episode', label: 'Episode' };
+        if (mediaType === 'movie') return { key: 'movie', label: 'Movie' };
+        return { key: 'unknown', label: 'Unknown' };
+    }
+
+    function streamKindIcon(kindKey) {
+        switch (kindKey) {
+            case 'episode':
+                return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="m8 3 4 4 4-4"/></svg>';
+            case 'movie':
+                return '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14"/><path d="M17 5v14"/><path d="M3 9h4"/><path d="M17 9h4"/><path d="M3 15h4"/><path d="M17 15h4"/></svg>';
+            default:
+                return '';
+        }
+    }
+
+    function renderStreamTypeChip(stream, extraClass = '') {
+        const kind = getStreamKind(stream);
+        const icon = streamKindIcon(kind.key);
+        return `<span class="stream-type-chip ${kind.key}${extraClass ? ' ' + extraClass : ''}" title="${escapeHtml(kind.label)}">${icon}${escapeHtml(kind.label)}</span>`;
     }
 
     // Fetch poster using external IDs (tvdbId/tmdbId) directly
@@ -1530,9 +1661,10 @@
                 const isPaused = stream.is_paused || false;
                 const mediaInfo = getMediaInfo(stream);
                 const filename = getStreamFilename(stream);
+                const typeChip = renderStreamTypeChip(stream);
                 const terminateButton = streamId ? '<button class="stream-table-terminate" type="button" data-terminate-stream-id="'+streamId+'" title="Terminate stream" aria-label="Terminate stream"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>' : '';
                 const profilesText = getProfilesText(stream);
-                return '<tr data-stream-id="'+escapeHtml(streamId)+'"'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(stream.path || stream.original_path || '-')+'">'+escapeHtml(mediaInfo.title)+'</div>'+(mediaInfo.subtitle ? '<div style="font-size: 0.75rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">'+escapeHtml(mediaInfo.subtitle)+'</div>' : '')+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;"><div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(filename || stream.path || stream.original_path || '-')+'">'+(filename ? escapeHtml(filename) : '<span style="color: var(--text-muted);">-</span>')+'</div></td><td style="font-size: 0.8125rem;">'+(profilesText ? escapeHtml(profilesText) : '<span style="color: var(--text-muted);">-</span>')+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div class="stream-progress-bar" style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span class="stream-percent" style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div class="stream-time" style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td><td style="width: 40px; text-align: right;">'+terminateButton+'</td></tr>';
+                return '<tr data-stream-id="'+escapeHtml(streamId)+'"'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div class="stream-table-media-heading" title="'+escapeHtml(stream.path || stream.original_path || '-')+'">'+typeChip+'<span class="stream-table-media-title">'+escapeHtml(mediaInfo.title)+'</span></div>'+(mediaInfo.subtitle ? '<div style="font-size: 0.75rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">'+escapeHtml(mediaInfo.subtitle)+'</div>' : '')+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;"><div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(filename || stream.path || stream.original_path || '-')+'">'+(filename ? escapeHtml(filename) : '<span style="color: var(--text-muted);">-</span>')+'</div></td><td style="font-size: 0.8125rem;">'+(profilesText ? escapeHtml(profilesText) : '<span style="color: var(--text-muted);">-</span>')+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div class="stream-progress-bar" style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span class="stream-percent" style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div class="stream-time" style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td><td style="width: 40px; text-align: right;">'+terminateButton+'</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -1747,8 +1879,10 @@
                 const hasMultipleViewers = profileNames.length > 1;
                 const isPaused = stream.is_paused || false;
                 const filename = getStreamFilename(stream);
+                const kind = getStreamKind(stream);
+                const typeChip = renderStreamTypeChip(stream);
                 return `
-                    <div class="stream-card${isPaused ? ' paused' : ''}" data-stream-id="${streamId}">
+                    <div class="stream-card stream-kind-${kind.key}${isPaused ? ' paused' : ''}" data-stream-id="${escapeHtml(streamId)}">
                         <div class="stream-card-media" role="button" tabindex="0" data-filename-toggle title="${escapeHtml(filename || 'No filename available')}" aria-label="Show filename">
                             ${stream.id ? `<button class="stream-card-terminate" type="button" data-terminate-stream-id="${streamId}" title="Terminate stream" aria-label="Terminate stream"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>` : ''}
                             <div class="stream-card-poster-placeholder" id="poster-${streamId}">
@@ -1772,8 +1906,11 @@
                             <div class="stream-card-file-overlay">${filename ? escapeHtml(filename) : 'No filename available'}</div>
                         </div>
                         <div class="stream-card-content">
-                            <div class="stream-card-title" title="${mediaInfo.title}">${mediaInfo.title}</div>
-                            <div class="stream-card-subtitle">${mediaInfo.subtitle || ''}</div>
+                            <div class="stream-card-heading">
+                                ${typeChip}
+                                <div class="stream-card-title" title="${escapeHtml(mediaInfo.title)}">${escapeHtml(mediaInfo.title)}</div>
+                            </div>
+                            <div class="stream-card-subtitle">${mediaInfo.subtitle ? escapeHtml(mediaInfo.subtitle) : ''}</div>
                             <div class="stream-card-meta">
                                 <span class="stream-card-meta-item">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
