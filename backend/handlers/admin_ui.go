@@ -47,6 +47,7 @@ import (
 	"novastream/services/sessions"
 	"novastream/services/simkl"
 	"novastream/services/trakt"
+	"novastream/services/usenetengine"
 	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
 	"novastream/services/watchlist"
@@ -4786,6 +4787,18 @@ type TestUsenetProviderRequest struct {
 	Password string `json:"password"`
 }
 
+// TestUsenetEngineRequest represents a request to test an external usenet engine.
+type TestUsenetEngineRequest struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	BaseURL       string `json:"baseUrl"`
+	APIPath       string `json:"apiPath"`
+	APIKey        string `json:"apiKey"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	WebDAVBaseURL string `json:"webdavBaseUrl"`
+}
+
 // TestUsenetProvider tests a usenet provider by connecting to the NNTP server
 func (h *AdminUIHandler) TestUsenetProvider(w http.ResponseWriter, r *http.Request) {
 	var req TestUsenetProviderRequest
@@ -4901,6 +4914,70 @@ func (h *AdminUIHandler) TestUsenetProvider(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "NNTP connection successful, authentication passed",
+	})
+}
+
+// TestUsenetEngine tests a SAB-compatible external usenet engine control API.
+func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req TestUsenetEngineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Invalid request body",
+		})
+		return
+	}
+
+	if strings.TrimSpace(req.BaseURL) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Base URL is required",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	engineSettings := config.UsenetEngineSettings{
+		Name:          req.Name,
+		Type:          req.Type,
+		BaseURL:       req.BaseURL,
+		APIPath:       req.APIPath,
+		APIKey:        req.APIKey,
+		Username:      req.Username,
+		Password:      req.Password,
+		WebDAVBaseURL: req.WebDAVBaseURL,
+	}
+	engine, err := usenetengine.NewFromSettings(engineSettings, &http.Client{Timeout: 12 * time.Second})
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Configuration failed: %v", err),
+		})
+		return
+	}
+
+	testJobID := "strmr-connection-test-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if _, err := engine.Status(ctx, testJobID); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("SAB-compatible API check failed: %v", err),
+		})
+		return
+	}
+
+	message := "SAB-compatible API is reachable"
+	if strings.TrimSpace(req.WebDAVBaseURL) == "" {
+		message += "; WebDAV base URL is not configured"
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": message,
 	})
 }
 
@@ -7374,7 +7451,7 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		resp, err := client.Get(req.PlaylistURL)
+		resp, _, err := testLiveGetWithUserAgents(r.Context(), client, req.PlaylistURL, []string{liveStreamUserAgent, liveBrowserUserAgent})
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
@@ -7383,9 +7460,22 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
-		buf := make([]byte, 4096)
-		n, _ := resp.Body.Read(buf)
-		content := strings.TrimLeft(string(buf[:n]), "\xef\xbb\xbf \t\r\n") // strip BOM and whitespace
+		if resp.StatusCode >= http.StatusBadRequest {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Playlist fetch returned HTTP %d", resp.StatusCode),
+			})
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Failed to read playlist response: %v", err),
+			})
+			return
+		}
+		content := strings.TrimLeft(string(body), "\xef\xbb\xbf \t\r\n") // strip BOM and whitespace
 		if strings.HasPrefix(content, "#EXTM3U") || strings.Contains(content, "#EXTINF") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
@@ -7407,8 +7497,9 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		host := strings.TrimRight(req.XtreamHost, "/")
-		url := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories", host, req.XtreamUsername, req.XtreamPassword)
-		resp, err := client.Get(url)
+		url := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories",
+			host, url.QueryEscape(req.XtreamUsername), url.QueryEscape(req.XtreamPassword))
+		resp, workingUA, err := testLiveGetWithUserAgents(r.Context(), client, url, xtreamUserAgents)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
@@ -7417,6 +7508,13 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Xtream API returned HTTP %d", resp.StatusCode),
+			})
+			return
+		}
 		var categories []interface{}
 		if err := json.NewDecoder(resp.Body).Decode(&categories); err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7427,7 +7525,7 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": fmt.Sprintf("Connected (%d categories)", len(categories)),
+			"message": fmt.Sprintf("Connected (%d categories, %s)", len(categories), workingUA),
 		})
 
 	case "stremio":
@@ -7439,7 +7537,7 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		base := normalizeStremioBaseURL(req.ManifestURL)
-		resp, err := client.Get(base + "/manifest.json")
+		resp, _, err := testLiveGetWithUserAgents(r.Context(), client, base+"/manifest.json", []string{liveStreamUserAgent, liveBrowserUserAgent})
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
@@ -7448,6 +7546,13 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("Manifest fetch returned HTTP %d", resp.StatusCode),
+			})
+			return
+		}
 		var manifest struct {
 			Name     string `json:"name"`
 			Catalogs []struct {
@@ -7483,6 +7588,49 @@ func (h *AdminUIHandler) TestLiveTV(w http.ResponseWriter, r *http.Request) {
 			"error":   "No Live TV mode configured",
 		})
 	}
+}
+
+func testLiveGetWithUserAgents(ctx context.Context, client *http.Client, requestURL string, userAgents []string) (*http.Response, string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	if len(userAgents) == 0 {
+		userAgents = []string{liveStreamUserAgent}
+	}
+
+	var lastErr error
+	for _, userAgent := range userAgents {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, "", lastErr
+			}
+			return nil, "", err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(requestURL), nil)
+		if err != nil {
+			return nil, "", err
+		}
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode >= http.StatusBadRequest && len(userAgents) > 1 {
+			lastErr = fmt.Errorf("request returned status %d with User-Agent %q", resp.StatusCode, userAgent)
+			resp.Body.Close()
+			continue
+		}
+		return resp, userAgent, nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no User-Agent candidates configured")
+	}
+	return nil, "", lastErr
 }
 
 func testOpenSubtitlesCredentials(username, password string) (bool, string) {

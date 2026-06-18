@@ -3649,6 +3649,19 @@
                     password: item.password
                 };
                 break;
+            case 'usenetEngines':
+                endpoint = basePath + '/api/test/usenet-engine';
+                payload = {
+                    name: item.name,
+                    type: item.type,
+                    baseUrl: item.baseUrl,
+                    apiPath: item.apiPath,
+                    apiKey: item.apiKey,
+                    username: item.username,
+                    password: item.password,
+                    webdavBaseUrl: item.webdavBaseUrl
+                };
+                break;
             case 'debridProviders':
                 endpoint = basePath + '/api/test/debrid-provider';
                 payload = { name: item.name, provider: item.provider, apiKey: item.apiKey };
@@ -4468,7 +4481,7 @@
     }
 
     // Testable sections
-    const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'debridProviders', 'live.sources', 'liveTV.sources'];
+    const testableSections = ['indexers', 'torrentScrapers', 'usenet', 'usenetEngines', 'debridProviders', 'live.sources', 'liveTV.sources'];
 
     // Deep equality check for comparing values
     function deepEqual(a, b) {

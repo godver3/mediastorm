@@ -1088,6 +1088,105 @@ func TestAdminUIHandler_TestLiveTV_NoConfig(t *testing.T) {
 	}
 }
 
+func TestAdminUIHandler_TestUsenetEngine_MissingBaseURLReturnsJSON(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"name": "NZBDav",
+		"type": "nzbdav",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+		t.Fatalf("expected JSON content type, got %q", got)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != false || result["error"] != "Base URL is required" {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestLiveTV_M3USendsPlayerUserAgent(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.Header.Get("User-Agent")) == "" {
+			http.Error(w, "missing user agent", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("#EXTM3U\n#EXTINF:-1,Test\nhttp://example.test/live.ts\n"))
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]string{
+		"mode":        "m3u",
+		"playlistUrl": server.URL + "/playlist.m3u",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/live", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestLiveTV(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestLiveTV_XtreamFallsBackUserAgent(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+	var requests int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if strings.Contains(r.Header.Get("User-Agent"), "VLC") {
+			http.Error(w, "blocked user agent", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"category_id":"1","category_name":"News"}]`))
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]string{
+		"mode":           "xtream",
+		"xtreamHost":     server.URL,
+		"xtreamUsername": "user name",
+		"xtreamPassword": "p@ss&word",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/live", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestLiveTV(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %#v", result)
+	}
+	if requests < 2 {
+		t.Fatalf("expected user-agent fallback to retry, got %d request(s)", requests)
+	}
+}
+
 func TestAdminUIHandler_TestLiveTV_InvalidJSON(t *testing.T) {
 	handler, tmpDir := setupAdminUIHandler(t)
 	sessionsService, _ := sessions.NewService(tmpDir, sessions.DefaultSessionDuration)

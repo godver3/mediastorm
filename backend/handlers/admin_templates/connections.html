@@ -111,6 +111,7 @@
 .conn-card-badge-tor { background:rgba(245,158,11,0.16);color:#f59e0b;border:1px solid rgba(245,158,11,0.35); }
 .conn-card-badge-dir { background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35); }
 .conn-card-badge-usn { background:rgba(59,130,246,0.16);color:#60a5fa;border:1px solid rgba(96,165,250,0.35); }
+.conn-card-badge-eng { background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35); }
 .conn-card-badge-meta { background: rgba(99, 102, 241, 0.14); color: var(--accent); border: 1px solid rgba(99, 102, 241, 0.28); }
 .conn-card-status { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 20px; flex-wrap: wrap; }
 .conn-card-status .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -251,11 +252,14 @@ function isConfiguredLiveSource(source) {
     if (mode === 'xtream') {
         return !!(source.xtreamHost && source.xtreamUsername && source.xtreamPassword);
     }
+    if (mode === 'stremio') {
+        return !!source.manifestUrl;
+    }
     return !!source.playlistUrl;
 }
 
 function liveSourceLabel(source, index) {
-    const mode = source?.mode === 'xtream' ? 'Xtream Codes' : 'M3U Playlist';
+    const mode = source?.mode === 'xtream' ? 'Xtream Codes' : (source?.mode === 'stremio' ? 'Stremio Addon' : 'M3U Playlist');
     const name = source?.name || (source?.id ? source.id : '');
     return name ? `${mode}: ${name}` : mode || `Live TV ${index + 1}`;
 }
@@ -343,6 +347,22 @@ function buildCards() {
                         item.name || ('Provider ' + (i + 1)),
                         createBadge('USN', 'conn-card-badge-usn'),
                         `usenet:${i}`,
+                        item
+                    )
+                );
+            }
+        });
+    }
+
+    if (settings.usenetEngines) {
+        settings.usenetEngines.forEach((item, i) => {
+            if (item.enabled) {
+                testCards.push(
+                    createCard(
+                        'External Usenet Engines',
+                        item.name || item.type || ('Engine ' + (i + 1)),
+                        createBadge('ENG', 'conn-card-badge-eng'),
+                        `usenet-engine:${i}`,
                         item
                     )
                 );
@@ -557,6 +577,8 @@ async function runAllTests() {
             p = testPost(basePath + '/api/test/live', {
                 mode: source.mode || settings.live?.mode || '',
                 playlistUrl: source.playlistUrl || '',
+                manifestUrl: source.manifestUrl || '',
+                proxyUrl: source.proxyUrl || '',
                 xtreamHost: source.xtreamHost || '',
                 xtreamUsername: source.xtreamUsername || '',
                 xtreamPassword: source.xtreamPassword || ''
@@ -570,6 +592,18 @@ async function runAllTests() {
         } else if (card.key && card.key.startsWith('usenet:')) {
             const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/usenet-provider', { name: item.name, host: item.host, port: item.port, ssl: item.ssl, username: item.username, password: item.password });
+        } else if (card.key && card.key.startsWith('usenet-engine:')) {
+            const item = card.payload;
+            if (item) p = testPost(basePath + '/api/test/usenet-engine', {
+                name: item.name,
+                type: item.type,
+                baseUrl: item.baseUrl,
+                apiPath: item.apiPath,
+                apiKey: item.apiKey,
+                username: item.username,
+                password: item.password,
+                webdavBaseUrl: item.webdavBaseUrl
+            });
         } else if (card.key && card.key.startsWith('debrid:')) {
             const item = card.payload;
             if (item) p = testPost(basePath + '/api/test/debrid-provider', { name: item.name, provider: item.provider, apiKey: item.apiKey });
