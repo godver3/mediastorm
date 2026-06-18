@@ -179,6 +179,9 @@ func buildScrapersFromSettings(settings config.Settings) []Scraper {
 			}
 			log.Printf("[debrid] Initializing MediaFusion scraper: %s at %s", scraperCfg.Name, baseURL)
 			scrapers = append(scrapers, NewMediaFusionScraper(httpClient, baseURL, scraperCfg.Name))
+		case "internetarchive":
+			log.Printf("[debrid] Initializing Internet Archive scraper: %s", scraperCfg.Name)
+			scrapers = append(scrapers, NewInternetArchiveScraper(httpClient, scraperCfg.URL, scraperCfg.Name, scraperCfg.Config))
 		default:
 			log.Printf("[debrid] Unknown scraper type: %s", scraperCfg.Type)
 		}
@@ -552,7 +555,7 @@ func hasActiveDirectStreamScrapers(scrapers []config.TorrentScraperConfig) bool 
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(scraper.Type)) {
-		case "aiostreams", "comet", "mediafusion":
+		case "aiostreams", "comet", "mediafusion", "internetarchive":
 			return true
 		}
 	}

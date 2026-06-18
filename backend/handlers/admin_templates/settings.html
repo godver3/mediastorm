@@ -681,10 +681,10 @@
             }
         } else if (servicePriority === 'debrid') {
             const debridProviders = currentSettings.streaming?.debridProviders || [];
-            const aiostreamsScrapers = (currentSettings.torrentScrapers || []).filter(s => s.type === 'aiostreams' && s.enabled);
-            if (!hasEnabledItem(debridProviders) && aiostreamsScrapers.length === 0) {
+            const directStreamScrapers = (currentSettings.torrentScrapers || []).filter(s => ['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(String(s.type || '')) && s.enabled);
+            if (!hasEnabledItem(debridProviders) && directStreamScrapers.length === 0) {
                 if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
-                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider or AIOStreams source';
+                errors.filtering.fields.servicePriority = 'Debrid priority requires an enabled debrid provider or direct-stream source';
             }
         }
 
@@ -2751,7 +2751,7 @@
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
 
         // Show reminder when adding direct-stream capable sources
-        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && ['aiostreams', 'comet', 'mediafusion'].includes(String(value))) {
+        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && ['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(String(value))) {
             const timeout = currentSettings.streaming?.indexerTimeoutSec || 5;
             if (timeout <= 5) {
                 showToast('Direct-stream addons may need more than the default 5s search timeout. Consider increasing it under Search & Resolution.', 'info');
@@ -4746,7 +4746,7 @@
             if (sectionKey === 'torrentScrapers') {
                 const scraperType = String(item.type || '');
                 const badgeStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;';
-                if (['aiostreams', 'comet', 'mediafusion'].includes(scraperType)) {
+                if (['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(scraperType)) {
                     typeBadgesHtml =
                         '<span style="' + badgeStyle + 'background:rgba(245,158,11,0.16);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);">TOR</span>' +
                         '<span style="' + badgeStyle + 'background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35);">DIR</span>';

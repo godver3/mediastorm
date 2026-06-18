@@ -523,16 +523,16 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"torrentScrapers": map[string]interface{}{
 		"label":       "Torrent & Stream Sources",
-		"description": "Configure search addons used for debrid and direct playback discovery. Some sources return torrent candidates (Torrentio, Jackett, Zilean, Nyaa), while others may return ready-to-play direct stream URLs (AIOStreams, Comet, MediaFusion). Streaming mode still controls whether playback uses Usenet, Debrid, or Hybrid resolution.",
+		"description": "Configure search addons used for debrid and direct playback discovery. Some sources return torrent candidates (Torrentio, Jackett, Zilean, Nyaa), while others may return ready-to-play direct stream URLs (AIOStreams, Comet, MediaFusion, Internet Archive). Streaming mode still controls whether playback uses Usenet, Debrid, or Hybrid resolution.",
 		"icon":        "magnet",
 		"group":       "sources",
 		"order":       1,
 		"is_array":    true,
 		"fields": map[string]interface{}{
 			"name":                     map[string]interface{}{"type": "text", "label": "Name", "description": "Scraper name", "order": 0},
-			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "prowlarr", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion"}, "description": "Source/addon type", "order": 1},
+			"type":                     map[string]interface{}{"type": "select", "label": "Type", "options": []string{"torrentio", "prowlarr", "jackett", "zilean", "aiostreams", "nyaa", "comet", "mediafusion", "internetarchive"}, "description": "Source/addon type", "order": 1},
 			"options":                  map[string]interface{}{"type": "text", "label": "Options", "description": `Torrentio URL path options, not a full addon URL. Use the <a href="https://torrentio.strem.fun/configure" target="_blank" rel="noopener noreferrer">Torrentio configurator</a>, then copy only the options segment before /stream (for example: sort=qualitysize|qualityfilter=480p,scr,cam).`, "showWhen": map[string]interface{}{"field": "type", "value": "torrentio"}, "order": 2, "placeholder": "sort=qualitysize|qualityfilter=480p,scr,cam"},
-			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL. For Prowlarr, use the Prowlarr base URL and the backend will add each enabled torrent indexer on save. For AIOStreams/Comet/MediaFusion, use the full Stremio addon URL. For Torrentio, this can replace https://torrentio.strem.fun.", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "prowlarr"}, {"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "mediafusion"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "http://prowlarr:9696"},
+			"url":                      map[string]interface{}{"type": "text", "label": "URL", "description": "API URL. For Prowlarr, use the Prowlarr base URL and the backend will add each enabled torrent indexer on save. For AIOStreams/Comet/MediaFusion, use the full Stremio addon URL. For Torrentio, this can replace https://torrentio.strem.fun. For Internet Archive, leave blank unless testing another archive.org-compatible host.", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "prowlarr"}, {"field": "type", "value": "jackett"}, {"field": "type", "value": "zilean"}, {"field": "type", "value": "aiostreams"}, {"field": "type", "value": "comet"}, {"field": "type", "value": "mediafusion"}, {"field": "type", "value": "internetarchive"}, {"field": "type", "value": "torrentio"}}}, "order": 3, "placeholder": "http://prowlarr:9696"},
 			"apiKey":                   map[string]interface{}{"type": "password", "label": "API Key", "description": "Prowlarr or Jackett API key", "showWhen": map[string]interface{}{"operator": "or", "conditions": []map[string]interface{}{{"field": "type", "value": "prowlarr"}, {"field": "type", "value": "jackett"}}}, "order": 4},
 			"config.passthroughFormat": map[string]interface{}{"type": "boolean", "label": "Passthrough Format", "description": "Show raw AIOStreams format in manual selection (emoji-formatted details)", "showWhen": map[string]interface{}{"field": "type", "value": "aiostreams"}, "order": 5},
 			"config.category":          map[string]interface{}{"type": "select", "label": "Category", "options": []string{"1_0", "1_2", "1_3", "1_4"}, "description": "Nyaa category (1_0=All Anime, 1_2=English-translated, 1_3=Non-English, 1_4=Raw)", "showWhen": map[string]interface{}{"field": "type", "value": "nyaa"}, "order": 6},
@@ -4063,11 +4063,49 @@ func (h *AdminUIHandler) TestScraper(w http.ResponseWriter, r *http.Request) {
 		h.testCometScraper(w, req)
 	case "mediafusion":
 		h.testMediaFusionScraper(w, req)
+	case "internetarchive":
+		h.testInternetArchiveScraper(w, req)
 	case "torrentio":
 		fallthrough
 	default:
 		h.testTorrentioScraper(w, req.Options, req.URL)
 	}
+}
+
+func (h *AdminUIHandler) testInternetArchiveScraper(w http.ResponseWriter, req TestScraperRequest) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	scraper := debrid.NewInternetArchiveScraper(&http.Client{Timeout: 20 * time.Second}, req.URL, req.Name, map[string]string{
+		"maxItems":        "3",
+		"maxFilesPerItem": "1",
+	})
+	results, err := scraper.Search(ctx, debrid.SearchRequest{
+		Query: "Dragnet",
+		Parsed: debrid.ParsedQuery{
+			Title:     "Dragnet",
+			MediaType: debrid.MediaTypeSeries,
+		},
+		MaxResults: 3,
+	})
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Internet Archive search failed: %v", err),
+		})
+		return
+	}
+	if len(results) == 0 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Internet Archive search returned no playable test videos",
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Internet Archive is working (%d playable test videos found)", len(results)),
+	})
 }
 
 // testTorrentioScraper tests torrentio by checking cinemeta and then torrentio endpoints

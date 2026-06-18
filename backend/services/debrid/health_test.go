@@ -1,6 +1,11 @@
 package debrid
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"novastream/config"
+	"novastream/models"
 	"sync"
 	"testing"
 )
@@ -98,4 +103,71 @@ func TestActiveTorrentConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestPreResolvedInternetArchiveHead500FallsBackToRangeGet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			http.Error(w, "archive edge error", http.StatusInternalServerError)
+		case http.MethodGet:
+			if got := r.Header.Get("Range"); got != "bytes=0-1023" {
+				t.Fatalf("Range header = %q, want bytes=0-1023", got)
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Header().Set("Content-Range", "bytes 0-1023/118544272")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(make([]byte, 1024))
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	hs := NewHealthService(config.NewManager(t.TempDir() + "/settings.json"))
+	health, err := hs.CheckHealth(context.Background(), models.NZBResult{
+		Title:       "Dragnet/Season 1/Dragnet (1951) - S01E01 - The Human Bomb.mp4",
+		Link:        server.URL + "/video.mp4",
+		ServiceType: models.ServiceTypeDebrid,
+		Attributes: map[string]string{
+			"preresolved": "true",
+			"stream_url":  server.URL + "/video.mp4",
+			"scraper":     "internetarchive",
+			"tracker":     "archive.org",
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("CheckHealth returned error: %v", err)
+	}
+	if !health.Healthy || !health.Cached {
+		t.Fatalf("expected healthy cached stream, got %#v", health)
+	}
+}
+
+func TestPreResolvedNonArchiveHead500IsUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		http.Error(w, "provider error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	hs := NewHealthService(config.NewManager(t.TempDir() + "/settings.json"))
+	health, err := hs.CheckHealth(context.Background(), models.NZBResult{
+		Title:       "Provider stream",
+		Link:        server.URL + "/video.mp4",
+		ServiceType: models.ServiceTypeDebrid,
+		Attributes: map[string]string{
+			"preresolved": "true",
+			"stream_url":  server.URL + "/video.mp4",
+			"scraper":     "other",
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("CheckHealth returned error: %v", err)
+	}
+	if health.Healthy || health.Cached || health.ErrorMessage != "stream returned HTTP 500" {
+		t.Fatalf("expected non-archive stream to be rejected, got %#v", health)
+	}
 }

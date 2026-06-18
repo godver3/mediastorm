@@ -220,6 +220,26 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 					// Don't check content-length for 405 - it's the error body size, not the file size
 					if resp.StatusCode == http.StatusMethodNotAllowed {
 						log.Printf("[debrid-health] pre-resolved stream %s: HEAD not supported (405), falling through to ffprobe", result.Title)
+					} else if resp.StatusCode >= 500 && isInternetArchiveDirectStream(result, streamURL) {
+						log.Printf("[debrid-health] pre-resolved Internet Archive stream %s returned HEAD HTTP %d - trying ranged GET fallback", result.Title, resp.StatusCode)
+						if ok, status, contentLength, contentType := probePreResolvedRange(ctx, encodedStreamURL); ok {
+							log.Printf("[debrid-health] pre-resolved Internet Archive stream %s verified by ranged GET: status=%d content-length=%d content-type=%q", result.Title, status, contentLength, contentType)
+							return &DebridHealthCheck{
+								Healthy:  true,
+								Status:   "cached",
+								Cached:   true,
+								Provider: result.Attributes["tracker"],
+							}, nil
+						} else {
+							log.Printf("[debrid-health] pre-resolved Internet Archive stream %s ranged GET fallback failed: status=%d content-length=%d content-type=%q", result.Title, status, contentLength, contentType)
+						}
+						return &DebridHealthCheck{
+							Healthy:      false,
+							Status:       "not_cached",
+							Cached:       false,
+							Provider:     result.Attributes["tracker"],
+							ErrorMessage: fmt.Sprintf("stream returned HTTP %d", resp.StatusCode),
+						}, nil
 					} else if resp.StatusCode >= 400 {
 						log.Printf("[debrid-health] pre-resolved stream %s returned HTTP %d - treating as uncached", result.Title, resp.StatusCode)
 						return &DebridHealthCheck{
@@ -375,6 +395,58 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 	}
 
 	return s.checkProviderHealth(ctx, client, result, infoHash, torrentURL, verifyUncached)
+}
+
+func isInternetArchiveDirectStream(result models.NZBResult, streamURL string) bool {
+	if strings.EqualFold(strings.TrimSpace(result.Attributes["scraper"]), "internetarchive") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Attributes["tracker"]), "archive.org") {
+		return true
+	}
+	parsed, err := url.Parse(streamURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "archive.org" || strings.HasSuffix(host, ".archive.org")
+}
+
+func probePreResolvedRange(ctx context.Context, streamURL string) (ok bool, status int, contentLength int64, contentType string) {
+	rangeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(rangeCtx, http.MethodGet, streamURL, nil)
+	if err != nil {
+		return false, 0, 0, ""
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
+	req.Header.Set("Range", "bytes=0-1023")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[debrid-health] ranged GET request failed for pre-resolved stream: %v", err)
+		return false, 0, 0, ""
+	}
+	defer resp.Body.Close()
+
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	contentLength = resp.ContentLength
+	contentType = resp.Header.Get("Content-Type")
+	if contentLength <= 0 && resp.Header.Get("Content-Range") != "" {
+		contentLength = 1024
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return false, resp.StatusCode, contentLength, contentType
+	}
+	if IsKnownPlaceholderURL(resp.Request.URL.String()) {
+		return false, resp.StatusCode, contentLength, contentType
+	}
+	if contentLength > 0 && contentLength < 512 {
+		return false, resp.StatusCode, contentLength, contentType
+	}
+	return true, resp.StatusCode, contentLength, contentType
 }
 
 func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider, result models.NZBResult, infoHash, torrentURL string, verifyUncached bool) (*DebridHealthCheck, error) {

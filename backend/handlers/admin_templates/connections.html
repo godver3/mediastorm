@@ -239,7 +239,7 @@ function updateSearchTimeoutProjection() {
 
 function getScraperBadges(item) {
     const type = String(item?.type || '').toLowerCase();
-    if (['aiostreams', 'comet', 'mediafusion'].includes(type)) {
+    if (['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(type)) {
         return createBadge('TOR', 'conn-card-badge-tor') + createBadge('DIR', 'conn-card-badge-dir');
     }
     return createBadge('TOR', 'conn-card-badge-tor');
