@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"novastream/config"
+
 	"github.com/gorilla/mux"
 )
 
@@ -27,8 +29,8 @@ const (
 	thumbnailMinIntervalSec     = 30
 	thumbnailMaxCount           = 120
 	thumbnailPreviewLODPasses   = 6
-	thumbnailWorkerCount        = 3
-	thumbnailLowPriorityWorkers = 1
+	thumbnailDefaultWorkers     = 1
+	thumbnailMaxWorkers         = 8
 	thumbnailWidth              = 240
 	thumbnailFrameTimeout       = 45 * time.Second
 	thumbnailFilterVersion      = 14
@@ -441,7 +443,7 @@ func (m *ThumbnailManager) markUnsupported(cleanPath string, durationSec float64
 	return key, nil
 }
 
-func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float64, intervalSec int, toneMapMode thumbnailToneMapMode, dvProfile string) (string, bool, error) {
+func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float64, intervalSec int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) (string, bool, error) {
 	if m == nil {
 		return "", false, fmt.Errorf("thumbnail manager unavailable")
 	}
@@ -484,14 +486,15 @@ func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float6
 			delete(m.inFlight, key)
 			m.mu.Unlock()
 		}()
-		m.generate(key, cleanPath, sourceURL, durationSec, intervalSec, toneMapMode, dvProfile)
+		m.generate(key, cleanPath, sourceURL, durationSec, intervalSec, workerCount, toneMapMode, dvProfile)
 	}()
 
 	return key, true, nil
 }
 
-func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSec float64, requestedInterval int, toneMapMode thumbnailToneMapMode, dvProfile string) {
+func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSec float64, requestedInterval int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) {
 	interval, times := thumbnailTimes(durationSec, requestedInterval)
+	workerCount = thumbnailWorkerCountFromSetting(workerCount)
 	manifest := &thumbnailManifest{
 		Key:         key,
 		Status:      "generating",
@@ -534,14 +537,14 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 		log.Printf("[thumbnails] pass start key=%s pass=%d jobs=%d generated=%d/%d", key, passIndex+1, len(pass), manifest.Generated, manifest.Total)
 		results := make(chan thumbnailResult, len(pass))
 		jobs := make(chan thumbnailJob)
-		workerCount := thumbnailWorkerCountForSource(sourceURL)
-		if len(pass) < workerCount {
-			workerCount = len(pass)
+		passWorkerCount := workerCount
+		if len(pass) < passWorkerCount {
+			passWorkerCount = len(pass)
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(workerCount)
-		for worker := 0; worker < workerCount; worker++ {
+		wg.Add(passWorkerCount)
+		for worker := 0; worker < passWorkerCount; worker++ {
 			go func() {
 				defer wg.Done()
 				for job := range jobs {
@@ -584,12 +587,29 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 	log.Printf("[thumbnails] complete key=%s path=%q generated=%d/%d", key, cleanPath, manifest.Generated, manifest.Total)
 }
 
-func thumbnailWorkerCountForSource(sourceURL string) int {
-	source := strings.ToLower(sourceURL)
-	if strings.Contains(source, "/webdav/") || strings.Contains(source, "/api/video/stream") {
-		return thumbnailLowPriorityWorkers
+func thumbnailWorkerCountFromSetting(workers int) int {
+	if workers < 1 {
+		return thumbnailDefaultWorkers
 	}
-	return thumbnailWorkerCount
+	if workers > thumbnailMaxWorkers {
+		return thumbnailMaxWorkers
+	}
+	return workers
+}
+
+func (h *VideoHandler) thumbnailGenerationSettings() config.PlaybackThumbnailSettings {
+	settings := config.PlaybackThumbnailSettings{Enabled: false, Workers: thumbnailDefaultWorkers}
+	if h == nil || h.configManager == nil {
+		return settings
+	}
+	loaded, err := h.configManager.Load()
+	if err != nil {
+		log.Printf("[thumbnails] failed to load thumbnail settings: %v", err)
+		return settings
+	}
+	settings = loaded.Playback.Thumbnails
+	settings.Workers = thumbnailWorkerCountFromSetting(settings.Workers)
+	return settings
 }
 
 func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string) thumbnailResult {
@@ -667,6 +687,19 @@ func (h *VideoHandler) StartThumbnails(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing path parameter", http.StatusBadRequest)
 		return
 	}
+	thumbnailSettings := h.thumbnailGenerationSettings()
+	log.Printf("[thumbnails] start request key=%s enabled=%t workers=%d path=%q", thumbnailKey(cleanPath), thumbnailSettings.Enabled, thumbnailSettings.Workers, cleanPath)
+	if !thumbnailSettings.Enabled {
+		key := thumbnailKey(cleanPath)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"key":     key,
+			"status":  "disabled",
+			"started": false,
+		})
+		return
+	}
 	durationSec, _ := strconv.ParseFloat(strings.TrimSpace(r.URL.Query().Get("duration")), 64)
 	intervalSec, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("interval")))
 	dvProfile := parseThumbnailDVProfile(r)
@@ -699,7 +732,7 @@ func (h *VideoHandler) StartThumbnails(w http.ResponseWriter, r *http.Request) {
 
 	toneMap := parseThumbnailToneMapHint(r, dvProfile) || thumbnailNeedsToneMap(h.getCachedMetadata(cleanPath))
 	toneMapMode := h.thumbnailManager.thumbnailToneMapMode(toneMap, dvProfile)
-	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, durationSec, intervalSec, toneMapMode, dvProfile)
+	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, durationSec, intervalSec, thumbnailSettings.Workers, toneMapMode, dvProfile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -780,6 +813,9 @@ func (h *VideoHandler) thumbnailStatusForKey(key string) string {
 	}
 	if h.thumbnailManager.isInflight(key) {
 		return "generating"
+	}
+	if !h.thumbnailGenerationSettings().Enabled {
+		return "disabled"
 	}
 	return "pending"
 }

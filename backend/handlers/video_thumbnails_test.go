@@ -2,10 +2,15 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"novastream/config"
 )
 
 func TestThumbnailTimesCapsLongVideos(t *testing.T) {
@@ -85,15 +90,56 @@ func TestThumbnailGenerationPassesProgressivelyRefineTimeline(t *testing.T) {
 	}
 }
 
-func TestThumbnailWorkerCountForSource(t *testing.T) {
-	if got := thumbnailWorkerCountForSource("http://127.0.0.1:7777/webdav/movie.mkv"); got != thumbnailLowPriorityWorkers {
-		t.Fatalf("webdav worker count = %d, want %d", got, thumbnailLowPriorityWorkers)
+func TestThumbnailWorkerCountFromSetting(t *testing.T) {
+	if got := thumbnailWorkerCountFromSetting(0); got != thumbnailDefaultWorkers {
+		t.Fatalf("zero worker count = %d, want %d", got, thumbnailDefaultWorkers)
 	}
-	if got := thumbnailWorkerCountForSource("http://127.0.0.1:7777/api/video/stream?path=%2Fwebdav%2Fmovie.mkv"); got != thumbnailLowPriorityWorkers {
-		t.Fatalf("stream proxy worker count = %d, want %d", got, thumbnailLowPriorityWorkers)
+	if got := thumbnailWorkerCountFromSetting(3); got != 3 {
+		t.Fatalf("configured worker count = %d, want 3", got)
 	}
-	if got := thumbnailWorkerCountForSource("https://cdn.example/video.mkv"); got != thumbnailWorkerCount {
-		t.Fatalf("cdn worker count = %d, want %d", got, thumbnailWorkerCount)
+	if got := thumbnailWorkerCountFromSetting(thumbnailMaxWorkers + 1); got != thumbnailMaxWorkers {
+		t.Fatalf("high worker count = %d, want %d", got, thumbnailMaxWorkers)
+	}
+}
+
+func TestStartThumbnailsDisabledBySettings(t *testing.T) {
+	settings := config.DefaultSettings()
+	settings.Playback.Thumbnails.Enabled = false
+	handler := &VideoHandler{
+		thumbnailManager: NewThumbnailManager(t.TempDir(), "ffmpeg"),
+		configManager:    staticVideoConfigProvider{settings: settings},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/video/thumbnails/start?path=%2Fwebdav%2Fmovie.mkv&duration=3600", nil)
+	rr := httptest.NewRecorder()
+	handler.StartThumbnails(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status code = %d, want %d", rr.Code, http.StatusAccepted)
+	}
+	var startResp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&startResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if startResp["status"] != "disabled" {
+		t.Fatalf("start status = %v, want disabled", startResp["status"])
+	}
+	if startResp["started"] != false {
+		t.Fatalf("started = %v, want false", startResp["started"])
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/video/thumbnails/status?path=%2Fwebdav%2Fmovie.mkv", nil)
+	statusRR := httptest.NewRecorder()
+	handler.GetThumbnailsStatus(statusRR, statusReq)
+	if statusRR.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", statusRR.Code, http.StatusOK)
+	}
+	var statusResp thumbnailStatusResponse
+	if err := json.NewDecoder(statusRR.Body).Decode(&statusResp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if statusResp.Status != "disabled" {
+		t.Fatalf("thumbnail status = %q, want disabled", statusResp.Status)
 	}
 }
 

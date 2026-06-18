@@ -37,6 +37,37 @@ func TestDefaultSettingsDisablesMatchFrameRate(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsDisablesThumbnailGeneration(t *testing.T) {
+	settings := DefaultSettings()
+
+	if settings.Playback.Thumbnails.Enabled {
+		t.Fatal("expected thumbnail generation to default to disabled")
+	}
+	if settings.Playback.Thumbnails.Workers != 1 {
+		t.Fatalf("thumbnail workers = %d, want 1", settings.Playback.Thumbnails.Workers)
+	}
+}
+
+func TestLoadBackfillsThumbnailSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"playback":{"preferredPlayer":"native"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if settings.Playback.Thumbnails.Enabled {
+		t.Fatal("expected thumbnail generation to backfill as disabled")
+	}
+	if settings.Playback.Thumbnails.Workers != 1 {
+		t.Fatalf("thumbnail workers = %d, want 1", settings.Playback.Thumbnails.Workers)
+	}
+}
+
 func TestDefaultSettingsEnablesCleanPosters(t *testing.T) {
 	settings := DefaultSettings()
 
