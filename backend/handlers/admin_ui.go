@@ -720,7 +720,7 @@ var SettingsSchema = map[string]interface{}{
 				"options": []map[string]interface{}{
 					{"value": "home", "label": "Home"},
 					{"value": "search", "label": "Search"},
-					{"value": "lists", "label": "Lists"},
+					{"value": "lists", "label": "Discovery"},
 					{"value": "live", "label": "Live"},
 					{"value": "profiles", "label": "Profiles"},
 					{"value": "downloads", "label": "Downloads"},

@@ -845,6 +845,9 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			UnknownTrackPolicy: string(globalSettings.Filtering.UnknownTrackPolicy),
 		},
 		Display: models.DisplaySettings{
+			BadgeVisibility:                  globalSettings.Display.BadgeVisibility,
+			NavigationTabVisibility:          globalSettings.Display.NavigationTabVisibility,
+			WatchStateIconStyle:              globalSettings.Display.WatchStateIconStyle,
 			BypassFilteringForAIOStreamsOnly: models.BoolPtr(globalSettings.Display.BypassFilteringForAIOStreamsOnly),
 			DisableMobileTopCarousel:         models.BoolPtr(globalSettings.Display.DisableMobileTopCarousel),
 			AppLanguage:                      globalSettings.Display.AppLanguage,
