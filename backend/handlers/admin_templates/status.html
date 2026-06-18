@@ -1348,6 +1348,9 @@
     let currentStreamView = localStorage.getItem('streamView') || 'card';
     let cachedStreams = [];
     const metadataCache = new Map();
+    const DASHBOARD_STATS_REFRESH_MS = 30000;
+    let dashboardStatsTimer = null;
+    let dashboardStatsInFlight = false;
 
     function setStreamView(view) {
         currentStreamView = view;
@@ -1555,7 +1558,10 @@
         return `${hours}h ${mins}m`;
     }
 
-    async function loadDashboardStats() {
+    async function loadDashboardStats(options = {}) {
+        if (dashboardStatsInFlight) return;
+        dashboardStatsInFlight = true;
+        const silent = Boolean(options.silent);
         try {
             const params = new URLSearchParams();
             const profileSelect = document.getElementById('watchTimeProfileSelect');
@@ -1572,11 +1578,22 @@
             renderDashboardStats(await response.json());
         } catch (error) {
             console.warn('Failed to load dashboard stats:', error);
+            if (silent) return;
             const note = document.getElementById('watchTimeNote');
             const list = document.getElementById('recentWatchList');
             if (note) note.textContent = 'Failed to load watch time.';
             if (list) list.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem 0;">Failed to load recent activity</div>';
+        } finally {
+            dashboardStatsInFlight = false;
         }
+    }
+
+    function startDashboardStatsAutoRefresh() {
+        if (dashboardStatsTimer) clearInterval(dashboardStatsTimer);
+        dashboardStatsTimer = setInterval(() => {
+            if (document.hidden) return;
+            loadDashboardStats({ silent: true });
+        }, DASHBOARD_STATS_REFRESH_MS);
     }
 
     function renderDashboardStats(data) {
@@ -2336,15 +2353,23 @@
         connectSSE();
         startInterpolation();
         loadDashboardStats();
+        startDashboardStatsAutoRefresh();
         if (isAdmin) {
             testEndpoints();
             refreshDebridStatus();
         }
     });
 
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            loadDashboardStats({ silent: true });
+        }
+    });
+
     window.addEventListener('beforeunload', () => {
         if (eventSource) eventSource.close();
         if (interpolationTimer) clearInterval(interpolationTimer);
+        if (dashboardStatsTimer) clearInterval(dashboardStatsTimer);
         if (fallbackPollTimer) clearInterval(fallbackPollTimer);
         if (sseRetryTimer) clearTimeout(sseRetryTimer);
     });
