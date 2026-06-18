@@ -888,7 +888,7 @@ func (h *PrequeueHandler) Options(w http.ResponseWriter, r *http.Request) {
 // runPrequeueWorker runs the prequeue background task
 func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, targetEpisode *models.EpisodeReference, startOffset float64, skipHLS bool) {
 	// Create cancellable context
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	// Store cancel func for potential cancellation
@@ -1088,6 +1088,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 		annotateResultProfile(&result, userID)
 		resolution, lastErr = h.playbackSvc.Resolve(ctx, result)
+		if lastErr == nil && resolution != nil && resolution.QueueID > 0 && strings.TrimSpace(resolution.WebDAVPath) == "" {
+			resolution, lastErr = h.waitForPlaybackQueue(ctx, prequeueID, resolution.QueueID, result.Title)
+		}
 		if lastErr != nil || resolution == nil || resolution.WebDAVPath == "" {
 			if debrid.IsBlockedContentError(lastErr) {
 				log.Printf("[prequeue] Provider blocked selected file for result [%d] (%s) %s; trying next result: %v", i, result.ServiceType, result.Title, lastErr)
@@ -1547,6 +1550,45 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	}
 
 	log.Printf("[prequeue] TIMING: Prequeue %s is ready (TOTAL: %v)", prequeueID, time.Since(workerStart))
+}
+
+func (h *PrequeueHandler) waitForPlaybackQueue(ctx context.Context, prequeueID string, queueID int64, title string) (*models.PlaybackResolution, error) {
+	if h == nil || h.playbackSvc == nil {
+		return nil, fmt.Errorf("playback service not configured")
+	}
+	log.Printf("[prequeue] Waiting for queued playback result queueID=%d title=%q", queueID, title)
+
+	timeout := time.NewTimer(15 * time.Minute)
+	defer timeout.Stop()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		status, err := h.playbackSvc.QueueStatus(ctx, queueID)
+		if err != nil {
+			return nil, err
+		}
+		if status != nil {
+			h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
+				e.HealthStatus = status.HealthStatus
+				if status.FileSize > 0 {
+					e.FileSize = status.FileSize
+				}
+			})
+			if strings.TrimSpace(status.WebDAVPath) != "" {
+				log.Printf("[prequeue] Queued playback result ready queueID=%d title=%q path=%q", queueID, title, status.WebDAVPath)
+				return status, nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout.C:
+			return nil, fmt.Errorf("playback queue %d timed out waiting for external usenet engine", queueID)
+		case <-ticker.C:
+		}
+	}
 }
 
 // failPrequeue marks a prequeue as failed

@@ -9,9 +9,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"novastream/config"
 	"novastream/services/credits"
 	"novastream/services/streaming"
 )
+
+type staticVideoConfigProvider struct {
+	settings config.Settings
+}
+
+func (p staticVideoConfigProvider) Load() (config.Settings, error) {
+	return p.settings, nil
+}
 
 // --- detectContainerExt tests ---
 
@@ -66,6 +75,49 @@ func TestDetectContainerExt(t *testing.T) {
 				t.Errorf("detectContainerExt(%q) = %q, want %q", tc.input, result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestProxyExternalURLUsesConfiguredUsenetWebDAVAuth(t *testing.T) {
+	var sawAuth bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != "webdav-user" || password != "webdav-pass" {
+			t.Fatalf("missing configured WebDAV auth")
+		}
+		sawAuth = true
+		w.Header().Set("Content-Type", "video/x-matroska")
+		_, _ = io.WriteString(w, "video")
+	}))
+	defer upstream.Close()
+
+	handler := NewVideoHandler(false, "", "")
+	settings := config.DefaultSettings()
+	settings.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:           "NZBDav",
+		Type:           "nzbdav",
+		Enabled:        true,
+		BaseURL:        "http://engine.example",
+		WebDAVBaseURL:  upstream.URL + "/webdav",
+		WebDAVUsername: "webdav-user",
+		WebDAVPassword: "webdav-pass",
+	}}
+	handler.SetConfigManager(staticVideoConfigProvider{settings: settings})
+
+	req := httptest.NewRequest(http.MethodGet, "/video/stream?path=x", nil)
+	rec := httptest.NewRecorder()
+	handled, err := handler.proxyExternalURL(rec, req, upstream.URL+"/webdav/Movie/Movie.mkv")
+	if err != nil {
+		t.Fatalf("proxyExternalURL: %v", err)
+	}
+	if !handled {
+		t.Fatal("handled = false")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !sawAuth {
+		t.Fatal("upstream did not receive auth")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ import (
 	"novastream/models"
 	"novastream/services/debrid"
 	usenetsvc "novastream/services/usenet"
+	"novastream/services/usenetengine"
 
 	"github.com/javi11/nzbparser"
 )
@@ -55,16 +57,33 @@ type Service struct {
 	nzbSystem   *integration.NzbSystem
 	metadataSvc metadataService
 
+	externalMu     sync.Mutex
+	externalJobs   map[int64]*externalUsenetJob
+	externalNextID atomic.Int64
+
 	// NZB fetch/process counters for diagnostics (atomic, safe for concurrent use).
 	// Grep logs for [search-stats] to see totals during playback.
 	nzbFetchCount   atomic.Int64 // NZB file downloads from indexers
 	nzbProcessCount atomic.Int64 // NZB files sent for immediate processing
 }
 
+type externalUsenetJob struct {
+	ID            int64
+	EngineJobID   string
+	Engine        config.UsenetEngineSettings
+	SourceNZBPath string
+	FileSize      int64
+	CreatedAt     time.Time
+	LastStatus    string
+	LastError     string
+}
+
 var (
 	ErrQueueItemNotFound = errors.New("playback queue item not found")
 	ErrQueueItemFailed   = errors.New("playback queue item failed")
 )
+
+const externalQueueIDBase int64 = 1_000_000_000
 
 // HealthCheckResult holds the result of a parallel health check for a single candidate
 type HealthCheckResult struct {
@@ -87,17 +106,20 @@ func NewService(cfg *config.Manager, usenetSvc usenetHealthService, nzbSystem *i
 	}
 	dnscache.ConfigureTransport(transport, dnscache.DefaultTTL)
 
-	return &Service{
+	service := &Service{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout:   60 * time.Second,
 			Transport: transport,
 		},
-		usenet:      usenetSvc,
-		debrid:      debrid.NewPlaybackService(cfg, nil),
-		nzbSystem:   nzbSystem,
-		metadataSvc: metadataSvc,
+		usenet:       usenetSvc,
+		debrid:       debrid.NewPlaybackService(cfg, nil),
+		nzbSystem:    nzbSystem,
+		metadataSvc:  metadataSvc,
+		externalJobs: make(map[int64]*externalUsenetJob),
 	}
+	service.externalNextID.Store(externalQueueIDBase)
+	return service
 }
 
 // ResolveBatch performs a single set of provider API calls and resolves all episodes from memory.
@@ -145,6 +167,13 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	if err != nil {
 		log.Printf("[playback] warning: failed to load config, using default health check behavior: %v", err)
 	}
+
+	if res, err := s.resolveExternalUsenet(ctx, cfg, candidate, nzbBytes, fileName); err != nil {
+		return nil, err
+	} else if res != nil {
+		return res, nil
+	}
+
 	skipHealthCheck := cfg.Import.SkipHealthCheck
 
 	healthStatus := "unknown"
@@ -294,6 +323,7 @@ func (s *Service) ParallelHealthCheck(ctx context.Context, candidates []models.N
 		log.Printf("[playback] warning: failed to load config for parallel health check: %v", err)
 	}
 	skipHealthCheck := cfg.Import.SkipHealthCheck
+	externalEnabled := externalUsenetEnabledForProfile(cfg, "")
 
 	var (
 		wg      sync.WaitGroup
@@ -352,10 +382,15 @@ func (s *Service) ParallelHealthCheck(ctx context.Context, candidates []models.N
 			result.NZBBytes = nzbBytes
 			result.FileName = fileName
 
-			// Perform health check if not skipped
+			// Perform health check if not skipped. External engines own the final
+			// availability/import decision, so do not reject candidates with our
+			// direct NNTP segment sampler before they can be submitted.
 			if skipHealthCheck {
 				result.Healthy = true
 				log.Printf("[playback] parallel health check [%d] %s: skipped (config)", idx, candidate.Title)
+			} else if externalEnabled || externalUsenetEnabledForCandidate(cfg, candidate) {
+				result.Healthy = true
+				log.Printf("[playback] parallel health check [%d] %s: skipped (external usenet engine)", idx, candidate.Title)
 			} else if s.usenet != nil {
 				check, err := s.usenet.CheckHealthWithNZB(checkCtx, candidate, nzbBytes, fileName)
 				if err != nil {
@@ -413,9 +448,6 @@ func (s *Service) ParallelHealthCheck(ctx context.Context, candidates []models.N
 // ResolveWithHealthResult processes an NZB using pre-fetched health check results.
 // This avoids re-fetching and re-checking the NZB when we already have the data.
 func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthCheckResult) (*models.PlaybackResolution, error) {
-	if !result.Healthy {
-		return nil, fmt.Errorf("health check failed")
-	}
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -425,13 +457,25 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 
 	log.Printf("[playback] resolving with pre-checked result: %s", result.Candidate.Title)
 
-	if s.nzbSystem == nil {
-		return nil, fmt.Errorf("NZB system not configured")
-	}
-
 	cfg, err := s.cfg.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if !result.Healthy && !externalUsenetEnabledForCandidate(cfg, result.Candidate) {
+		return nil, fmt.Errorf("health check failed")
+	}
+	if res, err := s.resolveExternalUsenet(ctx, cfg, result.Candidate, result.NZBBytes, result.FileName); err != nil {
+		return nil, err
+	} else if res != nil {
+		return res, nil
+	}
+
+	if !result.Healthy {
+		return nil, fmt.Errorf("health check failed")
+	}
+	if s.nzbSystem == nil {
+		return nil, fmt.Errorf("NZB system not configured")
 	}
 
 	// Process NZB immediately without queuing
@@ -514,7 +558,14 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 }
 
 // QueueStatus inspects the importer queue for the given ID and returns the current playback resolution state.
-func (s *Service) QueueStatus(_ context.Context, queueID int64) (*models.PlaybackResolution, error) {
+func (s *Service) QueueStatus(ctx context.Context, queueID int64) (*models.PlaybackResolution, error) {
+	if res, handled, err := s.externalQueueStatus(ctx, queueID); handled {
+		return res, err
+	}
+	if queueID >= externalQueueIDBase {
+		return nil, ErrQueueItemNotFound
+	}
+
 	if s.nzbSystem == nil {
 		return nil, fmt.Errorf("NZB system not configured")
 	}
@@ -563,6 +614,712 @@ func (s *Service) QueueStatus(_ context.Context, queueID int64) (*models.Playbac
 		}
 		return res, nil
 	}
+}
+
+func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Settings, candidate models.NZBResult, nzbBytes []byte, fileName string) (*models.PlaybackResolution, error) {
+	profileID := strings.TrimSpace(candidate.Attributes["profileId"])
+	engines := usenetengine.EnabledEngines(settings, profileID)
+	if len(engines) == 0 {
+		return nil, nil
+	}
+
+	engineSettings := engines[0]
+	engine, err := usenetengine.NewFromSettings(engineSettings, s.httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("configure usenet engine %q: %w", engineSettings.Name, err)
+	}
+
+	category := strings.TrimSpace(engineSettings.Category)
+	if candidateCategory := strings.TrimSpace(candidate.Attributes["category"]); candidateCategory != "" {
+		category = candidateCategory
+	}
+	priority := strings.TrimSpace(engineSettings.Priority)
+
+	log.Printf("[playback] submitting NZB to external usenet engine name=%q type=%q fileName=%q", engineSettings.Name, engineSettings.Type, fileName)
+	submit, err := engine.SubmitNZB(ctx, usenetengine.SubmitRequest{
+		FileName: fileName,
+		NZB:      nzbBytes,
+		Category: category,
+		Priority: priority,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("submit NZB to external usenet engine: %w", err)
+	}
+
+	queueID := s.externalNextID.Add(1)
+	if queueID <= 0 {
+		queueID = s.externalNextID.Add(1)
+	}
+	sourceNZBPath := strings.TrimSpace(fileName)
+	fileSize := estimateNZBFileSize(nzbBytes)
+
+	s.externalMu.Lock()
+	s.externalJobs[queueID] = &externalUsenetJob{
+		ID:            queueID,
+		EngineJobID:   submit.JobID,
+		Engine:        engineSettings,
+		SourceNZBPath: sourceNZBPath,
+		FileSize:      fileSize,
+		CreatedAt:     time.Now(),
+		LastStatus:    string(usenetengine.StatusQueued),
+	}
+	s.externalMu.Unlock()
+
+	log.Printf("[playback] external usenet job queued queueID=%d engineJobID=%q engine=%q", queueID, submit.JobID, engine.Name())
+	return &models.PlaybackResolution{
+		QueueID:       queueID,
+		HealthStatus:  "queued",
+		FileSize:      fileSize,
+		SourceNZBPath: sourceNZBPath,
+	}, nil
+}
+
+func (s *Service) externalQueueStatus(ctx context.Context, queueID int64) (*models.PlaybackResolution, bool, error) {
+	s.externalMu.Lock()
+	job := s.externalJobs[queueID]
+	s.externalMu.Unlock()
+	if job == nil {
+		return nil, false, nil
+	}
+
+	engine, err := usenetengine.NewFromSettings(job.Engine, s.httpClient)
+	if err != nil {
+		return nil, true, fmt.Errorf("configure usenet engine %q: %w", job.Engine.Name, err)
+	}
+	status, err := engine.Status(ctx, job.EngineJobID)
+	if err != nil {
+		s.rememberExternalJobError(queueID, err)
+		return nil, true, fmt.Errorf("poll external usenet engine: %w", err)
+	}
+	if status == nil {
+		status = &usenetengine.JobStatus{JobID: job.EngineJobID, Status: usenetengine.StatusUnknown}
+	}
+
+	health := externalHealthStatus(status.Status)
+	fileSize := firstPositiveInt64(status.SizeBytes, job.FileSize)
+	sourceNZBPath := firstNonEmpty(status.FileName, job.SourceNZBPath)
+
+	s.externalMu.Lock()
+	if existing := s.externalJobs[queueID]; existing != nil {
+		existing.LastStatus = health
+		existing.LastError = status.Error
+		if fileSize > 0 {
+			existing.FileSize = fileSize
+		}
+		if sourceNZBPath != "" {
+			existing.SourceNZBPath = sourceNZBPath
+		}
+	}
+	s.externalMu.Unlock()
+
+	switch status.Status {
+	case usenetengine.StatusFailed:
+		errMsg := strings.TrimSpace(status.Error)
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(status.RawStatus)
+		}
+		if errMsg == "" {
+			errMsg = "external usenet engine reported failure"
+		}
+		s.deleteExternalJob(queueID)
+		return nil, true, fmt.Errorf("%w: %s", ErrQueueItemFailed, errMsg)
+	case usenetengine.StatusCompleted:
+		streamURL, urlErr := s.resolveExternalWebDAVStream(ctx, job.Engine, status.OutputPath)
+		if urlErr != nil {
+			return nil, true, urlErr
+		}
+		s.deleteExternalJob(queueID)
+		return &models.PlaybackResolution{
+			QueueID:       queueID,
+			WebDAVPath:    streamURL,
+			HealthStatus:  "healthy",
+			FileSize:      fileSize,
+			SourceNZBPath: sourceNZBPath,
+		}, true, nil
+	default:
+		if streamURL, ok, fallbackErr := s.resolveExternalWebDAVFallback(ctx, job.Engine, sourceNZBPath); fallbackErr != nil {
+			return nil, true, fallbackErr
+		} else if ok {
+			s.deleteExternalJob(queueID)
+			return &models.PlaybackResolution{
+				QueueID:       queueID,
+				WebDAVPath:    streamURL,
+				HealthStatus:  "healthy",
+				FileSize:      fileSize,
+				SourceNZBPath: sourceNZBPath,
+			}, true, nil
+		}
+		return &models.PlaybackResolution{
+			QueueID:       queueID,
+			HealthStatus:  health,
+			FileSize:      fileSize,
+			SourceNZBPath: sourceNZBPath,
+		}, true, nil
+	}
+}
+
+func (s *Service) rememberExternalJobError(queueID int64, err error) {
+	s.externalMu.Lock()
+	defer s.externalMu.Unlock()
+	if job := s.externalJobs[queueID]; job != nil && err != nil {
+		job.LastError = err.Error()
+	}
+}
+
+func (s *Service) deleteExternalJob(queueID int64) {
+	s.externalMu.Lock()
+	delete(s.externalJobs, queueID)
+	s.externalMu.Unlock()
+}
+
+func externalHealthStatus(status usenetengine.Status) string {
+	switch status {
+	case usenetengine.StatusQueued:
+		return "queued"
+	case usenetengine.StatusProcessing:
+		return "processing"
+	case usenetengine.StatusCompleted:
+		return "healthy"
+	case usenetengine.StatusFailed:
+		return "failed"
+	default:
+		return "processing"
+	}
+}
+
+func (s *Service) resolveExternalWebDAVStream(ctx context.Context, engine config.UsenetEngineSettings, outputPath string) (string, error) {
+	streamURL, err := externalWebDAVURL(engine, outputPath)
+	if err != nil {
+		return "", err
+	}
+	if isExternalPlayableURL(streamURL) && !isNonContentMediaPath(streamURL) {
+		return streamURL, nil
+	}
+	if isExternalPlayableURL(streamURL) && isNonContentMediaPath(streamURL) {
+		return "", fmt.Errorf("external usenet engine selected non-content media path: %s", path.Base(streamURL))
+	}
+
+	selected, err := s.findExternalWebDAVMediaFile(ctx, engine, streamURL, 0)
+	if err != nil {
+		return "", err
+	}
+	if selected == "" {
+		return "", fmt.Errorf("external usenet WebDAV directory contains no playable media files")
+	}
+	return selected, nil
+}
+
+func (s *Service) resolveExternalWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, sourceNZBPath string) (string, bool, error) {
+	if !strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+		return "", false, nil
+	}
+	releaseName := strings.TrimSpace(sourceNZBPath)
+	if releaseName == "" {
+		return "", false, nil
+	}
+	if strings.EqualFold(path.Ext(releaseName), ".nzb") {
+		releaseName = strings.TrimSuffix(releaseName, path.Ext(releaseName))
+	}
+	if releaseName == "" {
+		return "", false, nil
+	}
+	directoryURL, err := externalWebDAVURL(engine, path.Join("nzbs", releaseName))
+	if err != nil {
+		return "", true, err
+	}
+	selected, err := s.findExternalWebDAVMediaFile(ctx, engine, directoryURL, 0)
+	if err != nil {
+		return "", false, nil
+	}
+	if selected == "" {
+		return "", false, nil
+	}
+	return selected, true, nil
+}
+
+func externalWebDAVURL(engine config.UsenetEngineSettings, outputPath string) (string, error) {
+	outputPath = strings.TrimSpace(outputPath)
+	if outputPath == "" {
+		return "", fmt.Errorf("external usenet engine completed without a stream path")
+	}
+	if strings.HasPrefix(outputPath, "http://") || strings.HasPrefix(outputPath, "https://") {
+		return externalWebDAVAbsoluteURL(engine, outputPath)
+	}
+	base := strings.TrimSpace(engine.WebDAVBaseURL)
+	if base == "" {
+		return "", fmt.Errorf("external usenet engine completed at %q but webdavBaseUrl is not configured", outputPath)
+	}
+	relative := externalWebDAVRelativePath(engine, outputPath)
+	if relative == "" {
+		return "", fmt.Errorf("unable to map external usenet output path %q to WebDAV URL", outputPath)
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse webdavBaseUrl: %w", err)
+	}
+	basePath := strings.TrimRight(baseURL.Path, "/")
+	relPath := strings.TrimLeft(relative, "/")
+	baseURL.Path = joinURLPath(basePath, relPath)
+	baseURL.RawQuery = ""
+	baseURL.Fragment = ""
+	return baseURL.String(), nil
+}
+
+func externalWebDAVAbsoluteURL(engine config.UsenetEngineSettings, outputURL string) (string, error) {
+	parsed, err := url.Parse(outputURL)
+	if err != nil {
+		return "", fmt.Errorf("parse external usenet output URL: %w", err)
+	}
+	base := strings.TrimSpace(engine.WebDAVBaseURL)
+	if base == "" || !isLikelyInternalExternalEngineHost(parsed) {
+		return outputURL, nil
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse webdavBaseUrl: %w", err)
+	}
+	basePath := strings.TrimRight(baseURL.Path, "/")
+	relPath := strings.TrimLeft(parsed.EscapedPath(), "/")
+	if unescaped, unescapeErr := url.PathUnescape(relPath); unescapeErr == nil {
+		relPath = unescaped
+	}
+	baseURL.Path = joinURLPath(basePath, relPath)
+	baseURL.RawQuery = parsed.RawQuery
+	baseURL.Fragment = ""
+	return baseURL.String(), nil
+}
+
+func isLikelyInternalExternalEngineHost(parsed *url.URL) bool {
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	port := strings.TrimSpace(parsed.Port())
+	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" {
+		return port == "" || port == "8080" || port == "3000"
+	}
+	return false
+}
+
+func isExternalPlayableURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(parsed.Path))
+	_, ok := playableExtensionPriority[ext]
+	return ok
+}
+
+func (s *Service) findExternalWebDAVMediaFile(ctx context.Context, engine config.UsenetEngineSettings, directoryURL string, depth int) (string, error) {
+	if depth > webDAVScanMaxDepth {
+		return "", nil
+	}
+	entries, err := s.listExternalWebDAVDirectory(ctx, engine, directoryURL)
+	if err != nil {
+		return "", err
+	}
+
+	var bestURL string
+	var bestSize int64 = -1
+	var bestPriority int = 999
+
+	for _, entry := range entries {
+		if entry.URL == "" {
+			continue
+		}
+		if entry.IsDir {
+			name := strings.ToLower(strings.Trim(strings.TrimSpace(entry.Name), "/"))
+			if name == "sample" || name == "samples" || name == "extras" || name == "extra" {
+				continue
+			}
+			nested, nestedErr := s.findExternalWebDAVMediaFile(ctx, engine, entry.URL, depth+1)
+			if nestedErr != nil {
+				return "", nestedErr
+			}
+			if nested == "" {
+				continue
+			}
+			nestedSize := entry.Size
+			nestedPriority := externalMediaPriority(nested)
+			if shouldPreferExternalMedia(nestedPriority, nestedSize, bestPriority, bestSize) {
+				bestURL = nested
+				bestSize = nestedSize
+				bestPriority = nestedPriority
+			}
+			continue
+		}
+
+		if isExternalRcloneLinkURL(entry.URL) {
+			if !isExternalPlayableRcloneLink(entry.URL, entry.Name) || isNonContentMediaPath(entry.URL) {
+				continue
+			}
+			resolved, linkErr := s.resolveExternalRcloneLink(ctx, engine, entry.URL)
+			if linkErr != nil {
+				return "", linkErr
+			}
+			if resolved == "" {
+				continue
+			}
+			priority := externalMediaPriorityForPath(firstNonEmpty(entry.Name, entry.URL))
+			if shouldPreferExternalMedia(priority, entry.Size, bestPriority, bestSize) {
+				bestURL = resolved
+				bestSize = entry.Size
+				bestPriority = priority
+			}
+			continue
+		}
+
+		if !isExternalPlayableURL(entry.URL) || isNonContentMediaPath(entry.URL) {
+			continue
+		}
+		priority := externalMediaPriority(entry.URL)
+		if shouldPreferExternalMedia(priority, entry.Size, bestPriority, bestSize) {
+			bestURL = entry.URL
+			bestSize = entry.Size
+			bestPriority = priority
+		}
+	}
+
+	return bestURL, nil
+}
+
+func (s *Service) resolveExternalRcloneLink(ctx context.Context, engine config.UsenetEngineSettings, linkURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, linkURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build external WebDAV rclonelink request: %w", err)
+	}
+	applyExternalWebDAVAuth(req, engine)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("read external WebDAV rclonelink: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("external WebDAV rclonelink returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	if err != nil {
+		return "", fmt.Errorf("read external WebDAV rclonelink body: %w", err)
+	}
+	target := strings.Trim(strings.TrimSpace(string(body)), "\x00")
+	if target == "" {
+		return "", nil
+	}
+	resolved, err := externalWebDAVURL(engine, target)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func isExternalRcloneLinkURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(path.Ext(parsed.Path), ".rclonelink")
+}
+
+func isExternalPlayableRcloneLink(rawURL string, name string) bool {
+	if isExternalPlayableRcloneLinkName(name) {
+		return true
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return isExternalPlayableRcloneLinkName(path.Base(parsed.Path))
+}
+
+func isExternalPlayableRcloneLinkName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if !strings.HasSuffix(lower, ".rclonelink") {
+		return false
+	}
+	mediaName := strings.TrimSuffix(name, name[len(name)-len(".rclonelink"):])
+	ext := strings.ToLower(path.Ext(mediaName))
+	_, ok := playableExtensionPriority[ext]
+	return ok
+}
+
+func (s *Service) listExternalWebDAVDirectory(ctx context.Context, engine config.UsenetEngineSettings, directoryURL string) ([]webDAVEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", ensureTrailingSlash(directoryURL), strings.NewReader(`<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:resourcetype/></D:prop></D:propfind>`))
+	if err != nil {
+		return nil, fmt.Errorf("build WebDAV PROPFIND: %w", err)
+	}
+	req.Header.Set("Depth", "1")
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	applyExternalWebDAVAuth(req, engine)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list external WebDAV directory: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("external WebDAV PROPFIND returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var multi webDAVMultiStatus
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&multi); err != nil {
+		return nil, fmt.Errorf("parse external WebDAV PROPFIND: %w", err)
+	}
+
+	baseURL, err := url.Parse(ensureTrailingSlash(directoryURL))
+	if err != nil {
+		return nil, fmt.Errorf("parse WebDAV directory URL: %w", err)
+	}
+
+	entries := make([]webDAVEntry, 0, len(multi.Responses))
+	for _, response := range multi.Responses {
+		entryURL := resolveWebDAVHref(baseURL, response.Href)
+		if entryURL == "" || sameURLPath(entryURL, baseURL.String()) {
+			continue
+		}
+		prop := response.firstOKProp()
+		name := strings.TrimSpace(prop.DisplayName)
+		if name == "" {
+			if parsed, parseErr := url.Parse(entryURL); parseErr == nil {
+				name = path.Base(strings.TrimRight(parsed.Path, "/"))
+			}
+		}
+		entries = append(entries, webDAVEntry{
+			Name:  name,
+			URL:   entryURL,
+			Size:  parseInt64String(prop.ContentLength),
+			IsDir: prop.ResourceType.Collection != nil || strings.HasSuffix(entryURL, "/"),
+		})
+	}
+	return entries, nil
+}
+
+type webDAVMultiStatus struct {
+	Responses []webDAVResponse `xml:"response"`
+}
+
+type webDAVResponse struct {
+	Href     string            `xml:"href"`
+	PropStat []webDAVPropStats `xml:"propstat"`
+}
+
+type webDAVPropStats struct {
+	Status string        `xml:"status"`
+	Prop   webDAVXMLProp `xml:"prop"`
+}
+
+type webDAVXMLProp struct {
+	DisplayName   string             `xml:"displayname"`
+	ContentLength string             `xml:"getcontentlength"`
+	ResourceType  webDAVResourceType `xml:"resourcetype"`
+}
+
+type webDAVResourceType struct {
+	Collection *struct{} `xml:"collection"`
+}
+
+func (r webDAVResponse) firstOKProp() webDAVXMLProp {
+	for _, propStat := range r.PropStat {
+		if strings.Contains(propStat.Status, " 200 ") || strings.HasPrefix(propStat.Status, "HTTP/1.1 200") || strings.TrimSpace(propStat.Status) == "" {
+			return propStat.Prop
+		}
+	}
+	if len(r.PropStat) > 0 {
+		return r.PropStat[0].Prop
+	}
+	return webDAVXMLProp{}
+}
+
+func resolveWebDAVHref(baseURL *url.URL, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" {
+		return ""
+	}
+	ref, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	if ref.IsAbs() && isLikelyInternalExternalEngineHost(ref) {
+		resolved := *ref
+		resolved.Scheme = baseURL.Scheme
+		resolved.Host = baseURL.Host
+
+		basePath := strings.TrimRight(baseURL.EscapedPath(), "/")
+		refPath := resolved.EscapedPath()
+		if basePath != "" && !strings.HasPrefix(strings.TrimRight(refPath, "/")+"/", basePath+"/") {
+			relPath := strings.TrimLeft(refPath, "/")
+			if unescaped, unescapeErr := url.PathUnescape(relPath); unescapeErr == nil {
+				relPath = unescaped
+			}
+			resolved.Path = joinURLPath(basePath, relPath)
+			resolved.RawPath = ""
+		}
+		return resolved.String()
+	}
+	resolved := baseURL.ResolveReference(ref)
+	return resolved.String()
+}
+
+func applyExternalWebDAVAuth(req *http.Request, engine config.UsenetEngineSettings) {
+	if req == nil {
+		return
+	}
+	if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
+		req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
+	}
+}
+
+func sameURLPath(a string, b string) bool {
+	au, errA := url.Parse(a)
+	bu, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+	}
+	return au.Scheme == bu.Scheme && au.Host == bu.Host && strings.TrimRight(au.Path, "/") == strings.TrimRight(bu.Path, "/")
+}
+
+func ensureTrailingSlash(rawURL string) string {
+	if strings.HasSuffix(rawURL, "/") {
+		return rawURL
+	}
+	return rawURL + "/"
+}
+
+func externalMediaPriority(rawURL string) int {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return 999
+	}
+	return externalMediaPriorityForPath(parsed.Path)
+}
+
+func externalMediaPriorityForPath(value string) int {
+	if strings.HasSuffix(strings.ToLower(value), ".rclonelink") {
+		value = value[:len(value)-len(".rclonelink")]
+	}
+	if priority, ok := playableExtensionPriority[strings.ToLower(path.Ext(value))]; ok {
+		return priority
+	}
+	return 999
+}
+
+func shouldPreferExternalMedia(priority int, size int64, bestPriority int, bestSize int64) bool {
+	if bestSize < 0 {
+		return true
+	}
+	if size > 0 && bestSize > 0 && size != bestSize {
+		return size > bestSize
+	}
+	return priority < bestPriority
+}
+
+func parseInt64String(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func externalWebDAVRelativePath(engine config.UsenetEngineSettings, outputPath string) string {
+	outputPath = strings.TrimSpace(outputPath)
+	prefix := strings.TrimSpace(engine.Config["webdavPathPrefix"])
+	if prefix != "" {
+		if rel, ok := trimPathPrefix(outputPath, prefix); ok {
+			return rel
+		}
+	}
+	for _, prefix := range []string{"/mnt/davex", "/mnt/nzbdav"} {
+		if rel, ok := trimPathPrefix(outputPath, prefix); ok {
+			return rel
+		}
+	}
+	for _, marker := range []string{"/webdav/", "/completed-symlinks/", "/completed-downloads/", "/content/", "/__all__/", "/nzbs/"} {
+		if idx := strings.Index(outputPath, marker); idx >= 0 {
+			if marker == "/webdav/" {
+				return outputPath[idx+len(marker):]
+			}
+			return outputPath[idx+1:]
+		}
+	}
+	return strings.TrimLeft(outputPath, "/")
+}
+
+func trimPathPrefix(value, prefix string) (string, bool) {
+	value = strings.TrimSpace(value)
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return value, true
+	}
+	if value == prefix {
+		return "", true
+	}
+	if strings.HasPrefix(value, prefix+"/") {
+		return strings.TrimLeft(strings.TrimPrefix(value, prefix), "/"), true
+	}
+	return "", false
+}
+
+func joinURLPath(basePath, relPath string) string {
+	switch {
+	case basePath == "" && relPath == "":
+		return "/"
+	case basePath == "":
+		return "/" + relPath
+	case relPath == "":
+		return basePath
+	default:
+		return basePath + "/" + relPath
+	}
+}
+
+func estimateNZBFileSize(nzbBytes []byte) int64 {
+	fileSize := int64(0)
+	if parsed, parseErr := nzbparser.Parse(bytes.NewReader(nzbBytes)); parseErr == nil && len(parsed.Files) > 0 {
+		for _, f := range parsed.Files {
+			var size int64
+			for _, seg := range f.Segments {
+				size += int64(seg.Bytes)
+			}
+			if size > fileSize {
+				fileSize = size
+			}
+		}
+	}
+	return fileSize
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func externalUsenetEnabledForCandidate(settings config.Settings, candidate models.NZBResult) bool {
+	return externalUsenetEnabledForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
+}
+
+func externalUsenetEnabledForProfile(settings config.Settings, profileID string) bool {
+	return len(usenetengine.EnabledEngines(settings, profileID)) > 0
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
@@ -716,6 +1473,7 @@ var episodeSpecificReleasePattern = regexp.MustCompile(`(?i)s\d{1,2}\s*e\d{1,4}`
 
 type webDAVEntry struct {
 	Name  string
+	URL   string
 	Size  int64
 	IsDir bool
 }

@@ -4908,6 +4908,16 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "invalid external URL", http.StatusBadRequest)
 		return true, fmt.Errorf("parse external URL: %w", err)
 	}
+	legacyUsername := ""
+	legacyPassword := ""
+	legacyHasAuth := false
+	if parsedURL.User != nil {
+		legacyUsername = parsedURL.User.Username()
+		legacyPassword, _ = parsedURL.User.Password()
+		legacyHasAuth = legacyUsername != "" || legacyPassword != ""
+		parsedURL.User = nil
+		cleanURL = parsedURL.String()
+	}
 
 	videoTracef("[video] external proxy: final URL host=%s", parsedURL.Host)
 
@@ -4933,6 +4943,11 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	proxyReq.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
 	proxyReq.Header.Set("Accept", "*/*")
 	proxyReq.Header.Set("Accept-Encoding", "identity") // Don't accept compression for video streaming
+	if legacyHasAuth {
+		proxyReq.SetBasicAuth(legacyUsername, legacyPassword)
+	} else {
+		h.applyExternalUsenetWebDAVAuth(proxyReq)
+	}
 
 	// Log request details for debugging
 	videoTracef("[video] external proxy request: method=%s host=%s path=%s", proxyReq.Method, proxyReq.URL.Host, proxyReq.URL.Path)
@@ -4967,7 +4982,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		// prequeue/prewarm entry so the next resolve re-searches for a fresh stream
 		// instead of repeatedly serving the expired link.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-			h.invalidatePrequeuesForFailedPath(externalURL)
+			h.invalidatePrequeuesForFailedPath(cleanURL)
 		}
 		http.Error(w, fmt.Sprintf("external stream error: %d", resp.StatusCode), resp.StatusCode)
 		return true, fmt.Errorf("external stream returned %d", resp.StatusCode)
@@ -5045,7 +5060,7 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	accountID := h.resolveAccountID(r)
-	streamID, bytesCounter, actCounter := tracker.StartStreamWithAccount(r, externalURL, expectedLength, 0, 0, accountID)
+	streamID, bytesCounter, actCounter := tracker.StartStreamWithAccount(r, cleanURL, expectedLength, 0, 0, accountID)
 	defer tracker.EndStream(streamID)
 
 	// Stream the response body to the client
@@ -5118,6 +5133,47 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 	}
 
 	return true, nil
+}
+
+func (h *VideoHandler) applyExternalUsenetWebDAVAuth(req *http.Request) {
+	if h == nil || h.configManager == nil || req == nil || req.URL == nil {
+		return
+	}
+	settings, err := h.configManager.Load()
+	if err != nil {
+		return
+	}
+	for _, engine := range settings.UsenetEngines {
+		if !engine.Enabled || strings.TrimSpace(engine.WebDAVBaseURL) == "" {
+			continue
+		}
+		if !externalURLMatchesBase(req.URL, engine.WebDAVBaseURL) {
+			continue
+		}
+		if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
+			req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
+		}
+		return
+	}
+}
+
+func externalURLMatchesBase(candidate *url.URL, baseRaw string) bool {
+	if candidate == nil {
+		return false
+	}
+	base, err := url.Parse(strings.TrimSpace(baseRaw))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(candidate.Scheme, base.Scheme) || !strings.EqualFold(candidate.Host, base.Host) {
+		return false
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	if basePath == "" {
+		return true
+	}
+	candidatePath := strings.TrimRight(candidate.EscapedPath(), "/")
+	return candidatePath == basePath || strings.HasPrefix(candidatePath+"/", basePath+"/")
 }
 
 // GetDirectURL returns the direct download URL for a given path.

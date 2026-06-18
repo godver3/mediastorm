@@ -550,6 +550,11 @@ func redactSettings(s *config.Settings) {
 	for i := range s.Usenet {
 		mask(&s.Usenet[i].Password)
 	}
+	for i := range s.UsenetEngines {
+		mask(&s.UsenetEngines[i].APIKey)
+		mask(&s.UsenetEngines[i].Password)
+		mask(&s.UsenetEngines[i].WebDAVPassword)
+	}
 
 	// Indexers (Newznab/Torznab)
 	for i := range s.Indexers {
@@ -646,6 +651,13 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 	for i := range incoming.Usenet {
 		if i < len(existing.Usenet) {
 			restore(&incoming.Usenet[i].Password, existing.Usenet[i].Password)
+		}
+	}
+	for i := range incoming.UsenetEngines {
+		if i < len(existing.UsenetEngines) {
+			restore(&incoming.UsenetEngines[i].APIKey, existing.UsenetEngines[i].APIKey)
+			restore(&incoming.UsenetEngines[i].Password, existing.UsenetEngines[i].Password)
+			restore(&incoming.UsenetEngines[i].WebDAVPassword, existing.UsenetEngines[i].WebDAVPassword)
 		}
 	}
 

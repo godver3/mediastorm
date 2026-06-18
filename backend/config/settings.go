@@ -19,6 +19,7 @@ func boolPtr(v bool) *bool        { return &v }
 type Settings struct {
 	Server          ServerSettings          `json:"server"`
 	Usenet          []UsenetSettings        `json:"usenet"`
+	UsenetEngines   []UsenetEngineSettings  `json:"usenetEngines,omitempty"`
 	Indexers        []IndexerConfig         `json:"indexers"`
 	TorrentScrapers []TorrentScraperConfig  `json:"torrentScrapers"`
 	Metadata        MetadataSettings        `json:"metadata"`
@@ -67,6 +68,28 @@ type UsenetSettings struct {
 	Connections     int      `json:"connections"`
 	Enabled         bool     `json:"enabled"`
 	AllowedProfiles []string `json:"allowedProfiles,omitempty"`
+}
+
+// UsenetEngineSettings configures an external NZB/WebDAV engine that exposes a
+// SABnzbd-compatible control API and a WebDAV file surface.
+type UsenetEngineSettings struct {
+	Name                string            `json:"name"`
+	Type                string            `json:"type"` // altmount | nzbdav | nzbdavex | decypharr | sabnzbd
+	Enabled             bool              `json:"enabled"`
+	BaseURL             string            `json:"baseUrl"`
+	APIPath             string            `json:"apiPath,omitempty"` // defaults to /api, Decypharr commonly uses /sabnzbd/api
+	APIKey              string            `json:"apiKey,omitempty"`
+	Username            string            `json:"username,omitempty"`
+	Password            string            `json:"password,omitempty"`
+	WebDAVBaseURL       string            `json:"webdavBaseUrl,omitempty"`
+	WebDAVUsername      string            `json:"webdavUsername,omitempty"`
+	WebDAVPassword      string            `json:"webdavPassword,omitempty"`
+	Category            string            `json:"category,omitempty"`
+	Priority            string            `json:"priority,omitempty"`
+	PollIntervalSeconds int               `json:"pollIntervalSeconds,omitempty"`
+	TimeoutSeconds      int               `json:"timeoutSeconds,omitempty"`
+	Config              map[string]string `json:"config,omitempty"`
+	AllowedProfiles     []string          `json:"allowedProfiles,omitempty"`
 }
 
 type IndexerConfig struct {
