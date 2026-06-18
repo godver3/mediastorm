@@ -28,13 +28,33 @@ const (
 )
 
 var (
-	resolution2160Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
-	resolution1080Pattern  = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
-	resolution720Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
-	resolution576Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
-	resolution480Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
-	formulaOneRoundPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})(?:x\d+)*(?:[^a-z0-9]+|x)(?:r|round)[.\s_-]*(\d{1,2})(?:[^a-z0-9]|$)`)
-	formulaOneXPattern     = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})x(\d{1,3})(?:[^a-z0-9]|$)`)
+	resolution2160Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:2160[pi]?|4k|uhd)([^a-z0-9]|$)`)
+	resolution1080Pattern   = regexp.MustCompile(`(?i)(^|[^a-z0-9])1080[pi]?([^a-z0-9]|$)`)
+	resolution720Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])720[pi]?([^a-z0-9]|$)`)
+	resolution576Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
+	resolution480Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
+	formulaOneRoundPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})(?:x\d+)*(?:[^a-z0-9]+|x)(?:r|round)[.\s_-]*(\d{1,2})(?:[^a-z0-9]|$)`)
+	formulaOneXPattern      = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})x(\d{1,3})(?:[^a-z0-9]|$)`)
+	episodeCodeTokenPattern = regexp.MustCompile(`(?i)^(?:s\d{1,4}e\d{1,5}|\d{1,4}x\d{1,5})$`)
+	seasonOnlyTokenPattern  = regexp.MustCompile(`(?i)^s\d{1,4}$`)
+	releaseBoundaryTokens   = map[string]struct{}{
+		"480p":   {},
+		"576p":   {},
+		"720p":   {},
+		"1080p":  {},
+		"1080i":  {},
+		"2160p":  {},
+		"4k":     {},
+		"uhd":    {},
+		"web":    {},
+		"webrip": {},
+		"webdl":  {},
+		"hdtv":   {},
+		"bluray": {},
+		"bdrip":  {},
+		"brrip":  {},
+		"dvdrip": {},
+	}
 )
 
 // HDRDVPolicy determines what HDR/DV content to exclude from search results.
@@ -303,7 +323,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 		}
 
 		// Check title similarity
-		titleSim, matchedTitle := bestTitleSimilarity(candidateTitles, parsed.Title)
+		titleSim, matchedTitle := bestTitleSimilarity(candidateTitles, parsed.Title, result.Title)
 		if i < 5 {
 			ref := opts.ExpectedTitle
 			if matchedTitle != "" {
@@ -719,7 +739,7 @@ func containsJapaneseRune(value string) bool {
 	return false
 }
 
-func bestTitleSimilarity(candidates []string, parsedTitle string) (float64, string) {
+func bestTitleSimilarity(candidates []string, parsedTitle string, rawTitle ...string) (float64, string) {
 	if len(candidates) == 0 {
 		return 0.0, ""
 	}
@@ -729,6 +749,11 @@ func bestTitleSimilarity(candidates []string, parsedTitle string) (float64, stri
 	)
 
 	parsedTitles := parsedTitleVariants(parsedTitle)
+	for _, raw := range rawTitle {
+		for _, variant := range rawTitlePrefixVariants(raw) {
+			parsedTitles = appendUniqueTitleVariant(parsedTitles, variant)
+		}
+	}
 
 	for _, candidate := range candidates {
 		normalizedCandidate := normalizeForContainment(candidate)
@@ -751,6 +776,78 @@ func bestTitleSimilarity(candidates []string, parsedTitle string) (float64, stri
 		}
 	}
 	return bestScore, bestCandidate
+}
+
+func appendUniqueTitleVariant(variants []string, value string) []string {
+	value = strings.TrimSpace(html.UnescapeString(value))
+	if value == "" {
+		return variants
+	}
+	key := strings.ToLower(value)
+	for _, existing := range variants {
+		if strings.ToLower(strings.TrimSpace(existing)) == key {
+			return variants
+		}
+	}
+	return append(variants, value)
+}
+
+func rawTitlePrefixVariants(title string) []string {
+	normalized := normalizeForContainment(title)
+	fields := strings.Fields(normalized)
+	if len(fields) < 2 {
+		return nil
+	}
+
+	cut := len(fields)
+	for i := 0; i < len(fields); i++ {
+		if isReleaseBoundaryToken(fields, i) {
+			cut = i
+			break
+		}
+	}
+	if cut < 2 || cut >= len(fields) {
+		return nil
+	}
+
+	prefix := strings.Join(fields[:cut], " ")
+	if strings.TrimSpace(prefix) == "" {
+		return nil
+	}
+	return []string{prefix}
+}
+
+func isReleaseBoundaryToken(fields []string, idx int) bool {
+	token := fields[idx]
+	if episodeCodeTokenPattern.MatchString(token) || seasonOnlyTokenPattern.MatchString(token) {
+		return true
+	}
+	if isReleaseDateTokenSequence(fields, idx) {
+		return true
+	}
+	if _, skip := releaseBoundaryTokens[token]; skip {
+		return true
+	}
+	return false
+}
+
+func isReleaseDateTokenSequence(fields []string, idx int) bool {
+	if idx+2 >= len(fields) {
+		return false
+	}
+	year, err := strconv.Atoi(fields[idx])
+	if err != nil || year < 1900 || year > 2100 {
+		return false
+	}
+	month, err := strconv.Atoi(fields[idx+1])
+	if err != nil || month < 1 || month > 12 {
+		return false
+	}
+	day, err := strconv.Atoi(fields[idx+2])
+	if err != nil || day < 1 || day > 31 {
+		return false
+	}
+	return true
 }
 
 func parsedTitleVariants(title string) []string {

@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"strings"
 	"testing"
 
 	"novastream/models"
@@ -1117,6 +1118,58 @@ func TestResults_TitleContainment(t *testing.T) {
 			if r.Title == "From.Scratch.S01E01.2022.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV" {
 				t.Error("From Scratch should have been filtered when searching for FROM")
 			}
+		}
+	})
+}
+
+func TestResults_RawTitlePrefixFallback(t *testing.T) {
+	t.Run("keeps Dateline NBC when parser drops network suffix", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Dateline.NBC.S34E26.2026.06.05.A.Killing.in.Midtown.1080p.PCOK.WEB-DL.AAC2.0.H.264-RAWR"},
+			{Title: "Dateline NBC S34E26 2026 06 05 A Killing in Midtown 1080p PCOK WEB-DL AAC2 0 H 264-RAWR"},
+			{Title: "Dateline.S34E26.2026.06.05.A.Killing.in.Midtown.1080p.WEB-DL.H.264-GROUP"},
+		}
+
+		opts := Options{
+			ExpectedTitle:  "Dateline NBC",
+			ExpectedYear:   1992,
+			EpisodeAirYear: 2026,
+			IsMovie:        false,
+			TargetSeason:   34,
+			TargetEpisode:  26,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 2 {
+			t.Fatalf("expected 2 Dateline NBC results, got %d", len(filtered))
+		}
+		for _, result := range filtered {
+			if !strings.Contains(result.Title, "NBC") {
+				t.Fatalf("unexpected non-NBC result passed: %s", result.Title)
+			}
+		}
+	})
+
+	t.Run("still rejects one word title matching a longer raw prefix", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "From.S01E01.Long.Days.Journey.Into.Night.1080p.WEB-DL.H.264"},
+			{Title: "From.Scratch.S01E01.2022.1080p.Netflix.WEB-DL.AVC.DDP.5.1.Atmos-DBTV"},
+		}
+
+		opts := Options{
+			ExpectedTitle: "FROM",
+			ExpectedYear:  2022,
+			IsMovie:       false,
+			TargetSeason:  1,
+			TargetEpisode: 1,
+		}
+
+		filtered := Results(results, opts)
+		if len(filtered) != 1 {
+			t.Fatalf("expected only FROM result, got %d", len(filtered))
+		}
+		if filtered[0].Title != results[0].Title {
+			t.Fatalf("unexpected result passed: %s", filtered[0].Title)
 		}
 	})
 }

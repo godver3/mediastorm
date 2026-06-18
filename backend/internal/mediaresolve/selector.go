@@ -50,10 +50,10 @@ var (
 		".zip":  {},
 		".7z":   {},
 	}
-	episodeCodePattern    = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
-	episodeAltPattern     = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
-	episodeNumberPattern  = regexp.MustCompile(`(?i)[-_\s/](\d{1,2})[-_\s\[\.]`)  // Matches " - 01 - ", "_01_", "_01[", "_01.", "/01 " for season packs
-	seasonIndicatorPattern = regexp.MustCompile(`(?i)season[\s._-]*(\d{1,2})`)    // Matches "Season 02", "Season.02", "season_02"
+	episodeCodePattern     = regexp.MustCompile(`(?i)s(\d{1,2})\s*e(\d{1,2})`)
+	episodeAltPattern      = regexp.MustCompile(`(?i)ep(?:isode)?\.?\s*(\d{1,2})`) // Matches "Ep. 01", "Episode 01", "Ep01"
+	episodeNumberPattern   = regexp.MustCompile(`(?i)[-_\s/](\d{1,2})[-_\s\[\.]`)  // Matches " - 01 - ", "_01_", "_01[", "_01.", "/01 " for season packs
+	seasonIndicatorPattern = regexp.MustCompile(`(?i)season[\s._-]*(\d{1,2})`)     // Matches "Season 02", "Season.02", "season_02"
 
 	// Absolute episode patterns for anime (3-4 digit episode numbers)
 	// These patterns are specifically designed to match anime release formats
@@ -81,13 +81,14 @@ var (
 	s01AbsoluteEpisodePattern = regexp.MustCompile(`(?i)s01e(\d{3,4})(?:\s|$|[\.\-\[\(])`)
 
 	// Negative patterns to avoid false positives
-	resolutionPattern = regexp.MustCompile(`(?i)(\d{3,4})p`)         // 1080p, 720p, 480p
-	yearPattern       = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)    // (2024), [2024]
+	resolutionPattern = regexp.MustCompile(`(?i)(\d{3,4})p`)               // 1080p, 720p, 480p
+	yearPattern       = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)          // (2024), [2024]
 	checksumPattern   = regexp.MustCompile(`[\[\(]([A-Fa-f0-9]{8})[\]\)]`) // [ABCD1234]
 
 	// Daily show date patterns
-	// Matches: "2026.01.21", "2026-01-21", "2026 01 21"
-	dailyDatePattern = regexp.MustCompile(`(?:^|[.\-_\s])(\d{4})[.\-\s](\d{2})[.\-\s](\d{2})(?:[.\-_\s]|$)`)
+	// Matches: "2026.01.21", "2026-01-21", "2026 01 21", "2026_01_21",
+	// and non-zero-padded month/day variants used by some indexer titles.
+	dailyDatePattern = regexp.MustCompile(`(?:^|[.\-_\s])(\d{4})[.\-_\s](\d{1,2})[.\-_\s](\d{1,2})(?:[.\-_\s]|$)`)
 )
 
 // SelectBestCandidate applies SXXEXX matching and fuzzy title similarity against a list of candidates.

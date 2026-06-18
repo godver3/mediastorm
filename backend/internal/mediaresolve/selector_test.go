@@ -22,6 +22,8 @@ func TestParseDailyDate(t *testing.T) {
 		{"Hyphen separated", "The-Daily-Show-2026-01-22-Guest.mkv", 2026, 1, 22, true},
 		{"Space separated", "The Daily Show 2026 01 22 Guest.mkv", 2026, 1, 22, true},
 		{"Mixed separators", "The.Daily.Show.2026-01-22.Guest.mkv", 2026, 1, 22, true},
+		{"Underscore separated", "Dateline.NBC.2026_05_16.1080p.WEB.h264.mkv", 2026, 5, 16, true},
+		{"Non-padded month day", "Dateline.NBC.2026.5.6.1080p.WEB.h264.mkv", 2026, 5, 6, true},
 
 		// Different date positions
 		{"Date at start", "2026.01.22.The.Daily.Show.mkv", 2026, 1, 22, true},
@@ -128,6 +130,8 @@ func TestCandidateMatchesDailyDate(t *testing.T) {
 		// Exact match cases
 		{"Exact date match", "The.Daily.Show.2026.01.22.Guest.mkv", "2026-01-22", 0, true},
 		{"Different format same date", "The-Daily-Show-2026-01-22.mkv", "2026-01-22", 0, true},
+		{"Underscore date same date", "Dateline.NBC.2026_05_16.1080p.WEB.h264-GROUP", "2026-05-16", 0, true},
+		{"Non-padded date same date", "Dateline.NBC.2026.5.16.1080p.WEB.h264-GROUP", "2026-05-16", 0, true},
 
 		// Wrong date (exact match required)
 		{"Wrong date", "The.Daily.Show.2026.01.21.Guest.mkv", "2026-01-22", 0, false},
@@ -246,10 +250,10 @@ func TestSelectBestCandidate_DailyShowWithMultipleFiles(t *testing.T) {
 
 func TestParseAbsoluteEpisodeNumber(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		wantEp  int
-		wantOk  bool
+		name   string
+		input  string
+		wantEp int
+		wantOk bool
 	}{
 		// SubsPlease format (most common anime release format)
 		{"SubsPlease standard", "[SubsPlease] One Piece - 1153 (1080p) [HASH].mkv", 1153, true},
