@@ -778,6 +778,7 @@
     let webPlayerVolume = 1;
     let webPlayerMuted = false;
     let webPlayerAutoMutedPendingGesture = false;
+    let webPlayerDebugSessionId = `web-player-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     let keepaliveTimer = null;
     let progressTimer = null;
     let lastProgressSentAt = 0;
@@ -834,6 +835,15 @@
         activeProfileId,
         mediaType: playbackMeta.mediaType,
       });
+      webPlayerDebugLog('info', 'init', {
+        hasSourcePath: Boolean(sourcePath),
+        hasDirectMovieUrl: Boolean(directMovieUrl),
+        hasHlsSessionId: Boolean(hlsSessionId),
+        hasToken: Boolean(AUTH_TOKEN),
+        activeProfileId,
+        mediaType: playbackMeta.mediaType,
+        isLive: Boolean(playbackMeta.isLive),
+      });
 
       if (!activeProfileId) {
         renderLoading('No profile was provided for playback.', true);
@@ -849,13 +859,24 @@
         syncSubtitleOffset(requestedOffset, actualOffset);
         hlsDuration = numericRouteParam('durationHint') || 0;
         renderPlayerShell();
-        attachWebPlayer(document.getElementById('webPlayer'), apiUrl(directMovieUrl));
+        const playlistUrl = apiUrl(directMovieUrl);
+        webPlayerDebugLog('info', 'attach existing hls session', {
+          hlsSessionId,
+          isLive: Boolean(playbackMeta.isLive),
+          playlistUrl: redactUrlForLog(playlistUrl),
+        });
+        attachWebPlayer(document.getElementById('webPlayer'), playlistUrl);
         startKeepalive();
         startProgressTracking();
       } else if (directMovieUrl) {
         hlsDuration = numericRouteParam('durationHint') || 0;
         renderPlayerShell();
-        attachWebPlayer(document.getElementById('webPlayer'), apiUrl(directMovieUrl));
+        const playlistUrl = apiUrl(directMovieUrl);
+        webPlayerDebugLog('info', 'attach direct movie url', {
+          isLive: Boolean(playbackMeta.isLive),
+          playlistUrl: redactUrlForLog(playlistUrl),
+        });
+        attachWebPlayer(document.getElementById('webPlayer'), playlistUrl);
         startProgressTracking();
       } else {
         renderLoading('No playback source was provided.', true);
@@ -976,6 +997,14 @@
         syncSubtitleOffset(requestedOffset, actualOffset);
         hlsDuration = Number(session.duration || hlsDuration || numericRouteParam('durationHint') || 0);
         hlsPlaylistUrl = apiUrl(session.playlistUrl || '');
+        webPlayerDebugLog('info', 'created hls session', {
+          hlsSessionId,
+          isLive: Boolean(playbackMeta.isLive),
+          playlistUrl: redactUrlForLog(hlsPlaylistUrl),
+          duration: hlsDuration,
+          requestedOffset,
+          actualOffset,
+        });
 
         renderPlayerShell();
         attachWebPlayer(document.getElementById('webPlayer'), hlsPlaylistUrl);
@@ -1167,24 +1196,74 @@
 
     function attachWebPlayer(video, playlistUrl) {
       if (!video || !playlistUrl) return;
+      webPlayerDebugLog('info', 'attach player', {
+        hlsSessionId,
+        isLive: Boolean(playbackMeta.isLive),
+        canNativeHls: video.canPlayType('application/vnd.apple.mpegurl'),
+        hasHlsJs: Boolean(window.Hls),
+        hlsJsSupported: Boolean(window.Hls && window.Hls.isSupported()),
+        playlistUrl: redactUrlForLog(playlistUrl),
+      });
       if (hlsInstance) {
         hlsInstance.destroy();
         hlsInstance = null;
       }
 
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = playlistUrl;
-      } else if (window.Hls && window.Hls.isSupported()) {
+      if (window.Hls && window.Hls.isSupported()) {
         hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0, backBufferLength: 30 });
         webPlayerMediaRecoverAttempts = 0;
         hlsInstance.loadSource(playlistUrl);
         hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.MANIFEST_LOADING, (_event, data) => {
+          webPlayerDebugLog('info', 'hls manifest loading', { url: redactUrlForLog(data?.url || '') });
+        });
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          webPlayerDebugLog('info', 'hls manifest parsed', {
+            levels: data?.levels?.length,
+            audioTracks: data?.audioTracks?.length,
+            subtitleTracks: data?.subtitleTracks?.length,
+          });
+        });
+        hlsInstance.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+          webPlayerDebugLog('info', 'hls level loaded', {
+            live: Boolean(data?.details?.live),
+            fragments: data?.details?.fragments?.length,
+            targetduration: data?.details?.targetduration,
+            startSN: data?.details?.startSN,
+            endSN: data?.details?.endSN,
+          });
+        });
+        hlsInstance.on(Hls.Events.FRAG_LOADING, (_event, data) => {
+          const frag = data?.frag;
+          webPlayerDebugLog('info', 'hls fragment loading', {
+            sn: frag?.sn,
+            type: frag?.type,
+            url: redactUrlForLog(frag?.url || ''),
+          });
+        });
         // Once we're successfully buffering again, forget prior recovery attempts
         // so an isolated later blip doesn't immediately exhaust the budget.
         hlsInstance.on(Hls.Events.FRAG_BUFFERED, () => {
           webPlayerMediaRecoverAttempts = 0;
         });
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+          webPlayerDebugLog(data?.fatal ? 'error' : 'warn', 'hls error', {
+            type: data?.type,
+            details: data?.details,
+            fatal: Boolean(data?.fatal),
+            reason: data?.reason,
+            responseCode: data?.response?.code,
+            responseText: data?.response?.text,
+            fragSn: data?.frag?.sn,
+            fragType: data?.frag?.type,
+            fragUrl: redactUrlForLog(data?.frag?.url || ''),
+            url: redactUrlForLog(data?.url || ''),
+            mediaErrorCode: video.error?.code || null,
+            mediaErrorMessage: video.error?.message || '',
+            readyState: video.readyState,
+            networkState: video.networkState,
+            currentTime: Number(video.currentTime || 0),
+          });
           if (!data?.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             setStatus('Reconnecting…', true);
@@ -1211,11 +1290,23 @@
           }
           setStatus('Playback error. Try seeking or switching tracks.', true);
         });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        webPlayerDebugLog('info', 'using native hls fallback', {
+          hlsSessionId,
+          canNativeHls: video.canPlayType('application/vnd.apple.mpegurl'),
+        });
+        video.src = playlistUrl;
       } else {
         video.src = playlistUrl;
       }
 
       video.addEventListener('canplay', () => {
+        webPlayerDebugLog('info', 'video canplay', {
+          hlsSessionId,
+          readyState: video.readyState,
+          networkState: video.networkState,
+          currentTime: Number(video.currentTime || 0),
+        });
         attemptAutoplay(video);
         installSubtitleTrack(video);
       }, { once: true });
@@ -1942,6 +2033,39 @@
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) return null;
       return response.json();
+    }
+
+    function webPlayerDebugLog(level, message, details = {}) {
+      try {
+        const payload = {
+          sessionId: webPlayerDebugSessionId,
+          userAgent: navigator.userAgent,
+          path: window.location.href,
+          entries: [{
+            level,
+            message: `[web-player] ${message} ${JSON.stringify(details)}`,
+            timestamp: new Date().toISOString(),
+          }],
+        };
+        fetch(apiUrl('/debug/log'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {}
+    }
+
+    function redactUrlForLog(value) {
+      if (!value) return '';
+      try {
+        const url = new URL(value, window.location.origin);
+        if (url.searchParams.has('token')) url.searchParams.set('token', 'redacted');
+        return url.toString();
+      } catch {
+        return String(value).replace(/([?&]token=)[^&]+/i, '$1redacted');
+      }
     }
 
     function apiUrl(path) {

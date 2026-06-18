@@ -2479,6 +2479,9 @@
                 mediaType: 'channel',
                 itemId: channel.tvgId || channel.id || '',
             });
+            if (channel.sourceId) {
+                params.set('sourceId', channel.sourceId);
+            }
             const session = await apiCall(`/api/live/hls/start?${params.toString()}`);
             hlsSessionId = session?.sessionId || '';
             const playbackUrl = buildIptvPlaybackUrl(session);
@@ -3381,10 +3384,7 @@
     function attachWebPlayer(video, playlistUrl, options = {}) {
         if (!video || !playlistUrl) return;
         webPlayerDebug('attachWebPlayer.begin', { playlistUrl, reuseHls: Boolean(options.reuseHls), hasHlsInstance: Boolean(hlsInstance) });
-        if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = playlistUrl;
-            webPlayerDebug('attachWebPlayer.nativeSrcSet', { playlistUrl });
-        } else if (window.Hls && window.Hls.isSupported()) {
+        if (window.Hls && window.Hls.isSupported()) {
             if (hlsInstance && options.reuseHls) {
                 webPlayerDebug('attachWebPlayer.hlsReuseBeforeLoad', { playlistUrl });
                 hlsInstance.stopLoad();
@@ -3423,6 +3423,9 @@
                     }
                 }
             });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = playlistUrl;
+            webPlayerDebug('attachWebPlayer.nativeSrcSet', { playlistUrl });
         } else {
             throw new Error('This browser does not support HLS playback.');
         }
