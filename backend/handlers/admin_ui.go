@@ -336,8 +336,8 @@ var SettingsSchema = map[string]interface{}{
 			"apiPath": map[string]interface{}{
 				"type":        "text",
 				"label":       "API Path",
-				"description": "SAB-compatible API endpoint path. AltMount, NZBDav, and NZBDavEx use /api; Decypharr uses /sabnzbd/api.",
-				"placeholder": "/api",
+				"description": "SAB-compatible API endpoint path. AltMount and Decypharr use /sabnzbd/api; NZBDav and NZBDavEx use /api.",
+				"placeholder": "/sabnzbd/api",
 				"order":       3,
 			},
 			"apiKey":         map[string]interface{}{"type": "password", "label": "API Key", "description": "Optional SAB-compatible API key", "order": 4},

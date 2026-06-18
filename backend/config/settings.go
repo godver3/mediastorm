@@ -77,7 +77,7 @@ type UsenetEngineSettings struct {
 	Type                string            `json:"type"` // altmount | nzbdav | nzbdavex | decypharr | sabnzbd
 	Enabled             bool              `json:"enabled"`
 	BaseURL             string            `json:"baseUrl"`
-	APIPath             string            `json:"apiPath,omitempty"` // defaults to /api, Decypharr commonly uses /sabnzbd/api
+	APIPath             string            `json:"apiPath,omitempty"` // defaults to SAB-compatible API path for the selected engine
 	APIKey              string            `json:"apiKey,omitempty"`
 	Username            string            `json:"username,omitempty"`
 	Password            string            `json:"password,omitempty"`
@@ -1320,7 +1320,7 @@ func DefaultSettings() Settings {
 
 func DefaultUsenetEngineSettings() []UsenetEngineSettings {
 	return []UsenetEngineSettings{
-		{Name: "AltMount", Type: "altmount", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
+		{Name: "AltMount", Type: "altmount", Enabled: false, APIPath: "/sabnzbd/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
 		{Name: "NZBDav", Type: "nzbdav", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
 		{Name: "NZBDavEx", Type: "nzbdavex", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
 		{Name: "Decypharr", Type: "decypharr", Enabled: false, APIPath: "/sabnzbd/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
@@ -1344,7 +1344,7 @@ func backfillUsenetEngineDefaults(existing []UsenetEngineSettings) []UsenetEngin
 		if strings.TrimSpace(existing[i].APIPath) == "" {
 			if existing[i].Type == "" {
 				existing[i].APIPath = "/api"
-			} else if strings.EqualFold(strings.TrimSpace(existing[i].Type), "decypharr") {
+			} else if strings.EqualFold(strings.TrimSpace(existing[i].Type), "altmount") || strings.EqualFold(strings.TrimSpace(existing[i].Type), "decypharr") {
 				existing[i].APIPath = "/sabnzbd/api"
 			} else {
 				existing[i].APIPath = "/api"

@@ -56,10 +56,12 @@ func normalizeEngineType(value string) string {
 }
 
 func defaultAPIPath(engineType string) string {
-	if engineType == "decypharr" {
+	switch engineType {
+	case "altmount", "decypharr":
 		return "/sabnzbd/api"
+	default:
+		return "/api"
 	}
-	return "/api"
 }
 
 func defaultFileFieldName(engineType string) string {

@@ -32,6 +32,9 @@ func TestEnabledEnginesFiltersByProfile(t *testing.T) {
 }
 
 func TestDefaultAPIPath(t *testing.T) {
+	if got := defaultAPIPath("altmount"); got != "/sabnzbd/api" {
+		t.Fatalf("altmount path = %q, want /sabnzbd/api", got)
+	}
 	if got := defaultAPIPath("decypharr"); got != "/sabnzbd/api" {
 		t.Fatalf("decypharr path = %q, want /sabnzbd/api", got)
 	}

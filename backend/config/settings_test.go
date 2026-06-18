@@ -89,10 +89,13 @@ func TestDefaultSettingsIncludesDisabledUsenetEnginePresets(t *testing.T) {
 		}
 		pathsByType[engine.Type] = engine.APIPath
 	}
-	for _, typ := range []string{"altmount", "nzbdav", "nzbdavex"} {
+	for _, typ := range []string{"nzbdav", "nzbdavex"} {
 		if pathsByType[typ] != "/api" {
 			t.Fatalf("%s APIPath = %q, want /api", typ, pathsByType[typ])
 		}
+	}
+	if pathsByType["altmount"] != "/sabnzbd/api" {
+		t.Fatalf("altmount APIPath = %q, want /sabnzbd/api", pathsByType["altmount"])
 	}
 	if pathsByType["decypharr"] != "/sabnzbd/api" {
 		t.Fatalf("decypharr APIPath = %q, want /sabnzbd/api", pathsByType["decypharr"])
