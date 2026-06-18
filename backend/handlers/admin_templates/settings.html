@@ -414,9 +414,9 @@
             description: 'Standard dark theme with blue accent and default sizing.',
             appearance: {
                 fontScale: 1,
-                accentColor: '#0061fe',
+                accentColor: '#3f66ff',
                 textColor: '#ffffff',
-                secondaryTextColor: '#a8adbd',
+                secondaryTextColor: '#c7cad6',
                 backgroundColor: '#0b0b0f',
                 modalBackgroundColor: '#1f1f2a',
                 buttonStyle: 'soft',
@@ -440,6 +440,23 @@
                 buttonRadius: 'rounded',
                 highContrast: false,
                 reduceOverlays: true,
+            },
+        },
+        {
+            id: 'storm-gold',
+            name: 'Storm Gold',
+            description: 'Yellow lightning accent derived from the new thunderbolt branding.',
+            appearance: {
+                fontScale: 1,
+                accentColor: '#f0d020',
+                textColor: '#f7f7f2',
+                secondaryTextColor: '#b8bdc7',
+                backgroundColor: '#090b0e',
+                modalBackgroundColor: '#1b2028',
+                buttonStyle: 'soft',
+                buttonRadius: 'rounded',
+                highContrast: false,
+                reduceOverlays: false,
             },
         },
         {
@@ -8089,7 +8106,7 @@
         if (selectedClientId) {
             const client = clientsForUser.find(c => c.id === selectedClientId);
             const clientName = client ? client.name : selectedClientId;
-            bannerHtml = '<div style="background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;"><div style="display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#8b5cf6" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Editing device-specific settings for <strong>' + clientName + '</strong></span></div><p style="margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-muted);">Fields show <span class="inheritance-badge overridden" style="font-size: 0.6rem;">Device</span> when overridden here, or <span class="inheritance-badge inherited" style="font-size: 0.6rem;">From Profile</span> / <span class="inheritance-badge inherited" style="font-size: 0.6rem;">From Global</span> when inherited. Click ↩ to reset an override.</p></div>';
+            bannerHtml = '<div style="background: rgba(240, 208, 32, 0.1); border: 1px solid #f0d020; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;"><div style="display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#f0d020" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Editing device-specific settings for <strong>' + clientName + '</strong></span></div><p style="margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-muted);">Fields show <span class="inheritance-badge overridden" style="font-size: 0.6rem;">Device</span> when overridden here, or <span class="inheritance-badge inherited" style="font-size: 0.6rem;">From Profile</span> / <span class="inheritance-badge inherited" style="font-size: 0.6rem;">From Global</span> when inherited. Click ↩ to reset an override.</p></div>';
         } else if (selectedUserId) {
             bannerHtml = '<div style="background: var(--accent-bg, #2563eb20); border: 1px solid var(--accent, #2563eb); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;"><div style="display: flex; align-items: center; gap: 0.75rem;"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span>Editing profile-specific settings</span></div><p style="margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-muted);">Fields show <span class="inheritance-badge overridden" style="font-size: 0.6rem;">Profile</span> when overridden here, or <span class="inheritance-badge inherited" style="font-size: 0.6rem;">From Global</span> when using the default. Click ↩ to reset an override.</p></div>';
         }
