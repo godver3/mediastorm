@@ -36,6 +36,9 @@ const (
 	thumbnailFilterVersion      = 14
 	thumbnailMinJPEGBytes       = 800
 	thumbnailLibplaceboRuntime  = "libplacebo_runtime"
+	thumbnailRateLimitRetries   = 2
+	thumbnailRateLimitInitial   = 5 * time.Second
+	thumbnailRateLimitMax       = 2 * time.Minute
 )
 
 type ThumbnailManager struct {
@@ -111,6 +114,12 @@ type thumbnailJob struct {
 type thumbnailResult struct {
 	Details thumbnailDetails
 	OK      bool
+}
+
+type thumbnailRateLimitCooldown struct {
+	mu        sync.Mutex
+	nextDelay time.Duration
+	until     time.Time
 }
 
 func NewThumbnailManager(baseDir, ffmpegPath string) *ThumbnailManager {
@@ -415,6 +424,57 @@ func thumbnailInputUnavailable(output []byte) bool {
 		strings.Contains(text, "server returned 5xx")
 }
 
+func thumbnailRateLimited(output []byte) bool {
+	text := strings.ToLower(string(output))
+	return strings.Contains(text, "429") || strings.Contains(text, "too many requests") || strings.Contains(text, "rate limit")
+}
+
+func (c *thumbnailRateLimitCooldown) wait(key, cleanPath string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	waitFor := time.Until(c.until)
+	c.mu.Unlock()
+	if waitFor <= 0 {
+		return
+	}
+	log.Printf("[thumbnails] rate-limit cooldown key=%s wait=%s path=%q", key, waitFor.Round(time.Second), cleanPath)
+	timer := time.NewTimer(waitFor)
+	defer timer.Stop()
+	<-timer.C
+}
+
+func (c *thumbnailRateLimitCooldown) recordRateLimit() time.Duration {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delay := c.nextDelay
+	if delay <= 0 {
+		delay = thumbnailRateLimitInitial
+	} else {
+		delay *= 2
+		if delay > thumbnailRateLimitMax {
+			delay = thumbnailRateLimitMax
+		}
+	}
+	c.nextDelay = delay
+	c.until = time.Now().Add(delay)
+	return delay
+}
+
+func (c *thumbnailRateLimitCooldown) recordSuccess() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.nextDelay = 0
+	c.until = time.Time{}
+	c.mu.Unlock()
+}
+
 func (m *ThumbnailManager) markUnsupported(cleanPath string, durationSec float64, requestedInterval int, dvProfile string, reason string) (string, error) {
 	key := thumbnailKey(cleanPath)
 	dir := filepath.Join(m.baseDir, key)
@@ -530,6 +590,7 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 	}
 
 	dir := filepath.Join(m.baseDir, key)
+	cooldown := &thumbnailRateLimitCooldown{}
 	for passIndex, pass := range thumbnailGenerationPasses(len(times)) {
 		if len(pass) == 0 {
 			continue
@@ -548,7 +609,7 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 			go func() {
 				defer wg.Done()
 				for job := range jobs {
-					results <- m.generateFrame(job, key, cleanPath, sourceURL, toneMapMode, dvProfile)
+					results <- m.generateFrame(job, key, cleanPath, sourceURL, toneMapMode, dvProfile, cooldown)
 				}
 			}()
 		}
@@ -612,14 +673,24 @@ func (h *VideoHandler) thumbnailGenerationSettings() config.PlaybackThumbnailSet
 	return settings
 }
 
-func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string) thumbnailResult {
+func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string, cooldown *thumbnailRateLimitCooldown) thumbnailResult {
 	details := thumbnailDetails{TimeSec: job.TimeSec, File: job.FileName}
 	if thumbnailOutputUsable(job.OutputPath) {
 		return thumbnailResult{Details: details, OK: true}
 	}
 	_ = os.Remove(job.OutputPath)
 
-	output, err := m.runFrameCommand(job, sourceURL, thumbnailFilter(toneMapMode))
+	var output []byte
+	var err error
+	for attempt := 0; attempt <= thumbnailRateLimitRetries; attempt++ {
+		cooldown.wait(key, cleanPath)
+		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(toneMapMode))
+		if err == nil || !thumbnailRateLimited(output) {
+			break
+		}
+		delay := cooldown.recordRateLimit()
+		log.Printf("[thumbnails] rate limited key=%s time=%.1f attempt=%d/%d cooldown=%s path=%q output=%s", key, job.TimeSec, attempt+1, thumbnailRateLimitRetries+1, delay, cleanPath, strings.TrimSpace(string(output)))
+	}
 	if err != nil && toneMapMode != thumbnailToneMapNone && !isDolbyVisionProfile5(dvProfile) && !thumbnailInputUnavailable(output) {
 		log.Printf("[thumbnails] tone-map frame failed key=%s time=%.1f path=%q err=%v output=%s; retrying without tone map", key, job.TimeSec, cleanPath, err, strings.TrimSpace(string(output)))
 		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(thumbnailToneMapNone))
@@ -641,6 +712,7 @@ func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourc
 		_ = os.Remove(job.OutputPath)
 		return thumbnailResult{}
 	}
+	cooldown.recordSuccess()
 	return thumbnailResult{Details: details, OK: true}
 }
 

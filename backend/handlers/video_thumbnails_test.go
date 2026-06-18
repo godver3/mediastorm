@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"novastream/config"
 )
@@ -99,6 +100,60 @@ func TestThumbnailWorkerCountFromSetting(t *testing.T) {
 	}
 	if got := thumbnailWorkerCountFromSetting(thumbnailMaxWorkers + 1); got != thumbnailMaxWorkers {
 		t.Fatalf("high worker count = %d, want %d", got, thumbnailMaxWorkers)
+	}
+}
+
+func TestThumbnailRateLimitedDetection(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{
+			name: "ffmpeg 429",
+			text: "[in#0] Error opening input: Server returned 429 Too Many Requests",
+			want: true,
+		},
+		{
+			name: "rate limit text",
+			text: "provider rate limit exceeded",
+			want: true,
+		},
+		{
+			name: "plain 404",
+			text: "Error opening input: Server returned 404 Not Found",
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := thumbnailRateLimited([]byte(tc.text)); got != tc.want {
+				t.Fatalf("thumbnailRateLimited() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestThumbnailRateLimitCooldownBackoff(t *testing.T) {
+	cooldown := &thumbnailRateLimitCooldown{}
+	if got := cooldown.recordRateLimit(); got != thumbnailRateLimitInitial {
+		t.Fatalf("first cooldown = %s, want %s", got, thumbnailRateLimitInitial)
+	}
+	if got := cooldown.recordRateLimit(); got != thumbnailRateLimitInitial*2 {
+		t.Fatalf("second cooldown = %s, want %s", got, thumbnailRateLimitInitial*2)
+	}
+	for i := 0; i < 10; i++ {
+		_ = cooldown.recordRateLimit()
+	}
+	if cooldown.nextDelay != thumbnailRateLimitMax {
+		t.Fatalf("capped cooldown = %s, want %s", cooldown.nextDelay, thumbnailRateLimitMax)
+	}
+	if time.Until(cooldown.until) <= 0 {
+		t.Fatal("expected cooldown deadline to be in the future")
+	}
+	cooldown.recordSuccess()
+	if cooldown.nextDelay != 0 || !cooldown.until.IsZero() {
+		t.Fatalf("success should clear cooldown, delay=%s until=%v", cooldown.nextDelay, cooldown.until)
 	}
 }
 

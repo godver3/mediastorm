@@ -29,6 +29,13 @@ type trackCacheEntry struct {
 	expiresAt      time.Time
 }
 
+type preResolvedHealthCacheEntry struct {
+	health    DebridHealthCheck
+	expiresAt time.Time
+}
+
+const preResolvedPositiveHealthTTL = 2 * time.Minute
+
 // HealthService checks debrid item health by verifying cached status.
 type HealthService struct {
 	cfg         *config.Manager
@@ -36,6 +43,10 @@ type HealthService struct {
 	// Track cache keyed by info hash
 	trackCache   map[string]*trackCacheEntry
 	trackCacheMu sync.RWMutex
+	// Short-lived cache for pre-resolved scraper streams. AIO-style playback URLs
+	// can rotate per request and rate-limit when probed repeatedly.
+	preResolvedHealthCache   map[string]*preResolvedHealthCacheEntry
+	preResolvedHealthCacheMu sync.RWMutex
 	// Track which hashes are currently being probed
 	probing   map[string]bool
 	probingMu sync.Mutex
@@ -49,10 +60,11 @@ type HealthService struct {
 // NewHealthService creates a new debrid health check service.
 func NewHealthService(cfg *config.Manager) *HealthService {
 	return &HealthService{
-		cfg:            cfg,
-		trackCache:     make(map[string]*trackCacheEntry),
-		probing:        make(map[string]bool),
-		activeTorrents: make(map[string]bool),
+		cfg:                    cfg,
+		trackCache:             make(map[string]*trackCacheEntry),
+		preResolvedHealthCache: make(map[string]*preResolvedHealthCacheEntry),
+		probing:                make(map[string]bool),
+		activeTorrents:         make(map[string]bool),
 	}
 }
 
@@ -91,6 +103,77 @@ func (s *HealthService) isTorrentActive(provider, torrentID string) bool {
 	active := s.activeTorrents[key]
 	s.activeTorrentsMu.Unlock()
 	return active
+}
+
+func preResolvedHealthCacheKey(result models.NZBResult) string {
+	parts := []string{
+		strings.ToLower(strings.TrimSpace(result.Attributes["scraper"])),
+		strings.ToLower(strings.TrimSpace(result.Attributes["tracker"])),
+		strings.ToLower(strings.TrimSpace(result.Attributes["raw_title"])),
+		strings.ToLower(strings.TrimSpace(result.Title)),
+	}
+	for i, part := range parts {
+		parts[i] = strings.Join(strings.Fields(part), " ")
+	}
+	return strings.Join(parts, "|")
+}
+
+func cloneDebridHealthCheck(in DebridHealthCheck) DebridHealthCheck {
+	out := in
+	if in.AudioTracks != nil {
+		out.AudioTracks = append([]AudioTrackInfo(nil), in.AudioTracks...)
+	}
+	if in.SubtitleTracks != nil {
+		out.SubtitleTracks = append([]SubtitleTrackInfo(nil), in.SubtitleTracks...)
+	}
+	return out
+}
+
+func (s *HealthService) cachedPreResolvedHealth(key string) (*DebridHealthCheck, bool) {
+	if s == nil || key == "" {
+		return nil, false
+	}
+	s.preResolvedHealthCacheMu.RLock()
+	entry := s.preResolvedHealthCache[key]
+	s.preResolvedHealthCacheMu.RUnlock()
+	if entry == nil {
+		return nil, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		s.preResolvedHealthCacheMu.Lock()
+		if current := s.preResolvedHealthCache[key]; current == entry {
+			delete(s.preResolvedHealthCache, key)
+		}
+		s.preResolvedHealthCacheMu.Unlock()
+		return nil, false
+	}
+	health := cloneDebridHealthCheck(entry.health)
+	return &health, true
+}
+
+func (s *HealthService) rememberPreResolvedHealth(key string, health *DebridHealthCheck) {
+	if s == nil || key == "" || health == nil || !health.Healthy || !health.Cached {
+		return
+	}
+	entry := &preResolvedHealthCacheEntry{
+		health:    cloneDebridHealthCheck(*health),
+		expiresAt: time.Now().Add(preResolvedPositiveHealthTTL),
+	}
+	s.preResolvedHealthCacheMu.Lock()
+	s.preResolvedHealthCache[key] = entry
+	s.preResolvedHealthCacheMu.Unlock()
+}
+
+func appendProbeNote(existing, note string) string {
+	existing = strings.TrimSpace(existing)
+	note = strings.TrimSpace(note)
+	if existing == "" {
+		return note
+	}
+	if note == "" {
+		return existing
+	}
+	return existing + "; " + note
 }
 
 // DebridHealthCheck represents the health status of a debrid item.
@@ -142,6 +225,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		if streamURL == "" {
 			streamURL = result.Link
 		}
+		preResolvedCacheKey := preResolvedHealthCacheKey(result)
 		if rawName := strings.TrimSpace(result.Attributes["raw_name"]); rawName != "" {
 			log.Printf("[debrid-health] pre-resolved raw display: title=%q raw_name=%q raw_title=%q tracker=%q scraper=%q",
 				result.Title,
@@ -274,6 +358,11 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 			audioCount, err := s.probeAudioStreamCount(ctx, streamURL)
 			if err != nil {
 				log.Printf("[debrid-health] probe failed for pre-resolved stream %s: %v", result.Title, err)
+				if cached, ok := s.cachedPreResolvedHealth(preResolvedCacheKey); ok {
+					cached.TrackProbeError = appendProbeNote(cached.TrackProbeError, fmt.Sprintf("recent probe failed: %v", err))
+					log.Printf("[debrid-health] using recent positive pre-resolved health cache for %s after probe failure", result.Title)
+					return cached, nil
+				}
 				// On probe failure, treat as potentially uncached
 				return &DebridHealthCheck{
 					Healthy:      false,
@@ -318,6 +407,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 			}
 		}
 
+		s.rememberPreResolvedHealth(preResolvedCacheKey, healthResult)
 		return healthResult, nil
 	}
 

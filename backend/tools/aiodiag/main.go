@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -55,6 +57,7 @@ func main() {
 		sampleSize      = flag.Int("sample", 20, "Number of top streams to sample")
 		timeoutSec      = flag.Int("timeout", 25, "Per-request timeout in seconds")
 		ffprobePath     = flag.String("ffprobe", "ffprobe", "ffprobe binary path")
+		fastScan        = flag.Bool("fast", false, "Skip full health checks and print HEAD/ffprobe details for each sampled stream")
 	)
 	flag.Parse()
 
@@ -102,13 +105,13 @@ func main() {
 			fmt.Printf("[%s] skipped: missing URL\n", sc.Name)
 			continue
 		}
-		if err := runForScraper(httpClient, health, sc.Name, base, *mediaType, streamID, *sampleSize); err != nil {
+		if err := runForScraper(httpClient, health, sc.Name, base, *mediaType, streamID, *sampleSize, *ffprobePath, *fastScan); err != nil {
 			fmt.Printf("[%s] error: %v\n", sc.Name, err)
 		}
 	}
 }
 
-func runForScraper(httpClient *http.Client, health *debrid.HealthService, name, baseURL, mediaType, streamID string, sampleSize int) error {
+func runForScraper(httpClient *http.Client, health *debrid.HealthService, name, baseURL, mediaType, streamID string, sampleSize int, ffprobePath string, fastScan bool) error {
 	endpoint := fmt.Sprintf("%s/stream/%s/%s.json", baseURL, mediaType, url.PathEscape(streamID))
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -173,6 +176,20 @@ func runForScraper(httpClient *http.Client, health *debrid.HealthService, name, 
 			}
 		}
 
+		if fastScan {
+			audioCount, probeErr := probeFFprobeAudio(ffprobePath, u)
+			host := ""
+			if parsed, parseErr := url.Parse(u); parseErr == nil {
+				host = parsed.Host
+			}
+			fmt.Printf("[%s] #%02d head=%d len=%d audio=%d host=%s title=%q\n",
+				name, i+1, status, contentLength, audioCount, host, streamTitle(payload.Streams[i]))
+			if status == http.StatusMethodNotAllowed || probeErr != nil || audioCount == 0 {
+				fmt.Printf("[%s] #%02d concern head=%d probe_err=%v url=%s\n", name, i+1, status, probeErr, u)
+			}
+			continue
+		}
+
 		candidate := models.NZBResult{
 			Title:       streamTitle(payload.Streams[i]),
 			Link:        u,
@@ -204,6 +221,39 @@ func runForScraper(httpClient *http.Client, health *debrid.HealthService, name, 
 	fmt.Printf("[%s] health_cached=%d health_not_cached=%d health_errors=%d\n",
 		name, sum.healthCached, sum.healthNotCached, sum.healthErrors)
 	return nil
+}
+
+func probeFFprobeAudio(ffprobePath, streamURL string) (int, error) {
+	probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	args := []string{
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "a",
+		"-analyzeduration", "5000000",
+		"-probesize", "5000000",
+		streamURL,
+	}
+
+	cmd := exec.CommandContext(probeCtx, ffprobePath, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var result struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return 0, err
+	}
+	return len(result.Streams), nil
 }
 
 func streamURL(s rawStream) string {

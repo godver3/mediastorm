@@ -105,6 +105,43 @@ func TestActiveTorrentConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPreResolvedPositiveHealthCacheUsesReleaseIdentity(t *testing.T) {
+	hs := NewHealthService(nil)
+	first := models.NZBResult{
+		Title: "Game.of.Thrones.S06E10.The.Winds.of.Winter.2160p.BluRay.REMUX.HEVC-PB69.mkv",
+		Attributes: map[string]string{
+			"scraper":   "aiostreams",
+			"tracker":   "ElfCache",
+			"raw_title": "Game.of.Thrones.S06E10.The.Winds.of.Winter.2160p.BluRay.REMUX.HEVC-PB69.mkv",
+		},
+	}
+	second := first
+	second.Link = "https://aiostreams.example/playback/new-signed-url"
+
+	key := preResolvedHealthCacheKey(first)
+	hs.rememberPreResolvedHealth(key, &DebridHealthCheck{
+		Healthy: true,
+		Status:  "cached",
+		Cached:  true,
+		AudioTracks: []AudioTrackInfo{{
+			Index:    4,
+			Language: "eng",
+			Codec:    "truehd",
+		}},
+	})
+
+	cached, ok := hs.cachedPreResolvedHealth(preResolvedHealthCacheKey(second))
+	if !ok {
+		t.Fatal("expected cached health for the same pre-resolved release identity")
+	}
+	if !cached.Healthy || !cached.Cached || cached.Status != "cached" {
+		t.Fatalf("cached health = %#v, want healthy cached", cached)
+	}
+	if len(cached.AudioTracks) != 1 || cached.AudioTracks[0].Language != "eng" {
+		t.Fatalf("cached audio tracks = %#v", cached.AudioTracks)
+	}
+}
+
 func TestPreResolvedInternetArchiveHead500FallsBackToRangeGet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
