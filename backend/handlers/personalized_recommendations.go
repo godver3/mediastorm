@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"novastream/models"
+	"novastream/services/kids"
 )
 
 const (
@@ -75,6 +76,12 @@ type personalizedTopTenResult struct {
 	Err   error
 }
 
+type personalizedKidsRatingFilter struct {
+	enabled        bool
+	maxMovieRating string
+	maxTVRating    string
+}
+
 // GetPersonalizedRecommendations returns a non-AI "Recommended For You" shelf.
 // It uses recent watch/progress activity as seeds, the details-page Similar
 // engine as the candidate generator, and today's top-ten/trending shelves as
@@ -115,7 +122,8 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		return
 	}
 
-	resp := h.buildPersonalizedRecommendations(r.Context(), userID, history, progress, days, limitPerType)
+	kidsRatingFilter := h.personalizedKidsRatingFilter(userID)
+	resp := h.buildPersonalizedRecommendations(r.Context(), userID, history, progress, days, limitPerType, kidsRatingFilter)
 	if resp.Items == nil {
 		resp.Items = []models.TrendingItem{}
 	}
@@ -145,6 +153,29 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *MetadataHandler) personalizedKidsRatingFilter(userID string) personalizedKidsRatingFilter {
+	if userID == "" || h.UsersService == nil {
+		return personalizedKidsRatingFilter{}
+	}
+
+	user, ok := h.UsersService.Get(userID)
+	if !ok || !user.IsKidsProfile || user.KidsMode != "rating" {
+		return personalizedKidsRatingFilter{}
+	}
+	movieRating := user.KidsMaxMovieRating
+	tvRating := user.KidsMaxTVRating
+	if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+		movieRating = user.KidsMaxRating
+		tvRating = user.KidsMaxRating
+	}
+
+	return personalizedKidsRatingFilter{
+		enabled:        strings.TrimSpace(movieRating) != "" || strings.TrimSpace(tvRating) != "",
+		maxMovieRating: movieRating,
+		maxTVRating:    tvRating,
+	}
 }
 
 func parsePersonalizedIntParam(r *http.Request, name string, fallback, minValue, maxValue int) int {
@@ -223,6 +254,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	progress []models.PlaybackProgress,
 	days int,
 	limitPerType int,
+	kidsRatingFilter personalizedKidsRatingFilter,
 ) PersonalizedRecommendationsResponse {
 	now := time.Now().UTC()
 	cutoff := now.AddDate(0, 0, -days)
@@ -266,6 +298,9 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 			return
 		}
 		title.MediaType = mediaType
+		if kidsRatingFilter.enabled && !isPersonalizedRatingAllowed(title, kidsRatingFilter) {
+			return
+		}
 		keys := titleExclusionKeys(title)
 		if intersectsStringSet(keys, excluded) {
 			return
@@ -377,6 +412,17 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 		SeedCount:   len(seeds),
 		Explanation: buildPersonalizedExplanation(seeds, days, len(topTenAll)+len(topTenMovies)+len(topTenSeries) > 0),
 	}
+}
+
+func isPersonalizedRatingAllowed(title models.Title, filter personalizedKidsRatingFilter) bool {
+	maxRating := filter.maxTVRating
+	if strings.EqualFold(title.MediaType, "movie") {
+		maxRating = filter.maxMovieRating
+	}
+	if strings.TrimSpace(maxRating) == "" {
+		return true
+	}
+	return kids.IsRatingAllowed(title.Certification, maxRating, title.MediaType)
 }
 
 func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, progress []models.PlaybackProgress, cutoff, now time.Time, limit int) []personalizedSeed {

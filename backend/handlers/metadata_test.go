@@ -1553,6 +1553,108 @@ func TestMetadataHandler_GetPersonalizedRecommendations_UsesSimilarAndExcludesKn
 	}
 }
 
+func TestMetadataHandler_GetPersonalizedRecommendations_FiltersKidsProfileRatings(t *testing.T) {
+	now := time.Now().UTC()
+	title := func(mediaType string, tmdbID int64, name, certification string) models.Title {
+		idKind := "movie"
+		if mediaType == "series" {
+			idKind = "tv"
+		}
+		return models.Title{
+			ID:            "tmdb:" + idKind + ":" + strconv.FormatInt(tmdbID, 10),
+			Name:          name,
+			MediaType:     mediaType,
+			TMDBID:        tmdbID,
+			Certification: certification,
+			Popularity:    50,
+		}
+	}
+
+	fake := &fakeMetadataService{
+		similarByKey: map[string][]models.Title{
+			"movie:1": {
+				title("movie", 101, "Blocked Movie", "R"),
+				title("movie", 102, "Allowed Movie", "PG"),
+				title("movie", 103, "Unrated Movie", ""),
+				title("movie", 104, "Backfill Movie", "G"),
+			},
+			"series:10": {
+				title("series", 201, "Blocked Series", "TV-MA"),
+				title("series", 202, "Allowed Series", "TV-PG"),
+				title("series", 203, "Unrated Series", ""),
+				title("series", 204, "Backfill Series", "TV-G"),
+			},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"kid1": {
+				ID:                 "kid1",
+				IsKidsProfile:      true,
+				KidsMode:           "rating",
+				KidsMaxMovieRating: "PG",
+				KidsMaxTVRating:    "TV-PG",
+			},
+		},
+	})
+	handler.HistoryService = &fakeMetadataHistoryService{
+		history: []models.WatchHistoryItem{
+			{
+				MediaType:   "movie",
+				ItemID:      "tmdb:movie:1",
+				Name:        "Watched Movie",
+				Watched:     true,
+				WatchedAt:   now.Add(-24 * time.Hour),
+				ExternalIDs: map[string]string{"tmdb": "1"},
+			},
+		},
+		progress: []models.PlaybackProgress{
+			{
+				MediaType:      "episode",
+				ItemID:         "episode:1",
+				SeriesID:       "tmdb:tv:10",
+				SeriesName:     "Watched Series",
+				PercentWatched: 50,
+				UpdatedAt:      now.Add(-12 * time.Hour),
+				ExternalIDs:    map[string]string{"tmdb": "10"},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recommendations/personalized?userId=kid1&limitPerType=2", nil)
+	rec := httptest.NewRecorder()
+
+	handler.GetPersonalizedRecommendations(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload PersonalizedRecommendationsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+
+	if payload.Total != 4 || len(payload.Items) != 4 || len(payload.Movies) != 2 || len(payload.Series) != 2 {
+		t.Fatalf("expected full allowed recommendations, total=%d movies=%d series=%d items=%+v", payload.Total, len(payload.Movies), len(payload.Series), payload.Items)
+	}
+	got := map[string]bool{}
+	for _, item := range payload.Items {
+		got[item.Title.Name] = true
+	}
+	for _, name := range []string{"Allowed Movie", "Backfill Movie", "Allowed Series", "Backfill Series"} {
+		if !got[name] {
+			t.Fatalf("expected %q in filtered recommendations, got %+v", name, got)
+		}
+	}
+	for _, name := range []string{"Blocked Movie", "Blocked Series", "Unrated Movie", "Unrated Series"} {
+		if got[name] {
+			t.Fatalf("did not expect %q in filtered recommendations, got %+v", name, got)
+		}
+	}
+}
+
 func TestMetadataHandler_BatchSeriesDetails_WithFields(t *testing.T) {
 	fake := &fakeMetadataService{
 		seriesResp: &models.SeriesDetails{
