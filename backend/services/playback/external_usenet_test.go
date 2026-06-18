@@ -176,6 +176,175 @@ func TestResolveExternalUsenetEngineQueuesAndPollsCompletedWebDAVURL(t *testing.
 	}
 }
 
+func TestExternalQueueStatusRejectsMismatchedCompletedPath(t *testing.T) {
+	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+	svc.externalJobs[42] = &externalUsenetJob{
+		ID:             42,
+		EngineJobID:    "altmount-job",
+		SubmittedTitle: "The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY",
+		SourceNZBPath:  "The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.nzb",
+		Engine: config.UsenetEngineSettings{
+			Name:          "AltMount",
+			Type:          "altmount",
+			BaseURL:       "http://engine.invalid",
+			WebDAVBaseURL: "http://127.0.0.1:3313/webdav",
+		},
+		FileSize:   123,
+		LastStatus: "queued",
+	}
+
+	if externalOutputPathMatchesSubmitted(
+		"http://127.0.0.1:3313/webdav/Default/complete/Bluey.S02E19.The.Show/Bluey.S02E19.The.Show.mkv",
+		svc.externalJobs[42].SubmittedTitle,
+		svc.externalJobs[42].SourceNZBPath,
+	) {
+		t.Fatal("Bluey path matched Owl House submission")
+	}
+	if !externalOutputPathMatchesSubmitted(
+		"http://127.0.0.1:3313/webdav/Default/complete/The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY/The.Owl.House.S01E01.mkv",
+		svc.externalJobs[42].SubmittedTitle,
+		svc.externalJobs[42].SourceNZBPath,
+	) {
+		t.Fatal("Owl House path did not match Owl House submission")
+	}
+	if !externalOutputPathMatchesSubmitted(
+		"http://127.0.0.1:3313/webdav/Default/complete/The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.mkv",
+		svc.externalJobs[42].SubmittedTitle,
+		svc.externalJobs[42].SourceNZBPath,
+	) {
+		t.Fatal("exact Owl House file path did not match Owl House submission")
+	}
+}
+
+func TestExternalQueueStatusFallsBackToAltMountWebDAVOnMismatchedCompletedPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "queue":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"queue":  map[string]any{"slots": []map[string]any{}},
+			})
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "history":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"history": map[string]any{
+					"slots": []map[string]any{{
+						"nzo_id":  "altmount-job",
+						"status":  "Completed",
+						"storage": "/mnt/remotes/altmount/Default/complete/Bluey.S02E19.The.Show/Bluey.S02E19.The.Show.mkv",
+					}},
+				},
+			})
+		case r.Method == "HEAD" && r.URL.Path == "/webdav/Default/complete/The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.mkv":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == "HEAD":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == "PROPFIND":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+	svc.externalJobs[42] = &externalUsenetJob{
+		ID:             42,
+		EngineJobID:    "altmount-job",
+		SubmittedTitle: "The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY",
+		SourceNZBPath:  "The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY_2.nzb",
+		Engine: config.UsenetEngineSettings{
+			Name:          "AltMount",
+			Type:          "altmount",
+			BaseURL:       server.URL,
+			APIPath:       "/sabnzbd/api",
+			WebDAVBaseURL: server.URL + "/webdav",
+			Config: map[string]string{
+				"webdavPathPrefix": "/mnt/remotes/altmount",
+			},
+		},
+	}
+
+	res, handled, err := svc.externalQueueStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("externalQueueStatus: %v", err)
+	}
+	if !handled {
+		t.Fatal("handled = false")
+	}
+	want := server.URL + "/webdav/Default/complete/The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.mkv"
+	if res.WebDAVPath != want {
+		t.Fatalf("WebDAVPath = %q, want %q", res.WebDAVPath, want)
+	}
+	if res.HealthStatus != "healthy" {
+		t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+	}
+}
+
+func TestExternalQueueStatusRejectsStaleAltMountStatusFileName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "queue":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"queue":  map[string]any{"slots": []map[string]any{}},
+			})
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "history":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"history": map[string]any{
+					"slots": []map[string]any{{
+						"nzo_id":   "altmount-job",
+						"status":   "Completed",
+						"nzb_name": "The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.nzb",
+						"storage":  "/mnt/remotes/altmount/Default/complete/The.Owl.House.S01E01.A.Lying.Witch.and.a.Warden.1080p.DSNP.WEB-DL.AAC2.0.H.264-LAZY.mkv",
+					}},
+				},
+			})
+		case r.Method == "HEAD" || r.Method == "PROPFIND":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+	svc.externalJobs[42] = &externalUsenetJob{
+		ID:             42,
+		EngineJobID:    "altmount-job",
+		SubmittedTitle: "The.Wonderfully.Weird.World.of.Gumball.S01E01.The.Burger.1080p.DSNP.WEB-DL.AAC2.0.x264-AndreMor",
+		SourceNZBPath:  "The.Wonderfully.Weird.World.of.Gumball.S01E01.The.Burger.1080p.DSNP.WEB-DL.AAC2.0.x264-AndreMor.nzb",
+		Engine: config.UsenetEngineSettings{
+			Name:          "AltMount",
+			Type:          "altmount",
+			BaseURL:       server.URL,
+			APIPath:       "/sabnzbd/api",
+			WebDAVBaseURL: server.URL + "/webdav",
+			Config: map[string]string{
+				"webdavPathPrefix": "/mnt/remotes/altmount",
+			},
+		},
+	}
+
+	res, handled, err := svc.externalQueueStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("externalQueueStatus: %v", err)
+	}
+	if !handled {
+		t.Fatal("handled = false")
+	}
+	if res.WebDAVPath != "" {
+		t.Fatalf("WebDAVPath = %q, want empty while stale status is rejected", res.WebDAVPath)
+	}
+	if res.SourceNZBPath != "The.Wonderfully.Weird.World.of.Gumball.S01E01.The.Burger.1080p.DSNP.WEB-DL.AAC2.0.x264-AndreMor.nzb" {
+		t.Fatalf("SourceNZBPath = %q, want original submitted NZB", res.SourceNZBPath)
+	}
+	if res.HealthStatus != "processing" {
+		t.Fatalf("HealthStatus = %q, want processing", res.HealthStatus)
+	}
+}
+
 func TestResolveExternalUsenetEngineSelectsMediaFromCompletedWebDAVDirectory(t *testing.T) {
 	var addFileSeen bool
 	var webDAVAuthSeen bool

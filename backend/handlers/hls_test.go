@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"novastream/config"
 	"novastream/services/streaming"
 )
 
@@ -41,6 +44,56 @@ func TestGenerateSessionID_Format(t *testing.T) {
 		if !strings.HasPrefix(id, "session-") {
 			t.Errorf("generateSessionID format unexpected: %s (len=%d)", id, len(id))
 		}
+	}
+}
+
+func TestThrottlingProxyUsesConfiguredExternalWebDAVAuth(t *testing.T) {
+	expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("webdav-user:webdav-pass"))
+	var sawAuthenticatedGet atomic.Bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.Header.Get("Authorization") == expectedAuth {
+			sawAuthenticatedGet.Store(true)
+		}
+		if r.Header.Get("Authorization") != expectedAuth {
+			http.Error(w, "missing auth", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Length", "5")
+		if r.Method != http.MethodHead {
+			_, _ = w.Write([]byte("video"))
+		}
+	}))
+	defer upstream.Close()
+
+	settings := config.DefaultSettings()
+	settings.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:           "AltMount",
+		Type:           "altmount",
+		Enabled:        true,
+		WebDAVBaseURL:  upstream.URL + "/webdav",
+		WebDAVUsername: "webdav-user",
+		WebDAVPassword: "webdav-pass",
+	}}
+	manager := NewHLSManager(t.TempDir(), "", "", nil)
+	manager.SetConfigManager(staticVideoConfigProvider{settings: settings})
+	session := &HLSSession{ID: "test-hls-auth", OutputDir: t.TempDir()}
+
+	proxy, localURL, err := newThrottlingProxy(upstream.URL+"/webdav/movie.mkv", session, manager.applyExternalUsenetWebDAVAuth)
+	if err != nil {
+		t.Fatalf("newThrottlingProxy returned error: %v", err)
+	}
+	defer proxy.Close()
+
+	resp, err := http.Get(localURL)
+	if err != nil {
+		t.Fatalf("proxy GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("proxy GET status = %d, want 200", resp.StatusCode)
+	}
+	if !sawAuthenticatedGet.Load() {
+		t.Fatalf("upstream GET did not receive configured WebDAV auth")
 	}
 }
 

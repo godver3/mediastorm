@@ -376,6 +376,9 @@ func (h *VideoHandler) SetUserSettingsService(svc UserSettingsProvider) {
 // SetConfigManager sets the config manager for global settings fallback
 func (h *VideoHandler) SetConfigManager(cfgManager ConfigProvider) {
 	h.configManager = cfgManager
+	if h.hlsManager != nil {
+		h.hlsManager.SetConfigManager(cfgManager)
+	}
 }
 
 // SetClientSettingsService sets the client settings service for per-device policy checks
@@ -1694,6 +1697,7 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, cleanPath, nil)
 		if err == nil {
 			headReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+			h.applyExternalUsenetWebDAVAuth(headReq)
 			headResp, headErr := http.DefaultClient.Do(headReq)
 			if headErr == nil {
 				defer headResp.Body.Close()
@@ -2307,6 +2311,11 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 		"-print_format", "json",
 		"-show_streams",
 		"-show_format",
+	}
+	if reader == nil {
+		if header := h.externalUsenetWebDAVAuthHeader(inputSpecifier); header != "" {
+			args = append(args, "-headers", header)
+		}
 	}
 	if reader != nil {
 		args = append(args, "-i", "pipe:0")
@@ -5157,6 +5166,34 @@ func (h *VideoHandler) applyExternalUsenetWebDAVAuth(req *http.Request) {
 	}
 }
 
+func (h *VideoHandler) externalUsenetWebDAVAuthHeader(rawURL string) string {
+	if h == nil || h.configManager == nil {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	settings, err := h.configManager.Load()
+	if err != nil {
+		return ""
+	}
+	for _, engine := range settings.UsenetEngines {
+		if !engine.Enabled || strings.TrimSpace(engine.WebDAVBaseURL) == "" {
+			continue
+		}
+		if !externalURLMatchesBase(parsed, engine.WebDAVBaseURL) {
+			continue
+		}
+		if engine.WebDAVUsername == "" && engine.WebDAVPassword == "" {
+			return ""
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte(engine.WebDAVUsername + ":" + engine.WebDAVPassword))
+		return "Authorization: Basic " + encoded + "\r\n"
+	}
+	return ""
+}
+
 func externalURLMatchesBase(candidate *url.URL, baseRaw string) bool {
 	if candidate == nil {
 		return false
@@ -5408,13 +5445,18 @@ func (h *VideoHandler) CropDetect(w http.ResponseWriter, r *http.Request) {
 			}
 			args := []string{
 				"-ss", fmt.Sprintf("%.2f", seekTime),
+			}
+			if header := h.externalUsenetWebDAVAuthHeader(probeURL); header != "" {
+				args = append(args, "-headers", header)
+			}
+			args = append(args,
 				"-i", probeURL,
 				"-an",
 				"-vframes", "5",
 				"-vf", fmt.Sprintf("cropdetect=%d:16:0", cropThreshold),
 				"-f", "null",
 				"-",
-			}
+			)
 			cmd := exec.CommandContext(ctx, h.ffmpegPath, args...)
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr

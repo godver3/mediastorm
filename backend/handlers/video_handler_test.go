@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,6 +119,44 @@ func TestProxyExternalURLUsesConfiguredUsenetWebDAVAuth(t *testing.T) {
 	}
 	if !sawAuth {
 		t.Fatal("upstream did not receive auth")
+	}
+}
+
+func TestExternalUsenetWebDAVAuthHeaderForFFProbe(t *testing.T) {
+	handler := NewVideoHandler(false, "", "")
+	settings := config.DefaultSettings()
+	settings.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:           "AltMount",
+		Type:           "altmount",
+		Enabled:        true,
+		WebDAVBaseURL:  "http://127.0.0.1:3313/webdav",
+		WebDAVUsername: "webdav-user",
+		WebDAVPassword: "webdav-pass",
+	}}
+	handler.SetConfigManager(staticVideoConfigProvider{settings: settings})
+
+	got := handler.externalUsenetWebDAVAuthHeader("http://127.0.0.1:3313/webdav/Default/complete/Movie/Movie.mkv")
+	want := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("webdav-user:webdav-pass")) + "\r\n"
+	if got != want {
+		t.Fatalf("auth header = %q, want %q", got, want)
+	}
+}
+
+func TestExternalUsenetWebDAVAuthHeaderIgnoresOtherURLs(t *testing.T) {
+	handler := NewVideoHandler(false, "", "")
+	settings := config.DefaultSettings()
+	settings.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:           "AltMount",
+		Type:           "altmount",
+		Enabled:        true,
+		WebDAVBaseURL:  "http://127.0.0.1:3313/webdav",
+		WebDAVUsername: "webdav-user",
+		WebDAVPassword: "webdav-pass",
+	}}
+	handler.SetConfigManager(staticVideoConfigProvider{settings: settings})
+
+	if got := handler.externalUsenetWebDAVAuthHeader("https://example.com/video.mkv"); got != "" {
+		t.Fatalf("auth header for unrelated URL = %q, want empty", got)
 	}
 }
 

@@ -127,16 +127,18 @@ type throttledReader struct {
 type throttlingProxy struct {
 	targetURL string
 	session   *HLSSession
+	applyAuth func(*http.Request)
 	server    *http.Server
 	port      int
 }
 
 // newThrottlingProxy creates a new throttling proxy for the given URL.
 // Returns the proxy and the local URL that FFmpeg should use.
-func newThrottlingProxy(targetURL string, session *HLSSession) (*throttlingProxy, string, error) {
+func newThrottlingProxy(targetURL string, session *HLSSession, applyAuth func(*http.Request)) (*throttlingProxy, string, error) {
 	proxy := &throttlingProxy{
 		targetURL: targetURL,
 		session:   session,
+		applyAuth: applyAuth,
 	}
 
 	// Find a free port
@@ -172,6 +174,7 @@ func newThrottlingProxy(targetURL string, session *HLSSession) (*throttlingProxy
 		if err != nil {
 			return
 		}
+		proxy.applyRequestAuth(req)
 		resp, err := cdnClient.Do(req)
 		if err != nil {
 			log.Printf("[hls] session %s: CDN warm-up failed (non-fatal): %v", session.ID, err)
@@ -202,10 +205,7 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Extract userinfo from URL and set Basic Auth header
 	// Go's http.Client doesn't automatically use URL-embedded credentials
-	if parsedURL, parseErr := url.Parse(p.targetURL); parseErr == nil && parsedURL.User != nil {
-		password, _ := parsedURL.User.Password()
-		req.SetBasicAuth(parsedURL.User.Username(), password)
-	}
+	p.applyRequestAuth(req)
 
 	// Forward Range header for seeking support
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
@@ -240,6 +240,20 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, throttled)
 	if err != nil && err != context.Canceled {
 		log.Printf("[hls] session %s: proxy copy error: %v", p.session.ID, err)
+	}
+}
+
+func (p *throttlingProxy) applyRequestAuth(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if parsedURL, parseErr := url.Parse(p.targetURL); parseErr == nil && parsedURL.User != nil {
+		password, _ := parsedURL.User.Password()
+		req.SetBasicAuth(parsedURL.User.Username(), password)
+		return
+	}
+	if p.applyAuth != nil {
+		p.applyAuth(req)
 	}
 }
 
@@ -763,6 +777,7 @@ type HLSManager struct {
 	localAccessMu      sync.RWMutex
 	localWebDAVBaseURL string
 	localWebDAVPrefix  string
+	configManager      ConfigProvider
 	// Global probe cache - shared between prequeue (ProbeVideoFull) and HLS (probeAllMetadata)
 	probeCache   map[string]*cachedProbeEntry
 	probeCacheMu sync.RWMutex
@@ -817,6 +832,36 @@ func NewHLSManager(baseDir, ffmpegPath, ffprobePath string, streamer streaming.P
 	go manager.cleanupLoop()
 
 	return manager
+}
+
+// SetConfigManager allows HLS proxy fetches to authenticate against external Usenet WebDAV engines.
+func (m *HLSManager) SetConfigManager(cfgManager ConfigProvider) {
+	if m == nil {
+		return
+	}
+	m.configManager = cfgManager
+}
+
+func (m *HLSManager) applyExternalUsenetWebDAVAuth(req *http.Request) {
+	if m == nil || m.configManager == nil || req == nil || req.URL == nil {
+		return
+	}
+	settings, err := m.configManager.Load()
+	if err != nil {
+		return
+	}
+	for _, engine := range settings.UsenetEngines {
+		if !engine.Enabled || strings.TrimSpace(engine.WebDAVBaseURL) == "" {
+			continue
+		}
+		if !externalURLMatchesBase(req.URL, engine.WebDAVBaseURL) {
+			continue
+		}
+		if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
+			req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
+		}
+		return
+	}
 }
 
 // ConfigureLocalWebDAVAccess allows the manager to build direct URLs against the local WebDAV server.
@@ -1974,7 +2019,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			videoTracef("[hls] session %s: setting up throttling proxy for direct URL", session.ID)
 
 			var err error
-			proxy, proxyURL, err = newThrottlingProxy(directURL, session)
+			proxy, proxyURL, err = newThrottlingProxy(directURL, session, m.applyExternalUsenetWebDAVAuth)
 			if err != nil {
 				log.Printf("[hls] session %s: failed to create throttling proxy: %v, falling back to pipe", session.ID, err)
 				hasDirectURL = false // Fall through to pipe handling

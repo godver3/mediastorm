@@ -503,7 +503,7 @@ func (m *ThumbnailManager) markUnsupported(cleanPath string, durationSec float64
 	return key, nil
 }
 
-func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float64, intervalSec int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) (string, bool, error) {
+func (m *ThumbnailManager) start(cleanPath, sourceURL, authHeader string, durationSec float64, intervalSec int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) (string, bool, error) {
 	if m == nil {
 		return "", false, fmt.Errorf("thumbnail manager unavailable")
 	}
@@ -546,13 +546,13 @@ func (m *ThumbnailManager) start(cleanPath, sourceURL string, durationSec float6
 			delete(m.inFlight, key)
 			m.mu.Unlock()
 		}()
-		m.generate(key, cleanPath, sourceURL, durationSec, intervalSec, workerCount, toneMapMode, dvProfile)
+		m.generate(key, cleanPath, sourceURL, authHeader, durationSec, intervalSec, workerCount, toneMapMode, dvProfile)
 	}()
 
 	return key, true, nil
 }
 
-func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSec float64, requestedInterval int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) {
+func (m *ThumbnailManager) generate(key, cleanPath, sourceURL, authHeader string, durationSec float64, requestedInterval int, workerCount int, toneMapMode thumbnailToneMapMode, dvProfile string) {
 	interval, times := thumbnailTimes(durationSec, requestedInterval)
 	workerCount = thumbnailWorkerCountFromSetting(workerCount)
 	manifest := &thumbnailManifest{
@@ -609,7 +609,7 @@ func (m *ThumbnailManager) generate(key, cleanPath, sourceURL string, durationSe
 			go func() {
 				defer wg.Done()
 				for job := range jobs {
-					results <- m.generateFrame(job, key, cleanPath, sourceURL, toneMapMode, dvProfile, cooldown)
+					results <- m.generateFrame(job, key, cleanPath, sourceURL, authHeader, toneMapMode, dvProfile, cooldown)
 				}
 			}()
 		}
@@ -673,7 +673,7 @@ func (h *VideoHandler) thumbnailGenerationSettings() config.PlaybackThumbnailSet
 	return settings
 }
 
-func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL string, toneMapMode thumbnailToneMapMode, dvProfile string, cooldown *thumbnailRateLimitCooldown) thumbnailResult {
+func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourceURL, authHeader string, toneMapMode thumbnailToneMapMode, dvProfile string, cooldown *thumbnailRateLimitCooldown) thumbnailResult {
 	details := thumbnailDetails{TimeSec: job.TimeSec, File: job.FileName}
 	if thumbnailOutputUsable(job.OutputPath) {
 		return thumbnailResult{Details: details, OK: true}
@@ -684,7 +684,7 @@ func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourc
 	var err error
 	for attempt := 0; attempt <= thumbnailRateLimitRetries; attempt++ {
 		cooldown.wait(key, cleanPath)
-		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(toneMapMode))
+		output, err = m.runFrameCommand(job, sourceURL, authHeader, thumbnailFilter(toneMapMode))
 		if err == nil || !thumbnailRateLimited(output) {
 			break
 		}
@@ -693,7 +693,7 @@ func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourc
 	}
 	if err != nil && toneMapMode != thumbnailToneMapNone && !isDolbyVisionProfile5(dvProfile) && !thumbnailInputUnavailable(output) {
 		log.Printf("[thumbnails] tone-map frame failed key=%s time=%.1f path=%q err=%v output=%s; retrying without tone map", key, job.TimeSec, cleanPath, err, strings.TrimSpace(string(output)))
-		output, err = m.runFrameCommand(job, sourceURL, thumbnailFilter(thumbnailToneMapNone))
+		output, err = m.runFrameCommand(job, sourceURL, authHeader, thumbnailFilter(thumbnailToneMapNone))
 	}
 	if err != nil {
 		if thumbnailInputUnavailable(output) {
@@ -716,7 +716,7 @@ func (m *ThumbnailManager) generateFrame(job thumbnailJob, key, cleanPath, sourc
 	return thumbnailResult{Details: details, OK: true}
 }
 
-func (m *ThumbnailManager) runFrameCommand(job thumbnailJob, sourceURL, filter string) ([]byte, error) {
+func (m *ThumbnailManager) runFrameCommand(job thumbnailJob, sourceURL, authHeader, filter string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), thumbnailFrameTimeout)
 	defer cancel()
 	args := []string{
@@ -724,12 +724,17 @@ func (m *ThumbnailManager) runFrameCommand(job thumbnailJob, sourceURL, filter s
 		"-loglevel", "error",
 		"-y",
 		"-ss", fmt.Sprintf("%.2f", job.TimeSec),
+	}
+	if authHeader != "" {
+		args = append(args, "-headers", authHeader)
+	}
+	args = append(args,
 		"-i", sourceURL,
 		"-frames:v", "1",
 		"-vf", filter,
 		"-q:v", "5",
 		job.OutputPath,
-	}
+	)
 	cmd := exec.CommandContext(ctx, m.ffmpegPath, args...)
 	return cmd.CombinedOutput()
 }
@@ -804,7 +809,8 @@ func (h *VideoHandler) StartThumbnails(w http.ResponseWriter, r *http.Request) {
 
 	toneMap := parseThumbnailToneMapHint(r, dvProfile) || thumbnailNeedsToneMap(h.getCachedMetadata(cleanPath))
 	toneMapMode := h.thumbnailManager.thumbnailToneMapMode(toneMap, dvProfile)
-	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, durationSec, intervalSec, thumbnailSettings.Workers, toneMapMode, dvProfile)
+	authHeader := h.externalUsenetWebDAVAuthHeader(sourceURL)
+	key, started, err := h.thumbnailManager.start(cleanPath, sourceURL, authHeader, durationSec, intervalSec, thumbnailSettings.Workers, toneMapMode, dvProfile)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
