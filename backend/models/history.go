@@ -62,10 +62,10 @@ type EpisodeWatchPayload struct {
 	NextEpisode *EpisodeReference `json:"nextEpisode,omitempty"`
 }
 
-// WatchHistoryItem represents a unified watch history entry for any media (movie, episode, or series).
+// WatchHistoryItem represents a unified watch history entry for any media (movie, episode, series, or live).
 type WatchHistoryItem struct {
 	ID             string            `json:"id"`        // mediaType:itemId (e.g., "movie:tmdb:12345" or "series:tvdb:67890:s01e02")
-	MediaType      string            `json:"mediaType"` // "movie" | "series" | "episode"
+	MediaType      string            `json:"mediaType"` // "movie" | "series" | "episode" | "live"
 	ItemID         string            `json:"itemId"`    // The actual ID (e.g., "tmdb:12345")
 	Name           string            `json:"name"`
 	Year           int               `json:"year,omitempty"`
@@ -102,7 +102,7 @@ type WatchHistoryUpdate struct {
 
 // PlaybackProgressUpdate represents a playback progress update from the player.
 type PlaybackProgressUpdate struct {
-	MediaType      string            `json:"mediaType"`      // "movie" | "episode"
+	MediaType      string            `json:"mediaType"`      // "movie" | "episode" | "live"
 	ItemID         string            `json:"itemId"`         // The media ID
 	Position       float64           `json:"position"`       // Current playback position in seconds
 	Duration       float64           `json:"duration"`       // Total duration in seconds
@@ -126,7 +126,7 @@ type PlaybackProgressUpdate struct {
 // PlaybackProgress stores the current playback progress for a media item.
 type PlaybackProgress struct {
 	ID             string            `json:"id"`                       // mediaType:itemId
-	MediaType      string            `json:"mediaType"`                // "movie" | "episode"
+	MediaType      string            `json:"mediaType"`                // "movie" | "episode" | "live"
 	ItemID         string            `json:"itemId"`                   // The media ID
 	Position       float64           `json:"position"`                 // Last known position in seconds
 	Duration       float64           `json:"duration"`                 // Total duration in seconds

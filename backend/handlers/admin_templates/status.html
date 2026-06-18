@@ -242,9 +242,10 @@
                 <option value="all">All Profiles</option>
             </select>
             <select id="watchTimeMediaTypeSelect" class="form-select" style="max-width: 180px; min-width: 140px;" onchange="loadDashboardStats()">
-                <option value="all">Movies & Episodes</option>
+                <option value="all">All Playback</option>
                 <option value="movie">Movies</option>
                 <option value="episode">Episodes</option>
+                <option value="live">Live TV</option>
             </select>
         </div>
         <div class="card-body">
@@ -264,7 +265,7 @@
             </div>
             <div class="watch-time-chart" aria-label="Watch time distribution">
                 <div class="watch-time-chart-header">
-                    <span>Tracked distribution</span>
+                    <span>By type</span>
                     <span id="watchTimeChartTotal">-</span>
                 </div>
                 <div class="watch-time-chart-bar" id="watchTimeChartBar">
@@ -834,16 +835,8 @@
         transition: width 0.25s ease;
     }
 
-    .watch-time-chart-segment.week {
-        background: #22c55e;
-    }
-
-    .watch-time-chart-segment.month {
-        background: #38bdf8;
-    }
-
-    .watch-time-chart-segment.earlier {
-        background: #a78bfa;
+    .watch-time-chart-segment {
+        background: var(--text-muted);
     }
 
     .watch-time-chart-empty {
@@ -857,7 +850,7 @@
 
     .watch-time-chart-legend {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
         gap: 0.625rem;
         margin-top: 0.75rem;
     }
@@ -1641,29 +1634,33 @@
         const totalEl = document.getElementById('watchTimeChartTotal');
         if (!bar || !legend || !totalEl) return;
 
-        const weekSeconds = Math.max(0, Number(watchTime?.weekSeconds || 0));
-        const monthSeconds = Math.max(weekSeconds, Number(watchTime?.monthSeconds || 0));
-        const everSeconds = Math.max(monthSeconds, Number(watchTime?.everSeconds || 0));
+        const everSeconds = Math.max(0, Number(watchTime?.everSeconds || 0));
         const buckets = [
             {
-                key: 'week',
-                label: 'Last 7 days',
-                color: '#22c55e',
-                seconds: weekSeconds,
+                key: 'movie',
+                label: 'Movies',
+                color: 'var(--accent)',
+                seconds: Math.max(0, Number(watchTime?.movieSeconds || 0)),
             },
             {
-                key: 'month',
-                label: 'Prior month',
-                color: '#38bdf8',
-                seconds: Math.max(0, monthSeconds - weekSeconds),
+                key: 'episode',
+                label: 'Episodes',
+                color: 'var(--accent-hover)',
+                seconds: Math.max(0, Number(watchTime?.episodeSeconds || 0)),
             },
             {
-                key: 'earlier',
-                label: 'Earlier',
-                color: '#a78bfa',
-                seconds: Math.max(0, everSeconds - monthSeconds),
+                key: 'live',
+                label: 'Live TV',
+                color: 'var(--success)',
+                seconds: Math.max(0, Number(watchTime?.liveSeconds || 0)),
             },
-        ];
+            {
+                key: 'other',
+                label: 'Other',
+                color: 'var(--text-muted)',
+                seconds: Math.max(0, Number(watchTime?.otherSeconds || 0)),
+            },
+        ].filter((bucket) => bucket.seconds > 0 || bucket.key !== 'other');
 
         totalEl.textContent = formatWatchTime(everSeconds);
         if (everSeconds <= 0) {
@@ -1676,7 +1673,7 @@
             .filter((bucket) => bucket.seconds > 0)
             .map((bucket) => {
                 const width = Math.max(1, (bucket.seconds / everSeconds) * 100);
-                return `<span class="watch-time-chart-segment ${bucket.key}" style="width: ${width.toFixed(3)}%;" title="${escapeHtml(bucket.label)}: ${escapeHtml(formatWatchTime(bucket.seconds))}"></span>`;
+                return `<span class="watch-time-chart-segment ${bucket.key}" style="width: ${width.toFixed(3)}%; background: ${bucket.color};" title="${escapeHtml(bucket.label)}: ${escapeHtml(formatWatchTime(bucket.seconds))}"></span>`;
             })
             .join('');
         legend.innerHTML = buckets.map((bucket) => watchTimeLegendItem(bucket)).join('');

@@ -536,6 +536,10 @@ func isLiveTVRecordingProgressUpdate(update models.PlaybackProgressUpdate) bool 
 	return strings.Contains(itemID, liveTVRecordingPathSegment) || strings.Contains(seriesID, liveTVRecordingPathSegment)
 }
 
+func isLiveProgressUpdate(update models.PlaybackProgressUpdate) bool {
+	return strings.EqualFold(strings.TrimSpace(update.MediaType), "live")
+}
+
 func isLegacyRecordingTitleProgress(progress models.PlaybackProgress, recordingTitleSet map[string]struct{}) bool {
 	if len(recordingTitleSet) == 0 || progress.MediaType != "movie" || len(progress.ExternalIDs) > 0 {
 		return false
@@ -3952,6 +3956,12 @@ func normalizeWatchHistoryItem(item models.WatchHistoryItem) models.WatchHistory
 }
 
 func normalizePlaybackProgressUpdate(update models.PlaybackProgressUpdate) models.PlaybackProgressUpdate {
+	if isLiveProgressUpdate(update) {
+		update.MediaType = "live"
+		update.ItemID = mediaidentity.SanitizeID(update.ItemID)
+		update.ExternalIDs = mediaidentity.NormalizeExternalIDs(update.ExternalIDs)
+		return update
+	}
 	normalizedExternalIDs := normalizeStorageExternalIDs(update.MediaType, update.ItemID, update.SeriesID, update.ExternalIDs)
 	externalIDs := storageIdentityExternalIDs(update.MediaType, update.ItemID, update.SeriesID, normalizedExternalIDs)
 	identity := mediaidentity.Resolve(mediaidentity.Input{
@@ -3974,6 +3984,13 @@ func normalizePlaybackProgressUpdate(update models.PlaybackProgressUpdate) model
 }
 
 func normalizePlaybackProgressItem(progress models.PlaybackProgress) models.PlaybackProgress {
+	if strings.EqualFold(strings.TrimSpace(progress.MediaType), "live") {
+		progress.MediaType = "live"
+		progress.ItemID = mediaidentity.SanitizeID(progress.ItemID)
+		progress.ID = makeWatchKey(progress.MediaType, progress.ItemID)
+		progress.ExternalIDs = mediaidentity.NormalizeExternalIDs(progress.ExternalIDs)
+		return progress
+	}
 	normalizedExternalIDs := normalizeStorageExternalIDs(progress.MediaType, progress.ItemID, progress.SeriesID, progress.ExternalIDs)
 	externalIDs := storageIdentityExternalIDs(progress.MediaType, progress.ItemID, progress.SeriesID, normalizedExternalIDs)
 	identity := mediaidentity.Resolve(mediaidentity.Input{
@@ -4317,6 +4334,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	if !isAddressableEpisodeUpdate(update.MediaType, update.ItemID, update.EpisodeNumber, update.ExternalIDs) {
 		return models.PlaybackProgress{}, ErrEpisodeNotAddressable
 	}
+	isLiveProgress := isLiveProgressUpdate(update)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -4420,9 +4438,9 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 	// the 90% auto-watched marking below. This is in-memory live state only.
 	s.recordActiveProgressLocked(userID, progress)
 
-	// Clear hidden flag for related series entries when new progress is logged
-	// This ensures the series reappears in continue watching when user resumes watching
-	if update.SeriesID != "" {
+	// Clear hidden flag for related series entries when new progress is logged.
+	// Live TV does not participate in continue-watching state.
+	if !isLiveProgress && update.SeriesID != "" {
 		// Extract provider/ID from the update's series ID for external ID matching
 		// (e.g. "tvdb:series:73562" → provider="tvdb", numericID="73562")
 		var unhideProvider, unhideNumericID string
@@ -4485,15 +4503,17 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		return models.PlaybackProgress{}, err
 	}
 
-	// Invalidate continue watching cache for this user since progress changed
-	s.invalidateContinueWatchingLocked(userID)
+	if !isLiveProgress {
+		// Invalidate continue watching cache for this user since VOD progress changed.
+		s.invalidateContinueWatchingLocked(userID)
+	}
 
 	// Grab real-time scrobbler reference while holding the lock
 	rtScrobbler := s.traktRTScrobbler
-	allowRealtimeScrobble := !isLiveTVRecordingProgressUpdate(update)
+	allowRealtimeScrobble := !isLiveProgress && !isLiveTVRecordingProgressUpdate(update)
 
 	// Auto-mark as watched if >= 90% complete
-	if percentWatched >= 90 {
+	if !isLiveProgress && percentWatched >= 90 {
 		// Local watched-history sync below writes the Trakt watched event. Clear
 		// any active realtime session so we don't also create a scrobble event.
 		if rtScrobbler != nil && allowRealtimeScrobble {

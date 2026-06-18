@@ -800,6 +800,7 @@
     let lastKnownPositivePosition = 0;
     let lastProgressPaused = false;
     let progressCompleted = false;
+    let liveWatchStartedAt = null;
 
     document.addEventListener('DOMContentLoaded', safeInit);
     window.addEventListener('beforeunload', () => {
@@ -930,9 +931,11 @@
 
       const rawMediaType = (routeParam('mediaType') || 'movie').toLowerCase();
       const isLive = rawMediaType === 'channel' || rawMediaType === 'live';
-      const mediaType = rawMediaType === 'episode' || rawMediaType === 'series' ? 'episode' : 'movie';
+      const mediaType = isLive ? 'live' : rawMediaType === 'episode' || rawMediaType === 'series' ? 'episode' : 'movie';
       const title = routeParam('title') || routeParam('seriesTitle') || routeParam('displayName') || 'Untitled';
-      const itemId = routeParam('titleId') || routeParam('imdbId') || routeParam('tvdbId') || sourcePath || directMovieUrl || title;
+      const itemId = isLive
+        ? routeParam('tvgId') || routeParam('liveSourceUrl') || hlsSessionId || title
+        : routeParam('titleId') || routeParam('imdbId') || routeParam('tvdbId') || sourcePath || directMovieUrl || title;
 
       playbackMeta = {
         mediaType,
@@ -1406,6 +1409,10 @@
     }
 
     function progressPositionForSend(options = {}) {
+      if (playbackMeta.isLive) {
+        if (liveWatchStartedAt === null) liveWatchStartedAt = Date.now();
+        return Math.max(1, (Date.now() - liveWatchStartedAt) / 1000);
+      }
       if (options.position !== null && options.position !== undefined && Number.isFinite(Number(options.position))) {
         const explicit = Number(options.position);
         rememberPositivePosition(explicit);
@@ -1418,6 +1425,10 @@
     }
 
     function currentDuration() {
+      if (playbackMeta.isLive) {
+        const elapsed = progressPositionForSend();
+        return elapsed + 24 * 60 * 60;
+      }
       const video = document.getElementById('webPlayer');
       const absoluteTime = currentAbsoluteTime();
       return hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + (hlsSessionId ? hlsPlaybackOffset : 0));
@@ -1802,12 +1813,11 @@
     }
 
     function startProgressTracking() {
-      // Live channels have no meaningful resume position — don't record history.
-      if (playbackMeta.isLive) return;
       stopProgressTracking();
       lastProgressSentAt = 0;
       lastProgressPosition = 0;
-      lastKnownPositivePosition = Math.max(0, currentAbsoluteTime());
+      liveWatchStartedAt = playbackMeta.isLive ? Date.now() : null;
+      lastKnownPositivePosition = playbackMeta.isLive ? 0 : Math.max(0, currentAbsoluteTime());
       lastProgressPaused = false;
       progressCompleted = false;
       progressTimer = setInterval(() => sendWebPlayerProgress(), WEB_PLAYER_PROGRESS_INTERVAL_MS);
@@ -1860,7 +1870,7 @@
         lastProgressPosition = position;
         lastProgressPaused = isPaused;
         const percentWatched = Number(result?.percentWatched ?? (duration > 0 ? (position / duration) * 100 : 0));
-        if (percentWatched >= 90 || isEnded) {
+        if (!playbackMeta.isLive && (percentWatched >= 90 || isEnded)) {
           progressCompleted = true;
           stopProgressTracking();
         }
@@ -1878,6 +1888,10 @@
       if (playbackMeta.tmdbId) externalIds.tmdb = String(playbackMeta.tmdbId);
       if (playbackMeta.tvdbId) externalIds.tvdb = String(playbackMeta.tvdbId);
       if (playbackMeta.itemId) externalIds.titleId = String(playbackMeta.itemId);
+      if (playbackMeta.isLive) {
+        if (routeParam('tvgId')) externalIds.tvgId = routeParam('tvgId');
+        if (routeParam('liveSourceUrl')) externalIds.liveSourceUrl = routeParam('liveSourceUrl');
+      }
 
       const payload = {
         mediaType: playbackMeta.mediaType || 'movie',
@@ -1902,6 +1916,7 @@
     }
 
     function buildProgressItemId() {
+      if (playbackMeta.mediaType === 'live') return playbackMeta.itemId || routeParam('liveSourceUrl') || directMovieUrl || playbackMeta.title || 'live-channel';
       if (playbackMeta.mediaType !== 'episode') return playbackMeta.itemId || sourcePath || directMovieUrl || playbackMeta.title || 'movie';
       const seriesId = playbackMeta.itemId || playbackMeta.seriesTitle || playbackMeta.title || 'series';
       const season = playbackMeta.seasonNumber || 1;

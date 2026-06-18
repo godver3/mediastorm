@@ -2250,10 +2250,14 @@ type dashboardRecentWatchItem struct {
 }
 
 type dashboardWatchTimeStats struct {
-	WeekSeconds  float64 `json:"weekSeconds"`
-	MonthSeconds float64 `json:"monthSeconds"`
-	EverSeconds  float64 `json:"everSeconds"`
-	HasTracked   bool    `json:"hasTracked"`
+	WeekSeconds    float64 `json:"weekSeconds"`
+	MonthSeconds   float64 `json:"monthSeconds"`
+	EverSeconds    float64 `json:"everSeconds"`
+	MovieSeconds   float64 `json:"movieSeconds"`
+	EpisodeSeconds float64 `json:"episodeSeconds"`
+	LiveSeconds    float64 `json:"liveSeconds"`
+	OtherSeconds   float64 `json:"otherSeconds"`
+	HasTracked     bool    `json:"hasTracked"`
 }
 
 type dashboardProfileOption struct {
@@ -2343,7 +2347,7 @@ func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Reques
 				if !dashboardWatchMediaTypeMatches(item.MediaType, watchMediaType) {
 					continue
 				}
-				addDashboardWatchSeconds(&watchTime, item.WatchedSeconds, item.WatchedAt, weekCutoff, monthCutoff)
+				addDashboardWatchSeconds(&watchTime, item.MediaType, item.WatchedSeconds, item.WatchedAt, weekCutoff, monthCutoff)
 			}
 		}
 
@@ -2353,7 +2357,7 @@ func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Reques
 				if !dashboardWatchMediaTypeMatches(progress.MediaType, watchMediaType) {
 					continue
 				}
-				addDashboardWatchSeconds(&watchTime, progress.WatchedSeconds, progress.UpdatedAt, weekCutoff, monthCutoff)
+				addDashboardWatchSeconds(&watchTime, progress.MediaType, progress.WatchedSeconds, progress.UpdatedAt, weekCutoff, monthCutoff)
 			}
 		}
 	}
@@ -2410,6 +2414,8 @@ func normalizeDashboardWatchMediaType(mediaType string) string {
 		return "movie"
 	case "episode", "episodes":
 		return "episode"
+	case "live", "livetv", "live-tv", "channel", "channels":
+		return "live"
 	default:
 		return ""
 	}
@@ -2422,12 +2428,22 @@ func dashboardWatchMediaTypeMatches(itemMediaType, filter string) bool {
 	return strings.EqualFold(strings.TrimSpace(itemMediaType), filter)
 }
 
-func addDashboardWatchSeconds(stats *dashboardWatchTimeStats, seconds float64, at time.Time, weekCutoff, monthCutoff time.Time) {
+func addDashboardWatchSeconds(stats *dashboardWatchTimeStats, mediaType string, seconds float64, at time.Time, weekCutoff, monthCutoff time.Time) {
 	if seconds <= 0 {
 		return
 	}
 	stats.HasTracked = true
 	stats.EverSeconds += seconds
+	switch normalizeDashboardWatchMediaType(mediaType) {
+	case "movie":
+		stats.MovieSeconds += seconds
+	case "episode":
+		stats.EpisodeSeconds += seconds
+	case "live":
+		stats.LiveSeconds += seconds
+	default:
+		stats.OtherSeconds += seconds
+	}
 	if !at.IsZero() {
 		t := at.UTC()
 		if !t.Before(weekCutoff) {

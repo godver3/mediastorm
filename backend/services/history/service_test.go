@@ -445,6 +445,57 @@ func TestUpdatePlaybackProgressAccumulatesWatchedSeconds(t *testing.T) {
 	}
 }
 
+func TestUpdatePlaybackProgressLiveAccumulatesWithoutWatchedHistoryOrScrobble(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewService(dir)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	scrobbler := newCaptureRealTimeScrobbler()
+	svc.SetTraktRealTimeScrobbler(scrobbler)
+
+	live := func(position float64) models.PlaybackProgressUpdate {
+		return models.PlaybackProgressUpdate{
+			MediaType:   "live",
+			ItemID:      "channel:news",
+			MovieName:   "News Channel",
+			Position:    position,
+			Duration:    position + 86400,
+			ExternalIDs: map[string]string{"tvgId": "news"},
+		}
+	}
+
+	if _, err := svc.UpdatePlaybackProgress("user", live(30)); err != nil {
+		t.Fatalf("UpdatePlaybackProgress(30) error = %v", err)
+	}
+	progress, err := svc.UpdatePlaybackProgress("user", live(95))
+	if err != nil {
+		t.Fatalf("UpdatePlaybackProgress(95) error = %v", err)
+	}
+	if progress.MediaType != "live" {
+		t.Fatalf("MediaType = %q, want live", progress.MediaType)
+	}
+	if progress.WatchedSeconds != 95 {
+		t.Fatalf("WatchedSeconds = %.0f, want 95", progress.WatchedSeconds)
+	}
+
+	historyItems, err := svc.ListWatchHistory("user")
+	if err != nil {
+		t.Fatalf("ListWatchHistory() error = %v", err)
+	}
+	if len(historyItems) != 0 {
+		t.Fatalf("watch history length = %d, want 0", len(historyItems))
+	}
+
+	select {
+	case update := <-scrobbler.handleCalls:
+		t.Fatalf("unexpected realtime scrobble for live update: %#v", update)
+	case update := <-scrobbler.clearCalls:
+		t.Fatalf("unexpected realtime clear for live update: %#v", update)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestContinueWatchingWithoutMetadata(t *testing.T) {
 	dir := t.TempDir()
 	svc, err := NewService(dir)
