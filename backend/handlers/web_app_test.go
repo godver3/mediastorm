@@ -139,6 +139,9 @@ func TestWebPlaybackHandlerServesStandalonePlayer(t *testing.T) {
 			t.Fatalf("expected body to contain %q", want)
 		}
 	}
+	if strings.Contains(body, `id="profileSelect"`) || strings.Contains(body, `class="profile-select"`) {
+		t.Fatalf("playback page should not render a profile selector")
+	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}

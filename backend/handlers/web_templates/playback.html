@@ -94,16 +94,6 @@
       text-overflow: ellipsis;
     }
 
-    .profile-select {
-      min-width: 160px;
-      max-width: 280px;
-      padding: 0.5rem 0.65rem;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: var(--panel-2);
-      color: var(--text);
-    }
-
     .shell {
       display: grid;
       gap: 0.8rem;
@@ -609,10 +599,6 @@
         background: #000;
       }
 
-      .profile-select {
-        display: none;
-      }
-
       /* Cluster the transport buttons on the left; push the tracks button right.
          Seek + time wrap onto their own full-width rows below. */
       .controls {
@@ -730,7 +716,6 @@
           <div id="topSubtitle" class="brand-subtitle">Web player</div>
         </div>
       </div>
-      <select id="profileSelect" class="profile-select" aria-label="Profile"></select>
     </header>
 
     <main class="shell">
@@ -838,7 +823,7 @@
     }
 
     function init() {
-      setupProfileSelect();
+      setupActiveProfile();
       readRouteMetadata();
       renderHeader();
       console.info('[web-player] init', {
@@ -895,30 +880,16 @@
       window.location.assign(`${basePath || ''}/watch`);
     }
 
-    function setupProfileSelect() {
+    function setupActiveProfile() {
       const requestedProfile = routeParam('profileId') || routeParam('userId');
-      const select = document.getElementById('profileSelect');
-      select.innerHTML = PROFILES.map((profile) =>
-        `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name || profile.id)}</option>`
-      ).join('');
-
       const selected = PROFILES.find((profile) => profile.id === requestedProfile) || PROFILES[0];
       if (selected) {
         activeProfileId = selected.id;
         activeProfileName = selected.name || selected.id;
-        select.value = selected.id;
       } else if (requestedProfile) {
         activeProfileId = requestedProfile;
         activeProfileName = routeParam('profileName') || requestedProfile;
-        select.innerHTML = `<option value="${escapeHtml(activeProfileId)}">${escapeHtml(activeProfileName)}</option>`;
-        select.value = activeProfileId;
       }
-
-      select.addEventListener('change', () => {
-        const profile = PROFILES.find((entry) => entry.id === select.value);
-        activeProfileId = profile?.id || '';
-        activeProfileName = profile?.name || activeProfileId;
-      });
     }
 
     function readRouteMetadata() {
