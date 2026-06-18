@@ -45,6 +45,62 @@ func TestDefaultSettingsEnablesCleanPosters(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsIncludesDisabledUsenetEnginePresets(t *testing.T) {
+	settings := DefaultSettings()
+
+	if len(settings.UsenetEngines) != 4 {
+		t.Fatalf("UsenetEngines length = %d, want 4", len(settings.UsenetEngines))
+	}
+	pathsByType := map[string]string{}
+	for _, engine := range settings.UsenetEngines {
+		if engine.Enabled {
+			t.Fatalf("engine %q should default to disabled", engine.Type)
+		}
+		pathsByType[engine.Type] = engine.APIPath
+	}
+	for _, typ := range []string{"altmount", "nzbdav", "nzbdavex"} {
+		if pathsByType[typ] != "/api" {
+			t.Fatalf("%s APIPath = %q, want /api", typ, pathsByType[typ])
+		}
+	}
+	if pathsByType["decypharr"] != "/sabnzbd/api" {
+		t.Fatalf("decypharr APIPath = %q, want /sabnzbd/api", pathsByType["decypharr"])
+	}
+}
+
+func TestLoadBackfillsUsenetEnginePresets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"usenetEngines":[{"name":"My NZBDav","type":"nzbdav","enabled":true,"baseUrl":"http://nzbdav:3000"}]}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if len(settings.UsenetEngines) != 4 {
+		t.Fatalf("UsenetEngines length = %d, want 4: %#v", len(settings.UsenetEngines), settings.UsenetEngines)
+	}
+	if settings.UsenetEngines[0].Name != "My NZBDav" || settings.UsenetEngines[0].BaseURL != "http://nzbdav:3000" {
+		t.Fatalf("existing engine was not preserved: %+v", settings.UsenetEngines[0])
+	}
+	if settings.UsenetEngines[0].APIPath != "/api" {
+		t.Fatalf("existing nzbdav APIPath = %q, want /api", settings.UsenetEngines[0].APIPath)
+	}
+
+	seen := map[string]bool{}
+	for _, engine := range settings.UsenetEngines {
+		seen[engine.Type] = true
+	}
+	for _, typ := range []string{"altmount", "nzbdav", "nzbdavex", "decypharr"} {
+		if !seen[typ] {
+			t.Fatalf("missing engine preset %q in %#v", typ, settings.UsenetEngines)
+		}
+	}
+}
+
 func TestLoadForcesCleanPostersEnabled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"display":{"cleanPosters":false}}`)

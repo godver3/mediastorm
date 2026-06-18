@@ -631,6 +631,10 @@
         return arr.some(item => item.enabled === true);
     }
 
+    function hasEnabledUsenetProvider() {
+        return hasEnabledItem(currentSettings.usenet || []) || hasEnabledItem(currentSettings.usenetEngines || []);
+    }
+
     // Validate all settings and return errors object
     function validateSettings() {
         const errors = {};
@@ -662,11 +666,10 @@
         // Usenet Providers - required only in usenet-only mode.
         // Hybrid mode can still function with the debrid side alone.
         if (serviceMode === 'usenet') {
-            const usenetProviders = currentSettings.usenet || [];
-            if (!hasEnabledItem(usenetProviders)) {
+            if (!hasEnabledUsenetProvider()) {
                 errors.usenet = {
                     fields: {},
-                    messages: ['At least one enabled usenet provider is required for ' + serviceMode + ' mode']
+                    messages: ['At least one enabled Usenet provider or external Usenet engine is required for ' + serviceMode + ' mode']
                 };
             }
         }
@@ -674,10 +677,9 @@
         // Filtering - if service priority selected, must have enabled provider of that type
         const servicePriority = currentSettings.filtering?.servicePriority;
         if (servicePriority === 'usenet') {
-            const usenetProviders = currentSettings.usenet || [];
-            if (!hasEnabledItem(usenetProviders)) {
+            if (!hasEnabledUsenetProvider()) {
                 if (!errors.filtering) errors.filtering = { fields: {}, messages: [] };
-                errors.filtering.fields.servicePriority = 'Usenet priority requires an enabled usenet provider';
+                errors.filtering.fields.servicePriority = 'Usenet priority requires an enabled Usenet provider or external engine';
             }
         } else if (servicePriority === 'debrid') {
             const debridProviders = currentSettings.streaming?.debridProviders || [];
@@ -2750,6 +2752,10 @@
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
 
+        if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'type') {
+            applyUsenetEngineTypeDefaults(basePath, value);
+        }
+
         // Show reminder when adding direct-stream capable sources
         if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && ['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(String(value))) {
             const timeout = currentSettings.streaming?.indexerTimeoutSec || 5;
@@ -2760,6 +2766,35 @@
 
         // Re-render to update validation indicators (renderSettings runs validation)
         renderSettings();
+    }
+
+    function usenetEngineDefaultsForType(type) {
+        switch (String(type || '').toLowerCase()) {
+            case 'decypharr':
+                return { name: 'Decypharr', apiPath: '/sabnzbd/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+            case 'nzbdavex':
+                return { name: 'NZBDavEx', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+            case 'nzbdav':
+                return { name: 'NZBDav', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+            case 'altmount':
+            default:
+                return { name: 'AltMount', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+        }
+    }
+
+    function applyUsenetEngineTypeDefaults(basePath, type) {
+        const defaults = usenetEngineDefaultsForType(type);
+        const existingName = getValue(basePath + '.name');
+        if (!existingName || ['AltMount', 'NZBDav', 'NZBDavEx', 'Decypharr'].includes(existingName)) {
+            setValue(basePath + '.name', defaults.name);
+        }
+        setValue(basePath + '.apiPath', defaults.apiPath);
+        if (!getValue(basePath + '.pollIntervalSeconds')) {
+            setValue(basePath + '.pollIntervalSeconds', defaults.pollIntervalSeconds);
+        }
+        if (!getValue(basePath + '.timeoutSeconds')) {
+            setValue(basePath + '.timeoutSeconds', defaults.timeoutSeconds);
+        }
     }
     function handleNumberFieldChange(basePath, fieldKey, rawValue) {
         const topKey = (basePath || '').split('.')[0];
@@ -3540,6 +3575,13 @@
             } else {
                 newItem[fieldKey] = defaultValue;
             }
+        }
+        if (sectionKey === 'usenetEngines') {
+            const defaults = usenetEngineDefaultsForType(newItem.type);
+            newItem.name = defaults.name;
+            newItem.apiPath = defaults.apiPath;
+            newItem.pollIntervalSeconds = defaults.pollIntervalSeconds;
+            newItem.timeoutSeconds = defaults.timeoutSeconds;
         }
         arr.push(newItem);
         renderSettings();
@@ -4757,6 +4799,9 @@
             } else if (sectionKey === 'usenet') {
                 typeBadgesHtml =
                     '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:36px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;background:rgba(59,130,246,0.16);color:#60a5fa;border:1px solid rgba(96,165,250,0.35);">USN</span>';
+            } else if (sectionKey === 'usenetEngines') {
+                typeBadgesHtml =
+                    '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:36px;padding:0.125rem 0.45rem;border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;background:rgba(34,197,94,0.16);color:#22c55e;border:1px solid rgba(34,197,94,0.35);">ENG</span>';
             }
             const fieldsHtml = Object.entries(sectionDef.fields)
                 .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))

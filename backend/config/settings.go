@@ -1220,9 +1220,10 @@ func DefaultRankingCriteria() []RankingCriterion {
 func DefaultSettings() Settings {
 	sabnzbdEnabled := false
 	return Settings{
-		Server:   ServerSettings{Host: "0.0.0.0", Port: 7777},
-		Usenet:   []UsenetSettings{},
-		Indexers: []IndexerConfig{},
+		Server:        ServerSettings{Host: "0.0.0.0", Port: 7777},
+		Usenet:        []UsenetSettings{},
+		UsenetEngines: DefaultUsenetEngineSettings(),
+		Indexers:      []IndexerConfig{},
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
@@ -1309,6 +1310,48 @@ func DefaultSettings() Settings {
 			RetentionCount: 10, // Keep at most 10 backups
 		},
 	}
+}
+
+func DefaultUsenetEngineSettings() []UsenetEngineSettings {
+	return []UsenetEngineSettings{
+		{Name: "AltMount", Type: "altmount", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
+		{Name: "NZBDav", Type: "nzbdav", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
+		{Name: "NZBDavEx", Type: "nzbdavex", Enabled: false, APIPath: "/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
+		{Name: "Decypharr", Type: "decypharr", Enabled: false, APIPath: "/sabnzbd/api", PollIntervalSeconds: 2, TimeoutSeconds: 300},
+	}
+}
+
+func backfillUsenetEngineDefaults(existing []UsenetEngineSettings) []UsenetEngineSettings {
+	defaults := DefaultUsenetEngineSettings()
+	if len(existing) == 0 {
+		return defaults
+	}
+	seen := make(map[string]bool, len(existing))
+	for i := range existing {
+		key := strings.ToLower(strings.TrimSpace(existing[i].Type))
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(existing[i].Name))
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		if strings.TrimSpace(existing[i].APIPath) == "" {
+			if existing[i].Type == "" {
+				existing[i].APIPath = "/api"
+			} else if strings.EqualFold(strings.TrimSpace(existing[i].Type), "decypharr") {
+				existing[i].APIPath = "/sabnzbd/api"
+			} else {
+				existing[i].APIPath = "/api"
+			}
+		}
+	}
+	for _, def := range defaults {
+		key := strings.ToLower(strings.TrimSpace(def.Type))
+		if !seen[key] {
+			existing = append(existing, def)
+		}
+	}
+	return existing
 }
 
 // Manager loads and persists settings to a JSON file.
@@ -1686,6 +1729,7 @@ func (m *Manager) Load() (Settings, error) {
 		sabnzbdEnabled := false
 		s.SABnzbd.Enabled = &sabnzbdEnabled
 	}
+	s.UsenetEngines = backfillUsenetEngineDefaults(s.UsenetEngines)
 
 	// Backfill Live settings
 	if s.Live.PlaylistCacheTTLHours == 0 {
