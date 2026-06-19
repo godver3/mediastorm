@@ -8,6 +8,44 @@
     <p>Import and manage your media library</p>
 </div>
 
+<!-- SYSTEM CATEGORY -->
+<div class="settings-group">
+    <div class="group-title">System</div>
+
+    <div class="section" id="systemUpdatesSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                    <polyline points="21 3 21 9 15 9"/>
+                </svg>
+                System Updates
+            </div>
+            <span id="systemUpdatesBadge" class="status-badge"></span>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                Check whether the running backend is behind the latest published release. Updates are applied outside the app through Docker or your deployment tooling.
+            </p>
+            <div id="systemUpdatesStatus" style="display:grid;gap:0.75rem;margin-bottom:1rem;">
+                <div class="text-muted">Checking for updates...</div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="loadUpdateStatus(true)" id="checkSystemUpdatesBtn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                        <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                        <polyline points="21 3 21 9 15 9"/>
+                    </svg>
+                    Check for Updates
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- INTEGRATIONS CATEGORY -->
 <div class="settings-group">
     <div class="group-title">Integrations</div>
@@ -1965,7 +2003,7 @@
         // Load profiles first so client dropdowns are populated
         await loadUserProfiles();
         // Then load everything else in parallel
-        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadSimklAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadBackendVersionInfo(), loadClients(), loadScheduledTasks(), loadWorkers()]);
+        await Promise.all([loadPlexAccounts(), loadTraktAccounts(), loadMdblistAccounts(), loadSimklAccounts(), loadJellyfinAccounts(), loadLocalMediaLibraries(), loadBackendVersionInfo(), loadUpdateStatus(false), loadClients(), loadScheduledTasks(), loadWorkers()]);
     });
 
     async function loadLocalMediaLibraries() {
@@ -3886,6 +3924,83 @@
                 renderClientsList();
             }
         }
+    }
+
+    async function loadUpdateStatus(force) {
+        const statusEl = document.getElementById('systemUpdatesStatus');
+        const badge = document.getElementById('systemUpdatesBadge');
+        const btn = document.getElementById('checkSystemUpdatesBtn');
+        if (btn) btn.disabled = true;
+        if (force && statusEl) {
+            statusEl.innerHTML = '<div class="text-muted">Checking for updates...</div>';
+        }
+        try {
+            const url = basePath + '/api/updates/status' + (force ? '?force=true' : '');
+            const response = await fetch(url, { credentials: 'same-origin' });
+            if (!response.ok) throw new Error('Failed to check for updates');
+            const status = await response.json();
+            renderUpdateStatus(status);
+            if (force) {
+                showToast(status.backend?.updateAvailable ? 'Backend update available' : 'Backend is up to date', 'success');
+            }
+        } catch (err) {
+            console.error('Failed to load update status:', err);
+            if (badge) {
+                badge.textContent = 'Unavailable';
+                badge.className = 'status-badge warning';
+            }
+            if (statusEl) {
+                statusEl.innerHTML = `<div style="color: var(--error);">Failed to check for updates: ${escapeHtml(err.message)}</div>`;
+            }
+            if (force) showToast('Failed to check for updates: ' + err.message, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    function renderUpdateStatus(status) {
+        const backend = status?.backend || {};
+        const statusEl = document.getElementById('systemUpdatesStatus');
+        const badge = document.getElementById('systemUpdatesBadge');
+        if (!statusEl || !badge) return;
+
+        const current = backend.currentVersion
+            ? `${backend.currentVersion}${backend.currentBuildId ? ` (${backend.currentBuildId})` : ''}`
+            : 'Unknown';
+        const latest = backend.latestVersion
+            ? `${backend.latestVersion}${backend.latestBuildId ? ` (${backend.latestBuildId})` : ''}`
+            : 'Unknown';
+        const checkedAt = status?.checkedAt ? new Date(status.checkedAt).toLocaleString() : 'Unknown';
+
+        if (backend.error) {
+            badge.textContent = 'Unavailable';
+            badge.className = 'status-badge warning';
+        } else if (backend.updateAvailable) {
+            badge.textContent = 'Update Available';
+            badge.className = 'status-badge warning';
+        } else {
+            badge.textContent = 'Up to Date';
+            badge.className = 'status-badge connected';
+        }
+
+        statusEl.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;">
+                <div style="padding:0.75rem;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;">
+                    <div class="text-muted" style="font-size:0.8rem;margin-bottom:0.25rem;">Current Backend</div>
+                    <div style="font-weight:600;">${escapeHtml(current)}</div>
+                </div>
+                <div style="padding:0.75rem;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;">
+                    <div class="text-muted" style="font-size:0.8rem;margin-bottom:0.25rem;">Latest Release</div>
+                    <div style="font-weight:600;">${escapeHtml(latest)}</div>
+                </div>
+                <div style="padding:0.75rem;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;">
+                    <div class="text-muted" style="font-size:0.8rem;margin-bottom:0.25rem;">Last Checked</div>
+                    <div style="font-weight:600;">${escapeHtml(checkedAt)}</div>
+                </div>
+            </div>
+            ${backend.updateAvailable ? `<p class="text-muted" style="margin-top:0.75rem;">A newer backend release is available. Update through Docker or your deployment tooling.</p>` : ''}
+            ${backend.error ? `<p style="color:var(--error);margin-top:0.75rem;">${escapeHtml(backend.error)}</p>` : ''}
+        `;
     }
 
     function updateClientCountBadge() {

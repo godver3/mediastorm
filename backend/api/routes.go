@@ -450,6 +450,10 @@ func Register(
 	versionHandler := handlers.NewVersionHandler()
 	api.HandleFunc("/version", versionHandler.GetVersion).Methods(http.MethodGet, http.MethodOptions)
 
+	updatesHandler := handlers.NewUpdatesHandler()
+	protected.HandleFunc("/updates/status", updatesHandler.Status).Methods(http.MethodGet)
+	protected.HandleFunc("/updates/status", updatesHandler.Options).Methods(http.MethodOptions)
+
 	// Homepage dashboard integration endpoint (requires API key)
 	homepageHandler := handlers.NewHomepageHandler(accountsSvc)
 	homepageHandler.SetUserService(usersSvc)

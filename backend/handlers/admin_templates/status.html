@@ -130,8 +130,83 @@
     height: 16px;
 }
 
+.dashboard-update-banner {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding: 1rem 3.25rem 1rem 1rem;
+    border: 1px solid rgba(245, 158, 11, 0.42);
+    border-radius: var(--radius-lg);
+    background:
+        linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(99, 102, 241, 0.08)),
+        var(--bg-secondary);
+}
+
+.dashboard-update-banner[hidden] {
+    display: none;
+}
+
+.dashboard-update-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.25rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+.dashboard-update-title svg {
+    width: 18px;
+    height: 18px;
+    color: #f59e0b;
+    flex: 0 0 auto;
+}
+
+.dashboard-update-banner p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.dashboard-update-dismiss {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius);
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.dashboard-update-dismiss:hover {
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.dashboard-update-dismiss svg {
+    width: 16px;
+    height: 16px;
+}
+
 @media (max-width: 760px) {
     .donation-banner {
+        grid-template-columns: 1fr;
+        padding-right: 3rem;
+    }
+
+    .dashboard-update-banner {
         grid-template-columns: 1fr;
         padding-right: 3rem;
     }
@@ -169,6 +244,26 @@
         </a>
     </div>
     <button class="donation-banner-close" type="button" aria-label="Hide donation links permanently" title="Hide donation links" onclick="hideDonationBanner()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+    </button>
+</section>
+
+<section id="dashboardUpdateBanner" class="dashboard-update-banner" aria-label="Backend update available" hidden>
+    <div>
+        <h2 class="dashboard-update-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                <polyline points="21 3 21 9 15 9"/>
+            </svg>
+            Backend update available
+        </h2>
+        <p id="dashboardUpdateMessage">A newer backend release is available.</p>
+    </div>
+    <span class="status-badge warning">Update Available</span>
+    <button class="dashboard-update-dismiss" type="button" aria-label="Dismiss backend update notification" title="Dismiss" onclick="dismissDashboardUpdateBanner()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18"/>
             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1401,6 +1496,8 @@
 <script>
     const isAdmin = {{json .IsAdmin}};
     const donationBannerStorageKey = 'mediastormDonationBannerHidden';
+    const dashboardUpdateDismissPrefix = 'mediastormDashboardUpdateDismissed:';
+    let dashboardUpdateDismissKey = null;
 
     function hideDonationBanner() {
         const banner = document.getElementById('donationBanner');
@@ -1425,6 +1522,62 @@
             console.warn('Unable to read donation banner dismissal', error);
         }
     })();
+
+    function dismissDashboardUpdateBanner() {
+        const banner = document.getElementById('dashboardUpdateBanner');
+        if (banner) {
+            banner.hidden = true;
+        }
+        if (!dashboardUpdateDismissKey) return;
+        try {
+            localStorage.setItem(dashboardUpdateDismissKey, '1');
+        } catch (error) {
+            console.warn('Unable to persist update banner dismissal', error);
+        }
+    }
+
+    function dashboardUpdateWasDismissed(key) {
+        try {
+            return localStorage.getItem(key) === '1';
+        } catch (error) {
+            console.warn('Unable to read update banner dismissal', error);
+            return false;
+        }
+    }
+
+    async function loadDashboardUpdateNotification() {
+        const banner = document.getElementById('dashboardUpdateBanner');
+        const message = document.getElementById('dashboardUpdateMessage');
+        if (!banner || !message) return;
+        try {
+            const response = await fetch(basePath + '/api/updates/status', { credentials: 'same-origin' });
+            if (!response.ok) return;
+            const status = await response.json();
+            const backend = status && status.backend;
+            if (!backend || backend.error || !backend.updateAvailable) {
+                banner.hidden = true;
+                return;
+            }
+
+            const latestLabel = backend.latestVersion
+                ? `${backend.latestVersion}${backend.latestBuildId ? ` (${backend.latestBuildId})` : ''}`
+                : backend.latestTag || 'latest release';
+            const currentLabel = backend.currentVersion
+                ? `${backend.currentVersion}${backend.currentBuildId ? ` (${backend.currentBuildId})` : ''}`
+                : 'unknown';
+            const releaseKey = backend.latestTag || `${backend.latestVersion || 'unknown'}-${backend.latestBuildId || ''}`;
+            dashboardUpdateDismissKey = dashboardUpdateDismissPrefix + releaseKey;
+            if (dashboardUpdateWasDismissed(dashboardUpdateDismissKey)) {
+                banner.hidden = true;
+                return;
+            }
+
+            message.textContent = `Running backend ${currentLabel}; latest release is ${latestLabel}. Update through Docker or your deployment tooling.`;
+            banner.hidden = false;
+        } catch (error) {
+            console.warn('Failed to load dashboard update status:', error);
+        }
+    }
 
     // Stream view state
     let currentStreamView = localStorage.getItem('streamView') || 'card';
@@ -2491,6 +2644,7 @@
         startInterpolation();
         loadDashboardStats();
         startDashboardStatsAutoRefresh();
+        loadDashboardUpdateNotification();
         if (isAdmin) {
             testEndpoints();
             refreshDebridStatus();

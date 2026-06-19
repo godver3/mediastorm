@@ -865,6 +865,8 @@ func main() {
 	r.HandleFunc("/admin/api/calendar", adminUIHandler.RequireAuth(adminUIHandler.GetCalendarData)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/schema", adminUIHandler.RequireAuth(adminUIHandler.GetSchema)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/status", adminUIHandler.RequireAuth(adminUIHandler.GetStatus)).Methods(http.MethodGet)
+	updatesHandler := handlers.NewUpdatesHandler()
+	r.HandleFunc("/admin/api/updates/status", adminUIHandler.RequireAuth(updatesHandler.Status)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/onboarding/status", adminUIHandler.RequireMasterAuth(adminUIHandler.GetOnboardingStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/onboarding/skip", adminUIHandler.RequireMasterAuth(adminUIHandler.SkipOnboarding)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/onboarding/complete", adminUIHandler.RequireMasterAuth(adminUIHandler.CompleteOnboarding)).Methods(http.MethodPost)
