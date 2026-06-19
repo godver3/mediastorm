@@ -5227,6 +5227,7 @@ func (s *Service) discoverShelfWithOptions(ctx context.Context, mediaType string
 	}
 
 	items := make([]models.TrendingItem, 0, effectiveLimit)
+	seenTitles := make(map[string]struct{}, effectiveLimit)
 	total := 0
 	remaining := effectiveLimit
 	source := "cache"
@@ -5273,16 +5274,23 @@ func (s *Service) discoverShelfWithOptions(ctx context.Context, mediaType string
 			continue
 		}
 		pageItems := pageData.Items[pageOffset:]
-		if len(pageItems) > remaining {
-			pageItems = pageItems[:remaining]
-		}
-		for i, title := range pageItems {
+		for _, title := range pageItems {
+			key := discoverTitleDedupeKey(normalizedType, title)
+			if key != "" {
+				if _, ok := seenTitles[key]; ok {
+					continue
+				}
+				seenTitles[key] = struct{}{}
+			}
 			items = append(items, models.TrendingItem{
-				Rank:  ((page - 1) * tmdbDiscoverPageSize) + pageOffset + i + 1,
+				Rank:  offset + len(items) + 1,
 				Title: title,
 			})
+			remaining--
+			if remaining <= 0 {
+				break
+			}
 		}
-		remaining -= len(pageItems)
 		if len(pageData.Items) < tmdbDiscoverPageSize {
 			break
 		}
@@ -5305,6 +5313,20 @@ func (s *Service) discoverShelfWithOptions(ctx context.Context, mediaType string
 		time.Since(start).Round(time.Millisecond),
 	)
 	return items, total, nil
+}
+
+func discoverTitleDedupeKey(mediaType string, title models.Title) string {
+	if title.TMDBID > 0 {
+		return fmt.Sprintf("tmdb:%s:%d", mediaType, title.TMDBID)
+	}
+	if id := strings.TrimSpace(title.ID); id != "" {
+		return strings.ToLower(id)
+	}
+	name := strings.ToLower(strings.TrimSpace(title.Name))
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf("title:%s:%s:%d", mediaType, name, title.Year)
 }
 
 // GetAIRecommendations generates personalized recommendations using the configured AI provider

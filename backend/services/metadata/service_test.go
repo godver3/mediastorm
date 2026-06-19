@@ -1116,6 +1116,102 @@ func TestDiscoverByGenreWithOptionsAllowsFiftyItems(t *testing.T) {
 	}
 }
 
+func TestDiscoverByGenreWithOptionsDedupesRepeatedTMDBIDs(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	var requestedPages []string
+	svc := &Service{
+		client: &tvdbClient{language: "eng"},
+		cache:  cache,
+		tmdb: newTMDBClient("tmdb-key", "eng", &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(req.URL.Path, "/3/movie/") && strings.HasSuffix(req.URL.Path, "/images") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"backdrops":[],"posters":[],"logos":[]}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				if req.URL.Path != "/3/discover/movie" {
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Status:     "404 Not Found",
+						Body:       io.NopCloser(strings.NewReader(`{}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				page := req.URL.Query().Get("page")
+				requestedPages = append(requestedPages, page)
+				pageNum, _ := strconv.Atoi(page)
+
+				var ids []int64
+				switch pageNum {
+				case 1:
+					for id := int64(1); id <= 20; id++ {
+						ids = append(ids, id)
+					}
+				case 2:
+					ids = append(ids, 5)
+					for id := int64(21); id <= 39; id++ {
+						ids = append(ids, id)
+					}
+				default:
+					for id := int64((pageNum-1)*20 + 1); id <= int64(pageNum*20); id++ {
+						ids = append(ids, id)
+					}
+				}
+
+				results := make([]string, 0, len(ids))
+				for _, id := range ids {
+					results = append(results, fmt.Sprintf(
+						`{"id":%d,"title":"Movie %d","release_date":"2025-01-01","genre_ids":[28],"popularity":%d}`,
+						id,
+						id,
+						100-id,
+					))
+				}
+				body := fmt.Sprintf(`{"results":[%s],"total_results":60}`, strings.Join(results, ","))
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}, cache),
+	}
+
+	items, total, err := svc.DiscoverByGenreWithOptions(context.Background(), "movie", 28, 25, 0, ShelfLoadOptions{
+		Lite:         true,
+		ArtworkLimit: 20,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverByGenreWithOptions: %v", err)
+	}
+	if total != 60 {
+		t.Fatalf("total = %d, want 60", total)
+	}
+	if len(items) != 25 {
+		t.Fatalf("len(items) = %d, want 25", len(items))
+	}
+	seen := make(map[int64]bool, len(items))
+	for i, item := range items {
+		if item.Rank != i+1 {
+			t.Fatalf("item %d rank = %d, want %d", i, item.Rank, i+1)
+		}
+		if seen[item.Title.TMDBID] {
+			t.Fatalf("duplicate tmdb id %d in discover results", item.Title.TMDBID)
+		}
+		seen[item.Title.TMDBID] = true
+	}
+	if !seen[25] {
+		t.Fatalf("expected page 2 unique items to fill the limit, got ids=%v", seen)
+	}
+	if got := strings.Join(requestedPages, ","); got != "1,2" {
+		t.Fatalf("requested pages = %s, want 1,2", got)
+	}
+}
+
 func TestDiscoverByDecadeWithOptions(t *testing.T) {
 	cache := newFileCache(t.TempDir(), 24)
 	var capturedQuery string
