@@ -51,3 +51,20 @@ func TestDefaultFileFieldName(t *testing.T) {
 		t.Fatalf("nzbdav field = %q, want nzbfile", got)
 	}
 }
+
+func TestCategoryInQuery(t *testing.T) {
+	for _, engineType := range []string{"decypharr", "nzbdav"} {
+		t.Run(engineType, func(t *testing.T) {
+			if !categoryInQuery(engineType) {
+				t.Fatalf("categoryInQuery(%q) = false, want true", engineType)
+			}
+		})
+	}
+	for _, engineType := range []string{"altmount", "nzbdavex", "sabnzbd", ""} {
+		t.Run(engineType, func(t *testing.T) {
+			if categoryInQuery(engineType) {
+				t.Fatalf("categoryInQuery(%q) = true, want false", engineType)
+			}
+		})
+	}
+}

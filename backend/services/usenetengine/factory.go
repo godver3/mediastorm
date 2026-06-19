@@ -21,7 +21,7 @@ func NewFromSettings(settings config.UsenetEngineSettings, httpClient HTTPDoer) 
 			BaseURL:         settings.BaseURL,
 			APIPath:         apiPath,
 			FileFieldName:   defaultFileFieldName(engineType),
-			CategoryInQuery: engineType == "decypharr",
+			CategoryInQuery: categoryInQuery(engineType),
 			APIKey:          settings.APIKey,
 			Username:        settings.Username,
 			Password:        settings.Password,
@@ -70,6 +70,15 @@ func defaultFileFieldName(engineType string) string {
 		return "name"
 	}
 	return "nzbfile"
+}
+
+func categoryInQuery(engineType string) bool {
+	switch engineType {
+	case "decypharr", "nzbdav":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsString(values []string, needle string) bool {
