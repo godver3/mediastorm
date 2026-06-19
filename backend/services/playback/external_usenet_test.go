@@ -366,6 +366,153 @@ func TestExternalQueueStatusFallsBackToAltMountWebDAVOnMismatchedCompletedPath(t
 	}
 }
 
+func TestExternalQueueStatusAcceptsAltMountDuplicateSuffixedCompletedPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "queue":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"queue":  map[string]any{"slots": []map[string]any{}},
+			})
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "history":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"history": map[string]any{
+					"slots": []map[string]any{{
+						"nzo_id":   "altmount-job",
+						"status":   "Completed",
+						"nzb_name": "Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2.nzb",
+						"storage":  "mediastorm/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2",
+					}},
+				},
+			})
+		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/mediastorm/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2/":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/mediastorm/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/mediastorm/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv</D:displayname><D:getcontentlength>123456789</D:getcontentlength></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		default:
+			t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+	svc.externalJobs[42] = &externalUsenetJob{
+		ID:             42,
+		EngineJobID:    "altmount-job",
+		SubmittedTitle: "Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD",
+		SourceNZBPath:  "Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv.nzb",
+		Engine: config.UsenetEngineSettings{
+			Name:          "AltMount",
+			Type:          "altmount",
+			BaseURL:       server.URL,
+			APIPath:       "/sabnzbd/api",
+			WebDAVBaseURL: server.URL + "/webdav",
+		},
+	}
+
+	res, handled, err := svc.externalQueueStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("externalQueueStatus: %v", err)
+	}
+	if !handled {
+		t.Fatal("handled = false")
+	}
+	want := server.URL + "/webdav/mediastorm/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv_2/Sophies.Choice.1982.RERiP.MULTi.1080p.BluRay.x264-ULSHD.mkv"
+	if res.WebDAVPath != want {
+		t.Fatalf("WebDAVPath = %q, want %q", res.WebDAVPath, want)
+	}
+	if res.HealthStatus != "healthy" {
+		t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+	}
+}
+
+func TestExternalQueueStatusFallsBackToAltMountCategoryRoot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "queue":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"queue":  map[string]any{"slots": []map[string]any{}},
+			})
+		case r.URL.Path == "/sabnzbd/api" && r.URL.Query().Get("mode") == "history":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"history": map[string]any{
+					"slots": []map[string]any{{
+						"nzo_id":   "altmount-job",
+						"status":   "Completed",
+						"nzb_name": "Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv.nzb",
+						"storage":  "mediastorm",
+					}},
+				},
+			})
+		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/mediastorm/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv/":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/mediastorm/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/mediastorm/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv</D:displayname><D:getcontentlength>123456789</D:getcontentlength></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		case r.Method == "HEAD":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == "PROPFIND":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+	svc.externalJobs[42] = &externalUsenetJob{
+		ID:             42,
+		EngineJobID:    "altmount-job",
+		SubmittedTitle: "Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION",
+		SourceNZBPath:  "Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv.nzb",
+		Engine: config.UsenetEngineSettings{
+			Name:          "AltMount",
+			Type:          "altmount",
+			BaseURL:       server.URL,
+			APIPath:       "/sabnzbd/api",
+			WebDAVBaseURL: server.URL + "/webdav",
+			Category:      "mediastorm",
+		},
+	}
+
+	res, handled, err := svc.externalQueueStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("externalQueueStatus: %v", err)
+	}
+	if !handled {
+		t.Fatal("handled = false")
+	}
+	want := server.URL + "/webdav/mediastorm/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv/Over.Your.Dead.Body.2026.NORDiC.2160p.WEB-DL.H.264.DV.HDR.DDP5.1-ADDICTION.mkv"
+	if res.WebDAVPath != want {
+		t.Fatalf("WebDAVPath = %q, want %q", res.WebDAVPath, want)
+	}
+	if res.HealthStatus != "healthy" {
+		t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+	}
+}
+
 func TestExternalQueueStatusRejectsStaleAltMountStatusFileName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

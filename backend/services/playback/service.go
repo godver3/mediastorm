@@ -865,6 +865,7 @@ func externalReleaseName(value string) string {
 	if decoded, err := url.PathUnescape(value); err == nil {
 		value = decoded
 	}
+	value = stripDuplicateReleaseSuffix(value)
 	for {
 		ext := path.Ext(value)
 		if ext == "" {
@@ -877,6 +878,7 @@ func externalReleaseName(value string) string {
 			}
 		}
 		value = strings.TrimSuffix(value, ext)
+		value = stripDuplicateReleaseSuffix(value)
 	}
 	return strings.TrimSpace(value)
 }
@@ -950,10 +952,9 @@ func (s *Service) resolveExternalWebDAVFallback(ctx context.Context, engine conf
 					return "", true, err
 				}
 				if isExternalPlayableURL(candidateURL) {
-					if ok := s.externalWebDAVURLExists(ctx, engine, candidateURL); !ok {
-						continue
+					if ok := s.externalWebDAVURLExists(ctx, engine, candidateURL); ok {
+						return candidateURL, true, nil
 					}
-					return candidateURL, true, nil
 				}
 				selected, err := s.findExternalWebDAVMediaFile(ctx, engine, candidateURL, 0)
 				if err != nil {
@@ -1040,7 +1041,7 @@ func externalFallbackBasePaths(engine config.UsenetEngineSettings) []string {
 		if completeDir == "" {
 			completeDir = "complete"
 		}
-		return []string{path.Join(category, completeDir)}
+		return []string{category, path.Join(category, completeDir)}
 	case "decypharr":
 		return []string{"nzbs"}
 	default:
