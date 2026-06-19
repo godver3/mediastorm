@@ -2854,7 +2854,17 @@
         handleFieldChange(basePath, fieldKey, parsed);
     }
 
-    function renderAdditionalFieldHint(sectionKey, fieldKey) {
+    function renderAdditionalFieldHint(sectionKey, fieldKey, item) {
+        if (sectionKey === 'usenetEngines' && fieldKey === 'webdavBaseUrl') {
+            const engineType = String(item?.type || '').toLowerCase();
+            if (engineType === 'altmount' || engineType === 'decypharr') {
+                return '<p class="form-hint">Use the engine WebDAV endpoint, usually the API host plus <code>/webdav</code>, for example <code>http://host:port/webdav</code>.</p>';
+            }
+            if (engineType === 'nzbdav' || engineType === 'nzbdavex') {
+                return '<p class="form-hint">Use the WebDAV root URL without <code>/webdav</code>, for example <code>http://host:port</code>.</p>';
+            }
+            return '<p class="form-hint">AltMount and Decypharr usually use <code>/webdav</code>; NZBDav and NZBDavEx usually use the root URL.</p>';
+        }
         if (fieldKey !== 'maxStreams') return '';
         if (sectionKey === 'liveTV' && selectedUserId) {
             return '<p class="form-hint">Leave empty to inherit global.</p>';
@@ -4921,7 +4931,11 @@
                 } else {
                     fieldValue = item[fieldKey];
                 }
-                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+'"><label class="form-label">'+fieldDef.label+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+renderAdditionalFieldHint(sectionKey, fieldKey)+renderApiKeyFormatWarning(fieldKey, fieldValue)+'</div>';
+                const isRequired = fieldDef.required === true;
+                const isMissingRequired = isRequired && (fieldValue === undefined || fieldValue === null || String(fieldValue).trim() === '');
+                const requiredBadge = isMissingRequired ? '<span style="margin-left:0.4rem;color:var(--warning);font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">Required</span>' : '';
+                const requiredHint = isMissingRequired ? '<p class="form-hint" style="color:var(--warning);">Required before testing or saving this provider.</p>' : '';
+                return '<div class="form-group'+(fieldDef.type === 'boolean' ? ' form-group-toggle' : '')+(isMissingRequired ? ' required-missing' : '')+'"><label class="form-label">'+fieldDef.label+requiredBadge+'</label>'+renderInput(fieldKey, fieldDef, fieldValue, basePath+'.'+index, sectionKey)+(fieldDef.description ? '<p class="form-hint">'+fieldDef.description+'</p>' : '')+requiredHint+renderAdditionalFieldHint(sectionKey, fieldKey, item)+renderApiKeyFormatWarning(fieldKey, fieldValue)+'</div>';
             }).join('');
             const testBtn = isTestable ? '<button id="test-btn-'+sectionKey+'-'+index+'" class="btn btn-sm btn-secondary" onclick="testProvider(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test</button>' : '';
             const hiddenChannelsBtn = (sectionKey === 'live.sources' || sectionKey === 'liveTV.sources')

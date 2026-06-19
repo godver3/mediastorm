@@ -335,8 +335,8 @@ var SettingsSchema = map[string]interface{}{
 		"is_array":    true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Display name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Provider", "options": []map[string]string{{"value": "altmount", "label": "AltMount"}, {"value": "nzbdav", "label": "NZBDav"}, {"value": "nzbdavex", "label": "NZBDavEx"}, {"value": "decypharr", "label": "Decypharr"}}, "description": "External engine type", "order": 1},
-			"baseUrl": map[string]interface{}{"type": "text", "label": "API Base URL", "description": "Base URL for the engine control API, without the API path.", "placeholder": "http://engine:8080", "order": 2},
+			"type":    map[string]interface{}{"type": "select", "label": "Provider", "options": []map[string]string{{"value": "altmount", "label": "AltMount"}, {"value": "nzbdav", "label": "NZBDav"}, {"value": "nzbdavex", "label": "NZBDavEx"}, {"value": "decypharr", "label": "Decypharr"}}, "description": "External engine type", "required": true, "order": 1},
+			"baseUrl": map[string]interface{}{"type": "text", "label": "API Base URL", "description": "Base URL for the engine control API, without the API path.", "placeholder": "http://engine:8080", "required": true, "order": 2},
 			"apiPath": map[string]interface{}{
 				"type":        "text",
 				"label":       "API Path",
@@ -347,10 +347,10 @@ var SettingsSchema = map[string]interface{}{
 			"apiKey":              map[string]interface{}{"type": "password", "label": "API Key", "description": "Optional SAB-compatible API key", "order": 4},
 			"username":            map[string]interface{}{"type": "text", "label": "API Username", "description": "Optional API basic-auth username", "order": 5},
 			"password":            map[string]interface{}{"type": "password", "label": "API Password", "description": "Optional API basic-auth password", "order": 6},
-			"webdavBaseUrl":       map[string]interface{}{"type": "text", "label": "WebDAV Base URL", "description": "Required base URL for completed files exposed by the engine.", "placeholder": "http://engine:8080/webdav", "order": 7},
+			"webdavBaseUrl":       map[string]interface{}{"type": "text", "label": "WebDAV Base URL", "description": "Required base URL for completed files exposed by the engine. AltMount and Decypharr usually include /webdav; NZBDav and NZBDavEx usually use the root URL.", "placeholder": "http://engine:8080/webdav", "required": true, "order": 7},
 			"webdavUsername":      map[string]interface{}{"type": "text", "label": "WebDAV Username", "description": "Optional WebDAV basic-auth username", "order": 8},
 			"webdavPassword":      map[string]interface{}{"type": "password", "label": "WebDAV Password", "description": "Optional WebDAV basic-auth password", "order": 9},
-			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional category to assign queued NZBs", "order": 10},
+			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional SAB category to assign queued NZBs. Leave blank for Decypharr; its custom folders are WebDAV views, not submit categories.", "order": 10},
 			"priority":            map[string]interface{}{"type": "text", "label": "Priority", "description": "Optional SAB-compatible priority", "order": 11},
 			"pollIntervalSeconds": map[string]interface{}{"type": "number", "label": "Poll Interval (seconds)", "description": "How often to poll for completion. 0 uses the backend default.", "min": 0, "order": 12},
 			"timeoutSeconds":      map[string]interface{}{"type": "number", "label": "Timeout (seconds)", "description": "Maximum wait for engine completion. 0 uses the backend default.", "min": 0, "order": 13},
@@ -5007,7 +5007,7 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	testJobID := "strmr-connection-test-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	testJobID := usenetEngineStatusProbeJobID(engineSettings)
 	if _, err := engine.Status(ctx, testJobID); err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
@@ -5023,12 +5023,21 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	categoryValidationMessage := ""
 	if err := validateUsenetEngineRemoteConfig(engineSettings, remoteConfig); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   fmt.Sprintf("SAB-compatible config check failed: %v", err),
-		})
-		return
+		if strings.EqualFold(strings.TrimSpace(engineSettings.Type), "decypharr") {
+			if explanation, explainErr := explainUsenetEngineRemoteConfigMismatch(ctx, engineSettings); explainErr == nil && explanation != "" {
+				categoryValidationMessage = explanation
+			} else {
+				categoryValidationMessage = fmt.Sprintf("Decypharr did not advertise category %q through the SAB-compatible config API; continuing because Decypharr playback uses the WebDAV nzbs folder.", usenetEngineCategoryForAdminTest(engineSettings))
+			}
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("SAB-compatible config check failed: %v", err),
+			})
+			return
+		}
 	}
 	if err := testUsenetEngineWebDAV(ctx, engineSettings); err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5037,7 +5046,10 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	categoryLocationMessage, _ := discoverUsenetEngineWebDAVCategory(ctx, engineSettings)
+	categoryLocationMessage := categoryValidationMessage
+	if categoryLocationMessage == "" {
+		categoryLocationMessage, _ = discoverUsenetEngineWebDAVCategory(ctx, engineSettings)
+	}
 	pathMappingVerified := false
 	pathMappingMessage := categoryLocationMessage
 	if testMode == "full" {
@@ -5078,6 +5090,14 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"message": message,
 	})
+}
+
+func usenetEngineStatusProbeJobID(engine config.UsenetEngineSettings) string {
+	engineType := strings.ToLower(strings.TrimSpace(engine.Type))
+	if engineType == "nzbdav" || engineType == "nzbdavex" {
+		return "00000000-0000-4000-8000-000000000000"
+	}
+	return "strmr-connection-test-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func testUsenetEngineWebDAV(ctx context.Context, engine config.UsenetEngineSettings) error {
@@ -5385,6 +5405,26 @@ func validateUsenetEngineRemoteConfig(engine config.UsenetEngineSettings, remote
 	return fmt.Errorf("configured category %q was not found in remote config; available categories: %s", category, strings.Join(available, ", "))
 }
 
+func explainUsenetEngineRemoteConfigMismatch(ctx context.Context, engine config.UsenetEngineSettings) (string, error) {
+	if !strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+		return "", nil
+	}
+	category := usenetEngineCategoryForAdminTest(engine)
+	if category == "" {
+		return "", nil
+	}
+	rootEntries, err := listAdminWebDAVDirectory(ctx, engine, strings.TrimSpace(engine.WebDAVBaseURL))
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range rootEntries {
+		if entry.IsDir && strings.EqualFold(entry.Name, category) {
+			return fmt.Sprintf("%q is exposed as a Decypharr WebDAV custom folder, but Decypharr does not advertise custom folders as SAB-compatible categories. Category will be ignored for Decypharr playback; completed files are discovered under the WebDAV nzbs folder.", category), nil
+		}
+	}
+	return "", nil
+}
+
 func testUsenetEnginePathMapping(ctx context.Context, engine config.UsenetEngineSettings) (bool, string, error) {
 	outputPath, label, err := latestCompletedUsenetEngineOutputPath(ctx, engine)
 	if err != nil {
@@ -5410,8 +5450,9 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 	if len(bigBuckBunnyTestNZB) == 0 {
 		return "", fmt.Errorf("embedded test NZB is empty")
 	}
+	testFileName := "strmr-connection-test-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".nzb"
 	submit, err := client.SubmitNZB(ctx, usenetengine.SubmitRequest{
-		FileName: "big-buck-bunny.nzb",
+		FileName: testFileName,
 		NZB:      bigBuckBunnyTestNZB,
 		Category: strings.TrimSpace(engine.Category),
 		Priority: strings.TrimSpace(engine.Priority),
@@ -5439,6 +5480,11 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 	deadline := time.Now().Add(timeout)
 	var lastStatus *usenetengine.JobStatus
 	for {
+		if strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+			if message, ok := testDecypharrAdminWebDAVFallback(ctx, engine, testFileName); ok {
+				return message, nil
+			}
+		}
 		status, err := client.Status(ctx, jobID)
 		if err != nil {
 			return "", fmt.Errorf("poll test NZB status: %w", err)
@@ -5482,6 +5528,31 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+func testDecypharrAdminWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, testFileName string) (string, bool) {
+	baseName := strings.TrimSuffix(path.Base(strings.TrimSpace(testFileName)), path.Ext(strings.TrimSpace(testFileName)))
+	if baseName == "" {
+		return "", false
+	}
+	outputPath := path.Join("/mnt/decypharr/downloads", baseName)
+	if prefix := strings.TrimSpace(engine.Config["webdavPathPrefix"]); prefix != "" {
+		outputPath = path.Join(prefix, "downloads", baseName)
+	}
+	mappedURL, prefixMatched, err := mapUsenetEngineOutputPathForAdminTest(engine, outputPath)
+	if err != nil {
+		return "", false
+	}
+	if err := testUsenetEngineMappedWebDAVURL(ctx, engine, mappedURL); err != nil {
+		return "", false
+	}
+	message := adminPathMappingMessage(engine, outputPath, prefixMatched)
+	if message == "" {
+		message = "completed path verified via Decypharr WebDAV fallback"
+	} else {
+		message += "; completed path verified via Decypharr WebDAV fallback"
+	}
+	return message, true
 }
 
 func adminPathMappingMessage(engine config.UsenetEngineSettings, outputPath string, prefixMatched bool) string {
