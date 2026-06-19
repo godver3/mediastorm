@@ -1255,12 +1255,130 @@ func TestDiscoverByDecadeWithOptions(t *testing.T) {
 	}
 	if !strings.Contains(capturedQuery, "primary_release_date.gte=1980-01-01") ||
 		!strings.Contains(capturedQuery, "primary_release_date.lte=1989-12-31") ||
-		!strings.Contains(capturedQuery, "vote_count.gte=300") {
+		!strings.Contains(capturedQuery, "vote_count.gte=300") ||
+		!strings.Contains(capturedQuery, "language=en-US") ||
+		!strings.Contains(capturedQuery, "with_original_language=en") {
 		t.Fatalf("decade filters missing from query: %s", capturedQuery)
 	}
 
 	if _, _, err := svc.DiscoverByDecadeWithOptions(context.Background(), "movie", 1985, 20, 0, ShelfLoadOptions{}); err == nil {
 		t.Fatalf("expected error for non-decade year")
+	}
+}
+
+func TestDiscoverByGenreWithOptionsFiltersOriginalLanguage(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	var capturedQuery string
+	svc := &Service{
+		client: &tvdbClient{language: "jpn"},
+		cache:  cache,
+		tmdb: newTMDBClient("tmdb-key", "jpn", &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(req.URL.Path, "/3/movie/") && strings.HasSuffix(req.URL.Path, "/images") {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"backdrops":[],"posters":[],"logos":[]}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				if req.URL.Path != "/3/discover/movie" {
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Status:     "404 Not Found",
+						Body:       io.NopCloser(strings.NewReader(`{}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				capturedQuery = req.URL.RawQuery
+				body := `{"results":[{"id":1,"title":"Genre Movie","release_date":"2025-01-01","popularity":50}],"total_results":1}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		}, cache),
+	}
+
+	items, total, err := svc.DiscoverByGenreWithOptions(context.Background(), "movie", 28, 20, 0, ShelfLoadOptions{
+		Lite:         true,
+		ArtworkLimit: 20,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverByGenreWithOptions: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("total = %d len(items) = %d, want 1/1", total, len(items))
+	}
+	if !strings.Contains(capturedQuery, "with_genres=28") ||
+		!strings.Contains(capturedQuery, "language=ja-US") ||
+		!strings.Contains(capturedQuery, "with_original_language=ja") {
+		t.Fatalf("genre language filters missing from query: %s", capturedQuery)
+	}
+}
+
+func TestSimilarUsesMetadataOriginalLanguage(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	var discoverQuery string
+	svc := &Service{
+		client: &tvdbClient{language: "jpn"},
+		cache:  cache,
+		tmdb: newTMDBClient("tmdb-key", "jpn", &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.Path {
+				case "/3/movie/123":
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"genres":[{"id":28}],"original_language":"ko","release_date":"2020-01-01"}`)),
+						Header:     make(http.Header),
+					}, nil
+				case "/3/movie/123/keywords":
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(`{"keywords":[{"id":101}]}`)),
+						Header:     make(http.Header),
+					}, nil
+				case "/3/discover/movie":
+					discoverQuery = req.URL.RawQuery
+					body := `{"results":[` +
+						`{"id":201,"title":"Movie 201","release_date":"2020-01-01","original_language":"ja","popularity":50},` +
+						`{"id":202,"title":"Movie 202","release_date":"2020-01-01","original_language":"ja","popularity":49},` +
+						`{"id":203,"title":"Movie 203","release_date":"2020-01-01","original_language":"ja","popularity":48},` +
+						`{"id":204,"title":"Movie 204","release_date":"2020-01-01","original_language":"ja","popularity":47},` +
+						`{"id":205,"title":"Movie 205","release_date":"2020-01-01","original_language":"ja","popularity":46}` +
+						`],"total_results":5}`
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Status:     "200 OK",
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     make(http.Header),
+					}, nil
+				default:
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Status:     "404 Not Found",
+						Body:       io.NopCloser(strings.NewReader(`{}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+			}),
+		}, cache),
+	}
+
+	titles, err := svc.Similar(context.Background(), "movie", 123)
+	if err != nil {
+		t.Fatalf("Similar: %v", err)
+	}
+	if len(titles) != 5 {
+		t.Fatalf("len(titles) = %d, want 5", len(titles))
+	}
+	if !strings.Contains(discoverQuery, "with_original_language=ja") ||
+		strings.Contains(discoverQuery, "with_original_language=ko") {
+		t.Fatalf("similar query did not use metadata language: %s", discoverQuery)
 	}
 }
 

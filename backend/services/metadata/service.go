@@ -5070,8 +5070,8 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 		normalizedType = "series"
 	}
 
-	// Check cache first (v3 = era/language-aware discover engine)
-	cacheID := cacheKey("discover", "similar", "v3", normalizedType, fmt.Sprintf("%d", tmdbID))
+	// Check cache first (v4 = metadata-language-aware discover engine)
+	cacheID := cacheKey("discover", "similar", "v4", normalizedType, fmt.Sprintf("%d", tmdbID), strings.TrimSpace(s.client.language))
 	var cached []models.Title
 	if ok, _ := s.cache.get(cacheID, &cached); ok {
 		log.Printf("[metadata] similar cache hit type=%s tmdbId=%d count=%d", normalizedType, tmdbID, len(cached))
@@ -5093,11 +5093,13 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 
 	var titles []models.Title
 
-	// Pass 1: genres + keywords + era + language (tightest match)
+	metadataOriginalLanguage := tmdbOriginalLanguageFilter(s.tmdb.language)
+
+	// Pass 1: genres + keywords + era + metadata language (tightest match)
 	if len(seed.GenreIDs) > 0 {
 		opts := discoverSimilarOpts{
 			KeywordIDs:       seed.KeywordIDs,
-			OriginalLanguage: seed.OriginalLanguage,
+			OriginalLanguage: metadataOriginalLanguage,
 			YearFrom:         yearFrom,
 			YearTo:           yearTo,
 		}
@@ -5127,15 +5129,6 @@ func (s *Service) Similar(ctx context.Context, mediaType string, tmdbID int64) (
 			}
 		}
 
-		// Pass 4: drop language constraint if still too few
-		if len(titles) < 5 {
-			log.Printf("[metadata] similar pass3 too few (%d), retrying without language filter", len(titles))
-			opts.OriginalLanguage = ""
-			pass4, err4 := s.tmdb.discoverSimilar(ctx, normalizedType, seed.GenreIDs, tmdbID, opts)
-			if err4 == nil && len(pass4) > len(titles) {
-				titles = pass4
-			}
-		}
 	}
 
 	// Fall back to TMDB's /similar endpoint if discover didn't produce results
@@ -5168,7 +5161,7 @@ func (s *Service) DiscoverByGenreWithOptions(ctx context.Context, mediaType stri
 	}
 	return s.discoverShelfWithOptions(ctx, mediaType, limit, offset, opts,
 		fmt.Sprintf("genre genreId=%d", genreID),
-		[]string{"genre", fmt.Sprintf("%d", genreID)},
+		[]string{"genre", "v2", fmt.Sprintf("%d", genreID)},
 		func(normalizedType string, page int) ([]models.Title, int, error) {
 			return s.tmdb.discoverByGenre(ctx, normalizedType, genreID, page)
 		})
@@ -5185,7 +5178,7 @@ func (s *Service) DiscoverByDecadeWithOptions(ctx context.Context, mediaType str
 	}
 	return s.discoverShelfWithOptions(ctx, mediaType, limit, offset, opts,
 		fmt.Sprintf("decade decade=%d", decadeStart),
-		[]string{"decade", fmt.Sprintf("%d", decadeStart), "v2"},
+		[]string{"decade", fmt.Sprintf("%d", decadeStart), "v3"},
 		func(normalizedType string, page int) ([]models.Title, int, error) {
 			return s.tmdb.discoverByDecade(ctx, normalizedType, decadeStart, page)
 		})

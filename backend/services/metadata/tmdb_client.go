@@ -3072,7 +3072,7 @@ func (c *tmdbClient) discoverSimilar(ctx context.Context, mediaType string, genr
 		endpoint += "&with_keywords=" + strings.Join(kwParts, "|")
 	}
 	if opts.OriginalLanguage != "" {
-		endpoint += "&with_original_language=" + opts.OriginalLanguage
+		endpoint += "&with_original_language=" + url.QueryEscape(opts.OriginalLanguage)
 	}
 	dateField := "first_air_date"
 	if apiMediaType == "movie" {
@@ -3168,6 +3168,7 @@ func (c *tmdbClient) fetchSimilar(ctx context.Context, mediaType string, tmdbID 
 	if lang := strings.TrimSpace(c.language); lang != "" {
 		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
 	}
+	originalLanguage := tmdbOriginalLanguageFilter(c.language)
 
 	var payload tmdbSimilarResponse
 	if err := c.doGET(ctx, endpoint, &payload); err != nil {
@@ -3177,6 +3178,9 @@ func (c *tmdbClient) fetchSimilar(ctx context.Context, mediaType string, tmdbID 
 	// Convert results to Title slice
 	titles := make([]models.Title, 0, len(payload.Results))
 	for _, r := range payload.Results {
+		if originalLanguage != "" && !tmdbOriginalLanguageMatches(r.OriginalLanguage, originalLanguage) {
+			continue
+		}
 		// Determine the media type for the result
 		resultMediaType := "movie"
 		if apiMediaType == "tv" {
@@ -3327,6 +3331,9 @@ func (c *tmdbClient) discoverTitles(ctx context.Context, mediaType, filterQuery,
 		tmdbBaseURL, apiMediaType, c.apiKey, filterQuery, page)
 	if lang := strings.TrimSpace(c.language); lang != "" {
 		endpoint = endpoint + "&language=" + normalizeLanguage(lang)
+		if originalLanguage := tmdbOriginalLanguageFilter(lang); originalLanguage != "" {
+			endpoint = endpoint + "&with_original_language=" + url.QueryEscape(originalLanguage)
+		}
 	}
 
 	var payload struct {
@@ -3391,4 +3398,18 @@ func (c *tmdbClient) discoverTitles(ctx context.Context, mediaType, filterQuery,
 	}
 
 	return titles, payload.TotalResults, nil
+}
+
+func tmdbOriginalLanguageFilter(lang string) string {
+	normalized := normalizeLanguage(lang)
+	if len(normalized) < 2 {
+		return ""
+	}
+	return strings.ToLower(normalized[:2])
+}
+
+func tmdbOriginalLanguageMatches(value, want string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	want = strings.ToLower(strings.TrimSpace(want))
+	return value != "" && want != "" && value == want
 }
