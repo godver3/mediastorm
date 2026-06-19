@@ -3323,7 +3323,7 @@
                         </div>
                     </div>
                     <input id="webPlayerSeek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginWebPlayerSeekInput()" ontouchstart="beginWebPlayerSeekInput()" onkeydown="beginWebPlayerSeekInput()" oninput="previewWebPlayerSeek(this.value)" onchange="commitWebPlayerSeek(this.value)">
-                    <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>
+                    <div id="webPlayerTime" class="web-player-time">${formatTime(hlsPlaybackOffset)} / ${formatDurationLabel(hlsDuration)}</div>
                 </div>
                 <div class="web-player-track-controls">
                     ${renderWebPlayerTrackSelectors()}
@@ -3565,8 +3565,10 @@
 
     function currentWebPlayerDuration() {
         const video = document.getElementById('webPlayer');
-        const absoluteTime = currentWebPlayerAbsoluteTime();
-        return hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + hlsPlaybackOffset);
+        if (Number.isFinite(Number(hlsDuration)) && Number(hlsDuration) > 0) return Number(hlsDuration);
+        const mediaDuration = Number(video?.duration);
+        if (Number.isFinite(mediaDuration) && mediaDuration > 0) return mediaDuration + hlsPlaybackOffset;
+        return 0;
     }
 
     function startWebPlayerProgressTracking(video) {
@@ -3694,17 +3696,16 @@
         const volumeValue = document.getElementById('webPlayerVolumeValue');
         const volumeIcon = document.getElementById('webPlayerVolumeIcon');
         const host = document.getElementById('videoHost');
-        const absoluteTime = currentWebPlayerAbsoluteTime();
         const controlTime = currentWebPlayerControlTime();
-        const duration = hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + hlsPlaybackOffset);
+        const duration = currentWebPlayerDuration();
         if (seek) {
-            seek.disabled = webPlayerSeekInProgress;
+            seek.disabled = webPlayerSeekInProgress || duration <= 0;
         }
         if (seek && !webPlayerSeekInputActive) {
             seek.max = String(Math.max(1, Math.floor(duration || 1)));
             seek.value = String(Math.floor(Math.min(controlTime, duration || controlTime)));
         }
-        if (time) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+        if (time) time.textContent = `${formatTime(controlTime)} / ${formatDurationLabel(duration)}`;
         if (button && video) {
             const isPlaying = !video.paused;
             if (host) host.classList.toggle('web-player-paused', !isPlaying);
@@ -4705,6 +4706,11 @@
         const secs = total % 60;
         if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
         return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function formatDurationLabel(seconds) {
+        const value = Number(seconds);
+        return Number.isFinite(value) && value > 0 ? formatTime(value) : '--:--';
     }
 
     async function selectPreferredTracks(path, preferences) {

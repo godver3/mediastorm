@@ -259,6 +259,7 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 		"-show_streams",
 		"-i", url,
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -538,6 +539,7 @@ func (m *HLSManager) probeAudioStreamsFromURL(ctx context.Context, url string) (
 		"-of", "json",
 		"-i", url,
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -723,6 +725,7 @@ func (m *HLSManager) probeSubtitleStreamsFromURL(ctx context.Context, url string
 		"-of", "json",
 		"-i", url,
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -862,6 +865,7 @@ func (m *HLSManager) probeDurationFromURL(ctx context.Context, url string) (floa
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		"-i", url,
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -962,6 +966,7 @@ func (m *HLSManager) probeColorMetadataFromURL(ctx context.Context, url string) 
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		"-i", url,
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -1035,6 +1040,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 		"-read_intervals", fmt.Sprintf("%.3f%%+#1", seekTime),
 		"-of", "csv=p=0",
 	}
+	args = append(m.externalFFmpegHeaders(url), args...)
 
 	cmd := exec.CommandContext(probeCtx, m.ffprobePath, args...)
 	output, err := cmd.Output()
@@ -1053,6 +1059,7 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 			"-read_intervals", fmt.Sprintf("%.3f%%+#5", seekTime),
 			"-of", "csv=p=0",
 		}
+		args = append(m.externalFFmpegHeaders(url), args...)
 		cmd = exec.CommandContext(probeCtx, m.ffprobePath, args...)
 		output, err = cmd.Output()
 		if err != nil {

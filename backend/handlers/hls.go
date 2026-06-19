@@ -864,6 +864,27 @@ func (m *HLSManager) applyExternalUsenetWebDAVAuth(req *http.Request) {
 	}
 }
 
+func (m *HLSManager) externalFFmpegHeaders(rawURL string) []string {
+	parsedURL, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsedURL == nil {
+		return nil
+	}
+
+	req := &http.Request{URL: parsedURL, Header: make(http.Header)}
+	if parsedURL.User != nil {
+		password, _ := parsedURL.User.Password()
+		req.SetBasicAuth(parsedURL.User.Username(), password)
+	} else {
+		m.applyExternalUsenetWebDAVAuth(req)
+	}
+
+	authHeader := req.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil
+	}
+	return []string{"-headers", "Authorization: " + authHeader + "\r\n"}
+}
+
 // ConfigureLocalWebDAVAccess allows the manager to build direct URLs against the local WebDAV server.
 // baseURL should be something like http://127.0.0.1:7777. prefix is the configured WebDAV prefix (e.g., /webdav).
 func (m *HLSManager) ConfigureLocalWebDAVAccess(baseURL, prefix, username, password string) {
@@ -948,6 +969,7 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 		return "", fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+	m.applyExternalUsenetWebDAVAuth(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -976,6 +998,7 @@ func (m *HLSManager) resolveExternalURL(ctx context.Context, externalURL string)
 	}
 	req.Header.Set("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
 	req.Header.Set("Range", "bytes=0-0") // Request only 1 byte
+	m.applyExternalUsenetWebDAVAuth(req)
 
 	resp, err = client.Do(req)
 	if err != nil {

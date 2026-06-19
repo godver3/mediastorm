@@ -1128,7 +1128,7 @@
           </button>
           ${isLive ? `<div class="seek-spacer"></div>
           <div id="time" class="time live-indicator"><span class="live-dot"></span>LIVE</div>` : `<input id="seek" class="seek" type="range" min="0" max="${Math.max(1, Math.floor(hlsDuration || 1))}" step="1" value="${Math.floor(hlsPlaybackOffset)}" onpointerdown="beginSeekInput()" onmousedown="beginSeekInput()" ontouchstart="beginSeekInput()" onkeydown="beginSeekInput()" oninput="previewSeek(this.value)" onchange="commitSeek(this.value)" onblur="cancelSeekInput()">
-          <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatTime(hlsDuration)}</div>`}
+          <div id="time" class="time">${formatTime(hlsPlaybackOffset)} / ${formatDurationLabel(hlsDuration)}</div>`}
         </div>
         ${isLive ? '' : `<div class="track-backdrop" onclick="closeTrackSheet()" aria-hidden="true"></div>
         <div class="track-controls" role="dialog" aria-modal="true" aria-label="Audio and subtitles">
@@ -1492,8 +1492,12 @@
         return elapsed + 24 * 60 * 60;
       }
       const video = document.getElementById('webPlayer');
-      const absoluteTime = currentAbsoluteTime();
-      return hlsDuration || Math.max(absoluteTime, Number(video?.duration || 0) + (hlsSessionId ? hlsPlaybackOffset : 0));
+      if (Number.isFinite(Number(hlsDuration)) && Number(hlsDuration) > 0) return Number(hlsDuration);
+      const mediaDuration = Number(video?.duration);
+      if (Number.isFinite(mediaDuration) && mediaDuration > 0) {
+        return mediaDuration + (hlsSessionId ? hlsPlaybackOffset : 0);
+      }
+      return 0;
     }
 
     function currentControlTime() {
@@ -1564,12 +1568,12 @@
       const duration = currentDuration();
       const controlTime = currentControlTime();
       if (seek && !webPlayerSeekInputActive) {
-        seek.disabled = webPlayerSeekInProgress;
+        seek.disabled = webPlayerSeekInProgress || duration <= 0;
         seek.max = String(Math.max(1, Math.floor(duration || 1)));
         seek.value = String(Math.floor(Math.min(controlTime, duration || controlTime)));
       }
       // Live playback shows a static "LIVE" badge in #time — don't overwrite it.
-      if (time && !playbackMeta.isLive) time.textContent = `${formatTime(controlTime)} / ${formatTime(duration)}`;
+      if (time && !playbackMeta.isLive) time.textContent = `${formatTime(controlTime)} / ${formatDurationLabel(duration)}`;
       const volumeSlider = document.getElementById('volumeSlider');
       if (volumeSlider && document.activeElement !== volumeSlider) {
         volumeSlider.value = String(video.muted ? 0 : Number(video.volume || 0));
@@ -2156,6 +2160,11 @@
       const secs = total % 60;
       if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
       return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function formatDurationLabel(seconds) {
+      const value = Number(seconds);
+      return Number.isFinite(value) && value > 0 ? formatTime(value) : '--:--';
     }
 
     function setStatus(message, error) {
