@@ -720,6 +720,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	}
 
 	isLocalMediaPath := strings.HasPrefix(cleanPath, "localmedia:")
+	isDebridPath := isDebridStreamPath(cleanPath)
 
 	// Create a context with timeout to prevent hanging streams
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
@@ -731,7 +732,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	// seek storms from hammering the debrid CDN. ExoPlayer on Android TV generates
 	// hundreds of 2-byte range requests when seeking through DV files with
 	// interleaved tracks. Each CDN round trip takes ~1s, causing multi-second stalls.
-	if rangeHeader != "" && r.Method == http.MethodGet && !isLocalMediaPath {
+	if rangeHeader != "" && r.Method == http.MethodGet && isDebridPath && !isLocalMediaPath {
 		if rangeStart, rangeEnd, ok := parseByteRange(rangeHeader); ok {
 			rangeLen := rangeEnd - rangeStart + 1
 			if rangeLen > 0 && rangeLen <= rangeCacheMinFetchSize {
@@ -829,7 +830,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	// in non-interleaved MP4 files. The pool keeps CDN connections alive after
 	// client disconnects, so the next request at a nearby position is served
 	// from the buffer instead of making a new CDN round-trip.
-	if rangeHeader != "" && r.Method == http.MethodGet && h.streamPool != nil && !isLocalMediaPath {
+	if rangeHeader != "" && r.Method == http.MethodGet && h.streamPool != nil && isDebridPath && !isLocalMediaPath {
 		if reqStart, ok := parseRangeStart(rangeHeader); ok {
 			displayName := sanitizeExternalDisplayName(r.URL.Query().Get("displayName"))
 			if displayName == "" {
@@ -2781,6 +2782,13 @@ func sanitizeExternalDisplayName(input string) string {
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, "\\", "_")
 	return strings.TrimSpace(name)
+}
+
+func isDebridStreamPath(cleanPath string) bool {
+	trimmed := strings.TrimSpace(cleanPath)
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	trimmed = strings.TrimPrefix(trimmed, "webdav/")
+	return strings.HasPrefix(strings.ToLower(trimmed), "debrid/")
 }
 
 func inferFilenameFromPath(cleanPath string) string {
