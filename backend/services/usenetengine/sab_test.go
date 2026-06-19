@@ -71,6 +71,52 @@ func TestSABClientSubmitNZBUsesAddFileMultipart(t *testing.T) {
 	}
 }
 
+func TestSABClientSubmitNZBCanSendCategoryInQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("cat"); got != "mediastorm" {
+			t.Fatalf("query cat = %q, want mediastorm", got)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		var multipartCat string
+		if r.MultipartForm != nil && len(r.MultipartForm.Value["cat"]) > 0 {
+			multipartCat = r.MultipartForm.Value["cat"][0]
+		}
+		if got := multipartCat; got != "" {
+			t.Fatalf("multipart cat = %q, want empty", got)
+		}
+		if _, _, err := r.FormFile("name"); err != nil {
+			t.Fatalf("FormFile(name): %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  true,
+			"nzo_ids": []string{"decypharr-job"},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewSABClient(SABConfig{
+		BaseURL:         server.URL,
+		FileFieldName:   "name",
+		CategoryInQuery: true,
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("NewSABClient: %v", err)
+	}
+	res, err := client.SubmitNZB(context.Background(), SubmitRequest{
+		FileName: "movie.nzb",
+		NZB:      []byte("<nzb/>"),
+		Category: "mediastorm",
+	})
+	if err != nil {
+		t.Fatalf("SubmitNZB: %v", err)
+	}
+	if res.JobID != "decypharr-job" {
+		t.Fatalf("JobID = %q, want decypharr-job", res.JobID)
+	}
+}
+
 func TestSABClientStatusNormalizesQueueSlot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("mode"); got != "queue" {

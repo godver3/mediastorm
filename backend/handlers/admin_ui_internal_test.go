@@ -57,7 +57,7 @@ func TestExplainUsenetEngineRemoteConfigMismatchDetectsDecypharrCustomFolder(t *
 	if err != nil {
 		t.Fatalf("explainUsenetEngineRemoteConfigMismatch: %v", err)
 	}
-	if !strings.Contains(message, "custom folder") || !strings.Contains(message, "Category will be ignored") {
+	if !strings.Contains(message, "custom folder") || !strings.Contains(message, "Category will still be sent") {
 		t.Fatalf("message = %q", message)
 	}
 }

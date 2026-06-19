@@ -350,7 +350,7 @@ var SettingsSchema = map[string]interface{}{
 			"webdavBaseUrl":       map[string]interface{}{"type": "text", "label": "WebDAV Base URL", "description": "Required base URL for completed files exposed by the engine. AltMount and Decypharr usually include /webdav; NZBDav and NZBDavEx usually use the root URL.", "placeholder": "http://engine:8080/webdav", "required": true, "order": 7},
 			"webdavUsername":      map[string]interface{}{"type": "text", "label": "WebDAV Username", "description": "Optional WebDAV basic-auth username", "order": 8},
 			"webdavPassword":      map[string]interface{}{"type": "password", "label": "WebDAV Password", "description": "Optional WebDAV basic-auth password", "order": 9},
-			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional SAB category to assign queued NZBs. Leave blank for Decypharr; its custom folders are WebDAV views, not submit categories.", "order": 10},
+			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional SAB category to assign queued NZBs. Decypharr accepts this during submission even when it is not listed in the SAB config response; custom folders are separate WebDAV views.", "order": 10},
 			"priority":            map[string]interface{}{"type": "text", "label": "Priority", "description": "Optional SAB-compatible priority", "order": 11},
 			"pollIntervalSeconds": map[string]interface{}{"type": "number", "label": "Poll Interval (seconds)", "description": "How often to poll for completion. 0 uses the backend default.", "min": 0, "order": 12},
 			"timeoutSeconds":      map[string]interface{}{"type": "number", "label": "Timeout (seconds)", "description": "Maximum wait for engine completion. 0 uses the backend default.", "min": 0, "order": 13},
@@ -5029,7 +5029,7 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 			if explanation, explainErr := explainUsenetEngineRemoteConfigMismatch(ctx, engineSettings); explainErr == nil && explanation != "" {
 				categoryValidationMessage = explanation
 			} else {
-				categoryValidationMessage = fmt.Sprintf("Decypharr did not advertise category %q through the SAB-compatible config API; continuing because Decypharr playback uses the WebDAV nzbs folder.", usenetEngineCategoryForAdminTest(engineSettings))
+				categoryValidationMessage = fmt.Sprintf("Decypharr did not advertise category %q through the SAB-compatible config API; continuing because Decypharr accepts categories during submission and playback discovers completed NZBs under the WebDAV nzbs folder.", usenetEngineCategoryForAdminTest(engineSettings))
 			}
 		} else {
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5419,7 +5419,7 @@ func explainUsenetEngineRemoteConfigMismatch(ctx context.Context, engine config.
 	}
 	for _, entry := range rootEntries {
 		if entry.IsDir && strings.EqualFold(entry.Name, category) {
-			return fmt.Sprintf("%q is exposed as a Decypharr WebDAV custom folder, but Decypharr does not advertise custom folders as SAB-compatible categories. Category will be ignored for Decypharr playback; completed files are discovered under the WebDAV nzbs folder.", category), nil
+			return fmt.Sprintf("%q is exposed as a Decypharr WebDAV custom folder, but Decypharr does not advertise custom folders as SAB-compatible categories. Category will still be sent when submitting NZBs; completed files are discovered under the WebDAV nzbs folder.", category), nil
 		}
 	}
 	return "", nil

@@ -16,13 +16,14 @@ import (
 )
 
 type SABConfig struct {
-	Name          string
-	BaseURL       string
-	APIPath       string
-	FileFieldName string
-	APIKey        string
-	Username      string
-	Password      string
+	Name            string
+	BaseURL         string
+	APIPath         string
+	FileFieldName   string
+	CategoryInQuery bool
+	APIKey          string
+	Username        string
+	Password        string
 }
 
 type SABClient struct {
@@ -72,7 +73,8 @@ func (c *SABClient) SubmitNZB(ctx context.Context, req SubmitRequest) (*SubmitRe
 	if _, err := part.Write(req.NZB); err != nil {
 		return nil, fmt.Errorf("write nzb payload: %w", err)
 	}
-	if req.Category != "" {
+	category := strings.TrimSpace(req.Category)
+	if category != "" && !c.cfg.CategoryInQuery {
 		if err := writer.WriteField("cat", req.Category); err != nil {
 			return nil, fmt.Errorf("write category: %w", err)
 		}
@@ -86,7 +88,11 @@ func (c *SABClient) SubmitNZB(ctx context.Context, req SubmitRequest) (*SubmitRe
 		return nil, fmt.Errorf("close multipart body: %w", err)
 	}
 
-	endpoint, err := c.apiURL("addfile", nil)
+	var extra url.Values
+	if category != "" && c.cfg.CategoryInQuery {
+		extra = url.Values{"cat": []string{category}}
+	}
+	endpoint, err := c.apiURL("addfile", extra)
 	if err != nil {
 		return nil, err
 	}

@@ -634,9 +634,6 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	if candidateCategory := strings.TrimSpace(candidate.Attributes["category"]); candidateCategory != "" {
 		category = candidateCategory
 	}
-	if strings.EqualFold(strings.TrimSpace(engineSettings.Type), "decypharr") {
-		category = ""
-	}
 	priority := strings.TrimSpace(engineSettings.Priority)
 
 	submitNZB := nzbBytes

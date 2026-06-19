@@ -17,13 +17,14 @@ func NewFromSettings(settings config.UsenetEngineSettings, httpClient HTTPDoer) 
 			apiPath = defaultAPIPath(engineType)
 		}
 		return NewSABClient(SABConfig{
-			Name:          firstConfigured(settings.Name, settings.Type, "usenet-engine"),
-			BaseURL:       settings.BaseURL,
-			APIPath:       apiPath,
-			FileFieldName: defaultFileFieldName(engineType),
-			APIKey:        settings.APIKey,
-			Username:      settings.Username,
-			Password:      settings.Password,
+			Name:            firstConfigured(settings.Name, settings.Type, "usenet-engine"),
+			BaseURL:         settings.BaseURL,
+			APIPath:         apiPath,
+			FileFieldName:   defaultFileFieldName(engineType),
+			CategoryInQuery: engineType == "decypharr",
+			APIKey:          settings.APIKey,
+			Username:        settings.Username,
+			Password:        settings.Password,
 		}, httpClient)
 	default:
 		return nil, fmt.Errorf("unsupported usenet engine type %q", settings.Type)
