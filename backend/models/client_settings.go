@@ -24,11 +24,15 @@ type ClientFilterSettings struct {
 	RemoteBackendUrl *string `json:"remoteBackendUrl,omitempty"`
 
 	// Display overrides
-	BypassFilteringForAIOStreamsOnly          *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
-	DisableMobileTopCarousel                  *bool               `json:"disableMobileTopCarousel,omitempty"`
-	NavigationTabVisibility                   *[]string           `json:"navigationTabVisibility,omitempty"`
-	NavigationTabVisibilityIncludesSystemTabs *bool               `json:"navigationTabVisibilityIncludesSystemTabs,omitempty"`
-	Appearance                                *AppearanceSettings `json:"appearance,omitempty"`
+	BypassFilteringForAIOStreamsOnly             *bool               `json:"bypassFilteringForAioStreamsOnly,omitempty"`
+	DisableMobileTopCarousel                     *bool               `json:"disableMobileTopCarousel,omitempty"`
+	BlurUnwatchedEpisodeThumbnails               *bool               `json:"blurUnwatchedEpisodeThumbnails,omitempty"`
+	BlurUnwatchedEpisodeThumbnailsIncludeCurrent *bool               `json:"blurUnwatchedEpisodeThumbnailsIncludeCurrent,omitempty"`
+	BlurUnwatchedEpisodeOverviews                *bool               `json:"blurUnwatchedEpisodeOverviews,omitempty"`
+	BlurUnwatchedEpisodeOverviewsIncludeCurrent  *bool               `json:"blurUnwatchedEpisodeOverviewsIncludeCurrent,omitempty"`
+	NavigationTabVisibility                      *[]string           `json:"navigationTabVisibility,omitempty"`
+	NavigationTabVisibilityIncludesSystemTabs    *bool               `json:"navigationTabVisibilityIncludesSystemTabs,omitempty"`
+	Appearance                                   *AppearanceSettings `json:"appearance,omitempty"`
 
 	// Playback overrides
 	PreferredPlayer               *string  `json:"preferredPlayer,omitempty"`
@@ -87,6 +91,10 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.AnimePreferredLanguage == nil &&
 		c.BypassFilteringForAIOStreamsOnly == nil &&
 		c.DisableMobileTopCarousel == nil &&
+		c.BlurUnwatchedEpisodeThumbnails == nil &&
+		c.BlurUnwatchedEpisodeThumbnailsIncludeCurrent == nil &&
+		c.BlurUnwatchedEpisodeOverviews == nil &&
+		c.BlurUnwatchedEpisodeOverviewsIncludeCurrent == nil &&
 		c.NavigationTabVisibility == nil &&
 		c.Appearance == nil &&
 		c.PreferredPlayer == nil &&

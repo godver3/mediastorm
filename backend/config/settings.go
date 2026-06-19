@@ -789,6 +789,14 @@ type DisplaySettings struct {
 	CleanPosters bool `json:"cleanPosters,omitempty"`
 	// DisableMobileTopCarousel hides the top hero carousel on mobile home.
 	DisableMobileTopCarousel bool `json:"disableMobileTopCarousel,omitempty"`
+	// BlurUnwatchedEpisodeThumbnails blurs Details-page thumbnails for unwatched episodes.
+	BlurUnwatchedEpisodeThumbnails bool `json:"blurUnwatchedEpisodeThumbnails,omitempty"`
+	// BlurUnwatchedEpisodeThumbnailsIncludeCurrent applies thumbnail blurring to the selected/current episode too.
+	BlurUnwatchedEpisodeThumbnailsIncludeCurrent bool `json:"blurUnwatchedEpisodeThumbnailsIncludeCurrent,omitempty"`
+	// BlurUnwatchedEpisodeOverviews blurs Details-page overview text for unwatched episodes.
+	BlurUnwatchedEpisodeOverviews bool `json:"blurUnwatchedEpisodeOverviews,omitempty"`
+	// BlurUnwatchedEpisodeOverviewsIncludeCurrent applies overview blurring to the selected/current episode too.
+	BlurUnwatchedEpisodeOverviewsIncludeCurrent bool `json:"blurUnwatchedEpisodeOverviewsIncludeCurrent,omitempty"`
 	// AppLanguage overrides the app UI language (ISO 639-1 code, e.g. "en", "fr"). Empty = use device locale.
 	AppLanguage string `json:"appLanguage,omitempty"`
 	// Appearance controls app-wide visual accessibility and theming preferences.

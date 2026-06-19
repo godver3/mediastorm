@@ -1492,18 +1492,26 @@
         {
             key: 'display',
             label: 'Display',
-            description: 'Badge Icon Style, navigation tabs, filtering bypass, appearance',
+            description: 'Badge Icon Style, navigation tabs, filtering bypass, episode privacy, appearance',
             detailSection: 'Display',
-            detailFields: ['Badge Icon Style', 'Navigation Tabs', 'Bypass Filtering for AIOStreams Only', 'appearance'],
+            detailFields: ['Badge Icon Style', 'Navigation Tabs', 'Bypass Filtering for AIOStreams Only', 'Blur Unwatched Episode Thumbnails', 'Blur Unwatched Episode Overview', 'appearance'],
             userPaths: [
                 'display.watchStateIconStyle',
                 'display.navigationTabVisibility',
                 'display.bypassFilteringForAioStreamsOnly',
+                'display.blurUnwatchedEpisodeThumbnails',
+                'display.blurUnwatchedEpisodeThumbnailsIncludeCurrent',
+                'display.blurUnwatchedEpisodeOverviews',
+                'display.blurUnwatchedEpisodeOverviewsIncludeCurrent',
                 'display.appearance',
             ],
             clientPaths: [
                 'navigationTabVisibility',
                 'bypassFilteringForAioStreamsOnly',
+                'blurUnwatchedEpisodeThumbnails',
+                'blurUnwatchedEpisodeThumbnailsIncludeCurrent',
+                'blurUnwatchedEpisodeOverviews',
+                'blurUnwatchedEpisodeOverviewsIncludeCurrent',
                 'appearance',
             ],
         },
@@ -2173,7 +2181,7 @@
 
     // Map filtering field paths to client settings keys
     const clientFilterFields = ['maxSizeMovieGb', 'maxSizeEpisodeGb', 'maxResolution', 'hdrDvPolicy', 'requiredTerms', 'filterOutTerms', 'preferredTerms', 'nonPreferredTerms', 'unknownTrackPolicy'];
-    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
+    const clientDisplayFields = ['bypassFilteringForAioStreamsOnly', 'navigationTabVisibility', 'blurUnwatchedEpisodeThumbnails', 'blurUnwatchedEpisodeThumbnailsIncludeCurrent', 'blurUnwatchedEpisodeOverviews', 'blurUnwatchedEpisodeOverviewsIncludeCurrent', 'appearance.fontScale', 'appearance.accentColor', 'appearance.textColor', 'appearance.secondaryTextColor', 'appearance.backgroundColor', 'appearance.modalBackgroundColor', 'appearance.buttonStyle', 'appearance.buttonRadius', 'appearance.highContrast', 'appearance.reduceOverlays'];
     const clientPlaybackFields = [
         'preferredPlayer',
         'preferredAudioLanguage',
