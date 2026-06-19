@@ -176,6 +176,91 @@ func TestResolveExternalUsenetEngineQueuesAndPollsCompletedWebDAVURL(t *testing.
 	}
 }
 
+func TestResolveExternalUsenetAltMountRewritesSubmittedNZB(t *testing.T) {
+	release := "Rick.and.Morty.S09E01.Theres.Something.About.Morty.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb-Scrambled"
+	var addFileSeen bool
+	engineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("mode") != "addfile" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": true,
+				"queue":  map[string]any{"slots": []map[string]any{}},
+			})
+			return
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm: %v", err)
+		}
+		file, header, err := r.FormFile("nzbfile")
+		if err != nil {
+			t.Fatalf("FormFile(nzbfile): %v", err)
+		}
+		defer file.Close()
+		data, _ := io.ReadAll(file)
+		wantFileName := release + ".mkv.nzb"
+		if header.Filename != wantFileName {
+			t.Fatalf("filename = %q, want %q", header.Filename, wantFileName)
+		}
+		if !strings.Contains(string(data), release+".mkv") {
+			t.Fatalf("uploaded NZB was not rewritten with media extension: %s", string(data))
+		}
+		if strings.Contains(string(data), `"TKpvdrWv5Ho7.mkv"`) {
+			t.Fatalf("uploaded NZB still contains obfuscated media subject: %s", string(data))
+		}
+		addFileSeen = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  true,
+			"nzo_ids": []string{"altmount-job-1"},
+		})
+	}))
+	defer engineServer.Close()
+
+	indexerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="`+release+`.nzb"`)
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+  <head>
+    <meta type="name">`+release+`</meta>
+    <meta type="title">96345F4P63F13t0P61t63k4J70J00437.mkv</meta>
+  </head>
+  <file subject="`+release+` [2/7] &quot;`+release+`.vol-01.par2&quot; yEnc (1/1)">
+    <segments><segment bytes="6681" number="1">par2-id</segment></segments>
+  </file>
+  <file subject="`+release+` [1/7] &quot;TKpvdrWv5Ho7.mkv&quot; yEnc (1/269)">
+    <segments><segment bytes="3961388" number="1">video-id</segment></segments>
+  </file>
+</nzb>`)
+	}))
+	defer indexerServer.Close()
+
+	settings := config.DefaultSettings()
+	settings.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:          "AltMount",
+		Type:          "altmount",
+		Enabled:       true,
+		BaseURL:       engineServer.URL,
+		WebDAVBaseURL: "http://webdav.example/webdav",
+	}}
+	cfg := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := cfg.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewService(cfg, nil, nil, nil)
+	res, err := svc.Resolve(context.Background(), models.NZBResult{
+		Title:       release,
+		DownloadURL: indexerServer.URL + "/" + release + ".nzb",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !addFileSeen {
+		t.Fatal("engine addfile was not called")
+	}
+	if res.SourceNZBPath != release+".mkv.nzb" {
+		t.Fatalf("SourceNZBPath = %q, want %q", res.SourceNZBPath, release+".mkv.nzb")
+	}
+}
+
 func TestExternalQueueStatusRejectsMismatchedCompletedPath(t *testing.T) {
 	svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
 	svc.externalJobs[42] = &externalUsenetJob{

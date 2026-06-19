@@ -636,10 +636,16 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	}
 	priority := strings.TrimSpace(engineSettings.Priority)
 
-	log.Printf("[playback] submitting NZB to external usenet engine name=%q type=%q fileName=%q", engineSettings.Name, engineSettings.Type, fileName)
+	submitNZB := nzbBytes
+	submitFileName := fileName
+	if strings.EqualFold(strings.TrimSpace(engineSettings.Type), "altmount") {
+		submitNZB, submitFileName = prepareAltMountNZBSubmission(candidate, nzbBytes, fileName)
+	}
+
+	log.Printf("[playback] submitting NZB to external usenet engine name=%q type=%q fileName=%q", engineSettings.Name, engineSettings.Type, submitFileName)
 	submit, err := engine.SubmitNZB(ctx, usenetengine.SubmitRequest{
-		FileName: fileName,
-		NZB:      nzbBytes,
+		FileName: submitFileName,
+		NZB:      submitNZB,
 		Category: category,
 		Priority: priority,
 	})
@@ -651,8 +657,8 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	if queueID <= 0 {
 		queueID = s.externalNextID.Add(1)
 	}
-	sourceNZBPath := strings.TrimSpace(fileName)
-	fileSize := estimateNZBFileSize(nzbBytes)
+	sourceNZBPath := strings.TrimSpace(submitFileName)
+	fileSize := estimateNZBFileSize(submitNZB)
 
 	s.externalMu.Lock()
 	s.externalJobs[queueID] = &externalUsenetJob{
