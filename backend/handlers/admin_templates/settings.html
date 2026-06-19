@@ -220,6 +220,37 @@
     </div>
 </div>
 
+<!-- Usenet Engine Test Mode Modal -->
+<div id="usenetEngineTestModeModal" class="test-modal" onclick="closeUsenetEngineTestModeModal(null)">
+    <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 560px;">
+        <div class="test-modal-header">
+            <h3>Choose Test Type</h3>
+            <button class="test-modal-close" onclick="closeUsenetEngineTestModeModal(null)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <div class="test-modal-body">
+            <div id="usenetEngineTestModeProvider" class="test-modal-provider"></div>
+            <div style="display: grid; gap: 0.75rem;">
+                <button class="btn btn-secondary" style="justify-content: flex-start; align-items: flex-start; flex-direction: column; gap: 0.25rem; padding: 0.85rem 1rem; text-align: left;" onclick="closeUsenetEngineTestModeModal('basic')">
+                    <strong>Basic Test</strong>
+                    <span style="font-size: 0.85rem; opacity: 0.78;">Checks API auth, remote categories, WebDAV reachability, and recent completed path mapping when history is available. Does not add a job.</span>
+                </button>
+                <button class="btn btn-primary" style="justify-content: flex-start; align-items: flex-start; flex-direction: column; gap: 0.25rem; padding: 0.85rem 1rem; text-align: left;" onclick="closeUsenetEngineTestModeModal('full')">
+                    <strong>Full Test</strong>
+                    <span style="font-size: 0.85rem; opacity: 0.86;">Submits a bundled Big Buck Bunny NZB, waits for completion, validates the mapped WebDAV path, then removes queue and history entries.</span>
+                </button>
+            </div>
+        </div>
+        <div class="test-modal-footer">
+            <button class="btn btn-secondary" onclick="closeUsenetEngineTestModeModal(null)">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Propagate Prompt Modal -->
 <div id="propagateModal" class="test-modal" onclick="closePropagateModal()">
     <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 480px;">
@@ -2778,7 +2809,7 @@
                 return { name: 'NZBDav', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
             case 'altmount':
             default:
-                return { name: 'AltMount', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+                return { name: 'AltMount', apiPath: '/sabnzbd/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
         }
     }
 
@@ -3607,9 +3638,6 @@
         const btn = document.getElementById('test-btn-'+sectionKey+'-'+index);
         if (!btn) return;
 
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-small"></span> Testing...';
-
         let endpoint, payload;
         const sectionDef = schema[sectionKey];
         let items;
@@ -3628,6 +3656,15 @@
             showTestResultModal('Unknown', false, 'Item not found');
             return;
         }
+
+        let testMode = 'basic';
+        if (sectionKey === 'usenetEngines') {
+            testMode = await chooseUsenetEngineTestMode(item.name || item.type || 'External Usenet Engine');
+            if (!testMode) return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-small"></span> Testing...';
 
         switch(sectionKey) {
             case 'indexers':
@@ -3654,12 +3691,20 @@
                 payload = {
                     name: item.name,
                     type: item.type,
+                    testMode: testMode,
                     baseUrl: item.baseUrl,
                     apiPath: item.apiPath,
                     apiKey: item.apiKey,
                     username: item.username,
                     password: item.password,
-                    webdavBaseUrl: item.webdavBaseUrl
+                    webdavBaseUrl: item.webdavBaseUrl,
+                    webdavUsername: item.webdavUsername,
+                    webdavPassword: item.webdavPassword,
+                    category: item.category,
+                    priority: item.priority,
+                    pollIntervalSeconds: item.pollIntervalSeconds,
+                    timeoutSeconds: item.timeoutSeconds,
+                    config: item.config || {}
                 };
                 break;
             case 'debridProviders':
@@ -3715,6 +3760,31 @@
         }
     }
 
+    let usenetEngineTestModeResolver = null;
+
+    function chooseUsenetEngineTestMode(providerName) {
+        const modal = document.getElementById('usenetEngineTestModeModal');
+        const providerEl = document.getElementById('usenetEngineTestModeProvider');
+        if (!modal) return Promise.resolve('basic');
+        if (providerEl) providerEl.innerHTML = '<strong>' + escapeHtml(providerName) + '</strong>';
+        modal.classList.add('visible');
+        document.body.style.overflow = 'hidden';
+        return new Promise(resolve => {
+            usenetEngineTestModeResolver = resolve;
+        });
+    }
+
+    function closeUsenetEngineTestModeModal(mode) {
+        const modal = document.getElementById('usenetEngineTestModeModal');
+        if (modal) modal.classList.remove('visible');
+        document.body.style.overflow = '';
+        if (usenetEngineTestModeResolver) {
+            const resolve = usenetEngineTestModeResolver;
+            usenetEngineTestModeResolver = null;
+            resolve(mode);
+        }
+    }
+
     // Test result modal functions
     function showTestResultModal(providerName, isSuccess, message) {
         const modal = document.getElementById('testModal');
@@ -3759,6 +3829,7 @@
     // Close modal on Escape key
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
+            closeUsenetEngineTestModeModal(null);
             closeTestModal();
         }
     });

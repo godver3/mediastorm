@@ -286,12 +286,19 @@ func (h *UsenetHandler) CheckHealth(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Result         models.NZBResult `json:"result"`
 		ProbeForTracks bool             `json:"probeForTracks,omitempty"`
+		ProfileID      string           `json:"profileId,omitempty"`
 	}
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&request); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if request.ProfileID != "" {
+		if request.Result.Attributes == nil {
+			request.Result.Attributes = map[string]string{}
+		}
+		request.Result.Attributes["profileId"] = request.ProfileID
 	}
 
 	res, err := h.Service.CheckHealth(r.Context(), request.Result)

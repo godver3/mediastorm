@@ -20,6 +20,7 @@ import (
 	"novastream/internal/httpheaders"
 	"novastream/internal/pool"
 	"novastream/models"
+	"novastream/services/usenetengine"
 
 	"github.com/javi11/nntppool"
 )
@@ -70,11 +71,15 @@ func (s *Service) CheckHealth(ctx context.Context, candidate models.NZBResult) (
 	start := time.Now()
 	log.Printf("[usenet] health check start title=%q url=%q", strings.TrimSpace(candidate.Title), downloadURL)
 
+	profileID := strings.TrimSpace(candidate.Attributes["profileId"])
 	settings, err := s.loadUsenetSettings()
 	if err != nil {
 		return nil, err
 	}
-	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
+	settings = config.FilterSettingsForProfile(settings, profileID)
+	if result, handled, err := s.directUsenetHealthPreflight(settings, profileID, candidate, ""); handled {
+		return result, err
+	}
 
 	nzbBytes, fileName, err := s.fetchNZB(ctx, downloadURL, candidate)
 	if err != nil {
@@ -92,11 +97,15 @@ func (s *Service) CheckHealthWithNZB(ctx context.Context, candidate models.NZBRe
 	start := time.Now()
 	log.Printf("[usenet] health check start title=%q url=%q (prefetched=true)", strings.TrimSpace(candidate.Title), downloadURL)
 
+	profileID := strings.TrimSpace(candidate.Attributes["profileId"])
 	settings, err := s.loadUsenetSettings()
 	if err != nil {
 		return nil, err
 	}
-	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(candidate.Attributes["profileId"]))
+	settings = config.FilterSettingsForProfile(settings, profileID)
+	if result, handled, err := s.directUsenetHealthPreflight(settings, profileID, candidate, fileName); handled {
+		return result, err
+	}
 
 	if len(nzbBytes) == 0 {
 		return nil, fmt.Errorf("nzb payload is empty")
@@ -166,20 +175,30 @@ func (s *Service) loadUsenetSettings() (config.Settings, error) {
 		return config.Settings{}, fmt.Errorf("load settings: %w", err)
 	}
 
-	// Check if at least one enabled provider is configured
-	hasEnabledProvider := false
-	for _, provider := range settings.Usenet {
-		if provider.Enabled && strings.TrimSpace(provider.Host) != "" {
-			hasEnabledProvider = true
-			break
-		}
-	}
-
-	if !hasEnabledProvider {
-		return config.Settings{}, fmt.Errorf("no enabled usenet providers configured")
-	}
-
 	return settings, nil
+}
+
+func (s *Service) directUsenetHealthPreflight(settings config.Settings, profileID string, candidate models.NZBResult, fileName string) (*models.NZBHealthCheck, bool, error) {
+	if len(filterEnabledUsenetProviders(settings.Usenet)) > 0 {
+		return nil, false, nil
+	}
+	if len(usenetengine.EnabledEngines(settings, profileID)) > 0 {
+		result, err := externalEngineHealthCheck(candidate, fileName)
+		return result, true, err
+	}
+	return nil, true, fmt.Errorf("no enabled usenet providers configured")
+}
+
+func externalEngineHealthCheck(candidate models.NZBResult, fileName string) (*models.NZBHealthCheck, error) {
+	result := &models.NZBHealthCheck{
+		Status:          "external_engine",
+		Healthy:         true,
+		CheckedSegments: 0,
+		TotalSegments:   0,
+		FileName:        strings.TrimSpace(fileName),
+	}
+	logHealthCheckResult(candidate, result, 0)
+	return result, nil
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {

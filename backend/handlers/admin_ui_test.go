@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1111,6 +1113,592 @@ func TestAdminUIHandler_TestUsenetEngine_MissingBaseURLReturnsJSON(t *testing.T)
 	}
 	if result["success"] != false || result["error"] != "Base URL is required" {
 		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_MissingWebDAVBaseURLReturnsJSON(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"name":    "NZBDav",
+		"type":    "nzbdav",
+		"baseUrl": "http://127.0.0.1:9999",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != false || result["error"] != "WebDAV Base URL is required" {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_AltMountDoesNotRequireWebDAVPathPrefix(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"history": map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			w.WriteHeader(207)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]string{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_ChecksAPIAndWebDAV(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	var sawAPI bool
+	var sawWebDAV bool
+	var sawMappedWebDAV bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			sawAPI = true
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"status":       "Completed",
+							"nzb_name":     "Release.Name.nzb",
+							"storage_path": "/mnt/remotes/altmount/Default/complete/Release.Name",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			if r.Method != "PROPFIND" {
+				http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+				return
+			}
+			sawWebDAV = true
+			w.WriteHeader(207)
+		case r.URL.Path == "/webdav/Default/complete/Release.Name":
+			if r.Method != "PROPFIND" {
+				http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+				return
+			}
+			sawMappedWebDAV = true
+			w.WriteHeader(207)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/mnt/remotes/altmount",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawAPI {
+		t.Fatal("expected SAB-compatible API to be checked")
+	}
+	if !sawWebDAV {
+		t.Fatal("expected WebDAV to be checked")
+	}
+	if !sawMappedWebDAV {
+		t.Fatal("expected mapped WebDAV path to be checked")
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result["message"]), "completed-path mapping are valid") {
+		t.Fatalf("message = %q", result["message"])
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_FailsWrongWebDAVPathPrefix(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"status":       "Completed",
+							"nzb_name":     "Release.Name.nzb",
+							"storage_path": "/mnt/remotes/altmount/Default/complete/Release.Name",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			w.WriteHeader(207)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/wrong/prefix",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != false {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result["error"]), "mapped WebDAV path returned HTTP 404") {
+		t.Fatalf("error = %q", result["error"])
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_AllowsWebDAVMethodNotAllowed(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"history": map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			http.Error(w, "directory listing disabled", http.StatusMethodNotAllowed)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/mnt/remotes/altmount",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_ScansWebDAVCategoryLocation(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"history": map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav" || r.URL.Path == "/webdav/":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/Default/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>Default</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		case r.URL.Path == "/webdav/Default/":
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/Default/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/Default/complete/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>complete</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/mnt/remotes/altmount",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result["message"]), `WebDAV category scan found "Default/complete"`) {
+		t.Fatalf("message = %q", result["message"])
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_TestNZBValidatesAndCleansUp(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	var sawAddFile bool
+	var sawMappedWebDAV bool
+	var sawQueueDelete bool
+	var sawHistoryDelete bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "addfile":
+				sawAddFile = true
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"nzo_ids": []string{"job-1"},
+				})
+			case "queue":
+				if r.URL.Query().Get("name") == "delete" {
+					sawQueueDelete = true
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				if r.URL.Query().Get("name") == "delete" {
+					sawHistoryDelete = true
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"nzo_id":       "job-1",
+							"status":       "Completed",
+							"nzb_name":     "test.nzb",
+							"storage_path": "/mnt/remotes/altmount/Default/complete/test",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			w.WriteHeader(207)
+		case r.URL.Path == "/webdav/Default/complete/test":
+			sawMappedWebDAV = true
+			w.WriteHeader(207)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"testMode":      "full",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/mnt/remotes/altmount",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawAddFile {
+		t.Fatal("expected test NZB to be submitted")
+	}
+	if !sawMappedWebDAV {
+		t.Fatal("expected mapped completed test NZB path to be probed")
+	}
+	if !sawQueueDelete || !sawHistoryDelete {
+		t.Fatalf("cleanup: queue=%t history=%t, want both", sawQueueDelete, sawHistoryDelete)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_FullTestAllowsRelativeCompletedPath(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "addfile":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"nzo_ids": []string{"job-1"},
+				})
+			case "queue":
+				if r.URL.Query().Get("name") == "delete" {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				if r.URL.Query().Get("name") == "delete" {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"nzo_id":       "job-1",
+							"status":       "Completed",
+							"nzb_name":     "test.nzb",
+							"storage_path": "Default/complete/test",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "Default", "dir": "complete"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.URL.Path == "/webdav":
+			w.WriteHeader(207)
+		case r.URL.Path == "/webdav/Default/complete/test":
+			w.WriteHeader(207)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"testMode":      "full",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"config": map[string]string{
+			"webdavPathPrefix": "/mnt/remotes/altmoun",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result["message"]), "completed path is WebDAV-relative") {
+		t.Fatalf("message = %q", result["message"])
 	}
 }
 

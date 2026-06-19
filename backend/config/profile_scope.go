@@ -24,6 +24,7 @@ func IsProfileAllowed(allowedProfiles []string, profileID string) bool {
 // search/resolution sources removed.
 func FilterSettingsForProfile(settings Settings, profileID string) Settings {
 	settings.Usenet = filterUsenetForProfile(settings.Usenet, profileID)
+	settings.UsenetEngines = filterUsenetEnginesForProfile(settings.UsenetEngines, profileID)
 	settings.Indexers = filterIndexersForProfile(settings.Indexers, profileID)
 	settings.TorrentScrapers = filterTorrentScrapersForProfile(settings.TorrentScrapers, profileID)
 	settings.Streaming.DebridProviders = filterDebridProvidersForProfile(settings.Streaming.DebridProviders, profileID)
@@ -37,6 +38,19 @@ func filterUsenetForProfile(items []UsenetSettings, profileID string) []UsenetSe
 		return items
 	}
 	filtered := make([]UsenetSettings, 0, len(items))
+	for _, item := range items {
+		if IsProfileAllowed(item.AllowedProfiles, profileID) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func filterUsenetEnginesForProfile(items []UsenetEngineSettings, profileID string) []UsenetEngineSettings {
+	if len(items) == 0 {
+		return items
+	}
+	filtered := make([]UsenetEngineSettings, 0, len(items))
 	for _, item := range items {
 		if IsProfileAllowed(item.AllowedProfiles, profileID) {
 			filtered = append(filtered, item)

@@ -32,6 +32,11 @@ func TestFilterSettingsForProfile(t *testing.T) {
 			{Name: "one", Enabled: true, AllowedProfiles: []string{"profile-1"}},
 			{Name: "two", Enabled: true, AllowedProfiles: []string{"profile-2"}},
 		},
+		UsenetEngines: []UsenetEngineSettings{
+			{Name: "all", Enabled: true},
+			{Name: "one", Enabled: true, AllowedProfiles: []string{"profile-1"}},
+			{Name: "two", Enabled: true, AllowedProfiles: []string{"profile-2"}},
+		},
 		Indexers: []IndexerConfig{
 			{Name: "all", Enabled: true},
 			{Name: "one", Enabled: true, AllowedProfiles: []string{"profile-1"}},
@@ -63,6 +68,9 @@ func TestFilterSettingsForProfile(t *testing.T) {
 	if names := usenetNames(got.Usenet); !equalStrings(names, []string{"all", "one"}) {
 		t.Fatalf("usenet names = %v, want [all one]", names)
 	}
+	if names := usenetEngineNames(got.UsenetEngines); !equalStrings(names, []string{"all", "one"}) {
+		t.Fatalf("usenet engine names = %v, want [all one]", names)
+	}
 	if names := indexerNames(got.Indexers); !equalStrings(names, []string{"all", "one"}) {
 		t.Fatalf("indexer names = %v, want [all one]", names)
 	}
@@ -78,6 +86,14 @@ func TestFilterSettingsForProfile(t *testing.T) {
 }
 
 func usenetNames(items []UsenetSettings) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
+func usenetEngineNames(items []UsenetEngineSettings) []string {
 	names := make([]string, 0, len(items))
 	for _, item := range items {
 		names = append(names, item.Name)

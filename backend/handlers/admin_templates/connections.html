@@ -597,12 +597,20 @@ async function runAllTests() {
             if (item) p = testPost(basePath + '/api/test/usenet-engine', {
                 name: item.name,
                 type: item.type,
+                testMode: 'basic',
                 baseUrl: item.baseUrl,
                 apiPath: item.apiPath,
                 apiKey: item.apiKey,
                 username: item.username,
                 password: item.password,
-                webdavBaseUrl: item.webdavBaseUrl
+                webdavBaseUrl: item.webdavBaseUrl,
+                webdavUsername: item.webdavUsername,
+                webdavPassword: item.webdavPassword,
+                category: item.category,
+                priority: item.priority,
+                pollIntervalSeconds: item.pollIntervalSeconds,
+                timeoutSeconds: item.timeoutSeconds,
+                config: item.config || {}
             });
         } else if (card.key && card.key.startsWith('debrid:')) {
             const item = card.payload;

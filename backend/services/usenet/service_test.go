@@ -621,6 +621,43 @@ func TestServiceCheckHealthErrorsWithoutHost(t *testing.T) {
 	}
 }
 
+func TestServiceCheckHealthSkipsDirectProvidersForExternalEngineProfile(t *testing.T) {
+	cfg := config.DefaultSettings()
+	cfg.Usenet = []config.UsenetSettings{}
+	cfg.UsenetEngines = []config.UsenetEngineSettings{{
+		Name:            "AltMount",
+		Type:            "altmount",
+		Enabled:         true,
+		BaseURL:         "http://altmount.test",
+		AllowedProfiles: []string{"profile-1"},
+	}}
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(cfg); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	svc := NewService(mgr, nil)
+	res, err := svc.CheckHealth(context.Background(), models.NZBResult{
+		DownloadURL: "https://example.com/file.nzb",
+		Attributes:  map[string]string{"profileId": "profile-1"},
+	})
+	if err != nil {
+		t.Fatalf("CheckHealth returned error: %v", err)
+	}
+	if res == nil || !res.Healthy || res.Status != "external_engine" {
+		t.Fatalf("health result = %#v, want healthy external_engine", res)
+	}
+
+	_, err = svc.CheckHealth(context.Background(), models.NZBResult{
+		DownloadURL: "https://example.com/file.nzb",
+		Attributes:  map[string]string{"profileId": "profile-2"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no enabled usenet providers configured") {
+		t.Fatalf("profile-2 error = %v, want no enabled provider", err)
+	}
+}
+
 func TestFetchNZBSetsDownloadHeaders(t *testing.T) {
 	var receivedUserAgent string
 	var receivedAccept string
