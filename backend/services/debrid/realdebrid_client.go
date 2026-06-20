@@ -11,26 +11,44 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+)
+
+const (
+	realDebridRateLimitBaseDelay = 2 * time.Second
+	realDebridRateLimitMaxDelay  = 2 * time.Minute
 )
 
 // RealDebridClient handles API interactions with Real-Debrid service.
 // It implements the Provider interface.
 type RealDebridClient struct {
-	apiKey     string
-	httpClient *http.Client
-	baseURL    string
+	apiKey      string
+	httpClient  *http.Client
+	baseURL     string
+	rateLimiter *realDebridRateLimiter
 }
+
+type realDebridRateLimiter struct {
+	mu         sync.Mutex
+	nextAt     time.Time
+	delay      time.Duration
+	lastUpdate time.Time
+}
+
+var realDebridRateLimiters sync.Map
 
 // Ensure RealDebridClient implements Provider interface.
 var _ Provider = (*RealDebridClient)(nil)
 
 // NewRealDebridClient creates a new Real-Debrid API client.
 func NewRealDebridClient(apiKey string) *RealDebridClient {
+	trimmedKey := strings.TrimSpace(apiKey)
 	return &RealDebridClient{
-		apiKey:     strings.TrimSpace(apiKey),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		baseURL:    "https://api.real-debrid.com/rest/1.0",
+		apiKey:      trimmedKey,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		baseURL:     "https://api.real-debrid.com/rest/1.0",
+		rateLimiter: realDebridRateLimiterForKey(trimmedKey),
 	}
 }
 
@@ -43,6 +61,87 @@ func init() {
 	RegisterProvider("realdebrid", func(apiKey string) Provider {
 		return NewRealDebridClient(apiKey)
 	})
+}
+
+func realDebridRateLimiterForKey(apiKey string) *realDebridRateLimiter {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		key = "default"
+	}
+	limiter, _ := realDebridRateLimiters.LoadOrStore(key, &realDebridRateLimiter{})
+	return limiter.(*realDebridRateLimiter)
+}
+
+func (l *realDebridRateLimiter) delayUntil(now time.Time) time.Duration {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.nextAt.IsZero() || !now.Before(l.nextAt) {
+		return 0
+	}
+	return l.nextAt.Sub(now)
+}
+
+func (l *realDebridRateLimiter) recordRateLimit(now time.Time, retryAfter time.Duration) time.Duration {
+	if l == nil {
+		return retryAfter
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	delay := realDebridRateLimitBaseDelay
+	if l.delay > 0 {
+		delay = l.delay * 2
+	}
+	if retryAfter > delay {
+		delay = retryAfter
+	}
+	if delay > realDebridRateLimitMaxDelay {
+		delay = realDebridRateLimitMaxDelay
+	}
+
+	l.delay = delay
+	l.nextAt = now.Add(delay)
+	l.lastUpdate = now
+	return delay
+}
+
+func (l *realDebridRateLimiter) recordSuccess(now time.Time) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if !l.nextAt.IsZero() && now.Before(l.nextAt) {
+		return
+	}
+
+	if l.delay <= realDebridRateLimitBaseDelay {
+		l.delay = 0
+		l.nextAt = time.Time{}
+	} else {
+		l.delay /= 2
+	}
+	l.lastUpdate = now
+}
+
+func (c *RealDebridClient) waitForRateLimit(ctx context.Context) error {
+	delay := c.rateLimiter.delayUntil(time.Now())
+	if delay <= 0 {
+		return nil
+	}
+	log.Printf("[realdebrid] rate limit slowdown active, waiting %v before next request", delay)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ErrorResponse represents a Real-Debrid API error response.
@@ -108,6 +207,10 @@ func (c *RealDebridClient) doWithRetry(req *http.Request, maxRetries int) (*http
 	}
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if err := c.waitForRateLimit(req.Context()); err != nil {
+			return nil, err
+		}
+
 		if attempt > 0 {
 			if err := resetRequestBody(req); err != nil {
 				return nil, fmt.Errorf("reset request body: %w", err)
@@ -122,12 +225,20 @@ func (c *RealDebridClient) doWithRetry(req *http.Request, maxRetries int) (*http
 		// Check if we should retry this error
 		shouldRetry, retryReason := c.shouldRetryError(resp)
 		if !shouldRetry {
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				c.rateLimiter.recordSuccess(time.Now())
+			}
 			return resp, nil
 		}
 
 		// Read the error body for logging
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		resp.Body.Close()
+
+		delay := c.calculateRetryDelay(resp, attempt)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			delay = c.rateLimiter.recordRateLimit(time.Now(), delay)
+		}
 
 		// Don't retry on last attempt
 		if attempt == maxRetries {
@@ -140,9 +251,6 @@ func (c *RealDebridClient) doWithRetry(req *http.Request, maxRetries int) (*http
 				Header:     resp.Header,
 			}, nil
 		}
-
-		// Calculate delay with exponential backoff
-		delay := c.calculateRetryDelay(resp, attempt)
 
 		log.Printf("[realdebrid] %s, retrying in %v (attempt %d/%d): %s",
 			retryReason, delay, attempt+1, maxRetries, string(body))
