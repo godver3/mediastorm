@@ -280,6 +280,14 @@ var SettingsSchema = map[string]interface{}{
 				"max":         120,
 				"step":        0.1,
 			},
+			"healthCheckTimeoutSec": map[string]interface{}{
+				"type":        "number",
+				"label":       "Health Check Timeout (seconds)",
+				"description": "Maximum time to wait for manual debrid/direct-stream probes and Usenet health checks (default: 15). Increase this for AIOStreams or external Usenet engines that keep analyzing after the initial check.",
+				"min":         1,
+				"max":         300,
+				"step":        1,
+			},
 			"maxAlternateTitleSearches": map[string]interface{}{
 				"type":        "number",
 				"label":       "Max Alternate Title Searches",

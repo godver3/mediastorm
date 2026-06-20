@@ -212,6 +212,7 @@ type StreamingSettings struct {
 	MultiProviderMode          MultiProviderMode        `json:"multiProviderMode,omitempty"` // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec int                      `json:"usenetResolutionTimeoutSec"`  // Timeout for usenet content resolution in seconds (0 = no limit)
 	IndexerTimeoutSec          float64                  `json:"indexerTimeoutSec"`           // Timeout for indexer/scraper searches in seconds (default: 5)
+	HealthCheckTimeoutSec      int                      `json:"healthCheckTimeoutSec"`       // Timeout for manual debrid/usenet health checks in seconds (default: 15)
 	MaxAlternateTitleSearches  int                      `json:"maxAlternateTitleSearches"`   // Max alternate/international titles to search per item (0 = unlimited)
 }
 
@@ -1245,7 +1246,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeHybrid, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, MaxAlternateTitleSearches: 5},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeHybrid, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5, HealthCheckTimeoutSec: 15, MaxAlternateTitleSearches: 5},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
@@ -1736,6 +1737,10 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill IndexerTimeoutSec if not set (0 means use default of 5 seconds)
 	if s.Streaming.IndexerTimeoutSec <= 0 {
 		s.Streaming.IndexerTimeoutSec = 5
+	}
+	// Backfill HealthCheckTimeoutSec if not set (0 means use the existing 15 second client default)
+	if s.Streaming.HealthCheckTimeoutSec <= 0 {
+		s.Streaming.HealthCheckTimeoutSec = 15
 	}
 
 	// Backfill Import settings

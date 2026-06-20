@@ -217,6 +217,11 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 	if s.cfg == nil {
 		return nil, fmt.Errorf("health service not configured")
 	}
+	settings, err := s.cfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	healthCheckTimeout := debridHealthCheckTimeout(settings)
 
 	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
 	// Pre-resolved streams need to be probed to check if they're actually cached
@@ -257,7 +262,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		// First, do a quick HEAD request to check if the URL is accessible
 		// This catches 404s and other HTTP errors quickly without waiting for ffprobe
 		if streamURL != "" {
-			headCtx, headCancel := context.WithTimeout(ctx, 20*time.Second)
+			headCtx, headCancel := context.WithTimeout(ctx, healthCheckTimeout)
 			defer headCancel()
 
 			// Encode URL properly (handles spaces and special characters)
@@ -355,7 +360,7 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 
 		// If we have ffprobe, verify the stream has audio (placeholder videos have 0 audio streams)
 		if s.ffprobePath != "" && streamURL != "" {
-			audioCount, err := s.probeAudioStreamCount(ctx, streamURL)
+			audioCount, err := s.probeAudioStreamCount(ctx, streamURL, healthCheckTimeout)
 			if err != nil {
 				log.Printf("[debrid-health] probe failed for pre-resolved stream %s: %v", result.Title, err)
 				if cached, ok := s.cachedPreResolvedHealth(preResolvedCacheKey); ok {
@@ -434,10 +439,6 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 		}, nil
 	}
 
-	settings, err := s.cfg.Load()
-	if err != nil {
-		return nil, fmt.Errorf("load settings: %w", err)
-	}
 	settings = config.FilterSettingsForProfile(settings, strings.TrimSpace(result.Attributes["profileId"]))
 
 	// Determine provider - use attribute if specified, otherwise use first enabled provider
@@ -485,6 +486,14 @@ func (s *HealthService) CheckHealth(ctx context.Context, result models.NZBResult
 	}
 
 	return s.checkProviderHealth(ctx, client, result, infoHash, torrentURL, verifyUncached)
+}
+
+func debridHealthCheckTimeout(settings config.Settings) time.Duration {
+	timeoutSec := settings.Streaming.HealthCheckTimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = 15
+	}
+	return time.Duration(timeoutSec) * time.Second
 }
 
 func isInternetArchiveDirectStream(result models.NZBResult, streamURL string) bool {
@@ -1117,13 +1126,13 @@ func (s *HealthService) extractTorrentFilename(resp *http.Response, torrentURL s
 
 // probeAudioStreamCount uses ffprobe to count audio streams in a URL.
 // Returns 0 if no audio streams are found (indicating a placeholder video).
-func (s *HealthService) probeAudioStreamCount(ctx context.Context, streamURL string) (int, error) {
+func (s *HealthService) probeAudioStreamCount(ctx context.Context, streamURL string, timeout time.Duration) (int, error) {
 	if s.ffprobePath == "" {
 		return -1, fmt.Errorf("ffprobe not configured")
 	}
 
 	// Use a short timeout - we just need to read the header
-	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	args := []string{
