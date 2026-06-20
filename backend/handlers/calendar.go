@@ -150,7 +150,7 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		result = []models.CalendarItem{}
 	}
 	if home {
-		result = limitCalendarForHome(result, loc, homeLimit)
+		result = calendar.LimitForHomeShelf(result, loc, homeLimit)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -162,56 +162,6 @@ func (h *CalendarHandler) GetCalendar(w http.ResponseWriter, r *http.Request) {
 		RecentDays:  recentDays,
 		RefreshedAt: cached.RefreshedAt.Format(time.RFC3339),
 	})
-}
-
-func limitCalendarForHome(items []models.CalendarItem, loc *time.Location, limit int) []models.CalendarItem {
-	if len(items) == 0 || limit <= 0 {
-		return []models.CalendarItem{}
-	}
-	candidateLimit := limit * 3
-	if candidateLimit < 60 {
-		candidateLimit = 60
-	}
-	if candidateLimit > 200 {
-		candidateLimit = 200
-	}
-
-	now := time.Now().In(loc)
-	recent := make([]models.CalendarItem, 0, candidateLimit)
-	recentBySource := make(map[string][]models.CalendarItem)
-	upcoming := make([]models.CalendarItem, 0, candidateLimit)
-	for _, item := range items {
-		airDT := calendar.ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone).In(loc)
-		if airDT.After(now) {
-			if len(upcoming) < candidateLimit {
-				upcoming = append(upcoming, item)
-			}
-			continue
-		}
-		source := item.Source
-		if source == "" {
-			source = "unknown"
-		}
-		sourceRecent := append(recentBySource[source], item)
-		if len(sourceRecent) > limit {
-			sourceRecent = sourceRecent[len(sourceRecent)-limit:]
-		}
-		recentBySource[source] = sourceRecent
-	}
-
-	for _, sourceRecent := range recentBySource {
-		recent = append(recent, sourceRecent...)
-	}
-	sort.Slice(recent, func(i, j int) bool {
-		ti := calendar.ParseAirDateTime(recent[i].AirDate, recent[i].AirTime, recent[i].AirTimezone)
-		tj := calendar.ParseAirDateTime(recent[j].AirDate, recent[j].AirTime, recent[j].AirTimezone)
-		return ti.Before(tj)
-	})
-
-	limited := make([]models.CalendarItem, 0, len(recent)+len(upcoming))
-	limited = append(limited, recent...)
-	limited = append(limited, upcoming...)
-	return limited
 }
 
 func parseCalendarBoolQuery(value string) bool {

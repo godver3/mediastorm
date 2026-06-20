@@ -12,6 +12,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	calendarpkg "novastream/services/calendar"
 	"novastream/services/kids"
 	"novastream/services/playback"
 
@@ -32,7 +33,7 @@ const startupTrendingTimeout = 1500 * time.Millisecond
 // startupCalendarService is the subset of the calendar service used by the
 // startup handler. It reads only from the pre-built cache (non-blocking).
 type startupCalendarService interface {
-	GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward int) []models.CalendarItem
+	GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward, limit int) []models.CalendarItem
 }
 
 type startupPrequeueStore interface {
@@ -221,7 +222,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// 5b. Calendar home-shelf items (yesterday + next 2 days). Non-blocking:
+	// 5b. Calendar home-shelf items. Non-blocking:
 	// reads only from the pre-built in-memory cache; returns empty when not ready.
 	if h.calendar != nil {
 		wg.Add(1)
@@ -234,7 +235,13 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 					loc = parsed
 				}
 			}
-			resp.CalendarItems = h.calendar.GetForHomeShelf(userID, loc, 1, 2)
+			resp.CalendarItems = h.calendar.GetForHomeShelf(
+				userID,
+				loc,
+				calendarpkg.MaxRecentDaysWindow,
+				14,
+				startupShelfLimit,
+			)
 		}()
 	}
 

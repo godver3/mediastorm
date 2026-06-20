@@ -16,8 +16,8 @@ const (
 	calendarMetadataConcurrency = 8
 	calendarRefreshConcurrency  = 2
 	calendarLiteRefreshWorkers  = 6
-	calendarLiteDaysBack        = 1
-	calendarLiteDaysForward     = 2
+	calendarLiteDaysBack        = recentlyAiredDaysWindow
+	calendarLiteDaysForward     = 14
 	calendarLiteHistoryLimit    = 25
 	calendarLiteMovieLimit      = 20
 	recentlyAiredDaysWindow     = 90
@@ -332,12 +332,12 @@ func (s *Service) peekLite(userID string) *userCalendar {
 	return s.liteCache[userID]
 }
 
-// GetForHomeShelf returns a small window of calendar items (daysBack before
-// today through daysForward after today) suitable for the home-screen shelf.
+// GetForHomeShelf returns a window of calendar items (daysBack before today
+// through daysForward after today) suitable for the home-screen shelf.
 // It reads only from the pre-built cache — it never triggers a calendar build —
 // so it is safe to call in latency-sensitive contexts like the startup bundle.
 // Returns nil when the calendar has not yet been built for this user.
-func (s *Service) GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward int) []models.CalendarItem {
+func (s *Service) GetForHomeShelf(userID string, loc *time.Location, daysBack, daysForward, limit int) []models.CalendarItem {
 	cached := s.peekLite(userID)
 	if cached == nil {
 		go s.buildAndCacheLiteUserCalendar(userID, false)
@@ -365,7 +365,63 @@ func (s *Service) GetForHomeShelf(userID string, loc *time.Location, daysBack, d
 		}
 		result = append(result, adjusted)
 	}
-	return result
+	return LimitForHomeShelf(result, loc, limit)
+}
+
+// LimitForHomeShelf preserves enough recently-aired and upcoming candidates for
+// home shelves while capping startup/calendar payload size.
+func LimitForHomeShelf(items []models.CalendarItem, loc *time.Location, limit int) []models.CalendarItem {
+	if len(items) == 0 || limit <= 0 {
+		if items == nil {
+			return []models.CalendarItem{}
+		}
+		return items
+	}
+
+	candidateLimit := limit * 3
+	if candidateLimit < 60 {
+		candidateLimit = 60
+	}
+	if candidateLimit > 200 {
+		candidateLimit = 200
+	}
+
+	now := time.Now().In(loc)
+	recent := make([]models.CalendarItem, 0, candidateLimit)
+	recentBySource := make(map[string][]models.CalendarItem)
+	upcoming := make([]models.CalendarItem, 0, candidateLimit)
+	for _, item := range items {
+		airDT := ParseAirDateTime(item.AirDate, item.AirTime, item.AirTimezone).In(loc)
+		if airDT.After(now) {
+			if len(upcoming) < candidateLimit {
+				upcoming = append(upcoming, item)
+			}
+			continue
+		}
+		source := item.Source
+		if source == "" {
+			source = "unknown"
+		}
+		sourceRecent := append(recentBySource[source], item)
+		if len(sourceRecent) > limit {
+			sourceRecent = sourceRecent[len(sourceRecent)-limit:]
+		}
+		recentBySource[source] = sourceRecent
+	}
+
+	for _, sourceRecent := range recentBySource {
+		recent = append(recent, sourceRecent...)
+	}
+	sort.Slice(recent, func(i, j int) bool {
+		ti := ParseAirDateTime(recent[i].AirDate, recent[i].AirTime, recent[i].AirTimezone)
+		tj := ParseAirDateTime(recent[j].AirDate, recent[j].AirTime, recent[j].AirTimezone)
+		return ti.Before(tj)
+	})
+
+	limited := make([]models.CalendarItem, 0, len(recent)+len(upcoming))
+	limited = append(limited, recent...)
+	limited = append(limited, upcoming...)
+	return limited
 }
 
 func (s *Service) refreshAllLite() {

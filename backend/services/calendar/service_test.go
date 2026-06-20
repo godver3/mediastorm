@@ -1012,13 +1012,13 @@ func TestGetForHomeShelf_UsesLiteCacheNotFullCache(t *testing.T) {
 	}
 
 	svc := New(meta, wl, hist, us, users)
-	if got := svc.GetForHomeShelf("user1", time.UTC, 1, 2); got != nil {
+	if got := svc.GetForHomeShelf("user1", time.UTC, 1, 2, 20); got != nil {
 		t.Fatalf("expected empty result before lite cache build, got %d items", len(got))
 	}
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		items := svc.GetForHomeShelf("user1", time.UTC, 1, 2)
+		items := svc.GetForHomeShelf("user1", time.UTC, 1, 2, 20)
 		if len(items) == 1 {
 			if svc.peek("user1") != nil {
 				t.Fatal("expected full calendar cache to remain empty")
@@ -1029,6 +1029,34 @@ func TestGetForHomeShelf_UsesLiteCacheNotFullCache(t *testing.T) {
 	}
 
 	t.Fatal("expected lite cache to populate asynchronously for home shelf")
+}
+
+func TestGetForHomeShelf_ReturnsRecentlyAiredWindowFromLiteCache(t *testing.T) {
+	meta, wl, hist, us, users := defaultMocks()
+	meta.series[100] = &models.SeriesDetails{
+		Title: models.Title{Name: "Show", TVDBID: 100},
+		Seasons: []models.SeriesSeason{
+			{Number: 1, Episodes: []models.SeriesEpisode{
+				{Name: "Older", SeasonNumber: 1, EpisodeNumber: 1, AiredDate: pastDate(30)},
+				{Name: "Recent", SeasonNumber: 1, EpisodeNumber: 2, AiredDate: pastDate(2)},
+				{Name: "Soon", SeasonNumber: 1, EpisodeNumber: 3, AiredDate: futureDate(10)},
+			}},
+		},
+	}
+	hist.items["user1"] = []models.SeriesWatchState{
+		{SeriesID: "tvdb:100", SeriesTitle: "Show", ExternalIDs: map[string]string{"tvdb": "100"}},
+	}
+
+	svc := New(meta, wl, hist, us, users)
+	svc.buildAndCacheLiteUserCalendar("user1", true)
+
+	items := svc.GetForHomeShelf("user1", time.UTC, MaxRecentDaysWindow, 14, 20)
+	if len(items) != 3 {
+		t.Fatalf("expected wider home shelf window to include 2 recent and 1 upcoming item, got %d", len(items))
+	}
+	if items[0].EpisodeTitle != "Older" || items[1].EpisodeTitle != "Recent" || items[2].EpisodeTitle != "Soon" {
+		t.Fatalf("unexpected item order: %q, %q, %q", items[0].EpisodeTitle, items[1].EpisodeTitle, items[2].EpisodeTitle)
+	}
 }
 
 func TestGet_OnDemandBuildForUncachedUser(t *testing.T) {

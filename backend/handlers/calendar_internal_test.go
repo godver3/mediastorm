@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"novastream/models"
+	"novastream/services/calendar"
 )
 
 func TestLimitCalendarForHomePreservesRecentItemsPerSource(t *testing.T) {
@@ -29,7 +30,7 @@ func TestLimitCalendarForHomePreservesRecentItemsPerSource(t *testing.T) {
 		})
 	}
 
-	got := limitCalendarForHome(items, loc, 5)
+	got := calendar.LimitForHomeShelf(items, loc, 5)
 
 	watchlistCount := 0
 	trendingCount := 0
