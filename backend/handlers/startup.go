@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +109,84 @@ type StartupResponse struct {
 	// CalendarItems contains the home-shelf calendar window (yesterday + next 2 days).
 	// Populated from the pre-built calendar cache; empty if the cache is not ready yet.
 	CalendarItems []models.CalendarItem `json:"calendarItems,omitempty"`
+}
+
+type HomeShelfManifest struct {
+	ID             string `json:"id"`
+	Type           string `json:"type,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	Order          int    `json:"order"`
+	SourceKey      string `json:"sourceKey,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	HideUnreleased bool   `json:"hideUnreleased,omitempty"`
+}
+
+type HomeManifestResponse struct {
+	Revision                 string              `json:"revision"`
+	SettingsHash             string              `json:"settingsHash"`
+	ShelvesHash              string              `json:"shelvesHash"`
+	ContinueWatchingRevision string              `json:"continueWatchingRevision,omitempty"`
+	WatchlistHash            string              `json:"watchlistHash"`
+	WatchlistTotal           int                 `json:"watchlistTotal"`
+	Shelves                  []HomeShelfManifest `json:"shelves"`
+	GeneratedAt              time.Time           `json:"generatedAt"`
+}
+
+// GetHomeManifest returns a cheap fingerprint for the home page data/config.
+// Clients use this before automatic refreshes so foreground/staleness checks
+// can avoid reloading full shelf payloads when the backend would send the same
+// home state they already have.
+func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userID"])
+	if userID == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+
+	if h.users != nil && !h.users.Exists(userID) {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	resp := HomeManifestResponse{GeneratedAt: time.Now().UTC()}
+	defaults := h.getDefaultsFromGlobal()
+	settings, err := h.userSettings.GetWithDefaults(userID, defaults)
+	if err != nil {
+		log.Printf("[home-manifest] user settings error for %s: %v", userID, err)
+	} else {
+		resp.SettingsHash = hashForManifest(settings.HomeShelves, settings.Display)
+		resp.Shelves = buildHomeShelfManifest(settings.HomeShelves.Shelves)
+		resp.ShelvesHash = hashForManifest(resp.Shelves)
+	}
+
+	if h.history != nil {
+		if revision, err := h.history.GetContinueWatchingRevision(userID); err != nil {
+			log.Printf("[home-manifest] continue watching revision error for %s: %v", userID, err)
+		} else {
+			resp.ContinueWatchingRevision = revision
+		}
+	}
+
+	if h.watchlist != nil {
+		if items, err := h.watchlist.List(userID); err != nil {
+			log.Printf("[home-manifest] watchlist error for %s: %v", userID, err)
+		} else {
+			resp.WatchlistTotal = len(items)
+			resp.WatchlistHash = watchlistManifestHash(items)
+		}
+	}
+
+	resp.Revision = hashForManifest(
+		resp.SettingsHash,
+		resp.ShelvesHash,
+		resp.ContinueWatchingRevision,
+		resp.WatchlistHash,
+		resp.WatchlistTotal,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // GetStartup returns all initial user data in a single response.
@@ -591,6 +672,67 @@ func (h *StartupHandler) SetLocalMedia(lm localLibraryLister) {
 // Options handles CORS preflight for the startup endpoint.
 func (h *StartupHandler) Options(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+func buildHomeShelfManifest(shelves []models.ShelfConfig) []HomeShelfManifest {
+	out := make([]HomeShelfManifest, 0, len(shelves))
+	for _, shelf := range shelves {
+		entry := HomeShelfManifest{
+			ID:             shelf.ID,
+			Type:           shelf.Type,
+			Enabled:        shelf.Enabled,
+			Order:          shelf.Order,
+			Limit:          shelf.Limit,
+			HideUnreleased: shelf.HideUnreleased,
+			SourceKey:      homeShelfSourceKey(shelf),
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Order == out[j].Order {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Order < out[j].Order
+	})
+	return out
+}
+
+func homeShelfSourceKey(shelf models.ShelfConfig) string {
+	switch shelf.Type {
+	case "mdblist":
+		return "mdblist:" + strings.TrimSpace(shelf.ListURL)
+	case "trakt":
+		return fmt.Sprintf("trakt:%s:%s:%s", shelf.TraktAccountID, shelf.TraktListType, shelf.TraktListID)
+	case "simkl":
+		return fmt.Sprintf("simkl:%s:%s:%s", shelf.SimklAccountID, shelf.SimklMediaType, shelf.SimklListType)
+	case "letterboxd":
+		return fmt.Sprintf("letterboxd:%s:%s", shelf.LetterboxdListID, shelf.LetterboxdListURL)
+	case "genre", "decade", "local-library":
+		return shelf.Type + ":" + shelf.ID
+	default:
+		if strings.TrimSpace(shelf.ListURL) != "" {
+			return "mdblist:" + strings.TrimSpace(shelf.ListURL)
+		}
+		return shelf.ID
+	}
+}
+
+func watchlistManifestHash(items []models.WatchlistItem) string {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		keys = append(keys, fmt.Sprintf("%s:%s:%s:%d", item.MediaType, item.ID, item.Name, item.Year))
+	}
+	sort.Strings(keys)
+	return hashForManifest(keys)
+}
+
+func hashForManifest(values ...interface{}) string {
+	data, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // applyFilters applies hideUnreleased, hideWatched, and kids rating filters to trending items.

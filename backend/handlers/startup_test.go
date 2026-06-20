@@ -400,6 +400,88 @@ func TestStartupHandler_Success(t *testing.T) {
 	}
 }
 
+func TestStartupHandler_HomeManifest(t *testing.T) {
+	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
+
+	h := handlers.NewStartupHandler(
+		&mockUserSettingsService{
+			withDefault: models.UserSettings{
+				HomeShelves: models.HomeShelvesSettings{
+					Shelves: []models.ShelfConfig{
+						{ID: "continue-watching", Name: "Continue Watching", Enabled: true, Order: 1},
+						{
+							ID:             "mdblist-test",
+							Name:           "MDBList Test",
+							Enabled:        true,
+							Order:          2,
+							Type:           "mdblist",
+							ListURL:        "https://mdblist.com/lists/test/list/json",
+							Limit:          12,
+							HideUnreleased: true,
+						},
+					},
+				},
+			},
+		},
+		&mockWatchlistService{
+			items: []models.WatchlistItem{
+				{ID: "m1", MediaType: "movie", Name: "Test Movie", Year: 2026},
+			},
+		},
+		&mockHistoryService{revision: "cw:revision"},
+		&mockMetadataServiceStartup{},
+		cfgManager,
+		&mockUserServiceStartup{exists: true},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user1/home/manifest", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user1"})
+	rec := httptest.NewRecorder()
+
+	h.GetHomeManifest(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Revision                 string `json:"revision"`
+		SettingsHash             string `json:"settingsHash"`
+		ShelvesHash              string `json:"shelvesHash"`
+		ContinueWatchingRevision string `json:"continueWatchingRevision"`
+		WatchlistHash            string `json:"watchlistHash"`
+		WatchlistTotal           int    `json:"watchlistTotal"`
+		Shelves                  []struct {
+			ID             string `json:"id"`
+			SourceKey      string `json:"sourceKey"`
+			Limit          int    `json:"limit"`
+			HideUnreleased bool   `json:"hideUnreleased"`
+		} `json:"shelves"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Revision == "" || resp.SettingsHash == "" || resp.ShelvesHash == "" || resp.WatchlistHash == "" {
+		t.Fatalf("expected manifest hashes to be populated: %+v", resp)
+	}
+	if resp.ContinueWatchingRevision != "cw:revision" {
+		t.Fatalf("continueWatchingRevision = %q, want cw:revision", resp.ContinueWatchingRevision)
+	}
+	if resp.WatchlistTotal != 1 {
+		t.Fatalf("watchlistTotal = %d, want 1", resp.WatchlistTotal)
+	}
+	if len(resp.Shelves) != 2 {
+		t.Fatalf("shelves length = %d, want 2", len(resp.Shelves))
+	}
+	if resp.Shelves[1].SourceKey != "mdblist:https://mdblist.com/lists/test/list/json" {
+		t.Fatalf("mdblist sourceKey = %q", resp.Shelves[1].SourceKey)
+	}
+	if resp.Shelves[1].Limit != 12 || !resp.Shelves[1].HideUnreleased {
+		t.Fatalf("mdblist shelf manifest = %+v", resp.Shelves[1])
+	}
+}
+
 func TestStartupHandler_UsesHomeShelfItemCap(t *testing.T) {
 	cfgManager := config.NewManager(t.TempDir() + "/settings.json")
 	watchlistItems := make([]models.WatchlistItem, 30)

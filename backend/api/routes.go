@@ -695,6 +695,8 @@ func Register(
 	if startupHandler != nil {
 		profileProtected.HandleFunc("/{userID}/startup", startupHandler.GetStartup).Methods(http.MethodGet)
 		profileProtected.HandleFunc("/{userID}/startup", startupHandler.Options).Methods(http.MethodOptions)
+		profileProtected.HandleFunc("/{userID}/home/manifest", startupHandler.GetHomeManifest).Methods(http.MethodGet)
+		profileProtected.HandleFunc("/{userID}/home/manifest", startupHandler.Options).Methods(http.MethodOptions)
 	}
 
 	// Details bundle endpoint (combines details-page API calls into one for low-power devices)
