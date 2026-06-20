@@ -25,6 +25,11 @@ func NewMetadataService(rootPath string) *MetadataService {
 	}
 }
 
+// RootPath returns the filesystem root used for metadata files.
+func (ms *MetadataService) RootPath() string {
+	return ms.rootPath
+}
+
 // truncateFilename truncates the filename if it's too long to prevent filesystem issues
 // when creating .meta files. Keeps filename under 250 characters.
 func (ms *MetadataService) truncateFilename(filename string) string {

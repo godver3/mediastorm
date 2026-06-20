@@ -57,6 +57,7 @@ type Service struct {
 	database        *database.DB              // Database for processing queue
 	metadataService *metadata.MetadataService // Metadata service for file processing
 	processor       *Processor
+	resolvedCache   *resolvedNZBCache
 	configGetter    config.ConfigGetter    // Config getter for dynamic configuration access
 	sabnzbdClient   *sabnzbd.SABnzbdClient // SABnzbd client for fallback
 	log             *slog.Logger
@@ -94,6 +95,7 @@ func NewService(config ServiceConfig, metadataService *metadata.MetadataService,
 		metadataService: metadataService,
 		database:        database,
 		processor:       processor,
+		resolvedCache:   newResolvedNZBCache(metadataService),
 		configGetter:    configGetter,
 		sabnzbdClient:   sabnzbd.NewSABnzbdClient(),
 		log:             slog.Default().With("component", "importer-service"),
@@ -992,7 +994,20 @@ func (s *Service) AddNZBToQueue(ctx context.Context, fileName string, nzbBytes [
 // ProcessNZBImmediately processes an NZB file immediately without queuing
 // Returns the resulting storage path for the processed content
 func (s *Service) ProcessNZBImmediately(ctx context.Context, fileName string, nzbBytes []byte) (string, error) {
+	return s.ProcessNZBImmediatelyWithSource(ctx, fileName, nzbBytes, ResolvedNZBSource{})
+}
+
+// ProcessNZBImmediatelyWithSource processes an NZB file immediately and records
+// the resolved metadata path for future reuse.
+func (s *Service) ProcessNZBImmediatelyWithSource(ctx context.Context, fileName string, nzbBytes []byte, source ResolvedNZBSource) (string, error) {
 	s.log.InfoContext(ctx, "Processing NZB immediately", "fileName", fileName, "size", len(nzbBytes))
+	nzbHash := resolvedNZBHash(nzbBytes)
+	if entry, ok, err := s.resolvedCache.findByNZBHash(ctx, nzbHash); err != nil {
+		s.log.WarnContext(ctx, "resolved NZB cache lookup failed", "fileName", fileName, "error", err)
+	} else if ok {
+		s.log.InfoContext(ctx, "Resolved NZB cache hit", "fileName", fileName, "storagePath", entry.StoragePath)
+		return entry.StoragePath, nil
+	}
 
 	// Create temp directory for NZBs if it doesn't exist
 	tempDir := filepath.Join(os.TempDir(), "novastream-nzbs")
@@ -1020,9 +1035,24 @@ func (s *Service) ProcessNZBImmediately(ctx context.Context, fileName string, nz
 	if err != nil {
 		return "", fmt.Errorf("process NZB: %w", err)
 	}
+	if err := s.resolvedCache.put(ctx, nzbHash, fileName, resultingPath, source); err != nil {
+		s.log.WarnContext(ctx, "failed to persist resolved NZB cache entry", "fileName", fileName, "storagePath", resultingPath, "error", err)
+	}
 
 	s.log.InfoContext(ctx, "Successfully processed NZB immediately", "resultingPath", resultingPath)
 	return resultingPath, nil
+}
+
+func (s *Service) FindResolvedNZBByDownloadURL(ctx context.Context, downloadURL string) (*ResolvedNZBEntry, bool, error) {
+	return s.resolvedCache.findByDownloadURL(ctx, downloadURL)
+}
+
+func (s *Service) ListResolvedNZBs(ctx context.Context, filter string, page, perPage int) (*ResolvedNZBListResult, error) {
+	return s.resolvedCache.list(ctx, filter, page, perPage)
+}
+
+func (s *Service) DeleteResolvedNZB(ctx context.Context, key string) error {
+	return s.resolvedCache.delete(ctx, key)
 }
 
 // sanitizeFileName removes unsafe characters from a filename

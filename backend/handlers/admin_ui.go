@@ -32,6 +32,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/auth"
+	"novastream/internal/importer"
 	"novastream/internal/netproxy"
 
 	"github.com/google/uuid"
@@ -1281,6 +1282,7 @@ type AdminUIHandler struct {
 	statusTemplate        *template.Template
 	historyTemplate       *template.Template
 	toolsTemplate         *template.Template
+	resolvedNZBTemplate   *template.Template
 	searchTemplate        *template.Template
 	playbackTemplate      *template.Template
 	loginTemplate         *template.Template
@@ -1316,7 +1318,13 @@ type AdminUIHandler struct {
 	clientsService        clientsService
 	clientSettingsService clientSettingsService
 	logsHandler           *LogsHandler
+	resolvedNZBService    resolvedNZBService
 	serverBasePath        string // server-level base path from config (e.g. "/mediastorm")
+}
+
+type resolvedNZBService interface {
+	ListResolvedNZBs(ctx context.Context, filter string, page, perPage int) (*importer.ResolvedNZBListResult, error)
+	DeleteResolvedNZB(ctx context.Context, key string) error
 }
 
 // MetadataService interface for metadata operations
@@ -1383,6 +1391,10 @@ func (h *AdminUIHandler) SetClientSettingsService(css clientSettingsService) {
 
 func (h *AdminUIHandler) SetLogsHandler(lh *LogsHandler) {
 	h.logsHandler = lh
+}
+
+func (h *AdminUIHandler) SetResolvedNZBService(svc resolvedNZBService) {
+	h.resolvedNZBService = svc
 }
 
 // SetCalendarService sets the calendar service for the calendar admin page
@@ -1547,6 +1559,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		statusTemplate:       createPageTemplate("status.html"),
 		historyTemplate:      createPageTemplate("history.html"),
 		toolsTemplate:        createPageTemplate("tools.html"),
+		resolvedNZBTemplate:  createPageTemplate("resolved_nzbs.html"),
 		searchTemplate:       createPageTemplate("search.html"),
 		playbackTemplate:     createPageTemplate("playback.html"),
 		loginTemplate:        loginTmpl,
@@ -8955,6 +8968,71 @@ func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Tools template error: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+func (h *AdminUIHandler) ResolvedNZBsPage(w http.ResponseWriter, r *http.Request) {
+	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
+	usersList := h.getScopedUsers(isAdmin, accountID)
+
+	data := AdminPageData{
+		CurrentPath:    basePath + "/tools",
+		BasePath:       basePath,
+		ServerBasePath: h.serverBasePath,
+		IsAdmin:        isAdmin,
+		AccountID:      accountID,
+		Username:       username,
+		Users:          usersList,
+		Version:        GetBackendVersion(),
+		BuildID:        GetBackendBuildID(),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.resolvedNZBTemplate == nil {
+		http.Error(w, "Resolved NZBs template not loaded", http.StatusInternalServerError)
+		return
+	}
+	if err := h.resolvedNZBTemplate.ExecuteTemplate(w, "base", data); err != nil {
+		fmt.Printf("Resolved NZBs template error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+func (h *AdminUIHandler) ListResolvedNZBs(w http.ResponseWriter, r *http.Request) {
+	if h.resolvedNZBService == nil {
+		http.Error(w, `{"error":"resolved NZB service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("perPage"))
+	result, err := h.resolvedNZBService.ListResolvedNZBs(r.Context(), r.URL.Query().Get("q"), page, perPage)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (h *AdminUIHandler) DeleteResolvedNZB(w http.ResponseWriter, r *http.Request) {
+	if h.resolvedNZBService == nil {
+		http.Error(w, `{"error":"resolved NZB service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	key := mux.Vars(r)["key"]
+	if strings.TrimSpace(key) == "" {
+		http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.resolvedNZBService.DeleteResolvedNZB(r.Context(), key); err != nil {
+		status := http.StatusInternalServerError
+		if os.IsNotExist(err) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 }
 
 // PrequeuePage serves the active prequeues viewer page

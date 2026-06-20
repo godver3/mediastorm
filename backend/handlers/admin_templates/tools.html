@@ -44,6 +44,7 @@
             </div>
         </div>
     </div>
+
 </div>
 
 <!-- INTEGRATIONS CATEGORY -->
@@ -361,6 +362,35 @@
 {{if .IsAdmin}}
 <div class="settings-group">
     <div class="group-title">Automation</div>
+
+    <div class="section" id="resolvedNZBsSection">
+        <div class="section-header" onclick="toggleSection(this)">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Resolved NZBs
+            </div>
+            <svg class="section-toggle" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+            </svg>
+        </div>
+        <div class="section-content">
+            <p class="text-muted" style="margin-bottom: 1rem;">
+                View internal Usenet resolutions that are ready in the metadata filesystem. These entries are reusable across Usenet provider changes.
+            </p>
+            <a class="btn btn-primary" href="{{.BasePath}}/tools/resolved-nzbs">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 0.5rem;">
+                    <path d="M3 6h18"/>
+                    <path d="M3 12h18"/>
+                    <path d="M3 18h18"/>
+                </svg>
+                Open Resolved NZBs
+            </a>
+        </div>
+    </div>
 
     <!-- Scheduled Tasks Section -->
     <div class="section" id="scheduledTasksSection">

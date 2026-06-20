@@ -1,0 +1,239 @@
+{{template "base" .}}
+
+{{define "title"}}Resolved NZBs - mediastorm Admin{{end}}
+
+{{define "content"}}
+<style>
+    .resolved-nzbs-table {
+        width: 100%;
+        min-width: 920px;
+        table-layout: fixed;
+        border-collapse: collapse;
+    }
+
+    .resolved-nzbs-table th,
+    .resolved-nzbs-table td {
+        padding: 0.75rem;
+        vertical-align: middle;
+    }
+
+    .resolved-title-cell,
+    .resolved-file-cell,
+    .resolved-path-cell {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .resolved-title-cell {
+        width: 18%;
+    }
+
+    .resolved-file-cell {
+        width: 18%;
+        color: var(--text-secondary);
+    }
+
+    .resolved-path-cell {
+        width: 26%;
+        color: var(--text-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.82rem;
+    }
+
+    .resolved-size-cell {
+        width: 9%;
+        white-space: nowrap;
+    }
+
+    .resolved-time-cell {
+        width: 13%;
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+
+    .resolved-hits-cell {
+        width: 5%;
+    }
+
+    .resolved-actions-cell {
+        width: 112px;
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .resolved-delete-button {
+        min-width: 82px;
+        justify-content: center;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+        .resolved-nzbs-table {
+            min-width: 900px;
+        }
+
+        .resolved-nzbs-table th,
+        .resolved-nzbs-table td {
+            padding: 0.6rem;
+        }
+
+        .resolved-path-cell {
+            font-size: 0.78rem;
+        }
+    }
+</style>
+
+<div class="page-header">
+    <h1>Resolved NZBs</h1>
+    <p>Internal Usenet content that is ready in the metadata filesystem</p>
+</div>
+
+<div class="settings-group">
+    <div class="section expanded">
+        <div class="section-header">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18"/>
+                    <path d="M3 12h18"/>
+                    <path d="M3 18h18"/>
+                </svg>
+                Resolved Content
+            </div>
+        </div>
+        <div class="section-content" style="display:block;">
+            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem;">
+                <input id="resolvedFilter" class="form-input" style="max-width:360px;" type="search" placeholder="Filter by title, file, indexer, path, hash">
+                <select id="resolvedPerPage" class="form-input" style="max-width:120px;">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadResolvedNZBs(1)">Filter</button>
+                <a class="btn btn-secondary" href="{{.BasePath}}/tools">Back to Tools</a>
+            </div>
+            <div id="resolvedStatus" class="text-muted" style="margin-bottom:0.75rem;">Loading...</div>
+            <div style="overflow-x:auto; -webkit-overflow-scrolling:touch;">
+                <table class="resolved-nzbs-table">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); color:var(--text-secondary); text-align:left;">
+                            <th class="resolved-title-cell">Title</th>
+                            <th class="resolved-file-cell">File</th>
+                            <th class="resolved-path-cell">Storage Path</th>
+                            <th class="resolved-size-cell">Size</th>
+                            <th class="resolved-time-cell">Last Used</th>
+                            <th class="resolved-hits-cell">Hits</th>
+                            <th class="resolved-actions-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="resolvedRows"></tbody>
+                </table>
+            </div>
+            <div style="display:flex; gap:0.75rem; align-items:center; justify-content:flex-end; margin-top:1rem;">
+                <button class="btn btn-secondary" id="resolvedPrev" onclick="changeResolvedPage(-1)">Previous</button>
+                <span id="resolvedPageLabel" class="text-muted"></span>
+                <button class="btn btn-secondary" id="resolvedNext" onclick="changeResolvedPage(1)">Next</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let resolvedPage = 1;
+let resolvedTotalPages = 0;
+
+function resolvedApiPath(path) {
+    return '{{.BasePath}}/api' + path;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, function(char) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[char];
+    });
+}
+
+function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (!value) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = value;
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+    }
+    return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatTime(seconds) {
+    const value = Number(seconds || 0);
+    if (!value) return '';
+    return new Date(value * 1000).toLocaleString();
+}
+
+async function loadResolvedNZBs(page) {
+    resolvedPage = page || resolvedPage || 1;
+    const q = document.getElementById('resolvedFilter').value.trim();
+    const perPage = document.getElementById('resolvedPerPage').value;
+    const params = new URLSearchParams({ page: String(resolvedPage), perPage });
+    if (q) params.set('q', q);
+    document.getElementById('resolvedStatus').textContent = 'Loading...';
+    const response = await fetch(resolvedApiPath('/resolved-nzbs?' + params.toString()));
+    if (!response.ok) {
+        document.getElementById('resolvedStatus').textContent = 'Failed to load resolved NZBs';
+        return;
+    }
+    const data = await response.json();
+    resolvedPage = data.page || 1;
+    resolvedTotalPages = data.totalPages || 0;
+    renderResolvedRows(data.items || []);
+    document.getElementById('resolvedStatus').textContent = `${data.total || 0} resolved item${data.total === 1 ? '' : 's'}`;
+    document.getElementById('resolvedPageLabel').textContent = resolvedTotalPages ? `Page ${resolvedPage} of ${resolvedTotalPages}` : 'Page 1 of 1';
+    document.getElementById('resolvedPrev').disabled = resolvedPage <= 1;
+    document.getElementById('resolvedNext').disabled = resolvedTotalPages === 0 || resolvedPage >= resolvedTotalPages;
+}
+
+function renderResolvedRows(items) {
+    const rows = document.getElementById('resolvedRows');
+    if (!items.length) {
+        rows.innerHTML = '<tr><td colspan="7" class="text-muted" style="padding:1rem; text-align:center;">No resolved NZBs found</td></tr>';
+        return;
+    }
+    rows.innerHTML = items.map(item => `
+        <tr style="border-bottom:1px solid var(--border);">
+            <td class="resolved-title-cell" title="${escapeHtml(item.title || item.fileName || item.key.slice(0, 12))}">${escapeHtml(item.title || item.fileName || item.key.slice(0, 12))}</td>
+            <td class="resolved-file-cell" title="${escapeHtml(item.fileName || '')}">${escapeHtml(item.fileName || '')}</td>
+            <td class="resolved-path-cell" title="${escapeHtml(item.storagePath || '')}">${escapeHtml(item.storagePath || '')}</td>
+            <td class="resolved-size-cell">${escapeHtml(formatBytes(item.fileSize))}</td>
+            <td class="resolved-time-cell">${escapeHtml(formatTime(item.lastUsedAt || item.createdAt))}</td>
+            <td class="resolved-hits-cell">${Number(item.hits || 0)}</td>
+            <td class="resolved-actions-cell">
+                <button class="btn btn-danger resolved-delete-button" onclick="deleteResolvedNZB('${escapeHtml(item.key)}')">Delete</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function changeResolvedPage(delta) {
+    const next = resolvedPage + delta;
+    if (next < 1 || (resolvedTotalPages && next > resolvedTotalPages)) return;
+    loadResolvedNZBs(next);
+}
+
+async function deleteResolvedNZB(key) {
+    if (!confirm('Delete this resolved NZB metadata?')) return;
+    const response = await fetch(resolvedApiPath('/resolved-nzbs/' + encodeURIComponent(key)), { method: 'DELETE' });
+    if (!response.ok) {
+        alert('Failed to delete resolved NZB');
+        return;
+    }
+    loadResolvedNZBs(resolvedPage);
+}
+
+document.getElementById('resolvedFilter').addEventListener('keydown', event => {
+    if (event.key === 'Enter') loadResolvedNZBs(1);
+});
+document.getElementById('resolvedPerPage').addEventListener('change', () => loadResolvedNZBs(1));
+loadResolvedNZBs(1);
+</script>
+{{end}}

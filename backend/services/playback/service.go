@@ -156,18 +156,30 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		return nil, fmt.Errorf("candidate is missing a download URL")
 	}
 
+	cfg, err := s.cfg.Load()
+	if err != nil {
+		log.Printf("[playback] warning: failed to load config, using default health check behavior: %v", err)
+	}
+
+	if !externalUsenetEnabledForCandidate(cfg, candidate) && s.nzbSystem != nil {
+		if entry, ok, cacheErr := s.nzbSystem.ImporterService().FindResolvedNZBByDownloadURL(ctx, downloadURL); cacheErr != nil {
+			log.Printf("[playback] resolved NZB cache lookup failed: %v", cacheErr)
+		} else if ok {
+			sourceNZBPath := strings.TrimSpace(entry.FileName)
+			if sourceNZBPath == "" {
+				sourceNZBPath = strings.TrimSpace(candidate.Title)
+			}
+			log.Printf("[playback] resolved NZB cache hit before fetch storagePath=%q title=%q", entry.StoragePath, entry.Title)
+			return s.buildInternalPlaybackResolution(cfg, candidate, entry.StoragePath, sourceNZBPath, entry.FileSize, "healthy")
+		}
+	}
+
 	nzbBytes, fileName, err := s.fetchNZB(ctx, downloadURL, candidate)
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("[playback] nzb fetched size=%d fileName=%q", len(nzbBytes), fileName)
-
-	// Check if health check should be skipped (optimization for faster startup)
-	cfg, err := s.cfg.Load()
-	if err != nil {
-		log.Printf("[playback] warning: failed to load config, using default health check behavior: %v", err)
-	}
 
 	if res, err := s.resolveExternalUsenet(ctx, cfg, candidate, nzbBytes, fileName); err != nil {
 		return nil, err
@@ -222,7 +234,12 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		log.Printf("[playback] usenet resolution timeout set to %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
 	}
 
-	storagePath, err := service.ProcessNZBImmediately(processCtx, fileName, nzbBytes)
+	storagePath, err := service.ProcessNZBImmediatelyWithSource(processCtx, fileName, nzbBytes, importer.ResolvedNZBSource{
+		DownloadURL: downloadURL,
+		Title:       candidate.Title,
+		Indexer:     candidate.Indexer,
+		FileSize:    estimateNZBFileSize(nzbBytes),
+	})
 	if err != nil {
 		if processCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("usenet resolution timed out after %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
@@ -257,31 +274,40 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	if healthCheck != nil && strings.TrimSpace(healthCheck.FileName) != "" {
 		sourceNZBPath = strings.TrimSpace(healthCheck.FileName)
 	}
+	return s.buildInternalPlaybackResolution(cfg, candidate, finalPath, sourceNZBPath, estimateNZBFileSize(nzbBytes), "healthy")
+}
 
-	// Calculate file size from NZB if possible
-	fileSize := int64(0)
-	if parsed, parseErr := nzbparser.Parse(bytes.NewReader(nzbBytes)); parseErr == nil && len(parsed.Files) > 0 {
-		for _, f := range parsed.Files {
-			var size int64
-			for _, seg := range f.Segments {
-				size += int64(seg.Bytes)
-			}
-			if size > fileSize {
-				fileSize = size
-			}
+func (s *Service) buildInternalPlaybackResolution(cfg config.Settings, candidate models.NZBResult, storagePath, sourceNZBPath string, fileSize int64, healthStatus string) (*models.PlaybackResolution, error) {
+	finalPath := storagePath
+	if s.metadataSvc != nil && s.isLikelyDirectory(storagePath) {
+		log.Printf("[playback] storagePath appears to be a directory, scanning for media files: %q", storagePath)
+		hints := buildSelectionHintsFromCandidate(candidate, storagePath)
+		mediaFile, findErr := s.findBestMediaFile(storagePath, hints)
+		if findErr != nil {
+			return nil, fmt.Errorf("directory contains no playable media files: %w", findErr)
+		}
+		if mediaFile != "" {
+			finalPath = mediaFile
+			log.Printf("[playback] selected media file from directory: %q", finalPath)
 		}
 	}
+	if isNonContentMediaPath(finalPath) {
+		return nil, fmt.Errorf("resolved media path appears to be a sample/extras file: %s", path.Base(finalPath))
+	}
+	if err := s.validateResolvedMediaFile(finalPath, storagePath, candidate); err != nil {
+		return nil, err
+	}
+	if healthStatus == "" {
+		healthStatus = "healthy"
+	}
 
-	// Prepend WebDAV prefix to the final path (file, not directory)
 	webdavPath := fmt.Sprintf("%s%s", strings.TrimRight(cfg.WebDAV.Prefix, "/"), finalPath)
-
 	resolution := &models.PlaybackResolution{
-		HealthStatus:  "healthy",
+		HealthStatus:  healthStatus,
 		FileSize:      fileSize,
 		SourceNZBPath: sourceNZBPath,
 		WebDAVPath:    webdavPath,
 	}
-
 	log.Printf("[playback] NZB processed and ready for playback, webdavPath=%q", webdavPath)
 	return resolution, nil
 }
@@ -495,7 +521,16 @@ func (s *Service) ResolveWithHealthResult(ctx context.Context, result HealthChec
 		log.Printf("[playback] usenet resolution timeout set to %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
 	}
 
-	storagePath, err := service.ProcessNZBImmediately(processCtx, result.FileName, result.NZBBytes)
+	downloadURL := strings.TrimSpace(result.Candidate.DownloadURL)
+	if downloadURL == "" {
+		downloadURL = strings.TrimSpace(result.Candidate.Link)
+	}
+	storagePath, err := service.ProcessNZBImmediatelyWithSource(processCtx, result.FileName, result.NZBBytes, importer.ResolvedNZBSource{
+		DownloadURL: downloadURL,
+		Title:       result.Candidate.Title,
+		Indexer:     result.Candidate.Indexer,
+		FileSize:    estimateNZBFileSize(result.NZBBytes),
+	})
 	if err != nil {
 		if processCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("usenet resolution timed out after %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
