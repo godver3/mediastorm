@@ -75,7 +75,7 @@ const invalidatedPrequeueRetryDelay = time.Hour
 // Service manages pre-warming of continue watching items
 type Service struct {
 	mu      sync.RWMutex
-	entries map[string]*WarmEntry // key: "titleID:userID"
+	entries map[string]*WarmEntry // key: "titleID:userID:settingsScopeKey"
 	path    string                // persistence file path
 	store   *datastore.DataStore  // PostgreSQL backing store (nil = JSON file mode)
 
@@ -290,6 +290,36 @@ func (s *Service) warmContinueWatchingScope(
 		return nil
 	}
 
+	if shared := s.findReusableWarmEntry(state.SeriesID, user.ID, settingsScopeKey, targetEpisode); shared != nil {
+		if pqEntry, ok := s.prequeueStore.Get(shared.PrequeueID); ok &&
+			pqEntry.Status == playback.PrequeueStatusReady && hasTrackMetadata(pqEntry) &&
+			playback.EpisodeReferencesMatch(targetEpisode, pqEntry.TargetEpisode) {
+			expiresAt := time.Now().Add(maxAge)
+			s.extendPrequeueExpiry(pqEntry.ID, expiresAt)
+			s.mu.Lock()
+			s.entries[key] = &WarmEntry{
+				TitleID:          state.SeriesID,
+				TitleName:        state.SeriesTitle,
+				UserID:           user.ID,
+				SettingsScopeKey: settingsScopeKey,
+				MediaType:        mediaType,
+				Year:             state.Year,
+				ImdbID:           imdbID,
+				TargetEpisode:    targetEpisode,
+				PrequeueID:       pqEntry.ID,
+				StreamPath:       pqEntry.StreamPath,
+				LastResolve:      shared.LastResolve,
+				LastRefresh:      time.Now(),
+				ExpiresAt:        expiresAt,
+			}
+			s.mu.Unlock()
+			log.Printf("[prewarm] Reused shared warm entry %s for %q user %s scope=%s (source user=%s)",
+				pqEntry.ID, state.SeriesTitle, user.Name, settingsScopeKey, shared.UserID)
+			result.Skipped++
+			return nil
+		}
+	}
+
 	if *resolveCount > 0 {
 		var jitter time.Duration
 		if s.jitterFn != nil {
@@ -389,12 +419,19 @@ func (s *Service) UpdateFromPrequeue(prequeueID string) {
 	}
 
 	key := entryKey(pqEntry.TitleID, pqEntry.UserID, pqEntry.SettingsScopeKey)
+	adopted := s.isAdoptedPrequeueID(prequeueID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	warmEntry, ok := s.entries[key]
 	if !ok {
-		return
+		if !adopted {
+			return
+		}
+		warmEntry = &WarmEntry{
+			ExpiresAt: pqEntry.ExpiresAt,
+		}
+		s.entries[key] = warmEntry
 	}
 
 	warmEntry.TitleID = pqEntry.TitleID
@@ -754,18 +791,56 @@ func (s *Service) GetWarmScoped(titleID, userID, settingsScopeKey string) *playb
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entry, ok := s.entries[entryKey(titleID, userID, settingsScopeKey)]
-	if !ok || entry.Error != "" || entry.PrequeueID == "" {
-		return nil
+	now := time.Now()
+	entry := s.entries[entryKey(titleID, userID, settingsScopeKey)]
+	if !warmEntryReusableAt(entry, now) {
+		entry = s.findWarmEntryLocked(titleID, userID, settingsScopeKey, now)
 	}
-
-	if time.Now().After(entry.ExpiresAt) {
+	if entry == nil {
 		return nil
 	}
 
 	return &playback.WarmRef{
 		PrequeueID: entry.PrequeueID,
 	}
+}
+
+func (s *Service) findReusableWarmEntry(titleID, userID, settingsScopeKey string, targetEpisode *models.EpisodeReference) *WarmEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entry := s.findWarmEntryLocked(titleID, userID, settingsScopeKey, time.Now())
+	if entry == nil {
+		return nil
+	}
+	if entry.TargetEpisode != nil && !playback.EpisodeReferencesMatch(targetEpisode, entry.TargetEpisode) {
+		return nil
+	}
+	return entry
+}
+
+func (s *Service) findWarmEntryLocked(titleID, userID, settingsScopeKey string, now time.Time) *WarmEntry {
+	scopeKey := normalizeEntryScopeKey(settingsScopeKey)
+	var newest *WarmEntry
+	for _, entry := range s.entries {
+		if !warmEntryReusableAt(entry, now) ||
+			entry.TitleID != titleID ||
+			entry.UserID == userID ||
+			normalizeEntryScopeKey(entry.SettingsScopeKey) != scopeKey {
+			continue
+		}
+		if newest == nil || entry.LastRefresh.After(newest.LastRefresh) || entry.LastResolve.After(newest.LastResolve) {
+			newest = entry
+		}
+	}
+	return newest
+}
+
+func warmEntryReusableAt(entry *WarmEntry, now time.Time) bool {
+	return entry != nil &&
+		entry.Error == "" &&
+		entry.PrequeueID != "" &&
+		!now.After(entry.ExpiresAt)
 }
 
 // ListAll returns all warm entries (for admin viewer)
@@ -1044,9 +1119,13 @@ func (s *Service) isAdoptedEntry(entry *WarmEntry) bool {
 	if entry == nil || entry.PrequeueID == "" {
 		return false
 	}
+	return s.isAdoptedPrequeueID(entry.PrequeueID)
+}
+
+func (s *Service) isAdoptedPrequeueID(prequeueID string) bool {
 	s.adhocMu.RLock()
 	defer s.adhocMu.RUnlock()
-	_, adopted := s.adhocEntries[entry.PrequeueID]
+	_, adopted := s.adhocEntries[prequeueID]
 	return adopted
 }
 
@@ -1058,14 +1137,18 @@ func isExternalStreamURL(streamPath string) bool {
 }
 
 func entryKey(titleID, userID string, settingsScopeKey ...string) string {
-	scopeKey := playback.DefaultPrequeueSettingsScopeKey
 	if len(settingsScopeKey) > 0 {
-		scopeKey = strings.TrimSpace(settingsScopeKey[0])
-		if scopeKey == "" {
-			scopeKey = playback.DefaultPrequeueSettingsScopeKey
-		}
+		return titleID + ":" + userID + ":" + normalizeEntryScopeKey(settingsScopeKey[0])
 	}
-	return titleID + ":" + userID + ":" + scopeKey
+	return titleID + ":" + userID + ":" + playback.DefaultPrequeueSettingsScopeKey
+}
+
+func normalizeEntryScopeKey(scopeKey string) string {
+	scopeKey = strings.TrimSpace(scopeKey)
+	if scopeKey == "" {
+		return playback.DefaultPrequeueSettingsScopeKey
+	}
+	return scopeKey
 }
 
 // episodeRefLabel renders an episode reference for logging.

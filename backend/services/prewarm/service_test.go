@@ -636,11 +636,11 @@ func TestIsExternalStreamURL(t *testing.T) {
 	cases := map[string]bool{
 		"https://aiostreams.example.com/api/v1/proxy/x": true,
 		"http://comet.example.com/playback/x":           true,
-		"  https://leading.space/x  ":                    true,
-		"/debrid/rd/123/456":                             false,
-		"/webdav/title.mkv":                              false,
-		"localmedia:abc":                                 false,
-		"":                                               false,
+		"  https://leading.space/x  ":                   true,
+		"/debrid/rd/123/456":                            false,
+		"/webdav/title.mkv":                             false,
+		"localmedia:abc":                                false,
+		"":                                              false,
 	}
 	for path, want := range cases {
 		if got := isExternalStreamURL(path); got != want {
@@ -918,6 +918,59 @@ func TestAdoptEntry(t *testing.T) {
 
 	if !exists {
 		t.Error("expected adopted entry to be tracked")
+	}
+}
+
+func TestGetWarmScopedFallsBackToSharedScopeAcrossUsers(t *testing.T) {
+	svc := NewService(nil, "")
+	svc.entries[entryKey("title1", "user1", "global")] = &WarmEntry{
+		TitleID:          "title1",
+		TitleName:        "Hoppers",
+		UserID:           "user1",
+		SettingsScopeKey: "global",
+		PrequeueID:       "pq_shared",
+		LastRefresh:      time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
+	}
+
+	warm := svc.GetWarmScoped("title1", "user2", "global")
+	if warm == nil {
+		t.Fatal("expected shared-scope warm entry")
+	}
+	if warm.PrequeueID != "pq_shared" {
+		t.Fatalf("PrequeueID = %q, want pq_shared", warm.PrequeueID)
+	}
+}
+
+func TestUpdateFromPrequeueRegistersAdoptedAdhocEntry(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	svc := NewService(nil, "")
+	svc.SetPrequeueStore(store)
+
+	entry, _ := store.CreateScoped("title1", "Hoppers", "user1", "movie", 2026, nil, "details", "global")
+	svc.AdoptEntry(entry.ID)
+	store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusReady
+		e.StreamPath = "/webdav/Hoppers.mkv"
+		e.AudioTracks = []playback.AudioTrackInfo{{Index: 1, Codec: "eac3", Language: "eng"}}
+	})
+
+	svc.UpdateFromPrequeue(entry.ID)
+
+	warmEntry := svc.entries[entryKey("title1", "user1", "global")]
+	if warmEntry == nil {
+		t.Fatal("expected adopted ready prequeue to create a warm entry")
+	}
+	if warmEntry.PrequeueID != entry.ID {
+		t.Fatalf("PrequeueID = %q, want %q", warmEntry.PrequeueID, entry.ID)
+	}
+	if warmEntry.StreamPath != "/webdav/Hoppers.mkv" {
+		t.Fatalf("StreamPath = %q, want /webdav/Hoppers.mkv", warmEntry.StreamPath)
+	}
+
+	warm := svc.GetWarmScoped("title1", "user2", "global")
+	if warm == nil || warm.PrequeueID != entry.ID {
+		t.Fatalf("expected adopted warm entry to be reusable by shared scope, got %#v", warm)
 	}
 }
 
