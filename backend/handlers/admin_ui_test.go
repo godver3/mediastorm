@@ -1140,6 +1140,36 @@ func TestAdminUIHandler_TestUsenetEngine_MissingWebDAVBaseURLReturnsJSON(t *test
 	}
 }
 
+func TestAdminUIHandler_TestUsenetEngine_DecypharrAuthHint(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized: Host and token are required for authentication(you've enabled authentication)", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "Decypharr",
+		"type":          "decypharr",
+		"baseUrl":       server.URL,
+		"webdavBaseUrl": server.URL + "/webdav",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != false {
+		t.Fatalf("success = %#v, want false", result["success"])
+	}
+	errorMessage, _ := result["error"].(string)
+	if !strings.Contains(errorMessage, "Decypharr login/auth is enabled") {
+		t.Fatalf("error = %q, want Decypharr auth hint", errorMessage)
+	}
+}
+
 func TestAdminUIHandler_TestUsenetEngine_AltMountDoesNotRequireWebDAVPathPrefix(t *testing.T) {
 	handler, _ := setupAdminUIHandler(t)
 
@@ -1178,6 +1208,7 @@ func TestAdminUIHandler_TestUsenetEngine_AltMountDoesNotRequireWebDAVPathPrefix(
 	body, _ := json.Marshal(map[string]string{
 		"name":          "AltMount",
 		"type":          "altmount",
+		"testMode":      "basic",
 		"baseUrl":       server.URL,
 		"apiPath":       "/sabnzbd/api",
 		"webdavBaseUrl": server.URL + "/webdav",
@@ -1258,6 +1289,7 @@ func TestAdminUIHandler_TestUsenetEngine_ChecksAPIAndWebDAV(t *testing.T) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          "AltMount",
 		"type":          "altmount",
+		"testMode":      "basic",
 		"baseUrl":       server.URL,
 		"apiPath":       "/sabnzbd/api",
 		"webdavBaseUrl": server.URL + "/webdav",
@@ -1337,6 +1369,7 @@ func TestAdminUIHandler_TestUsenetEngine_FailsWrongWebDAVPathPrefix(t *testing.T
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          "AltMount",
 		"type":          "altmount",
+		"testMode":      "basic",
 		"baseUrl":       server.URL,
 		"apiPath":       "/sabnzbd/api",
 		"webdavBaseUrl": server.URL + "/webdav",
@@ -1360,6 +1393,89 @@ func TestAdminUIHandler_TestUsenetEngine_FailsWrongWebDAVPathPrefix(t *testing.T
 	}
 	if !strings.Contains(fmt.Sprint(result["error"]), "mapped WebDAV path returned HTTP 404") {
 		t.Fatalf("error = %q", result["error"])
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_InfersWebDAVPathPrefix(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"status":       "Completed",
+							"nzb_name":     "strmr-connection-test.nzb",
+							"storage_path": "/mnt/debrid/decypharr_downloads/mediastorm/strmr-connection-test",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.Method == "PROPFIND" && (r.URL.Path == "/webdav" || r.URL.Path == "/webdav/"):
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/</D:href>
+    <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/mediastorm/</D:href>
+    <D:propstat><D:prop><D:displayname>mediastorm</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/mediastorm/strmr-connection-test":
+			w.WriteHeader(http.StatusMultiStatus)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "Decypharr",
+		"type":          "decypharr",
+		"testMode":      "basic",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	message := fmt.Sprint(result["message"])
+	if !strings.Contains(message, `inferred Completed Path Prefix "/mnt/debrid/decypharr_downloads"`) {
+		t.Fatalf("message = %q", message)
 	}
 }
 
@@ -1401,6 +1517,7 @@ func TestAdminUIHandler_TestUsenetEngine_AllowsWebDAVMethodNotAllowed(t *testing
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          "AltMount",
 		"type":          "altmount",
+		"testMode":      "basic",
 		"baseUrl":       server.URL,
 		"apiPath":       "/sabnzbd/api",
 		"webdavBaseUrl": server.URL + "/webdav",
@@ -1488,6 +1605,7 @@ func TestAdminUIHandler_TestUsenetEngine_ScansWebDAVCategoryLocation(t *testing.
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":          "AltMount",
 		"type":          "altmount",
+		"testMode":      "basic",
 		"baseUrl":       server.URL,
 		"apiPath":       "/sabnzbd/api",
 		"webdavBaseUrl": server.URL + "/webdav",
@@ -1514,7 +1632,7 @@ func TestAdminUIHandler_TestUsenetEngine_ScansWebDAVCategoryLocation(t *testing.
 	}
 }
 
-func TestAdminUIHandler_TestUsenetEngine_TestNZBValidatesAndCleansUp(t *testing.T) {
+func TestAdminUIHandler_TestUsenetEngine_TestNZBValidatesAndOffersCleanup(t *testing.T) {
 	handler, _ := setupAdminUIHandler(t)
 
 	var sawAddFile bool
@@ -1570,7 +1688,7 @@ func TestAdminUIHandler_TestUsenetEngine_TestNZBValidatesAndCleansUp(t *testing.
 			}
 		case r.URL.Path == "/webdav":
 			w.WriteHeader(207)
-		case r.URL.Path == "/webdav/Default/complete/test":
+		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/Default/complete/test":
 			sawMappedWebDAV = true
 			w.WriteHeader(207)
 		default:
@@ -1612,6 +1730,175 @@ func TestAdminUIHandler_TestUsenetEngine_TestNZBValidatesAndCleansUp(t *testing.
 	}
 	if result["success"] != true {
 		t.Fatalf("unexpected response: %#v", result)
+	}
+	cleanup, ok := result["cleanup"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected cleanup metadata, got %#v", result["cleanup"])
+	}
+	if cleanup["artifactUrl"] != server.URL+"/webdav/Default/complete/test" {
+		t.Fatalf("artifactUrl = %#v", cleanup["artifactUrl"])
+	}
+	if !strings.Contains(fmt.Sprint(result["message"]), "test artifact remains available for optional cleanup") {
+		t.Fatalf("message = %q", result["message"])
+	}
+}
+
+func TestAdminUIHandler_DeleteUsenetEngineTestArtifact(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	var sawDelete bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/webdav/Default/complete/test":
+			sawDelete = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"webdavBaseUrl": server.URL + "/webdav",
+		"artifactUrl":   server.URL + "/webdav/Default/complete/test",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine/delete-artifact", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.DeleteUsenetEngineTestArtifact(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawDelete {
+		t.Fatal("expected WebDAV artifact delete")
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_DeleteUsenetEngineTestArtifactRejectsOutsideWebDAVRoot(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "AltMount",
+		"type":          "altmount",
+		"webdavBaseUrl": "http://engine.test/webdav",
+		"artifactUrl":   "http://engine.test/other/test",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine/delete-artifact", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.DeleteUsenetEngineTestArtifact(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != false {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+}
+
+func TestAdminUIHandler_TestUsenetEngine_FullDecypharrValidatesWebDAVFallbackWhenHistoryIsEmpty(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	var sawAddFile bool
+	var sawFallback bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/sabnzbd/api":
+			switch r.URL.Query().Get("mode") {
+			case "addfile":
+				sawAddFile = true
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"nzo_ids": []string{"decypharr-job-1"},
+				})
+			case "queue":
+				if r.URL.Query().Get("name") == "delete" {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				if r.URL.Query().Get("name") == "delete" {
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": true})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  true,
+					"history": map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.Method == "PROPFIND" && (r.URL.Path == "/webdav" || r.URL.Path == "/webdav/"):
+			w.WriteHeader(http.StatusMultiStatus)
+		case r.Method == "PROPFIND" && strings.HasPrefix(r.URL.Path, "/webdav/nzbs/strmr-connection-test-"):
+			sawFallback = true
+			w.WriteHeader(http.StatusMultiStatus)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "Decypharr",
+		"type":          "decypharr",
+		"testMode":      "full",
+		"baseUrl":       server.URL,
+		"apiPath":       "/sabnzbd/api",
+		"webdavBaseUrl": server.URL + "/webdav",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawAddFile {
+		t.Fatal("expected test NZB to be submitted")
+	}
+	if !sawFallback {
+		t.Fatal("expected Decypharr WebDAV fallback to be probed")
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	if !strings.Contains(fmt.Sprint(result["message"]), "completed path verified via Decypharr WebDAV fallback") {
+		t.Fatalf("message = %q", result["message"])
+	}
+	cleanup, ok := result["cleanup"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected cleanup metadata, got %#v", result["cleanup"])
+	}
+	if !strings.HasPrefix(fmt.Sprint(cleanup["artifactUrl"]), server.URL+"/webdav/nzbs/strmr-connection-test-") {
+		t.Fatalf("artifactUrl = %#v", cleanup["artifactUrl"])
 	}
 }
 
@@ -1664,7 +1951,9 @@ func TestAdminUIHandler_TestUsenetEngine_FullTestAllowsRelativeCompletedPath(t *
 			}
 		case r.URL.Path == "/webdav":
 			w.WriteHeader(207)
-		case r.URL.Path == "/webdav/Default/complete/test":
+		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/Default/complete/test":
+			w.WriteHeader(207)
+		case r.Method == http.MethodDelete && r.URL.Path == "/webdav/Default/complete/test":
 			w.WriteHeader(207)
 		default:
 			http.NotFound(w, r)

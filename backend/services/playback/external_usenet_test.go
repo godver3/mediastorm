@@ -513,6 +513,79 @@ func TestExternalQueueStatusFallsBackToAltMountCategoryRoot(t *testing.T) {
 	}
 }
 
+func TestExternalQueueStatusFallsBackToGenericWebDAVRoot(t *testing.T) {
+	for _, engineType := range []string{"nzbdav", "nzbdavex"} {
+		t.Run(engineType, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/api" && r.URL.Query().Get("mode") == "queue":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"status": true,
+						"queue":  map[string]any{"slots": []map[string]any{}},
+					})
+				case r.URL.Path == "/api" && r.URL.Query().Get("mode") == "history":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"status": true,
+						"history": map[string]any{
+							"slots": []map[string]any{{
+								"nzo_id":  "generic-job",
+								"status":  "Completed",
+								"storage": "/unrelated/Other.Release",
+							}},
+						},
+					})
+				case r.Method == "PROPFIND" && r.URL.Path == "/webdav/Release.Name/":
+					w.Header().Set("Content-Type", "application/xml")
+					w.WriteHeader(http.StatusMultiStatus)
+					_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/Release.Name/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/webdav/Release.Name/Release.Name.mkv</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>Release.Name.mkv</D:displayname><D:getcontentlength>123456789</D:getcontentlength></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+				default:
+					t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+				}
+			}))
+			defer server.Close()
+
+			svc := NewService(config.NewManager(filepath.Join(t.TempDir(), "settings.json")), nil, nil, nil)
+			svc.externalJobs[42] = &externalUsenetJob{
+				ID:            42,
+				EngineJobID:   "generic-job",
+				SourceNZBPath: "Release.Name.nzb",
+				Engine: config.UsenetEngineSettings{
+					Name:          engineType,
+					Type:          engineType,
+					BaseURL:       server.URL,
+					APIPath:       "/api",
+					WebDAVBaseURL: server.URL + "/webdav",
+				},
+			}
+
+			res, handled, err := svc.externalQueueStatus(context.Background(), 42)
+			if err != nil {
+				t.Fatalf("externalQueueStatus: %v", err)
+			}
+			if !handled {
+				t.Fatal("handled = false")
+			}
+			want := server.URL + "/webdav/Release.Name/Release.Name.mkv"
+			if res.WebDAVPath != want {
+				t.Fatalf("WebDAVPath = %q, want %q", res.WebDAVPath, want)
+			}
+			if res.HealthStatus != "healthy" {
+				t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+			}
+		})
+	}
+}
+
 func TestExternalQueueStatusRejectsStaleAltMountStatusFileName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -803,6 +876,8 @@ func TestExternalQueueStatusFallsBackToDecypharrWebDAVNZBFolder(t *testing.T) {
 				"status":  true,
 				"history": map[string]any{"slots": []map[string]any{}},
 			})
+		case r.Method == "PROPFIND" && (r.URL.Path == "/webdav/Release.Name" || r.URL.Path == "/webdav/Release.Name/"):
+			http.NotFound(w, r)
 		case r.Method == "PROPFIND" && (r.URL.Path == "/webdav/nzbs/Release.Name" || r.URL.Path == "/webdav/nzbs/Release.Name/"):
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>

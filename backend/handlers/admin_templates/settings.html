@@ -215,38 +215,8 @@
             <div id="testModalMessage" class="test-modal-message"></div>
         </div>
         <div class="test-modal-footer">
+            <button id="testModalCleanupButton" class="btn btn-primary" style="display: none;" onclick="attemptTestArtifactDelete()">Attempt Delete</button>
             <button class="btn btn-secondary" onclick="closeTestModal()">Close</button>
-        </div>
-    </div>
-</div>
-
-<!-- Usenet Engine Test Mode Modal -->
-<div id="usenetEngineTestModeModal" class="test-modal" onclick="closeUsenetEngineTestModeModal(null)">
-    <div class="test-modal-content" onclick="event.stopPropagation()" style="max-width: 560px;">
-        <div class="test-modal-header">
-            <h3>Choose Test Type</h3>
-            <button class="test-modal-close" onclick="closeUsenetEngineTestModeModal(null)">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/>
-                    <line x1="6" y1="6" x2="18" y2="18"/>
-                </svg>
-            </button>
-        </div>
-        <div class="test-modal-body">
-            <div id="usenetEngineTestModeProvider" class="test-modal-provider"></div>
-            <div style="display: grid; gap: 0.75rem;">
-                <button class="btn btn-secondary" style="justify-content: flex-start; align-items: flex-start; flex-direction: column; gap: 0.25rem; padding: 0.85rem 1rem; text-align: left;" onclick="closeUsenetEngineTestModeModal('basic')">
-                    <strong>Basic Test</strong>
-                    <span style="font-size: 0.85rem; opacity: 0.78;">Checks API auth, remote categories, WebDAV reachability, and recent completed path mapping when history is available. Does not add a job.</span>
-                </button>
-                <button class="btn btn-primary" style="justify-content: flex-start; align-items: flex-start; flex-direction: column; gap: 0.25rem; padding: 0.85rem 1rem; text-align: left;" onclick="closeUsenetEngineTestModeModal('full')">
-                    <strong>Full Test</strong>
-                    <span style="font-size: 0.85rem; opacity: 0.86;">Submits a bundled Big Buck Bunny NZB, waits for completion, validates the mapped WebDAV path, then removes queue and history entries.</span>
-                </button>
-            </div>
-        </div>
-        <div class="test-modal-footer">
-            <button class="btn btn-secondary" onclick="closeUsenetEngineTestModeModal(null)">Cancel</button>
         </div>
     </div>
 </div>
@@ -2794,6 +2764,9 @@
         if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'type') {
             applyUsenetEngineTypeDefaults(basePath, value);
         }
+        if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'baseUrl') {
+            normalizeUsenetEngineAPIURL(basePath);
+        }
 
         // Show reminder when adding direct-stream capable sources
         if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && ['aiostreams', 'comet', 'mediafusion', 'internetarchive'].includes(String(value))) {
@@ -2810,14 +2783,14 @@
     function usenetEngineDefaultsForType(type) {
         switch (String(type || '').toLowerCase()) {
             case 'decypharr':
-                return { name: 'Decypharr', apiPath: '/sabnzbd/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+                return { name: 'Decypharr', apiPath: '', pollIntervalSeconds: 2, timeoutSeconds: 300 };
             case 'nzbdavex':
-                return { name: 'NZBDavEx', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+                return { name: 'NZBDavEx', apiPath: '', pollIntervalSeconds: 2, timeoutSeconds: 300 };
             case 'nzbdav':
-                return { name: 'NZBDav', apiPath: '/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+                return { name: 'NZBDav', apiPath: '', pollIntervalSeconds: 2, timeoutSeconds: 300 };
             case 'altmount':
             default:
-                return { name: 'AltMount', apiPath: '/sabnzbd/api', pollIntervalSeconds: 2, timeoutSeconds: 300 };
+                return { name: 'AltMount', apiPath: '', pollIntervalSeconds: 2, timeoutSeconds: 300 };
         }
     }
 
@@ -2833,6 +2806,28 @@
         }
         if (!getValue(basePath + '.timeoutSeconds')) {
             setValue(basePath + '.timeoutSeconds', defaults.timeoutSeconds);
+        }
+    }
+    function normalizeUsenetEngineAPIURL(basePath) {
+        const raw = String(getValue(basePath + '.baseUrl') || '').trim().replace(/\/+$/, '');
+        if (!raw) return;
+        try {
+            const url = new URL(raw);
+            const path = url.pathname.replace(/\/+$/, '');
+            const candidates = ['/sabnzbd/api', '/api'];
+            for (const apiPath of candidates) {
+                if (path === apiPath || path.endsWith(apiPath)) {
+                    const rootPath = path.slice(0, path.length - apiPath.length).replace(/\/+$/, '');
+                    url.pathname = rootPath || '/';
+                    url.search = '';
+                    url.hash = '';
+                    setValue(basePath + '.baseUrl', url.toString().replace(/\/+$/, ''));
+                    setValue(basePath + '.apiPath', apiPath);
+                    return;
+                }
+            }
+        } catch (e) {
+            // Leave invalid URLs in place so validation can show the real error.
         }
     }
     function handleNumberFieldChange(basePath, fieldKey, rawValue) {
@@ -3675,12 +3670,6 @@
             return;
         }
 
-        let testMode = 'basic';
-        if (sectionKey === 'usenetEngines') {
-            testMode = await chooseUsenetEngineTestMode(item.name || item.type || 'External Usenet Engine');
-            if (!testMode) return;
-        }
-
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-small"></span> Testing...';
 
@@ -3706,22 +3695,27 @@
                 break;
             case 'usenetEngines':
                 endpoint = basePath + '/api/test/usenet-engine';
+                const engineRowPath = sectionKey + '.' + index;
+                const engineRowValue = (field) => {
+                    const value = getValue(engineRowPath + '.' + field);
+                    return value === undefined || value === null ? '' : value;
+                };
                 payload = {
-                    name: item.name,
-                    type: item.type,
-                    testMode: testMode,
-                    baseUrl: item.baseUrl,
-                    apiPath: item.apiPath,
-                    apiKey: item.apiKey,
-                    username: item.username,
-                    password: item.password,
-                    webdavBaseUrl: item.webdavBaseUrl,
-                    webdavUsername: item.webdavUsername,
-                    webdavPassword: item.webdavPassword,
-                    category: item.category,
-                    priority: item.priority,
-                    pollIntervalSeconds: item.pollIntervalSeconds,
-                    timeoutSeconds: item.timeoutSeconds,
+                    name: engineRowValue('name'),
+                    type: engineRowValue('type'),
+                    testMode: 'full',
+                    baseUrl: engineRowValue('baseUrl'),
+                    apiPath: engineRowValue('apiPath'),
+                    apiKey: engineRowValue('apiKey'),
+                    username: engineRowValue('username'),
+                    password: engineRowValue('password'),
+                    webdavBaseUrl: engineRowValue('webdavBaseUrl'),
+                    webdavUsername: engineRowValue('webdavUsername'),
+                    webdavPassword: engineRowValue('webdavPassword'),
+                    category: engineRowValue('category'),
+                    priority: engineRowValue('priority'),
+                    pollIntervalSeconds: engineRowValue('pollIntervalSeconds'),
+                    timeoutSeconds: engineRowValue('timeoutSeconds'),
                     config: item.config || {}
                 };
                 break;
@@ -3767,44 +3761,25 @@
             btn.textContent = 'Test';
 
             if (result.success) {
-                showTestResultModal(item.name || 'Provider', true, result.message || 'Test successful');
+                const cleanup = result.cleanup && result.cleanup.artifactUrl ? {
+                    label: result.cleanup.buttonLabel || 'Attempt Delete',
+                    payload: { ...payload, artifactUrl: result.cleanup.artifactUrl }
+                } : null;
+                showTestResultModal(item.name || 'Provider', true, result.message || 'Test successful', cleanup);
             } else {
-                showTestResultModal(item.name || 'Provider', false, result.error || 'Test failed');
+                showTestResultModal(item.name || 'Provider', false, result.error || 'Test failed', null);
             }
         } catch (e) {
             btn.disabled = false;
             btn.textContent = 'Test';
-            showTestResultModal(item.name || 'Provider', false, 'Error: ' + e.message);
-        }
-    }
-
-    let usenetEngineTestModeResolver = null;
-
-    function chooseUsenetEngineTestMode(providerName) {
-        const modal = document.getElementById('usenetEngineTestModeModal');
-        const providerEl = document.getElementById('usenetEngineTestModeProvider');
-        if (!modal) return Promise.resolve('basic');
-        if (providerEl) providerEl.innerHTML = '<strong>' + escapeHtml(providerName) + '</strong>';
-        modal.classList.add('visible');
-        document.body.style.overflow = 'hidden';
-        return new Promise(resolve => {
-            usenetEngineTestModeResolver = resolve;
-        });
-    }
-
-    function closeUsenetEngineTestModeModal(mode) {
-        const modal = document.getElementById('usenetEngineTestModeModal');
-        if (modal) modal.classList.remove('visible');
-        document.body.style.overflow = '';
-        if (usenetEngineTestModeResolver) {
-            const resolve = usenetEngineTestModeResolver;
-            usenetEngineTestModeResolver = null;
-            resolve(mode);
+            showTestResultModal(item.name || 'Provider', false, 'Error: ' + e.message, null);
         }
     }
 
     // Test result modal functions
-    function showTestResultModal(providerName, isSuccess, message) {
+    let currentTestCleanup = null;
+
+    function showTestResultModal(providerName, isSuccess, message, cleanup) {
         const modal = document.getElementById('testModal');
         const titleEl = document.getElementById('testModalTitle');
         const titleText = document.getElementById('testModalTitleText');
@@ -3812,6 +3787,7 @@
         const iconError = document.getElementById('testModalIconError');
         const providerEl = document.getElementById('testModalProvider');
         const messageEl = document.getElementById('testModalMessage');
+        const cleanupButton = document.getElementById('testModalCleanupButton');
 
         // Set title and icon based on success/error
         if (isSuccess) {
@@ -3829,10 +3805,51 @@
         // Set provider name and message
         providerEl.innerHTML = '<strong>' + escapeHtml(providerName) + '</strong>';
         messageEl.textContent = message;
+        currentTestCleanup = cleanup || null;
+        if (cleanupButton) {
+            cleanupButton.style.display = currentTestCleanup ? 'inline-flex' : 'none';
+            cleanupButton.disabled = false;
+            cleanupButton.textContent = currentTestCleanup?.label || 'Attempt Delete';
+        }
 
         // Show modal
         modal.classList.add('visible');
         document.body.style.overflow = 'hidden';
+    }
+
+    async function attemptTestArtifactDelete() {
+        if (!currentTestCleanup) return;
+        const cleanupButton = document.getElementById('testModalCleanupButton');
+        const messageEl = document.getElementById('testModalMessage');
+        if (cleanupButton) {
+            cleanupButton.disabled = true;
+            cleanupButton.innerHTML = '<span class="spinner-small"></span> Deleting...';
+        }
+        try {
+            const response = await fetch(basePath + '/api/test/usenet-engine/delete-artifact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(currentTestCleanup.payload)
+            });
+            const result = await response.json();
+            if (result.success) {
+                if (messageEl) messageEl.textContent = result.message || 'Test artifact deleted from WebDAV';
+                currentTestCleanup = null;
+                if (cleanupButton) cleanupButton.style.display = 'none';
+            } else {
+                if (messageEl) messageEl.textContent = result.error || 'Delete failed';
+                if (cleanupButton) {
+                    cleanupButton.disabled = false;
+                    cleanupButton.textContent = 'Attempt Delete';
+                }
+            }
+        } catch (e) {
+            if (messageEl) messageEl.textContent = 'Delete failed: ' + e.message;
+            if (cleanupButton) {
+                cleanupButton.disabled = false;
+                cleanupButton.textContent = 'Attempt Delete';
+            }
+        }
     }
 
     function closeTestModal(event) {
@@ -3842,12 +3859,12 @@
         const modal = document.getElementById('testModal');
         modal.classList.remove('visible');
         document.body.style.overflow = '';
+        currentTestCleanup = null;
     }
 
     // Close modal on Escape key
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-            closeUsenetEngineTestModeModal(null);
             closeTestModal();
         }
     });
@@ -4908,6 +4925,9 @@
             const fieldsHtml = Object.entries(sectionDef.fields)
                 .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
                 .map(([fieldKey, fieldDef]) => {
+                if (sectionKey === 'usenetEngines' && ['apiPath', 'priority', 'config.webdavPathPrefix', 'pollIntervalSeconds', 'timeoutSeconds', 'allowedProfiles'].includes(fieldKey)) {
+                    return '';
+                }
                 const showWhen = fieldDef.showWhen;
                 if (showWhen) {
                     const getItemValue = (path) => path.split('.').reduce((obj, key) => obj?.[key], item);
@@ -4954,7 +4974,8 @@
             return '<div class="array-item"><div class="array-item-header" style="align-items:flex-start;"><div class="array-item-title" style="display:flex;flex-direction:column;align-items:flex-start;"><span>'+(item.name || item.id || 'Item '+(index+1))+'</span>'+badgesTitleHtml+'</div><div class="array-item-actions" style="align-items:flex-start;">'+hiddenChannelsBtn+testBtn+'<button class="btn btn-sm btn-danger" onclick="removeArrayItem(\''+sectionKey+'\', '+index+')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div><div class="grid grid-2">'+fieldsHtml+'</div>'+hintHtml+'</div>';
         }).join('');
         const styles = '<style></style>';
-        return styles + '<div class="array-items">'+itemsHtml+'<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button></div>';
+        const addButton = '<button class="add-item-btn" onclick="addArrayItem(\''+sectionKey+'\')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add '+sectionDef.label.replace(/s$/, '')+'</button>';
+        return styles + '<div class="array-items">'+itemsHtml+'<div style="display:flex;gap:0.75rem;flex-wrap:wrap;">'+addButton+'</div></div>';
     }
     // Render provider priority reorder UI for streaming section
     function renderProviderPriorityUI() {

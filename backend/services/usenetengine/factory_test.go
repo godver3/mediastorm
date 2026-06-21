@@ -43,6 +43,18 @@ func TestDefaultAPIPath(t *testing.T) {
 	}
 }
 
+func TestSplitConfiguredAPIEndpoint(t *testing.T) {
+	baseURL, apiPath := splitConfiguredAPIEndpoint("http://engine:8282/sabnzbd/api", "", "decypharr")
+	if baseURL != "http://engine:8282" || apiPath != "/sabnzbd/api" {
+		t.Fatalf("decypharr split = %q %q, want root plus /sabnzbd/api", baseURL, apiPath)
+	}
+
+	baseURL, apiPath = splitConfiguredAPIEndpoint("http://engine:3000/api", "", "nzbdav")
+	if baseURL != "http://engine:3000" || apiPath != "/api" {
+		t.Fatalf("nzbdav split = %q %q, want root plus /api", baseURL, apiPath)
+	}
+}
+
 func TestDefaultFileFieldName(t *testing.T) {
 	if got := defaultFileFieldName("decypharr"); got != "name" {
 		t.Fatalf("decypharr field = %q, want name", got)
@@ -66,5 +78,20 @@ func TestCategoryInQuery(t *testing.T) {
 				t.Fatalf("categoryInQuery(%q) = true, want false", engineType)
 			}
 		})
+	}
+}
+
+func TestDecypharrUsesSABAuthQueryParams(t *testing.T) {
+	if got := usernameParam("decypharr"); got != "ma_username" {
+		t.Fatalf("usernameParam(decypharr) = %q, want ma_username", got)
+	}
+	if got := passwordParam("decypharr"); got != "ma_password" {
+		t.Fatalf("passwordParam(decypharr) = %q, want ma_password", got)
+	}
+	if got := usernameParam("nzbdav"); got != "" {
+		t.Fatalf("usernameParam(nzbdav) = %q, want empty", got)
+	}
+	if got := passwordParam("nzbdav"); got != "" {
+		t.Fatalf("passwordParam(nzbdav) = %q, want empty", got)
 	}
 }

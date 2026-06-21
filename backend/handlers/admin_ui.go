@@ -344,8 +344,8 @@ var SettingsSchema = map[string]interface{}{
 		"is_array":    true,
 		"fields": map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Display name", "order": 0},
-			"type":    map[string]interface{}{"type": "select", "label": "Provider", "options": []map[string]string{{"value": "altmount", "label": "AltMount"}, {"value": "nzbdav", "label": "NZBDav"}, {"value": "nzbdavex", "label": "NZBDavEx"}, {"value": "decypharr", "label": "Decypharr"}}, "description": "External engine type", "required": true, "order": 1},
-			"baseUrl": map[string]interface{}{"type": "text", "label": "API Base URL", "description": "Base URL for the engine control API, without the API path.", "placeholder": "http://engine:8080", "required": true, "order": 2},
+			"type":    map[string]interface{}{"type": "select", "label": "Engine", "options": []map[string]string{{"value": "altmount", "label": "AltMount"}, {"value": "nzbdav", "label": "NZBDav"}, {"value": "nzbdavex", "label": "NZBDavEx"}, {"value": "decypharr", "label": "Decypharr"}}, "description": "External engine type", "required": true, "order": 1},
+			"baseUrl": map[string]interface{}{"type": "text", "label": "API URL", "description": "URL used to reach the engine API. You can paste the root URL or the full SAB-compatible API URL.", "placeholder": "http://engine:8080/sabnzbd/api", "required": true, "order": 2},
 			"apiPath": map[string]interface{}{
 				"type":        "text",
 				"label":       "API Path",
@@ -354,22 +354,22 @@ var SettingsSchema = map[string]interface{}{
 				"order":       3,
 			},
 			"apiKey":              map[string]interface{}{"type": "password", "label": "API Key", "description": "Optional SAB-compatible API key", "order": 4},
-			"username":            map[string]interface{}{"type": "text", "label": "API Username", "description": "Optional API basic-auth username", "order": 5},
-			"password":            map[string]interface{}{"type": "password", "label": "API Password", "description": "Optional API basic-auth password", "order": 6},
-			"webdavBaseUrl":       map[string]interface{}{"type": "text", "label": "WebDAV Base URL", "description": "Required base URL for completed files exposed by the engine. AltMount and Decypharr usually include /webdav; NZBDav and NZBDavEx usually use the root URL.", "placeholder": "http://engine:8080/webdav", "required": true, "order": 7},
-			"webdavUsername":      map[string]interface{}{"type": "text", "label": "WebDAV Username", "description": "Optional WebDAV basic-auth username", "order": 8},
-			"webdavPassword":      map[string]interface{}{"type": "password", "label": "WebDAV Password", "description": "Optional WebDAV basic-auth password", "order": 9},
-			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional SAB category to assign queued NZBs. Decypharr accepts this during submission even when it is not listed in the SAB config response; custom folders are separate WebDAV views.", "order": 10},
+			"webdavBaseUrl":       map[string]interface{}{"type": "text", "label": "WebDAV Root Location", "description": "Root WebDAV URL where release-named folders are visible. The test shows sample contents from this location.", "placeholder": "http://engine:8080/webdav/nzbs", "required": true, "order": 5},
+			"webdavUsername":      map[string]interface{}{"type": "text", "label": "WebDAV Username", "description": "Optional WebDAV basic-auth username", "order": 6},
+			"webdavPassword":      map[string]interface{}{"type": "password", "label": "WebDAV Password", "description": "Optional WebDAV basic-auth password", "order": 7},
+			"category":            map[string]interface{}{"type": "text", "label": "Category", "description": "Optional SAB category to assign queued NZBs.", "order": 8},
+			"username":            map[string]interface{}{"type": "text", "label": "API Username", "description": "Optional API auth username. For Decypharr login/auth, use the Decypharr username or Arr host.", "order": 9},
+			"password":            map[string]interface{}{"type": "password", "label": "API Password", "description": "Optional API auth password/token. For Decypharr login/auth, use the Decypharr password or Arr token.", "order": 10},
 			"priority":            map[string]interface{}{"type": "text", "label": "Priority", "description": "Optional SAB-compatible priority", "order": 11},
-			"pollIntervalSeconds": map[string]interface{}{"type": "number", "label": "Poll Interval (seconds)", "description": "How often to poll for completion. 0 uses the backend default.", "min": 0, "order": 12},
-			"timeoutSeconds":      map[string]interface{}{"type": "number", "label": "Timeout (seconds)", "description": "Maximum wait for engine completion. 0 uses the backend default.", "min": 0, "order": 13},
-			"enabled":             map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this engine", "order": 14},
+			"pollIntervalSeconds": map[string]interface{}{"type": "number", "label": "Poll Interval (seconds)", "description": "How often to poll for completion. 0 uses the backend default.", "min": 0, "order": 13},
+			"timeoutSeconds":      map[string]interface{}{"type": "number", "label": "Timeout (seconds)", "description": "Maximum wait for engine completion. 0 uses the backend default.", "min": 0, "order": 14},
+			"enabled":             map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable this engine", "order": 15},
 			"allowedProfiles": map[string]interface{}{
 				"type":        "multiselect",
 				"label":       "Allowed Profiles",
 				"description": "Profiles allowed to use this engine. Leave empty for all profiles.",
 				"optionsFrom": "profiles",
-				"order":       15,
+				"order":       16,
 			},
 		},
 	},
@@ -4814,6 +4814,7 @@ type TestUsenetEngineRequest struct {
 	Name           string            `json:"name"`
 	Type           string            `json:"type"`
 	TestMode       string            `json:"testMode"`
+	ArtifactURL    string            `json:"artifactUrl"`
 	BaseURL        string            `json:"baseUrl"`
 	APIPath        string            `json:"apiPath"`
 	APIKey         string            `json:"apiKey"`
@@ -4827,6 +4828,11 @@ type TestUsenetEngineRequest struct {
 	PollInterval   int               `json:"pollIntervalSeconds"`
 	Timeout        int               `json:"timeoutSeconds"`
 	Config         map[string]string `json:"config"`
+}
+
+type testUsenetEngineNZBResult struct {
+	Message     string
+	ArtifactURL string
 }
 
 // TestUsenetProvider tests a usenet provider by connecting to the NNTP server
@@ -4984,7 +4990,7 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 
 	testMode := strings.ToLower(strings.TrimSpace(req.TestMode))
 	if testMode == "" {
-		testMode = "basic"
+		testMode = "full"
 	}
 	if testMode != "basic" && testMode != "full" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -5030,6 +5036,13 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 
 	testJobID := usenetEngineStatusProbeJobID(engineSettings)
 	if _, err := engine.Status(ctx, testJobID); err != nil {
+		if hint := decypharrAuthHint(engineSettings, err); hint != "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   hint,
+			})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("SAB-compatible API check failed: %v", err),
@@ -5038,6 +5051,13 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 	}
 	remoteConfig, err := getUsenetEngineRemoteConfig(ctx, engineSettings)
 	if err != nil {
+		if hint := decypharrAuthHint(engineSettings, err); hint != "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   hint,
+			})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("SAB-compatible config check failed: %v", err),
@@ -5067,16 +5087,18 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	webDAVSampleMessage := sampleAdminWebDAVRootMessage(ctx, engineSettings)
 	categoryLocationMessage := categoryValidationMessage
 	if categoryLocationMessage == "" {
 		categoryLocationMessage, _ = discoverUsenetEngineWebDAVCategory(ctx, engineSettings)
 	}
 	pathMappingVerified := false
 	pathMappingMessage := categoryLocationMessage
+	cleanupArtifactURL := ""
 	if testMode == "full" {
 		var err error
-		var fullMappingMessage string
-		fullMappingMessage, err = testUsenetEngineWithNZB(ctx, engineSettings, engine)
+		var fullResult testUsenetEngineNZBResult
+		fullResult, err = testUsenetEngineWithNZB(ctx, engineSettings, engine)
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
@@ -5084,7 +5106,8 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		pathMappingMessage = combineAdminTestMessages(pathMappingMessage, fullMappingMessage)
+		pathMappingMessage = combineAdminTestMessages(pathMappingMessage, fullResult.Message)
+		cleanupArtifactURL = fullResult.ArtifactURL
 		pathMappingVerified = true
 	} else {
 		var err error
@@ -5107,10 +5130,93 @@ func (h *AdminUIHandler) TestUsenetEngine(w http.ResponseWriter, r *http.Request
 	if pathMappingMessage != "" {
 		message += "; " + pathMappingMessage
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if webDAVSampleMessage != "" {
+		message += "; " + webDAVSampleMessage
+	}
+	response := map[string]interface{}{
 		"success": true,
 		"message": message,
+	}
+	if cleanupArtifactURL != "" {
+		response["cleanup"] = map[string]interface{}{
+			"available":    true,
+			"artifactUrl":  cleanupArtifactURL,
+			"description":  "The test artifact was verified on WebDAV and can be deleted.",
+			"buttonLabel":  "Attempt Delete",
+			"successText":  "Test artifact deleted from WebDAV",
+			"endpointPath": "/admin/api/test/usenet-engine/delete-artifact",
+		}
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *AdminUIHandler) DeleteUsenetEngineTestArtifact(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req TestUsenetEngineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "Invalid request body",
+		})
+		return
+	}
+	engineSettings := config.UsenetEngineSettings{
+		Name:           req.Name,
+		Type:           req.Type,
+		BaseURL:        req.BaseURL,
+		APIPath:        req.APIPath,
+		APIKey:         req.APIKey,
+		Username:       req.Username,
+		Password:       req.Password,
+		WebDAVBaseURL:  req.WebDAVBaseURL,
+		WebDAVUsername: req.WebDAVUsername,
+		WebDAVPassword: req.WebDAVPassword,
+		Category:       req.Category,
+		Priority:       req.Priority,
+		Config:         req.Config,
+	}
+	artifactURL := strings.TrimSpace(req.ArtifactURL)
+	if artifactURL == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   "artifactUrl is required",
+		})
+		return
+	}
+	if err := validateUsenetEngineCleanupArtifactURL(engineSettings, artifactURL); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := deleteUsenetEngineMappedWebDAVURL(ctx, engineSettings, artifactURL); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("WebDAV delete failed: %v", err),
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Test artifact deleted from WebDAV",
 	})
+}
+
+func decypharrAuthHint(engine config.UsenetEngineSettings, err error) string {
+	if !strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") || err == nil {
+		return ""
+	}
+	if !strings.Contains(err.Error(), "Host and token are required for authentication") {
+		return ""
+	}
+	return "Decypharr rejected the SAB-compatible API because Decypharr login/auth is enabled. Enter Decypharr's login username and password in API Username and API Password, or use the Arr host/token pair Decypharr expects for SAB clients."
 }
 
 func usenetEngineStatusProbeJobID(engine config.UsenetEngineSettings) string {
@@ -5198,6 +5304,36 @@ func discoverUsenetEngineWebDAVCategory(ctx context.Context, engine config.Usene
 		}
 	}
 	return "", nil
+}
+
+func sampleAdminWebDAVRootMessage(ctx context.Context, engine config.UsenetEngineSettings) string {
+	entries, err := listAdminWebDAVDirectory(ctx, engine, strings.TrimSpace(engine.WebDAVBaseURL))
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	limit := len(entries)
+	if limit > 6 {
+		limit = 6
+	}
+	names := make([]string, 0, limit)
+	for _, entry := range entries[:limit] {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+		if entry.IsDir {
+			name += "/"
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	suffix := ""
+	if len(entries) > limit {
+		suffix = fmt.Sprintf(" and %d more", len(entries)-limit)
+	}
+	return fmt.Sprintf("WebDAV root sample: %s%s", strings.Join(names, ", "), suffix)
 }
 
 func listAdminWebDAVDirectory(ctx context.Context, engine config.UsenetEngineSettings, directoryURL string) ([]adminWebDAVEntry, error) {
@@ -5459,6 +5595,9 @@ func testUsenetEnginePathMapping(ctx context.Context, engine config.UsenetEngine
 		return false, "", err
 	}
 	if err := testUsenetEngineMappedWebDAVURL(ctx, engine, mappedURL); err != nil {
+		if suggestion, ok := inferAdminWebDAVPathPrefixMessage(ctx, engine, outputPath); ok {
+			return true, suggestion, nil
+		}
 		if label != "" {
 			return false, "", fmt.Errorf("%s mapped to %s: %w", label, mappedURL, err)
 		}
@@ -5467,9 +5606,9 @@ func testUsenetEnginePathMapping(ctx context.Context, engine config.UsenetEngine
 	return true, adminPathMappingMessage(engine, outputPath, prefixMatched), nil
 }
 
-func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSettings, client usenetengine.Engine) (string, error) {
+func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSettings, client usenetengine.Engine) (testUsenetEngineNZBResult, error) {
 	if len(bigBuckBunnyTestNZB) == 0 {
-		return "", fmt.Errorf("embedded test NZB is empty")
+		return testUsenetEngineNZBResult{}, fmt.Errorf("embedded test NZB is empty")
 	}
 	testFileName := "strmr-connection-test-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".nzb"
 	submit, err := client.SubmitNZB(ctx, usenetengine.SubmitRequest{
@@ -5479,11 +5618,11 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 		Priority: strings.TrimSpace(engine.Priority),
 	})
 	if err != nil {
-		return "", fmt.Errorf("submit test NZB: %w", err)
+		return testUsenetEngineNZBResult{}, fmt.Errorf("submit test NZB: %w", err)
 	}
 	jobID := strings.TrimSpace(submit.JobID)
 	if jobID == "" {
-		return "", fmt.Errorf("test NZB submission did not return a job id")
+		return testUsenetEngineNZBResult{}, fmt.Errorf("test NZB submission did not return a job id")
 	}
 	defer cleanupUsenetEngineTestJob(context.Background(), engine, client, jobID)
 
@@ -5502,13 +5641,16 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 	var lastStatus *usenetengine.JobStatus
 	for {
 		if strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
-			if message, ok := testDecypharrAdminWebDAVFallback(ctx, engine, testFileName); ok {
+			if message, ok, err := testDecypharrAdminWebDAVFallback(ctx, engine, testFileName); ok || err != nil {
+				if err != nil {
+					return testUsenetEngineNZBResult{}, err
+				}
 				return message, nil
 			}
 		}
 		status, err := client.Status(ctx, jobID)
 		if err != nil {
-			return "", fmt.Errorf("poll test NZB status: %w", err)
+			return testUsenetEngineNZBResult{}, fmt.Errorf("poll test NZB status: %w", err)
 		}
 		lastStatus = status
 		if status != nil {
@@ -5516,16 +5658,26 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 			case usenetengine.StatusCompleted:
 				outputPath := strings.TrimSpace(status.OutputPath)
 				if outputPath == "" {
-					return "", fmt.Errorf("test NZB completed without an output path")
+					return testUsenetEngineNZBResult{}, fmt.Errorf("test NZB completed without an output path")
 				}
 				mappedURL, prefixMatched, err := mapUsenetEngineOutputPathForAdminTest(engine, outputPath)
 				if err != nil {
-					return "", err
+					return testUsenetEngineNZBResult{}, err
 				}
 				if err := testUsenetEngineMappedWebDAVURL(ctx, engine, mappedURL); err != nil {
-					return "", fmt.Errorf("test NZB completed path mapped to %s: %w", mappedURL, err)
+					if prefix, inferredURL, ok := inferAdminWebDAVPathPrefix(ctx, engine, outputPath); ok {
+						message := fmt.Sprintf("completed path matched WebDAV after stripping inferred Completed Path Prefix %q; save this value if playback still maps completed paths incorrectly (%s)", prefix, inferredURL)
+						return testUsenetEngineNZBResult{
+							Message:     combineAdminTestMessages(message, "test artifact remains available for optional cleanup"),
+							ArtifactURL: inferredURL,
+						}, nil
+					}
+					return testUsenetEngineNZBResult{}, fmt.Errorf("test NZB completed path mapped to %s: %w", mappedURL, err)
 				}
-				return adminPathMappingMessage(engine, outputPath, prefixMatched), nil
+				return testUsenetEngineNZBResult{
+					Message:     combineAdminTestMessages(adminPathMappingMessage(engine, outputPath, prefixMatched), "test artifact remains available for optional cleanup"),
+					ArtifactURL: mappedURL,
+				}, nil
 			case usenetengine.StatusFailed:
 				errMsg := strings.TrimSpace(status.Error)
 				if errMsg == "" {
@@ -5534,46 +5686,62 @@ func testUsenetEngineWithNZB(ctx context.Context, engine config.UsenetEngineSett
 				if errMsg == "" {
 					errMsg = "external engine reported failure"
 				}
-				return "", fmt.Errorf("test NZB failed: %s", errMsg)
+				return testUsenetEngineNZBResult{}, fmt.Errorf("test NZB failed: %s", errMsg)
 			}
 		}
 		if time.Now().After(deadline) {
 			if lastStatus != nil {
-				return "", fmt.Errorf("timed out waiting for test NZB completion; last status=%s progress=%.1f%%", lastStatus.Status, lastStatus.Progress)
+				return testUsenetEngineNZBResult{}, fmt.Errorf("timed out waiting for test NZB completion; last status=%s progress=%.1f%%", lastStatus.Status, lastStatus.Progress)
 			}
-			return "", fmt.Errorf("timed out waiting for test NZB completion")
+			return testUsenetEngineNZBResult{}, fmt.Errorf("timed out waiting for test NZB completion")
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return testUsenetEngineNZBResult{}, ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
 }
 
-func testDecypharrAdminWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, testFileName string) (string, bool) {
+func testDecypharrAdminWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, testFileName string) (testUsenetEngineNZBResult, bool, error) {
 	baseName := strings.TrimSuffix(path.Base(strings.TrimSpace(testFileName)), path.Ext(strings.TrimSpace(testFileName)))
 	if baseName == "" {
-		return "", false
+		return testUsenetEngineNZBResult{}, false, nil
 	}
-	outputPath := path.Join("/mnt/decypharr/downloads", baseName)
+	candidates := []string{
+		baseName,
+		path.Join("nzbs", baseName),
+		path.Join("__all__", baseName),
+	}
+	if category := usenetEngineCategoryForAdminTest(engine); category != "" {
+		candidates = append(candidates, path.Join(category, baseName))
+	}
 	if prefix := strings.TrimSpace(engine.Config["webdavPathPrefix"]); prefix != "" {
-		outputPath = path.Join(prefix, "downloads", baseName)
-	}
-	mappedURL, prefixMatched, err := mapUsenetEngineOutputPathForAdminTest(engine, outputPath)
-	if err != nil {
-		return "", false
-	}
-	if err := testUsenetEngineMappedWebDAVURL(ctx, engine, mappedURL); err != nil {
-		return "", false
-	}
-	message := adminPathMappingMessage(engine, outputPath, prefixMatched)
-	if message == "" {
-		message = "completed path verified via Decypharr WebDAV fallback"
+		candidates = append(candidates, path.Join(prefix, "downloads", baseName))
 	} else {
-		message += "; completed path verified via Decypharr WebDAV fallback"
+		candidates = append(candidates, path.Join("/mnt/decypharr/downloads", baseName))
 	}
-	return message, true
+
+	for _, outputPath := range candidates {
+		mappedURL, prefixMatched, err := mapUsenetEngineOutputPathForAdminTest(engine, outputPath)
+		if err != nil {
+			continue
+		}
+		if err := testUsenetEngineMappedWebDAVURL(ctx, engine, mappedURL); err != nil {
+			continue
+		}
+		message := adminPathMappingMessage(engine, outputPath, prefixMatched)
+		if message == "" {
+			message = "completed path verified via Decypharr WebDAV fallback"
+		} else {
+			message += "; completed path verified via Decypharr WebDAV fallback"
+		}
+		return testUsenetEngineNZBResult{
+			Message:     combineAdminTestMessages(message, "test artifact remains available for optional cleanup"),
+			ArtifactURL: mappedURL,
+		}, true, nil
+	}
+	return testUsenetEngineNZBResult{}, false, nil
 }
 
 func adminPathMappingMessage(engine config.UsenetEngineSettings, outputPath string, prefixMatched bool) string {
@@ -5596,6 +5764,72 @@ func adminPathMappingMessage(engine config.UsenetEngineSettings, outputPath stri
 		return "completed path is WebDAV-relative; webdavPathPrefix was not used"
 	}
 	return "completed path mapped to WebDAV without using webdavPathPrefix"
+}
+
+func inferAdminWebDAVPathPrefixMessage(ctx context.Context, engine config.UsenetEngineSettings, outputPath string) (string, bool) {
+	prefix, mappedURL, ok := inferAdminWebDAVPathPrefix(ctx, engine, outputPath)
+	if !ok {
+		return "", false
+	}
+	return fmt.Sprintf("completed path matched WebDAV after stripping inferred Completed Path Prefix %q; save this value if playback still maps completed paths incorrectly (%s)", prefix, mappedURL), true
+}
+
+func inferAdminWebDAVPathPrefix(ctx context.Context, engine config.UsenetEngineSettings, outputPath string) (string, string, bool) {
+	outputPath = strings.TrimSpace(outputPath)
+	if outputPath == "" || !strings.HasPrefix(outputPath, "/") {
+		return "", "", false
+	}
+	rootEntries, err := listAdminWebDAVDirectory(ctx, engine, strings.TrimSpace(engine.WebDAVBaseURL))
+	if err != nil || len(rootEntries) == 0 {
+		return "", "", false
+	}
+	parts := splitAdminPathParts(outputPath)
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	for _, entry := range rootEntries {
+		name := strings.Trim(strings.TrimSpace(entry.Name), "/")
+		if name == "" {
+			continue
+		}
+		for idx, part := range parts {
+			if !strings.EqualFold(part, name) || idx == 0 {
+				continue
+			}
+			prefix := "/" + strings.Join(parts[:idx], "/")
+			candidateEngine := engine
+			if candidateEngine.Config == nil {
+				candidateEngine.Config = map[string]string{}
+			} else {
+				copied := make(map[string]string, len(candidateEngine.Config)+1)
+				for key, value := range candidateEngine.Config {
+					copied[key] = value
+				}
+				candidateEngine.Config = copied
+			}
+			candidateEngine.Config["webdavPathPrefix"] = prefix
+			mappedURL, _, mapErr := mapUsenetEngineOutputPathForAdminTest(candidateEngine, outputPath)
+			if mapErr != nil {
+				continue
+			}
+			if testErr := testUsenetEngineMappedWebDAVURL(ctx, candidateEngine, mappedURL); testErr == nil {
+				return prefix, mappedURL, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func splitAdminPathParts(value string) []string {
+	raw := strings.Split(strings.Trim(value, "/"), "/")
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
 }
 
 func combineAdminTestMessages(values ...string) string {
@@ -5681,17 +5915,10 @@ func latestCompletedUsenetEngineOutputPath(ctx context.Context, engine config.Us
 }
 
 func usenetEngineAPIURL(engine config.UsenetEngineSettings, mode string, extra url.Values) (string, error) {
-	base, err := url.Parse(strings.TrimSpace(engine.BaseURL))
+	baseURL, apiPath := splitAdminUsenetEngineAPIEndpoint(engine)
+	base, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("parse baseUrl: %w", err)
-	}
-	apiPath := strings.TrimSpace(engine.APIPath)
-	if apiPath == "" {
-		if strings.EqualFold(strings.TrimSpace(engine.Type), "altmount") || strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
-			apiPath = "/sabnzbd/api"
-		} else {
-			apiPath = "/api"
-		}
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(apiPath, "/")
 	q := base.Query()
@@ -5699,6 +5926,14 @@ func usenetEngineAPIURL(engine config.UsenetEngineSettings, mode string, extra u
 	q.Set("output", "json")
 	if strings.TrimSpace(engine.APIKey) != "" {
 		q.Set("apikey", strings.TrimSpace(engine.APIKey))
+	}
+	if strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+		if strings.TrimSpace(engine.Username) != "" {
+			q.Set("ma_username", strings.TrimSpace(engine.Username))
+		}
+		if strings.TrimSpace(engine.Password) != "" {
+			q.Set("ma_password", strings.TrimSpace(engine.Password))
+		}
 	}
 	for key, values := range extra {
 		for _, value := range values {
@@ -5709,12 +5944,49 @@ func usenetEngineAPIURL(engine config.UsenetEngineSettings, mode string, extra u
 	return base.String(), nil
 }
 
+func splitAdminUsenetEngineAPIEndpoint(engine config.UsenetEngineSettings) (string, string) {
+	baseURL := strings.TrimSpace(engine.BaseURL)
+	apiPath := strings.TrimSpace(engine.APIPath)
+	if apiPath == "" {
+		if strings.EqualFold(strings.TrimSpace(engine.Type), "altmount") || strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+			apiPath = "/sabnzbd/api"
+		} else {
+			apiPath = "/api"
+		}
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL, apiPath
+	}
+	pathValue := strings.TrimRight(parsed.Path, "/")
+	candidates := []string{apiPath, "/sabnzbd/api", "/api"}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if pathValue == candidate || strings.HasSuffix(pathValue, candidate) {
+			rootPath := strings.TrimRight(strings.TrimSuffix(pathValue, candidate), "/")
+			parsed.Path = rootPath
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return strings.TrimRight(parsed.String(), "/"), candidate
+		}
+	}
+	return baseURL, apiPath
+}
+
 func applyUsenetEngineAPIAuth(req *http.Request, engine config.UsenetEngineSettings) {
 	if engine.Username != "" || engine.Password != "" {
 		req.SetBasicAuth(engine.Username, engine.Password)
 	}
 	if strings.TrimSpace(engine.APIKey) != "" {
 		req.Header.Set("X-Api-Key", strings.TrimSpace(engine.APIKey))
+		if strings.EqualFold(strings.TrimSpace(engine.Type), "decypharr") {
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(engine.APIKey))
+		}
 	}
 }
 
@@ -5799,6 +6071,61 @@ func testUsenetEngineMappedWebDAVURL(ctx context.Context, engine config.UsenetEn
 		}
 		return fmt.Errorf("mapped WebDAV path returned HTTP %d", resp.StatusCode)
 	}
+}
+
+func deleteUsenetEngineMappedWebDAVURL(ctx context.Context, engine config.UsenetEngineSettings, rawURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("build WebDAV delete request: %w", err)
+	}
+	if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
+		req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("send WebDAV delete request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if bodyText := strings.TrimSpace(string(body)); bodyText != "" {
+		return fmt.Errorf("WebDAV delete returned HTTP %d: %s", resp.StatusCode, bodyText)
+	}
+	return fmt.Errorf("WebDAV delete returned HTTP %d", resp.StatusCode)
+}
+
+func validateUsenetEngineCleanupArtifactURL(engine config.UsenetEngineSettings, artifactURL string) error {
+	artifact, err := url.Parse(strings.TrimSpace(artifactURL))
+	if err != nil || artifact.Scheme == "" || artifact.Host == "" {
+		return fmt.Errorf("artifactUrl must be an absolute WebDAV URL")
+	}
+	base, err := url.Parse(strings.TrimSpace(engine.WebDAVBaseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return fmt.Errorf("webdavBaseUrl must be an absolute URL")
+	}
+	if !strings.EqualFold(artifact.Scheme, base.Scheme) || !strings.EqualFold(artifact.Host, base.Host) {
+		return fmt.Errorf("artifactUrl must be under the configured WebDAV Root Location")
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	artifactPath := artifact.EscapedPath()
+	if basePath == "" {
+		basePath = "/"
+	}
+	if basePath == "/" {
+		if !strings.HasPrefix(artifactPath, "/") {
+			return fmt.Errorf("artifactUrl must be under the configured WebDAV Root Location")
+		}
+		return nil
+	}
+	if artifactPath != basePath && !strings.HasPrefix(artifactPath, basePath+"/") {
+		return fmt.Errorf("artifactUrl must be under the configured WebDAV Root Location")
+	}
+	return nil
 }
 
 func firstNonEmptyString(values ...string) string {

@@ -971,16 +971,17 @@ func (s *Service) resolveExternalWebDAVStream(ctx context.Context, engine config
 
 func (s *Service) resolveExternalWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, submittedTitle, sourceNZBPath string) (string, bool, error) {
 	engineType := strings.ToLower(strings.TrimSpace(engine.Type))
-	if engineType != "decypharr" && engineType != "altmount" {
-		return "", false, nil
-	}
 	releaseNames := externalFallbackReleaseNames(submittedTitle, sourceNZBPath)
 	if len(releaseNames) == 0 {
 		return "", false, nil
 	}
+	basePaths := externalFallbackBasePaths(engine)
+	if len(basePaths) == 0 {
+		return "", false, nil
+	}
 
 	for _, releaseName := range releaseNames {
-		for _, basePath := range externalFallbackBasePaths(engine) {
+		for _, basePath := range basePaths {
 			for _, candidatePath := range externalExactFallbackPaths(engineType, basePath, releaseName) {
 				candidateURL, err := externalWebDAVURL(engine, candidatePath)
 				if err != nil {
@@ -1076,11 +1077,19 @@ func externalFallbackBasePaths(engine config.UsenetEngineSettings) []string {
 		if completeDir == "" {
 			completeDir = "complete"
 		}
-		return []string{category, path.Join(category, completeDir)}
+		return []string{"", category, path.Join(category, completeDir)}
 	case "decypharr":
-		return []string{"nzbs"}
+		return []string{"", "nzbs"}
 	default:
-		return nil
+		category := strings.TrimSpace(engine.Category)
+		if category == "" {
+			category = strings.TrimSpace(engine.Config["webdavCategory"])
+		}
+		out := []string{""}
+		if category != "" {
+			out = append(out, category)
+		}
+		return out
 	}
 }
 

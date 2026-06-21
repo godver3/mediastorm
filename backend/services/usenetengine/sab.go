@@ -22,8 +22,11 @@ type SABConfig struct {
 	FileFieldName   string
 	CategoryInQuery bool
 	APIKey          string
+	APIKeyAsBearer  bool
 	Username        string
 	Password        string
+	UsernameParam   string
+	PasswordParam   string
 }
 
 type SABClient struct {
@@ -236,6 +239,12 @@ func (c *SABClient) apiURL(mode string, extra url.Values) (string, error) {
 	if c.cfg.APIKey != "" {
 		q.Set("apikey", c.cfg.APIKey)
 	}
+	if c.cfg.UsernameParam != "" && c.cfg.Username != "" {
+		q.Set(c.cfg.UsernameParam, c.cfg.Username)
+	}
+	if c.cfg.PasswordParam != "" && c.cfg.Password != "" {
+		q.Set(c.cfg.PasswordParam, c.cfg.Password)
+	}
 	for key, values := range extra {
 		for _, value := range values {
 			q.Add(key, value)
@@ -251,6 +260,9 @@ func (c *SABClient) applyAuth(req *http.Request) {
 	}
 	if c.cfg.APIKey != "" {
 		req.Header.Set("X-Api-Key", c.cfg.APIKey)
+		if c.cfg.APIKeyAsBearer {
+			req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+		}
 	}
 }
 

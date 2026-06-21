@@ -117,6 +117,67 @@ func TestSABClientSubmitNZBCanSendCategoryInQuery(t *testing.T) {
 	}
 }
 
+func TestSABClientCanSendAPIKeyAsBearer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("apikey"); got != "decypharr-token" {
+			t.Fatalf("apikey query = %q, want decypharr-token", got)
+		}
+		if got := r.Header.Get("X-Api-Key"); got != "decypharr-token" {
+			t.Fatalf("X-Api-Key = %q, want decypharr-token", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer decypharr-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": true,
+			"queue":  map[string]any{"slots": []map[string]any{}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewSABClient(SABConfig{
+		BaseURL:        server.URL,
+		APIKey:         "decypharr-token",
+		APIKeyAsBearer: true,
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("NewSABClient: %v", err)
+	}
+	if _, err := client.Status(context.Background(), "job-1"); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+}
+
+func TestSABClientCanSendAuthQueryParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("ma_username"); got != "decypharr-user" {
+			t.Fatalf("ma_username query = %q, want decypharr-user", got)
+		}
+		if got := r.URL.Query().Get("ma_password"); got != "decypharr-pass" {
+			t.Fatalf("ma_password query = %q, want decypharr-pass", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": true,
+			"queue":  map[string]any{"slots": []map[string]any{}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewSABClient(SABConfig{
+		BaseURL:       server.URL,
+		Username:      "decypharr-user",
+		Password:      "decypharr-pass",
+		UsernameParam: "ma_username",
+		PasswordParam: "ma_password",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("NewSABClient: %v", err)
+	}
+	if _, err := client.Status(context.Background(), "job-1"); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+}
+
 func TestSABClientStatusNormalizesQueueSlot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("mode"); got != "queue" {

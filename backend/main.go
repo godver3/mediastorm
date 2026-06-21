@@ -923,6 +923,7 @@ func main() {
 	r.HandleFunc("/admin/api/test/scraper", adminUIHandler.RequireAuth(adminUIHandler.TestScraper)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/usenet-provider", adminUIHandler.RequireAuth(adminUIHandler.TestUsenetProvider)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/usenet-engine", adminUIHandler.RequireAuth(adminUIHandler.TestUsenetEngine)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/test/usenet-engine/delete-artifact", adminUIHandler.RequireAuth(adminUIHandler.DeleteUsenetEngineTestArtifact)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/debrid-provider", adminUIHandler.RequireAuth(adminUIHandler.TestDebridProvider)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/subtitles", adminUIHandler.RequireAuth(adminUIHandler.TestSubtitles)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/test/metadata", adminUIHandler.RequireAuth(adminUIHandler.TestMetadata)).Methods(http.MethodPost)
