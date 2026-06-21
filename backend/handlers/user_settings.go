@@ -236,24 +236,28 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 	result := make([]models.ShelfConfig, len(configShelves))
 	for i, s := range configShelves {
 		result[i] = models.ShelfConfig{
-			ID:                s.ID,
-			Name:              s.Name,
-			Enabled:           s.Enabled,
-			Order:             s.Order,
-			Type:              s.Type,
-			ListURL:           s.ListURL,
-			StreamingServices: convertStreamingServices(s.StreamingServices),
-			TraktAccountID:    s.TraktAccountID,
-			TraktListType:     s.TraktListType,
-			TraktListID:       s.TraktListID,
-			SimklAccountID:    s.SimklAccountID,
-			SimklListType:     s.SimklListType,
-			SimklMediaType:    s.SimklMediaType,
-			LetterboxdListID:  s.LetterboxdListID,
-			LetterboxdListURL: s.LetterboxdListURL,
-			Limit:             s.Limit,
-			HideUnreleased:    s.HideUnreleased,
-			Sort:              s.Sort,
+			ID:                     s.ID,
+			Name:                   s.Name,
+			Enabled:                s.Enabled,
+			Order:                  s.Order,
+			Type:                   s.Type,
+			ListURL:                s.ListURL,
+			StreamingServices:      convertStreamingServices(s.StreamingServices),
+			CollectionItems:        convertCollectionHubItems(s.CollectionItems),
+			TraktAccountID:         s.TraktAccountID,
+			TraktListType:          s.TraktListType,
+			TraktListID:            s.TraktListID,
+			SimklAccountID:         s.SimklAccountID,
+			SimklListType:          s.SimklListType,
+			SimklMediaType:         s.SimklMediaType,
+			LetterboxdListID:       s.LetterboxdListID,
+			LetterboxdListURL:      s.LetterboxdListURL,
+			Limit:                  s.Limit,
+			HideUnreleased:         s.HideUnreleased,
+			Sort:                   s.Sort,
+			AnimateLogoOnlyOnFocus: s.AnimateLogoOnlyOnFocus,
+			ShowCollectionTitles:   s.ShowCollectionTitles,
+			ShowCollectionCounts:   s.ShowCollectionCounts,
 			CalendarSources: models.CalendarSettings{
 				Watchlist:      s.CalendarSources.Watchlist,
 				History:        s.CalendarSources.History,
@@ -262,6 +266,26 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 				MDBLists:       s.CalendarSources.MDBLists,
 				MDBListShelves: s.CalendarSources.MDBListShelves,
 			},
+		}
+	}
+	return result
+}
+
+func convertCollectionHubItems(items []config.CollectionHubLink) []models.CollectionHubLink {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]models.CollectionHubLink, len(items))
+	for i, item := range items {
+		result[i] = models.CollectionHubLink{
+			ID:            item.ID,
+			Name:          item.Name,
+			Enabled:       item.Enabled,
+			Order:         item.Order,
+			SourceShelfID: item.SourceShelfID,
+			LogoURL:       item.LogoURL,
+			LogoScale:     item.LogoScale,
+			TintColor:     item.TintColor,
 		}
 	}
 	return result

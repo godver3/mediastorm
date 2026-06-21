@@ -707,7 +707,7 @@ func homeShelfSourceKey(shelf models.ShelfConfig) string {
 		return fmt.Sprintf("simkl:%s:%s:%s", shelf.SimklAccountID, shelf.SimklMediaType, shelf.SimklListType)
 	case "letterboxd":
 		return fmt.Sprintf("letterboxd:%s:%s", shelf.LetterboxdListID, shelf.LetterboxdListURL)
-	case "genre", "decade", "local-library":
+	case "genre", "decade", "collection-hub", "local-library":
 		return shelf.Type + ":" + shelf.ID
 	default:
 		if strings.TrimSpace(shelf.ListURL) != "" {

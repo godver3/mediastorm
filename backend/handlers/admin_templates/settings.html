@@ -1679,6 +1679,16 @@
                     hasLogoUrl: !!service?.logoUrl,
                 }))
                 : undefined,
+            collectionItems: Array.isArray(shelf?.collectionItems)
+                ? shelf.collectionItems.map((item, itemIndex) => ({
+                    index: itemIndex,
+                    id: item?.id || '',
+                    name: item?.name || '',
+                    enabled: item?.enabled !== false,
+                    sourceShelfId: item?.sourceShelfId || '',
+                    hasLogoUrl: !!item?.logoUrl,
+                }))
+                : undefined,
         }));
     }
 
@@ -4785,7 +4795,11 @@
         if (normalizeOptionalString(profileShelf.simklListType) && normalizeOptionalString(profileShelf.simklListType) !== normalizeOptionalString(globalShelf.simklListType)) return false;
         if (normalizeOptionalString(profileShelf.letterboxdListId) && normalizeOptionalString(profileShelf.letterboxdListId) !== normalizeOptionalString(globalShelf.letterboxdListId)) return false;
         if (normalizeOptionalString(profileShelf.letterboxdListUrl) && normalizeOptionalString(profileShelf.letterboxdListUrl) !== normalizeOptionalString(globalShelf.letterboxdListUrl)) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'animateLogoOnlyOnFocus') && normalizeOptionalBoolean(profileShelf.animateLogoOnlyOnFocus) !== normalizeOptionalBoolean(globalShelf.animateLogoOnlyOnFocus)) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'showCollectionTitles') && normalizeOptionalBoolean(profileShelf.showCollectionTitles) !== normalizeOptionalBoolean(globalShelf.showCollectionTitles)) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'showCollectionCounts') && normalizeOptionalBoolean(profileShelf.showCollectionCounts) !== normalizeOptionalBoolean(globalShelf.showCollectionCounts)) return false;
         if (Object.prototype.hasOwnProperty.call(profileShelf, 'streamingServices') && !deepEqual(profileShelf.streamingServices || [], globalShelf.streamingServices || [])) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'collectionItems') && !deepEqual(profileShelf.collectionItems || [], globalShelf.collectionItems || [])) return false;
         if (!calendarSourcesEqual(profileShelf.calendarSources, globalShelf.calendarSources)) return false;
         return true;
     }
@@ -5210,13 +5224,17 @@
             const isMyUpcoming = s.id === 'my-upcoming';
             const isRecentlyAired = s.id === 'my-recently-aired';
             const isStreamingServices = s.id === 'streaming-services';
-            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || s.type === 'decade' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-') || s.id.startsWith('decade-')));
+            const isCollectionHub = s.type === 'collection-hub';
+            const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || s.type === 'decade' || isCollectionHub || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-') || s.id.startsWith('decade-') || s.id.startsWith('collection-hub-')));
             const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
             const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
             const sortBadge = isMyUpcoming ? '<span class="shelf-source-badge" title="Sort">'+getMyUpcomingSortLabel(s.sort)+'</span>' : '';
             const streamingBadge = isStreamingServices && Array.isArray(s.streamingServices) && s.streamingServices.length
                 ? '<span class="shelf-source-badge" title="Configured services">'+s.streamingServices.filter(service => service.enabled !== false).length+' services</span>'
+                : '';
+            const collectionBadge = isCollectionHub && Array.isArray(s.collectionItems) && s.collectionItems.length
+                ? '<span class="shelf-source-badge" title="Included shelves">'+s.collectionItems.filter(item => item.enabled !== false).length+' shelves</span>'
                 : '';
 
             let actionsHtml = '';
@@ -5229,6 +5247,8 @@
                             ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sort">Sort</button>'
                         : isStreamingServices
                             ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editStreamingServicesShelf(\''+s.id+'\')" title="Configure streaming services">Config</button>'
+                        : isCollectionHub
+                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCollectionHubShelf(\''+s.id+'\')" title="Configure collection hub">Config</button>'
                         : '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>')+
                     (isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '')+
                 '</div>';
@@ -5237,7 +5257,7 @@
             // Use display index (i) for drag reordering, store shelf ID for reference
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
-                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+sortBadge+streamingBadge+'</span>'+
+                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+sortBadge+streamingBadge+collectionBadge+'</span>'+
                 actionsHtml+
                 '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
             '</div>';
@@ -5307,10 +5327,15 @@
             '.streaming-service-row-controls{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;}'+
             '.streaming-service-icon-btn{width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;}'+
             '.streaming-service-icon-btn svg{width:16px;height:16px;}'+
+            '.streaming-service-config-row .array-item-header{margin-bottom:0;}'+
+            '.streaming-service-config-row.expanded .array-item-header{margin-bottom:0.75rem;}'+
             '.streaming-service-fields{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;}'+
             '.streaming-service-fields[hidden]{display:none!important;}'+
             '.streaming-service-field{display:flex;flex-direction:column;gap:0.35rem;font-size:0.75rem;color:var(--text-secondary);font-weight:500;}'+
             '.streaming-service-field-wide{grid-column:span 2;}'+
+            '.collection-hub-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.75rem;margin-bottom:12px;}'+
+            '.collection-hub-option{display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text-secondary);font-weight:500;line-height:1.3;}'+
+            '.collection-hub-option input{flex:0 0 auto;}'+
             '@media(max-width:768px){'+
                 '.streaming-services-modal{align-items:stretch;justify-content:stretch;padding:0;}'+
                 '.streaming-services-modal-content{width:100%;max-width:none;height:100dvh;max-height:100dvh;border-radius:0;border-left:0;border-right:0;}'+
@@ -5328,6 +5353,7 @@
                 '.streaming-service-row-controls .toggle{gap:0;}'+
                 '.streaming-service-fields{grid-template-columns:1fr;}'+
                 '.streaming-service-field-wide{grid-column:auto;}'+
+                '.collection-hub-options{grid-template-columns:1fr;}'+
             '}'+
             '</style>';
 
@@ -5343,6 +5369,7 @@
                         '<option value="letterboxd">Letterboxd</option>'+
                         '<option value="genre">Genre</option>'+
                         '<option value="decade">Decade</option>'+
+                        '<option value="collection-hub">Collection Hub</option>'+
                         '<option value="streaming-service">Streaming Service</option>'+
                     '</select>'+
                 '</div>'+
@@ -5567,6 +5594,7 @@
             case 'letterboxd': return 'Letterboxd';
             case 'genre': return 'Genre';
             case 'decade': return 'Decade';
+            case 'collection-hub': return 'Collection Hub';
             default: return type || 'MDBList';
         }
     }
@@ -5991,6 +6019,7 @@
         const isLetterboxd = type === 'letterboxd';
         const isGenre = type === 'genre';
         const isDecade = type === 'decade';
+        const isCollectionHub = type === 'collection-hub';
         document.getElementById('streamingServiceGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('streamingMediaTypeGroup').style.display = isStreaming ? '' : 'none';
         document.getElementById('traktAccountGroup').style.display = isTrakt ? '' : 'none';
@@ -6006,10 +6035,10 @@
         document.getElementById('genreGroup').style.display = isGenre ? '' : 'none';
         document.getElementById('decadeMediaTypeGroup').style.display = isDecade ? '' : 'none';
         document.getElementById('decadeGroup').style.display = isDecade ? '' : 'none';
-        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade) ? 'none' : '';
+        document.getElementById('mdblistUrlGroup').style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade || isCollectionHub) ? 'none' : '';
         const hint = document.getElementById('shelfFormHint');
         if (hint) {
-            hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade) ? 'none' : '';
+            hint.style.display = (isStreaming || isTrakt || isSimkl || isLetterboxd || isGenre || isDecade || isCollectionHub) ? 'none' : '';
         }
         if (!isLetterboxd) {
             const urlHint = document.getElementById('letterboxdUrlHint');
@@ -6036,6 +6065,9 @@
         else if (isDecade) {
             renderDecadeOptions('newShelfDecade');
             onDecadeShelfSourceChange();
+        }
+        else if (isCollectionHub) {
+            document.getElementById('newShelfName').value = 'Collection Hub';
         }
         else {
             document.getElementById('newShelfName').value = '';
@@ -6306,6 +6338,31 @@
             if (limitInput) limitInput.value = '0';
             if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
             onShelfTypeChange();
+        } else if (shelfType === 'collection-hub') {
+            const name = nameInput?.value?.trim();
+
+            if (!name) {
+                alert('Please enter a name');
+                return;
+            }
+
+            const slug = name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'collection';
+            const id = `collection-hub-${slug}-${Date.now()}`;
+            const maxOrder = Math.max(...shelves.map(s => s.order || 0), -1);
+            shelves.push({
+                id,
+                name,
+                enabled: true,
+                order: maxOrder + 1,
+                type: 'collection-hub',
+                collectionItems: [],
+            });
+
+            if (typeSelect) typeSelect.value = 'mdblist';
+            nameInput.value = '';
+            if (limitInput) limitInput.value = '0';
+            if (hideUnreleasedInput) hideUnreleasedInput.checked = false;
+            onShelfTypeChange();
         } else {
             // MDBList shelf
             const name = nameInput?.value?.trim();
@@ -6466,6 +6523,7 @@
         const fields = row?.querySelector('.streaming-service-fields');
         if (!fields) return;
         fields.hidden = !fields.hidden;
+        row.classList.toggle('expanded', !fields.hidden);
         button.innerHTML = streamingServiceChevronIcon(!fields.hidden);
         button.title = fields.hidden ? 'Expand settings' : 'Collapse settings';
         button.setAttribute('aria-label', button.title);
@@ -6557,6 +6615,224 @@
         }
         shelf.streamingServices = services;
         closeStreamingServicesModal();
+        renderSettings();
+    }
+
+    const COLLECTION_HUB_ITEM_CAP = 20;
+
+    function isCollectionHubSourceShelf(shelf, currentShelfId) {
+        if (!shelf || shelf.id === currentShelfId) return false;
+        if (shelf.type === 'collection-hub') return false;
+        if (shelf.id === 'streaming-services') return false;
+        return true;
+    }
+
+    function collectionHubSourceLabel(shelf) {
+        if (!shelf) return 'Shelf';
+        const type = shelf.type && shelf.type !== 'builtin' ? ' - ' + getShelfTypeLabel(shelf.type) : '';
+        return `${shelf.name || shelf.id}${type}`;
+    }
+
+    function renderCollectionHubSourceOptions(currentShelfId, selectedShelfId) {
+        const shelves = getEditableHomeShelves()
+            .filter((shelf) => isCollectionHubSourceShelf(shelf, currentShelfId))
+            .sort((a, b) => (a.order || 0) - (b.order || 0));
+        return shelves.map((shelf) => {
+            const selected = shelf.id === selectedShelfId ? 'selected' : '';
+            return `<option value="${escapeHtml(shelf.id).replace(/"/g, '&quot;')}" ${selected}>${escapeHtml(collectionHubSourceLabel(shelf))}</option>`;
+        }).join('');
+    }
+
+    function readCollectionHubEditorRows() {
+        const rows = Array.from(document.querySelectorAll('#collectionHubRows .collection-hub-config-row'));
+        return rows.map((row, index) => {
+            const id = row.dataset.itemId || ('collection-' + Date.now() + '-' + index);
+            const value = (field) => row.querySelector('[data-field="' + field + '"]')?.value?.trim() || '';
+            return {
+                id,
+                name: value('name') || 'Collection',
+                enabled: !!row.querySelector('[data-field="enabled"]')?.checked,
+                order: index,
+                sourceShelfId: value('sourceShelfId'),
+                logoUrl: value('logoUrl'),
+                logoScale: parseFloat(value('logoScale')) || undefined,
+                tintColor: value('tintColor') || 'rgba(148,163,184,0.18)',
+            };
+        });
+    }
+
+    function normalizeCollectionHubItems(items, currentShelfId, options = {}) {
+        const shouldSort = options.sort !== false;
+        const shelves = getEditableHomeShelves();
+        const sourceById = new Map(shelves.map((shelf) => [shelf.id, shelf]));
+        const source = Array.isArray(items) ? items.slice(0, COLLECTION_HUB_ITEM_CAP) : [];
+        const normalized = source.map((item, index) => {
+            const sourceShelf = sourceById.get(item.sourceShelfId);
+            return {
+                id: item.id || ('collection-' + Date.now() + '-' + index),
+                name: item.name || sourceShelf?.name || 'Collection',
+                enabled: item.enabled !== false,
+                order: Number.isFinite(item.order) ? item.order : index,
+                sourceShelfId: item.sourceShelfId || '',
+                logoUrl: item.logoUrl || '',
+                logoScale: item.logoScale || '',
+                tintColor: item.tintColor || 'rgba(148,163,184,0.18)',
+            };
+        }).filter((item) => !item.sourceShelfId || isCollectionHubSourceShelf(sourceById.get(item.sourceShelfId), currentShelfId));
+        return shouldSort ? normalized.sort((a, b) => (a.order || 0) - (b.order || 0)) : normalized;
+    }
+
+    function renderCollectionHubEditorRows(items, currentShelfId) {
+        return items.map((item, index) => `
+            <div class="array-item streaming-service-config-row collection-hub-config-row" data-item-id="${escapeHtml(item.id).replace(/"/g, '&quot;')}">
+                <div class="array-item-header streaming-service-row-header">
+                    <div class="array-item-title streaming-service-row-title">${escapeHtml(item.name)}</div>
+                    <div class="array-item-actions streaming-service-row-controls">
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn" onclick="moveCollectionHubRow(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button>
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn" onclick="moveCollectionHubRow(${index}, 1)" ${index === items.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+                        <label class="toggle" title="Show this collection on the hub shelf">
+                            <input type="checkbox" data-field="enabled" ${item.enabled ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                            <span>Show</span>
+                        </label>
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn streaming-service-expand-btn" onclick="toggleStreamingServiceRow(this)" title="Expand settings" aria-label="Expand settings">${streamingServiceChevronIcon(false)}</button>
+                        <button type="button" class="btn btn-sm btn-danger streaming-service-icon-btn" onclick="deleteCollectionHubRow(${index})" title="Remove" aria-label="Remove">&times;</button>
+                    </div>
+                </div>
+                <div class="streaming-service-fields" hidden>
+                    <label class="streaming-service-field">Name<input class="form-input" data-field="name" value="${escapeHtml(item.name).replace(/"/g, '&quot;')}"></label>
+                    <label class="streaming-service-field streaming-service-field-wide">Source Shelf<select class="form-input" data-field="sourceShelfId">${renderCollectionHubSourceOptions(currentShelfId, item.sourceShelfId)}</select></label>
+                    <label class="streaming-service-field streaming-service-field-wide">PNG/GIF Logo URL<input class="form-input" data-field="logoUrl" value="${escapeHtml(item.logoUrl).replace(/"/g, '&quot;')}" placeholder="https://example.com/logo.png"></label>
+                    <label class="streaming-service-field">Logo Scale<input class="form-input" data-field="logoScale" type="number" min="0.5" max="2" step="0.05" value="${item.logoScale || ''}" placeholder="1"></label>
+                    <label class="streaming-service-field">Tint Color<input class="form-input" data-field="tintColor" value="${escapeHtml(item.tintColor).replace(/"/g, '&quot;')}" placeholder="rgba(148,163,184,0.18)"></label>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function rerenderCollectionHubEditor(items) {
+        const modal = document.getElementById('collectionHubModal');
+        const currentShelfId = modal?.dataset.shelfId || '';
+        const container = document.getElementById('collectionHubRows');
+        if (container) container.innerHTML = renderCollectionHubEditorRows(normalizeCollectionHubItems(items, currentShelfId, { sort: false }), currentShelfId);
+    }
+
+    function editCollectionHubShelf(shelfId) {
+        const shelves = getEditableHomeShelves();
+        const shelf = shelves.find((s) => s.id === shelfId);
+        if (!shelf) return;
+        const items = normalizeCollectionHubItems(shelf.collectionItems, shelfId);
+        const modalHtml = `
+            <div id="collectionHubModal" data-shelf-id="${escapeHtml(shelfId).replace(/"/g, '&quot;')}" class="test-modal streaming-services-modal visible" onclick="closeCollectionHubModal(event)">
+                <div class="test-modal-content streaming-services-modal-content" onclick="event.stopPropagation()">
+                    <div class="test-modal-header streaming-services-modal-header">
+                        <div class="streaming-services-modal-title">
+                            <h3>Configure Collection Hub</h3>
+                            <p class="form-hint" style="margin-top:0.35rem;">Choose the shelves this hub links to. Optional PNG or GIF logo URLs replace text artwork on each card.</p>
+                        </div>
+                        <div class="streaming-services-modal-actions">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="addCollectionHubRow()">Add collection</button>
+                            <button type="button" class="test-modal-close" onclick="closeCollectionHubModal()" aria-label="Close">&times;</button>
+                        </div>
+                    </div>
+                    <div class="test-modal-body streaming-services-modal-body">
+                        <label class="streaming-service-field streaming-service-field-wide" style="display:block;margin-bottom:12px;">Collection Title<input id="collectionHubTitleInput" class="form-input" value="${escapeHtml(shelf.name || 'Collection Hub').replace(/"/g, '&quot;')}" placeholder="Collection Hub"></label>
+                        <div class="collection-hub-options">
+                            <label class="collection-hub-option"><input type="checkbox" id="collectionHubShowTitles" ${(shelf.showCollectionTitles || shelf.collectionItems?.some(item => item.showTitle)) ? 'checked' : ''}> Include item titles</label>
+                            <label class="collection-hub-option"><input type="checkbox" id="collectionHubShowCounts" ${(shelf.showCollectionCounts || shelf.collectionItems?.some(item => item.showItemCount)) ? 'checked' : ''}> Include item counts</label>
+                            <label class="collection-hub-option"><input type="checkbox" id="collectionHubAnimateLogoOnlyOnFocus" ${(shelf.animateLogoOnlyOnFocus || shelf.collectionItems?.some(item => item.animateLogoOnlyOnFocus)) ? 'checked' : ''}> Animate GIF logos only on focus on TV</label>
+                        </div>
+                        <div id="collectionHubRows" class="array-items">${renderCollectionHubEditorRows(items, shelfId)}</div>
+                    </div>
+                    <div class="test-modal-footer streaming-services-modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeCollectionHubModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="saveCollectionHubShelf('${shelfId}')">Save</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        document.body.style.overflow = 'hidden';
+        document.getElementById('collectionHubModal').addEventListener('click', (e) => {
+            if (e.target.id === 'collectionHubModal') closeCollectionHubModal();
+        });
+    }
+
+    function closeCollectionHubModal(event) {
+        if (event && event.target && event.target.id !== 'collectionHubModal') return;
+        const modal = document.getElementById('collectionHubModal');
+        if (modal) modal.remove();
+        document.body.style.overflow = '';
+    }
+
+    function addCollectionHubRow() {
+        const modal = document.getElementById('collectionHubModal');
+        const currentShelfId = modal?.dataset.shelfId || '';
+        const items = readCollectionHubEditorRows();
+        if (items.length >= COLLECTION_HUB_ITEM_CAP) {
+            alert('Collection hubs are capped at 20 items.');
+            return;
+        }
+        const firstShelf = getEditableHomeShelves().find((shelf) => isCollectionHubSourceShelf(shelf, currentShelfId));
+        items.push({
+            id: 'collection-' + Date.now(),
+            name: firstShelf?.name || 'Collection',
+            enabled: true,
+            order: items.length,
+            sourceShelfId: firstShelf?.id || '',
+            logoUrl: '',
+            tintColor: 'rgba(148,163,184,0.18)',
+        });
+        rerenderCollectionHubEditor(items);
+    }
+
+    function moveCollectionHubRow(index, delta) {
+        const items = readCollectionHubEditorRows();
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= items.length) return;
+        const moved = items.splice(index, 1)[0];
+        items.splice(nextIndex, 0, moved);
+        rerenderCollectionHubEditor(items);
+    }
+
+    function deleteCollectionHubRow(index) {
+        const items = readCollectionHubEditorRows();
+        items.splice(index, 1);
+        rerenderCollectionHubEditor(items);
+    }
+
+    function saveCollectionHubShelf(shelfId) {
+        const shelves = getEditableHomeShelves();
+        const shelf = shelves.find((s) => s.id === shelfId);
+        if (!shelf) return;
+        const title = document.getElementById('collectionHubTitleInput')?.value?.trim();
+        const showTitles = !!document.getElementById('collectionHubShowTitles')?.checked;
+        const showCounts = !!document.getElementById('collectionHubShowCounts')?.checked;
+        const animateLogoOnlyOnFocus = !!document.getElementById('collectionHubAnimateLogoOnlyOnFocus')?.checked;
+        const items = readCollectionHubEditorRows();
+        if (!title) {
+            alert('Please enter a collection title.');
+            return;
+        }
+        if (items.length > COLLECTION_HUB_ITEM_CAP) {
+            alert('Collection hubs are capped at 20 items.');
+            return;
+        }
+        for (const item of items) {
+            if (!item.name || !item.sourceShelfId) {
+                alert('Every collection needs a name and source shelf.');
+                return;
+            }
+            if (item.logoUrl && !/\.(png|gif)(?:[?#].*)?$/i.test(item.logoUrl)) {
+                alert(item.name + ' logo must be a PNG or GIF URL.');
+                return;
+            }
+        }
+        shelf.name = title;
+        shelf.showCollectionTitles = showTitles;
+        shelf.showCollectionCounts = showCounts;
+        shelf.animateLogoOnlyOnFocus = animateLogoOnlyOnFocus;
+        shelf.collectionItems = items;
+        closeCollectionHubModal();
         renderSettings();
     }
 

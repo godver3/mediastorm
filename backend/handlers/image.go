@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -147,6 +149,33 @@ func validateProxyImageURL(sourceURL string) error {
 	return nil
 }
 
+func validateExternalGIFURL(sourceURL string) error {
+	parsedSource, err := url.Parse(sourceURL)
+	if err != nil || parsedSource.Host == "" {
+		return fmt.Errorf("invalid URL")
+	}
+	if parsedSource.Scheme != "https" && parsedSource.Scheme != "http" {
+		return fmt.Errorf("invalid URL scheme")
+	}
+	if !strings.HasSuffix(strings.ToLower(parsedSource.Path), ".gif") {
+		return fmt.Errorf("URL must point to a GIF")
+	}
+	host := parsedSource.Hostname()
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("URL host not allowed")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("URL host lookup failed")
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("URL host not allowed")
+		}
+	}
+	return nil
+}
+
 func normalizeProxyWidth(width int) int {
 	if width > 0 && width <= 2000 {
 		return width
@@ -193,7 +222,17 @@ func (h *ImageHandler) ensureCached(sourceURL string, targetWidth, quality int) 
 	}()
 
 	// Fetch the image
-	resp, err := h.httpc.Get(sourceURL)
+	client := *h.httpc
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return http.ErrUseLastResponse
+		}
+		if err := validateExternalGIFURL(req.URL.String()); err != nil {
+			return err
+		}
+		return nil
+	}
+	resp, err := client.Get(sourceURL)
 	if err != nil {
 		log.Printf("[ImageProxy] Fetch error for %s: %v", sourceURL, err)
 		return cachePath, nil, false, fmt.Errorf("failed to fetch image")
@@ -265,6 +304,106 @@ func (h *ImageHandler) ensureCached(sourceURL string, targetWidth, quality int) 
 		return cachePath, nil, false, fmt.Errorf("failed to read cached image")
 	}
 
+	return cachePath, data, false, nil
+}
+
+// GIFFirstFrame returns the first frame of an external GIF as a cached PNG.
+func (h *ImageHandler) GIFFirstFrame(w http.ResponseWriter, r *http.Request) {
+	sourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if sourceURL == "" {
+		http.Error(w, "url parameter required", http.StatusBadRequest)
+		return
+	}
+	if err := validateExternalGIFURL(sourceURL); err != nil {
+		http.Error(w, "invalid URL", http.StatusBadRequest)
+		return
+	}
+
+	_, data, cached, err := h.ensureGIFFirstFrameCached(sourceURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=2592000")
+	if cached {
+		w.Header().Set("X-Cache", "HIT")
+	} else {
+		w.Header().Set("X-Cache", "MISS")
+	}
+	w.Write(data)
+}
+
+func (h *ImageHandler) ensureGIFFirstFrameCached(sourceURL string) (string, []byte, bool, error) {
+	cacheKey := h.cacheKey("gif-first-frame:"+sourceURL, 0, 0)
+	cachePath := filepath.Join(h.cacheDir, cacheKey+".png")
+	if data, err := os.ReadFile(cachePath); err == nil {
+		return cachePath, data, true, nil
+	}
+
+	h.mu.Lock()
+	if ch, exists := h.inProgress[cacheKey]; exists {
+		h.mu.Unlock()
+		<-ch
+		if data, err := os.ReadFile(cachePath); err == nil {
+			return cachePath, data, true, nil
+		}
+		return cachePath, nil, false, fmt.Errorf("failed to load first frame")
+	}
+	ch := make(chan struct{})
+	h.inProgress[cacheKey] = ch
+	h.mu.Unlock()
+
+	defer func() {
+		h.mu.Lock()
+		delete(h.inProgress, cacheKey)
+		close(ch)
+		h.mu.Unlock()
+	}()
+
+	resp, err := h.httpc.Get(sourceURL)
+	if err != nil {
+		log.Printf("[ImageProxy] GIF first-frame fetch error for %s: %v", sourceURL, err)
+		return cachePath, nil, false, fmt.Errorf("failed to fetch image")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[ImageProxy] GIF first-frame fetch returned %d for %s", resp.StatusCode, sourceURL)
+		return cachePath, nil, false, fmt.Errorf("image source error")
+	}
+
+	firstFrame, err := gif.Decode(resp.Body)
+	if err != nil {
+		log.Printf("[ImageProxy] GIF first-frame decode error for %s: %v", sourceURL, err)
+		return cachePath, nil, false, fmt.Errorf("failed to decode GIF")
+	}
+
+	tmpPath := cachePath + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		log.Printf("[ImageProxy] GIF first-frame cache create error: %v", err)
+		var buf bytes.Buffer
+		if encodeErr := png.Encode(&buf, firstFrame); encodeErr != nil {
+			return cachePath, nil, false, fmt.Errorf("failed to encode first frame")
+		}
+		return cachePath, buf.Bytes(), false, nil
+	}
+	if err := png.Encode(f, firstFrame); err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		log.Printf("[ImageProxy] GIF first-frame encode error: %v", err)
+		return cachePath, nil, false, fmt.Errorf("failed to encode first frame")
+	}
+	f.Close()
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		os.Remove(tmpPath)
+		log.Printf("[ImageProxy] GIF first-frame cache rename error: %v", err)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return cachePath, nil, false, fmt.Errorf("failed to read cached first frame")
+	}
 	return cachePath, data, false, nil
 }
 
@@ -345,7 +484,7 @@ func (h *ImageHandler) ClearCache() error {
 
 	var errs []error
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jpg") {
+		if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".jpg") || strings.HasSuffix(entry.Name(), ".png")) {
 			if err := os.Remove(filepath.Join(h.cacheDir, entry.Name())); err != nil {
 				errs = append(errs, err)
 			}

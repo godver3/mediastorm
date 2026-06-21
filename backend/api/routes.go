@@ -474,6 +474,8 @@ func Register(
 		protected.HandleFunc("/images/warm", imageHandler.Options).Methods(http.MethodOptions)
 		api.HandleFunc("/images/proxy", imageHandler.Proxy).Methods(http.MethodGet, http.MethodHead)
 		api.HandleFunc("/images/proxy", imageHandler.Options).Methods(http.MethodOptions)
+		api.HandleFunc("/images/gif-first-frame", imageHandler.GIFFirstFrame).Methods(http.MethodGet, http.MethodHead)
+		api.HandleFunc("/images/gif-first-frame", imageHandler.Options).Methods(http.MethodOptions)
 	}
 
 	// Admin endpoints for monitoring (master only)

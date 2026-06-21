@@ -2,6 +2,7 @@ package user_settings
 
 import (
 	"log"
+	"reflect"
 	"sort"
 
 	"novastream/config"
@@ -206,23 +207,28 @@ func configShelvesToModel(shelves []config.ShelfConfig) []models.ShelfConfig {
 	out := make([]models.ShelfConfig, len(shelves))
 	for i, s := range shelves {
 		out[i] = models.ShelfConfig{
-			ID:                s.ID,
-			Name:              s.Name,
-			Enabled:           s.Enabled,
-			Order:             s.Order,
-			Type:              s.Type,
-			ListURL:           s.ListURL,
-			TraktAccountID:    s.TraktAccountID,
-			TraktListType:     s.TraktListType,
-			TraktListID:       s.TraktListID,
-			SimklAccountID:    s.SimklAccountID,
-			SimklListType:     s.SimklListType,
-			SimklMediaType:    s.SimklMediaType,
-			LetterboxdListID:  s.LetterboxdListID,
-			LetterboxdListURL: s.LetterboxdListURL,
-			Limit:             s.Limit,
-			HideUnreleased:    s.HideUnreleased,
-			Sort:              s.Sort,
+			ID:                     s.ID,
+			Name:                   s.Name,
+			Enabled:                s.Enabled,
+			Order:                  s.Order,
+			Type:                   s.Type,
+			ListURL:                s.ListURL,
+			StreamingServices:      configStreamingServicesToModel(s.StreamingServices),
+			CollectionItems:        configCollectionHubItemsToModel(s.CollectionItems),
+			TraktAccountID:         s.TraktAccountID,
+			TraktListType:          s.TraktListType,
+			TraktListID:            s.TraktListID,
+			SimklAccountID:         s.SimklAccountID,
+			SimklListType:          s.SimklListType,
+			SimklMediaType:         s.SimklMediaType,
+			LetterboxdListID:       s.LetterboxdListID,
+			LetterboxdListURL:      s.LetterboxdListURL,
+			Limit:                  s.Limit,
+			HideUnreleased:         s.HideUnreleased,
+			Sort:                   s.Sort,
+			AnimateLogoOnlyOnFocus: s.AnimateLogoOnlyOnFocus,
+			ShowCollectionTitles:   s.ShowCollectionTitles,
+			ShowCollectionCounts:   s.ShowCollectionCounts,
 			CalendarSources: models.CalendarSettings{
 				Watchlist:      s.CalendarSources.Watchlist,
 				History:        s.CalendarSources.History,
@@ -231,6 +237,54 @@ func configShelvesToModel(shelves []config.ShelfConfig) []models.ShelfConfig {
 				MDBLists:       s.CalendarSources.MDBLists,
 				MDBListShelves: s.CalendarSources.MDBListShelves,
 			},
+		}
+	}
+	return out
+}
+
+func configCollectionHubItemsToModel(items []config.CollectionHubLink) []models.CollectionHubLink {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]models.CollectionHubLink, len(items))
+	for i, item := range items {
+		out[i] = models.CollectionHubLink{
+			ID:            item.ID,
+			Name:          item.Name,
+			Enabled:       item.Enabled,
+			Order:         item.Order,
+			SourceShelfID: item.SourceShelfID,
+			LogoURL:       item.LogoURL,
+			LogoScale:     item.LogoScale,
+			TintColor:     item.TintColor,
+		}
+	}
+	return out
+}
+
+func configStreamingServicesToModel(services []config.StreamingServiceLink) []models.StreamingServiceLink {
+	if len(services) == 0 {
+		return nil
+	}
+	out := make([]models.StreamingServiceLink, len(services))
+	for i, service := range services {
+		lists := make([]models.StreamingServiceListLink, len(service.Lists))
+		for j, list := range service.Lists {
+			lists[j] = models.StreamingServiceListLink{
+				Key:   list.Key,
+				Title: list.Title,
+				URL:   list.URL,
+			}
+		}
+		out[i] = models.StreamingServiceLink{
+			ID:        service.ID,
+			Name:      service.Name,
+			Enabled:   service.Enabled,
+			Order:     service.Order,
+			LogoURL:   service.LogoURL,
+			LogoScale: service.LogoScale,
+			TintColor: service.TintColor,
+			Lists:     lists,
 		}
 	}
 	return out
@@ -1158,6 +1212,11 @@ func shelfConfigsEqual(user []models.ShelfConfig, global []config.ShelfConfig) b
 			(us.SimklMediaType != "" && us.SimklMediaType != gs.SimklMediaType) ||
 			(us.LetterboxdListID != "" && us.LetterboxdListID != gs.LetterboxdListID) ||
 			(us.LetterboxdListURL != "" && us.LetterboxdListURL != gs.LetterboxdListURL) ||
+			(us.AnimateLogoOnlyOnFocus != gs.AnimateLogoOnlyOnFocus) ||
+			(us.ShowCollectionTitles != gs.ShowCollectionTitles) ||
+			(us.ShowCollectionCounts != gs.ShowCollectionCounts) ||
+			(len(us.StreamingServices) > 0 && !reflect.DeepEqual(us.StreamingServices, configStreamingServicesToModel(gs.StreamingServices))) ||
+			(len(us.CollectionItems) > 0 && !reflect.DeepEqual(us.CollectionItems, configCollectionHubItemsToModel(gs.CollectionItems))) ||
 			!calendarSettingsEqual(us.CalendarSources, gs.CalendarSources) {
 			return false
 		}

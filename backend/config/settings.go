@@ -463,25 +463,41 @@ func (ls *LiveSettings) GetEffectivePlaylistURL() string {
 
 // ShelfConfig represents a configurable home screen shelf.
 type ShelfConfig struct {
-	ID                string                 `json:"id"`                          // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
-	Name              string                 `json:"name"`                        // Display name
-	Enabled           bool                   `json:"enabled"`                     // Whether the shelf is visible
-	Order             int                    `json:"order"`                       // Sort order (lower numbers appear first)
-	Type              string                 `json:"type,omitempty"`              // "builtin" (default), "mdblist", "trakt", "simkl", "letterboxd", "genre", "decade", or "local-library"
-	ListURL           string                 `json:"listUrl,omitempty"`           // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
-	StreamingServices []StreamingServiceLink `json:"streamingServices,omitempty"` // Service cards for the built-in Streaming Services shelf
-	TraktAccountID    string                 `json:"traktAccountId,omitempty"`    // Trakt account ID, or "__all__" for master-account global watchlists
-	TraktListType     string                 `json:"traktListType,omitempty"`     // "watchlist" or "custom"
-	TraktListID       string                 `json:"traktListId,omitempty"`       // Trakt custom list slug/ID when traktListType == "custom"
-	SimklAccountID    string                 `json:"simklAccountId,omitempty"`    // Simkl account ID
-	SimklListType     string                 `json:"simklListType,omitempty"`     // Simkl status bucket: "plantowatch", "watching", "completed", "hold", or "dropped"
-	SimklMediaType    string                 `json:"simklMediaType,omitempty"`    // Simkl media bucket: "movies", "shows", or "anime"
-	LetterboxdListID  string                 `json:"letterboxdListId,omitempty"`  // MDBList external-list ID for an imported Letterboxd list
-	LetterboxdListURL string                 `json:"letterboxdListUrl,omitempty"` // Public Letterboxd list URL
-	Limit             int                    `json:"limit,omitempty"`             // Optional limit on number of items returned (0 = no limit)
-	HideUnreleased    bool                   `json:"hideUnreleased,omitempty"`    // Filter out unreleased/in-theaters content
-	Sort              string                 `json:"sort,omitempty"`              // Optional shelf-specific sort mode
-	CalendarSources   CalendarSourceSettings `json:"calendarSources,omitempty"`   // Optional source filter for calendar-backed shelves
+	ID                     string                 `json:"id"`                               // Unique identifier (e.g., "continue-watching", "watchlist", "trending-movies")
+	Name                   string                 `json:"name"`                             // Display name
+	Enabled                bool                   `json:"enabled"`                          // Whether the shelf is visible
+	Order                  int                    `json:"order"`                            // Sort order (lower numbers appear first)
+	Type                   string                 `json:"type,omitempty"`                   // "builtin" (default), "mdblist", "trakt", "simkl", "letterboxd", "genre", "decade", "collection-hub", or "local-library"
+	ListURL                string                 `json:"listUrl,omitempty"`                // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	StreamingServices      []StreamingServiceLink `json:"streamingServices,omitempty"`      // Service cards for the built-in Streaming Services shelf
+	CollectionItems        []CollectionHubLink    `json:"collectionItems,omitempty"`        // Shelf cards for collection hub shelves
+	TraktAccountID         string                 `json:"traktAccountId,omitempty"`         // Trakt account ID, or "__all__" for master-account global watchlists
+	TraktListType          string                 `json:"traktListType,omitempty"`          // "watchlist" or "custom"
+	TraktListID            string                 `json:"traktListId,omitempty"`            // Trakt custom list slug/ID when traktListType == "custom"
+	SimklAccountID         string                 `json:"simklAccountId,omitempty"`         // Simkl account ID
+	SimklListType          string                 `json:"simklListType,omitempty"`          // Simkl status bucket: "plantowatch", "watching", "completed", "hold", or "dropped"
+	SimklMediaType         string                 `json:"simklMediaType,omitempty"`         // Simkl media bucket: "movies", "shows", or "anime"
+	LetterboxdListID       string                 `json:"letterboxdListId,omitempty"`       // MDBList external-list ID for an imported Letterboxd list
+	LetterboxdListURL      string                 `json:"letterboxdListUrl,omitempty"`      // Public Letterboxd list URL
+	Limit                  int                    `json:"limit,omitempty"`                  // Optional limit on number of items returned (0 = no limit)
+	HideUnreleased         bool                   `json:"hideUnreleased,omitempty"`         // Filter out unreleased/in-theaters content
+	Sort                   string                 `json:"sort,omitempty"`                   // Optional shelf-specific sort mode
+	CalendarSources        CalendarSourceSettings `json:"calendarSources,omitempty"`        // Optional source filter for calendar-backed shelves
+	AnimateLogoOnlyOnFocus bool                   `json:"animateLogoOnlyOnFocus,omitempty"` // For collection hubs, animate GIF logos only when focused on TV
+	ShowCollectionTitles   bool                   `json:"showCollectionTitles,omitempty"`   // For collection hubs, show collection card titles
+	ShowCollectionCounts   bool                   `json:"showCollectionCounts,omitempty"`   // For collection hubs, show collection item counts
+}
+
+// CollectionHubLink represents a configurable card in a collection hub shelf.
+type CollectionHubLink struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Enabled       bool    `json:"enabled"`
+	Order         int     `json:"order"`
+	SourceShelfID string  `json:"sourceShelfId"`
+	LogoURL       string  `json:"logoUrl,omitempty"`
+	LogoScale     float64 `json:"logoScale,omitempty"`
+	TintColor     string  `json:"tintColor,omitempty"`
 }
 
 // StreamingServiceLink represents a configurable streaming service card on the home screen.
