@@ -284,6 +284,7 @@ func convertCollectionHubItems(items []config.CollectionHubLink) []models.Collec
 			Order:         item.Order,
 			SourceShelfID: item.SourceShelfID,
 			LogoURL:       item.LogoURL,
+			HeroArtURL:    item.HeroArtURL,
 			LogoScale:     item.LogoScale,
 			TintColor:     item.TintColor,
 		}

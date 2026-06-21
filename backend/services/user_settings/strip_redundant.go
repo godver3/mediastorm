@@ -255,6 +255,7 @@ func configCollectionHubItemsToModel(items []config.CollectionHubLink) []models.
 			Order:         item.Order,
 			SourceShelfID: item.SourceShelfID,
 			LogoURL:       item.LogoURL,
+			HeroArtURL:    item.HeroArtURL,
 			LogoScale:     item.LogoScale,
 			TintColor:     item.TintColor,
 		}

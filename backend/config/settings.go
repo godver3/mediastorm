@@ -496,6 +496,7 @@ type CollectionHubLink struct {
 	Order         int     `json:"order"`
 	SourceShelfID string  `json:"sourceShelfId"`
 	LogoURL       string  `json:"logoUrl,omitempty"`
+	HeroArtURL    string  `json:"heroArtUrl,omitempty"`
 	LogoScale     float64 `json:"logoScale,omitempty"`
 	TintColor     string  `json:"tintColor,omitempty"`
 }

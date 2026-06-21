@@ -1688,6 +1688,7 @@
                     enabled: item?.enabled !== false,
                     sourceShelfId: item?.sourceShelfId || '',
                     hasLogoUrl: !!item?.logoUrl,
+                    hasHeroArtUrl: !!item?.heroArtUrl,
                 }))
                 : undefined,
         }));
@@ -6656,6 +6657,7 @@
                 order: index,
                 sourceShelfId: value('sourceShelfId'),
                 logoUrl: value('logoUrl'),
+                heroArtUrl: value('heroArtUrl'),
                 logoScale: parseFloat(value('logoScale')) || undefined,
                 tintColor: value('tintColor') || 'rgba(148,163,184,0.18)',
             };
@@ -6676,6 +6678,7 @@
                 order: Number.isFinite(item.order) ? item.order : index,
                 sourceShelfId: item.sourceShelfId || '',
                 logoUrl: item.logoUrl || '',
+                heroArtUrl: item.heroArtUrl || '',
                 logoScale: item.logoScale || '',
                 tintColor: item.tintColor || 'rgba(148,163,184,0.18)',
             };
@@ -6704,6 +6707,7 @@
                     <label class="streaming-service-field">Name<input class="form-input" data-field="name" value="${escapeHtml(item.name).replace(/"/g, '&quot;')}"></label>
                     <label class="streaming-service-field streaming-service-field-wide">Source Shelf<select class="form-input" data-field="sourceShelfId">${renderCollectionHubSourceOptions(currentShelfId, item.sourceShelfId)}</select></label>
                     <label class="streaming-service-field streaming-service-field-wide">PNG/GIF Logo URL<input class="form-input" data-field="logoUrl" value="${escapeHtml(item.logoUrl).replace(/"/g, '&quot;')}" placeholder="https://example.com/logo.png"></label>
+                    <label class="streaming-service-field streaming-service-field-wide">TV Hero Art URL<input class="form-input" data-field="heroArtUrl" value="${escapeHtml(item.heroArtUrl).replace(/"/g, '&quot;')}" placeholder="https://example.com/hero.jpg"></label>
                     <label class="streaming-service-field">Logo Scale<input class="form-input" data-field="logoScale" type="number" min="0.5" max="2" step="0.05" value="${item.logoScale || ''}" placeholder="1"></label>
                     <label class="streaming-service-field">Tint Color<input class="form-input" data-field="tintColor" value="${escapeHtml(item.tintColor).replace(/"/g, '&quot;')}" placeholder="rgba(148,163,184,0.18)"></label>
                 </div>
@@ -6781,6 +6785,7 @@
             order: items.length,
             sourceShelfId: firstShelf?.id || '',
             logoUrl: '',
+            heroArtUrl: '',
             tintColor: 'rgba(148,163,184,0.18)',
         });
         rerenderCollectionHubEditor(items);
@@ -6825,6 +6830,10 @@
             }
             if (item.logoUrl && !/\.(png|gif)(?:[?#].*)?$/i.test(item.logoUrl)) {
                 alert(item.name + ' logo must be a PNG or GIF URL.');
+                return;
+            }
+            if (item.heroArtUrl && !/\.(png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(item.heroArtUrl)) {
+                alert(item.name + ' TV hero art must be a PNG, JPG, WebP, or GIF URL.');
                 return;
             }
         }
