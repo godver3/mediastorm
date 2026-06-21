@@ -115,19 +115,19 @@ func TestComputeAdaptiveCaps_BufferFactorClamp(t *testing.T) {
 	}
 }
 
-func TestComputeAdaptiveCaps_SpeedBucketingIsStable(t *testing.T) {
+func TestComputeAdaptiveCaps_UsesMeasuredSpeedDirectly(t *testing.T) {
 	now := time.Now()
-	// Speeds that wobble within the same 25 Mbps bucket (37.5–62.5 -> 50) must
-	// produce identical caps so the prequeue/prewarm scope key stays stable.
-	want := ComputeAdaptiveCaps(true, 0.7, &AdaptivePlaybackSettings{MeasuredMbps: FloatPtr(50)}, now)
-	for _, mbps := range []float64{50.3, 51.1, 48.0, 56.0, 44.5} {
-		got := ComputeAdaptiveCaps(true, 0.7, &AdaptivePlaybackSettings{MeasuredMbps: FloatPtr(mbps)}, now)
-		if got.MaxSizeMovieGB == nil || want.MaxSizeMovieGB == nil || *got.MaxSizeMovieGB != *want.MaxSizeMovieGB {
-			t.Fatalf("mbps %v: movie cap %v, want stable %v", mbps, got.MaxSizeMovieGB, want.MaxSizeMovieGB)
-		}
+	// Use the actual measured speed. Coarse throughput buckets make low/midrange
+	// caps materially inaccurate (for example 13 Mbps rounded up to 25 Mbps).
+	got := ComputeAdaptiveCaps(true, 0.7, &AdaptivePlaybackSettings{MeasuredMbps: FloatPtr(13)}, now)
+	if got.MaxSizeMovieGB == nil || *got.MaxSizeMovieGB != 8.2 {
+		t.Fatalf("13 Mbps movie cap = %v, want 8.2", got.MaxSizeMovieGB)
+	}
+	if got.MaxSizeEpisodeGB == nil || *got.MaxSizeEpisodeGB != 3.1 {
+		t.Fatalf("13 Mbps episode cap = %v, want 3.1", got.MaxSizeEpisodeGB)
 	}
 
-	// A slow connection must still get a real (non-zero) cap, not "no limit".
+	// A slow connection must still get a real positive cap, not "no limit".
 	slow := ComputeAdaptiveCaps(true, 0.7, &AdaptivePlaybackSettings{MeasuredMbps: FloatPtr(3)}, now)
 	if slow.MaxSizeMovieGB == nil || *slow.MaxSizeMovieGB <= 0 {
 		t.Fatalf("slow link should still get a positive cap, got %v", slow.MaxSizeMovieGB)

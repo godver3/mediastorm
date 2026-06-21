@@ -17,10 +17,6 @@ const (
 	// adaptiveMeasurementMaxAge bounds how long a throughput measurement stays
 	// usable before the adaptive size caps are ignored (display caps still apply).
 	adaptiveMeasurementMaxAge = 24 * time.Hour
-	// adaptiveSpeedBucketMbps quantizes measured throughput before deriving caps.
-	// Speed tests wobble run-to-run; bucketing keeps the resulting caps stable so
-	// the prequeue/prewarm cache scope key doesn't thrash on minor fluctuations.
-	adaptiveSpeedBucketMbps = 25.0
 )
 
 // AdaptivePlaybackSettings holds the per-device measurements a client reports for
@@ -70,16 +66,6 @@ func normalizeBufferFactor(f float64) float64 {
 	return f
 }
 
-// bucketSpeedMbps rounds a measured throughput to the nearest adaptiveSpeedBucketMbps,
-// with a floor of one bucket so a slow connection never rounds down to "no limit".
-func bucketSpeedMbps(mbps float64) float64 {
-	bucket := float64(int(mbps/adaptiveSpeedBucketMbps+0.5)) * adaptiveSpeedBucketMbps
-	if bucket < adaptiveSpeedBucketMbps {
-		bucket = adaptiveSpeedBucketMbps
-	}
-	return bucket
-}
-
 // sizeCapGB converts a runtime (seconds) into a size cap in decimal GB given the
 // measured throughput (Mbps) and buffer factor.
 //
@@ -114,11 +100,8 @@ func ComputeAdaptiveCaps(enabled bool, bufferFactor float64, a *AdaptivePlayback
 		}
 		if fresh {
 			factor := normalizeBufferFactor(bufferFactor)
-			// Bucket the speed so minor run-to-run wobble doesn't shift the caps
-			// (keeps the prequeue/prewarm cache scope stable).
-			mbps := bucketSpeedMbps(*a.MeasuredMbps)
-			movie := sizeCapGB(mbps, adaptiveMovieRuntimeSec, factor)
-			episode := sizeCapGB(mbps, adaptiveEpisodeRuntimeSec, factor)
+			movie := sizeCapGB(*a.MeasuredMbps, adaptiveMovieRuntimeSec, factor)
+			episode := sizeCapGB(*a.MeasuredMbps, adaptiveEpisodeRuntimeSec, factor)
 			caps.MaxSizeMovieGB = &movie
 			caps.MaxSizeEpisodeGB = &episode
 		}
