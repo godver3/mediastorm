@@ -2753,6 +2753,19 @@
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
     }
+
+    function allowOnlyOneEnabledUsenetEngine(basePath) {
+        const parts = String(basePath || '').split('.');
+        const enabledIndex = Number(parts[1]);
+        if (!Number.isInteger(enabledIndex)) return;
+        const engines = currentSettings.usenetEngines || [];
+        engines.forEach((engine, index) => {
+            if (index !== enabledIndex && engine) {
+                engine.enabled = false;
+            }
+        });
+    }
+
     function handleFieldChange(basePath, fieldKey, value) {
         // For nested config fields (e.g., config.autoClearQueue), convert booleans to strings
         // because Config is map[string]string in Go
@@ -2761,6 +2774,9 @@
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
 
+        if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'enabled' && value === true) {
+            allowOnlyOneEnabledUsenetEngine(basePath);
+        }
         if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'type') {
             applyUsenetEngineTypeDefaults(basePath, value);
         }

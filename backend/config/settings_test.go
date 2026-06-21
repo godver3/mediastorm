@@ -135,6 +135,35 @@ func TestLoadBackfillsUsenetEnginePresets(t *testing.T) {
 	}
 }
 
+func TestManagerAllowsOnlyOneEnabledUsenetEngine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	manager := NewManager(path)
+	settings := DefaultSettings()
+	settings.UsenetEngines = []UsenetEngineSettings{
+		{Name: "AltMount", Type: "altmount", Enabled: true},
+		{Name: "NZBDav", Type: "nzbdav", Enabled: true},
+		{Name: "Decypharr", Type: "decypharr", Enabled: true},
+	}
+
+	if err := manager.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	loaded, err := manager.Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if !loaded.UsenetEngines[0].Enabled {
+		t.Fatalf("first enabled engine was disabled: %#v", loaded.UsenetEngines)
+	}
+	for i := 1; i < len(loaded.UsenetEngines); i++ {
+		if loaded.UsenetEngines[i].Enabled {
+			t.Fatalf("engine %d remains enabled: %#v", i, loaded.UsenetEngines)
+		}
+	}
+}
+
 func TestLoadForcesCleanPostersEnabled(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	raw := []byte(`{"display":{"cleanPosters":false}}`)

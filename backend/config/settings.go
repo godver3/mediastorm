@@ -92,6 +92,21 @@ type UsenetEngineSettings struct {
 	AllowedProfiles     []string          `json:"allowedProfiles,omitempty"`
 }
 
+func normalizeEnabledUsenetEngines(engines []UsenetEngineSettings) []UsenetEngineSettings {
+	enabledSeen := false
+	for i := range engines {
+		if !engines[i].Enabled {
+			continue
+		}
+		if enabledSeen {
+			engines[i].Enabled = false
+			continue
+		}
+		enabledSeen = true
+	}
+	return engines
+}
+
 type IndexerConfig struct {
 	Name            string   `json:"name"`
 	URL             string   `json:"url"`
@@ -1762,7 +1777,7 @@ func (m *Manager) Load() (Settings, error) {
 		sabnzbdEnabled := false
 		s.SABnzbd.Enabled = &sabnzbdEnabled
 	}
-	s.UsenetEngines = backfillUsenetEngineDefaults(s.UsenetEngines)
+	s.UsenetEngines = normalizeEnabledUsenetEngines(backfillUsenetEngineDefaults(s.UsenetEngines))
 
 	// Backfill Live settings
 	if s.Live.PlaylistCacheTTLHours == 0 {
@@ -2100,6 +2115,7 @@ func (m *Manager) Save(s Settings) error {
 		return errors.New("config path not set")
 	}
 	s.Metadata.NormalizeAISettings()
+	s.UsenetEngines = normalizeEnabledUsenetEngines(s.UsenetEngines)
 	if s.Playback.Thumbnails.Workers < 1 {
 		s.Playback.Thumbnails.Workers = 1
 	}
