@@ -141,6 +141,9 @@ build.sh
 deploy/
 scripts/
 
+# Local Docker test stacks and generated container state
+docker/
+
 # Throwaway usenet benchmark harnesses (kept locally, not tracked)
 backend/tools/benchfb/
 backend/tools/benchrar/
