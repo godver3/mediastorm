@@ -1479,6 +1479,98 @@ func TestAdminUIHandler_TestUsenetEngine_InfersWebDAVPathPrefix(t *testing.T) {
 	}
 }
 
+func TestAdminUIHandler_TestUsenetEngine_NZBDavExUsesKnownMountRoot(t *testing.T) {
+	handler, _ := setupAdminUIHandler(t)
+
+	var sawMappedWebDAV bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api":
+			switch r.URL.Query().Get("mode") {
+			case "queue":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"queue":  map[string]interface{}{"slots": []map[string]interface{}{}},
+				})
+			case "history":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"history": map[string]interface{}{
+						"slots": []map[string]interface{}{{
+							"status":   "Completed",
+							"nzb_name": "strmr-connection-test.nzb",
+							"storage":  "/mnt/davex/completed-symlinks/mediastorm/strmr-connection-test",
+						}},
+					},
+				})
+			case "get_config":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"status": true,
+					"config": map[string]interface{}{
+						"categories": []map[string]interface{}{{"name": "mediastorm", "dir": "mediastorm"}},
+					},
+				})
+			default:
+				http.Error(w, "unexpected mode", http.StatusBadRequest)
+			}
+		case r.Method == "PROPFIND" && (r.URL.Path == "/" || r.URL.Path == ""):
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/completed-symlinks/</D:href>
+    <D:propstat><D:prop><D:displayname>completed-symlinks</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+  </D:response>
+</D:multistatus>`)
+		case r.Method == "PROPFIND" && r.URL.Path == "/completed-symlinks/mediastorm/strmr-connection-test":
+			sawMappedWebDAV = true
+			w.WriteHeader(http.StatusMultiStatus)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":          "NZBDavEx",
+		"type":          "nzbdavex",
+		"testMode":      "basic",
+		"baseUrl":       server.URL,
+		"apiPath":       "/api",
+		"webdavBaseUrl": server.URL,
+		"category":      "mediastorm",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/test/usenet-engine", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.TestUsenetEngine(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawMappedWebDAV {
+		t.Fatal("expected NZBDavEx completed-symlinks path to be checked")
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("unexpected response: %#v", result)
+	}
+	message := fmt.Sprint(result["message"])
+	if strings.Contains(message, "inferred Completed Path Prefix") {
+		t.Fatalf("message should not ask for inferred prefix: %q", message)
+	}
+	if !strings.Contains(message, "completed-path mapping are valid") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
 func TestAdminUIHandler_TestUsenetEngine_AllowsWebDAVMethodNotAllowed(t *testing.T) {
 	handler, _ := setupAdminUIHandler(t)
 

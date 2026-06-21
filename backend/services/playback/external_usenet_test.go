@@ -821,6 +821,8 @@ func TestResolveExternalUsenetEngineSelectsNZBDavExRcloneLink(t *testing.T) {
 </D:multistatus>`)
 		case r.Method == http.MethodGet && r.URL.Path == "/webdav/completed-symlinks/movies/Movie/Movie.mkv.rclonelink":
 			_, _ = io.WriteString(w, "/mnt/davex/.ids/f/2/f/d/2/f2fd252f-36a4-4508-903e-4c1c4a1e0e52")
+		case r.Method == "PROPFIND":
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Fatalf("unexpected WebDAV request method=%q path=%q", r.Method, r.URL.Path)
 		}
@@ -937,11 +939,12 @@ func TestResolveExternalUsenetReusesExistingWebDAVResolutionBeforeSubmit(t *test
 	for _, tt := range []struct {
 		engineType string
 		apiPath    string
+		category   string
 		hitPath    string
 	}{
 		{engineType: "altmount", apiPath: "/sabnzbd/api", hitPath: "/webdav/Release.Name/"},
-		{engineType: "nzbdav", apiPath: "/api", hitPath: "/webdav/Release.Name/"},
-		{engineType: "nzbdavex", apiPath: "/api", hitPath: "/webdav/Release.Name/"},
+		{engineType: "nzbdav", apiPath: "/api", category: "mediastorm", hitPath: "/webdav/completed-symlinks/mediastorm/Release.Name/"},
+		{engineType: "nzbdavex", apiPath: "/api", category: "mediastorm", hitPath: "/webdav/completed-symlinks/mediastorm/Release.Name/"},
 		{engineType: "decypharr", apiPath: "/sabnzbd/api", hitPath: "/webdav/nzbs/Release.Name/"},
 	} {
 		t.Run(tt.engineType, func(t *testing.T) {
@@ -988,6 +991,7 @@ func TestResolveExternalUsenetReusesExistingWebDAVResolutionBeforeSubmit(t *test
 				Enabled:       true,
 				BaseURL:       server.URL,
 				APIPath:       tt.apiPath,
+				Category:      tt.category,
 				WebDAVBaseURL: server.URL + "/webdav",
 			}}
 			cfg := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))

@@ -6003,6 +6003,9 @@ func mapUsenetEngineOutputPathForAdminTest(engine config.UsenetEngineSettings, o
 			prefixMatched = true
 		}
 	}
+	if !prefixMatched {
+		relative = adminUsenetEngineWebDAVRelativePath(relative)
+	}
 	relative = strings.TrimLeft(relative, "/")
 	if relative == "" {
 		return "", prefixMatched, fmt.Errorf("recent completed path %q mapped to an empty WebDAV path", outputPath)
@@ -6015,6 +6018,24 @@ func mapUsenetEngineOutputPathForAdminTest(engine config.UsenetEngineSettings, o
 	baseURL.RawQuery = ""
 	baseURL.Fragment = ""
 	return baseURL.String(), prefixMatched, nil
+}
+
+func adminUsenetEngineWebDAVRelativePath(outputPath string) string {
+	outputPath = strings.TrimSpace(outputPath)
+	for _, prefix := range []string{"/mnt/davex", "/mnt/nzbdav"} {
+		if rel, ok := trimAdminPathPrefix(outputPath, prefix); ok {
+			return rel
+		}
+	}
+	for _, marker := range []string{"/webdav/", "/completed-symlinks/", "/completed-downloads/", "/content/", "/__all__/", "/nzbs/"} {
+		if idx := strings.Index(outputPath, marker); idx >= 0 {
+			if marker == "/webdav/" {
+				return outputPath[idx+len(marker):]
+			}
+			return outputPath[idx+1:]
+		}
+	}
+	return outputPath
 }
 
 func trimAdminPathPrefix(value, prefix string) (string, bool) {

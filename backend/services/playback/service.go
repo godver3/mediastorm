@@ -1161,6 +1161,24 @@ func externalFallbackBasePaths(engine config.UsenetEngineSettings) []string {
 		return []string{"", category, path.Join(category, completeDir)}
 	case "decypharr":
 		return []string{"", "nzbs"}
+	case "nzbdav", "nzbdavex":
+		category := strings.TrimSpace(engine.Category)
+		if category == "" {
+			category = strings.TrimSpace(engine.Config["webdavCategory"])
+		}
+		out := make([]string, 0, 8)
+		if category != "" {
+			out = append(out,
+				path.Join("completed-symlinks", category),
+				path.Join("completed-downloads", category),
+				path.Join("content", category),
+			)
+		}
+		out = append(out, "completed-symlinks", "completed-downloads", "content", "")
+		if category != "" {
+			out = append(out, category)
+		}
+		return out
 	default:
 		category := strings.TrimSpace(engine.Category)
 		if category == "" {
