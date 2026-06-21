@@ -361,6 +361,7 @@
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
     const settingsDebugSessionId = 'settings-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    let editShelfEscapeHandler = null;
 
     function stringifyDebugArg(arg) {
         if (arg instanceof Error) {
@@ -5240,16 +5241,17 @@
             let actionsHtml = '';
             if (isCustom || isRecentlyAired || isMyUpcoming || isStreamingServices) {
                 // Custom lists can be edited/deleted; configurable built-ins expose scoped settings.
+                const configButton = (handler, title) => '<button class="shelf-edit-btn shelf-config-btn" onclick="'+handler+'" title="'+title+'" aria-label="'+title+'">'+icons.edit+'</button>';
                 actionsHtml = '<div class="shelf-actions">'+
                     (isRecentlyAired
-                        ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sources">Sources</button>'
+                        ? configButton('editCustomShelf(\''+s.id+'\')', 'Configure sources')
                         : isMyUpcoming
-                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sort">Sort</button>'
+                            ? configButton('editCustomShelf(\''+s.id+'\')', 'Configure sort')
                         : isStreamingServices
-                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editStreamingServicesShelf(\''+s.id+'\')" title="Configure streaming services">Config</button>'
+                            ? configButton('editStreamingServicesShelf(\''+s.id+'\')', 'Configure streaming services')
                         : isCollectionHub
-                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCollectionHubShelf(\''+s.id+'\')" title="Configure collection hub">Config</button>'
-                        : '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>')+
+                            ? configButton('editCollectionHubShelf(\''+s.id+'\')', 'Configure collection hub')
+                        : configButton('editCustomShelf(\''+s.id+'\')', 'Configure shelf'))+
                     (isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '')+
                 '</div>';
             }
@@ -5284,8 +5286,7 @@
             '.shelf-toggle input:checked + .toggle-slider:before{transform:translateX(18px);}'+
             '.shelf-edit-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:16px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:8px;}'+
             '.shelf-edit-btn:hover{color:#8a2be2;background:rgba(138,43,226,0.15);}'+
-            '.shelf-source-btn{font-size:12px;color:#dbeafe;min-width:0;min-height:30px;padding:5px 9px;}'+
-            '.shelf-source-btn:hover{color:#fff;background:rgba(59,130,246,0.22);}'+
+            '.shelf-config-btn svg{width:16px;height:16px;}'+
             '.shelf-delete-btn{background:rgba(255,255,255,0.08);border:none;color:#aaa;font-size:18px;cursor:pointer;padding:8px 10px;line-height:1;border-radius:6px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center;margin-left:4px;}'+
             '.shelf-delete-btn:hover{color:#e94560;background:rgba(233,69,96,0.15);}'+
             '.shelf-actions{display:flex;align-items:center;}'+
@@ -5295,7 +5296,7 @@
                 '.shelf-type-badge,.shelf-source-badge{height:18px;margin-top:0;}'+
                 '.shelf-filter-badge{margin-top:0;}'+
                 '.shelf-edit-btn,.shelf-delete-btn{min-width:44px;min-height:44px;font-size:20px;padding:10px 12px;}'+
-                '.shelf-source-btn{min-width:0;min-height:30px;font-size:11px;padding:5px 8px;}'+
+                '.shelf-config-btn svg{width:18px;height:18px;}'+
                 '.add-custom-list-form .form-row{flex-wrap:wrap;}'+
                 '.add-custom-list-form .form-group{flex:none !important;width:100%;}'+
                 '.add-custom-list-form button{width:100%;margin-bottom:0;margin-top:4px;}'+
@@ -6836,7 +6837,7 @@
         renderSettings();
     }
 
-    // Edit custom shelf - shows inline edit form
+    // Edit custom/configurable shelf.
     function editCustomShelf(shelfId) {
         const isPerUserSection = perUserSections.includes('homeShelves.shelves');
         let shelves;
@@ -6866,7 +6867,6 @@
         const traktListTypeOptions =
             `<option value="watchlist" ${traktListType === 'watchlist' ? 'selected' : ''}>Watchlist</option>` +
             `<option value="custom" ${traktListType === 'custom' ? 'selected' : ''}>Custom List</option>`;
-        const selectStyle = 'width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;';
         const simklAccountOptions = getAvailableSimklAccountsForShelfForm().map((acc) => {
             const selected = acc.id === (shelf.simklAccountId || '') ? 'selected' : '';
             return `<option value="${acc.id}" ${selected}>${acc.name}${acc.username ? ' (' + acc.username + ')' : ''}</option>`;
@@ -6899,7 +6899,7 @@
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Sort</label>
-                        <select id="editShelfSort" style="${selectStyle}">
+                        <select id="editShelfSort" class="form-input">
                             <option value="air-date-asc" ${currentSort === 'air-date-asc' ? 'selected' : ''}>Soonest air date</option>
                             <option value="air-date-desc" ${currentSort === 'air-date-desc' ? 'selected' : ''}>Latest air date</option>
                             <option value="recently-watched" ${currentSort === 'recently-watched' ? 'selected' : ''}>Recently watched</option>
@@ -6913,30 +6913,30 @@
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Trakt Account</label>
-                        <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" style="${selectStyle}">${traktAccountOptions}</select>
+                        <select id="editShelfTraktAccount" onchange="onEditTraktShelfSourceChange()" class="form-input">${traktAccountOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">List Type</label>
-                        <select id="editShelfTraktListType" onchange="onEditTraktShelfSourceChange()" style="${selectStyle}">${traktListTypeOptions}</select>
+                        <select id="editShelfTraktListType" onchange="onEditTraktShelfSourceChange()" class="form-input">${traktListTypeOptions}</select>
                     </div>
                     <div id="editShelfTraktListGroup" style="margin-bottom:12px;display:${traktListType === 'custom' ? 'block' : 'none'};">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Custom List</label>
-                        <select id="editShelfTraktList" style="${selectStyle}"><option value="">Loading...</option></select>
+                        <select id="editShelfTraktList" class="form-input"><option value="">Loading...</option></select>
                     </div>
         `;
         } else if (isSimklShelf) {
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Simkl Account</label>
-                        <select id="editShelfSimklAccount" style="${selectStyle}">${simklAccountOptions}</select>
+                        <select id="editShelfSimklAccount" class="form-input">${simklAccountOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Content</label>
-                        <select id="editShelfSimklMediaType" style="${selectStyle}">${simklMediaOptions}</select>
+                        <select id="editShelfSimklMediaType" class="form-input">${simklMediaOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">List</label>
-                        <select id="editShelfSimklListType" style="${selectStyle}">${simklStatusOptions}</select>
+                        <select id="editShelfSimklListType" class="form-input">${simklStatusOptions}</select>
                     </div>
         `;
         } else if (isLetterboxdShelf) {
@@ -6949,19 +6949,19 @@
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Source</label>
-                        <select id="editShelfLetterboxdSource" onchange="onEditLetterboxdSourceModeChange()" style="${selectStyle}">
+                        <select id="editShelfLetterboxdSource" onchange="onEditLetterboxdSourceModeChange()" class="form-input">
                             <option value="url" ${editUseUrl ? 'selected' : ''}>Public URL</option>
                             <option value="mdblist" ${editUseUrl ? '' : 'selected'}>Imported via MDBList</option>
                         </select>
                     </div>
                     <div id="editLetterboxdUrlGroup" style="margin-bottom:12px;display:${editUseUrl ? 'block' : 'none'};">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Public Letterboxd URL</label>
-                        <input type="text" id="editShelfLetterboxdUrl" value="${(shelf.letterboxdListUrl || '').replace(/"/g, '&quot;')}" placeholder="https://letterboxd.com/user/list/list-name/" style="${selectStyle}">
+                        <input type="text" id="editShelfLetterboxdUrl" value="${(shelf.letterboxdListUrl || '').replace(/"/g, '&quot;')}" placeholder="https://letterboxd.com/user/list/list-name/" class="form-input">
                         <p class="form-hint" style="margin-top:6px;font-size:11px;">Any public Letterboxd list or watchlist URL — no MDBList account needed.</p>
                     </div>
                     <div id="editLetterboxdListGroup" style="margin-bottom:12px;display:${editUseUrl ? 'none' : 'block'};">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Imported List</label>
-                        <select id="editShelfLetterboxdList" style="${selectStyle}">${letterboxdOptions}</select>
+                        <select id="editShelfLetterboxdList" class="form-input">${letterboxdOptions}</select>
                         <p class="form-hint" style="margin-top:6px;font-size:11px;">Letterboxd lists imported into mdblist.com. Don't see yours? Import it on MDBList first.</p>
                     </div>
         `;
@@ -6969,57 +6969,65 @@
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Content</label>
-                        <select id="editShelfGenreMediaType" onchange="onEditGenreShelfMediaTypeChange()" style="${selectStyle}">${genreMediaOptions}</select>
+                        <select id="editShelfGenreMediaType" onchange="onEditGenreShelfMediaTypeChange()" class="form-input">${genreMediaOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Genre</label>
-                        <select id="editShelfGenre" style="${selectStyle}">${genreOptions}</select>
+                        <select id="editShelfGenre" class="form-input">${genreOptions}</select>
                     </div>
         `;
         } else if (isDecadeShelf) {
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Content</label>
-                        <select id="editShelfDecadeMediaType" style="${selectStyle}">${decadeMediaOptions}</select>
+                        <select id="editShelfDecadeMediaType" class="form-input">${decadeMediaOptions}</select>
                     </div>
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Decade</label>
-                        <select id="editShelfDecade" style="${selectStyle}">${decadeOptions}</select>
+                        <select id="editShelfDecade" class="form-input">${decadeOptions}</select>
                     </div>
         `;
         } else {
             traktSourceFields = `
                     <div style="margin-bottom:12px;">
                         <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">URL</label>
-                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" style="${selectStyle}">
+                        <input type="text" id="editShelfUrl" value="${(shelf.listUrl || '').replace(/"/g, '&quot;')}" class="form-input">
                     </div>
         `;
         }
 
+        const modalTitle = isMyUpcomingShelf ? 'Configure My Upcoming Shelf' : isRecentlyAiredShelf ? 'Configure Recently Aired Shelf' : 'Configure ' + getShelfTypeLabel(shelf.type) + ' List';
+
         // Create modal HTML
         const modalHtml = `
-            <div id="editShelfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;">
-                <div style="background:#1a1a2e;border-radius:12px;padding:24px;max-width:500px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
-                    <h3 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">Edit ${isMyUpcomingShelf ? 'My Upcoming Shelf' : isRecentlyAiredShelf ? 'Recently Aired Shelf' : getShelfTypeLabel(shelf.type) + ' List'}</h3>
-                    <div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
-                        <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+            <div id="editShelfModal" class="test-modal streaming-services-modal visible" onclick="closeEditShelfModal(event)">
+                <div class="test-modal-content streaming-services-modal-content" onclick="event.stopPropagation()" style="max-width: 560px;">
+                    <div class="test-modal-header streaming-services-modal-header">
+                        <div class="streaming-services-modal-title">
+                            <h3>${icons.edit}<span>${modalTitle}</span></h3>
+                        </div>
+                        <button type="button" class="test-modal-close" onclick="closeEditShelfModal()" aria-label="Close">&times;</button>
                     </div>
-                    ${traktSourceFields}
-                    ${isRecentlyAiredShelf || isMyUpcomingShelf ? '' : `<div style="margin-bottom:12px;">
-                        <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
-                        <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" style="width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;box-sizing:border-box;">
+                    <div class="test-modal-body streaming-services-modal-body">
+                        <div style="margin-bottom:12px;">
+                            <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Name</label>
+                            <input type="text" id="editShelfName" value="${shelf.name.replace(/"/g, '&quot;')}" class="form-input">
+                        </div>
+                        ${traktSourceFields}
+                        ${isRecentlyAiredShelf || isMyUpcomingShelf ? '' : `<div style="margin-bottom:12px;">
+                            <label class="form-label" style="font-size:12px;margin-bottom:4px;display:block;">Item Limit <span style="color:#888;font-weight:normal;">(0 = unlimited)</span></label>
+                            <input type="number" id="editShelfLimit" value="${shelf.limit || 0}" min="0" max="500" class="form-input">
+                        </div>
+                        <div style="margin-bottom:16px;">
+                            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+                                <input type="checkbox" id="editShelfHideUnreleased" ${shelf.hideUnreleased ? 'checked' : ''} style="margin-top:2px;">
+                                <span style="font-size:14px;">Hide Unreleased <span style="font-size:11px;color:#888;font-weight:normal;">(Filter out movies not yet available for home viewing, and upcoming series)</span></span>
+                            </label>
+                        </div>`}
                     </div>
-                    <div style="margin-bottom:16px;">
-                        <label style="display:flex;align-items:center;cursor:pointer;">
-                            <input type="checkbox" id="editShelfHideUnreleased" ${shelf.hideUnreleased ? 'checked' : ''} style="margin-right:8px;">
-                            <span style="font-size:14px;">Hide Unreleased</span>
-                            <span style="font-size:11px;color:#888;margin-left:8px;">(Filter out movies not yet available for home viewing, and upcoming series)</span>
-                        </label>
-                    </div>`}
-                    <div style="display:flex;gap:12px;justify-content:flex-end;">
-                        <button onclick="closeEditShelfModal()" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:white;cursor:pointer;">Cancel</button>
-                        <button onclick="saveEditedShelf('${shelfId}')" style="padding:8px 16px;background:#8a2be2;border:none;border-radius:6px;color:white;cursor:pointer;">Save</button>
+                    <div class="test-modal-footer streaming-services-modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeEditShelfModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="saveEditedShelf('${shelfId}')">Save</button>
                     </div>
                 </div>
             </div>
@@ -7027,6 +7035,7 @@
 
         // Add modal to body
         document.body.insertAdjacentHTML('beforeend', modalHtml);
+        document.body.style.overflow = 'hidden';
 
         // Focus the name input
         document.getElementById('editShelfName').focus();
@@ -7035,25 +7044,26 @@
         }
 
         // Close on escape key
-        const handleEscape = (e) => {
+        if (editShelfEscapeHandler) {
+            document.removeEventListener('keydown', editShelfEscapeHandler);
+        }
+        editShelfEscapeHandler = (e) => {
             if (e.key === 'Escape') {
                 closeEditShelfModal();
-                document.removeEventListener('keydown', handleEscape);
             }
         };
-        document.addEventListener('keydown', handleEscape);
-
-        // Close on backdrop click
-        document.getElementById('editShelfModal').addEventListener('click', (e) => {
-            if (e.target.id === 'editShelfModal') {
-                closeEditShelfModal();
-            }
-        });
+        document.addEventListener('keydown', editShelfEscapeHandler);
     }
 
-    function closeEditShelfModal() {
+    function closeEditShelfModal(event) {
+        if (event && event.target && event.target.id !== 'editShelfModal') return;
         const modal = document.getElementById('editShelfModal');
         if (modal) modal.remove();
+        if (editShelfEscapeHandler) {
+            document.removeEventListener('keydown', editShelfEscapeHandler);
+            editShelfEscapeHandler = null;
+        }
+        document.body.style.overflow = '';
     }
 
     async function onEditTraktShelfSourceChange(selectedListId) {
