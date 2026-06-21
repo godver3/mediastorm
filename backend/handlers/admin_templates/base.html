@@ -2300,11 +2300,6 @@
                 const dropdown = button.closest('.nav-dropdown');
                 if (!dropdown) return;
 
-                if (isMobileNavMenu() && button.classList.contains('has-active')) {
-                    dropdown.classList.add('open');
-                    button.setAttribute('aria-expanded', 'true');
-                }
-
                 button.addEventListener('click', () => {
                     if (!isMobileNavMenu()) return;
                     const willOpen = !dropdown.classList.contains('open');

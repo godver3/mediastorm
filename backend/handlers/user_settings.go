@@ -242,6 +242,7 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 			Order:             s.Order,
 			Type:              s.Type,
 			ListURL:           s.ListURL,
+			StreamingServices: convertStreamingServices(s.StreamingServices),
 			TraktAccountID:    s.TraktAccountID,
 			TraktListType:     s.TraktListType,
 			TraktListID:       s.TraktListID,
@@ -261,6 +262,34 @@ func convertShelves(configShelves []config.ShelfConfig) []models.ShelfConfig {
 				MDBLists:       s.CalendarSources.MDBLists,
 				MDBListShelves: s.CalendarSources.MDBListShelves,
 			},
+		}
+	}
+	return result
+}
+
+func convertStreamingServices(services []config.StreamingServiceLink) []models.StreamingServiceLink {
+	if len(services) == 0 {
+		return nil
+	}
+	result := make([]models.StreamingServiceLink, len(services))
+	for i, service := range services {
+		lists := make([]models.StreamingServiceListLink, len(service.Lists))
+		for j, list := range service.Lists {
+			lists[j] = models.StreamingServiceListLink{
+				Key:   list.Key,
+				Title: list.Title,
+				URL:   list.URL,
+			}
+		}
+		result[i] = models.StreamingServiceLink{
+			ID:        service.ID,
+			Name:      service.Name,
+			Enabled:   service.Enabled,
+			Order:     service.Order,
+			LogoURL:   service.LogoURL,
+			LogoScale: service.LogoScale,
+			TintColor: service.TintColor,
+			Lists:     lists,
 		}
 	}
 	return result

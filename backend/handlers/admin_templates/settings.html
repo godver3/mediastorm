@@ -408,6 +408,10 @@
         console.info('[settings-debug] console bridge installed', { sessionId: settingsDebugSessionId, path: window.location.pathname });
     })();
 
+    function settingsPropagationLog(message, details = {}) {
+        console.info('[settings-propagation]', message, details);
+    }
+
     const themeQuickSelects = [
         {
             id: 'default-dark',
@@ -1054,7 +1058,7 @@
 
         for (const userId of allUserIds) {
             try {
-                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId), {
+                const response = await fetch(basePath + '/api/user-settings?userId=' + encodeURIComponent(userId) + '&raw=true', {
                     credentials: 'same-origin'
                 });
                 if (!response.ok) {
@@ -1074,7 +1078,7 @@
                     if (!profileSection) continue;
                     const globalSection = currentSettings[sec.globalKey] || {};
                     if (sec.key === 'display') {
-                        console.info('[settings-propagation] recalc display section start', {
+                        settingsPropagationLog('recalc display section start from raw profile settings', {
                             userId,
                             profileDisplay: profileSection,
                             globalDisplay: globalSection,
@@ -1120,7 +1124,7 @@
                         const globalVal = normalizeForComparison(globalSection[fieldKey]);
                         if (!deepEqual(profileVal, globalVal)) {
                             if (sec.key === 'display') {
-                                console.info('[settings-propagation] recalc display field differs', {
+                                settingsPropagationLog('recalc display field differs from raw profile settings', {
                                     userId,
                                     fieldKey,
                                     fieldLabel: getFieldLabel(sec.key, fieldKey),
@@ -1149,7 +1153,7 @@
                 }
 
                 const hasOverrides = Object.keys(details).length > 0;
-                console.info('[settings-propagation] recalc profile result', {
+                settingsPropagationLog('recalc profile result from raw profile settings', {
                     userId,
                     hasOverrides,
                     details,
@@ -1527,7 +1531,7 @@
                 ? (group.matchAllDetailFields ? fields : fields.filter(field => group.detailFields.includes(field)))
                 : [];
             if (matchingFields.length === 0) return null;
-            console.info('[settings-propagation] group eligible', {
+            settingsPropagationLog('group eligible from override details', {
                 group: group.key,
                 section: group.detailSection,
                 matchingFields,
@@ -1538,6 +1542,50 @@
                 description: matchingFields.join(', '),
             };
         }).filter(Boolean);
+    }
+
+    function changedPropagationGroupKeys(beforeSettings, afterSettings) {
+        if (!beforeSettings || !afterSettings) {
+            const fallbackGroups = new Set(propagationGroups.map(group => group.key));
+            settingsPropagationLog('changed groups fallback: missing before/after settings', {
+                groups: Array.from(fallbackGroups),
+                hasBeforeSettings: !!beforeSettings,
+                hasAfterSettings: !!afterSettings,
+            });
+            return fallbackGroups;
+        }
+        const changed = new Set();
+        const changedDetails = [];
+        for (const group of propagationGroups) {
+            for (const userPath of group.userPaths || []) {
+                const globalPath = getGlobalPath(userPath);
+                const keys = globalPath.split('.');
+                const sectionKey = keys[0];
+                const fieldKey = keys[keys.length - 1];
+                const beforeRaw = getAtPath(beforeSettings, globalPath);
+                const afterRaw = getAtPath(afterSettings, globalPath);
+                const equal = deepEqual(
+                    normalizeForComparisonForField(sectionKey, fieldKey, beforeRaw),
+                    normalizeForComparisonForField(sectionKey, fieldKey, afterRaw)
+                );
+                if (!equal) {
+                    changed.add(group.key);
+                    changedDetails.push({
+                        group: group.key,
+                        label: group.label,
+                        path: globalPath,
+                        before: debugPropagationValueSummary(globalPath, beforeRaw),
+                        after: debugPropagationValueSummary(globalPath, afterRaw),
+                    });
+                    break;
+                }
+            }
+        }
+        settingsPropagationLog('changed groups after global edit', {
+            groups: Array.from(changed),
+            details: changedDetails,
+        });
+        return changed;
     }
 
     function renderPropagationGroupToggles(targetId, groupsForTarget) {
@@ -1613,8 +1661,39 @@
         }
     }
 
+    function debugHomeShelvesSummary(shelves) {
+        if (!Array.isArray(shelves)) return shelves;
+        return shelves.map((shelf, index) => ({
+            index,
+            id: shelf?.id || '',
+            name: shelf?.name || '',
+            type: shelf?.type || '',
+            enabled: shelf?.enabled !== false,
+            streamingServices: Array.isArray(shelf?.streamingServices)
+                ? shelf.streamingServices.map((service, serviceIndex) => ({
+                    index: serviceIndex,
+                    id: service?.id || '',
+                    name: service?.name || '',
+                    enabled: service?.enabled !== false,
+                    listCount: Array.isArray(service?.lists) ? service.lists.length : 0,
+                    hasLogoUrl: !!service?.logoUrl,
+                }))
+                : undefined,
+        }));
+    }
+
+    function debugPropagationValueSummary(path, value) {
+        if (path === 'homeShelves.shelves') {
+            return debugHomeShelvesSummary(value);
+        }
+        return value;
+    }
+
     function debugPropagationSettingsSlice(settings) {
         return {
+            homeShelves: settings?.homeShelves ? {
+                shelves: debugHomeShelvesSummary(settings.homeShelves.shelves),
+            } : undefined,
             display: settings?.display,
             appearance: settings?.display?.appearance,
             playback: settings?.playback ? {
@@ -1639,11 +1718,22 @@
     }
 
     // After saving global settings, check which profiles have overrides and prompt to propagate
-    async function promptPropagateIfNeeded() {
+    async function promptPropagateIfNeeded(changedGroupKeys = null) {
+        settingsPropagationLog('prompt check started', {
+            selectedUserId,
+            selectedClientId,
+            changedGroupKeys: changedGroupKeys ? Array.from(changedGroupKeys) : null,
+            hasUserOverridesMap: !!userOverrides,
+            userOverrides,
+        });
         if (!isAdmin || !userOverrides) return;
 
         // Recalculate which profiles actually have overrides against the new global values
         await recalculateAllUserOverrides();
+        settingsPropagationLog('recalculated user overrides', {
+            userOverrides,
+            userOverrideDetails,
+        });
 
         // Build list of profiles with actual overrides
         const profilesWithOverrides = [];
@@ -1661,7 +1751,10 @@
             }
         });
 
-        if (profilesWithOverrides.length === 0) return;
+        if (profilesWithOverrides.length === 0) {
+            settingsPropagationLog('prompt skipped: no profiles with overrides');
+            return;
+        }
 
         // Configure modal for global→profiles propagation
         propagateLevel = 'global';
@@ -1673,17 +1766,41 @@
             'A profile checkbox toggles all groups inside that profile. All propagation selections start off.';
 
         const list = document.getElementById('propagateTargetList');
+        const hasChangedGroupFilter = changedGroupKeys instanceof Set && changedGroupKeys.size > 0;
+        if (changedGroupKeys instanceof Set && changedGroupKeys.size === 0) {
+            settingsPropagationLog('changed group filter empty; allowing all eligible override groups', {
+                reason: 'empty changed-group calculation would suppress existing profile overrides',
+            });
+        }
+
         const profilesWithPropagatableOverrides = profilesWithOverrides
-            .map(p => ({ ...p, propagationGroups: propagationGroupsForOverrideDetails(p.details) }))
+            .map(p => ({
+                ...p,
+                propagationGroups: propagationGroupsForOverrideDetails(p.details)
+                    .filter(group => !hasChangedGroupFilter || changedGroupKeys.has(group.key))
+            }))
             .filter(p => p.propagationGroups.length > 0);
 
-        if (profilesWithPropagatableOverrides.length === 0) return;
+        if (profilesWithPropagatableOverrides.length === 0) {
+            settingsPropagationLog('prompt skipped: overrides do not intersect changed groups', {
+                changedGroupKeys: changedGroupKeys ? Array.from(changedGroupKeys) : null,
+                hasChangedGroupFilter,
+                profilesWithOverrides: profilesWithOverrides.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    details: p.details,
+                })),
+            });
+            return;
+        }
 
-        console.info('[settings-propagation] prompt profiles with eligible groups', profilesWithPropagatableOverrides.map(p => ({
-            id: p.id,
-            name: p.name,
-            groups: p.propagationGroups.map(g => ({ key: g.key, description: g.description })),
-        })));
+        settingsPropagationLog('prompt opened: profiles with eligible groups', {
+            profiles: profilesWithPropagatableOverrides.map(p => ({
+                id: p.id,
+                name: p.name,
+                groups: p.propagationGroups.map(g => ({ key: g.key, description: g.description })),
+            })),
+        });
 
         list.innerHTML = profilesWithPropagatableOverrides.map(p => {
             return `<li style="padding: 0.5rem 0.6rem; margin-bottom: 0.35rem; background: var(--bg-secondary); border-radius: var(--radius);">
@@ -2470,6 +2587,7 @@
             return isExplicitEmptyArrayOverride(section, key) ? [] : null;
         }
         if (typeof val === 'string' && val.trim() === '') return null;
+        if (val && typeof val === 'object' && !Array.isArray(val) && Object.keys(val).length === 0) return null;
         return val;
     }
 
@@ -4667,6 +4785,7 @@
         if (normalizeOptionalString(profileShelf.simklListType) && normalizeOptionalString(profileShelf.simklListType) !== normalizeOptionalString(globalShelf.simklListType)) return false;
         if (normalizeOptionalString(profileShelf.letterboxdListId) && normalizeOptionalString(profileShelf.letterboxdListId) !== normalizeOptionalString(globalShelf.letterboxdListId)) return false;
         if (normalizeOptionalString(profileShelf.letterboxdListUrl) && normalizeOptionalString(profileShelf.letterboxdListUrl) !== normalizeOptionalString(globalShelf.letterboxdListUrl)) return false;
+        if (Object.prototype.hasOwnProperty.call(profileShelf, 'streamingServices') && !deepEqual(profileShelf.streamingServices || [], globalShelf.streamingServices || [])) return false;
         if (!calendarSourcesEqual(profileShelf.calendarSources, globalShelf.calendarSources)) return false;
         return true;
     }
@@ -4865,6 +4984,7 @@
                 }
             } else {
                 // Save global settings
+                const changedGroups = changedPropagationGroupKeys(originalSettings, currentSettings);
                 normalizeSettingsForSave(currentSettings);
                 const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
@@ -4878,7 +4998,7 @@
                     showToast('Settings saved successfully');
                     setTimeout(() => renderSettings(), 500);
                     // Check if any profiles have overrides
-                    await promptPropagateIfNeeded();
+                    await promptPropagateIfNeeded(changedGroups);
                 } else {
                     const result = await response.json();
                     showToast(result.error || 'Failed to save settings', 'error');
@@ -5089,20 +5209,26 @@
             const toggleChecked = s.enabled ? 'checked' : '';
             const isMyUpcoming = s.id === 'my-upcoming';
             const isRecentlyAired = s.id === 'my-recently-aired';
+            const isStreamingServices = s.id === 'streaming-services';
             const isCustom = !!s.listUrl || s.type === 'mdblist' || s.type === 'trakt' || s.type === 'simkl' || s.type === 'letterboxd' || s.type === 'genre' || s.type === 'decade' || (s.id && (s.id.startsWith('mdblist-') || s.id.startsWith('streaming-service-') || s.id.startsWith('trakt-') || s.id.startsWith('simkl-') || s.id.startsWith('letterboxd-') || s.id.startsWith('genre-') || s.id.startsWith('decade-')));
             const typeLabel = isRecentlyAired ? '<span class="shelf-type-badge">Calendar</span>' : (isCustom ? '<span class="shelf-type-badge">'+getShelfTypeLabel(s.type)+'</span>' : '');
             const filterBadge = (isCustom && s.hideUnreleased) ? '<span class="shelf-filter-badge" title="Hide Unreleased enabled">🎬</span>' : '';
             const sourceBadge = isRecentlyAired ? '<span class="shelf-source-badge" title="Sources">'+getCalendarSourceSummary(s)+'</span>' : '';
             const sortBadge = isMyUpcoming ? '<span class="shelf-source-badge" title="Sort">'+getMyUpcomingSortLabel(s.sort)+'</span>' : '';
+            const streamingBadge = isStreamingServices && Array.isArray(s.streamingServices) && s.streamingServices.length
+                ? '<span class="shelf-source-badge" title="Configured services">'+s.streamingServices.filter(service => service.enabled !== false).length+' services</span>'
+                : '';
 
             let actionsHtml = '';
-            if (isCustom || isRecentlyAired || isMyUpcoming) {
+            if (isCustom || isRecentlyAired || isMyUpcoming || isStreamingServices) {
                 // Custom lists can be edited/deleted; configurable built-ins expose scoped settings.
                 actionsHtml = '<div class="shelf-actions">'+
                     (isRecentlyAired
                         ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sources">Sources</button>'
                         : isMyUpcoming
                             ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Configure sort">Sort</button>'
+                        : isStreamingServices
+                            ? '<button class="shelf-edit-btn shelf-source-btn" onclick="editStreamingServicesShelf(\''+s.id+'\')" title="Configure streaming services">Config</button>'
                         : '<button class="shelf-edit-btn" onclick="editCustomShelf(\''+s.id+'\')" title="Edit">✎</button>')+
                     (isCustom ? '<button class="shelf-delete-btn" onclick="deleteCustomShelf(\''+s.id+'\')" title="Delete">×</button>' : '')+
                 '</div>';
@@ -5111,7 +5237,7 @@
             // Use display index (i) for drag reordering, store shelf ID for reference
             return '<div class="shelf-row'+enabledClass+'" data-index="'+i+'" data-id="'+s.id+'">'+
                 '<span class="shelf-handle">☰</span>'+
-                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+sortBadge+'</span>'+
+                '<span class="shelf-name">'+s.name+typeLabel+filterBadge+sourceBadge+sortBadge+streamingBadge+'</span>'+
                 actionsHtml+
                 '<label class="shelf-toggle"><input type="checkbox" '+toggleChecked+' onchange="toggleShelfEnabled(\''+s.id+'\', this.checked)"><span class="toggle-slider"></span></label>'+
             '</div>';
@@ -5170,6 +5296,39 @@
             '.shelves-inherited .add-custom-list-form input,.shelves-inherited .add-custom-list-form select,.shelves-inherited .add-custom-list-form button{opacity:0.7;}'+
             '.add-custom-list-form select{width:100%;padding:8px 12px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:white;font-size:14px;cursor:pointer;}'+
             '.add-custom-list-form select option{background:#1a1a2e;color:white;}'+
+            '.streaming-services-modal{padding:1rem;overscroll-behavior:contain;}'+
+            '.streaming-services-modal-content{max-width:920px;width:min(920px,100%);max-height:calc(100dvh - 2rem);}'+
+            '.streaming-services-modal-header{align-items:flex-start;gap:1rem;}'+
+            '.streaming-services-modal-title{min-width:0;flex:1;}'+
+            '.streaming-services-modal-actions{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;}'+
+            '.streaming-services-modal-body{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}'+
+            '.streaming-service-row-header{gap:0.75rem;align-items:flex-start;}'+
+            '.streaming-service-row-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'+
+            '.streaming-service-row-controls{display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;}'+
+            '.streaming-service-icon-btn{width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;}'+
+            '.streaming-service-icon-btn svg{width:16px;height:16px;}'+
+            '.streaming-service-fields{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;}'+
+            '.streaming-service-fields[hidden]{display:none!important;}'+
+            '.streaming-service-field{display:flex;flex-direction:column;gap:0.35rem;font-size:0.75rem;color:var(--text-secondary);font-weight:500;}'+
+            '.streaming-service-field-wide{grid-column:span 2;}'+
+            '@media(max-width:768px){'+
+                '.streaming-services-modal{align-items:stretch;justify-content:stretch;padding:0;}'+
+                '.streaming-services-modal-content{width:100%;max-width:none;height:100dvh;max-height:100dvh;border-radius:0;border-left:0;border-right:0;}'+
+                '.streaming-services-modal-header{padding:0.875rem 1rem;flex-direction:column;}'+
+                '.streaming-services-modal-actions{width:100%;justify-content:flex-start;}'+
+                '.streaming-services-modal-actions .btn{flex:1;min-height:44px;}'+
+                '.streaming-services-modal-body{padding:1rem;}'+
+                '.streaming-services-modal-footer{padding:0.875rem 1rem;gap:0.5rem;}'+
+                '.streaming-services-modal-footer .btn{flex:1;min-height:44px;}'+
+                '.streaming-service-row-header{flex-direction:row;align-items:center;flex-wrap:nowrap;}'+
+                '.streaming-service-row-controls{justify-content:flex-end;flex-wrap:nowrap;gap:0.35rem;flex-shrink:0;}'+
+                '.streaming-service-row-controls .btn{min-height:38px;}'+
+                '.streaming-service-row-title{white-space:nowrap;font-size:0.9rem;}'+
+                '.streaming-service-row-controls .toggle span:last-child{display:none;}'+
+                '.streaming-service-row-controls .toggle{gap:0;}'+
+                '.streaming-service-fields{grid-template-columns:1fr;}'+
+                '.streaming-service-field-wide{grid-column:auto;}'+
+            '}'+
             '</style>';
 
         const addCustomListForm = '<div class="add-custom-list-form">'+
@@ -5797,14 +5956,31 @@
 
     // Streaming service URL data (mirrors lists.tsx STREAMING_SERVICES)
     const STREAMING_SERVICES = {
-        netflix:  { name: 'Netflix',       movies: 'https://mdblist.com/lists/snoak/netflix-top-10-movies/json',        shows: 'https://mdblist.com/lists/snoak/netflix-top-10-shows/json' },
-        disney:   { name: 'Disney+',       movies: 'https://mdblist.com/lists/snoak/disney-plus-top-10-movies/json',   shows: 'https://mdblist.com/lists/snoak/disney-plus-top-10-tv-shows/json' },
-        amazon:   { name: 'Amazon Prime',  movies: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-shows/json',   shows: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-tv-shows/json' },
-        appletv:  { name: 'Apple TV+',     movies: 'https://mdblist.com/lists/snoak/apple-tv-top-10-movies/json',      shows: 'https://mdblist.com/lists/snoak/apple-tv-top-10-tv-shows/json' },
-        paramount:{ name: 'Paramount+',    movies: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-movies/json',shows: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-tv-shows/json' },
-        hbomax:   { name: 'HBO Max',       movies: 'https://mdblist.com/lists/snoak/hbo-top-10-movies-2/json',         shows: 'https://mdblist.com/lists/snoak/hbo-top-10-tv-shows/json' },
-        hulu:     { name: 'Hulu',          movies: 'https://mdblist.com/lists/snoak/top-hulu-movies/json',             shows: 'https://mdblist.com/lists/snoak/top-tv-shows-hulu/json' },
+        netflix:  { name: 'Netflix',       logoUrl: 'https://image.tmdb.org/t/p/original/wwemzKWzjKYJFfCeiB57q3r4Bcm.png', tintColor: 'rgba(229,9,20,0.18)', movies: 'https://mdblist.com/lists/snoak/netflix-top-10-movies/json',        shows: 'https://mdblist.com/lists/snoak/netflix-top-10-shows/json' },
+        disney:   { name: 'Disney+',       logoUrl: 'https://image.tmdb.org/t/p/original/1edZOYAfoyZyZ3rklNSiUpXX30Q.png', tintColor: 'rgba(17,60,207,0.18)', movies: 'https://mdblist.com/lists/snoak/disney-plus-top-10-movies/json',   shows: 'https://mdblist.com/lists/snoak/disney-plus-top-10-tv-shows/json' },
+        amazon:   { name: 'Amazon Prime',  logoUrl: 'https://image.tmdb.org/t/p/original/w7HfLNm9CWwRmAMU58udl2L7We7.png', tintColor: 'rgba(0,168,225,0.18)', movies: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-shows/json',   shows: 'https://mdblist.com/lists/snoak/amazon-prime-top-10-tv-shows/json' },
+        appletv:  { name: 'Apple TV+',     logoUrl: 'https://image.tmdb.org/t/p/w780_filter(negate,000,fff)/bngHRFi794mnMq34gfVcm9nDxN1.png', logoScale: 0.9, tintColor: 'rgba(160,160,160,0.15)', movies: 'https://mdblist.com/lists/snoak/apple-tv-top-10-movies/json',      shows: 'https://mdblist.com/lists/snoak/apple-tv-top-10-tv-shows/json' },
+        paramount:{ name: 'Paramount+',    logoUrl: 'https://image.tmdb.org/t/p/original/fi83B1oztoS47xxcemFdPMhIzK.png', tintColor: 'rgba(0,104,199,0.18)', movies: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-movies/json',shows: 'https://mdblist.com/lists/snoak/paramount-plus-top-10-tv-shows/json' },
+        hbomax:   { name: 'HBO Max',       logoUrl: 'https://cdn.prod.website-files.com/6911e6b4bcc8af690d496a26/6911e6b4bcc8af690d497038_HBO%20Max_White.jpg', logoScale: 1.2, tintColor: 'rgba(28,33,120,0.18)', movies: 'https://mdblist.com/lists/snoak/hbo-top-10-movies-2/json',         shows: 'https://mdblist.com/lists/snoak/hbo-top-10-tv-shows/json' },
+        hulu:     { name: 'Hulu',          logoUrl: 'https://image.tmdb.org/t/p/original/pqUTCleNUiTLAVlelGxUgWn1ELh.png', tintColor: 'rgba(28,231,131,0.18)', movies: 'https://mdblist.com/lists/snoak/top-hulu-movies/json',             shows: 'https://mdblist.com/lists/snoak/top-tv-shows-hulu/json' },
+        crunchyroll: { name: 'Crunchyroll', logoUrl: 'https://image.tmdb.org/t/p/original/qqyXcZlJQKlRmAD1TCKV7mGLQlt.png', logoScale: 1.05, tintColor: 'rgba(244,117,33,0.18)', movies: 'https://mdblist.com/lists/snoak/trending-anime-movies/json', shows: 'https://mdblist.com/lists/snoak/trending-anime-shows/json' },
     };
+
+    function defaultStreamingServices() {
+        return Object.entries(STREAMING_SERVICES).map(([id, service], index) => ({
+            id,
+            name: service.name,
+            enabled: true,
+            order: index,
+            logoUrl: service.logoUrl,
+            logoScale: service.logoScale || undefined,
+            tintColor: service.tintColor || 'rgba(148,163,184,0.18)',
+            lists: [
+                { key: id + '-movies', title: 'Movies', url: service.movies },
+                { key: id + '-shows', title: 'Shows', url: service.shows },
+            ],
+        }));
+    }
 
     // Update form fields when shelf type changes
     function onShelfTypeChange() {
@@ -6187,6 +6363,201 @@
             shelves.splice(index, 1);
             renderSettings();
         }
+    }
+
+    function getEditableHomeShelves() {
+        const isPerUserSection = perUserSections.includes('homeShelves.shelves');
+        if (selectedUserId && userSettings && isPerUserSection) {
+            ensureProfileShelves();
+            userSettings.homeShelves.shelves = ensureBuiltInHomeShelfConfig(userSettings.homeShelves?.shelves || []);
+            return userSettings.homeShelves.shelves;
+        }
+        if (!currentSettings.homeShelves) currentSettings.homeShelves = {};
+        currentSettings.homeShelves.shelves = ensureBuiltInHomeShelfConfig(currentSettings.homeShelves?.shelves || []);
+        return currentSettings.homeShelves.shelves;
+    }
+
+    function readStreamingServicesEditorRows() {
+        const rows = Array.from(document.querySelectorAll('#streamingServicesRows .streaming-service-config-row'));
+        return rows.map((row, index) => {
+            const id = row.dataset.serviceId || ('custom-' + Date.now() + '-' + index);
+            const value = (field) => row.querySelector('[data-field="' + field + '"]')?.value?.trim() || '';
+            const lists = [];
+            const moviesUrl = value('moviesUrl');
+            const showsUrl = value('showsUrl');
+            if (moviesUrl) lists.push({ key: id + '-movies', title: 'Movies', url: moviesUrl });
+            if (showsUrl) lists.push({ key: id + '-shows', title: 'Shows', url: showsUrl });
+            return {
+                id,
+                name: value('name') || 'Streaming Service',
+                enabled: !!row.querySelector('[data-field="enabled"]')?.checked,
+                order: index,
+                logoUrl: value('logoUrl'),
+                logoScale: parseFloat(value('logoScale')) || undefined,
+                tintColor: value('tintColor') || 'rgba(148,163,184,0.18)',
+                lists,
+            };
+        });
+    }
+
+    function normalizeStreamingServiceConfig(services, options = {}) {
+        const shouldSort = options.sort !== false;
+        const source = Array.isArray(services) && services.length ? services : defaultStreamingServices();
+        const normalized = source.map((service, index) => {
+            const fallback = STREAMING_SERVICES[service.id] || {};
+            const lists = Array.isArray(service.lists) ? service.lists : [];
+            return {
+                id: service.id || ('custom-' + Date.now() + '-' + index),
+                name: service.name || fallback.name || 'Streaming Service',
+                enabled: service.enabled !== false,
+                order: Number.isFinite(service.order) ? service.order : index,
+                logoUrl: service.logoUrl || fallback.logoUrl || '',
+                logoScale: service.logoScale || fallback.logoScale || '',
+                tintColor: service.tintColor || fallback.tintColor || 'rgba(148,163,184,0.18)',
+                moviesUrl: lists.find((list) => /movie/i.test(list.title || list.key || ''))?.url || service.movies || fallback.movies || '',
+                showsUrl: lists.find((list) => /show|tv/i.test(list.title || list.key || ''))?.url || service.shows || fallback.shows || '',
+            };
+        });
+        return shouldSort ? normalized.sort((a, b) => (a.order || 0) - (b.order || 0)) : normalized;
+    }
+
+    function renderStreamingServicesEditorRows(services) {
+        return services.map((service, index) => `
+            <div class="array-item streaming-service-config-row" data-service-id="${escapeHtml(service.id).replace(/"/g, '&quot;')}">
+                <div class="array-item-header streaming-service-row-header">
+                    <div class="array-item-title streaming-service-row-title">${escapeHtml(service.name)}</div>
+                    <div class="array-item-actions streaming-service-row-controls">
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn" onclick="moveStreamingServiceRow(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button>
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn" onclick="moveStreamingServiceRow(${index}, 1)" ${index === services.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+                        <label class="toggle" title="Show this service on the home shelf">
+                            <input type="checkbox" data-field="enabled" ${service.enabled ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                            <span>Show</span>
+                        </label>
+                        <button type="button" class="btn btn-sm btn-secondary streaming-service-icon-btn streaming-service-expand-btn" onclick="toggleStreamingServiceRow(this)" title="Expand settings" aria-label="Expand settings">${streamingServiceChevronIcon(false)}</button>
+                        <button type="button" class="btn btn-sm btn-danger streaming-service-icon-btn" onclick="deleteStreamingServiceRow(${index})" title="Remove" aria-label="Remove">&times;</button>
+                    </div>
+                </div>
+                <div class="streaming-service-fields" hidden>
+                    <label class="streaming-service-field">Name<input class="form-input" data-field="name" value="${escapeHtml(service.name).replace(/"/g, '&quot;')}"></label>
+                    <label class="streaming-service-field">Logo URL<input class="form-input" data-field="logoUrl" value="${escapeHtml(service.logoUrl).replace(/"/g, '&quot;')}"></label>
+                    <label class="streaming-service-field streaming-service-field-wide">Movies MDBList URL<input class="form-input" data-field="moviesUrl" value="${escapeHtml(service.moviesUrl).replace(/"/g, '&quot;')}" placeholder="https://mdblist.com/lists/.../json"></label>
+                    <label class="streaming-service-field streaming-service-field-wide">Shows MDBList URL<input class="form-input" data-field="showsUrl" value="${escapeHtml(service.showsUrl).replace(/"/g, '&quot;')}" placeholder="https://mdblist.com/lists/.../json"></label>
+                    <label class="streaming-service-field">Logo Scale<input class="form-input" data-field="logoScale" type="number" min="0.5" max="2" step="0.05" value="${service.logoScale || ''}" placeholder="1"></label>
+                    <label class="streaming-service-field">Tint Color<input class="form-input" data-field="tintColor" value="${escapeHtml(service.tintColor).replace(/"/g, '&quot;')}" placeholder="rgba(148,163,184,0.18)"></label>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function streamingServiceChevronIcon(expanded) {
+        return expanded
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+    }
+
+    function rerenderStreamingServicesEditor(services) {
+        const container = document.getElementById('streamingServicesRows');
+        if (container) container.innerHTML = renderStreamingServicesEditorRows(normalizeStreamingServiceConfig(services, { sort: false }));
+    }
+
+    function toggleStreamingServiceRow(button) {
+        const row = button.closest('.streaming-service-config-row');
+        const fields = row?.querySelector('.streaming-service-fields');
+        if (!fields) return;
+        fields.hidden = !fields.hidden;
+        button.innerHTML = streamingServiceChevronIcon(!fields.hidden);
+        button.title = fields.hidden ? 'Expand settings' : 'Collapse settings';
+        button.setAttribute('aria-label', button.title);
+    }
+
+    function editStreamingServicesShelf(shelfId) {
+        const shelves = getEditableHomeShelves();
+        const shelf = shelves.find((s) => s.id === shelfId);
+        if (!shelf) return;
+        const services = normalizeStreamingServiceConfig(shelf.streamingServices);
+        const modalHtml = `
+            <div id="streamingServicesModal" class="test-modal streaming-services-modal visible" onclick="closeStreamingServicesModal(event)">
+                <div class="test-modal-content streaming-services-modal-content" onclick="event.stopPropagation()">
+                    <div class="test-modal-header streaming-services-modal-header">
+                        <div class="streaming-services-modal-title">
+                            <h3>Configure Streaming Services Shelf</h3>
+                            <p class="form-hint" style="margin-top:0.35rem;">Control service order, visibility, logo, and MDBList source URLs. Add custom services for your own URLs.</p>
+                        </div>
+                        <div class="streaming-services-modal-actions">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="restoreDefaultStreamingServices()">Add defaults</button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="addStreamingServiceRow()">Add service</button>
+                            <button type="button" class="test-modal-close" onclick="closeStreamingServicesModal()" aria-label="Close">&times;</button>
+                        </div>
+                    </div>
+                    <div class="test-modal-body streaming-services-modal-body">
+                        <div id="streamingServicesRows" class="array-items">${renderStreamingServicesEditorRows(services)}</div>
+                    </div>
+                    <div class="test-modal-footer streaming-services-modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closeStreamingServicesModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="saveStreamingServicesShelf('${shelfId}')">Save</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        document.body.style.overflow = 'hidden';
+        document.getElementById('streamingServicesModal').addEventListener('click', (e) => {
+            if (e.target.id === 'streamingServicesModal') closeStreamingServicesModal();
+        });
+    }
+
+    function closeStreamingServicesModal(event) {
+        if (event && event.target && event.target.id !== 'streamingServicesModal') return;
+        const modal = document.getElementById('streamingServicesModal');
+        if (modal) modal.remove();
+        document.body.style.overflow = '';
+    }
+
+    function addStreamingServiceRow() {
+        const services = readStreamingServicesEditorRows();
+        services.push({ id: 'custom-' + Date.now(), name: 'Custom Service', enabled: true, order: services.length, logoUrl: '', tintColor: 'rgba(148,163,184,0.18)', lists: [] });
+        rerenderStreamingServicesEditor(services);
+    }
+
+    function moveStreamingServiceRow(index, delta) {
+        const services = readStreamingServicesEditorRows();
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= services.length) return;
+        const moved = services.splice(index, 1)[0];
+        services.splice(nextIndex, 0, moved);
+        rerenderStreamingServicesEditor(services);
+    }
+
+    function deleteStreamingServiceRow(index) {
+        const services = readStreamingServicesEditorRows();
+        services.splice(index, 1);
+        rerenderStreamingServicesEditor(services);
+    }
+
+    function restoreDefaultStreamingServices() {
+        const existing = readStreamingServicesEditorRows();
+        const byId = new Set(existing.map((service) => service.id));
+        rerenderStreamingServicesEditor(existing.concat(defaultStreamingServices().filter((service) => !byId.has(service.id))));
+    }
+
+    function saveStreamingServicesShelf(shelfId) {
+        const shelves = getEditableHomeShelves();
+        const shelf = shelves.find((s) => s.id === shelfId);
+        if (!shelf) return;
+        const services = readStreamingServicesEditorRows();
+        for (const service of services) {
+            if (!service.name || !service.logoUrl) {
+                alert('Every service needs a name and logo URL.');
+                return;
+            }
+            if (!service.lists.length) {
+                alert(service.name + ' needs at least one MDBList URL.');
+                return;
+            }
+        }
+        shelf.streamingServices = services;
+        closeStreamingServicesModal();
+        renderSettings();
     }
 
     // Edit custom shelf - shows inline edit form
@@ -8437,6 +8808,7 @@
                 }
             } else {
                 // Save global settings
+                const changedGroups = changedPropagationGroupKeys(originalSettings, currentSettings);
                 normalizeSettingsForSave(currentSettings);
                 const response = await fetch(basePath + '/api/settings', {
                     method: 'PUT',
@@ -8448,7 +8820,7 @@
                     originalSettings = JSON.parse(JSON.stringify(currentSettings));
                     showToast('Settings saved successfully');
                     // Check if any profiles have overrides and offer to propagate
-                    await promptPropagateIfNeeded();
+                    await promptPropagateIfNeeded(changedGroups);
                 } else {
                     const result = await response.json();
                     showToast(result.error || 'Failed to save settings', 'error');

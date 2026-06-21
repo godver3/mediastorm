@@ -469,6 +469,7 @@ type ShelfConfig struct {
 	Order             int                    `json:"order"`                       // Sort order (lower numbers appear first)
 	Type              string                 `json:"type,omitempty"`              // "builtin" (default), "mdblist", "trakt", "simkl", "letterboxd", "genre", "decade", or "local-library"
 	ListURL           string                 `json:"listUrl,omitempty"`           // MDBList URL for custom lists (e.g., https://mdblist.com/lists/username/list-name/json)
+	StreamingServices []StreamingServiceLink `json:"streamingServices,omitempty"` // Service cards for the built-in Streaming Services shelf
 	TraktAccountID    string                 `json:"traktAccountId,omitempty"`    // Trakt account ID, or "__all__" for master-account global watchlists
 	TraktListType     string                 `json:"traktListType,omitempty"`     // "watchlist" or "custom"
 	TraktListID       string                 `json:"traktListId,omitempty"`       // Trakt custom list slug/ID when traktListType == "custom"
@@ -481,6 +482,25 @@ type ShelfConfig struct {
 	HideUnreleased    bool                   `json:"hideUnreleased,omitempty"`    // Filter out unreleased/in-theaters content
 	Sort              string                 `json:"sort,omitempty"`              // Optional shelf-specific sort mode
 	CalendarSources   CalendarSourceSettings `json:"calendarSources,omitempty"`   // Optional source filter for calendar-backed shelves
+}
+
+// StreamingServiceLink represents a configurable streaming service card on the home screen.
+type StreamingServiceLink struct {
+	ID        string                     `json:"id"`
+	Name      string                     `json:"name"`
+	Enabled   bool                       `json:"enabled"`
+	Order     int                        `json:"order"`
+	LogoURL   string                     `json:"logoUrl"`
+	LogoScale float64                    `json:"logoScale,omitempty"`
+	TintColor string                     `json:"tintColor,omitempty"`
+	Lists     []StreamingServiceListLink `json:"lists"`
+}
+
+// StreamingServiceListLink represents a source list behind a streaming service card.
+type StreamingServiceListLink struct {
+	Key   string `json:"key"`
+	Title string `json:"title"`
+	URL   string `json:"url"`
 }
 
 // CalendarSourceSettings controls source filters for calendar-backed shelf configs.

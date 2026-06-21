@@ -3003,6 +3003,21 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("raw")), "true") {
+		userSettings, err := h.userSettingsService.Get(userID)
+		if err != nil {
+			http.Error(w, "Failed to load user settings", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if userSettings == nil {
+			json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+		json.NewEncoder(w).Encode(userSettings)
+		return
+	}
+
 	// Get global settings as defaults
 	globalSettings, err := h.configManager.Load()
 	if err != nil {
