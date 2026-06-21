@@ -687,6 +687,10 @@ func TestResolveExternalUsenetEngineSelectsMediaFromCompletedWebDAVDirectory(t *
 		if r.Method != "PROPFIND" {
 			t.Fatalf("method = %q, want PROPFIND for %s", r.Method, r.URL.Path)
 		}
+		if r.URL.Path == "/webdav/release/" || r.URL.Path == "/webdav/Movie/" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		username, password, ok := r.BasicAuth()
 		if !ok || username != "webdav-user" || password != "webdav-pass" {
 			t.Fatalf("missing WebDAV basic auth")
@@ -799,6 +803,8 @@ func TestResolveExternalUsenetEngineSelectsNZBDavExRcloneLink(t *testing.T) {
 		}
 
 		switch {
+		case r.Method == "PROPFIND" && (r.URL.Path == "/webdav/release/" || r.URL.Path == "/webdav/Movie/"):
+			w.WriteHeader(http.StatusNotFound)
 		case r.Method == "PROPFIND" && r.URL.Path == "/webdav/completed-symlinks/movies/Movie/":
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusMultiStatus)
@@ -924,6 +930,93 @@ func TestExternalQueueStatusFallsBackToDecypharrWebDAVNZBFolder(t *testing.T) {
 	}
 	if res.HealthStatus != "healthy" {
 		t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+	}
+}
+
+func TestResolveExternalUsenetReusesExistingWebDAVResolutionBeforeSubmit(t *testing.T) {
+	for _, tt := range []struct {
+		engineType string
+		apiPath    string
+		hitPath    string
+	}{
+		{engineType: "altmount", apiPath: "/sabnzbd/api", hitPath: "/webdav/Release.Name/"},
+		{engineType: "nzbdav", apiPath: "/api", hitPath: "/webdav/Release.Name/"},
+		{engineType: "nzbdavex", apiPath: "/api", hitPath: "/webdav/Release.Name/"},
+		{engineType: "decypharr", apiPath: "/sabnzbd/api", hitPath: "/webdav/nzbs/Release.Name/"},
+	} {
+		t.Run(tt.engineType, func(t *testing.T) {
+			var addFileSeen bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == tt.apiPath && r.URL.Query().Get("mode") == "addfile":
+					addFileSeen = true
+					t.Fatalf("addfile should not be called when existing %s WebDAV media is available", tt.engineType)
+				case r.Method == "HEAD":
+					w.WriteHeader(http.StatusNotFound)
+				case r.Method == "PROPFIND" && r.URL.Path == tt.hitPath:
+					w.Header().Set("Content-Type", "application/xml")
+					w.WriteHeader(http.StatusMultiStatus)
+					_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>`+strings.TrimRight(tt.hitPath, "/")+`/</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>`+strings.TrimRight(tt.hitPath, "/")+`/Release.Name.mkv</D:href>
+    <D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:displayname>Release.Name.mkv</D:displayname><D:getcontentlength>123456789</D:getcontentlength></D:prop></D:propstat>
+  </D:response>
+</D:multistatus>`)
+				case r.Method == "PROPFIND":
+					w.WriteHeader(http.StatusNotFound)
+				default:
+					t.Fatalf("unexpected request method=%q path=%q mode=%q", r.Method, r.URL.Path, r.URL.Query().Get("mode"))
+				}
+			}))
+			defer server.Close()
+
+			indexerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Disposition", `attachment; filename="Release.Name.nzb"`)
+				_, _ = io.WriteString(w, `<?xml version="1.0"?><nzb><file subject="Release.Name.mkv"><segments><segment bytes="123456">abc</segment></segments></file></nzb>`)
+			}))
+			defer indexerServer.Close()
+
+			settings := config.DefaultSettings()
+			settings.UsenetEngines = []config.UsenetEngineSettings{{
+				Name:          tt.engineType,
+				Type:          tt.engineType,
+				Enabled:       true,
+				BaseURL:       server.URL,
+				APIPath:       tt.apiPath,
+				WebDAVBaseURL: server.URL + "/webdav",
+			}}
+			cfg := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+			if err := cfg.Save(settings); err != nil {
+				t.Fatalf("save settings: %v", err)
+			}
+
+			svc := NewService(cfg, nil, nil, nil)
+			res, err := svc.Resolve(context.Background(), models.NZBResult{
+				Title:       "Release.Name",
+				DownloadURL: indexerServer.URL + "/Release.Name.nzb",
+			})
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if addFileSeen {
+				t.Fatal("engine addfile was called")
+			}
+			if res.QueueID != 0 {
+				t.Fatalf("QueueID = %d, want 0 for reused direct WebDAV result", res.QueueID)
+			}
+			want := server.URL + strings.TrimRight(tt.hitPath, "/") + "/Release.Name.mkv"
+			if res.WebDAVPath != want {
+				t.Fatalf("WebDAVPath = %q, want %q", res.WebDAVPath, want)
+			}
+			if res.HealthStatus != "healthy" {
+				t.Fatalf("HealthStatus = %q, want healthy", res.HealthStatus)
+			}
+		})
 	}
 }
 

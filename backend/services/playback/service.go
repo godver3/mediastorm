@@ -3,6 +3,8 @@ package playback
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -86,6 +88,42 @@ var (
 
 const externalQueueIDBase int64 = 1_000_000_000
 
+func shortSHA256Bytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func shortSHA256String(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return shortSHA256Bytes([]byte(value))
+}
+
+func shortHash(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 12 {
+		return value
+	}
+	return value[:12]
+}
+
+func safeURLForLog(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Sprintf("hash:%s", shortSHA256String(rawURL))
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return fmt.Sprintf("%s hash:%s", parsed.String(), shortSHA256String(rawURL))
+}
+
 // HealthCheckResult holds the result of a parallel health check for a single candidate
 type HealthCheckResult struct {
 	Index     int                    // Original index in the results slice (for priority)
@@ -161,17 +199,26 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		log.Printf("[playback] warning: failed to load config, using default health check behavior: %v", err)
 	}
 
-	if !externalUsenetEnabledForCandidate(cfg, candidate) && s.nzbSystem != nil {
+	externalUsenetEnabled := externalUsenetEnabledForCandidate(cfg, candidate)
+	downloadURLHash := shortSHA256String(downloadURL)
+	if externalUsenetEnabled {
+		log.Printf("[playback] resolved NZB cache lookup skipped for external usenet engine downloadURLHash=%q title=%q", downloadURLHash, strings.TrimSpace(candidate.Title))
+	} else if s.nzbSystem != nil {
+		log.Printf("[playback] resolved NZB cache lookup by download URL downloadURLHash=%q title=%q", downloadURLHash, strings.TrimSpace(candidate.Title))
 		if entry, ok, cacheErr := s.nzbSystem.ImporterService().FindResolvedNZBByDownloadURL(ctx, downloadURL); cacheErr != nil {
-			log.Printf("[playback] resolved NZB cache lookup failed: %v", cacheErr)
+			log.Printf("[playback] resolved NZB cache lookup failed downloadURLHash=%q: %v", downloadURLHash, cacheErr)
 		} else if ok {
 			sourceNZBPath := strings.TrimSpace(entry.FileName)
 			if sourceNZBPath == "" {
 				sourceNZBPath = strings.TrimSpace(candidate.Title)
 			}
-			log.Printf("[playback] resolved NZB cache hit before fetch storagePath=%q title=%q", entry.StoragePath, entry.Title)
+			log.Printf("[playback] resolved NZB cache hit before fetch downloadURLHash=%q nzbHash=%q storagePath=%q title=%q hits=%d", downloadURLHash, shortHash(entry.NZBHash), entry.StoragePath, entry.Title, entry.Hits)
 			return s.buildInternalPlaybackResolution(cfg, candidate, entry.StoragePath, sourceNZBPath, entry.FileSize, "healthy")
+		} else {
+			log.Printf("[playback] resolved NZB cache miss before fetch downloadURLHash=%q title=%q", downloadURLHash, strings.TrimSpace(candidate.Title))
 		}
+	} else {
+		log.Printf("[playback] resolved NZB cache lookup unavailable downloadURLHash=%q nzbSystemConfigured=false title=%q", downloadURLHash, strings.TrimSpace(candidate.Title))
 	}
 
 	nzbBytes, fileName, err := s.fetchNZB(ctx, downloadURL, candidate)
@@ -179,7 +226,8 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		return nil, err
 	}
 
-	log.Printf("[playback] nzb fetched size=%d fileName=%q", len(nzbBytes), fileName)
+	nzbHash := shortSHA256Bytes(nzbBytes)
+	log.Printf("[playback] nzb fetched size=%d fileName=%q downloadURLHash=%q nzbHash=%q externalUsenet=%t", len(nzbBytes), fileName, downloadURLHash, nzbHash, externalUsenetEnabled)
 
 	if res, err := s.resolveExternalUsenet(ctx, cfg, candidate, nzbBytes, fileName); err != nil {
 		return nil, err
@@ -676,7 +724,20 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	if strings.EqualFold(strings.TrimSpace(engineSettings.Type), "altmount") {
 		submitNZB, submitFileName = prepareAltMountNZBSubmission(candidate, nzbBytes, fileName)
 	}
+	sourceNZBPath := strings.TrimSpace(submitFileName)
+	fileSize := estimateNZBFileSize(submitNZB)
 
+	if existingURL, ok := s.findExistingExternalUsenetResolution(ctx, engineSettings, candidate, sourceNZBPath); ok {
+		log.Printf("[playback] external usenet existing resolution found before submit engine=%q type=%q fileName=%q streamURL=%q; skipping NZB submit", engineSettings.Name, engineSettings.Type, submitFileName, safeURLForLog(existingURL))
+		return &models.PlaybackResolution{
+			WebDAVPath:    existingURL,
+			HealthStatus:  "healthy",
+			FileSize:      fileSize,
+			SourceNZBPath: sourceNZBPath,
+		}, nil
+	}
+
+	log.Printf("[playback] external usenet resolve path selected engine=%q type=%q profileID=%q title=%q fileName=%q nzbHash=%q category=%q", engineSettings.Name, engineSettings.Type, profileID, strings.TrimSpace(candidate.Title), submitFileName, shortSHA256Bytes(submitNZB), category)
 	log.Printf("[playback] submitting NZB to external usenet engine name=%q type=%q fileName=%q", engineSettings.Name, engineSettings.Type, submitFileName)
 	submit, err := engine.SubmitNZB(ctx, usenetengine.SubmitRequest{
 		FileName: submitFileName,
@@ -692,10 +753,9 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	if queueID <= 0 {
 		queueID = s.externalNextID.Add(1)
 	}
-	sourceNZBPath := strings.TrimSpace(submitFileName)
-	fileSize := estimateNZBFileSize(submitNZB)
 
 	s.externalMu.Lock()
+	existingExternalJobs := len(s.externalJobs)
 	s.externalJobs[queueID] = &externalUsenetJob{
 		ID:             queueID,
 		EngineJobID:    submit.JobID,
@@ -708,7 +768,7 @@ func (s *Service) resolveExternalUsenet(ctx context.Context, settings config.Set
 	}
 	s.externalMu.Unlock()
 
-	log.Printf("[playback] external usenet job queued queueID=%d engineJobID=%q engine=%q", queueID, submit.JobID, engine.Name())
+	log.Printf("[playback] external usenet job queued queueID=%d engineJobID=%q engine=%q type=%q fileName=%q nzbHash=%q inMemoryJobsBefore=%d note=%q", queueID, submit.JobID, engine.Name(), engineSettings.Type, submitFileName, shortSHA256Bytes(submitNZB), existingExternalJobs, "external jobs are tracked in memory until completion; resolved NZB cache is not written on submit")
 	return &models.PlaybackResolution{
 		QueueID:       queueID,
 		HealthStatus:  "queued",
@@ -746,6 +806,7 @@ func (s *Service) externalQueueStatus(ctx context.Context, queueID int64) (*mode
 	}
 	statusFileName := strings.TrimSpace(status.FileName)
 	statusFileNameMatchesSubmission := statusFileName == "" || externalReleaseNameMatchesSubmitted(statusFileName, job.SubmittedTitle, sourceNZBPath)
+	log.Printf("[playback] external usenet status queueID=%d engineJobID=%q engine=%q type=%q status=%q rawStatus=%q submitted=%q sourceNZB=%q statusFileName=%q output=%q fileSize=%d", queueID, job.EngineJobID, job.Engine.Name, job.Engine.Type, status.Status, status.RawStatus, job.SubmittedTitle, sourceNZBPath, statusFileName, status.OutputPath, fileSize)
 
 	s.externalMu.Lock()
 	if existing := s.externalJobs[queueID]; existing != nil {
@@ -790,6 +851,7 @@ func (s *Service) externalQueueStatus(ctx context.Context, queueID int64) (*mode
 			if fallbackURL, ok, fallbackErr := s.resolveExternalWebDAVFallback(ctx, job.Engine, job.SubmittedTitle, sourceNZBPath); fallbackErr != nil {
 				return nil, true, fallbackErr
 			} else if ok {
+				log.Printf("[playback] external usenet completed via fallback queueID=%d engineJobID=%q sourceNZB=%q streamURL=%q; deleting in-memory job without writing resolved NZB cache", queueID, job.EngineJobID, sourceNZBPath, safeURLForLog(fallbackURL))
 				s.deleteExternalJob(queueID)
 				return &models.PlaybackResolution{
 					QueueID:       queueID,
@@ -806,6 +868,7 @@ func (s *Service) externalQueueStatus(ctx context.Context, queueID int64) (*mode
 				SourceNZBPath: sourceNZBPath,
 			}, true, nil
 		}
+		log.Printf("[playback] external usenet completed queueID=%d engineJobID=%q sourceNZB=%q streamURL=%q; deleting in-memory job without writing resolved NZB cache", queueID, job.EngineJobID, sourceNZBPath, safeURLForLog(streamURL))
 		s.deleteExternalJob(queueID)
 		return &models.PlaybackResolution{
 			QueueID:       queueID,
@@ -818,6 +881,7 @@ func (s *Service) externalQueueStatus(ctx context.Context, queueID int64) (*mode
 		if streamURL, ok, fallbackErr := s.resolveExternalWebDAVFallback(ctx, job.Engine, job.SubmittedTitle, sourceNZBPath); fallbackErr != nil {
 			return nil, true, fallbackErr
 		} else if ok {
+			log.Printf("[playback] external usenet fallback found before terminal status queueID=%d engineJobID=%q sourceNZB=%q streamURL=%q; deleting in-memory job without writing resolved NZB cache", queueID, job.EngineJobID, sourceNZBPath, safeURLForLog(streamURL))
 			s.deleteExternalJob(queueID)
 			return &models.PlaybackResolution{
 				QueueID:       queueID,
@@ -967,6 +1031,23 @@ func (s *Service) resolveExternalWebDAVStream(ctx context.Context, engine config
 		return "", fmt.Errorf("external usenet WebDAV directory contains no playable media files")
 	}
 	return selected, nil
+}
+
+func (s *Service) findExistingExternalUsenetResolution(ctx context.Context, engine config.UsenetEngineSettings, candidate models.NZBResult, sourceNZBPath string) (string, bool) {
+	if strings.TrimSpace(engine.WebDAVBaseURL) == "" {
+		log.Printf("[playback] external usenet existing resolution check skipped engine=%q type=%q fileName=%q reason=%q", engine.Name, engine.Type, sourceNZBPath, "webdavBaseUrl not configured")
+		return "", false
+	}
+	streamURL, ok, err := s.resolveExternalWebDAVFallback(ctx, engine, strings.TrimSpace(candidate.Title), sourceNZBPath)
+	if err != nil {
+		log.Printf("[playback] external usenet existing resolution check failed engine=%q type=%q fileName=%q: %v", engine.Name, engine.Type, sourceNZBPath, err)
+		return "", false
+	}
+	if !ok || strings.TrimSpace(streamURL) == "" {
+		log.Printf("[playback] external usenet existing resolution check miss engine=%q type=%q fileName=%q title=%q", engine.Name, engine.Type, sourceNZBPath, strings.TrimSpace(candidate.Title))
+		return "", false
+	}
+	return streamURL, true
 }
 
 func (s *Service) resolveExternalWebDAVFallback(ctx context.Context, engine config.UsenetEngineSettings, submittedTitle, sourceNZBPath string) (string, bool, error) {
