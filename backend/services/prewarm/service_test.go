@@ -509,6 +509,151 @@ func TestRunOnce_HandlesWorkerFailure(t *testing.T) {
 	}
 }
 
+func TestRunOnce_NoResultsFailureNearAirDateRetriesQuickly(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	now := time.Now().UTC()
+	airDate := now.Format("2006-01-02")
+
+	users := []models.User{{ID: "user1", Name: "Alice"}}
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {
+			{
+				SeriesID:    "tmdb:tv:37854",
+				SeriesTitle: "One Piece",
+				UpdatedAt:   now,
+				Year:        now.Year(),
+				NextEpisode: &models.EpisodeReference{
+					SeasonNumber:          23,
+					EpisodeNumber:         12,
+					AbsoluteEpisodeNumber: 1167,
+					AirDate:               airDate,
+				},
+			},
+		},
+	}
+
+	workerCalls := 0
+	workerFn := func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID string, targetEpisode *models.EpisodeReference) (string, error) {
+		workerCalls++
+		return "pq_failed", fmt.Errorf("prequeue failed: no results found")
+	}
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.SetWorkerFunc(workerFn)
+
+	result, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+	if result.Failed != 1 {
+		t.Fatalf("expected 1 failed, got %d", result.Failed)
+	}
+
+	warm := svc.entries[entryKey("tmdb:tv:37854", "user1")]
+	if warm == nil {
+		t.Fatal("expected failed warm entry to be recorded")
+	}
+	retryIn := time.Until(warm.ExpiresAt)
+	if retryIn < 10*time.Minute || retryIn > 20*time.Minute {
+		t.Fatalf("expected no-results release retry around 15m, got %s", retryIn)
+	}
+	if workerCalls != 1 {
+		t.Fatalf("expected 1 worker call, got %d", workerCalls)
+	}
+
+	result, err = svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("second RunOnce failed: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("expected failed entry to be skipped until retry, got skipped=%d", result.Skipped)
+	}
+	if workerCalls != 1 {
+		t.Fatalf("expected no retry before retry deadline, got %d worker calls", workerCalls)
+	}
+
+	warm.ExpiresAt = time.Now().Add(-time.Minute)
+	result, err = svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("third RunOnce failed: %v", err)
+	}
+	if result.Failed != 1 {
+		t.Fatalf("expected retry after deadline to fail again, got failed=%d", result.Failed)
+	}
+	if workerCalls != 2 {
+		t.Fatalf("expected retry after deadline, got %d worker calls", workerCalls)
+	}
+}
+
+func TestPrewarmFailureRetryDelay_NoResultsUsesReleaseWindow(t *testing.T) {
+	now := time.Date(2026, 6, 21, 8, 47, 0, 0, time.UTC)
+
+	tests := []struct {
+		name          string
+		err           error
+		targetEpisode *models.EpisodeReference
+		year          int
+		want          time.Duration
+	}{
+		{
+			name: "date-only today retries in release cadence",
+			err:  fmt.Errorf("prequeue failed: no results found"),
+			targetEpisode: &models.EpisodeReference{
+				SeasonNumber:          23,
+				EpisodeNumber:         12,
+				AbsoluteEpisodeNumber: 1167,
+				AirDate:               "2026-06-21",
+			},
+			year: now.Year(),
+			want: prewarmNoResultsReleaseRetryDelay,
+		},
+		{
+			name: "precise upcoming airtime retries soon",
+			err:  fmt.Errorf("no results found"),
+			targetEpisode: &models.EpisodeReference{
+				SeasonNumber:   1,
+				EpisodeNumber:  1,
+				AirDateTimeUTC: now.Add(3 * time.Hour).Format(time.RFC3339),
+			},
+			year: now.Year(),
+			want: prewarmNoResultsUpcomingRetryDelay,
+		},
+		{
+			name: "precise release window retries aggressively",
+			err:  fmt.Errorf("no results found"),
+			targetEpisode: &models.EpisodeReference{
+				SeasonNumber:   1,
+				EpisodeNumber:  1,
+				AirDateTimeUTC: now.Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+			year: now.Year(),
+			want: prewarmNoResultsReleaseRetryDelay,
+		},
+		{
+			name: "current year series without date caps no-results backoff",
+			err:  fmt.Errorf("no results found"),
+			targetEpisode: &models.EpisodeReference{
+				SeasonNumber:  1,
+				EpisodeNumber: 1,
+			},
+			year: now.Year(),
+			want: prewarmNoResultsCurrentYearRetryDelay,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prewarmFailureRetryDelayAt(tt.err, tt.targetEpisode, tt.year, "series", now)
+			if got != tt.want {
+				t.Fatalf("prewarmFailureRetryDelayAt() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetWarm_ReturnsEntry(t *testing.T) {
 	svc := NewService(nil, "")
 	svc.entries[entryKey("title1", "user1")] = &WarmEntry{

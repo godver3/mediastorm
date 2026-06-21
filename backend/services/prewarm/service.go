@@ -71,6 +71,9 @@ type SyncResult struct {
 
 const continueWatchingPrewarmMaxAge = 14 * 24 * time.Hour
 const invalidatedPrequeueRetryDelay = time.Hour
+const prewarmNoResultsReleaseRetryDelay = 15 * time.Minute
+const prewarmNoResultsUpcomingRetryDelay = 30 * time.Minute
+const prewarmNoResultsCurrentYearRetryDelay = time.Hour
 
 // Service manages pre-warming of continue watching items
 type Service struct {
@@ -255,6 +258,8 @@ func (s *Service) warmContinueWatchingScope(
 				state.SeriesTitle, user.Name, settingsScopeKey,
 				episodeRefLabel(entry.TargetEpisode), episodeRefLabel(targetEpisode))
 		} else if existing.Error != "" && time.Now().Before(existing.ExpiresAt) {
+			log.Printf("[prewarm] Skipping %q for user %s scope=%s: previous failure retry at %v (%s)",
+				state.SeriesTitle, user.Name, settingsScopeKey, existing.ExpiresAt, existing.Error)
 			result.Skipped++
 			return nil
 		} else {
@@ -357,11 +362,7 @@ func (s *Service) warmContinueWatchingScope(
 
 	if err != nil {
 		warmEntry.Error = err.Error()
-		warmEntry.ExpiresAt = time.Now().Add(playback.DynamicTTL(
-			targetEpisodeAirDate(targetEpisode),
-			targetEpisodeAirDateTimeUTC(targetEpisode),
-			state.Year, mediaType,
-		))
+		warmEntry.ExpiresAt = time.Now().Add(prewarmFailureRetryDelay(err, targetEpisode, state.Year, mediaType))
 		result.Failed++
 		log.Printf("[prewarm] Failed to warm %q for user %s client=%s scope=%s (retry after %v): %v",
 			state.SeriesTitle, user.Name, clientID, settingsScopeKey, time.Until(warmEntry.ExpiresAt).Round(time.Minute), err)
@@ -1174,4 +1175,75 @@ func targetEpisodeAirDateTimeUTC(ep *models.EpisodeReference) string {
 		return ""
 	}
 	return ep.AirDateTimeUTC
+}
+
+func prewarmFailureRetryDelay(err error, targetEpisode *models.EpisodeReference, year int, mediaType string) time.Duration {
+	return prewarmFailureRetryDelayAt(err, targetEpisode, year, mediaType, time.Now())
+}
+
+func prewarmFailureRetryDelayAt(err error, targetEpisode *models.EpisodeReference, year int, mediaType string, now time.Time) time.Duration {
+	baseTTL := playback.DynamicTTL(
+		targetEpisodeAirDate(targetEpisode),
+		targetEpisodeAirDateTimeUTC(targetEpisode),
+		year,
+		mediaType,
+	)
+	if err == nil || !isNoResultsPrewarmFailure(err) || targetEpisode == nil {
+		return baseTTL
+	}
+
+	if retry, ok := noResultsRetryFromAirDateTime(targetEpisode.AirDateTimeUTC, now); ok {
+		return retry
+	}
+	if retry, ok := noResultsRetryFromAirDate(targetEpisode.AirDate, now); ok {
+		return retry
+	}
+	if targetEpisode.AirDate == "" && targetEpisode.AirDateTimeUTC == "" && year >= now.Year() && strings.EqualFold(mediaType, "series") {
+		return prewarmNoResultsCurrentYearRetryDelay
+	}
+	return baseTTL
+}
+
+func isNoResultsPrewarmFailure(err error) bool {
+	errText := strings.ToLower(err.Error())
+	return strings.Contains(errText, "no results found") || strings.Contains(errText, "no results")
+}
+
+func noResultsRetryFromAirDateTime(airDateTimeUTC string, now time.Time) (time.Duration, bool) {
+	if strings.TrimSpace(airDateTimeUTC) == "" {
+		return 0, false
+	}
+	airTime, err := time.Parse(time.RFC3339, airDateTimeUTC)
+	if err != nil {
+		return 0, false
+	}
+	untilAir := airTime.Sub(now.UTC())
+	if untilAir <= 24*time.Hour && untilAir > time.Hour {
+		return prewarmNoResultsUpcomingRetryDelay, true
+	}
+	if untilAir <= time.Hour && untilAir >= -24*time.Hour {
+		return prewarmNoResultsReleaseRetryDelay, true
+	}
+	return 0, false
+}
+
+func noResultsRetryFromAirDate(airDate string, now time.Time) (time.Duration, bool) {
+	if strings.TrimSpace(airDate) == "" {
+		return 0, false
+	}
+	airDay, err := time.Parse("2006-01-02", airDate)
+	if err != nil {
+		return 0, false
+	}
+	nowUTC := now.UTC()
+	today := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+	days := int(airDay.Sub(today).Hours() / 24)
+	switch days {
+	case -1, 0:
+		return prewarmNoResultsReleaseRetryDelay, true
+	case 1:
+		return prewarmNoResultsUpcomingRetryDelay, true
+	default:
+		return 0, false
+	}
 }
