@@ -1469,6 +1469,14 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 			}
 			return count
 		},
+		"hasEnabledUsenetEngine": func(engines []config.UsenetEngineSettings) bool {
+			for _, e := range engines {
+				if e.Enabled {
+					return true
+				}
+			}
+			return false
+		},
 		"totalConnections": func(providers []config.UsenetSettings) int {
 			total := 0
 			for _, p := range providers {
