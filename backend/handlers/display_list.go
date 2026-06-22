@@ -325,9 +325,13 @@ func (h *DisplayListHandler) enrich(userID string, items []models.WatchlistItem,
 		}
 	}
 
-	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
-	enrichWatchlistArtwork(items, h.MetadataService)
-	enrichDisplayListReleases(r, items, h.MetadataService)
+	metadataSvc := h.MetadataService
+	if h.MetadataHandler != nil {
+		metadataSvc = h.MetadataHandler.serviceForUser(userID)
+	}
+	enrichWatchlistRatings(r.Context(), items, metadataSvc)
+	enrichWatchlistArtwork(items, metadataSvc)
+	enrichDisplayListReleases(r, items, metadataSvc)
 }
 
 func enrichDisplayListReleases(r *http.Request, items []models.WatchlistItem, meta metadataService) {

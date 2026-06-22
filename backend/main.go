@@ -200,7 +200,7 @@ func main() {
 		Enabled:        settings.MDBList.Enabled,
 		EnabledRatings: settings.MDBList.EnabledRatings,
 	}
-	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.Language, settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, metadata.AIConfig{
+	metadataService := metadata.NewService(settings.Metadata.TVDBAPIKey, settings.Metadata.TMDBAPIKey, settings.Metadata.EffectivePrimaryLanguage(), settings.Cache.Directory, settings.Cache.MetadataTTLHours, *demoMode, mdblistCfg, metadata.AIConfig{
 		Provider: settings.Metadata.AIProvider,
 		APIKey:   settings.Metadata.AIAPIKey,
 		Model:    settings.Metadata.AIModel,
@@ -547,7 +547,9 @@ func main() {
 	displayListHandler.SetHistoryService(historyService)
 	// Wire up metadata service for MDBList rating enrichment
 	watchlistHandler.SetMetadataService(metadataService)
+	watchlistHandler.SetMetadataLanguageProviders(cfgManager, userSettingsService)
 	customListsHandler.SetMetadataService(metadataService)
+	customListsHandler.SetMetadataLanguageProviders(cfgManager, userSettingsService)
 	displayListHandler.SetMetadataService(metadataService)
 	displayListHandler.SetMetadataHandler(metadataHandler)
 	// Wire up users service to metadata handler for kids profile filtering
@@ -594,6 +596,8 @@ func main() {
 	detailsBundleHandler := handlers.NewDetailsBundleHandler(
 		metadataService, historyService, contentPreferencesService, userService,
 	)
+	detailsBundleHandler.SetConfigManager(cfgManager)
+	detailsBundleHandler.SetUserSettingsProvider(userSettingsService)
 
 	// Calendar service provides upcoming content from watchlist, history, and MDBList
 	calendarService := calendar.New(metadataService, watchlistService, historyService, userSettingsService, userService)
@@ -733,6 +737,7 @@ func main() {
 
 	liveHandler := handlers.NewLiveHandler(nil, settings.Transmux.Enabled, settings.Transmux.FFmpegPath, settings.Live.PlaylistCacheTTLHours, settings.Live.ProbeSizeMB, settings.Live.AnalyzeDurationSec, settings.Live.LowLatency, cfgManager, userSettingsService)
 	localMediaHandler := handlers.NewLocalMediaHandler(localMediaService, userService, settings.Transmux.Enabled)
+	localMediaHandler.SetMetadataLanguageProviders(metadataService, cfgManager, userSettingsService)
 	userSettingsHandler.LocalMedia = localMediaService
 	userSettingsHandler.SetPrequeueStore(prequeueHandler.GetStore())
 

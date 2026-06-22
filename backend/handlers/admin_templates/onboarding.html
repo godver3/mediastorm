@@ -761,7 +761,8 @@ async function saveMetadata() {
   }
   if (tmdb && tmdb !== redacted) next.metadata.tmdbApiKey = tmdb;
   if (tvdb && tvdb !== redacted) next.metadata.tvdbApiKey = tvdb;
-  if (!next.metadata.language) next.metadata.language = 'eng';
+  if (!Array.isArray(next.metadata.language) || next.metadata.language.length === 0) next.metadata.language = ['eng'];
+  if (!next.metadata.primaryLanguage) next.metadata.primaryLanguage = next.metadata.language[0] || 'eng';
   await saveSettings(next);
   showToast('Metadata saved');
   await loadStatus();

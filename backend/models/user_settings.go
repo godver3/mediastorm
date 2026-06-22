@@ -33,6 +33,7 @@ func IntVal(p *int, def int) int {
 // These override global defaults when set.
 type UserSettings struct {
 	Playback       PlaybackSettings       `json:"playback"`
+	Metadata       MetadataSettings       `json:"metadata"`
 	HomeShelves    HomeShelvesSettings    `json:"homeShelves"`
 	Filtering      FilterSettings         `json:"filtering"`
 	AnimeFiltering AnimeFilteringSettings `json:"animeFiltering"`
@@ -41,6 +42,11 @@ type UserSettings struct {
 	Network        NetworkSettings        `json:"network"`
 	Ranking        *UserRankingSettings   `json:"ranking,omitempty"`
 	Calendar       CalendarSettings       `json:"calendar"`
+}
+
+// MetadataSettings contains per-profile metadata presentation preferences.
+type MetadataSettings struct {
+	PrimaryLanguage string `json:"primaryLanguage,omitempty"`
 }
 
 // CalendarSettings controls which content sources populate the calendar.

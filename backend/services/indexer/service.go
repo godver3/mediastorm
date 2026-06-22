@@ -374,6 +374,31 @@ func (s *Service) getEffectiveRankingCriteria(userID, clientID string, globalSet
 	return criteria
 }
 
+func (s *Service) getEffectiveMetadataLanguage(userID string, globalSettings config.Settings) string {
+	primary := globalSettings.Metadata.EffectivePrimaryLanguage()
+	if userID == "" || s.userSettings == nil {
+		return primary
+	}
+	userSettings, err := s.userSettings.Get(userID)
+	if err != nil {
+		log.Printf("[indexer] failed to get user settings for metadata language %s: %v", userID, err)
+		return primary
+	}
+	if userSettings == nil {
+		return primary
+	}
+	profileLanguage := strings.TrimSpace(userSettings.Metadata.PrimaryLanguage)
+	if profileLanguage == "" {
+		return primary
+	}
+	for _, lang := range globalSettings.Metadata.Language {
+		if strings.EqualFold(strings.TrimSpace(lang), profileLanguage) {
+			return strings.TrimSpace(lang)
+		}
+	}
+	return primary
+}
+
 // applyUserRankingOverrides applies user-level ranking overrides to the base criteria.
 func applyUserRankingOverrides(base []config.RankingCriterion, overrides []models.UserRankingCriterion) []config.RankingCriterion {
 	result := make([]config.RankingCriterion, len(base))
@@ -568,7 +593,7 @@ func (s *Service) buildScoringContext(opts SearchOptions, settings config.Settin
 		NonPreferredTerms:      nonPreferredTerms,
 		DownloadPreferredTerms: filter.CompileTerms(filterSettings.DownloadPreferredTerms),
 		UseDownloadRanking:     opts.UseDownloadRanking,
-		PreferredLang:          settings.Metadata.Language,
+		PreferredLang:          s.getEffectiveMetadataLanguage(opts.UserID, settings),
 		PreferredScraper:       settings.Filtering.PreferredScraper,
 	}
 }
@@ -661,7 +686,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
 	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
 
-	alternateTitles := s.resolveAlternateTitles(ctx, opts, settings.Metadata.Language, settings.Streaming.MaxAlternateTitleSearches)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, s.getEffectiveMetadataLanguage(opts.UserID, settings), settings.Streaming.MaxAlternateTitleSearches)
 	if len(alternateTitles) > 0 {
 		log.Printf("[indexer] resolved %d alternate title(s) for %q: %v", len(alternateTitles), opts.Query, alternateTitles)
 	}
@@ -1064,7 +1089,7 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 		}
 	}
 
-	alternateTitles := s.resolveAlternateTitles(ctx, opts, settings.Metadata.Language, settings.Streaming.MaxAlternateTitleSearches)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, s.getEffectiveMetadataLanguage(opts.UserID, settings), settings.Streaming.MaxAlternateTitleSearches)
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 
@@ -1354,7 +1379,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		}
 	}
 
-	alternateTitles := s.resolveAlternateTitles(ctx, opts, settings.Metadata.Language, settings.Streaming.MaxAlternateTitleSearches)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, s.getEffectiveMetadataLanguage(opts.UserID, settings), settings.Streaming.MaxAlternateTitleSearches)
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 

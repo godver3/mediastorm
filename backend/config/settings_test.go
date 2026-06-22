@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -278,6 +279,89 @@ func TestLoadMigratesGeminiAPIKeyToAISettings(t *testing.T) {
 	}
 	if settings.Metadata.GeminiAPIKey != "legacy-gemini-key" {
 		t.Fatalf("GeminiAPIKey = %q, want legacy-gemini-key", settings.Metadata.GeminiAPIKey)
+	}
+}
+
+func TestLoadMigratesMetadataLanguageStringToArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"metadata":{"language":"fra"}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	if len(settings.Metadata.Language) != 1 || settings.Metadata.Language[0] != "fra" {
+		t.Fatalf("Metadata.Language = %#v, want [fra]", settings.Metadata.Language)
+	}
+	if settings.Metadata.EffectivePrimaryLanguage() != "fra" {
+		t.Fatalf("PrimaryLanguage = %q, want fra", settings.Metadata.EffectivePrimaryLanguage())
+	}
+	if settings.Metadata.PrimaryLanguage != "fra" {
+		t.Fatalf("Metadata.PrimaryLanguage = %q, want fra", settings.Metadata.PrimaryLanguage)
+	}
+}
+
+func TestLoadNormalizesMetadataLanguageArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	raw := []byte(`{"metadata":{"language":["fra"," ","FRA","spa"]}}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	settings, err := NewManager(path).Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+
+	want := []string{"fra", "spa"}
+	if len(settings.Metadata.Language) != len(want) {
+		t.Fatalf("Metadata.Language = %#v, want %#v", settings.Metadata.Language, want)
+	}
+	for i := range want {
+		if settings.Metadata.Language[i] != want[i] {
+			t.Fatalf("Metadata.Language = %#v, want %#v", settings.Metadata.Language, want)
+		}
+	}
+}
+
+func TestSaveNormalizesMetadataLanguageArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	settings := DefaultSettings()
+	settings.Metadata.Language = []string{"", "fra", "FRA", "spa"}
+	settings.Metadata.PrimaryLanguage = "fra"
+
+	if err := NewManager(path).Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var saved struct {
+		Metadata struct {
+			Language        []string `json:"language"`
+			PrimaryLanguage string   `json:"primaryLanguage"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("unmarshal saved settings: %v", err)
+	}
+	want := []string{"fra", "spa"}
+	if len(saved.Metadata.Language) != len(want) {
+		t.Fatalf("saved metadata.language = %#v, want %#v", saved.Metadata.Language, want)
+	}
+	for i := range want {
+		if saved.Metadata.Language[i] != want[i] {
+			t.Fatalf("saved metadata.language = %#v, want %#v", saved.Metadata.Language, want)
+		}
+	}
+	if saved.Metadata.PrimaryLanguage != "fra" {
+		t.Fatalf("saved metadata.primaryLanguage = %q, want fra", saved.Metadata.PrimaryLanguage)
 	}
 }
 

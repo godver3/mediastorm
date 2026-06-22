@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"novastream/config"
 	"novastream/internal/auth"
 	"novastream/models"
 	"novastream/services/localmedia"
@@ -29,12 +31,17 @@ type localMediaService interface {
 
 type localMediaUsersProvider interface {
 	BelongsToAccount(profileID, accountID string) bool
+	Get(id string) (models.User, bool)
 }
 
 type LocalMediaHandler struct {
 	service         localMediaService
 	usersSvc        localMediaUsersProvider
 	transmuxEnabled bool
+
+	metadata     metadataService
+	cfgManager   *config.Manager
+	userSettings userSettingsProvider
 }
 
 func NewLocalMediaHandler(service localMediaService, usersSvc localMediaUsersProvider, transmuxEnabled bool) *LocalMediaHandler {
@@ -43,6 +50,14 @@ func NewLocalMediaHandler(service localMediaService, usersSvc localMediaUsersPro
 		usersSvc:        usersSvc,
 		transmuxEnabled: transmuxEnabled,
 	}
+}
+
+// SetMetadataLanguageProviders wires the metadata service and language sources
+// used to re-localize artwork on group listings for the requesting profile.
+func (h *LocalMediaHandler) SetMetadataLanguageProviders(metadata metadataService, cfg *config.Manager, userSettings userSettingsProvider) {
+	h.metadata = metadata
+	h.cfgManager = cfg
+	h.userSettings = userSettings
 }
 
 func (h *LocalMediaHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +77,33 @@ func (h *LocalMediaHandler) ListLibraries(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(libraries)
 }
 
+// kidsRatingCaps resolves the (movie, tv) rating caps for the requesting
+// profile when it is a kids profile in rating mode. Returns empty strings when
+// no rating restriction applies.
+func (h *LocalMediaHandler) kidsRatingCaps(r *http.Request) (movieRating, tvRating string) {
+	if h.usersSvc == nil {
+		return "", ""
+	}
+	profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
+	if profileID == "" {
+		profileID = strings.TrimSpace(r.URL.Query().Get("userId"))
+	}
+	if profileID == "" {
+		return "", ""
+	}
+	user, ok := h.usersSvc.Get(profileID)
+	if !ok || !user.IsKidsProfile || user.KidsMode != "rating" {
+		return "", ""
+	}
+	movieRating = user.KidsMaxMovieRating
+	tvRating = user.KidsMaxTVRating
+	if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+		movieRating = user.KidsMaxRating
+		tvRating = user.KidsMaxRating
+	}
+	return movieRating, tvRating
+}
+
 func (h *LocalMediaHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	libraryID := strings.TrimSpace(mux.Vars(r)["libraryID"])
 	if libraryID == "" {
@@ -74,16 +116,23 @@ func (h *LocalMediaHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 	offset, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset")))
+
+	// Apply kids profile rating caps so restricted profiles never see local
+	// content above their limit (or content we can't verify a rating for).
+	maxMovieRating, maxTVRating := h.kidsRatingCaps(r)
+
 	log.Printf("[localmedia] ListGroups: libraryID=%s limit=%d offset=%d filter=%q sort=%q", libraryID, limit, offset, r.URL.Query().Get("filter"), r.URL.Query().Get("sort"))
 	t0 := time.Now()
 	groups, err := h.service.ListGroups(r.Context(), libraryID, models.LocalMediaItemListQuery{
-		Filter:       r.URL.Query().Get("filter"),
-		Sort:         r.URL.Query().Get("sort"),
-		Dir:          r.URL.Query().Get("dir"),
-		Query:        r.URL.Query().Get("query"),
-		Limit:        limit,
-		Offset:       offset,
-		IncludeCards: strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include")), "cards"),
+		Filter:         r.URL.Query().Get("filter"),
+		Sort:           r.URL.Query().Get("sort"),
+		Dir:            r.URL.Query().Get("dir"),
+		Query:          r.URL.Query().Get("query"),
+		Limit:          limit,
+		Offset:         offset,
+		IncludeCards:   strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include")), "cards"),
+		MaxMovieRating: maxMovieRating,
+		MaxTVRating:    maxTVRating,
 	})
 	if err != nil {
 		log.Printf("[localmedia] ListGroups: libraryID=%s error after %s: %v", libraryID, time.Since(t0).Round(time.Millisecond), err)
@@ -98,9 +147,84 @@ func (h *LocalMediaHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	if groups == nil {
 		groups = &models.LocalMediaGroupListResult{Groups: []models.LocalMediaItemGroup{}}
 	}
+
+	// Stored local-media metadata (including poster artwork) is resolved once at
+	// scan time in the global metadata language. Re-localize artwork for profiles
+	// whose effective language differs so shelves match the profile's setting.
+	h.localizeGroupArtwork(r, groups.Groups)
+
 	log.Printf("[localmedia] ListGroups: libraryID=%s returned %d groups (total=%d) in %s", libraryID, len(groups.Groups), groups.Total, time.Since(t0).Round(time.Millisecond))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(groups)
+}
+
+// localizeGroupArtwork actively fetches localized TMDB artwork for each group
+// when the requesting profile's metadata language differs from the global
+// default the stored artwork was resolved in. It is a no-op for default-language
+// profiles so the common path keeps serving the baked-in artwork.
+func (h *LocalMediaHandler) localizeGroupArtwork(r *http.Request, groups []models.LocalMediaItemGroup) {
+	if len(groups) == 0 || h.metadata == nil || h.cfgManager == nil {
+		return
+	}
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	if userID == "" {
+		userID = strings.TrimSpace(r.URL.Query().Get("profileId"))
+	}
+	if userID == "" {
+		return
+	}
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return
+	}
+	if _, isDefault := resolveMetadataLanguage(settings, h.userSettings, userID); isDefault {
+		return
+	}
+	svc := metadataServiceForUser(h.metadata, h.cfgManager, h.userSettings, userID)
+	if svc == nil {
+		return
+	}
+
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for i := range groups {
+		g := &groups[i]
+		if g.TMDBID <= 0 && g.TVDBID <= 0 && strings.TrimSpace(g.IMDBID) == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(g *models.LocalMediaItemGroup) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mediaType := "series"
+			if g.LibraryType == models.LocalMediaLibraryTypeMovie {
+				mediaType = "movie"
+			}
+			title := models.Title{
+				MediaType:    mediaType,
+				TMDBID:       g.TMDBID,
+				TVDBID:       g.TVDBID,
+				IMDBID:       g.IMDBID,
+				Poster:       g.Poster,
+				TextPoster:   g.TextPoster,
+				Backdrop:     g.Backdrop,
+				TextBackdrop: g.TextBackdrop,
+			}
+			if svc.ApplyLocalizedArtwork(r.Context(), &title) {
+				g.Poster = title.Poster
+				g.TextPoster = title.TextPoster
+				g.Backdrop = title.Backdrop
+				g.TextBackdrop = title.TextBackdrop
+				if title.TMDBID > 0 {
+					g.TMDBID = title.TMDBID
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
 }
 
 func (h *LocalMediaHandler) FindMatches(w http.ResponseWriter, r *http.Request) {

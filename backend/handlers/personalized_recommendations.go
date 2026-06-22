@@ -124,6 +124,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 
 	kidsRatingFilter := h.personalizedKidsRatingFilter(userID)
 	resp := h.buildPersonalizedRecommendations(r.Context(), userID, history, progress, days, limitPerType, kidsRatingFilter)
+	service := h.serviceForUser(userID)
 	if resp.Items == nil {
 		resp.Items = []models.TrendingItem{}
 	}
@@ -135,13 +136,13 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 	}
 
 	if len(resp.Items) > 0 {
-		enrichTrendingRatings(resp.Items, h.Service)
+		enrichTrendingRatings(resp.Items, service)
 	}
 	if len(resp.Movies) > 0 {
-		enrichTrendingRatings(resp.Movies, h.Service)
+		enrichTrendingRatings(resp.Movies, service)
 	}
 	if len(resp.Series) > 0 {
-		enrichTrendingRatings(resp.Series, h.Service)
+		enrichTrendingRatings(resp.Series, service)
 	}
 	if len(resp.Items) > 0 {
 		cw, _ := h.HistoryService.ListSeriesStates(userID)
@@ -199,6 +200,7 @@ func parsePersonalizedIntParam(r *http.Request, name string, fallback, minValue,
 func (h *MetadataHandler) fetchPersonalizedTopTen(ctx context.Context, userID string) ([]models.TrendingItem, []models.TrendingItem, []models.TrendingItem) {
 	topTenCtx, cancel := context.WithTimeout(ctx, personalizedTopTenBudget)
 	defer cancel()
+	service := h.serviceForUser(userID)
 
 	requests := []struct {
 		kind      string
@@ -212,7 +214,7 @@ func (h *MetadataHandler) fetchPersonalizedTopTen(ctx context.Context, userID st
 	for _, request := range requests {
 		request := request
 		go func() {
-			items, err := h.Service.GetTopTen(topTenCtx, request.mediaType, nil)
+			items, err := service.GetTopTen(topTenCtx, request.mediaType, nil)
 			select {
 			case results <- personalizedTopTenResult{Kind: request.kind, Items: items, Err: err}:
 			case <-topTenCtx.Done():
@@ -256,6 +258,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	limitPerType int,
 	kidsRatingFilter personalizedKidsRatingFilter,
 ) PersonalizedRecommendationsResponse {
+	service := h.serviceForUser(userID)
 	now := time.Now().UTC()
 	cutoff := now.AddDate(0, 0, -days)
 	excluded := buildPersonalizedExclusion(history, progress)
@@ -355,7 +358,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 		default:
 		}
 
-		titles, err := h.Service.Similar(ctx, seed.MediaType, seed.TMDBID)
+		titles, err := service.Similar(ctx, seed.MediaType, seed.TMDBID)
 		if err != nil {
 			log.Printf("[metadata] personalized recommendations similar skipped user=%s seed=%q type=%s tmdb=%d: %v", userID, seed.Title, seed.MediaType, seed.TMDBID, err)
 			continue
@@ -381,7 +384,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	}
 
 	if len(movieCandidates) < limitPerType*2 {
-		if items, err := h.Service.Trending(ctx, "movie"); err == nil {
+		if items, err := service.Trending(ctx, "movie"); err == nil {
 			for idx, item := range items {
 				addCandidate(item.Title, maxFloat(0, 10-float64(idx)*0.08), "trending-movie")
 			}
@@ -390,7 +393,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 		}
 	}
 	if len(seriesCandidates) < limitPerType*2 {
-		if items, err := h.Service.Trending(ctx, "series"); err == nil {
+		if items, err := service.Trending(ctx, "series"); err == nil {
 			for idx, item := range items {
 				addCandidate(item.Title, maxFloat(0, 10-float64(idx)*0.08), "trending-series")
 			}
@@ -401,8 +404,8 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 
 	movies := finalizePersonalizedBucket(movieCandidates, limitPerType)
 	series := finalizePersonalizedBucket(seriesCandidates, limitPerType)
-	enrichPersonalizedArtwork(movies, h.Service)
-	enrichPersonalizedArtwork(series, h.Service)
+	enrichPersonalizedArtwork(movies, service)
+	enrichPersonalizedArtwork(series, service)
 	items := interleavePersonalizedItems(movies, series, limitPerType)
 	return PersonalizedRecommendationsResponse{
 		Items:       items,

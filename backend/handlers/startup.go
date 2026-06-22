@@ -246,7 +246,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.WatchlistTotal = len(items)
 		items = selectStartupWatchlistItems(items, startupShelfLimit, startupExploreCollageItemCount)
-		enrichWatchlistArtwork(items, h.metadata)
+		enrichWatchlistArtwork(items, metadataServiceForUser(h.metadata, h.cfgManager, h.userSettings, userID))
 		resp.Watchlist = items
 	}()
 
@@ -340,6 +340,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	var trendingCancel context.CancelFunc
 	var trendingCh chan trendingResult
 	if includeTrendingMovies || includeTrendingSeries {
+		metadataSvc := metadataServiceForUser(h.metadata, h.cfgManager, h.userSettings, userID)
 		trendingCtx, trendingCancel = context.WithTimeout(r.Context(), startupTrendingTimeout)
 		defer trendingCancel()
 		trendingCh = make(chan trendingResult, 1)
@@ -354,7 +355,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 				trendingWg.Add(1)
 				go func() {
 					defer trendingWg.Done()
-					items, err := h.metadata.Trending(trendingCtx, "movie")
+					items, err := metadataSvc.Trending(trendingCtx, "movie")
 					if err != nil {
 						log.Printf("[startup] trending movies error: %v", err)
 						return
@@ -376,7 +377,7 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 				trendingWg.Add(1)
 				go func() {
 					defer trendingWg.Done()
-					items, err := h.metadata.Trending(trendingCtx, "series")
+					items, err := metadataSvc.Trending(trendingCtx, "series")
 					if err != nil {
 						log.Printf("[startup] trending series error: %v", err)
 						return

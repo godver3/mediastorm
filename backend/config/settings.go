@@ -129,15 +129,68 @@ type TorrentScraperConfig struct {
 }
 
 type MetadataSettings struct {
-	TVDBAPIKey       string `json:"tvdbApiKey"`
-	TMDBAPIKey       string `json:"tmdbApiKey"`
-	AIProvider       string `json:"aiProvider,omitempty"`
-	AIAPIKey         string `json:"aiApiKey,omitempty"`
-	AIModel          string `json:"aiModel,omitempty"`
-	AIBaseURL        string `json:"aiBaseUrl,omitempty"`
-	GeminiAPIKey     string `json:"geminiApiKey,omitempty"`
-	Language         string `json:"language"`
-	AllowAdultSearch bool   `json:"allowAdultSearch"`
+	TVDBAPIKey       string   `json:"tvdbApiKey"`
+	TMDBAPIKey       string   `json:"tmdbApiKey"`
+	AIProvider       string   `json:"aiProvider,omitempty"`
+	AIAPIKey         string   `json:"aiApiKey,omitempty"`
+	AIModel          string   `json:"aiModel,omitempty"`
+	AIBaseURL        string   `json:"aiBaseUrl,omitempty"`
+	GeminiAPIKey     string   `json:"geminiApiKey,omitempty"`
+	Language         []string `json:"language"`
+	PrimaryLanguage  string   `json:"primaryLanguage"`
+	AllowAdultSearch bool     `json:"allowAdultSearch"`
+}
+
+func normalizeMetadataLanguages(languages []string) []string {
+	seen := make(map[string]bool, len(languages))
+	out := make([]string, 0, len(languages))
+	for _, lang := range languages {
+		lang = strings.TrimSpace(lang)
+		if lang == "" {
+			continue
+		}
+		key := strings.ToLower(lang)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, lang)
+	}
+	if len(out) == 0 {
+		return []string{"eng"}
+	}
+	return out
+}
+
+// EffectivePrimaryLanguage returns the configured primary metadata language.
+func (m MetadataSettings) EffectivePrimaryLanguage() string {
+	languages := normalizeMetadataLanguages(m.Language)
+	primary := strings.TrimSpace(m.PrimaryLanguage)
+	if primary == "" {
+		return languages[0]
+	}
+	for _, lang := range languages {
+		if strings.EqualFold(lang, primary) {
+			return lang
+		}
+	}
+	return languages[0]
+}
+
+func (m *MetadataSettings) NormalizeLanguages() {
+	m.Language = normalizeMetadataLanguages(m.Language)
+	primary := strings.TrimSpace(m.PrimaryLanguage)
+	if primary == "" {
+		m.PrimaryLanguage = m.Language[0]
+		return
+	}
+	for _, lang := range m.Language {
+		if strings.EqualFold(lang, primary) {
+			m.PrimaryLanguage = lang
+			return
+		}
+	}
+	m.PrimaryLanguage = m.Language[0]
 }
 
 func normalizeAIProvider(provider string) string {
@@ -1294,7 +1347,7 @@ func DefaultSettings() Settings {
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
-		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: "eng", AllowAdultSearch: false},
+		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: []string{"eng"}, PrimaryLanguage: "eng", AllowAdultSearch: false},
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
@@ -1543,6 +1596,56 @@ func (m *Manager) Load() (Settings, error) {
 	migrateLiveSourcesRaw(raw)
 	migrateNavigationTabVisibilitySystemTabs(raw)
 
+	if metadataRaw, ok := raw["metadata"].(map[string]interface{}); ok {
+		var migratedPrimary string
+		switch lang := metadataRaw["language"].(type) {
+		case string:
+			trimmed := strings.TrimSpace(lang)
+			if trimmed == "" {
+				trimmed = "eng"
+			}
+			metadataRaw["language"] = []interface{}{trimmed}
+			migratedPrimary = trimmed
+		case []interface{}:
+			normalized := make([]interface{}, 0, len(lang))
+			seen := map[string]bool{}
+			for _, item := range lang {
+				value, ok := item.(string)
+				if !ok {
+					continue
+				}
+				value = strings.TrimSpace(value)
+				if value == "" {
+					continue
+				}
+				key := strings.ToLower(value)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				normalized = append(normalized, value)
+			}
+			if len(normalized) == 0 {
+				normalized = []interface{}{"eng"}
+			}
+			metadataRaw["language"] = normalized
+			if first, ok := normalized[0].(string); ok {
+				migratedPrimary = first
+			}
+		case nil:
+			metadataRaw["language"] = []interface{}{"eng"}
+			migratedPrimary = "eng"
+		}
+		if strings.TrimSpace(migratedPrimary) == "" {
+			migratedPrimary = "eng"
+		}
+		if primary, ok := metadataRaw["primaryLanguage"].(string); !ok || strings.TrimSpace(primary) == "" {
+			metadataRaw["primaryLanguage"] = migratedPrimary
+		}
+	} else {
+		raw["metadata"] = map[string]interface{}{"language": []interface{}{"eng"}, "primaryLanguage": "eng"}
+	}
+
 	// Apply versioned migrations (settings field relocations)
 	MigrateRawSettings(raw)
 
@@ -1700,6 +1803,7 @@ func (m *Manager) Load() (Settings, error) {
 
 	// Backfill defaults for newly introduced settings when config predates them
 	s.Metadata.NormalizeAISettings()
+	s.Metadata.NormalizeLanguages()
 
 	if !s.Transmux.Enabled && strings.TrimSpace(s.Transmux.FFmpegPath) == "" && strings.TrimSpace(s.Transmux.FFprobePath) == "" {
 		s.Transmux = TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls"}
@@ -2152,6 +2256,7 @@ func (m *Manager) Save(s Settings) error {
 		return errors.New("config path not set")
 	}
 	s.Metadata.NormalizeAISettings()
+	s.Metadata.NormalizeLanguages()
 	s.UsenetEngines = normalizeEnabledUsenetEngines(s.UsenetEngines)
 	if s.Playback.Thumbnails.Workers < 1 {
 		s.Playback.Thumbnails.Workers = 1

@@ -6,15 +6,134 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"novastream/config"
 	"novastream/internal/auth"
 	"novastream/models"
 	"novastream/services/localmedia"
 
 	"github.com/gorilla/mux"
 )
+
+// metadataLanguageManager builds a config.Manager whose metadata settings enable
+// the given languages with the given primary, for local-media localization tests.
+func metadataLanguageManager(t *testing.T, languages []string, primary string) *config.Manager {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(path)
+	settings := config.DefaultSettings()
+	settings.Metadata.Language = languages
+	settings.Metadata.PrimaryLanguage = primary
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	return mgr
+}
+
+func localGroupsRequest(t *testing.T, handler *LocalMediaHandler, libraryID, query string) *models.LocalMediaGroupListResult {
+	t.Helper()
+	target := "/api/library/libraries/" + libraryID + "/groups"
+	if query != "" {
+		target += "?" + query
+	}
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req = mux.SetURLVars(req, map[string]string{"libraryID": libraryID})
+	rr := httptest.NewRecorder()
+	handler.ListGroups(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ListGroups status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var out models.LocalMediaGroupListResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return &out
+}
+
+func newLocalGroupsFixture() (*fakeLocalMediaPlaybackService, *fakeMetadataService) {
+	svc := &fakeLocalMediaPlaybackService{
+		groups: &models.LocalMediaGroupListResult{
+			Groups: []models.LocalMediaItemGroup{{
+				ID:          "movie:1",
+				LibraryType: models.LocalMediaLibraryTypeMovie,
+				Title:       "Top Gun",
+				TMDBID:      744,
+				TextPoster:  &models.Image{Type: "poster", Language: "en"},
+			}},
+			Total: 1,
+		},
+	}
+	return svc, &fakeMetadataService{}
+}
+
+func TestLocalMediaListGroupsLocalizesArtworkForNonDefaultLanguage(t *testing.T) {
+	svc, meta := newLocalGroupsFixture()
+	meta.applyArtworkLang = "it"
+	handler := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{}, false)
+	handler.SetMetadataLanguageProviders(
+		meta,
+		metadataLanguageManager(t, []string{"eng", "ita"}, "eng"),
+		&mockUserSettingsProvider{settings: map[string]*models.UserSettings{
+			"u1": {Metadata: models.MetadataSettings{PrimaryLanguage: "ita"}},
+		}},
+	)
+
+	out := localGroupsRequest(t, handler, "lib1", "userId=u1&include=cards")
+
+	if got := atomic.LoadInt32(&meta.applyArtworkCalls); got != 1 {
+		t.Fatalf("ApplyLocalizedArtwork calls = %d, want 1", got)
+	}
+	if out.Groups[0].TextPoster == nil || out.Groups[0].TextPoster.Language != "it" {
+		t.Fatalf("textPoster = %#v, want localized Italian poster", out.Groups[0].TextPoster)
+	}
+}
+
+func TestLocalMediaListGroupsSkipsLocalizationForDefaultLanguage(t *testing.T) {
+	svc, meta := newLocalGroupsFixture()
+	meta.applyArtworkLang = "it"
+	handler := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{}, false)
+	handler.SetMetadataLanguageProviders(
+		meta,
+		metadataLanguageManager(t, []string{"eng", "ita"}, "eng"),
+		&mockUserSettingsProvider{settings: map[string]*models.UserSettings{
+			// Profile matches the global default, so stored (English) artwork stands.
+			"u1": {Metadata: models.MetadataSettings{PrimaryLanguage: "eng"}},
+		}},
+	)
+
+	out := localGroupsRequest(t, handler, "lib1", "userId=u1&include=cards")
+
+	if got := atomic.LoadInt32(&meta.applyArtworkCalls); got != 0 {
+		t.Fatalf("ApplyLocalizedArtwork calls = %d, want 0 (default language)", got)
+	}
+	if out.Groups[0].TextPoster == nil || out.Groups[0].TextPoster.Language != "en" {
+		t.Fatalf("textPoster = %#v, want untouched English poster", out.Groups[0].TextPoster)
+	}
+}
+
+func TestLocalMediaListGroupsSkipsLocalizationWithoutUser(t *testing.T) {
+	svc, meta := newLocalGroupsFixture()
+	meta.applyArtworkLang = "it"
+	handler := NewLocalMediaHandler(svc, fakeLocalMediaUsersProvider{}, false)
+	handler.SetMetadataLanguageProviders(
+		meta,
+		metadataLanguageManager(t, []string{"eng", "ita"}, "eng"),
+		&mockUserSettingsProvider{settings: map[string]*models.UserSettings{}},
+	)
+
+	out := localGroupsRequest(t, handler, "lib1", "include=cards")
+
+	if got := atomic.LoadInt32(&meta.applyArtworkCalls); got != 0 {
+		t.Fatalf("ApplyLocalizedArtwork calls = %d, want 0 (no user)", got)
+	}
+	if out.Groups[0].TextPoster == nil || out.Groups[0].TextPoster.Language != "en" {
+		t.Fatalf("textPoster = %#v, want untouched English poster", out.Groups[0].TextPoster)
+	}
+}
 
 type fakeLocalMediaPlaybackService struct {
 	item      *models.LocalMediaItem
@@ -56,10 +175,16 @@ func (f *fakeLocalMediaPlaybackService) FindMatches(ctx context.Context, query m
 
 type fakeLocalMediaUsersProvider struct {
 	allowed bool
+	user    models.User
+	userOK  bool
 }
 
 func (f fakeLocalMediaUsersProvider) BelongsToAccount(profileID, accountID string) bool {
 	return f.allowed
+}
+
+func (f fakeLocalMediaUsersProvider) Get(id string) (models.User, bool) {
+	return f.user, f.userOK
 }
 
 func TestLocalMediaHandlerGetPlayback(t *testing.T) {
@@ -280,6 +405,46 @@ func TestLocalMediaHandlerListGroups(t *testing.T) {
 	}
 	if !service.lastQuery.IncludeCards {
 		t.Fatal("expected IncludeCards to be true")
+	}
+}
+
+func TestLocalMediaHandlerListGroupsPassesKidsRatingCaps(t *testing.T) {
+	service := &fakeLocalMediaPlaybackService{
+		groups: &models.LocalMediaGroupListResult{Groups: []models.LocalMediaItemGroup{}, Total: 0},
+	}
+	users := fakeLocalMediaUsersProvider{
+		userOK: true,
+		user: models.User{
+			IsKidsProfile:      true,
+			KidsMode:           "rating",
+			KidsMaxMovieRating: "PG",
+			KidsMaxTVRating:    "TV-Y7",
+		},
+	}
+	handler := NewLocalMediaHandler(service, users, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries/lib1/groups?profileId=kid1", nil)
+	req = mux.SetURLVars(req, map[string]string{"libraryID": "lib1"})
+	handler.ListGroups(httptest.NewRecorder(), req)
+
+	if service.lastQuery.MaxMovieRating != "PG" || service.lastQuery.MaxTVRating != "TV-Y7" {
+		t.Fatalf("expected rating caps PG/TV-Y7, got %q/%q", service.lastQuery.MaxMovieRating, service.lastQuery.MaxTVRating)
+	}
+}
+
+func TestLocalMediaHandlerListGroupsNoCapsForNonKids(t *testing.T) {
+	service := &fakeLocalMediaPlaybackService{
+		groups: &models.LocalMediaGroupListResult{Groups: []models.LocalMediaItemGroup{}, Total: 0},
+	}
+	users := fakeLocalMediaUsersProvider{userOK: true, user: models.User{IsKidsProfile: false}}
+	handler := NewLocalMediaHandler(service, users, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/libraries/lib1/groups?profileId=adult1", nil)
+	req = mux.SetURLVars(req, map[string]string{"libraryID": "lib1"})
+	handler.ListGroups(httptest.NewRecorder(), req)
+
+	if service.lastQuery.MaxMovieRating != "" || service.lastQuery.MaxTVRating != "" {
+		t.Fatalf("expected no rating caps for non-kids profile, got %q/%q", service.lastQuery.MaxMovieRating, service.lastQuery.MaxTVRating)
 	}
 }
 

@@ -160,6 +160,7 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		settings.Playback.PreferredAudioLanguage = sanitizeLanguageCode(settings.Playback.PreferredAudioLanguage)
 		settings.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(settings.Playback.PreferredSubtitleLanguage)
 		settings.Playback.PreferredSubtitleMode = strings.TrimSpace(strings.Trim(settings.Playback.PreferredSubtitleMode, "'\""))
+		settings.Metadata.PrimaryLanguage = sanitizeLanguageCode(settings.Metadata.PrimaryLanguage)
 
 		// Fill in missing Playback fields from defaults
 		// Empty strings indicate "not set" and should inherit from defaults
@@ -233,6 +234,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		}
 		if settings.Playback.MatchFrameRate == nil {
 			settings.Playback.MatchFrameRate = defaults.Playback.MatchFrameRate
+		}
+		if settings.Metadata.PrimaryLanguage == "" {
+			settings.Metadata.PrimaryLanguage = defaults.Metadata.PrimaryLanguage
 		}
 
 		// Fill in missing Display fields from defaults without overwriting explicit user overrides.
@@ -466,6 +470,7 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	settings.Playback.PreferredAudioLanguage = sanitizeLanguageCode(settings.Playback.PreferredAudioLanguage)
 	settings.Playback.PreferredSubtitleLanguage = sanitizeLanguageCode(settings.Playback.PreferredSubtitleLanguage)
 	settings.Playback.PreferredSubtitleMode = strings.TrimSpace(strings.Trim(settings.Playback.PreferredSubtitleMode, "'\""))
+	settings.Metadata.PrimaryLanguage = sanitizeLanguageCode(settings.Metadata.PrimaryLanguage)
 
 	log.Printf("[user-settings] Update(%q): subMode=%q, audioLang=%q, subLang=%q",
 		userID, settings.Playback.PreferredSubtitleMode, settings.Playback.PreferredAudioLanguage, settings.Playback.PreferredSubtitleLanguage)
@@ -587,6 +592,11 @@ func isSettingsEmpty(s models.UserSettings) bool {
 
 	// Check Playback - MaxResultsPerResolution
 	if s.Playback.MaxResultsPerResolution != nil {
+		return false
+	}
+
+	// Check Metadata
+	if s.Metadata.PrimaryLanguage != "" {
 		return false
 	}
 

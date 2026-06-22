@@ -207,6 +207,52 @@ func NewService(tvdbAPIKey, tmdbAPIKey, language, cacheDir string, ttlHours int,
 	return svc
 }
 
+// WithLanguage returns a request-scoped metadata service that uses the same
+// caches and API configuration with a different metadata language.
+func (s *Service) WithLanguage(language string) *Service {
+	language = strings.TrimSpace(language)
+	if language == "" || (s.client != nil && strings.EqualFold(normalizeTVDBLanguage(language), s.client.language)) {
+		return s
+	}
+
+	tvdbAPIKey := ""
+	if s.client != nil {
+		tvdbAPIKey = s.client.apiKey
+	}
+	tmdbAPIKey := ""
+	if s.tmdb != nil {
+		tmdbAPIKey = s.tmdb.apiKey
+	}
+
+	local := &Service{
+		client:              newTVDBClient(tvdbAPIKey, language, &http.Client{}, s.ttlHours),
+		tmdb:                newTMDBClient(tmdbAPIKey, language, &http.Client{}, s.cache),
+		ai:                  s.ai,
+		mdblist:             s.mdblist,
+		cache:               s.cache,
+		idCache:             s.idCache,
+		ratingsCache:        s.ratingsCache,
+		demo:                s.demo,
+		ttlHours:            s.ttlHours,
+		inflightRequests:    make(map[string]*inflightRequest),
+		trailerPrequeue:     s.trailerPrequeue,
+		progressTasks:       make(map[string]*ProgressTask),
+		cacheDir:            s.cacheDir,
+		customListInfoFn:    s.customListInfoFn,
+		ratingItemsFn:       s.ratingItemsFn,
+		topTenInterval:      s.topTenInterval,
+		topTenInFlight:      sync.Map{},
+		cachedFetchInFlight: sync.Map{},
+	}
+	local.allowAdultSearch.Store(s.allowAdultSearch.Load())
+
+	s.ytdlpProxyMu.RLock()
+	local.ytdlpProxy = s.ytdlpProxy
+	s.ytdlpProxyMu.RUnlock()
+
+	return local
+}
+
 // SetYTDLPProxyURL updates the proxy URL passed to yt-dlp for YouTube requests.
 func (s *Service) SetYTDLPProxyURL(proxyURL string) {
 	proxyURL = strings.TrimSpace(proxyURL)
@@ -1059,7 +1105,7 @@ func (s *Service) GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID in
 			if ok, _ := s.cache.get(cacheID, &cached); ok {
 				mergeTitle(cached)
 			}
-			imagesKey := cacheKey("tmdb", "images", "v4", "movie", fmt.Sprintf("%d", tmdbID))
+			imagesKey := cacheKey("tmdb", "images", "v6", s.client.language, "movie", fmt.Sprintf("%d", tmdbID))
 			var images tmdbImagesResult
 			if ok, _ := s.cache.get(imagesKey, &images); ok {
 				mergeImages(images)
@@ -1099,7 +1145,7 @@ func (s *Service) GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID in
 			}
 		}
 		if tmdbID > 0 {
-			imagesKey := cacheKey("tmdb", "images", "v4", "series", fmt.Sprintf("%d", tmdbID))
+			imagesKey := cacheKey("tmdb", "images", "v6", s.client.language, "series", fmt.Sprintf("%d", tmdbID))
 			var images tmdbImagesResult
 			if ok, _ := s.cache.get(imagesKey, &images); ok {
 				mergeImages(images)
@@ -2451,7 +2497,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if allowAdultSearch {
 		adultPolicy = "adult-allowed"
 	}
-	key := cacheKey("metadata", "search", "v4", mediaType, q, s.client.language, adultPolicy)
+	key := cacheKey("metadata", "search", "v5", mediaType, q, s.client.language, adultPolicy)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -2674,8 +2720,60 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if len(results) == 0 && tvdbErr != nil {
 		return nil, tvdbErr
 	}
+	s.enrichSearchResults(ctx, results)
 	_ = s.cache.set(key, results)
 	return results, nil
+}
+
+func (s *Service) enrichSearchResults(ctx context.Context, results []models.SearchResult) {
+	if len(results) == 0 || strings.EqualFold(s.client.language, "eng") || strings.TrimSpace(s.client.language) == "" {
+		return
+	}
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			title := &results[idx].Title
+			s.applySearchTranslation(title)
+			if title.TMDBID > 0 {
+				mediaType := "movie"
+				if strings.EqualFold(title.MediaType, "series") || strings.EqualFold(title.MediaType, "tv") {
+					mediaType = "series"
+				}
+				s.applyCachedTMDBImages(ctx, title, mediaType, title.TMDBID)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func (s *Service) applySearchTranslation(title *models.Title) {
+	if title == nil || title.TVDBID <= 0 || strings.TrimSpace(s.client.language) == "" || strings.EqualFold(s.client.language, "eng") {
+		return
+	}
+	var translation *tvdbSeriesTranslation
+	var err error
+	if strings.EqualFold(title.MediaType, "movie") {
+		translation, err = s.cachedMovieTranslations(title.TVDBID, s.client.language)
+	} else {
+		translation, err = s.cachedSeriesTranslations(title.TVDBID, s.client.language)
+	}
+	if err != nil || translation == nil {
+		return
+	}
+	if name := strings.TrimSpace(translation.Name); name != "" && !strings.EqualFold(name, title.Name) {
+		if strings.TrimSpace(title.OriginalName) == "" {
+			title.OriginalName = title.Name
+		}
+		title.Name = name
+	}
+	if overview := strings.TrimSpace(translation.Overview); overview != "" {
+		title.Overview = overview
+	}
 }
 
 func filterAdultSearchResults(results []models.SearchResult) []models.SearchResult {
@@ -6183,6 +6281,33 @@ func (s *Service) enrichTVContentRating(ctx context.Context, title *models.Title
 	return rating != ""
 }
 
+// enrichTitleCertification populates a single title's certification (content
+// rating) when it is missing, resolving the TMDB ID from an IMDB ID if needed.
+func (s *Service) enrichTitleCertification(ctx context.Context, title *models.Title) {
+	if title == nil || title.Certification != "" {
+		return
+	}
+
+	mediaType := strings.ToLower(title.MediaType)
+	tmdbID := title.TMDBID
+
+	if mediaType == "movie" {
+		if tmdbID <= 0 && title.IMDBID != "" {
+			tmdbID = s.getTMDBIDForIMDB(ctx, title.IMDBID)
+		}
+		if tmdbID > 0 {
+			s.enrichMovieReleases(ctx, title, tmdbID)
+		}
+	} else {
+		if tmdbID <= 0 && title.IMDBID != "" {
+			tmdbID = s.getTMDBIDForIMDBTV(ctx, title.IMDBID)
+		}
+		if tmdbID > 0 {
+			s.enrichTVContentRating(ctx, title, tmdbID)
+		}
+	}
+}
+
 // EnrichSearchCertifications adds certification (content rating) data to search results.
 // It resolves TMDB IDs and fetches certifications concurrently using existing enrichment functions.
 func (s *Service) EnrichSearchCertifications(ctx context.Context, results []models.SearchResult) {
@@ -6204,25 +6329,60 @@ func (s *Service) EnrichSearchCertifications(ctx context.Context, results []mode
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			s.enrichTitleCertification(ctx, &results[idx].Title)
+		}(i)
+	}
+	wg.Wait()
+}
 
-			mediaType := strings.ToLower(results[idx].Title.MediaType)
-			tmdbID := results[idx].Title.TMDBID
+// EnrichTrendingCertifications adds certification data to a slice of trending
+// items, fetching missing ratings concurrently. Used by kids-profile filtering
+// so list/shelf endpoints can be filtered by content rating.
+func (s *Service) EnrichTrendingCertifications(ctx context.Context, items []models.TrendingItem) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return
+	}
 
-			if mediaType == "movie" {
-				if tmdbID <= 0 && results[idx].Title.IMDBID != "" {
-					tmdbID = s.getTMDBIDForIMDB(ctx, results[idx].Title.IMDBID)
-				}
-				if tmdbID > 0 {
-					s.enrichMovieReleases(ctx, &results[idx].Title, tmdbID)
-				}
-			} else {
-				if tmdbID <= 0 && results[idx].Title.IMDBID != "" {
-					tmdbID = s.getTMDBIDForIMDBTV(ctx, results[idx].Title.IMDBID)
-				}
-				if tmdbID > 0 {
-					s.enrichTVContentRating(ctx, &results[idx].Title, tmdbID)
-				}
-			}
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for i := range items {
+		if items[i].Title.Certification != "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			s.enrichTitleCertification(ctx, &items[idx].Title)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// EnrichTitleCertifications adds certification data to a slice of titles,
+// fetching missing ratings concurrently. Used by kids-profile filtering.
+func (s *Service) EnrichTitleCertifications(ctx context.Context, titles []models.Title) {
+	if s.tmdb == nil || !s.tmdb.isConfigured() {
+		return
+	}
+
+	const maxConcurrent = 5
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for i := range titles {
+		if titles[i].Certification != "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			s.enrichTitleCertification(ctx, &titles[idx])
 		}(i)
 	}
 	wg.Wait()
@@ -6970,7 +7130,7 @@ func (s *Service) cachedFetchImages(ctx context.Context, mediaType string, tmdbI
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "images", "v5", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "images", "v6", s.client.language, mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached tmdbImagesResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil
@@ -7081,6 +7241,33 @@ func (s *Service) enrichShelfArtwork(ctx context.Context, items []models.Trendin
 		}(i)
 	}
 	wg.Wait()
+}
+
+// ApplyLocalizedArtwork actively fetches localized TMDB artwork for the title
+// (in this service's configured metadata language) and overwrites its poster /
+// backdrop fields. It mirrors the per-item logic of enrichShelfArtwork so that
+// callers holding a single Title (e.g. local library groups) can re-localize
+// artwork at request time. Returns true when any field was updated.
+func (s *Service) ApplyLocalizedArtwork(ctx context.Context, title *models.Title) bool {
+	if title == nil || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return false
+	}
+	mediaType := shelfArtworkMediaType(title.MediaType)
+	tmdbID := title.TMDBID
+	if tmdbID <= 0 && title.IMDBID != "" {
+		if mediaType == "movie" {
+			tmdbID = s.getTMDBIDForIMDB(ctx, title.IMDBID)
+		} else {
+			tmdbID = s.getTMDBIDForIMDBTV(ctx, title.IMDBID)
+		}
+		if tmdbID > 0 {
+			title.TMDBID = tmdbID
+		}
+	}
+	if tmdbID <= 0 {
+		return false
+	}
+	return s.applyCachedTMDBImages(ctx, title, mediaType, tmdbID)
 }
 
 func shelfArtworkMediaType(mediaType string) string {

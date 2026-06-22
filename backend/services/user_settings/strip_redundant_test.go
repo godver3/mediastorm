@@ -134,6 +134,45 @@ func TestStripProfileStringFieldDiffers(t *testing.T) {
 	}
 }
 
+func TestStripProfileMetadataPrimaryLanguageDiffers(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.Metadata.Language = []string{"eng", "fra"}
+	g.Metadata.PrimaryLanguage = "eng"
+
+	us := models.UserSettings{
+		Metadata: models.MetadataSettings{
+			PrimaryLanguage: "fra",
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	got := svc.settings["user1"]
+	if got.Metadata.PrimaryLanguage != "fra" {
+		t.Errorf("expected profile metadata primary language preserved as fra, got %q", got.Metadata.PrimaryLanguage)
+	}
+}
+
+func TestStripProfileMetadataPrimaryLanguageMatchesGlobal(t *testing.T) {
+	svc := tempService(t)
+	g := globalDefaults()
+	g.Metadata.Language = []string{"eng", "fra"}
+	g.Metadata.PrimaryLanguage = "eng"
+
+	us := models.UserSettings{
+		Metadata: models.MetadataSettings{
+			PrimaryLanguage: "eng",
+		},
+	}
+	svc.settings["user1"] = us
+	svc.StripRedundantOverrides(g, nil, nil)
+
+	if _, ok := svc.settings["user1"]; ok {
+		t.Fatal("expected matching metadata primary language override to be stripped and entry removed")
+	}
+}
+
 func TestStripProfileAlreadyEmpty(t *testing.T) {
 	svc := tempService(t)
 	g := globalDefaults()

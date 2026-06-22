@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,6 +56,11 @@ type fakeMetadataService struct {
 		textBackdrop string
 		backdrops    []string
 	}
+
+	// applyArtworkLang, when non-empty, is stamped onto any title passed to
+	// ApplyLocalizedArtwork so tests can assert localization fired.
+	applyArtworkLang  string
+	applyArtworkCalls int32
 
 	lastTrendingType         string
 	lastTrendingOptions      metadata.ShelfLoadOptions
@@ -299,6 +305,14 @@ func (f *fakeMetadataService) EnrichSearchCertifications(_ context.Context, _ []
 	// no-op in tests — certifications are pre-set on test data
 }
 
+func (f *fakeMetadataService) EnrichTrendingCertifications(_ context.Context, _ []models.TrendingItem) {
+	// no-op in tests — certifications are pre-set on test data
+}
+
+func (f *fakeMetadataService) EnrichTitleCertifications(_ context.Context, _ []models.Title) {
+	// no-op in tests — certifications are pre-set on test data
+}
+
 func (f *fakeMetadataService) GetProgressSnapshot() metadata.ProgressSnapshot {
 	return metadata.ProgressSnapshot{}
 }
@@ -317,6 +331,15 @@ func (f *fakeMetadataService) GetMDBListAllRatingsCached(_ string, _ string) []m
 
 func (f *fakeMetadataService) GetTextPosterURL(_ string, _ int64, _ int64) string {
 	return ""
+}
+
+func (f *fakeMetadataService) ApplyLocalizedArtwork(_ context.Context, title *models.Title) bool {
+	atomic.AddInt32(&f.applyArtworkCalls, 1)
+	if f.applyArtworkLang == "" || title == nil {
+		return false
+	}
+	title.TextPoster = &models.Image{Type: "poster", Language: f.applyArtworkLang}
+	return true
 }
 
 func (f *fakeMetadataService) GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID int64) (string, string, []string) {
@@ -986,6 +1009,65 @@ func TestMetadataHandler_SearchKidsContentListReturnsEmpty(t *testing.T) {
 	}
 	if len(payload) != 0 {
 		t.Fatalf("expected empty results for content_list kids, got %d", len(payload))
+	}
+}
+
+func TestMetadataHandler_TopTenKidsRatingFilters(t *testing.T) {
+	fake := &fakeMetadataService{
+		trendingResp: []models.TrendingItem{
+			{Title: models.Title{Name: "Kids Movie", MediaType: "movie", Certification: "G"}},
+			{Title: models.Title{Name: "Adult Movie", MediaType: "movie", Certification: "R"}},
+			{Title: models.Title{Name: "Unrated Movie", MediaType: "movie"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"kid1": {ID: "kid1", IsKidsProfile: true, KidsMode: "rating", KidsMaxMovieRating: "PG", KidsMaxTVRating: "TV-PG"},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/top-ten?type=movie&userId=kid1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.TopTen(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected %d, got %d", http.StatusOK, rec.Code)
+	}
+	var payload TopTenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].Title.Name != "Kids Movie" {
+		t.Fatalf("expected only G-rated movie, got %+v", payload.Items)
+	}
+}
+
+func TestMetadataHandler_TopTenNoFilterForAdult(t *testing.T) {
+	fake := &fakeMetadataService{
+		trendingResp: []models.TrendingItem{
+			{Title: models.Title{Name: "Kids Movie", MediaType: "movie", Certification: "G"}},
+			{Title: models.Title{Name: "Adult Movie", MediaType: "movie", Certification: "R"}},
+		},
+	}
+	handler := NewMetadataHandler(fake, testConfigManager(t))
+	handler.SetUsersService(&fakeUsersServiceForSearch{
+		users: map[string]models.User{
+			"adult1": {ID: "adult1", IsKidsProfile: false},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/discover/top-ten?type=movie&userId=adult1", nil)
+	rec := httptest.NewRecorder()
+	handler.TopTen(rec, req)
+
+	var payload TopTenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload.Items) != 2 {
+		t.Fatalf("expected no filtering for adult, got %d items", len(payload.Items))
 	}
 }
 

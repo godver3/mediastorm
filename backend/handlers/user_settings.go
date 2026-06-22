@@ -150,6 +150,9 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 	}
 
 	return models.UserSettings{
+		Metadata: models.MetadataSettings{
+			PrimaryLanguage: globalSettings.Metadata.EffectivePrimaryLanguage(),
+		},
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:            globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:     globalSettings.Playback.PreferredAudioLanguage,

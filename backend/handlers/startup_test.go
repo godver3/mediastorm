@@ -263,6 +263,12 @@ func (m *mockMetadataServiceStartup) ServePrequeuedTrailer(_ string, _ http.Resp
 func (m *mockMetadataServiceStartup) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
 }
 
+func (m *mockMetadataServiceStartup) EnrichTrendingCertifications(_ context.Context, _ []models.TrendingItem) {
+}
+
+func (m *mockMetadataServiceStartup) EnrichTitleCertifications(_ context.Context, _ []models.Title) {
+}
+
 func (m *mockMetadataServiceStartup) GetProgressSnapshot() metadatapkg.ProgressSnapshot {
 	return metadatapkg.ProgressSnapshot{}
 }
@@ -285,6 +291,10 @@ func (m *mockMetadataServiceStartup) GetTextPosterURL(_ string, _ int64, _ int64
 
 func (m *mockMetadataServiceStartup) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
 	return "", "", nil
+}
+
+func (m *mockMetadataServiceStartup) ApplyLocalizedArtwork(_ context.Context, _ *models.Title) bool {
+	return false
 }
 
 func (m *mockMetadataServiceStartup) GetCachedOverview(_ string, _ int64, _ int64) string {

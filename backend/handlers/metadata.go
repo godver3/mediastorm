@@ -28,6 +28,8 @@ type metadataService interface {
 	Search(context.Context, string, string) ([]models.SearchResult, error)
 	SearchYouTubeVideos(context.Context, string, int) ([]models.YouTubeVideoSearchResult, error)
 	EnrichSearchCertifications(context.Context, []models.SearchResult)
+	EnrichTrendingCertifications(context.Context, []models.TrendingItem)
+	EnrichTitleCertifications(context.Context, []models.Title)
 	SeriesDetails(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
 	BatchSeriesDetails(context.Context, []models.SeriesDetailsQuery) []models.BatchSeriesDetailsItem
 	BatchSeriesTitleFields(context.Context, []models.SeriesDetailsQuery, []string) []models.BatchSeriesDetailsItem
@@ -61,6 +63,7 @@ type metadataService interface {
 	// Poster helpers
 	GetTextPosterURL(mediaType string, tmdbID int64, tvdbID int64) string
 	GetCachedArtworkURLs(mediaType string, tmdbID int64, tvdbID int64) (string, string, []string)
+	ApplyLocalizedArtwork(ctx context.Context, title *models.Title) bool
 	GetCachedOverview(mediaType string, tmdbID int64, tvdbID int64) string
 	// Top Ten aggregated ranking
 	GetTopTen(ctx context.Context, mediaType string, customListURLs []string) ([]models.TrendingItem, error)
@@ -192,6 +195,53 @@ func (h *MetadataHandler) SetUsersService(service usersServiceInterface) {
 	h.UsersService = service
 }
 
+// kidsRatingLimits resolves the (movie, tv) max ratings for a kids profile in
+// rating mode. ok is false when no rating filtering should be applied (profile
+// is not a kids profile, not in rating mode, or has no rating configured).
+func (h *MetadataHandler) kidsRatingLimits(userID string) (movieRating, tvRating string, ok bool) {
+	if userID == "" || h.UsersService == nil {
+		return "", "", false
+	}
+	user, found := h.UsersService.Get(userID)
+	if !found || !user.IsKidsProfile || user.KidsMode != "rating" {
+		return "", "", false
+	}
+	movieRating = user.KidsMaxMovieRating
+	tvRating = user.KidsMaxTVRating
+	if movieRating == "" && tvRating == "" && user.KidsMaxRating != "" {
+		movieRating = user.KidsMaxRating
+		tvRating = user.KidsMaxRating
+	}
+	if movieRating == "" && tvRating == "" {
+		return "", "", false
+	}
+	return movieRating, tvRating, true
+}
+
+// filterTrendingByKids enriches certifications and filters trending items by the
+// kids rating limit for the given profile. It is a no-op for non-kids profiles
+// or profiles not in rating mode.
+func (h *MetadataHandler) filterTrendingByKids(ctx context.Context, userID string, service metadataService, items []models.TrendingItem) []models.TrendingItem {
+	movieRating, tvRating, ok := h.kidsRatingLimits(userID)
+	if !ok {
+		return items
+	}
+	// Populate certifications so items without one aren't all fail-closed.
+	service.EnrichTrendingCertifications(ctx, items)
+	return kids.FilterTrendingByRatings(items, movieRating, tvRating)
+}
+
+// filterTitlesByKids enriches certifications and filters titles by the kids
+// rating limit for the given profile. No-op for non-kids/rating profiles.
+func (h *MetadataHandler) filterTitlesByKids(ctx context.Context, userID string, service metadataService, titles []models.Title) []models.Title {
+	movieRating, tvRating, ok := h.kidsRatingLimits(userID)
+	if !ok {
+		return titles
+	}
+	service.EnrichTitleCertifications(ctx, titles)
+	return kids.FilterTitlesByRatings(titles, movieRating, tvRating)
+}
+
 func (h *MetadataHandler) SetAccountsService(service accountsServiceInterface) {
 	h.AccountsService = service
 }
@@ -219,6 +269,10 @@ func (h *MetadataHandler) SetMDBListListsClient(client *mdblist.ListsClient) {
 // SetLetterboxdClient sets the public Letterboxd list client.
 func (h *MetadataHandler) SetLetterboxdClient(client *letterboxd.Client) {
 	h.LetterboxdClient = client
+}
+
+func (h *MetadataHandler) serviceForUser(userID string) metadataService {
+	return metadataServiceForUser(h.Service, h.CfgManager, h.UserSettings, userID)
 }
 
 // DiscoverNewResponse wraps trending items with total count for pagination
@@ -249,6 +303,7 @@ func parseShelfLoadOptions(r *http.Request) metadatapkg.ShelfLoadOptions {
 func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	service := h.serviceForUser(userID)
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
 	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
 	// Parse optional pagination parameters
@@ -268,10 +323,10 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	loadOpts := parseShelfLoadOptions(r)
 	var items []models.TrendingItem
 	var err error
-	if svc, ok := h.Service.(trendingOptionsService); ok {
+	if svc, ok := service.(trendingOptionsService); ok {
 		items, err = svc.TrendingWithOptions(r.Context(), mediaType, loadOpts)
 	} else {
-		items, err = h.Service.Trending(r.Context(), mediaType)
+		items, err = service.Trending(r.Context(), mediaType)
 	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -333,7 +388,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := DiscoverNewResponse{Items: items, Total: total}
@@ -350,6 +405,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	service := h.serviceForUser(userID)
 
 	// Check kids profile restrictions before searching
 	if userID != "" && h.UsersService != nil {
@@ -363,7 +419,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results, err := h.Service.Search(r.Context(), q, mediaType)
+	results, err := service.Search(r.Context(), q, mediaType)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -375,7 +431,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	if userID != "" && h.UsersService != nil {
 		if user, ok := h.UsersService.Get(userID); ok && user.IsKidsProfile && user.KidsMode == "rating" {
 			// Enrich results with certification data
-			h.Service.EnrichSearchCertifications(r.Context(), results)
+			service.EnrichSearchCertifications(r.Context(), results)
 
 			movieRating := user.KidsMaxMovieRating
 			tvRating := user.KidsMaxTVRating
@@ -398,6 +454,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	service := h.serviceForUser(query.Get("userId"))
 
 	trimAndParseInt := func(value string) int {
 		value = strings.TrimSpace(value)
@@ -431,7 +488,7 @@ func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) 
 		TMDBID:  trimAndParseInt64(query.Get("tmdbId")),
 	}
 
-	details, err := h.Service.SeriesDetails(r.Context(), req)
+	details, err := service.SeriesDetails(r.Context(), req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		status := http.StatusBadGateway
@@ -448,6 +505,8 @@ func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	service := h.serviceForUser(userID)
 	var req models.BatchSeriesDetailsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -458,9 +517,9 @@ func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Requ
 
 	var results []models.BatchSeriesDetailsItem
 	if len(req.Fields) > 0 {
-		results = h.Service.BatchSeriesTitleFields(r.Context(), req.Queries, req.Fields)
+		results = service.BatchSeriesTitleFields(r.Context(), req.Queries, req.Fields)
 	} else {
-		results = h.Service.BatchSeriesDetails(r.Context(), req.Queries)
+		results = service.BatchSeriesDetails(r.Context(), req.Queries)
 	}
 
 	response := models.BatchSeriesDetailsResponse{
@@ -492,6 +551,7 @@ func (h *MetadataHandler) BatchMovieReleases(w http.ResponseWriter, r *http.Requ
 
 func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	service := h.serviceForUser(query.Get("userId"))
 
 	trimAndParseInt := func(value string) int {
 		value = strings.TrimSpace(value)
@@ -526,7 +586,7 @@ func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
 		TVDBID:  trimAndParseInt64(query.Get("tvdbId")),
 	}
 
-	details, err := h.Service.MovieDetails(r.Context(), req)
+	details, err := service.MovieDetails(r.Context(), req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -559,7 +619,8 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 
 	log.Printf("[metadata] fetching collection details collectionId=%d", collectionID)
 
-	details, err := h.Service.CollectionDetails(r.Context(), collectionID)
+	service := h.serviceForUser(query.Get("userId"))
+	details, err := service.CollectionDetails(r.Context(), collectionID)
 	if err != nil {
 		log.Printf("[metadata] collection details error collectionId=%d err=%v", collectionID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -567,6 +628,9 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Apply kids rating filter to collection members for kids profiles.
+	details.Movies = h.filterTitlesByKids(r.Context(), strings.TrimSpace(query.Get("userId")), service, details.Movies)
 
 	log.Printf("[metadata] collection details success collectionId=%d name=%q movieCount=%d", collectionID, details.Name, len(details.Movies))
 	for i, movie := range details.Movies {
@@ -598,7 +662,8 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	titles, err := h.Service.Similar(r.Context(), mediaType, tmdbID)
+	service := h.serviceForUser(query.Get("userId"))
+	titles, err := service.Similar(r.Context(), mediaType, tmdbID)
 	if err != nil {
 		log.Printf("[metadata] similar error type=%s tmdbId=%d err=%v", mediaType, tmdbID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -606,6 +671,8 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	titles = h.filterTitlesByKids(r.Context(), strings.TrimSpace(query.Get("userId")), service, titles)
 
 	// Return empty array instead of null if no results
 	if titles == nil {
@@ -635,7 +702,7 @@ func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	details, err := h.Service.PersonDetails(r.Context(), personID)
+	details, err := h.serviceForUser(query.Get("userId")).PersonDetails(r.Context(), personID)
 	if err != nil {
 		log.Printf("[metadata] person details error personId=%d err=%v", personID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -686,7 +753,7 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 		SeasonNumber: trimAndParseInt(query.Get("season")),
 	}
 
-	response, err := h.Service.Trailers(r.Context(), req)
+	response, err := h.serviceForUser(r.URL.Query().Get("userId")).Trailers(r.Context(), req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -1055,7 +1122,8 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		opts.HistorySvc = h.HistoryService
 	}
 
-	items, filteredTotal, unfilteredTotal, err := h.Service.GetCustomList(r.Context(), listURL, opts)
+	service := h.serviceForUser(userID)
+	items, filteredTotal, unfilteredTotal, err := service.GetCustomList(r.Context(), listURL, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -1063,8 +1131,14 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply kids rating filter for kids profiles.
+	if filtered := h.filterTrendingByKids(r.Context(), userID, service, items); len(filtered) != len(items) {
+		filteredTotal = len(filtered)
+		items = filtered
+	}
+
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := CustomListResponse{Items: items, Total: filteredTotal}
@@ -1215,7 +1289,8 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items, err := h.Service.GetCuratedList(r.Context(), curated, label)
+	service := h.serviceForUser(userID)
+	items, err := service.GetCuratedList(r.Context(), curated, label)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -1230,6 +1305,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if hideWatched && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
 	}
+	items = h.filterTrendingByKids(r.Context(), userID, service, items)
 	filteredTotal := len(items)
 
 	if offset > 0 && offset < len(items) {
@@ -1241,7 +1317,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 		items = items[:limit]
 	}
 
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := TraktShelfResponse{
@@ -1656,7 +1732,8 @@ func (h *MetadataHandler) LetterboxdSources(w http.ResponseWriter, r *http.Reque
 // filters/pagination and writes the standard shelf response. It returns nil
 // (after writing an error) on failure.
 func (h *MetadataHandler) buildShelfFromCurated(w http.ResponseWriter, r *http.Request, curated []metadatapkg.CuratedItem, label, userID string, hideUnreleased, hideWatched bool, limit, offset int) *CustomListResponse {
-	items, err := h.Service.GetCuratedList(r.Context(), curated, label)
+	service := h.serviceForUser(userID)
+	items, err := service.GetCuratedList(r.Context(), curated, label)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusBadGateway)
 		return nil
@@ -1669,6 +1746,7 @@ func (h *MetadataHandler) buildShelfFromCurated(w http.ResponseWriter, r *http.R
 	if hideWatched && userID != "" && h.HistoryService != nil {
 		items = filterWatchedItems(items, userID, h.HistoryService)
 	}
+	items = h.filterTrendingByKids(r.Context(), userID, service, items)
 	filteredTotal := len(items)
 
 	if offset > 0 && offset < len(items) {
@@ -1680,7 +1758,7 @@ func (h *MetadataHandler) buildShelfFromCurated(w http.ResponseWriter, r *http.R
 		items = items[:limit]
 	}
 
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := &CustomListResponse{Items: items, Total: filteredTotal}
@@ -1726,7 +1804,9 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := h.Service.GetCuratedList(r.Context(), req.Items, req.Label)
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
+	service := h.serviceForUser(userID)
+	items, err := service.GetCuratedList(r.Context(), req.Items, req.Label)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -1735,7 +1815,6 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich with watch state if user context is available
-	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	if userID != "" && h.HistoryService != nil {
 		wh, whErr := h.HistoryService.ListWatchHistory(userID)
 		if whErr == nil {
@@ -1747,7 +1826,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"items": items})
@@ -1757,6 +1836,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
 	genreIDStr := strings.TrimSpace(r.URL.Query().Get("genreId"))
 
 	if genreIDStr == "" {
@@ -1790,10 +1870,10 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 	loadOpts := parseShelfLoadOptions(r)
 	var items []models.TrendingItem
 	var total int
-	if svc, ok := h.Service.(discoverByGenreOptionsService); ok {
+	if svc, ok := service.(discoverByGenreOptionsService); ok {
 		items, total, err = svc.DiscoverByGenreWithOptions(r.Context(), mediaType, genreID, limit, offset, loadOpts)
 	} else {
-		items, total, err = h.Service.DiscoverByGenre(r.Context(), mediaType, genreID, limit, offset)
+		items, total, err = service.DiscoverByGenre(r.Context(), mediaType, genreID, limit, offset)
 	}
 	if err != nil {
 		log.Printf("[metadata] discover genre error type=%s genreId=%d: %v", mediaType, genreID, err)
@@ -1807,8 +1887,14 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		items = []models.TrendingItem{}
 	}
 
+	// Apply kids rating filter for kids profiles.
+	if filtered := h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, items); len(filtered) != len(items) {
+		total -= len(items) - len(filtered)
+		items = filtered
+	}
+
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 	log.Printf(
 		"[metadata] discover genre handler complete type=%s genreId=%d limit=%d offset=%d count=%d total=%d duration=%s",
 		mediaType,
@@ -1828,6 +1914,7 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
 	decadeStr := strings.TrimSpace(r.URL.Query().Get("decade"))
 
 	if decadeStr == "" {
@@ -1861,10 +1948,10 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 	loadOpts := parseShelfLoadOptions(r)
 	var items []models.TrendingItem
 	var total int
-	if svc, ok := h.Service.(discoverByDecadeOptionsService); ok {
+	if svc, ok := service.(discoverByDecadeOptionsService); ok {
 		items, total, err = svc.DiscoverByDecadeWithOptions(r.Context(), mediaType, decade, limit, offset, loadOpts)
 	} else {
-		items, total, err = h.Service.DiscoverByDecade(r.Context(), mediaType, decade, limit, offset)
+		items, total, err = service.DiscoverByDecade(r.Context(), mediaType, decade, limit, offset)
 	}
 	if err != nil {
 		log.Printf("[metadata] discover decade error type=%s decade=%d: %v", mediaType, decade, err)
@@ -1878,8 +1965,14 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 		items = []models.TrendingItem{}
 	}
 
+	// Apply kids rating filter for kids profiles.
+	if filtered := h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, items); len(filtered) != len(items) {
+		total -= len(items) - len(filtered)
+		items = filtered
+	}
+
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichTrendingRatings(items, h.Service)
+	enrichTrendingRatings(items, service)
 	log.Printf(
 		"[metadata] discover decade handler complete type=%s decade=%d limit=%d offset=%d count=%d total=%d duration=%s",
 		mediaType,
@@ -1962,7 +2055,8 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	items, err := h.Service.GetAIRecommendations(r.Context(), watchedTitles, mediaTypes, userID)
+	service := h.serviceForUser(userID)
+	items, err := service.GetAIRecommendations(r.Context(), watchedTitles, mediaTypes, userID)
 	if err != nil {
 		log.Printf("[metadata] ai recommendations error user=%s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -1974,7 +2068,8 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
-	enrichTrendingRatings(items, h.Service)
+	items = h.filterTrendingByKids(r.Context(), userID, service, items)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
@@ -1984,6 +2079,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	seedTitle := strings.TrimSpace(r.URL.Query().Get("title"))
 	mediaType := strings.TrimSpace(r.URL.Query().Get("type"))
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
 	if seedTitle == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -2000,7 +2096,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	// if the client navigates away.
 	aiCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	items, err := h.Service.GetAISimilar(aiCtx, seedTitle, mediaType)
+	items, err := service.GetAISimilar(aiCtx, seedTitle, mediaType)
 	if err != nil {
 		log.Printf("[metadata] ai similar error seed=%q: %v", seedTitle, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -2012,7 +2108,8 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
-	enrichTrendingRatings(items, h.Service)
+	items = h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, items)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
@@ -2021,6 +2118,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 // GetAICustomRecommendations returns recommendations based on a free-text query.
 func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
 	if query == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -2028,7 +2126,7 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 		return
 	}
 
-	items, err := h.Service.GetAICustomRecommendations(r.Context(), query)
+	items, err := service.GetAICustomRecommendations(r.Context(), query)
 	if err != nil {
 		log.Printf("[metadata] ai custom recommendations error query=%q: %v", query, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -2040,7 +2138,8 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 	if items == nil {
 		items = []models.TrendingItem{}
 	}
-	enrichTrendingRatings(items, h.Service)
+	items = h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, items)
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
@@ -2050,13 +2149,21 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) {
 	decade := strings.TrimSpace(r.URL.Query().Get("decade"))
 	mediaType := strings.TrimSpace(r.URL.Query().Get("mediaType"))
-	item, err := h.Service.GetAISurprise(r.Context(), decade, mediaType)
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
+	item, err := service.GetAISurprise(r.Context(), decade, mediaType)
 	if err != nil {
 		log.Printf("[metadata] ai surprise error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Drop the suggestion if it exceeds a kids profile's rating limit.
+	if item != nil {
+		if filtered := h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, []models.TrendingItem{*item}); len(filtered) == 0 {
+			item = nil
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2075,6 +2182,7 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 	if mediaType == "" {
 		mediaType = "all"
 	}
+	service := h.serviceForUser(r.URL.Query().Get("userId"))
 	debugMode := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("debug")), "1") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("debug")), "true")
 
@@ -2086,13 +2194,13 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 		err   error
 	)
 	if debugMode {
-		if svc, ok := h.Service.(topTenDebugService); ok {
+		if svc, ok := service.(topTenDebugService); ok {
 			items, debug, err = svc.GetTopTenDebug(r.Context(), mediaType, nil)
 		} else {
-			items, err = h.Service.GetTopTen(r.Context(), mediaType, nil)
+			items, err = service.GetTopTen(r.Context(), mediaType, nil)
 		}
 	} else {
-		items, err = h.Service.GetTopTen(r.Context(), mediaType, nil)
+		items, err = service.GetTopTen(r.Context(), mediaType, nil)
 	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -2101,7 +2209,9 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enrichTrendingRatings(items, h.Service)
+	items = h.filterTrendingByKids(r.Context(), strings.TrimSpace(r.URL.Query().Get("userId")), service, items)
+
+	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TopTenResponse{Items: items, Total: len(items), Debug: debug})

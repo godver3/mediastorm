@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"novastream/config"
 	"novastream/models"
 	"novastream/services/customlists"
 
@@ -30,6 +31,8 @@ type CustomListsHandler struct {
 	Users           userService
 	HistoryService  historyService
 	MetadataService metadataService
+	CfgManager      *config.Manager
+	UserSettings    userSettingsProvider
 }
 
 func NewCustomListsHandler(service customListsService, users userService) *CustomListsHandler {
@@ -43,6 +46,15 @@ func (h *CustomListsHandler) SetHistoryService(service historyService) {
 // SetMetadataService sets the metadata service for rating enrichment on list item responses.
 func (h *CustomListsHandler) SetMetadataService(service metadataService) {
 	h.MetadataService = service
+}
+
+func (h *CustomListsHandler) SetMetadataLanguageProviders(cfg *config.Manager, userSettings userSettingsProvider) {
+	h.CfgManager = cfg
+	h.UserSettings = userSettings
+}
+
+func (h *CustomListsHandler) metadataForUser(userID string) metadataService {
+	return metadataServiceForUser(h.MetadataService, h.CfgManager, h.UserSettings, userID)
 }
 
 func (h *CustomListsHandler) ListLists(w http.ResponseWriter, r *http.Request) {
@@ -188,10 +200,11 @@ func (h *CustomListsHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich with MDBList ratings for sort-by-rating support
-	enrichWatchlistRatings(r.Context(), items, h.MetadataService)
+	metadataSvc := h.metadataForUser(userID)
+	enrichWatchlistRatings(r.Context(), items, metadataSvc)
 
 	// Enrich with artwork URLs from metadata cache
-	enrichWatchlistArtwork(items, h.MetadataService)
+	enrichWatchlistArtwork(items, metadataSvc)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(items)

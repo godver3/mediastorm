@@ -22,6 +22,7 @@ import (
 
 	"novastream/internal/datastore"
 	"novastream/models"
+	"novastream/services/kids"
 	"novastream/utils/parsett"
 )
 
@@ -418,6 +419,7 @@ func (s *Service) ListGroups(ctx context.Context, libraryID string, query models
 	}
 
 	groups := buildLocalMediaGroups(filtered)
+	groups = filterLocalMediaGroupsByRating(groups, query.MaxMovieRating, query.MaxTVRating)
 	sortLocalMediaGroups(groups, query.Sort, query.Dir)
 
 	total := len(groups)
@@ -661,6 +663,35 @@ func buildLocalMediaGroups(items []models.LocalMediaItem) []models.LocalMediaIte
 	return groups
 }
 
+// filterLocalMediaGroupsByRating removes groups that exceed a kids profile's
+// rating cap. Groups whose certification is unknown are removed (fail-closed)
+// so unverifiable local content is never shown to a restricted profile. A no-op
+// when both caps are empty.
+func filterLocalMediaGroupsByRating(groups []models.LocalMediaItemGroup, maxMovieRating, maxTVRating string) []models.LocalMediaItemGroup {
+	if strings.TrimSpace(maxMovieRating) == "" && strings.TrimSpace(maxTVRating) == "" {
+		return groups
+	}
+
+	result := make([]models.LocalMediaItemGroup, 0, len(groups))
+	for _, group := range groups {
+		mediaType := "movie"
+		maxRating := maxMovieRating
+		if group.LibraryType == models.LocalMediaLibraryTypeShow {
+			mediaType = "series"
+			maxRating = maxTVRating
+		}
+		// No cap configured for this media type → allow.
+		if strings.TrimSpace(maxRating) == "" {
+			result = append(result, group)
+			continue
+		}
+		if kids.IsRatingAllowed(group.Certification, maxRating, mediaType) {
+			result = append(result, group)
+		}
+	}
+	return result
+}
+
 // collectItemsFromGroups flattens all items out of a slice of built groups.
 func collectItemsFromGroups(groups []models.LocalMediaItemGroup) []models.LocalMediaItem {
 	var items []models.LocalMediaItem
@@ -702,8 +733,22 @@ func updateLocalMediaGroupSummary(group *models.LocalMediaItemGroup, item models
 	if group.Overview == "" && item.Metadata != nil && strings.TrimSpace(item.Metadata.Overview) != "" {
 		group.Overview = strings.TrimSpace(item.Metadata.Overview)
 	}
+	if group.Certification == "" && item.Metadata != nil && strings.TrimSpace(item.Metadata.Certification) != "" {
+		group.Certification = strings.TrimSpace(item.Metadata.Certification)
+	}
 	if group.Year == 0 {
 		group.Year = localMediaResolvedYear(item)
+	}
+	if item.Metadata != nil {
+		if group.TMDBID == 0 && item.Metadata.TMDBID > 0 {
+			group.TMDBID = item.Metadata.TMDBID
+		}
+		if group.TVDBID == 0 && item.Metadata.TVDBID > 0 {
+			group.TVDBID = item.Metadata.TVDBID
+		}
+		if group.IMDBID == "" && strings.TrimSpace(item.Metadata.IMDBID) != "" {
+			group.IMDBID = strings.TrimSpace(item.Metadata.IMDBID)
+		}
 	}
 	if group.Poster == nil && item.Metadata != nil && item.Metadata.Poster != nil {
 		group.Poster = item.Metadata.Poster

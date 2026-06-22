@@ -115,6 +115,9 @@ func (s *Service) computeEffectiveProfile(userID string, global config.Settings)
 // globalToUserSettings converts global config values to the UserSettings shape.
 func globalToUserSettings(g config.Settings) models.UserSettings {
 	return models.UserSettings{
+		Metadata: models.MetadataSettings{
+			PrimaryLanguage: g.Metadata.EffectivePrimaryLanguage(),
+		},
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:               g.Playback.PreferredPlayer,
 			PreferredAudioLanguage:        g.Playback.PreferredAudioLanguage,
@@ -294,6 +297,10 @@ func configStreamingServicesToModel(services []config.StreamingServiceLink) []mo
 // mergeWithGlobal returns effective user settings: profile overrides filled in with global defaults.
 func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSettings {
 	eff := us
+
+	if eff.Metadata.PrimaryLanguage == "" {
+		eff.Metadata.PrimaryLanguage = g.Metadata.EffectivePrimaryLanguage()
+	}
 
 	// Playback: empty strings inherit global
 	if eff.Playback.PreferredPlayer == "" {
@@ -546,10 +553,19 @@ func (s *Service) stripProfileSettings(us *models.UserSettings, g config.Setting
 	changed = stripDisplay(&us.Display, g.Display) || changed
 	changed = stripAnimeFiltering(&us.AnimeFiltering, g.AnimeFiltering) || changed
 	changed = stripNetwork(&us.Network, g.Network) || changed
+	changed = stripMetadata(&us.Metadata, g.Metadata) || changed
 	changed = stripRanking(&us.Ranking, g.Ranking) || changed
 	// LiveTV channel lists (HiddenChannels, FavoriteChannels, SelectedCategories) are inherently per-user — never strip.
 	// Calendar has no global equivalent — never strip.
 	return changed
+}
+
+func stripMetadata(m *models.MetadataSettings, g config.MetadataSettings) bool {
+	if m.PrimaryLanguage != "" && m.PrimaryLanguage == g.EffectivePrimaryLanguage() {
+		m.PrimaryLanguage = ""
+		return true
+	}
+	return false
 }
 
 func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {

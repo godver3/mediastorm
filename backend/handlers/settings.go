@@ -1024,7 +1024,7 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 	if h.MetadataService != nil {
 		h.MetadataService.SetYTDLPProxyURL(s.Playback.YouTubeProxyURL)
 		h.MetadataService.SetAllowAdultSearch(s.Metadata.AllowAdultSearch)
-		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.Language, metadata.AIConfig{
+		h.MetadataService.UpdateAPIKeys(s.Metadata.TVDBAPIKey, s.Metadata.TMDBAPIKey, s.Metadata.EffectivePrimaryLanguage(), metadata.AIConfig{
 			Provider: s.Metadata.AIProvider,
 			APIKey:   s.Metadata.AIAPIKey,
 			Model:    s.Metadata.AIModel,

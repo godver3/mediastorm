@@ -109,6 +109,10 @@ type LocalMediaItemListQuery struct {
 	Offset         int    `json:"offset"`
 	IncludeMissing bool   `json:"includeMissing"`
 	IncludeCards   bool   `json:"includeCards"`
+	// Kids profile rating caps. When set, groups whose certification exceeds
+	// the cap for their media type (or have no known certification) are removed.
+	MaxMovieRating string `json:"-"`
+	MaxTVRating    string `json:"-"`
 }
 
 type LocalMediaItemListResult struct {
@@ -155,7 +159,11 @@ type LocalMediaItemGroup struct {
 	LibraryType      LocalMediaLibraryType   `json:"libraryType"`
 	Title            string                  `json:"title"`
 	Overview         string                  `json:"overview,omitempty"`
+	Certification    string                  `json:"certification,omitempty"` // MPAA/TV content rating from matched metadata
 	Year             int                     `json:"year,omitempty"`
+	TMDBID           int64                   `json:"tmdbId,omitempty"`
+	TVDBID           int64                   `json:"tvdbId,omitempty"`
+	IMDBID           string                  `json:"imdbId,omitempty"`
 	Poster           *Image                  `json:"poster,omitempty"`
 	TextPoster       *Image                  `json:"textPoster,omitempty"`
 	Backdrop         *Image                  `json:"backdrop,omitempty"`

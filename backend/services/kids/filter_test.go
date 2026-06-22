@@ -64,6 +64,49 @@ func TestFilterSearchByRatings_MovieOnlyRating(t *testing.T) {
 	}
 }
 
+func TestFilterTitlesByRatings(t *testing.T) {
+	titles := []models.Title{
+		{Name: "G Movie", MediaType: "movie", Certification: "G"},
+		{Name: "R Movie", MediaType: "movie", Certification: "R"},
+		{Name: "No Rating", MediaType: "movie"},
+		{Name: "TV-Y Show", MediaType: "series", Certification: "TV-Y"},
+		{Name: "TV-MA Show", MediaType: "series", Certification: "TV-MA"},
+	}
+
+	filtered := FilterTitlesByRatings(titles, "PG", "TV-PG")
+
+	// Expected: G Movie, TV-Y Show (R, unrated, and TV-MA removed)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 titles, got %d: %+v", len(filtered), filtered)
+	}
+	if filtered[0].Name != "G Movie" || filtered[1].Name != "TV-Y Show" {
+		t.Fatalf("unexpected titles: %+v", filtered)
+	}
+}
+
+func TestFilterTitlesByRatings_EmptyRatings(t *testing.T) {
+	titles := []models.Title{{Name: "R Movie", MediaType: "movie", Certification: "R"}}
+	if got := FilterTitlesByRatings(titles, "", ""); len(got) != 1 {
+		t.Fatalf("expected no filtering with empty ratings, got %d", len(got))
+	}
+}
+
+func TestFilterTitlesByRatings_TVOnlyRating(t *testing.T) {
+	titles := []models.Title{
+		{Name: "R Movie", MediaType: "movie", Certification: "R"},
+		{Name: "TV-Y Show", MediaType: "series", Certification: "TV-Y"},
+		{Name: "TV-MA Show", MediaType: "series", Certification: "TV-MA"},
+	}
+	// Only TV rating set — movies pass through untouched.
+	filtered := FilterTitlesByRatings(titles, "", "TV-PG")
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 titles, got %d: %+v", len(filtered), filtered)
+	}
+	if filtered[0].Name != "R Movie" || filtered[1].Name != "TV-Y Show" {
+		t.Fatalf("unexpected titles: %+v", filtered)
+	}
+}
+
 func TestValidateKidsMode_BothRejected(t *testing.T) {
 	if ValidateKidsMode("both") {
 		t.Fatal("expected 'both' mode to be invalid")

@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"novastream/config"
 	"novastream/models"
+	metadatapkg "novastream/services/metadata"
 
 	"github.com/gorilla/mux"
 )
@@ -25,10 +27,16 @@ type DetailsBundleHandler struct {
 	history      historyService
 	contentPrefs contentPreferencesService
 	users        userService
+	cfgManager   *config.Manager
+	userSettings userSettingsProvider
 }
 
 type seriesDetailsLiteProvider interface {
 	SeriesDetailsLite(context.Context, models.SeriesDetailsQuery) (*models.SeriesDetails, error)
+}
+
+type localizedMetadataProvider interface {
+	WithLanguage(string) *metadatapkg.Service
 }
 
 // NewDetailsBundleHandler constructs a DetailsBundleHandler.
@@ -44,6 +52,42 @@ func NewDetailsBundleHandler(
 		contentPrefs: contentPrefs,
 		users:        users,
 	}
+}
+
+func (h *DetailsBundleHandler) SetConfigManager(cfg *config.Manager) {
+	h.cfgManager = cfg
+}
+
+func (h *DetailsBundleHandler) SetUserSettingsProvider(provider userSettingsProvider) {
+	h.userSettings = provider
+}
+
+func (h *DetailsBundleHandler) metadataForUser(userID string) metadataService {
+	if h.metadata == nil || h.cfgManager == nil {
+		return h.metadata
+	}
+	localized, ok := h.metadata.(localizedMetadataProvider)
+	if !ok {
+		return h.metadata
+	}
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		return h.metadata
+	}
+	language := settings.Metadata.EffectivePrimaryLanguage()
+	if h.userSettings != nil && strings.TrimSpace(userID) != "" {
+		if profileSettings, err := h.userSettings.Get(userID); err == nil && profileSettings != nil {
+			if profileLanguage := strings.TrimSpace(profileSettings.Metadata.PrimaryLanguage); profileLanguage != "" {
+				for _, enabled := range settings.Metadata.Language {
+					if strings.EqualFold(strings.TrimSpace(enabled), profileLanguage) {
+						language = strings.TrimSpace(enabled)
+						break
+					}
+				}
+			}
+		}
+	}
+	return localized.WithLanguage(language)
 }
 
 // DetailsBundleResponse is the combined payload returned by
@@ -148,6 +192,7 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 	}
 
 	contentType, titleID, name, imdbID, year, _, tvdbID, tmdbID := parseDetailsRequest(r)
+	metadataSvc := h.metadataForUser(userID)
 	shellStart := time.Now()
 	resp := DetailsShellResponse{}
 
@@ -162,7 +207,7 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 		}
 
 		start := time.Now()
-		if liteProvider, ok := h.metadata.(seriesDetailsLiteProvider); ok {
+		if liteProvider, ok := metadataSvc.(seriesDetailsLiteProvider); ok {
 			details, err := liteProvider.SeriesDetailsLite(r.Context(), query)
 			log.Printf("[details-shell timing] series lite: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 			if err == nil {
@@ -173,7 +218,7 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 		}
 
 		start = time.Now()
-		details, err := h.metadata.SeriesDetails(r.Context(), query)
+		details, err := metadataSvc.SeriesDetails(r.Context(), query)
 		log.Printf("[details-shell timing] series details fallback: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 		if err != nil {
 			log.Printf("[details-shell] series shell error: %v", err)
@@ -182,7 +227,7 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 		}
 	case "movie":
 		start := time.Now()
-		details, err := h.metadata.MovieDetails(r.Context(), models.MovieDetailsQuery{
+		details, err := metadataSvc.MovieDetails(r.Context(), models.MovieDetailsQuery{
 			TitleID: titleID,
 			Name:    name,
 			Year:    year,
@@ -218,6 +263,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	}
 
 	contentType, titleID, name, imdbID, year, season, tvdbID, tmdbID := parseDetailsRequest(r)
+	metadataSvc := h.metadataForUser(userID)
 
 	bundleStart := time.Now()
 	resp := DetailsBundleResponse{}
@@ -233,7 +279,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		defer detailsDone.Done()
 		start := time.Now()
 		if contentType == "series" {
-			details, err := h.metadata.SeriesDetails(r.Context(), models.SeriesDetailsQuery{
+			details, err := metadataSvc.SeriesDetails(r.Context(), models.SeriesDetailsQuery{
 				TitleID: titleID,
 				Name:    name,
 				Year:    year,
@@ -252,7 +298,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 			}
 			mu.Unlock()
 		} else {
-			details, err := h.metadata.MovieDetails(r.Context(), models.MovieDetailsQuery{
+			details, err := metadataSvc.MovieDetails(r.Context(), models.MovieDetailsQuery{
 				TitleID: titleID,
 				Name:    name,
 				Year:    year,
@@ -295,7 +341,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		}
 
 		start := time.Now()
-		titles, err := h.metadata.Similar(r.Context(), contentType, similarTMDBID)
+		titles, err := metadataSvc.Similar(r.Context(), contentType, similarTMDBID)
 		log.Printf("[details-bundle timing] similar: %dms (err=%v)", time.Since(start).Milliseconds(), err)
 		if err != nil {
 			log.Printf("[details-bundle] similar error: %v", err)
@@ -311,7 +357,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 	go func() {
 		defer wg.Done()
 		start := time.Now()
-		trailerResp, err := h.metadata.Trailers(r.Context(), models.TrailerQuery{
+		trailerResp, err := metadataSvc.Trailers(r.Context(), models.TrailerQuery{
 			MediaType:    contentType,
 			TitleID:      titleID,
 			Name:         name,

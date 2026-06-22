@@ -17,14 +17,14 @@ var movieRatingOrder = map[string]int{
 }
 
 var tvRatingOrder = map[string]int{
-	"TV-Y":   1,
-	"TV-Y7":  2,
+	"TV-Y":     1,
+	"TV-Y7":    2,
 	"TV-Y7-FV": 2, // Fantasy violence variant of TV-Y7
-	"TV-G":   3,
-	"TV-PG":  4,
-	"TV-14":  5,
-	"TV-MA":  6,
-	"NR":     7, // Not Rated - treat as most permissive
+	"TV-G":     3,
+	"TV-PG":    4,
+	"TV-14":    5,
+	"TV-MA":    6,
+	"NR":       7, // Not Rated - treat as most permissive
 }
 
 // GetRatingLevel returns the restrictiveness level for a rating.
@@ -101,6 +101,31 @@ func FilterTrendingByRatings(items []models.TrendingItem, maxMovieRating, maxTVR
 		}
 		if IsRatingAllowed(item.Title.Certification, maxRating, item.Title.MediaType) {
 			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// FilterTitlesByRatings filters a list of Titles using separate max ratings for
+// movies and TV shows. Items without a certification or exceeding the max for
+// their media type are removed.
+func FilterTitlesByRatings(titles []models.Title, maxMovieRating, maxTVRating string) []models.Title {
+	if strings.TrimSpace(maxMovieRating) == "" && strings.TrimSpace(maxTVRating) == "" {
+		return titles
+	}
+
+	result := make([]models.Title, 0, len(titles))
+	for _, title := range titles {
+		maxRating := maxTVRating
+		if strings.ToLower(title.MediaType) == "movie" {
+			maxRating = maxMovieRating
+		}
+		if strings.TrimSpace(maxRating) == "" {
+			result = append(result, title)
+			continue
+		}
+		if IsRatingAllowed(title.Certification, maxRating, title.MediaType) {
+			result = append(result, title)
 		}
 	}
 	return result

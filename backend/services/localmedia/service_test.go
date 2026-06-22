@@ -12,6 +12,36 @@ import (
 	"novastream/utils/parsett"
 )
 
+func TestFilterLocalMediaGroupsByRating(t *testing.T) {
+	groups := []models.LocalMediaItemGroup{
+		{ID: "1", Title: "G Movie", LibraryType: models.LocalMediaLibraryTypeMovie, Certification: "G"},
+		{ID: "2", Title: "R Movie", LibraryType: models.LocalMediaLibraryTypeMovie, Certification: "R"},
+		{ID: "3", Title: "Unrated Movie", LibraryType: models.LocalMediaLibraryTypeMovie},
+		{ID: "4", Title: "TV-Y Show", LibraryType: models.LocalMediaLibraryTypeShow, Certification: "TV-Y"},
+		{ID: "5", Title: "TV-MA Show", LibraryType: models.LocalMediaLibraryTypeShow, Certification: "TV-MA"},
+	}
+
+	filtered := filterLocalMediaGroupsByRating(groups, "PG", "TV-PG")
+
+	// G Movie and TV-Y Show allowed; R, unrated (fail-closed), TV-MA removed.
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 groups, got %d: %+v", len(filtered), filtered)
+	}
+	if filtered[0].ID != "1" || filtered[1].ID != "4" {
+		t.Fatalf("unexpected groups: %+v", filtered)
+	}
+}
+
+func TestFilterLocalMediaGroupsByRating_NoCaps(t *testing.T) {
+	groups := []models.LocalMediaItemGroup{
+		{ID: "1", LibraryType: models.LocalMediaLibraryTypeMovie, Certification: "R"},
+		{ID: "2", LibraryType: models.LocalMediaLibraryTypeMovie},
+	}
+	if got := filterLocalMediaGroupsByRating(groups, "", ""); len(got) != 2 {
+		t.Fatalf("expected no filtering without caps, got %d", len(got))
+	}
+}
+
 func TestDetectTitleMovie(t *testing.T) {
 	got := detectTitle(models.LocalMediaLibraryTypeMovie, "The.Matrix.1999.1080p.BluRay.x264.mkv", nil)
 	if got.title != "The Matrix" {

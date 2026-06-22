@@ -221,6 +221,30 @@ func TestGetCachedArtworkURLsResolvesSeriesTMDBToTVDBCache(t *testing.T) {
 	}
 }
 
+func TestGetCachedArtworkURLsUsesMetadataLanguageForTMDBImages(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	svc := &Service{
+		client: &tvdbClient{language: "fra"},
+		cache:  cache,
+	}
+
+	if err := cache.set(cacheKey("tmdb", "images", "v6", "eng", "series", "71712"), tmdbImagesResult{
+		TextPoster: &models.Image{URL: "https://example.test/english-poster.jpg", Type: "poster", Language: "en"},
+	}); err != nil {
+		t.Fatalf("set english images cache: %v", err)
+	}
+	if err := cache.set(cacheKey("tmdb", "images", "v6", "fra", "series", "71712"), tmdbImagesResult{
+		TextPoster: &models.Image{URL: "https://example.test/french-poster.jpg", Type: "poster", Language: "fr"},
+	}); err != nil {
+		t.Fatalf("set french images cache: %v", err)
+	}
+
+	textPoster, _, _ := svc.GetCachedArtworkURLs("series", 71712, 0)
+	if textPoster != "https://example.test/french-poster.jpg" {
+		t.Fatalf("textPoster = %q, want french cache entry", textPoster)
+	}
+}
+
 func TestGetCachedArtworkURLsResolvesMovieTMDBToTVDBCache(t *testing.T) {
 	cache := newFileCache(t.TempDir(), 24)
 	svc := &Service{
@@ -746,6 +770,57 @@ func TestSearchBlocksAdultResultsByDefaultAndAllowsWhenEnabled(t *testing.T) {
 	}
 	if len(tmdbIncludeAdult) != 2 || tmdbIncludeAdult[1] != "true" {
 		t.Fatalf("TMDB include_adult calls = %v, want second true", tmdbIncludeAdult)
+	}
+}
+
+func TestSearchEnrichesResultsWithRequestedLanguage(t *testing.T) {
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/v4/login":
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			case "/v4/search":
+				body := `{"data":[{"type":"series","tvdb_id":"202","tmdb_id":"303","name":"English Search Title","overview":"English search overview","year":"2020","score":100}]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/v4/series/202/translations/fra":
+				body := `{"data":{"language":"fra","name":"Titre français","overview":"Résumé français"}}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/search/tv":
+				body := `{"results":[]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/tv/303/images":
+				body := `{"logos":[],"backdrops":[],"posters":[{"file_path":"/poster-fr.jpg","iso_639_1":"fr","vote_average":8.0}]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			default:
+				t.Fatalf("unexpected request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	cacheDir := t.TempDir()
+	svc := &Service{
+		client: &tvdbClient{apiKey: "test-tvdb-key", language: "fra", httpc: httpc, minInterval: 0, translationCacheTTL: 24 * time.Hour},
+		tmdb:   newTMDBClient("test-tmdb-key", "fra", httpc, newFileCache(cacheDir, 24)),
+		cache:  newFileCache(cacheDir, 24),
+	}
+
+	results, err := svc.Search(context.Background(), "english", "series")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d: %+v", len(results), results)
+	}
+	title := results[0].Title
+	if title.Name != "Titre français" {
+		t.Fatalf("title name = %q, want translated title", title.Name)
+	}
+	if title.Overview != "Résumé français" {
+		t.Fatalf("overview = %q, want translated overview", title.Overview)
+	}
+	if title.TextPoster == nil || title.TextPoster.URL != "https://image.tmdb.org/t/p/w780/poster-fr.jpg" {
+		t.Fatalf("text poster = %#v, want localized TMDB poster", title.TextPoster)
 	}
 }
 

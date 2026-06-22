@@ -593,7 +593,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Per-user sections: liveTV IPTV source overrides are configured here; channel preferences use a custom manager.
-    const perUserSections = ['playback', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'liveTV.sources', 'liveTV.playlistSources', 'display', 'network', 'ranking', 'ranking.criteria'];
+    const perUserSections = ['playback', 'metadata', 'homeShelves', 'homeShelves.shelves', 'filtering', 'animeFiltering', 'liveTV', 'liveTV.sources', 'liveTV.playlistSources', 'display', 'network', 'ranking', 'ranking.criteria'];
 
     // Validation state - stores errors by section and field
     let validationErrors = {};
@@ -999,6 +999,7 @@
     // Sections to check for overrides and their global mapping
     const overrideSections = [
         { key: 'playback', globalKey: 'playback', label: 'Playback' },
+        { key: 'metadata', globalKey: 'metadata', label: 'Metadata' },
         { key: 'filtering', globalKey: 'filtering', label: 'Content Filtering' },
         { key: 'animeFiltering', globalKey: 'animeFiltering', label: 'Anime Language' },
         { key: 'display', globalKey: 'display', label: 'Display' },
@@ -1434,6 +1435,17 @@
             ],
         },
         {
+            key: 'metadata',
+            label: 'Metadata',
+            description: 'Primary Metadata Language',
+            detailSection: 'Metadata',
+            detailFields: ['Primary Metadata Language'],
+            userPaths: [
+                'metadata.primaryLanguage',
+            ],
+            clientPaths: [],
+        },
+        {
             key: 'contentFiltering',
             label: 'Content Filtering',
             description: 'Max Movie Size (GB), Max Episode Size (GB), Max Resolution, HDR/DV Policy, Unknown Track Preference, Required Terms, Filter Out Terms, Preferred Terms, Non-Preferred Terms, Download Preferred Terms',
@@ -1712,6 +1724,9 @@
                 preferredAudioLanguage: settings.playback.preferredAudioLanguage,
                 preferredSubtitleLanguage: settings.playback.preferredSubtitleLanguage,
                 preferredSubtitleMode: settings.playback.preferredSubtitleMode,
+            } : undefined,
+            metadata: settings?.metadata ? {
+                primaryLanguage: settings.metadata.primaryLanguage,
             } : undefined,
             filtering: settings?.filtering ? {
                 maxSizeMovieGb: settings.filtering.maxSizeMovieGb,
@@ -2787,6 +2802,15 @@
                         });
                     if (value && !selectOptions.some(opt => opt.value === value)) {
                         selectOptions.push({value, label: value});
+                    }
+                } else if (fieldDef.optionsFrom === 'metadataLanguages') {
+                    const enabledLanguages = Array.isArray(currentSettings.metadata?.language) && currentSettings.metadata.language.length > 0
+                        ? currentSettings.metadata.language
+                        : ['eng'];
+                    const labelByValue = new Map((fieldDef.options || schema.metadata?.fields?.language?.options || []).map(opt => [String(opt.value ?? opt), String(opt.label ?? opt)]));
+                    selectOptions = enabledLanguages.map(lang => ({ value: lang, label: labelByValue.get(String(lang)) || String(lang) }));
+                    if (value && !selectOptions.some(opt => opt.value === value)) {
+                        selectOptions.push({value, label: labelByValue.get(String(value)) || String(value)});
                     }
                 }
                 const options = selectOptions.map(opt => {
@@ -4853,7 +4877,7 @@
 
         const stripped = {};
         // Only process per-user sections (top-level only, skip nested like 'homeShelves.shelves')
-        const topLevelPerUserSections = ['playback', 'homeShelves', 'filtering', 'liveTV', 'display'];
+        const topLevelPerUserSections = ['playback', 'metadata', 'homeShelves', 'filtering', 'liveTV', 'display'];
 
         for (const section of topLevelPerUserSections) {
             if (!userSettings[section]) continue;
@@ -8069,7 +8093,7 @@
 
         // Add test button for testable object sections
         let testHtml = '';
-        if (sectionDef.testable) {
+        if (sectionDef.testable && !selectedUserId && !selectedClientId) {
             testHtml = '<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.75rem;">'+
                 '<button id="test-btn-'+sectionKey+'" class="btn btn-secondary" onclick="testObjectSection(\''+sectionKey+'\')">'+
                 '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection</button>'+

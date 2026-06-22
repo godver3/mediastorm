@@ -125,6 +125,12 @@ func (m *mockMetadataServiceDetailsBundle) ServePrequeuedTrailer(_ string, _ htt
 func (m *mockMetadataServiceDetailsBundle) EnrichSearchCertifications(_ context.Context, _ []models.SearchResult) {
 }
 
+func (m *mockMetadataServiceDetailsBundle) EnrichTrendingCertifications(_ context.Context, _ []models.TrendingItem) {
+}
+
+func (m *mockMetadataServiceDetailsBundle) EnrichTitleCertifications(_ context.Context, _ []models.Title) {
+}
+
 func (m *mockMetadataServiceDetailsBundle) GetProgressSnapshot() metadatapkg.ProgressSnapshot {
 	return metadatapkg.ProgressSnapshot{}
 }
@@ -142,6 +148,10 @@ func (m *mockMetadataServiceDetailsBundle) GetTextPosterURL(_ string, _ int64, _
 
 func (m *mockMetadataServiceDetailsBundle) GetCachedArtworkURLs(_ string, _ int64, _ int64) (string, string, []string) {
 	return "", "", nil
+}
+
+func (m *mockMetadataServiceDetailsBundle) ApplyLocalizedArtwork(_ context.Context, _ *models.Title) bool {
+	return false
 }
 
 func (m *mockMetadataServiceDetailsBundle) GetCachedOverview(_ string, _ int64, _ int64) string {
