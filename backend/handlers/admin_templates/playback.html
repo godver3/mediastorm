@@ -2942,14 +2942,54 @@
         await resolveCandidate(result, { autoStart });
     }
 
+    // Poll the playback queue until the backend binds a playable webdavPath.
+    // External usenet engines (e.g. Decypharr) resolve asynchronously: the initial
+    // /api/playback/resolve response carries a queueId with healthStatus "queued"/
+    // "processing" and no webdavPath. Mirror the React frontend's polling loop so the
+    // admin player waits for the download to finish instead of failing immediately.
+    const PLAYBACK_QUEUE_POLL_INTERVAL_MS = 1500;
+    const PLAYBACK_QUEUE_TIMEOUT_MS = 120000;
+
+    function isResolutionReady(resolution) {
+        return !!(resolution && typeof resolution.webdavPath === 'string' && resolution.webdavPath.trim());
+    }
+
+    async function awaitPlayableResolution(initial, onStatus) {
+        if (isResolutionReady(initial)) return initial;
+
+        const queueId = Number(initial?.queueId);
+        if (!Number.isFinite(queueId) || queueId <= 0) {
+            // No webdavPath and no queue to poll — nothing more the backend can give us.
+            return initial;
+        }
+
+        const started = Date.now();
+        let current = initial;
+        while (Date.now() - started < PLAYBACK_QUEUE_TIMEOUT_MS) {
+            if (typeof onStatus === 'function') {
+                onStatus(String(current?.healthStatus || 'processing'));
+            }
+            await new Promise((resolve) => setTimeout(resolve, PLAYBACK_QUEUE_POLL_INTERVAL_MS));
+            current = await apiCall(`/api/playback/queue/${encodeURIComponent(String(queueId))}`);
+            if (isResolutionReady(current)) return current;
+        }
+        const timeoutError = new Error('Timed out waiting for the backend to prepare playback.');
+        timeoutError.code = 'PLAYBACK_QUEUE_TIMEOUT';
+        throw timeoutError;
+    }
+
     async function resolveCandidate(result, options = {}) {
         const panel = document.getElementById('playbackPanel');
         panel.style.display = 'block';
         panel.innerHTML = `<div class="empty-inline">Resolving ${escapeHtml(result.title || 'selected release')}...</div>`;
         try {
-            resolvedPlayback = await apiCall('/api/playback/resolve', {
+            const initialResolution = await apiCall('/api/playback/resolve', {
                 method: 'POST',
                 body: JSON.stringify({ result, startOffset: getResumeOffset() }),
+            });
+            resolvedPlayback = await awaitPlayableResolution(initialResolution, (status) => {
+                const label = status === 'queued' ? 'Queued' : 'Preparing';
+                panel.innerHTML = `<div class="empty-inline">${label} ${escapeHtml(result.title || 'selected release')}...</div>`;
             });
             currentResolvedCandidate = result;
             renderPlaybackChoices(result);
