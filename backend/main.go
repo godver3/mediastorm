@@ -387,7 +387,7 @@ func main() {
 	var remoteAccessHost *remoteaccess.IrohHostManager
 	var remoteAccessService *remoteaccess.Service
 	if store != nil {
-		remoteAccessHost = remoteaccess.NewIrohHostManager("", settings.Cache.Directory)
+		remoteAccessHost = remoteaccess.NewIrohHostManager("", settings.Cache.Directory, settings.Server.Port)
 		remoteAccessService = remoteaccess.NewService(store.RemoteAccessInvites(), remoteAccessHost)
 		remoteAccessHandler = handlers.NewRemoteAccessHandler(remoteAccessService)
 		defer func() {

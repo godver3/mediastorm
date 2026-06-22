@@ -14,13 +14,13 @@ func TestNewIrohHostManagerSecretFileFromDataDir(t *testing.T) {
 	t.Setenv("MEDIASTORM_IROH_SECRET_FILE", "")
 	dataDir := t.TempDir()
 
-	m := NewIrohHostManager(t.TempDir(), dataDir)
+	m := NewIrohHostManager(t.TempDir(), dataDir, 0)
 	want := filepath.Join(dataDir, defaultSecretFileName)
 	if m.secretFile != want {
 		t.Fatalf("secretFile = %q, want %q", m.secretFile, want)
 	}
 
-	ephemeral := NewIrohHostManager(t.TempDir(), "")
+	ephemeral := NewIrohHostManager(t.TempDir(), "", 0)
 	if ephemeral.secretFile != "" {
 		t.Fatalf("secretFile = %q, want empty when no data dir", ephemeral.secretFile)
 	}
@@ -31,9 +31,38 @@ func TestNewIrohHostManagerSecretFileEnvOverride(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "custom_secret.key")
 	t.Setenv("MEDIASTORM_IROH_SECRET_FILE", override)
 
-	m := NewIrohHostManager(t.TempDir(), t.TempDir())
+	m := NewIrohHostManager(t.TempDir(), t.TempDir(), 0)
 	if m.secretFile != override {
 		t.Fatalf("secretFile = %q, want override %q", m.secretFile, override)
+	}
+}
+
+// The proxy origin must follow the backend's configured Server.Port so operators who
+// change the listen port (e.g. 4000) aren't left with the host dialing a dead 7777 → 502.
+func TestNewIrohHostManagerOriginFromServerPort(t *testing.T) {
+	t.Setenv("MEDIASTORM_IROH_ORIGIN", "")
+	t.Setenv("REMOTE_ACCESS_ORIGIN", "")
+
+	m := NewIrohHostManager(t.TempDir(), "", 4000)
+	if want := "http://127.0.0.1:4000"; m.origin != want {
+		t.Fatalf("origin = %q, want %q", m.origin, want)
+	}
+
+	// Port 0 (unknown) falls back to the legacy default.
+	fallback := NewIrohHostManager(t.TempDir(), "", 0)
+	if fallback.origin != defaultIrohOrigin {
+		t.Fatalf("origin = %q, want legacy default %q", fallback.origin, defaultIrohOrigin)
+	}
+}
+
+// MEDIASTORM_IROH_ORIGIN / REMOTE_ACCESS_ORIGIN override the port-derived default.
+func TestNewIrohHostManagerOriginEnvOverridesPort(t *testing.T) {
+	t.Setenv("REMOTE_ACCESS_ORIGIN", "")
+	t.Setenv("MEDIASTORM_IROH_ORIGIN", "http://backend:9999")
+
+	m := NewIrohHostManager(t.TempDir(), "", 4000)
+	if want := "http://backend:9999"; m.origin != want {
+		t.Fatalf("origin = %q, want env override %q", m.origin, want)
 	}
 }
 

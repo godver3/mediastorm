@@ -33,6 +33,15 @@ const defaultRendezvousFileName = "mediastorm_rendezvous_codes.txt"
 // lookup — so it lives in the persistent data dir, not temp.
 const defaultSecretFileName = "iroh_host_secret.key"
 
+// defaultOriginForPort builds the loopback proxy origin from the backend's configured
+// HTTP listen port. Falls back to the legacy default origin when the port is unknown/unset.
+func defaultOriginForPort(serverPort int) string {
+	if serverPort > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d", serverPort)
+	}
+	return defaultIrohOrigin
+}
+
 var debugIrohProxyLogs = strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "1") ||
 	strings.EqualFold(strings.TrimSpace(os.Getenv("STRMR_IROH_PROXY_LOGS")), "true")
 
@@ -55,7 +64,15 @@ type IrohHostManager struct {
 // NewIrohHostManager builds a host manager. dataDir is a persistent directory (the app
 // cache dir) used to store the host's stable iroh secret key; pass "" to keep the legacy
 // ephemeral identity (a new node ID every start).
-func NewIrohHostManager(workDir, dataDir string) *IrohHostManager {
+//
+// serverPort is the port the backend's HTTP server actually listens on (config
+// Server.Port). The host proxies incoming iroh streams to the backend over the
+// container/host loopback, so the proxy origin must match the backend's real listen port —
+// not a hardcoded 7777. Operators who change Server.Port (and map Docker e.g. 4000:4000)
+// would otherwise get a 502 because the proxy dialed 127.0.0.1:7777 with nothing there.
+// Pass 0 to fall back to the legacy default port. The MEDIASTORM_IROH_ORIGIN /
+// REMOTE_ACCESS_ORIGIN env vars still override everything.
+func NewIrohHostManager(workDir, dataDir string, serverPort int) *IrohHostManager {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {
 		workDir = discoverIrohWorkDir()
@@ -69,7 +86,7 @@ func NewIrohHostManager(workDir, dataDir string) *IrohHostManager {
 		origin = strings.TrimSpace(os.Getenv("REMOTE_ACCESS_ORIGIN"))
 	}
 	if origin == "" {
-		origin = defaultIrohOrigin
+		origin = defaultOriginForPort(serverPort)
 	}
 	rendezvousFile := strings.TrimSpace(os.Getenv("MEDIASTORM_IROH_RENDEZVOUS_FILE"))
 	if rendezvousFile == "" {
