@@ -836,6 +836,12 @@ func main() {
 
 	// Register admin UI routes
 	adminUIHandler := handlers.NewAdminUIHandler(configPath, settings.Log.File, videoHandler.GetHLSManager(), userService, userSettingsService, cfgManager)
+
+	// Keep stream throughput (Mbps) EWMAs warm in the background so the admin
+	// dashboard shows live transfer speeds immediately on open, not only after a
+	// dashboard has been connected for a sampling interval.
+	handlers.StartThroughputSampler(context.Background(), videoHandler.GetHLSManager())
+
 	adminUIHandler.SetDebridSearchService(debridSearchService)
 	adminUIHandler.SetMetadataService(metadataService)
 	adminUIHandler.SetHistoryService(historyService)

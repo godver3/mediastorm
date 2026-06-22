@@ -109,6 +109,7 @@ type PlaybackProgressUpdate struct {
 	PercentWatched float64           `json:"percentWatched"` // Override: set directly when duration is unknown (e.g. Trakt import)
 	Timestamp      time.Time         `json:"timestamp"`      // When this update was sent
 	IsPaused       bool              `json:"isPaused"`       // Whether playback is currently paused
+	IsBuffering    bool              `json:"isBuffering"`    // Whether the player is currently stalled/buffering (not paused)
 	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields
@@ -133,6 +134,7 @@ type PlaybackProgress struct {
 	PercentWatched float64           `json:"percentWatched"`           // Position/Duration * 100
 	UpdatedAt      time.Time         `json:"updatedAt"`                // Last update time
 	IsPaused       bool              `json:"isPaused"`                 // Whether playback is currently paused
+	IsBuffering    bool              `json:"isBuffering,omitempty"`    // Whether the player is currently stalled/buffering (runtime only, not persisted)
 	WatchedSeconds float64           `json:"watchedSeconds,omitempty"` // Accumulated actual playback time in seconds
 	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
 

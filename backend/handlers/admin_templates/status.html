@@ -1384,6 +1384,10 @@
         background: rgba(156, 163, 175, 0.9);
         color: white;
     }
+    .stream-card-badge.buffering {
+        background: rgba(245, 158, 11, 0.9);
+        color: white;
+    }
 
     .stream-card.paused {
         opacity: 0.6;
@@ -1659,6 +1663,35 @@
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
+    // Format a bits-per-second rate as a human-friendly speed (Kbps/Mbps/Gbps).
+    function formatBitsPerSec(bps) {
+        const v = Number(bps) || 0;
+        if (v <= 0) return '0 Mbps';
+        if (v >= 1e9) return (v / 1e9).toFixed(2) + ' Gbps';
+        if (v >= 1e6) return (v / 1e6).toFixed(1) + ' Mbps';
+        if (v >= 1e3) return (v / 1e3).toFixed(0) + ' Kbps';
+        return v.toFixed(0) + ' bps';
+    }
+
+    // Derive a single playback state from a stream payload.
+    // Precedence: paused > buffering > playing.
+    function getStreamState(stream) {
+        if (stream.is_paused) return { key: 'paused', label: 'Paused' };
+        if (stream.is_buffering) return { key: 'buffering', label: 'Buffering' };
+        return { key: 'playing', label: 'Playing' };
+    }
+
+    // Status-badge markup for a derived stream state (shared by table render + live updates).
+    function streamStateBadgeHtml(state) {
+        if (state.key === 'paused') {
+            return '<span class="status-badge stream-state-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>';
+        }
+        if (state.key === 'buffering') {
+            return '<span class="status-badge stream-state-badge" style="background: rgba(245, 158, 11, 0.12); color: #f59e0b;">Buffering</span>';
+        }
+        return '<span class="status-badge online stream-state-badge">Playing</span>';
+    }
+
     function formatDuration(seconds) {
         if (!seconds || seconds < 0) return '-';
         const mins = Math.floor(seconds / 60);
@@ -1824,7 +1857,7 @@
     }
 
     function renderTableView(streams) {
-        return '<div class="table-container"><table><thead><tr><th>Media</th><th>Filename</th><th>Profile(s)</th><th>Status</th><th>Progress</th><th>Transferred</th><th>Started</th><th></th></tr></thead><tbody>' +
+        return '<div class="table-container"><table><thead><tr><th>Media</th><th>Filename</th><th>Profile(s)</th><th>Status</th><th>Progress</th><th>Speed</th><th>Transferred</th><th>Started</th><th></th></tr></thead><tbody>' +
             streams.map(stream => {
                 const streamId = stream.id || '';
                 const progress = stream.percent_watched || 0;
@@ -1832,12 +1865,14 @@
                 const duration = stream.duration || 0;
                 const timeDisplay = duration > 0 ? formatTime(currentPos) + ' / ' + formatTime(duration) : '-';
                 const isPaused = stream.is_paused || false;
+                const state = getStreamState(stream);
+                const speedText = state.key === 'paused' ? '-' : formatBitsPerSec(stream.throughput_bps || 0);
                 const mediaInfo = getMediaInfo(stream);
                 const filename = getStreamFilename(stream);
                 const typeChip = renderStreamTypeChip(stream);
                 const terminateButton = streamId ? '<button class="stream-table-terminate" type="button" data-terminate-stream-id="'+streamId+'" title="Terminate stream" aria-label="Terminate stream"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>' : '';
                 const profilesText = getProfilesText(stream);
-                return '<tr data-stream-id="'+escapeHtml(streamId)+'"'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div class="stream-table-media-heading" title="'+escapeHtml(stream.path || stream.original_path || '-')+'">'+typeChip+'<span class="stream-table-media-title">'+escapeHtml(mediaInfo.title)+'</span></div>'+(mediaInfo.subtitle ? '<div style="font-size: 0.75rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">'+escapeHtml(mediaInfo.subtitle)+'</div>' : '')+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;"><div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(filename || stream.path || stream.original_path || '-')+'">'+(filename ? escapeHtml(filename) : '<span style="color: var(--text-muted);">-</span>')+'</div></td><td style="font-size: 0.8125rem;">'+(profilesText ? escapeHtml(profilesText) : '<span style="color: var(--text-muted);">-</span>')+'</td><td>'+(isPaused ? '<span class="status-badge" style="background: rgba(156, 163, 175, 0.1); color: #9ca3af;">Paused</span>' : '<span class="status-badge online">Playing</span>')+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div class="stream-progress-bar" style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span class="stream-percent" style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div class="stream-time" style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td><td style="width: 40px; text-align: right;">'+terminateButton+'</td></tr>';
+                return '<tr data-stream-id="'+escapeHtml(streamId)+'"'+(isPaused ? ' style="opacity: 0.6;"' : '')+'><td><div class="stream-table-media-heading" title="'+escapeHtml(stream.path || stream.original_path || '-')+'">'+typeChip+'<span class="stream-table-media-title">'+escapeHtml(mediaInfo.title)+'</span></div>'+(mediaInfo.subtitle ? '<div style="font-size: 0.75rem; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">'+escapeHtml(mediaInfo.subtitle)+'</div>' : '')+(stream.has_dv ? '<span class="status-badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6; font-size: 0.625rem; padding: 0.125rem 0.375rem;">DV</span>' : '')+(stream.has_hdr ? '<span class="status-badge" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 0.625rem; padding: 0.125rem 0.375rem;">HDR</span>' : '')+'</td><td style="font-size: 0.8125rem;"><div style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="'+escapeHtml(filename || stream.path || stream.original_path || '-')+'">'+(filename ? escapeHtml(filename) : '<span style="color: var(--text-muted);">-</span>')+'</div></td><td style="font-size: 0.8125rem;">'+(profilesText ? escapeHtml(profilesText) : '<span style="color: var(--text-muted);">-</span>')+'</td><td>'+streamStateBadgeHtml(state)+'</td><td style="font-size: 0.8125rem;"><div style="display: flex; align-items: center; gap: 0.5rem;"><div class="stream-progress-bar" style="width: 60px; height: 4px; background: var(--bg-tertiary); border-radius: 2px; overflow: hidden;"><div style="height: 100%; background: var(--accent); width: '+progress.toFixed(1)+'%;"></div></div><span class="stream-percent" style="font-weight: 500; min-width: 36px;">'+(progress > 0 ? progress.toFixed(0)+'%' : '-')+'</span></div><div class="stream-time" style="font-size: 0.75rem; color: var(--text-muted);">'+timeDisplay+'</div></td><td class="stream-speed" style="font-size: 0.8125rem; font-weight: 500;">'+speedText+'</td><td>'+formatBytes(stream.bytes_streamed || 0)+'</td><td style="font-size: 0.8125rem; color: var(--text-muted);">'+getTimeSince(stream.created_at)+'</td><td style="width: 40px; text-align: right;">'+terminateButton+'</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -2051,6 +2086,8 @@
                 const profileNames = stream.profile_names || (stream.profile_name ? [stream.profile_name] : []) || [];
                 const hasMultipleViewers = profileNames.length > 1;
                 const isPaused = stream.is_paused || false;
+                const state = getStreamState(stream);
+                const speedText = state.key === 'paused' ? '' : formatBitsPerSec(stream.throughput_bps || 0);
                 const filename = getStreamFilename(stream);
                 const kind = getStreamKind(stream);
                 const typeChip = renderStreamTypeChip(stream);
@@ -2065,6 +2102,7 @@
                             </div>
                             <div class="stream-card-badges">
                                 ${isPaused ? '<span class="stream-card-badge paused">PAUSED</span>' : ''}
+                                ${state.key === 'buffering' ? '<span class="stream-card-badge buffering">BUFFERING</span>' : ''}
                                 ${stream.has_dv ? '<span class="stream-card-badge dv">DV</span>' : ''}
                                 ${stream.has_hdr ? '<span class="stream-card-badge hdr">HDR</span>' : ''}
                             </div>
@@ -2094,6 +2132,12 @@
                                 </span>
                                 <span class="stream-card-meta-item" style="font-weight: 500; color: var(--accent);">
                                     ${progress > 0 ? progress.toFixed(0) + '%' : '-'}
+                                </span>
+                                <span class="stream-card-meta-item stream-card-speed" style="font-weight: 500;${state.key === 'buffering' ? ' color: #f59e0b;' : ''}"${speedText ? '' : ' hidden'}>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 20v-6"/><path d="m8 17 4 3 4-3"/><path d="M12 4v6"/><circle cx="12" cy="12" r="10"/>
+                                    </svg>
+                                    ${escapeHtml(speedText)}
                                 </span>
                             </div>
                             ${hasProgress ? `<div class="stream-card-progress"><div class="stream-card-progress-bar" style="width: ${progress.toFixed(1)}%"></div></div>` : ''}
@@ -2466,9 +2510,6 @@
 
         cachedStreams = streams;
 
-        // Track which streams changed pause state for dynamic UI update
-        const pauseChanged = [];
-
         // Rebuild interpolation state
         streamInterpolationState.clear();
         for (const stream of streams) {
@@ -2477,8 +2518,6 @@
             const lastUpdated = stream.last_updated ? new Date(stream.last_updated).getTime() : serverTime;
             const isPaused = stream.is_paused || false;
             const position = stream.current_position || 0;
-
-            pauseChanged.push({ sid, isPaused });
 
             streamInterpolationState.set(sid, {
                 position: position,
@@ -2497,7 +2536,13 @@
         if (countEl) countEl.textContent = streams.length;
         if (subtextEl) {
             const totalBandwidth = streams.reduce((sum, s) => sum + (s.bytes_streamed || 0), 0);
-            subtextEl.textContent = totalBandwidth > 0 ? formatBytes(totalBandwidth) + ' total' : 'No active streams';
+            const totalThroughput = streams.reduce((sum, s) => sum + (s.is_paused ? 0 : (s.throughput_bps || 0)), 0);
+            if (totalBandwidth > 0) {
+                subtextEl.textContent = formatBytes(totalBandwidth) + ' total'
+                    + (totalThroughput > 0 ? ' · ' + formatBitsPerSec(totalThroughput) : '');
+            } else {
+                subtextEl.textContent = 'No active streams';
+            }
         }
 
         const container = document.getElementById('streamsContainer');
@@ -2511,32 +2556,52 @@
             renderStreams(streams);
         }
 
-        // Apply pause state to DOM (after any re-render so it isn't overwritten)
-        for (const { sid, isPaused } of pauseChanged) {
-            applyPausedState(sid, isPaused);
+        // Apply runtime state (playing/buffering/paused + speed) to DOM each tick,
+        // after any re-render so it isn't overwritten. Cards only fully re-render
+        // when the stream set changes, so these in-place updates keep speed/state live.
+        for (const stream of streams) {
+            applyStreamRuntime(stream);
         }
     }
 
-    function applyPausedState(streamId, isPaused) {
+    function applyStreamRuntime(stream) {
+        const streamId = stream.id;
+        if (!streamId) return;
+        const state = getStreamState(stream);
+        const isPaused = state.key === 'paused';
+        const speedText = isPaused ? '' : formatBitsPerSec(stream.throughput_bps || 0);
+
         // Card view
         const card = document.querySelector(`.stream-card[data-stream-id="${streamId}"]`);
         if (card) {
-            if (isPaused) {
-                card.classList.add('paused');
-                // Add PAUSED badge if not present
-                const badges = card.querySelector('.stream-card-badges');
-                if (badges && !badges.querySelector('.stream-card-badge.paused')) {
+            card.classList.toggle('paused', isPaused);
+            const badges = card.querySelector('.stream-card-badges');
+            if (badges) {
+                const pausedBadge = badges.querySelector('.stream-card-badge.paused');
+                if (isPaused && !pausedBadge) {
                     badges.insertAdjacentHTML('afterbegin', '<span class="stream-card-badge paused">PAUSED</span>');
+                } else if (!isPaused && pausedBadge) {
+                    pausedBadge.remove();
                 }
-                // Dim the live badge
-                const liveBadge = card.querySelector('.stream-card-live-badge');
-                if (liveBadge) liveBadge.style.background = 'rgba(156, 163, 175, 0.9)';
-            } else {
-                card.classList.remove('paused');
-                const pausedBadge = card.querySelector('.stream-card-badge.paused');
-                if (pausedBadge) pausedBadge.remove();
-                const liveBadge = card.querySelector('.stream-card-live-badge');
-                if (liveBadge) liveBadge.style.background = '';
+                const bufferingBadge = badges.querySelector('.stream-card-badge.buffering');
+                if (state.key === 'buffering' && !bufferingBadge) {
+                    badges.insertAdjacentHTML('afterbegin', '<span class="stream-card-badge buffering">BUFFERING</span>');
+                } else if (state.key !== 'buffering' && bufferingBadge) {
+                    bufferingBadge.remove();
+                }
+            }
+            const liveBadge = card.querySelector('.stream-card-live-badge');
+            if (liveBadge) liveBadge.style.background = isPaused ? 'rgba(156, 163, 175, 0.9)' : '';
+            const speedEl = card.querySelector('.stream-card-speed');
+            if (speedEl) {
+                if (speedText) {
+                    const svg = speedEl.querySelector('svg');
+                    speedEl.innerHTML = (svg ? svg.outerHTML : '') + ' ' + escapeHtml(speedText);
+                    speedEl.hidden = false;
+                    speedEl.style.color = state.key === 'buffering' ? '#f59e0b' : '';
+                } else {
+                    speedEl.hidden = true;
+                }
             }
         }
 
@@ -2544,20 +2609,10 @@
         const row = document.querySelector(`tr[data-stream-id="${streamId}"]`);
         if (row) {
             row.style.opacity = isPaused ? '0.6' : '';
-            const statusCell = row.querySelector('.status-badge');
-            if (statusCell) {
-                if (isPaused) {
-                    statusCell.className = 'status-badge';
-                    statusCell.style.background = 'rgba(156, 163, 175, 0.1)';
-                    statusCell.style.color = '#9ca3af';
-                    statusCell.textContent = 'Paused';
-                } else {
-                    statusCell.className = 'status-badge online';
-                    statusCell.style.background = '';
-                    statusCell.style.color = '';
-                    statusCell.textContent = 'Playing';
-                }
-            }
+            const statusCell = row.querySelector('.stream-state-badge');
+            if (statusCell) statusCell.outerHTML = streamStateBadgeHtml(state);
+            const speedCell = row.querySelector('.stream-speed');
+            if (speedCell) speedCell.textContent = isPaused ? '-' : formatBitsPerSec(stream.throughput_bps || 0);
         }
     }
 

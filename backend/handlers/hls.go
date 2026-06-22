@@ -381,6 +381,10 @@ type HLSSession struct {
 	BytesStreamed        int64
 	SegmentsCreated      int
 	FFmpegCPUStart       float64
+	// Rolling throughput sample state (bits/sec), updated atomically.
+	throughputLastBytes int64
+	throughputLastNanos int64
+	throughputBps       int64
 	FFmpegPID            int
 	LastSegmentRequest   time.Time
 	SegmentRequestCount  int
@@ -4889,6 +4893,25 @@ func (m *HLSManager) CleanupSession(sessionID string) {
 }
 
 // cleanupLoop periodically removes old sessions
+// SampleThroughput refreshes the throughput EWMA for every active HLS session.
+// Called by the background throughput sampler so dashboard speeds stay warm even
+// when no dashboard is connected.
+func (m *HLSManager) SampleThroughput() {
+	m.mu.RLock()
+	sessions := make([]*HLSSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.RUnlock()
+
+	for _, session := range sessions {
+		session.mu.RLock()
+		bytes := session.BytesStreamed
+		session.mu.RUnlock()
+		sampleThroughput(bytes, &session.throughputLastBytes, &session.throughputLastNanos, &session.throughputBps)
+	}
+}
+
 func (m *HLSManager) cleanupLoop() {
 	// Run cleanup every 30 seconds for more aggressive cleanup
 	ticker := time.NewTicker(30 * time.Second)

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"math"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -39,9 +40,123 @@ type TrackedStream struct {
 	Method          string
 	UserAgent       string
 	MediaMetadata   StreamMediaMetadata
+	ThroughputBps   int64 // instantaneous transfer rate in bits/sec (snapshot on read)
 	cancel          context.CancelFunc
 	bytesCounter    *int64
 	activityCounter *int64 // unix nanos of last byte transfer, updated atomically
+	// Rolling throughput sample state, updated atomically (independent of mu).
+	lastSampleBytes int64
+	lastSampleNanos int64
+	throughputBps   int64
+}
+
+// throughputSampleInterval is the minimum window between throughput samples.
+// A guard plus CAS makes sampling safe regardless of how many callers
+// (REST + multiple SSE connections) read the tracker concurrently.
+const throughputSampleInterval = 2 * time.Second
+
+// throughputSmoothingTau is the time constant for the exponentially-weighted
+// moving average of transfer rate. Byte delivery is bursty (a window may catch a
+// full burst or an idle gap), so a raw per-window rate bounces between ~0 and the
+// peak. Smoothing over ~this many seconds of observed data yields a steady,
+// representative speed instead. Larger = smoother but slower to react.
+const throughputSmoothingTau = 20 * time.Second
+
+// sampleThroughput updates an exponentially-weighted moving average of the
+// bits/sec transfer rate from a cumulative byte counter, and returns the smoothed
+// rate. It mutates the provided sample-state pointers atomically, so callers may
+// hold an RLock (or no lock) — all access here is via atomics, not the mutex.
+//
+// The EWMA averages over the observed transfer period rather than reporting a
+// single window's delta, so steady playback reads a stable number even though the
+// underlying delivery arrives in bursts.
+func sampleThroughput(bytesNow int64, lastBytes, lastNanos, outBps *int64) int64 {
+	nowNanos := time.Now().UnixNano()
+	prevNanos := atomic.LoadInt64(lastNanos)
+	if prevNanos == 0 {
+		// Seed the baseline on first observation; no rate yet.
+		if atomic.CompareAndSwapInt64(lastNanos, 0, nowNanos) {
+			atomic.StoreInt64(lastBytes, bytesNow)
+		}
+		return atomic.LoadInt64(outBps)
+	}
+	elapsed := nowNanos - prevNanos
+	if elapsed < int64(throughputSampleInterval) {
+		return atomic.LoadInt64(outBps)
+	}
+	// Claim this window so concurrent callers don't double-sample. The winner is
+	// the sole writer of lastBytes/outBps for this window.
+	if !atomic.CompareAndSwapInt64(lastNanos, prevNanos, nowNanos) {
+		return atomic.LoadInt64(outBps)
+	}
+	prevBytes := atomic.SwapInt64(lastBytes, bytesNow)
+	deltaBytes := bytesNow - prevBytes
+	if deltaBytes < 0 {
+		deltaBytes = 0
+	}
+	// Instantaneous rate over this window (float to avoid overflow at Gbps rates).
+	windowBps := float64(deltaBytes) * 8 * float64(time.Second) / float64(elapsed)
+
+	prev := atomic.LoadInt64(outBps)
+	if prev <= 0 {
+		// First real measurement: seed directly so the display converges quickly
+		// instead of ramping up from zero.
+		smoothed := int64(windowBps)
+		atomic.StoreInt64(outBps, smoothed)
+		return smoothed
+	}
+	// Time-based EWMA so the smoothing is consistent regardless of how long the
+	// gap between samples was: alpha = 1 - e^(-elapsed/tau).
+	alpha := 1 - math.Exp(-float64(elapsed)/float64(throughputSmoothingTau))
+	smoothed := int64(float64(prev) + alpha*(windowBps-float64(prev)))
+	if smoothed < 0 {
+		smoothed = 0
+	}
+	atomic.StoreInt64(outBps, smoothed)
+	return smoothed
+}
+
+// throughputSamplerInterval is how often the background sampler refreshes each
+// active stream's throughput EWMA so the dashboard shows live speeds immediately
+// on open, even when no dashboard was connected to drive sampling.
+const throughputSamplerInterval = 5 * time.Second
+
+// SampleThroughput refreshes the throughput EWMA for every active direct stream.
+// Work is proportional to the number of active streams (a few atomics + one
+// exp() each), so it is effectively free when there are none.
+func (t *StreamTracker) SampleThroughput() {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, s := range t.streams {
+		if s.bytesCounter == nil {
+			continue
+		}
+		sampleThroughput(atomic.LoadInt64(s.bytesCounter), &s.lastSampleBytes, &s.lastSampleNanos, &s.throughputBps)
+	}
+}
+
+// StartThroughputSampler launches a background goroutine that keeps each active
+// stream's throughput EWMA warm regardless of whether a dashboard is connected.
+// It samples both direct streams (this tracker) and HLS sessions every
+// throughputSamplerInterval. Because the per-tick cost scales with the number of
+// active streams and is negligible (microseconds even for dozens of streams), the
+// ticker simply no-ops when nothing is streaming.
+func StartThroughputSampler(ctx context.Context, hls *HLSManager) {
+	go func() {
+		ticker := time.NewTicker(throughputSamplerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				globalStreamTracker.SampleThroughput()
+				if hls != nil {
+					hls.SampleThroughput()
+				}
+			}
+		}
+	}()
 }
 
 // StreamUsageSummary represents the current stream usage for an account or profile.
@@ -385,6 +500,7 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 				lastActivity = time.Unix(0, nanos)
 			}
 		}
+		bytesNow := atomic.LoadInt64(s.bytesCounter)
 		// Create a copy with current bytes count and activity time
 		streamCopy := &TrackedStream{
 			ID:            s.ID,
@@ -396,13 +512,14 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 			AccountID:     s.AccountID,
 			StartTime:     s.StartTime,
 			LastActivity:  lastActivity,
-			BytesStreamed: atomic.LoadInt64(s.bytesCounter),
+			BytesStreamed: bytesNow,
 			ContentLength: s.ContentLength,
 			RangeStart:    s.RangeStart,
 			RangeEnd:      s.RangeEnd,
 			Method:        s.Method,
 			UserAgent:     s.UserAgent,
 			MediaMetadata: s.MediaMetadata,
+			ThroughputBps: sampleThroughput(bytesNow, &s.lastSampleBytes, &s.lastSampleNanos, &s.throughputBps),
 		}
 		streams = append(streams, streamCopy)
 	}

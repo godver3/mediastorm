@@ -4383,6 +4383,7 @@ func (s *Service) UpdatePlaybackProgress(userID string, update models.PlaybackPr
 		PercentWatched: percentWatched,
 		UpdatedAt:      updatedAt,
 		IsPaused:       update.IsPaused,
+		IsBuffering:    update.IsBuffering,
 		ExternalIDs:    update.ExternalIDs,
 		SeasonNumber:   update.SeasonNumber,
 		EpisodeNumber:  update.EpisodeNumber,

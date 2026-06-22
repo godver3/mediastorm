@@ -2121,6 +2121,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 				"current_position": position,
 				"percent_watched":  percent,
 				"bytes_streamed":   session.BytesStreamed,
+				"throughput_bps":   sampleThroughput(session.BytesStreamed, &session.throughputLastBytes, &session.throughputLastNanos, &session.throughputBps),
 				"has_dv":           session.HasDV && !session.DVDisabled,
 				"has_hdr":          session.HasHDR,
 				"dv_profile":       session.DVProfile,
@@ -2143,6 +2144,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			if heartbeatFresh {
 				if matchedProgress.IsPaused {
 					hlsStreamData["is_paused"] = true
+				} else if matchedProgress.IsBuffering {
+					hlsStreamData["is_buffering"] = true
 				}
 			} else {
 				hlsIdleDuration := now.Sub(hlsActivity)
@@ -2218,6 +2221,7 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 			"current_position": position,
 			"percent_watched":  percent,
 			"bytes_streamed":   stream.BytesStreamed,
+			"throughput_bps":   stream.ThroughputBps,
 			"content_length":   stream.ContentLength,
 			"user_agent":       stream.UserAgent,
 			// Media identification
@@ -2238,6 +2242,8 @@ func (h *AdminUIHandler) buildStreamsPayload(isAdmin bool, accountID string) ([]
 		if heartbeatFresh {
 			if matchedProgress.IsPaused {
 				streamData["is_paused"] = true
+			} else if matchedProgress.IsBuffering {
+				streamData["is_buffering"] = true
 			}
 		} else {
 			idleDuration := now.Sub(stream.LastActivity)
