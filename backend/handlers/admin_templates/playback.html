@@ -102,6 +102,22 @@
         </div>
     </div>
 </div>
+
+<div id="shareBackdrop" class="share-backdrop" onclick="if(event.target===this)closeShareDialog()">
+    <div class="share-dialog" role="dialog" aria-modal="true" aria-label="Share this stream">
+        <div class="section-label">Web Player</div>
+        <h2 style="margin: 4px 0 6px;">Share this stream</h2>
+        <p class="share-dialog-desc">Anyone with this link can watch this title once — no account needed. It opens straight into the player, works one time, and expires in 24 hours.</p>
+        <div class="share-row">
+            <input id="shareLinkInput" type="text" readonly onclick="this.select()">
+            <button class="btn btn-primary" type="button" onclick="copyShareLink()">Copy</button>
+        </div>
+        <div id="shareStatus" class="share-status"></div>
+        <div class="details-actions" style="justify-content: flex-end; margin-top: 14px;">
+            <button class="btn btn-secondary" type="button" onclick="closeShareDialog()">Done</button>
+        </div>
+    </div>
+</div>
 {{end}}
 
 <style>
@@ -1022,6 +1038,38 @@
         background: rgba(0, 0, 0, 0.62);
     }
 
+    .share-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 10001;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: rgba(0, 0, 0, 0.62);
+    }
+    .share-backdrop.is-open { display: flex; }
+    .share-dialog {
+        width: min(100%, 460px);
+        padding: 1.25rem;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+        border-radius: 14px;
+    }
+    .share-dialog-desc { font-size: 0.85rem; line-height: 1.5; opacity: 0.7; margin: 0 0 1rem; }
+    .share-row { display: flex; gap: 0.5rem; }
+    .share-row input {
+        flex: 1;
+        min-width: 0;
+        padding: 0.55rem 0.7rem;
+        border-radius: 8px;
+        border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+        background: var(--bg-primary, #0c0f16);
+        color: var(--text-primary, #e7eaf0);
+        font-size: 0.85rem;
+    }
+    .share-status { font-size: 0.78rem; opacity: 0.7; margin-top: 0.6rem; min-height: 1rem; }
+
     .web-player-resume-modal.is-open {
         display: flex;
     }
@@ -1439,6 +1487,8 @@
     let webPlayerLastProgressSentAt = 0;
     let webPlayerLastProgressPosition = 0;
     let webPlayerLastProgressPaused = false;
+    let webPlayerLastProgressBuffering = false;
+    let webPlayerVideoBuffering = false;
     let webPlayerProgressCompleted = false;
     let continueWatchingExpanded = false;
     // Per-shelf expand state (keyed by shelf source); collapsed shelves show 20 items.
@@ -3077,7 +3127,7 @@
         return ids;
     }
 
-    function buildWebPlayerProgressPayload(position, duration, isPaused) {
+    function buildWebPlayerProgressPayload(position, duration, isPaused, isBuffering) {
         if (!selectedItem || !activeProfileId) return null;
         const mediaType = selectedItem.mediaType === 'series' ? 'episode' : 'movie';
         const itemId = buildWebPlayerItemId();
@@ -3089,6 +3139,7 @@
             position,
             duration,
             isPaused: Boolean(isPaused),
+            isBuffering: Boolean(isBuffering),
             timestamp: new Date().toISOString(),
             externalIds: buildWebPlayerExternalIds(),
             year: selectedItem.year || undefined,
@@ -3353,6 +3404,10 @@
                         <span class="web-player-control-icon web-player-fullscreen-exit" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg></span>
                         <span class="web-player-button-label">Fullscreen</span>
                     </button>
+                    <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerShareButton" onclick="openShareDialog()" aria-label="Share stream" title="Share a one-time link">
+                        <span class="web-player-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
+                        <span class="web-player-button-label">Share</span>
+                    </button>
                     <div class="web-player-volume-control" id="webPlayerVolumeControl" aria-label="Volume">
                         <button class="btn btn-sm btn-secondary web-player-control-btn" id="webPlayerVolumeButton" onclick="toggleWebPlayerMute(event)" aria-label="Mute" title="Mute">
                             <span class="web-player-control-icon" aria-hidden="true"><svg id="webPlayerVolumeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></span>
@@ -3482,6 +3537,21 @@
                 });
             });
         });
+        // Buffering/stall detection for the admin dashboard "Buffering" state.
+        const markWebPlayerBuffering = () => {
+            if (video.paused || webPlayerVideoBuffering) return;
+            webPlayerVideoBuffering = true;
+            sendWebPlayerProgress({ force: true });
+        };
+        const clearWebPlayerBuffering = () => {
+            if (!webPlayerVideoBuffering) return;
+            webPlayerVideoBuffering = false;
+            sendWebPlayerProgress({ force: true });
+        };
+        video.addEventListener('waiting', markWebPlayerBuffering);
+        video.addEventListener('stalled', markWebPlayerBuffering);
+        video.addEventListener('playing', clearWebPlayerBuffering);
+        video.addEventListener('canplay', clearWebPlayerBuffering);
         video.addEventListener('volumechange', () => {
             webPlayerVolume = Number(video.volume || 0);
             webPlayerMuted = Boolean(video.muted);
@@ -3637,6 +3707,7 @@
 
         const isEnded = Boolean(options.ended);
         const isPaused = options.isPaused !== undefined ? Boolean(options.isPaused) : Boolean(video.paused);
+        const isBuffering = !isPaused && !isEnded && Boolean(webPlayerVideoBuffering);
         let position = isEnded ? duration : currentWebPlayerAbsoluteTime();
         if (!Number.isFinite(position) || position < 0) return Promise.resolve(null);
         position = Math.max(0, Math.min(position, duration));
@@ -3646,16 +3717,18 @@
         const now = Date.now();
         const positionDelta = Math.abs(position - webPlayerLastProgressPosition);
         const pauseStateChanged = isPaused !== webPlayerLastProgressPaused;
+        const bufferStateChanged = isBuffering !== webPlayerLastProgressBuffering;
         if (
             !options.force &&
             !pauseStateChanged &&
+            !bufferStateChanged &&
             now - webPlayerLastProgressSentAt < WEB_PLAYER_PROGRESS_INTERVAL_MS &&
             positionDelta < WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS
         ) {
             return Promise.resolve(null);
         }
 
-        const payload = buildWebPlayerProgressPayload(position, duration, isPaused);
+        const payload = buildWebPlayerProgressPayload(position, duration, isPaused, isBuffering);
         if (!payload) return Promise.resolve(null);
 
         const endpoint = `/api/users/${encodeURIComponent(activeProfileId)}/history/progress`;
@@ -3677,6 +3750,7 @@
                 webPlayerLastProgressSentAt = Date.now();
                 webPlayerLastProgressPosition = position;
                 webPlayerLastProgressPaused = isPaused;
+                webPlayerLastProgressBuffering = isBuffering;
                 const percentWatched = Number(result?.percentWatched ?? (duration > 0 ? (position / duration) * 100 : 0));
                 if (percentWatched >= 90 || isEnded) {
                     webPlayerProgressCompleted = true;
@@ -3806,6 +3880,88 @@
         const panel = document.getElementById('playbackPanel');
         if (panel) panel.classList.remove('web-player-theater-panel');
         document.body.classList.remove('web-player-theater-active');
+    }
+
+    // ---- One-time share link -------------------------------------------------
+    function buildShareParams() {
+        const item = selectedItem || {};
+        const isSeries = item.mediaType === 'series';
+        const params = {
+            mediaType: isSeries ? 'episode' : 'movie',
+            title: item.title || '',
+        };
+        if (resolvedPlayback?.webdavPath) params.sourcePath = resolvedPlayback.webdavPath;
+        if (activeProfileId) params.profileId = activeProfileId;
+        if (activeProfileName) params.profileName = activeProfileName;
+        if (item.year) params.year = String(item.year);
+        if (item.imdbId) params.imdbId = item.imdbId;
+        if (item.tmdbId) params.tmdbId = String(item.tmdbId);
+        if (item.tvdbId) params.tvdbId = String(item.tvdbId);
+        if (item.posterUrl) params.headerImage = item.posterUrl;
+        if (isSeries) {
+            params.seriesTitle = item.title || '';
+            if (selectedEpisode?.seasonNumber) params.seasonNumber = String(selectedEpisode.seasonNumber);
+            if (selectedEpisode?.episodeNumber) params.episodeNumber = String(selectedEpisode.episodeNumber);
+            if (selectedEpisode?.title) params.episodeName = selectedEpisode.title;
+        }
+        if (Number(webPlayerSelectedAudioTrack) >= 0) params.preselectedAudioTrack = String(webPlayerSelectedAudioTrack);
+        if (Number(webPlayerSelectedSubtitleTrack) >= 0) params.preselectedSubtitleTrack = String(webPlayerSelectedSubtitleTrack);
+
+        const video = document.getElementById('webPlayer');
+        const offset = Number(hlsPlaybackOffset || 0) + (video && Number.isFinite(video.currentTime) ? video.currentTime : 0);
+        if (Number.isFinite(offset) && offset > 1) params.startOffset = offset.toFixed(2);
+        return params;
+    }
+
+    async function openShareDialog() {
+        const backdrop = document.getElementById('shareBackdrop');
+        const input = document.getElementById('shareLinkInput');
+        const status = document.getElementById('shareStatus');
+        if (!backdrop || !input) return;
+        const params = buildShareParams();
+        if (!params.sourcePath) {
+            if (status) status.textContent = 'No active stream to share.';
+            backdrop.classList.add('is-open');
+            return;
+        }
+        input.value = '';
+        if (status) status.textContent = 'Creating link…';
+        backdrop.classList.add('is-open');
+        try {
+            const result = await apiCall('/api/share/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+            });
+            const absolute = new URL(result.url, window.location.origin).toString();
+            input.value = absolute;
+            input.select();
+            if (status) status.textContent = 'Link ready — single use, expires in 24 hours.';
+        } catch (error) {
+            if (status) status.textContent = `Could not create link: ${error.message || String(error)}`;
+        }
+    }
+
+    function closeShareDialog() {
+        document.getElementById('shareBackdrop')?.classList.remove('is-open');
+    }
+
+    async function copyShareLink() {
+        const input = document.getElementById('shareLinkInput');
+        const status = document.getElementById('shareStatus');
+        if (!input || !input.value) return;
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(input.value);
+            } else {
+                input.select();
+                document.execCommand('copy');
+            }
+            if (status) status.textContent = 'Copied to clipboard.';
+        } catch {
+            input.select();
+            if (status) status.textContent = 'Press ⌘/Ctrl+C to copy.';
+        }
     }
 
     function applyWebPlayerVolume(video) {

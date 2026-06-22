@@ -9,10 +9,26 @@ import (
 	"github.com/gorilla/mux"
 
 	"novastream/internal/auth"
+	"novastream/models"
 	"novastream/services/accounts"
 	"novastream/services/sessions"
 	"novastream/services/users"
 )
+
+// streamScopedPathPrefixes are the only API paths a stream-scoped session
+// (one-time share link) may access. Everything else is rejected so a shared
+// link cannot be used to browse the sharer's library or hit other account APIs.
+var streamScopedPathPrefixes = []string{"/api/video/", "/api/live/"}
+
+// isStreamScopedPathAllowed reports whether a stream-scoped session may access path.
+func isStreamScopedPathAllowed(path string) bool {
+	for _, prefix := range streamScopedPathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // Re-export from auth package for backward compatibility
 var (
@@ -62,6 +78,15 @@ func AccountAuthMiddleware(sessionsSvc *sessions.Service, accountsSvc *accounts.
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]string{"error": "account has expired"})
+				return
+			}
+
+			// Stream-scoped sessions (one-time share links) may only reach
+			// streaming/playback endpoints — never the rest of the account API.
+			if session.Scope == models.SessionScopeStream && !isStreamScopedPathAllowed(r.URL.Path) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]string{"error": "session not permitted for this endpoint"})
 				return
 			}
 

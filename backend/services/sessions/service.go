@@ -112,6 +112,13 @@ func (s *Service) CreatePersistent(accountID string, isMaster bool, userAgent, i
 
 // CreateWithDuration generates a new session with a custom duration.
 func (s *Service) CreateWithDuration(accountID string, isMaster bool, userAgent, ipAddress string, duration time.Duration) (models.Session, error) {
+	return s.CreateScoped(accountID, isMaster, userAgent, ipAddress, duration, "")
+}
+
+// CreateScoped generates a new session with a custom duration and access scope.
+// An empty scope grants full account access; models.SessionScopeStream limits the
+// session to streaming/playback endpoints (used for one-time share links).
+func (s *Service) CreateScoped(accountID string, isMaster bool, userAgent, ipAddress string, duration time.Duration, scope string) (models.Session, error) {
 	token, err := generateToken()
 	if err != nil {
 		return models.Session{}, err
@@ -126,6 +133,7 @@ func (s *Service) CreateWithDuration(accountID string, isMaster bool, userAgent,
 		CreatedAt: now,
 		UserAgent: userAgent,
 		IPAddress: ipAddress,
+		Scope:     scope,
 	}
 
 	s.mu.Lock()

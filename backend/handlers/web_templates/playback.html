@@ -701,6 +701,48 @@
         flex-direction: column;
       }
     }
+
+    /* Share mode: a player-only view with no navigation back to the app. */
+    body.share-mode .back-btn,
+    body.share-mode .nav-back,
+    body.share-mode .share-btn { display: none !important; }
+
+    /* Share link dialog */
+    .share-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 6, 10, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1200;
+      padding: 20px;
+    }
+    .share-backdrop.is-open { display: flex; }
+    .share-dialog {
+      width: 100%;
+      max-width: 440px;
+      background: #141821;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+    }
+    .share-dialog h2 { margin: 0 0 6px; font-size: 18px; }
+    .share-dialog p { margin: 0 0 16px; font-size: 13px; line-height: 1.5; opacity: 0.7; }
+    .share-row { display: flex; gap: 8px; }
+    .share-row input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: #0c0f16;
+      color: #e7eaf0;
+      font-size: 13px;
+    }
+    .share-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .share-status { font-size: 12px; opacity: 0.7; margin-top: 12px; min-height: 16px; }
   </style>
 </head>
 <body>
@@ -738,6 +780,21 @@
     </main>
   </div>
 
+  <div id="shareBackdrop" class="share-backdrop" onclick="if(event.target===this)closeShareDialog()">
+    <div class="share-dialog" role="dialog" aria-modal="true" aria-label="Share this stream">
+      <h2>Share this stream</h2>
+      <p>Anyone with this link can watch this title once — no account needed. The link opens straight into the player, works one time, and expires in 24 hours.</p>
+      <div class="share-row">
+        <input id="shareLinkInput" type="text" readonly onclick="this.select()">
+        <button class="btn btn-primary" type="button" onclick="copyShareLink()">Copy</button>
+      </div>
+      <div id="shareStatus" class="share-status"></div>
+      <div class="share-actions">
+        <button class="btn" type="button" onclick="closeShareDialog()">Done</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
   <script>
     const SERVER_BASE_PATH = {{json .ServerBasePath}};
@@ -745,6 +802,10 @@
     const PROFILES = Array.isArray(RAW_PROFILES) ? RAW_PROFILES : [];
     const ROUTE_PARAMS = new URLSearchParams(window.location.search || '');
     const AUTH_TOKEN = routeParam('token');
+    // Share mode: the page was opened from a one-time share link. Hide navigation
+    // affordances (no back buttons / no share button) and do not write playback
+    // progress back to the sharer's history.
+    const SHARE_MODE = routeParam('shareMode') === '1' || routeParam('shareMode') === 'true';
     const WEB_PLAYER_PROGRESS_INTERVAL_MS = 10000;
     const WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS = 5;
 
@@ -785,6 +846,8 @@
     let lastProgressPosition = 0;
     let lastKnownPositivePosition = 0;
     let lastProgressPaused = false;
+    let lastProgressBuffering = false;
+    let webPlayerBuffering = false;
     let progressCompleted = false;
     let liveWatchStartedAt = null;
 
@@ -796,6 +859,7 @@
 
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
+        closeShareDialog();
         closeTrackSheet();
         setFullscreen(false);
         setTheater(false);
@@ -824,6 +888,7 @@
     }
 
     function init() {
+      if (SHARE_MODE) document.body.classList.add('share-mode');
       setupActiveProfile();
       readRouteMetadata();
       renderHeader();
@@ -901,6 +966,86 @@
       window.location.assign(`${basePath || ''}/watch`);
     }
 
+    // ---- One-time share link ----------------------------------------------
+    function buildShareParams() {
+      const params = {
+        mediaType: playbackMeta.mediaType || 'movie',
+        title: playbackMeta.title || '',
+      };
+      if (sourcePath) params.sourcePath = sourcePath;
+      if (activeProfileId) params.profileId = activeProfileId;
+      if (activeProfileName) params.profileName = activeProfileName;
+      if (playbackMeta.seriesTitle) params.seriesTitle = playbackMeta.seriesTitle;
+      if (playbackMeta.displayName) params.displayName = playbackMeta.displayName;
+      if (playbackMeta.year) params.year = String(playbackMeta.year);
+      if (playbackMeta.seasonNumber) params.seasonNumber = String(playbackMeta.seasonNumber);
+      if (playbackMeta.episodeNumber) params.episodeNumber = String(playbackMeta.episodeNumber);
+      if (playbackMeta.episodeName) params.episodeName = playbackMeta.episodeName;
+      if (playbackMeta.imdbId) params.imdbId = playbackMeta.imdbId;
+      if (playbackMeta.tvdbId) params.tvdbId = String(playbackMeta.tvdbId);
+      if (playbackMeta.tmdbId) params.tmdbId = String(playbackMeta.tmdbId);
+      if (playbackMeta.posterUrl) params.headerImage = playbackMeta.posterUrl;
+      if (playbackMeta.dv) params.dv = '1';
+      if (playbackMeta.hdr10) params.hdr10 = '1';
+      if (playbackMeta.dvProfile) params.dvProfile = playbackMeta.dvProfile;
+      if (playbackMeta.forceAAC) params.forceAAC = '1';
+
+      // Capture the recipient's starting tracks from the current selection.
+      if (Number(webPlayerSelectedAudioTrack) >= 0) params.preselectedAudioTrack = String(webPlayerSelectedAudioTrack);
+      if (Number(webPlayerSelectedSubtitleTrack) >= 0) params.preselectedSubtitleTrack = String(webPlayerSelectedSubtitleTrack);
+
+      // Start the recipient where the sharer currently is.
+      const video = document.getElementById('webPlayer');
+      const offset = Number(hlsPlaybackOffset || 0) + (video && Number.isFinite(video.currentTime) ? video.currentTime : 0);
+      if (Number.isFinite(offset) && offset > 1) params.startOffset = offset.toFixed(2);
+      return params;
+    }
+
+    async function openShareDialog() {
+      const backdrop = document.getElementById('shareBackdrop');
+      const input = document.getElementById('shareLinkInput');
+      const status = document.getElementById('shareStatus');
+      if (!backdrop || !input) return;
+      input.value = '';
+      if (status) status.textContent = 'Creating link…';
+      backdrop.classList.add('is-open');
+
+      try {
+        const result = await apiCall('/share/create', {
+          method: 'POST',
+          body: JSON.stringify(buildShareParams()),
+        });
+        const absolute = new URL(result.url, window.location.origin).toString();
+        input.value = absolute;
+        input.select();
+        if (status) status.textContent = 'Link ready — single use, expires in 24 hours.';
+      } catch (error) {
+        if (status) status.textContent = `Could not create link: ${error.message || String(error)}`;
+      }
+    }
+
+    function closeShareDialog() {
+      document.getElementById('shareBackdrop')?.classList.remove('is-open');
+    }
+
+    async function copyShareLink() {
+      const input = document.getElementById('shareLinkInput');
+      const status = document.getElementById('shareStatus');
+      if (!input || !input.value) return;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(input.value);
+        } else {
+          input.select();
+          document.execCommand('copy');
+        }
+        if (status) status.textContent = 'Copied to clipboard.';
+      } catch {
+        input.select();
+        if (status) status.textContent = 'Press ⌘/Ctrl+C to copy.';
+      }
+    }
+
     function setupActiveProfile() {
       const requestedProfile = routeParam('profileId') || routeParam('userId');
       const selected = PROFILES.find((profile) => profile.id === requestedProfile) || PROFILES[0];
@@ -963,7 +1108,9 @@
       document.getElementById('details').textContent = [episode, playbackMeta.episodeName, playbackMeta.displayName || sourcePath]
         .filter(Boolean)
         .join(' - ');
-      document.getElementById('topSubtitle').textContent = activeProfileName ? `Playing as ${activeProfileName}` : 'Web player';
+      document.getElementById('topSubtitle').textContent = SHARE_MODE
+        ? 'Shared stream'
+        : activeProfileName ? `Playing as ${activeProfileName}` : 'Web player';
     }
 
     async function startManualPath() {
@@ -1098,11 +1245,11 @@
             </div>
           </div>`}
         </div>
-        <button class="btn icon-btn player-back mobile-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
+        <button class="btn icon-btn player-back nav-back mobile-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
         </button>
         <div class="controls">
-          <button class="btn icon-btn desktop-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
+          <button class="btn icon-btn nav-back desktop-only" onclick="goBackToWatch()" aria-label="Back to details" title="Back to details">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
           </button>
           ${isLive ? '' : `<button class="btn icon-btn" onclick="skipWebPlayer(-30)" aria-label="Skip back 30 seconds" title="Skip back 30 seconds">
@@ -1121,6 +1268,9 @@
           <input id="volumeSlider" class="volume-slider desktop-only" type="range" min="0" max="1" step="0.05" value="1" oninput="setWebPlayerVolume(this.value)" aria-label="Volume" title="Volume">
           ${isLive ? '' : `<button class="btn icon-btn tracks-btn" onclick="openTrackSheet()" aria-label="Audio & subtitles" title="Audio & subtitles">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4"/><path d="M14 15h3"/><path d="M7 11h2"/><path d="M12 11h5"/></svg></span>
+          </button>`}
+          ${(isLive || SHARE_MODE) ? '' : `<button class="btn icon-btn share-btn" onclick="openShareDialog()" aria-label="Share stream" title="Share stream">
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></span>
           </button>`}
           <button class="btn icon-btn desktop-only" onclick="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen">
             <span class="icon fullscreen-enter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
@@ -1380,6 +1530,23 @@
         renderSubtitles();
         sendWebPlayerProgress({ force: true, isPaused: true, ended: true });
       });
+      // Buffering/stall detection: surface a live "Buffering" state to the
+      // admin dashboard. 'waiting'/'stalled' fire when the player runs dry;
+      // 'playing'/'canplay' fire once data resumes.
+      const markBuffering = () => {
+        if (video.paused || webPlayerBuffering) return;
+        webPlayerBuffering = true;
+        sendWebPlayerProgress({ force: true });
+      };
+      const clearBuffering = () => {
+        if (!webPlayerBuffering) return;
+        webPlayerBuffering = false;
+        sendWebPlayerProgress({ force: true });
+      };
+      video.addEventListener('waiting', markBuffering);
+      video.addEventListener('stalled', markBuffering);
+      video.addEventListener('playing', clearBuffering);
+      video.addEventListener('canplay', clearBuffering);
       video.addEventListener('volumechange', () => {
         webPlayerVolume = Number(video.volume || 0);
         webPlayerMuted = Boolean(video.muted);
@@ -1897,12 +2064,15 @@
     }
 
     function sendWebPlayerProgress(options = {}) {
+      // Share-link viewers must not write into the sharer's watch history.
+      if (SHARE_MODE) return Promise.resolve(null);
       const video = document.getElementById('webPlayer');
       if (!video || progressCompleted || !activeProfileId) return Promise.resolve(null);
       const duration = currentDuration();
       if (!Number.isFinite(duration) || duration <= 0) return Promise.resolve(null);
       const isEnded = Boolean(options.ended);
       const isPaused = options.isPaused !== undefined ? Boolean(options.isPaused) : Boolean(video.paused);
+      const isBuffering = !isPaused && !isEnded && Boolean(webPlayerBuffering);
       let position = isEnded ? duration : progressPositionForSend(options);
       if (!Number.isFinite(position) || position < 0) return Promise.resolve(null);
       position = Math.max(0, Math.min(position, duration));
@@ -1912,17 +2082,19 @@
       const now = Date.now();
       const positionDelta = Math.abs(position - lastProgressPosition);
       const pauseStateChanged = isPaused !== lastProgressPaused;
-      if (!options.force && !pauseStateChanged && now - lastProgressSentAt < WEB_PLAYER_PROGRESS_INTERVAL_MS && positionDelta < WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS) {
+      const bufferStateChanged = isBuffering !== lastProgressBuffering;
+      if (!options.force && !pauseStateChanged && !bufferStateChanged && now - lastProgressSentAt < WEB_PLAYER_PROGRESS_INTERVAL_MS && positionDelta < WEB_PLAYER_PROGRESS_MIN_DELTA_SECONDS) {
         return Promise.resolve(null);
       }
 
-      const payload = buildProgressPayload(position, duration, isPaused);
+      const payload = buildProgressPayload(position, duration, isPaused, isBuffering);
       const endpoint = `/users/${encodeURIComponent(activeProfileId)}/history/progress`;
       const fetchOptions = { method: 'POST', body: JSON.stringify(payload) };
       if (options.keepalive) {
         lastProgressSentAt = Date.now();
         lastProgressPosition = position;
         lastProgressPaused = isPaused;
+        lastProgressBuffering = isBuffering;
         return fetch(apiUrl(endpoint), {
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
@@ -1935,6 +2107,7 @@
         lastProgressSentAt = Date.now();
         lastProgressPosition = position;
         lastProgressPaused = isPaused;
+        lastProgressBuffering = isBuffering;
         const percentWatched = Number(result?.percentWatched ?? (duration > 0 ? (position / duration) * 100 : 0));
         if (!playbackMeta.isLive && (percentWatched >= 90 || isEnded)) {
           progressCompleted = true;
@@ -1948,7 +2121,7 @@
       }).catch(() => null);
     }
 
-    function buildProgressPayload(position, duration, isPaused) {
+    function buildProgressPayload(position, duration, isPaused, isBuffering) {
       const externalIds = {};
       if (playbackMeta.imdbId) externalIds.imdb = playbackMeta.imdbId;
       if (playbackMeta.tmdbId) externalIds.tmdb = String(playbackMeta.tmdbId);
@@ -1965,6 +2138,7 @@
         position,
         duration,
         isPaused: Boolean(isPaused),
+        isBuffering: Boolean(isBuffering),
         timestamp: new Date().toISOString(),
         externalIds,
         year: playbackMeta.year || undefined,
@@ -2040,6 +2214,8 @@
     }
 
     function webPlayerDebugLog(level, message, details = {}) {
+      // The /debug/log endpoint is outside a share session's stream-only scope.
+      if (SHARE_MODE) return;
       try {
         const payload = {
           sessionId: webPlayerDebugSessionId,

@@ -766,6 +766,10 @@ func main() {
 
 	recordingsHandler := handlers.NewRecordingsHandler(recordingsService, userService)
 
+	// One-time shareable playback links: capture current stream + tracks, mint a
+	// short-lived stream-scoped session on open (single use).
+	shareHandler := handlers.NewShareHandler(handlers.NewShareStore(), sessionsService, settings.Server.BasePath)
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -799,6 +803,7 @@ func main() {
 		accountsService,
 		sessionsService,
 		userService,
+		shareHandler,
 		settings.Server.HomepageAPIKey,
 	)
 
@@ -907,6 +912,7 @@ func main() {
 	r.HandleFunc("/admin/api/indexers/search-test", adminUIHandler.RequireAuth(indexerHandler.SearchTest)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/playback/resolve", adminUIHandler.RequireAuth(playbackHandler.Resolve)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/playback/strm", adminUIHandler.RequireAuth(adminUIHandler.DownloadSTRM)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/share/create", adminUIHandler.RequireAuth(shareHandler.Create)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/debug/log", adminUIHandler.RequireAuth(adminUIHandler.CaptureDebugLog)).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc("/admin/api/video/metadata", adminUIHandler.RequireAuth(videoHandler.ProbeVideo)).Methods(http.MethodGet, http.MethodOptions)
 	r.HandleFunc("/admin/api/video/hls/start", adminUIHandler.RequireAuth(videoHandler.StartHLSSession)).Methods(http.MethodGet, http.MethodOptions)
@@ -1252,6 +1258,7 @@ func main() {
 	r.HandleFunc("/account/api/indexers/search", adminUIHandler.RequireAuth(indexerHandler.Search)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/playback/resolve", adminUIHandler.RequireAuth(playbackHandler.Resolve)).Methods(http.MethodPost)
 	r.HandleFunc("/account/api/playback/strm", adminUIHandler.RequireAuth(adminUIHandler.DownloadSTRM)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/share/create", adminUIHandler.RequireAuth(shareHandler.Create)).Methods(http.MethodPost)
 	r.HandleFunc("/account/api/debug/log", adminUIHandler.RequireAuth(adminUIHandler.CaptureDebugLog)).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc("/account/api/video/metadata", adminUIHandler.RequireAuth(videoHandler.ProbeVideo)).Methods(http.MethodGet, http.MethodOptions)
 	r.HandleFunc("/account/api/video/hls/start", adminUIHandler.RequireAuth(videoHandler.StartHLSSession)).Methods(http.MethodGet, http.MethodOptions)
@@ -1349,6 +1356,9 @@ func main() {
 	// Dedicated browser player handoff backed by the server-side HLS web player.
 	webPlaybackHandler := handlers.NewWebPlaybackHandler(userService, sessionsService, settings.Server.BasePath)
 	r.Handle("/watch/playback.html", webPlaybackHandler).Methods(http.MethodGet, http.MethodHead)
+
+	// One-time share link consumption (public, no auth — opening mints a scoped session).
+	r.HandleFunc("/share/{token}", shareHandler.Open).Methods(http.MethodGet)
 
 	// Dedicated consumer web app served from the frontend Expo web export.
 	webAppHandler := handlers.NewWebAppHandler(handlers.ResolveWebAppDir(), "/watch")

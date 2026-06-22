@@ -122,6 +122,7 @@ func Register(
 	accountsSvc *accounts.Service,
 	sessionsSvc *sessions.Service,
 	usersSvc *users.Service,
+	shareHandler *handlers.ShareHandler,
 	homepageAPIKey string,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
@@ -394,6 +395,11 @@ func Register(
 	// VOD stream usage endpoint
 	protected.HandleFunc("/stream-usage", videoHandler.GetStreamUsage).Methods(http.MethodGet)
 	protected.HandleFunc("/stream-usage", handleOptions).Methods(http.MethodOptions)
+
+	// One-time shareable playback link creation (recipient opens at /share/{token})
+	if shareHandler != nil {
+		protected.HandleFunc("/share/create", shareHandler.Create).Methods(http.MethodPost, http.MethodOptions)
+	}
 
 	// Video streaming endpoints
 	protected.HandleFunc("/video/stream", videoHandler.StreamVideo).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)

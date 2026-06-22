@@ -17,10 +17,10 @@ type pgSessionRepo struct {
 
 func (r *pgSessionRepo) Get(ctx context.Context, token string) (*models.Session, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address
+		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address, scope
 		FROM sessions WHERE token = $1`, token)
 	var s models.Session
-	err := row.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress)
+	err := row.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress, &s.Scope)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -32,7 +32,7 @@ func (r *pgSessionRepo) Get(ctx context.Context, token string) (*models.Session,
 
 func (r *pgSessionRepo) List(ctx context.Context) ([]models.Session, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address
+		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address, scope
 		FROM sessions WHERE expires_at > $1 ORDER BY created_at`, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -42,7 +42,7 @@ func (r *pgSessionRepo) List(ctx context.Context) ([]models.Session, error) {
 	var result []models.Session
 	for rows.Next() {
 		var s models.Session
-		if err := rows.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress); err != nil {
+		if err := rows.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress, &s.Scope); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		result = append(result, s)
@@ -52,7 +52,7 @@ func (r *pgSessionRepo) List(ctx context.Context) ([]models.Session, error) {
 
 func (r *pgSessionRepo) ListByAccount(ctx context.Context, accountID string) ([]models.Session, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address
+		SELECT token, account_id, is_master, expires_at, created_at, user_agent, ip_address, scope
 		FROM sessions WHERE account_id = $1 ORDER BY created_at`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -62,7 +62,7 @@ func (r *pgSessionRepo) ListByAccount(ctx context.Context, accountID string) ([]
 	var result []models.Session
 	for rows.Next() {
 		var s models.Session
-		if err := rows.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress); err != nil {
+		if err := rows.Scan(&s.Token, &s.AccountID, &s.IsMaster, &s.ExpiresAt, &s.CreatedAt, &s.UserAgent, &s.IPAddress, &s.Scope); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		result = append(result, s)
@@ -72,9 +72,9 @@ func (r *pgSessionRepo) ListByAccount(ctx context.Context, accountID string) ([]
 
 func (r *pgSessionRepo) Create(ctx context.Context, sess *models.Session) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO sessions (token, account_id, is_master, expires_at, created_at, user_agent, ip_address)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		sess.Token, sess.AccountID, sess.IsMaster, sess.ExpiresAt, sess.CreatedAt, sess.UserAgent, sess.IPAddress)
+		INSERT INTO sessions (token, account_id, is_master, expires_at, created_at, user_agent, ip_address, scope)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		sess.Token, sess.AccountID, sess.IsMaster, sess.ExpiresAt, sess.CreatedAt, sess.UserAgent, sess.IPAddress, sess.Scope)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -83,9 +83,9 @@ func (r *pgSessionRepo) Create(ctx context.Context, sess *models.Session) error 
 
 func (r *pgSessionRepo) Update(ctx context.Context, sess *models.Session) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE sessions SET account_id=$2, is_master=$3, expires_at=$4, created_at=$5, user_agent=$6, ip_address=$7
+		UPDATE sessions SET account_id=$2, is_master=$3, expires_at=$4, created_at=$5, user_agent=$6, ip_address=$7, scope=$8
 		WHERE token=$1`,
-		sess.Token, sess.AccountID, sess.IsMaster, sess.ExpiresAt, sess.CreatedAt, sess.UserAgent, sess.IPAddress)
+		sess.Token, sess.AccountID, sess.IsMaster, sess.ExpiresAt, sess.CreatedAt, sess.UserAgent, sess.IPAddress, sess.Scope)
 	if err != nil {
 		return fmt.Errorf("update session: %w", err)
 	}
