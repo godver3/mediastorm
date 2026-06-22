@@ -792,6 +792,9 @@ func TestSearchEnrichesResultsWithRequestedLanguage(t *testing.T) {
 			case "/3/tv/303/images":
 				body := `{"logos":[],"backdrops":[],"posters":[{"file_path":"/poster-fr.jpg","iso_639_1":"fr","vote_average":8.0}]}`
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/tv/303":
+				body := `{"id":303,"name":"Titre français","overview":"Résumé français"}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
 			default:
 				t.Fatalf("unexpected request path: %s", req.URL.Path)
 				return nil, nil
@@ -821,6 +824,52 @@ func TestSearchEnrichesResultsWithRequestedLanguage(t *testing.T) {
 	}
 	if title.TextPoster == nil || title.TextPoster.URL != "https://image.tmdb.org/t/p/w780/poster-fr.jpg" {
 		t.Fatalf("text poster = %#v, want localized TMDB poster", title.TextPoster)
+	}
+}
+
+func TestSearchLocalizesTMDBOnlyMovieTitleAndOverview(t *testing.T) {
+	// A TMDB-sourced movie with no TVDB id has no TVDB translation, so the
+	// localized title/overview must come from TMDB movie details.
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/v4/login":
+				body := bytes.NewBufferString(`{"data":{"token":"test-token"}}`)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header)}, nil
+			case "/v4/search":
+				body := `{"data":[]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/search/movie":
+				body := `{"results":[{"id":698687,"title":"Transformers One","overview":"The untold origin story.","release_date":"2024-09-11","popularity":80,"vote_average":8.0,"vote_count":1000,"adult":false}]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/movie/698687":
+				body := `{"id":698687,"title":"Transformers One","overview":"La storia inedita delle origini.","release_date":"2024-09-11"}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			case "/3/movie/698687/images":
+				body := `{"logos":[],"backdrops":[],"posters":[{"file_path":"/poster-it.jpg","iso_639_1":"it","vote_average":8.0}]}`
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(body)), Header: make(http.Header)}, nil
+			default:
+				t.Fatalf("unexpected request path: %s", req.URL.Path)
+				return nil, nil
+			}
+		}),
+	}
+	cacheDir := t.TempDir()
+	svc := &Service{
+		client: &tvdbClient{apiKey: "test-tvdb-key", language: "ita", httpc: httpc, minInterval: 0, translationCacheTTL: 24 * time.Hour},
+		tmdb:   newTMDBClient("test-tmdb-key", "ita", httpc, newFileCache(cacheDir, 24)),
+		cache:  newFileCache(cacheDir, 24),
+	}
+
+	results, err := svc.Search(context.Background(), "transformers one", "movie")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d: %+v", len(results), results)
+	}
+	if got := results[0].Title.Overview; got != "La storia inedita delle origini." {
+		t.Fatalf("overview = %q, want localized TMDB overview", got)
 	}
 }
 

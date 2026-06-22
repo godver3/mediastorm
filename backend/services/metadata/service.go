@@ -2497,7 +2497,7 @@ func (s *Service) Search(ctx context.Context, query string, mediaType string) ([
 	if allowAdultSearch {
 		adultPolicy = "adult-allowed"
 	}
-	key := cacheKey("metadata", "search", "v5", mediaType, q, s.client.language, adultPolicy)
+	key := cacheKey("metadata", "search", "v6", mediaType, q, s.client.language, adultPolicy)
 	var cached []models.SearchResult
 	if ok, _ := s.cache.get(key, &cached); ok {
 		valid := false
@@ -2739,6 +2739,7 @@ func (s *Service) enrichSearchResults(ctx context.Context, results []models.Sear
 			defer func() { <-sem }()
 			title := &results[idx].Title
 			s.applySearchTranslation(title)
+			s.applyTMDBTranslation(ctx, title)
 			if title.TMDBID > 0 {
 				mediaType := "movie"
 				if strings.EqualFold(title.MediaType, "series") || strings.EqualFold(title.MediaType, "tv") {
@@ -2749,6 +2750,38 @@ func (s *Service) enrichSearchResults(ctx context.Context, results []models.Sear
 		}(i)
 	}
 	wg.Wait()
+}
+
+// applyTMDBTranslation localizes a search result's name/overview using TMDB,
+// which carries localized strings for many TMDB-sourced titles that lack TVDB
+// translations (e.g. movies). It only overwrites with non-empty localized
+// values so a good TVDB translation is never clobbered with a blank.
+func (s *Service) applyTMDBTranslation(ctx context.Context, title *models.Title) {
+	if title == nil || title.TMDBID <= 0 || s.tmdb == nil || !s.tmdb.isConfigured() {
+		return
+	}
+	if strings.TrimSpace(s.tmdb.language) == "" || strings.EqualFold(s.tmdb.language, "eng") {
+		return
+	}
+	var localized *models.Title
+	var err error
+	if strings.EqualFold(title.MediaType, "series") || strings.EqualFold(title.MediaType, "tv") {
+		localized, err = s.tmdb.seriesDetails(ctx, title.TMDBID)
+	} else {
+		localized, err = s.tmdb.movieDetails(ctx, title.TMDBID)
+	}
+	if err != nil || localized == nil {
+		return
+	}
+	if overview := strings.TrimSpace(localized.Overview); overview != "" {
+		title.Overview = overview
+	}
+	if name := strings.TrimSpace(localized.Name); name != "" && !strings.EqualFold(name, title.Name) {
+		if strings.TrimSpace(title.OriginalName) == "" {
+			title.OriginalName = title.Name
+		}
+		title.Name = name
+	}
 }
 
 func (s *Service) applySearchTranslation(title *models.Title) {
