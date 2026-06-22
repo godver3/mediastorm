@@ -5,12 +5,85 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	xdraw "golang.org/x/image/draw"
 )
+
+// countingRoundTripper returns a canned response for every request and counts calls.
+type countingRoundTripper struct {
+	mu     sync.Mutex
+	calls  int
+	body   string
+	status int
+}
+
+func (rt *countingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	rt.calls++
+	rt.mu.Unlock()
+	status := rt.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(rt.body)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+func (rt *countingRoundTripper) callCount() int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.calls
+}
+
+// TestMovieDetails_FileCacheAndSingleflightCleanup verifies that movieDetails
+// persists results to the file cache (so repeat calls don't re-hit TMDB) and
+// that the in-flight singleflight map does not retain completed entries.
+func TestMovieDetails_FileCacheAndSingleflightCleanup(t *testing.T) {
+	rt := &countingRoundTripper{body: `{"id":603,"title":"The Matrix","release_date":"1999-03-30","imdb_id":"tt0133093","runtime":136}`}
+	cache := newFileCache(t.TempDir(), 24)
+	c := newTMDBClient("test-key", "en", &http.Client{Transport: rt}, cache)
+
+	ctx := context.Background()
+
+	got, err := c.movieDetails(ctx, 603)
+	if err != nil {
+		t.Fatalf("first movieDetails: unexpected error: %v", err)
+	}
+	if got == nil || got.Name != "The Matrix" {
+		t.Fatalf("first movieDetails: got %+v, want name=The Matrix", got)
+	}
+	if rt.callCount() != 1 {
+		t.Fatalf("expected 1 network call after first fetch, got %d", rt.callCount())
+	}
+
+	// The singleflight map must not retain entries once a fetch completes.
+	leaked := 0
+	c.movieCache.Range(func(_, _ any) bool { leaked++; return true })
+	if leaked != 0 {
+		t.Fatalf("movieCache leaked %d entries after fetch, want 0", leaked)
+	}
+
+	// Second call must be served from the file cache — no additional network call.
+	got2, err := c.movieDetails(ctx, 603)
+	if err != nil {
+		t.Fatalf("second movieDetails: unexpected error: %v", err)
+	}
+	if got2 == nil || got2.Name != "The Matrix" {
+		t.Fatalf("second movieDetails: got %+v, want name=The Matrix", got2)
+	}
+	if rt.callCount() != 1 {
+		t.Fatalf("expected file-cache hit (still 1 call), got %d", rt.callCount())
+	}
+}
 
 func TestNormalizeLanguage(t *testing.T) {
 	tests := map[string]string{

@@ -78,7 +78,9 @@ func resolveGenreIDs(ids []int, mediaType string) []string {
 	return names
 }
 
-// movieDetailsCacheEntry provides singleflight-style deduplication for movieDetails calls
+// movieDetailsCacheEntry provides singleflight-style deduplication for in-flight
+// movieDetails calls. Entries live only while a fetch is in progress and are
+// removed once it completes — persistence is handled by the file cache.
 type movieDetailsCacheEntry struct {
 	result *models.Title
 	err    error
@@ -96,7 +98,8 @@ type tmdbClient struct {
 	lastRequest time.Time
 	minInterval time.Duration
 
-	// In-memory cache for movieDetails (process-lifetime, deduplicated)
+	// In-flight singleflight map for movieDetails — holds only requests
+	// currently being fetched (bounded), not a process-lifetime cache.
 	movieCache sync.Map
 }
 
@@ -1818,7 +1821,20 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 		return nil, errors.New("tmdb api key not configured")
 	}
 
-	// Singleflight-style in-memory cache
+	// Persistent file cache — survives restarts and is scoped per language,
+	// unlike the in-memory singleflight map below.
+	var cacheID string
+	if c.cache != nil {
+		cacheID = cacheKey("tmdb", "movie", "details", "v1", c.language, fmt.Sprintf("%d", tmdbID))
+		var cached models.Title
+		if ok, _ := c.cache.get(cacheID, &cached); ok && cached.TMDBID > 0 {
+			return &cached, nil
+		}
+	}
+
+	// Singleflight: dedupe concurrent fetches for the same id. The entry is
+	// removed once the fetch completes so the map only ever holds in-flight
+	// requests (bounded), not a process-lifetime cache.
 	entry := &movieDetailsCacheEntry{done: make(chan struct{})}
 	if existing, loaded := c.movieCache.LoadOrStore(tmdbID, entry); loaded {
 		e := existing.(*movieDetailsCacheEntry)
@@ -1826,10 +1842,14 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 		return e.result, e.err
 	}
 	// We won the race — fetch and populate
-	defer close(entry.done)
 	result, err := c.movieDetailsFetch(ctx, tmdbID)
+	if err == nil && result != nil && cacheID != "" {
+		_ = c.cache.set(cacheID, result)
+	}
 	entry.result = result
 	entry.err = err
+	close(entry.done)
+	c.movieCache.Delete(tmdbID)
 	return result, err
 }
 

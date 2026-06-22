@@ -4316,7 +4316,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		return nil, fmt.Errorf("tvdb client not configured")
 	}
 
-	log.Printf("[metadata] series details lite request titleId=%q name=%q year=%d tvdbId=%d",
+	metadataTracef("[metadata] series details lite request titleId=%q name=%q year=%d tvdbId=%d",
 		strings.TrimSpace(req.TitleID), strings.TrimSpace(req.Name), req.Year, req.TVDBID)
 
 	tvdbID, err := s.resolveSeriesTVDBID(ctx, req)
