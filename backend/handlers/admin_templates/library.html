@@ -1342,12 +1342,12 @@ function renderGroupedItem(group) {
   const expanded = expandedGroups.has(group.id);
   const badgeClass = matchStatusClass(group.matchStatus);
   const title = group.title || 'Untitled';
-  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
+  const canBulkRematch = group.groupType === 'show' && group.itemCount > 1;
   const secondaryBits = [];
   if (group.year) secondaryBits.push(String(group.year));
   if (group.groupType === 'movie_versions') {
     secondaryBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
-  } else if (group.groupType === 'series') {
+  } else if (group.groupType === 'show') {
     secondaryBits.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
     secondaryBits.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
     secondaryBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
@@ -1388,10 +1388,10 @@ function renderGroupedItem(group) {
 function renderGroupedPosterItem(group) {
   const poster = (group.textPoster && group.textPoster.url) || (group.poster && group.poster.url) || '';
   const title = group.title || 'Untitled';
-  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
+  const canBulkRematch = group.groupType === 'show' && group.itemCount > 1;
   const metaBits = [];
   if (group.year) metaBits.push(String(group.year));
-  if (group.groupType === 'series') {
+  if (group.groupType === 'show') {
     metaBits.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
     metaBits.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
     metaBits.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
@@ -1416,7 +1416,7 @@ function renderGroupedPosterItem(group) {
 }
 
 function renderGroupedChildren(group) {
-  if (group.groupType === 'series') {
+  if (group.groupType === 'show') {
     const seasons = Array.isArray(group.seasons) ? group.seasons : [];
     return `
       <div class="library-group-details">
@@ -1681,7 +1681,7 @@ function renderPosterItemModalContent(item, meta, probe) {
 function renderPosterGroupSubtitle(group) {
   const parts = [];
   if (group.year) parts.push(String(group.year));
-  if (group.groupType === 'series') {
+  if (group.groupType === 'show') {
     parts.push(`${(group.seasons || []).length} season${(group.seasons || []).length === 1 ? '' : 's'}`);
     parts.push(`${countDistinctEpisodes(group)} episode${countDistinctEpisodes(group) === 1 ? '' : 's'}`);
     parts.push(`${group.itemCount} item${group.itemCount === 1 ? '' : 's'}`);
@@ -1693,8 +1693,8 @@ function renderPosterGroupSubtitle(group) {
 
 function renderPosterGroupModalContent(group) {
   const badgeClass = matchStatusClass(group.matchStatus);
-  const canBulkRematch = group.groupType === 'series' && group.itemCount > 1;
-  const childrenHtml = group.groupType === 'series'
+  const canBulkRematch = group.groupType === 'show' && group.itemCount > 1;
+  const childrenHtml = group.groupType === 'show'
     ? (group.seasons || []).map(renderPosterModalSeason).join('')
     : `<div style="display: grid; gap: 0.75rem;">${(group.items || []).map(item => renderItem(item, { forceCollapsible: true })).join('')}</div>`;
   return `
@@ -1770,7 +1770,7 @@ function buildMatchTargetForItem(itemId) {
 
 function buildMatchTargetForGroup(groupId) {
   const group = currentVisibleGroups.find(entry => entry.id === groupId);
-  if (!group || group.groupType !== 'series') return null;
+  if (!group || group.groupType !== 'show') return null;
   const items = collectGroupItems(group);
   if (!items.length) return null;
   const subtitleParts = [`${items.length} item${items.length === 1 ? '' : 's'}`];
