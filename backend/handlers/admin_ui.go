@@ -210,6 +210,7 @@ func (s *adminSessionStore) revoke(token string) {
 var SettingsGroups = []map[string]string{
 	{"id": "providers", "label": "Providers"},
 	{"id": "sources", "label": "Sources"},
+	{"id": "integrations", "label": "Integrations"},
 	{"id": "searchFiltering", "label": "Search & Filtering"},
 	{"id": "services", "label": "Services"},
 	{"id": "experience", "label": "Experience"},
@@ -223,7 +224,8 @@ var SettingsSchema = map[string]interface{}{
 		"icon":        "server",
 		"group":       "server",
 		"order":       0,
-		"description": "Changing host, port, or base path requires a container restart to take effect. Other server settings apply when saved.",
+		"description": "Host, port, base path, and allowed private media origins.",
+		"warning":     "Changing host, port, or base path requires a container restart to take effect. Other server settings apply when saved.",
 		"fields": map[string]interface{}{
 			"host":     map[string]interface{}{"type": "text", "label": "Host", "description": "Server bind address (leave empty to bind all interfaces)", "order": 0},
 			"port":     map[string]interface{}{"type": "number", "label": "Port", "description": "Server port (default: 7777)", "order": 1},
@@ -238,6 +240,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"network": map[string]interface{}{
 		"label": "Network URL Switching",
+		"description": "Switch between home and remote backend URLs based on Wi‑Fi.",
 		"icon":  "wifi",
 		"group": "server",
 		"order": 1,
@@ -267,6 +270,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"streaming": map[string]interface{}{
 		"label": "Search & Resolution",
+		"description": "Service mode, timeouts, and how searches are resolved.",
 		"icon":  "search",
 		"group": "searchFiltering",
 		"order": 0,
@@ -311,6 +315,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"debridProviders": map[string]interface{}{
 		"label":    "Debrid Providers",
+		"description": "Real-Debrid, TorBox, AllDebrid, Premiumize, and similar providers.",
 		"icon":     "cloud",
 		"group":    "providers",
 		"order":    1,
@@ -333,6 +338,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"usenet": map[string]interface{}{
 		"label":    "Usenet Providers",
+		"description": "Direct NNTP usenet provider accounts and connection limits.",
 		"icon":     "download",
 		"group":    "providers",
 		"order":    2,
@@ -388,6 +394,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"filtering": map[string]interface{}{
 		"label": "Ranking & Filtering",
+		"description": "Size limits, HDR policy, preferred terms, and filter rules.",
 		"icon":  "filter",
 		"group": "searchFiltering",
 		"order": 1,
@@ -497,6 +504,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"animeFiltering": map[string]interface{}{
 		"label": "Anime Language",
+		"description": "Prefer sub, dub, or either for anime search results.",
 		"icon":  "globe",
 		"group": "searchFiltering",
 		"order": 2,
@@ -521,6 +529,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"ranking": map[string]interface{}{
 		"label": "Overall Ranking",
+		"description": "Order of ranking criteria used to score search results.",
 		"icon":  "list",
 		"group": "searchFiltering",
 		"order": 3,
@@ -567,6 +576,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"live": map[string]interface{}{
 		"label":    "Live TV",
+		"description": "Live TV guide sources and IPTV configuration.",
 		"icon":     "tv",
 		"order":    2,
 		"testable": true,
@@ -637,6 +647,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"indexers": map[string]interface{}{
 		"label":    "Usenet Indexers",
+		"description": "Prowlarr or Newznab-compatible usenet indexers.",
 		"icon":     "search",
 		"group":    "sources",
 		"order":    0,
@@ -685,6 +696,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"playback": map[string]interface{}{
 		"label": "Playback",
+		"description": "Default playback behavior, audio, and related player options.",
 		"icon":  "play",
 		"group": "experience",
 		"order": 0,
@@ -729,6 +741,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"homeShelves": map[string]interface{}{
 		"label": "Home Shelves",
+		"description": "Configure which shelves appear on the home screen.",
 		"icon":  "layout",
 		"group": "experience",
 		"order": 1,
@@ -817,6 +830,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"display": map[string]interface{}{
 		"label": "Display",
+		"description": "App theme, layout density, and display preferences.",
 		"icon":  "eye",
 		"group": "experience",
 		"order": 2,
@@ -1078,8 +1092,9 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"metadata": map[string]interface{}{
 		"label":    "Metadata",
+		"description": "TVDB/TMDB API keys and metadata language preferences.",
 		"icon":     "film",
-		"group":    "services",
+		"group":    "integrations",
 		"order":    0,
 		"testable": true,
 		"fields": map[string]interface{}{
@@ -1156,6 +1171,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"cache": map[string]interface{}{
 		"label":  "Cache",
+		"description": "Cache sizing and metadata cache maintenance.",
 		"icon":   "database",
 		"group":  "services",
 		"order":  99,
@@ -1167,6 +1183,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"import": map[string]interface{}{
 		"label":  "Import Settings",
+		"description": "Import and sync behavior for libraries and lists.",
 		"icon":   "upload",
 		"group":  "services",
 		"order":  99,
@@ -1207,8 +1224,9 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"subtitles": map[string]interface{}{
 		"label":    "Subtitles",
+		"description": "Subtitle downloads and related provider settings.",
 		"icon":     "key",
-		"group":    "services",
+		"group":    "integrations",
 		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
@@ -1221,13 +1239,14 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"mdblist": map[string]interface{}{
 		"label":    "MDBList",
+		"description": "MDBList API access for custom and trending lists.",
 		"icon":     "star",
-		"group":    "services",
+		"group":    "integrations",
 		"order":    1,
 		"testable": true,
 		"fields": map[string]interface{}{
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Enable MDBList integration for aggregated ratings (Rotten Tomatoes, IMDB, etc.)", "order": 0},
-			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key (Ratings)", "description": "Global MDBList API key for ratings display. For scrobbling, add MDBList accounts in Tools.", "order": 1},
+			"apiKey":  map[string]interface{}{"type": "password", "label": "API Key (Ratings)", "description": "Global MDBList API key for ratings display. For scrobbling, add MDBList accounts in the Integrations account list below.", "order": 1},
 			"enabledRatings": map[string]interface{}{
 				"type":        "checkboxes",
 				"label":       "Rating Sources",
@@ -1247,6 +1266,7 @@ var SettingsSchema = map[string]interface{}{
 	},
 	"liveTV": map[string]interface{}{
 		"label":       "Live TV",
+		"description": "Per-profile live TV channel preferences and sources.",
 		"icon":        "tv",
 		"order":       3,
 		"inheritFrom": "live",
@@ -1688,8 +1708,8 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		fmt.Printf("Error reading base template: %v\n", err)
 	}
 
-	// Helper to create a page template with base
-	createPageTemplate := func(pageName string) *template.Template {
+	// Helper to create a page template with base (optional extra partials).
+	createPageTemplate := func(pageName string, extraPartials ...string) *template.Template {
 		pageContent, err := adminTemplates.ReadFile("admin_templates/" + pageName)
 		if err != nil {
 			fmt.Printf("Error reading %s: %v\n", pageName, err)
@@ -1700,6 +1720,18 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		if err != nil {
 			fmt.Printf("Error parsing base for %s: %v\n", pageName, err)
 			return nil
+		}
+		for _, partial := range extraPartials {
+			partialContent, partialErr := adminTemplates.ReadFile("admin_templates/" + partial)
+			if partialErr != nil {
+				fmt.Printf("Error reading %s: %v\n", partial, partialErr)
+				return nil
+			}
+			tmpl, err = tmpl.Parse(string(partialContent))
+			if err != nil {
+				fmt.Printf("Error parsing %s: %v\n", partial, err)
+				return nil
+			}
 		}
 		tmpl, err = tmpl.Parse(string(pageContent))
 		if err != nil {
@@ -1745,10 +1777,10 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 	}
 
 	return &AdminUIHandler{
-		settingsTemplate:      createPageTemplate("settings.html"),
+		settingsTemplate:      createPageTemplate("settings.html", "tools_embedded.html", "backup_embedded.html"),
 		statusTemplate:        createPageTemplate("status.html"),
 		historyTemplate:       createPageTemplate("history.html"),
-		toolsTemplate:         createPageTemplate("tools.html"),
+		toolsTemplate:         createPageTemplate("tools.html", "tools_embedded.html", "backup_embedded.html"),
 		hiddenItemsTemplate:   createPageTemplate("hidden_items.html"),
 		resolvedNZBTemplate:   createPageTemplate("resolved_nzbs.html"),
 		badStreamsTemplate:    createPageTemplate("bad_streams.html"),
@@ -1760,7 +1792,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 		accountsTemplate:      createPageTemplate("accounts.html"),
 		libraryTemplate:       createPageTemplate("library.html"),
 		kidsSettingsTemplate:  createPageTemplate("kids_settings.html"),
-		backupTemplate:        createPageTemplate("backup.html"),
+		backupTemplate:        createPageTemplate("backup.html", "backup_embedded.html"),
 		calendarTemplate:      createPageTemplate("calendar.html"),
 		performanceTemplate:   createPageTemplate("performance.html"),
 		logsTemplate:          createPageTemplate("logs.html"),
@@ -9985,39 +10017,10 @@ func (h *AdminUIHandler) TestDebridProvider(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// ToolsPage serves the tools page
+// ToolsPage redirects to Settings' Tools area. Deep tool routes stay registered.
 func (h *AdminUIHandler) ToolsPage(w http.ResponseWriter, r *http.Request) {
-	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
-	mgr := config.NewManager(h.settingsPath)
-	settings, err := mgr.Load()
-	if err != nil {
-		http.Error(w, "Failed to load settings", http.StatusInternalServerError)
-		return
-	}
-	usersList := h.getScopedUsers(isAdmin, accountID)
-
-	data := AdminPageData{
-		CurrentPath:    basePath + "/tools",
-		BasePath:       basePath,
-		ServerBasePath: h.serverBasePath,
-		IsAdmin:        isAdmin,
-		AccountID:      accountID,
-		Username:       username,
-		Settings:       settings,
-		Users:          usersList,
-		Version:        GetBackendVersion(),
-		BuildID:        GetBackendBuildID(),
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if h.toolsTemplate == nil {
-		http.Error(w, "Tools template not loaded", http.StatusInternalServerError)
-		return
-	}
-	if err := h.toolsTemplate.ExecuteTemplate(w, "base", data); err != nil {
-		fmt.Printf("Tools template error: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	_, _, basePath, _ := h.getPageRoleInfo(r)
+	http.Redirect(w, r, basePath+"/settings#tools", http.StatusFound)
 }
 
 func (h *AdminUIHandler) HiddenItemsPage(w http.ResponseWriter, r *http.Request) {
@@ -11033,36 +11036,14 @@ func (h *AdminUIHandler) KidsSettingsPage(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// BackupPage serves the backup management page
+// BackupPage redirects to Settings' Tools → Backup area. APIs stay under /admin/api/backups.
 func (h *AdminUIHandler) BackupPage(w http.ResponseWriter, r *http.Request) {
-	isAdmin, accountID, basePath, username := h.getPageRoleInfo(r)
-
-	// Backup page is only for admins
+	isAdmin, _, basePath, _ := h.getPageRoleInfo(r)
 	if !isAdmin {
 		http.Redirect(w, r, basePath, http.StatusFound)
 		return
 	}
-
-	data := AdminPageData{
-		CurrentPath:    basePath + "/backup",
-		BasePath:       basePath,
-		ServerBasePath: h.serverBasePath,
-		IsAdmin:        isAdmin,
-		AccountID:      accountID,
-		Username:       username,
-		Version:        GetBackendVersion(),
-		BuildID:        GetBackendBuildID(),
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if h.backupTemplate == nil {
-		http.Error(w, "Backup template not loaded", http.StatusInternalServerError)
-		return
-	}
-	if err := h.backupTemplate.ExecuteTemplate(w, "base", data); err != nil {
-		fmt.Printf("Backup template error: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	http.Redirect(w, r, basePath+"/settings#tools-backup", http.StatusFound)
 }
 
 // ConnectionsPage serves the connections dashboard page

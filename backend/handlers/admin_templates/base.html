@@ -2126,7 +2126,7 @@
                 {{if .IsAdmin}}
                 <!-- System dropdown (desktop only) -->
                 <div class="nav-dropdown desktop-dropdown">
-                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/connections") (hasSuffix .CurrentPath "/backup") (hasSuffix .CurrentPath "/performance") (hasSuffix .CurrentPath "/logs") (hasSuffix .CurrentPath "/tools")}}has-active{{end}}" type="button" aria-expanded="false" data-nav-dropdown-toggle data-walkthrough-target="system">
+                    <button class="nav-dropdown-toggle {{if or (hasSuffix .CurrentPath "/connections") (hasSuffix .CurrentPath "/performance") (hasSuffix .CurrentPath "/logs")}}has-active{{end}}" type="button" aria-expanded="false" data-nav-dropdown-toggle data-walkthrough-target="system">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
                             <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
@@ -2146,25 +2146,11 @@
                             </svg>
                             Connections
                         </a>
-                        <a href="{{.BasePath}}/backup" class="nav-link {{if hasSuffix .CurrentPath "/backup"}}active{{end}}">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                            Backup
-                        </a>
                         <a href="{{.BasePath}}/performance" class="nav-link {{if hasSuffix .CurrentPath "/performance"}}active{{end}}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                             </svg>
                             Performance
-                        </a>
-                        <a href="{{.BasePath}}/tools" class="nav-link {{if hasSuffix .CurrentPath "/tools"}}active{{end}}">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                            </svg>
-                            Tools
                         </a>
                         <a href="{{.BasePath}}/logs" class="nav-link {{if hasSuffix .CurrentPath "/logs"}}active{{end}}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2186,14 +2172,6 @@
                     </svg>
                     Connections
                 </a>
-                <a href="{{.BasePath}}/backup" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/backup"}}active{{end}}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
-                    Backup
-                </a>
                 <a href="{{.BasePath}}/search" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/search"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"/>
@@ -2206,12 +2184,6 @@
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                     </svg>
                     Performance
-                </a>
-                <a href="{{.BasePath}}/tools" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/tools"}}active{{end}}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                    </svg>
-                    Tools
                 </a>
                 <a href="{{.BasePath}}/logs" class="nav-link mobile-nav-link {{if hasSuffix .CurrentPath "/logs"}}active{{end}}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2519,8 +2491,8 @@
                     text: 'System contains admin tools for maintenance, diagnostics, and server operations.',
                     items: [
                         '<strong>Connections</strong> checks provider connectivity and configuration readiness.',
-                        '<strong>Backup, performance, and logs</strong> cover recovery, runtime stats, and troubleshooting.',
-                        '<strong>Tools</strong> exposes targeted admin actions such as cache and metadata maintenance.'
+                        '<strong>Performance and logs</strong> cover runtime stats and troubleshooting.',
+                        '<strong>Settings</strong> includes Tools actions such as backup, cache, and metadata maintenance.'
                     ]
                 },
                 {
