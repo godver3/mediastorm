@@ -149,3 +149,7 @@ backend/tools/benchfb/
 backend/tools/benchrar/
 backend/benchfb
 backend/benchrar
+
+# Isolated admin-dev local data
+.dev-data/
+backend/mediastorm-bin

@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1.7
+# Lightweight admin-dev image: Go backend only (no Expo web / iroh / pinned ffmpeg).
+# Used exclusively by docker-compose.admin-dev.yml on :7778.
+
+FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/go.mod backend/go.sum ./
+ENV GOTOOLCHAIN=local
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    for attempt in 1 2 3; do \
+        go mod download && break; \
+        if [ "$attempt" = "3" ]; then exit 1; fi; \
+        sleep $((attempt * 5)); \
+    done
+
+COPY backend/ .
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=1 go build -o mediastorm .
+
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget python3 python3-venv python3-pip ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /.venv && \
+    /.venv/bin/pip install --no-cache-dir parsett==1.8.5 subliminal==2.6.0
+
+RUN mkdir -p /app /root/cache /opt/strmr-web \
+	&& chmod 0755 /app \
+	&& chmod 0711 /root \
+	&& ln -s /root/cache /app/cache \
+	&& ln -s /app/mediastorm /root/mediastorm \
+	&& printf '%s\n' '<!doctype html><html><body>admin-dev web stub</body></html>' > /opt/strmr-web/index.html
+
+ENV HOME=/tmp
+ENV STRMR_WEB_APP_DIR=/opt/strmr-web
+WORKDIR /app
+
+COPY --from=builder --chown=root:root --chmod=0755 /app/mediastorm .
+COPY --chown=root:root --chmod=0444 backend/version.txt /app/version.txt
+COPY --chown=root:root --chmod=0555 backend/parse_title.py backend/parse_title_batch.py backend/search_subtitles.py backend/download_subtitle.py backend/detect_credits.py /
+
+EXPOSE 7777
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD wget -qO- http://localhost:7777/health > /dev/null || exit 1
+
+CMD ["./mediastorm"]
