@@ -1050,6 +1050,7 @@
     let nextEpisodePrequeuePollPromise = null;
     let playingNextEpisode = false;
     let webPlayerWatchNextAutoAdvanceBlocked = false;
+    let webPlayerEpisodeTransitionActive = false;
     let hlsDuration = 0;
     let hlsPlaylistUrl = '';
     let webPlayerActualStartOffset = 0;
@@ -2902,6 +2903,10 @@
       const host = document.getElementById('videoHost');
       const button = document.getElementById('skipSegmentButton');
       if (!host || !button) return;
+      if (webPlayerEpisodeTransitionActive) {
+        host.classList.remove('skip-segment-visible');
+        return;
+      }
       syncWebAutoSkipControls();
       const segment = activeWebSegmentAt(currentAbsoluteTime());
       const skippable = segment && !webPlayerSkipDismissed.has(segment.type) && (segment.type !== 'outro' || !nextEpisodeInfo);
@@ -3100,6 +3105,11 @@
     function updateUpNextVisibility(options = {}) {
       const host = document.getElementById('videoHost');
       if (!host) return;
+      if (webPlayerEpisodeTransitionActive) {
+        host.classList.remove('up-next-visible', 'skip-segment-visible');
+        clearWatchNextCountdown();
+        return;
+      }
       maybeTriggerNextEpisodePrequeue();
       maybeStartWebCreditsDetection();
       updateWebSegmentPrompts();
@@ -3451,6 +3461,12 @@
       webPlayerMetadataResolved = false;
       progressCompleted = false;
       lastKnownPositivePosition = 0;
+      syncSubtitleOffset(0, 0);
+      webPlayerDisplayedSeekTarget = null;
+      webPlayerQueuedSeekTarget = null;
+      webPlayerSeekInProgress = false;
+      webPlayerBuffering = false;
+      webPlayerPausedAt = 0;
       hlsDuration = Number(status.duration || 0);
       resetNextEpisodeState();
       webPlayerActivePrequeueId = status.prequeueId || nextEpisodePrequeue?.prequeueId || '';
@@ -3465,6 +3481,7 @@
     async function playNextEpisode() {
       if (!nextEpisodeInfo || playingNextEpisode) return;
       playingNextEpisode = true;
+      webPlayerEpisodeTransitionActive = true;
       webPlayerWatchNextAutoAdvanceBlocked = false;
       clearWatchNextCountdown();
       const host = document.getElementById('videoHost');
@@ -3486,7 +3503,14 @@
         if (Number(target.seasonNumber) !== Number(nextEpisodeInfo.seasonNumber) || Number(target.episodeNumber) !== Number(nextEpisodeInfo.episodeNumber)) throw new Error('Prepared episode does not match Up Next.');
         stopHlsSession({ keepalive: true, skipProgress: true });
         await switchToNextEpisode(status);
-        await waitForWebPlayerUsable();
+        try {
+          await waitForWebPlayerUsable();
+        } catch (firstLoadError) {
+          console.warn('[web-player] next episode initial HLS session stalled; recreating target session', firstLoadError);
+          setStatus('Restarting next episode stream…');
+          await startWebPlayerFromSource({ startOffset: 0, throwOnError: true });
+          await waitForWebPlayerUsable();
+        }
         await sendCapturedWebProgress(previous.completion);
         await sendCapturedWebProgress(buildProgressPayload(0, currentDuration(), false, false, false));
         webPlayerActivePrequeueId = status.prequeueId || nextEpisodePrequeue?.prequeueId || '';
@@ -3494,24 +3518,27 @@
         setStatus('');
       } catch (error) {
         console.warn('[web-player] play next episode failed', error);
-        if (sourcePath !== previous.sourcePath) {
-          sourcePath = previous.sourcePath;
-          playbackMeta = previous.meta;
-          hlsDuration = Number(previous.duration || 0);
-          progressCompleted = false;
-          lastKnownPositivePosition = Math.max(0, Number(previous.position || 0));
-          resetNextEpisodeState();
-          await startWebPlayerFromSource({ startOffset: previous.position }).catch(() => {});
-          // A failed automatic handoff must never restart its countdown after
-          // restoring the previous episode at the credits. Keep Watch Now
-          // available for a deliberate retry, but block another automatic loop.
-          webPlayerWatchNextAutoAdvanceBlocked = true;
+        // Once the target identity has been adopted, never restore the previous
+        // episode at its credits position. That creates an automatic advance
+        // loop and can make an entire episode appear to have been skipped.
+        // Leave the target session at zero so Play/recovery remains safe.
+        const targetWasAdopted = sourcePath !== previous.sourcePath;
+        webPlayerWatchNextAutoAdvanceBlocked = true;
+        upNextDismissed = targetWasAdopted;
+        if (targetWasAdopted) {
+          syncSubtitleOffset(0, 0);
+          lastKnownPositivePosition = 0;
+          const video = document.getElementById('webPlayer');
+          if (video) attemptAutoplay(video);
+          setStatus('Next episode is still loading. Press Play to retry.', true);
+        } else {
+          setStatus(error?.message || String(error), true);
         }
-        upNextDismissed = false;
-        setStatus(error?.message || String(error), true);
-        updateUpNextVisibility();
       } finally {
+        webPlayerEpisodeTransitionActive = false;
         playingNextEpisode = false;
+        updateWebSegmentPrompts();
+        updateUpNextVisibility();
       }
     }
 
@@ -3524,9 +3551,24 @@
       }
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => finish(new Error('Next episode timed out while loading.')), timeoutMs);
+        const recoverTimer = setTimeout(() => {
+          if (video.readyState >= 2 || !hlsInstance) return;
+          webPlayerDebugLog('warn', 'recovering stalled next episode media attachment', {
+            hlsSessionId,
+            readyState: video.readyState,
+            networkState: video.networkState,
+            currentTime: Number(video.currentTime || 0),
+          });
+          try {
+            hlsInstance.recoverMediaError();
+            hlsInstance.startLoad(0);
+            attemptAutoplay(video);
+          } catch {}
+        }, 6000);
         const readinessEvents = ['loadeddata', 'canplay', 'playing', 'timeupdate'];
         const finish = (error) => {
           clearTimeout(timer);
+          clearTimeout(recoverTimer);
           readinessEvents.forEach((eventName) => video.removeEventListener(eventName, ready));
           video.removeEventListener('error', failed);
           error ? reject(error) : resolve();
