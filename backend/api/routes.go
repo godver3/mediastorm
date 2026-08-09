@@ -436,6 +436,7 @@ func Register(
 	protected.HandleFunc("/video/thumbnails/status", videoHandler.GetThumbnailsStatus).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/thumbnails/image/{key}/{file}", videoHandler.ServeThumbnailImage).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/credits/detect", videoHandler.DetectCredits).Methods(http.MethodPost, http.MethodOptions)
+	protected.HandleFunc("/video/segments", videoHandler.GetIntroSegments).Methods(http.MethodGet, http.MethodOptions)
 	protected.HandleFunc("/video/credits/status", videoHandler.GetCreditsStatus).Methods(http.MethodGet, http.MethodOptions)
 
 	// HLS streaming endpoints for Dolby Vision

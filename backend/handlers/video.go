@@ -3392,6 +3392,7 @@ func (h *VideoHandler) runFFProbe(ctx context.Context, inputSpecifier string, re
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
 		"-print_format", "json",
 		"-show_streams",
+		"-show_chapters",
 		"-show_format",
 	}
 	if reader == nil {
@@ -3444,6 +3445,7 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 		AudioStrategy:       string(plan.mode),
 		AudioPlanReason:     plan.reason,
 		AudioStreams:        make([]audioStreamSummary, 0),
+		Chapters:            make([]chapterSummary, 0),
 		VideoStreams:        make([]videoStreamSummary, 0),
 		SelectedAudioIndex:  -1,
 		SelectedAudioCodec:  "",
@@ -3454,6 +3456,21 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 	if plan.stream != nil {
 		resp.SelectedAudioIndex = plan.stream.Index
 		resp.SelectedAudioCodec = plan.codec()
+	}
+	for _, chapter := range meta.Chapters {
+		start := parseChapterTime(chapter.StartTime, chapter.Start, chapter.TimeBase)
+		end := parseChapterTime(chapter.EndTime, chapter.End, chapter.TimeBase)
+		if start < 0 || (end > 0 && end <= start) {
+			continue
+		}
+		if end < 0 {
+			end = 0
+		}
+		resp.Chapters = append(resp.Chapters, chapterSummary{
+			Title: normalizeTag(chapter.Tags, "title"),
+			Start: start,
+			End:   end,
+		})
 	}
 
 	var copyableFound bool
@@ -3570,6 +3587,28 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 	return resp
 }
 
+func parseChapterTime(decimal string, ticks int64, timeBase string) float64 {
+	if strings.TrimSpace(decimal) != "" {
+		if value, err := strconv.ParseFloat(decimal, 64); err == nil && value >= 0 {
+			return value
+		}
+	}
+	parts := strings.Split(strings.TrimSpace(timeBase), "/")
+	if len(parts) != 2 {
+		return -1
+	}
+	numerator, errNumerator := strconv.ParseFloat(parts[0], 64)
+	denominator, errDenominator := strconv.ParseFloat(parts[1], 64)
+	if errNumerator != nil || errDenominator != nil || denominator == 0 {
+		return -1
+	}
+	value := float64(ticks) * numerator / denominator
+	if value < 0 {
+		return -1
+	}
+	return value
+}
+
 func normalizeTag(tags map[string]string, key string) string {
 	if tags == nil {
 		return ""
@@ -3659,8 +3698,19 @@ type transmuxPlan struct {
 }
 
 type ffprobeOutput struct {
-	Streams []ffprobeStream `json:"streams"`
-	Format  ffprobeFormat   `json:"format"`
+	Streams  []ffprobeStream  `json:"streams"`
+	Chapters []ffprobeChapter `json:"chapters"`
+	Format   ffprobeFormat    `json:"format"`
+}
+
+type ffprobeChapter struct {
+	ID        int               `json:"id"`
+	TimeBase  string            `json:"time_base"`
+	Start     int64             `json:"start"`
+	StartTime string            `json:"start_time"`
+	End       int64             `json:"end"`
+	EndTime   string            `json:"end_time"`
+	Tags      map[string]string `json:"tags"`
 }
 
 type ffprobeStream struct {
@@ -3754,6 +3804,12 @@ type subtitleStreamSummary struct {
 	IsBitmap      bool           `json:"isBitmap,omitempty"` // True for PGS, HDMV, DVD subtitles (can't extract to VTT)
 }
 
+type chapterSummary struct {
+	Title string  `json:"title,omitempty"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end,omitempty"`
+}
+
 type videoMetadataResponse struct {
 	Path                  string                  `json:"path"`
 	DurationSeconds       float64                 `json:"durationSeconds"`
@@ -3769,6 +3825,7 @@ type videoMetadataResponse struct {
 	SelectedAudioIndex    int                     `json:"selectedAudioIndex"`
 	SelectedAudioCodec    string                  `json:"selectedAudioCodec,omitempty"`
 	AudioCopySupported    bool                    `json:"audioCopySupported"`
+	Chapters              []chapterSummary        `json:"chapters"`
 	NeedsAudioTranscode   bool                    `json:"needsAudioTranscode"`
 	SelectedSubtitleIndex int                     `json:"selectedSubtitleIndex"`
 	Notes                 []string                `json:"notes,omitempty"`
