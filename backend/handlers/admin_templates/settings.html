@@ -4564,12 +4564,22 @@
     }
 
     function handleFieldChange(basePath, fieldKey, value) {
-        // For nested config fields (e.g., config.autoClearQueue), convert booleans to strings
-        // because Config is map[string]string in Go
+        // Config is map[string]string in Go, so nested controls must use their
+        // decimal/boolean wire representation before currentSettings is serialized.
         if (fieldKey.startsWith('config.') && typeof value === 'boolean') {
             value = value ? 'true' : 'false';
+        } else if (fieldKey.startsWith('config.') && typeof value === 'number') {
+            if (!Number.isFinite(value)) return;
+            value = String(value);
         }
         setValue(basePath ? basePath+'.'+fieldKey : fieldKey, value);
+        if (basePath && basePath.startsWith('torrentScrapers.') && fieldKey === 'type' && value === 'peartube') {
+            initializePearTubePolicyDraft(getValue(basePath));
+        }
+        if (basePath && basePath.startsWith('torrentScrapers.') &&
+            (fieldKey === 'config.contributeWatchedMedia' || fieldKey === 'config.archiveEnabled')) {
+            markPearTubePolicyExplicit(basePath);
+        }
 
         if (basePath && basePath.startsWith('usenetEngines.') && fieldKey === 'enabled' && value === true) {
             allowOnlyOneEnabledUsenetEngine(basePath);
@@ -4698,6 +4708,9 @@
             }
             return '<p class="form-hint">AltMount and Decypharr usually use <code>/webdav</code>; NZBDav and NZBDavEx usually use the root URL.</p>';
         }
+        if (sectionKey === 'torrentScrapers' && item?.type === 'peartube') {
+            return renderPearTubeFieldHint(fieldKey);
+        }
         if (fieldKey !== 'maxStreams') return '';
         if (sectionKey === 'liveTV' && selectedUserId) {
             return '<p class="form-hint">Leave empty to inherit global.</p>';
@@ -4717,6 +4730,161 @@
         } catch (e) {
             console.warn('Failed to load hardware acceleration status:', e);
         }
+    }
+
+    async function loadPearTubeStatus() {
+        if (!isAdmin) return;
+        try {
+            const response = await fetch(basePath + '/api/p2p/status', { credentials: 'same-origin' });
+            if (!response.ok) return;
+            pearTubeStatus = await response.json();
+            if (!selectedUserId && !selectedClientId) renderSettings();
+        } catch (e) {
+            console.warn('Failed to load PearTube status:', e);
+        }
+    }
+
+    function renderPearTubeFieldHint(fieldKey) {
+        if (!pearTubeStatus) return '<p class="form-hint">Checking the relay…</p>';
+        const fromEnv = pearTubeStatus.fromEnv || {};
+        if (fieldKey === 'url') {
+            if (fromEnv.relayUrl) {
+                return '<p class="form-hint"><strong>PEARTUBE_RELAY_URL</strong> is providing the relay address (<code>' +
+                    escapeHtml(pearTubeStatus.relayUrl || '') + '</code>). This affects search availability only, never consent.</p>';
+            }
+            return pearTubeStatus.enabled
+                ? '<p class="form-hint">Relay in use: <code>' + escapeHtml(pearTubeStatus.relayUrl || '') + '</code></p>'
+                : '<p class="form-hint">No relay is configured. Watch-only remains the safe policy default.</p>';
+        }
+        if (fieldKey === 'enabled') {
+            return '<p class="form-hint">Relay search is currently ' + (pearTubeStatus.enabled ? 'on' : 'off') +
+                '. This switch never grants contribution or archive permission.</p>';
+        }
+        if (fieldKey === 'config.contributeWatchedMedia') {
+            return '<p class="form-hint">Effective contribution: ' +
+                (pearTubeStatus.contributeWatchedMedia ? 'on' : 'off') +
+                (pearTubeStatus.migrationRequired ? ' (migration choice required; operating watch-only).' : '.') + '</p>';
+        }
+        if (fieldKey === 'config.contributionBudget') {
+            return '<p class="form-hint">Effective contribution-cache budget: ' +
+                Number(pearTubeStatus.contributionBudget || 0) + ' GiB.</p>';
+        }
+        if (fieldKey === 'config.archiveEnabled') {
+            return '<p class="form-hint">Effective archive retention: ' +
+                (pearTubeStatus.archiveEnabled ? 'on.' : 'off. Contribution never implies archive consent.') + '</p>';
+        }
+        if (fieldKey === 'config.archiveBudget') {
+            return '<p class="form-hint">Effective archive budget: ' +
+                Number(pearTubeStatus.archiveBudget || 0) + ' GiB, separate from contribution cache.</p>';
+        }
+        return '';
+    }
+
+    function firstPearTubeScraper() {
+        if (!Array.isArray(currentSettings?.torrentScrapers)) return null;
+        return currentSettings.torrentScrapers.find(scraper => scraper?.type === 'peartube') || null;
+    }
+
+    function initializePearTubePolicyDraft(scraper) {
+        if (!scraper || scraper.type !== 'peartube') return;
+        if (!scraper.config || typeof scraper.config !== 'object' || Array.isArray(scraper.config)) scraper.config = {};
+        if (scraper.config.contributeWatchedMedia === undefined) scraper.config.contributeWatchedMedia = 'false';
+        if (scraper.config.contributionBudget === undefined) scraper.config.contributionBudget = '21';
+        if (scraper.config.archiveEnabled === undefined) scraper.config.archiveEnabled = 'false';
+        if (scraper.config.archiveBudget === undefined) scraper.config.archiveBudget = '144';
+    }
+
+    function markPearTubePolicyExplicit(basePath) {
+        const scraper = getValue(basePath);
+        initializePearTubePolicyDraft(scraper);
+        if (!scraper || scraper.type !== 'peartube') return;
+        scraper.config.consentVersion = '1';
+        scraper.config.migrationRequired = 'false';
+        scraper.config.contributeWatchedMedia = String(scraper.config.contributeWatchedMedia === true || scraper.config.contributeWatchedMedia === 'true');
+        scraper.config.archiveEnabled = String(scraper.config.archiveEnabled === true || scraper.config.archiveEnabled === 'true');
+        if (!scraper.config.contributionBudget) scraper.config.contributionBudget = '21';
+        if (!scraper.config.archiveBudget) scraper.config.archiveBudget = '144';
+    }
+
+    function confirmPearTubePolicy() {
+        const scraper = firstPearTubeScraper();
+        if (!scraper) {
+            showToast('Add a PearTube source before confirming its policy', 'error');
+            return;
+        }
+        const index = currentSettings.torrentScrapers.indexOf(scraper);
+        markPearTubePolicyExplicit('torrentScrapers.' + index);
+        pearTubeStatus = { ...(pearTubeStatus || {}), migrationRequired: false, effectiveMode:
+            scraper.config.archiveEnabled === 'true' ? 'archive-enabled' :
+            scraper.config.contributeWatchedMedia === 'true' ? 'contributor' : 'watch-only' };
+        renderSettings();
+        showToast('Policy choice staged. Save settings to persist it.');
+    }
+
+    function renderPearTubeStatusPanel() {
+        if (!pearTubeStatus) {
+            return '<div class="form-hint" style="margin-bottom: 1rem;">Checking the relay…</div>';
+        }
+        const state = String(pearTubeStatus.state || 'disabled');
+        const mode = String(pearTubeStatus.effectiveMode || 'migration-required');
+        const tones = {
+            ready: { color: 'var(--success)', label: 'Relay ready' },
+            not_open: { color: 'var(--warning)', label: 'Relay reachable, not serving media' },
+            unreachable: { color: 'var(--error)', label: 'Relay unreachable' },
+            disabled: { color: 'var(--text-muted)', label: 'Relay disabled' },
+        };
+        const tone = tones[state] || tones.disabled;
+        const modeLabels = {
+            'watch-only': 'Watch-only',
+            contributor: 'Contributor',
+            'archive-enabled': 'Archive enabled',
+            'migration-required': 'Migration required — safe watch-only',
+        };
+        const facts = [
+            'Effective mode: <strong>' + escapeHtml(modeLabels[mode] || mode) + '</strong>',
+            'Consent schema: ' + Number(pearTubeStatus.consentVersion || 0) + ' / 1',
+            'Contribution: ' + (pearTubeStatus.contributeWatchedMedia ? 'on' : 'off') +
+                ' · budget ' + Number(pearTubeStatus.contributionBudget || 0) + ' GiB',
+            'Archive: ' + (pearTubeStatus.archiveEnabled ? 'on' : 'off') +
+                ' · budget ' + Number(pearTubeStatus.archiveBudget || 0) + ' GiB',
+        ];
+        if (state === 'disabled') {
+            facts.push('Search and playback use no PearTube relay until one is configured.');
+        } else {
+            facts.push('Relay: <code>' + escapeHtml(pearTubeStatus.relayUrl || '') + '</code>');
+            if (state === 'ready') facts.push('Titles the swarm can serve: ' + Number(pearTubeStatus.catalogEntities || 0));
+        }
+        if (mode === 'watch-only' || mode === 'migration-required') {
+            facts.push('Watch-only permits relay search and playback but does not publish watched media or retain archives.');
+        }
+
+        let migrationHtml = '';
+        if (pearTubeStatus.migrationRequired) {
+            migrationHtml = '<div style="margin-top:0.7rem;padding:0.7rem 0.8rem;background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:6px;font-size:0.8rem;color:var(--warning);">' +
+                '<strong>Explicit choice required.</strong> Review the separate contribution and archive switches. ' +
+                'Until saved under consent schema 1, this install behaves as watch-only.' +
+                '<div style="margin-top:0.55rem;"><button type="button" class="btn btn-secondary btn-sm" onclick="confirmPearTubePolicy()">Confirm current choices</button></div></div>';
+        }
+        let remedyHtml = '';
+        if (state === 'not_open' && pearTubeStatus.remedy) {
+            remedyHtml = '<div style="margin-top:0.6rem;padding:0.6rem 0.75rem;background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:6px;font-size:0.8rem;color:var(--warning);">' +
+                '<strong>Fix on the relay:</strong> <code style="white-space:normal;overflow-wrap:anywhere;">' +
+                escapeHtml(pearTubeStatus.remedy) + '</code></div>';
+        }
+        const detailHtml = pearTubeStatus.detail
+            ? '<div class="form-hint" style="margin-top:0.5rem;overflow-wrap:anywhere;">Relay says: ' + escapeHtml(pearTubeStatus.detail) + '</div>'
+            : '';
+
+        return '<div style="margin-bottom:1.25rem;padding:0.85rem 1rem;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);">' +
+            '<div style="display:flex;align-items:center;gap:0.55rem;font-weight:600;font-size:0.875rem;">' +
+                '<span style="width:9px;height:9px;border-radius:50%;background:' + tone.color + ';flex-shrink:0;"></span>' +
+                escapeHtml(tone.label) +
+                '<code style="margin-left:auto;font-size:0.75rem;color:var(--text-muted);">' + escapeHtml(state) + '</code>' +
+            '</div>' +
+            '<div class="form-hint" style="margin-top:0.5rem;overflow-wrap:anywhere;">' + facts.join(' · ') + '</div>' +
+            migrationHtml + remedyHtml + detailHtml +
+            '<div style="margin-top:0.75rem;"><button type="button" class="btn btn-secondary btn-sm" onclick="void loadPearTubeStatus()">Re-check relay</button></div>' +
+        '</div>';
     }
     // Detect when an API-key field has had a full URL/query string pasted into it
     // instead of the bare key. Newznab/debrid keys are plain tokens; if the value
@@ -5517,24 +5685,33 @@
         }
         const newItem = {};
         for (const [fieldKey, fieldDef] of Object.entries(sectionDef.fields)) {
-            let defaultValue;
-            switch (fieldDef.type) {
-                case 'boolean': defaultValue = (sectionKey.endsWith('sources') || sectionKey.endsWith('playlistSources')) && fieldKey === 'enabled'; break;
-                case 'number': defaultValue = 0; break;
-                case 'multiselect':
-                case 'checkboxes':
-                case 'tags':
-                case 'weighted-tags':
-                    defaultValue = [];
-                    break;
-                case 'select':
-                    const firstOpt = fieldDef.options?.[0];
-                    defaultValue = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
-                    break;
-                default: defaultValue = '';
+            if (fieldKey.startsWith('config.') &&
+                ['config.contributeWatchedMedia', 'config.contributionBudget', 'config.archiveEnabled', 'config.archiveBudget'].includes(fieldKey) &&
+                newItem.type !== 'peartube') {
+                continue;
             }
-            if (fieldKey.startsWith('config.') && typeof defaultValue === 'boolean') {
-                defaultValue = defaultValue ? 'true' : 'false';
+            let defaultValue;
+            if (Object.prototype.hasOwnProperty.call(fieldDef, 'default')) {
+                defaultValue = fieldDef.default;
+            } else {
+                switch (fieldDef.type) {
+                    case 'boolean': defaultValue = (sectionKey.endsWith('sources') || sectionKey.endsWith('playlistSources')) && fieldKey === 'enabled'; break;
+                    case 'number': defaultValue = 0; break;
+                    case 'multiselect':
+                    case 'checkboxes':
+                    case 'tags':
+                    case 'weighted-tags':
+                        defaultValue = [];
+                        break;
+                    case 'select':
+                        const firstOpt = fieldDef.options?.[0];
+                        defaultValue = typeof firstOpt === 'object' ? firstOpt.value : (firstOpt || '');
+                        break;
+                    default: defaultValue = '';
+                }
+            }
+            if (fieldKey.startsWith('config.') && (typeof defaultValue === 'boolean' || typeof defaultValue === 'number')) {
+                defaultValue = String(defaultValue);
             }
             if (fieldKey.includes('.')) {
                 const parts = fieldKey.split('.');
@@ -11072,6 +11249,10 @@
             customHtml = renderThemeQuickSelect();
         }
 
+        // The relay's live verdict belongs above the fields it explains.
+        if (sectionKey === 'torrentScrapers') {
+            customHtml = renderPearTubeStatusPanel();
+        }
         // Add test button for testable object sections
         let testHtml = '';
         if (sectionDef.testable && !selectedUserId && !selectedClientId) {
@@ -11080,7 +11261,8 @@
                 '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Test Connection</button>'+
                 '<span id="test-result-'+sectionKey+'" class="test-result"></span></div>';
         }
-        return (sectionKey === 'display' ? customHtml + fieldsHtml : fieldsHtml + customHtml) + testHtml;
+        const prependCustom = sectionKey === 'display' || sectionKey === 'torrentScrapers';
+        return (prependCustom ? customHtml + fieldsHtml : fieldsHtml + customHtml) + testHtml;
     }
 
     function sectionShowWhenMatches(sectionDef) {

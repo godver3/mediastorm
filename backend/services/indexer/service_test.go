@@ -167,6 +167,23 @@ func (s *countingDebridSearchService) Search(context.Context, debrid.SearchOptio
 	return cloneNZBResults(s.results), nil
 }
 
+type refreshingPearTubeSearchService struct {
+	calls atomic.Int32
+}
+
+func (s *refreshingPearTubeSearchService) Search(context.Context, debrid.SearchOptions) ([]models.NZBResult, error) {
+	candidateRef := strings.Repeat("A", 43)
+	if s.calls.Add(1) > 1 {
+		candidateRef = strings.Repeat("B", 43)
+	}
+	return []models.NZBResult{{
+		Title:       "Movie 2024 [PearTube]",
+		Indexer:     "PearTube",
+		ServiceType: models.ServiceTypePearTube,
+		Attributes:  map[string]string{"peartube_candidate_ref": candidateRef},
+	}}, nil
+}
+
 type maxAwareDebridSearchService struct {
 	results []models.NZBResult
 }
@@ -699,6 +716,99 @@ func TestSearchCachesResultsForRepeatedQuery(t *testing.T) {
 	}
 	if got := debridSvc.calls.Load(); got != 2 {
 		t.Fatalf("expected cache clear to force another underlying call, got %d calls", got)
+	}
+}
+
+func TestSearchRefreshesPearTubeCandidateRefsInsteadOfUsingSharedCache(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.TorrentScrapers = []config.TorrentScraperConfig{{
+		Name:    "PearTube",
+		Type:    config.TorrentScraperTypePearTube,
+		URL:     "https://companion.example.test",
+		Enabled: true,
+	}}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	debridSvc := &refreshingPearTubeSearchService{}
+	svc := NewService(mgr, nil, debridSvc)
+	opts := SearchOptions{Query: "Movie 2024", MediaType: "movie", Year: 2024, SkipFilter: true}
+
+	first, err := svc.Search(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("first search returned error: %v", err)
+	}
+	second, err := svc.Search(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("second search returned error: %v", err)
+	}
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("search result counts = %d, %d; want one fresh candidate each", len(first), len(second))
+	}
+	if got := debridSvc.calls.Load(); got != 2 {
+		t.Fatalf("underlying search calls = %d, want 2 fresh PearTube searches", got)
+	}
+	firstRef := first[0].Attributes["peartube_candidate_ref"]
+	secondRef := second[0].Attributes["peartube_candidate_ref"]
+	if firstRef == secondRef {
+		t.Fatalf("repeated search returned stale candidate ref %q", secondRef)
+	}
+}
+
+func TestSearchForwardsTMDBIDThroughDebridToPearTube(t *testing.T) {
+	t.Setenv("PEARTUBE_COMPANION_CLIENT", "mediastorm-test")
+	t.Setenv("PEARTUBE_COMPANION_SHARED_SECRET", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+
+	var requestTarget string
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestTarget = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{
+			"schemaVersion":2,
+			"candidateRef":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			"work":{"title":"The Matrix","releaseYear":1999},
+			"publication":{"publicationId":"publication-1","publisherId":"publisher-1"},
+			"rendition":{"renditionId":"rendition-1","container":"video/mp4","videoCodec":"avc1","resolutionLabel":"1080p","byteLength":4096},
+			"asset":{"assetId":"asset-1","byteLength":4096}
+		}],"cursor":null}`))
+	}))
+	defer relay.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+	settings := config.DefaultSettings()
+	settings.Streaming.ServiceMode = config.StreamingServiceModeDebrid
+	settings.TorrentScrapers = []config.TorrentScraperConfig{{
+		Name:    "PearTube",
+		Type:    config.TorrentScraperTypePearTube,
+		URL:     relay.URL,
+		Enabled: true,
+	}}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	svc := NewService(mgr, nil, debrid.NewSearchService(mgr))
+	results, err := svc.Search(t.Context(), SearchOptions{
+		Query:      "fallback title must not select the candidate",
+		TMDBID:     "603",
+		MediaType:  "movie",
+		Year:       1999,
+		SkipFilter: true,
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if want := "/api/v2/search?identifier=603&kind=movie&namespace=tmdb"; requestTarget != want {
+		t.Fatalf("companion request target = %q, want %q", requestTarget, want)
+	}
+	if len(results) != 1 || results[0].Attributes["peartube_candidate_ref"] == "" {
+		t.Fatalf("Search returned %+v, want one deferred PearTube candidate", results)
 	}
 }
 

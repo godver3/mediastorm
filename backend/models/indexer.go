@@ -5,9 +5,10 @@ import "time"
 type ContentServiceType string
 
 const (
-	ServiceTypeUnknown ContentServiceType = ""
-	ServiceTypeUsenet  ContentServiceType = "usenet"
-	ServiceTypeDebrid  ContentServiceType = "debrid"
+	ServiceTypeUnknown  ContentServiceType = ""
+	ServiceTypeUsenet   ContentServiceType = "usenet"
+	ServiceTypeDebrid   ContentServiceType = "debrid"
+	ServiceTypePearTube ContentServiceType = "peartube"
 )
 
 // NZBResult represents a normalized search result from a Torznab/Newznab indexer.

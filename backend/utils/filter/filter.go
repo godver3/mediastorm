@@ -223,6 +223,35 @@ func resolutionToString(res int) string {
 	}
 }
 
+func withStructuredQualityFacts(result models.NZBResult, parsed *parsett.ParsedTitle) *parsett.ParsedTitle {
+	if parsed == nil || result.ServiceType != models.ServiceTypePearTube {
+		return parsed
+	}
+
+	copy := *parsed
+	changed := false
+	if resolution := strings.TrimSpace(result.Attributes["resolution"]); resolutionToNumeric(resolution) > 0 {
+		copy.Resolution = resolution
+		changed = true
+	}
+	if encodedFormats := strings.TrimSpace(result.Attributes["hdrFormats"]); encodedFormats != "" {
+		formats := make([]string, 0, strings.Count(encodedFormats, ",")+1)
+		for format := range strings.SplitSeq(encodedFormats, ",") {
+			if format = strings.TrimSpace(format); format != "" {
+				formats = append(formats, format)
+			}
+		}
+		if len(formats) > 0 {
+			copy.HDR = formats
+			changed = true
+		}
+	}
+	if !changed {
+		return parsed
+	}
+	return &copy
+}
+
 // extractResolutionFromTitle extracts resolution from the title using simple string matching.
 // This is a fallback for when parsett doesn't detect resolution (e.g., underscore-separated titles).
 func extractResolutionFromTitle(title string) int {
@@ -363,6 +392,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			detailed = append(detailed, FilteredResult{Result: result, Passed: true})
 			continue
 		}
+		parsed = withStructuredQualityFacts(result, parsed)
 
 		// Ensure attributes map is initialized early (needed for year match tagging)
 		if result.Attributes == nil {

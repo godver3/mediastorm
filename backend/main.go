@@ -54,6 +54,7 @@ import (
 	"novastream/services/metadata"
 	"novastream/services/notifications"
 	"novastream/services/numbersstation"
+	"novastream/services/peartube"
 	"novastream/services/playback"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
@@ -374,7 +375,7 @@ func main() {
 	badStreamsHandler := handlers.NewBadStreamsHandler(badStreamsService)
 	indexerHandler.SetBadStreamsService(badStreamsService)
 
-	playbackService := playback.NewService(cfgManager, nzbSystem, nzbSystem.MetadataReader())
+	playbackService := playback.NewService(cfgManager, nzbSystem, nzbSystem.MetadataReader(), &peartube.Resolver{})
 	// Wire the preflight availability probe: usenet candidates are
 	// segment-sampled concurrently with the full resolve, so dead releases are
 	// cancelled and rejected cheaply (fail-open — only a definitive
@@ -887,6 +888,44 @@ func main() {
 	localMediaHandler := handlers.NewLocalMediaHandler(localMediaService, userService, settings.Transmux.Enabled)
 	localMediaHandler.SetMetadataLanguageProviders(metadataService, cfgManager, userSettingsService)
 	localMediaHandler.SetRemoteMediaService(remoteMediaService)
+	// Inert unless the admin settings or PEARTUBE_RELAY_URL/PEARTUBE_ENABLED name
+	// a relay. ApplyPearTubeSettings below installs the effective configuration.
+	pearTubeHandler := handlers.NewPearTubeHandler(localMediaService)
+	sourceGrants := peartube.NewSourceGrantRegistryFromEnv()
+	defer sourceGrants.Close()
+	pearTubeHandler.SetSourceGrants(sourceGrants)
+	r.Handle(peartube.SourceCallbackRoute, sourceGrants).Methods(http.MethodHead, http.MethodGet, http.MethodDelete)
+	// Lets a seed name the stream path a playback resolve returned, so a debrid
+	// or usenet source is re-resolved to a current URL at seed time instead of
+	// the caller shipping an expired one.
+	pearTubeHandler.SetStreamResolver(compositeProvider)
+	// Configure the integration from the stored settings, and again on every
+	// settings save, so a relay can be added, moved, or switched off from the
+	// admin settings page without restarting the container.
+	if err := pearTubeHandler.ApplyPearTubeSettings(settings.PearTubeConfig()); err != nil {
+		// Startup remains available for private playback, but contribution stays
+		// fail-closed until a later settings save reconciles the relay.
+		log.Printf("[peartube] initial relay policy reconciliation failed: %v", err)
+	}
+	settingsHandler.SetPearTubeConfigurer(pearTubeHandler)
+	// Contribute watched media only when the current persisted policy explicitly
+	// opts in. Relay search/playback remains independent from this observer.
+	//
+	// Every playback signal is registered, because no single one of them sees
+	// every player. The progress endpoint below is the web player's heartbeat;
+	// the HLS keepalive is the web player behind a transcode; and a byte-range
+	// stream request opening a new playback is the only signal an app produces.
+	// One title still seeds once: the seeder claims by title, not by signal.
+	//
+	// The metadata service is handed over because no app client sends a TMDB id:
+	// it names titles by TVDB and IMDb, and the swarm keys every entity by TMDB
+	// number, so the id has to be recovered here rather than demanded of clients
+	// that are already in the field.
+	pearTubeHandler.SetTMDBResolver(metadataService)
+	historyHandler.SetAutoSeeder(pearTubeHandler)
+	videoHandler.GetHLSManager().AddPlaybackActivityObserver(pearTubeHandler)
+	handlers.GetStreamTracker().AddPlaybackActivityObserver(pearTubeHandler)
+	handlers.GetStreamTracker().SetPlaybackAutoSeeder(pearTubeHandler)
 	localMediaHandler.SetLibraryAccessService(libraryAccessService)
 	userSettingsHandler.LocalMedia = localMediaService
 	userSettingsHandler.SetPrequeueStore(prequeueHandler.GetStore())

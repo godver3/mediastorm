@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,6 +51,9 @@ type Settings struct {
 	Network         NetworkSettings         `json:"network,omitempty"`
 	Ranking         RankingSettings         `json:"ranking,omitempty"`
 	BackupRetention BackupRetentionSettings `json:"backupRetention,omitempty"`
+	// PearTube is the pre-scraper-list load shape. It is cleared during load
+	// and save; runtime consumers read PearTubeConfig from TorrentScrapers.
+	PearTube *LegacyPearTubeSettings `json:"peartube,omitempty"`
 }
 
 type ServerSettings struct {
@@ -203,6 +207,205 @@ type TorrentScraperConfig struct {
 	Enabled         bool              `json:"enabled"`
 	Config          map[string]string `json:"config,omitempty"` // Scraper-specific config
 	AllowedProfiles []string          `json:"allowedProfiles,omitempty"`
+}
+
+// TorrentScraperTypePearTube is the scraper type naming the PearTube relay.
+const TorrentScraperTypePearTube = "peartube"
+
+// PearTubeConsentVersion is the only consent schema this binary understands.
+// Budget values are integer GiB so the persisted unit is concrete and portable.
+const (
+	PearTubeConsentVersion               = 1
+	PearTubeDefaultContributionBudgetGiB = 21
+	PearTubeDefaultArchiveBudgetGiB      = 144
+	PearTubeContributionBudgetMinGiB     = 1
+	PearTubeContributionBudgetMaxGiB     = 610
+	PearTubeArchiveBudgetMinGiB          = 1
+	PearTubeArchiveBudgetMaxGiB          = 1597
+	PearTubeConfigConsentVersion         = "consentVersion"
+	PearTubeConfigMigrationRequired      = "migrationRequired"
+	PearTubeConfigContributeWatchedMedia = "contributeWatchedMedia"
+	PearTubeConfigContributionBudget     = "contributionBudget"
+	PearTubeConfigArchiveEnabled         = "archiveEnabled"
+	PearTubeConfigArchiveBudget          = "archiveBudget"
+	PearTubeModeWatchOnly                = "watch-only"
+	PearTubeModeContributor              = "contributor"
+	PearTubeModeArchiveEnabled           = "archive-enabled"
+	PearTubeModeMigrationRequired        = "migration-required"
+)
+
+// PearTubeConfig reads relay availability and contribution policy from the
+// first PearTube scraper. Later entries never override or merge its consent.
+func (s Settings) PearTubeConfig() PearTubeSettings {
+	for i := range s.TorrentScrapers {
+		entry := &s.TorrentScrapers[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Type), TorrentScraperTypePearTube) {
+			return pearTubeSettingsFromScraper(entry)
+		}
+	}
+	return defaultPearTubeSettings()
+}
+
+func defaultPearTubeSettings() PearTubeSettings {
+	return PearTubeSettings{
+		ContributionBudget: PearTubeDefaultContributionBudgetGiB,
+		ArchiveBudget:      PearTubeDefaultArchiveBudgetGiB,
+		MigrationRequired:  true,
+	}
+}
+
+func pearTubeSettingsFromScraper(entry *TorrentScraperConfig) PearTubeSettings {
+	out := defaultPearTubeSettings()
+	enabled := entry.Enabled
+	out.RelayURL = strings.TrimSpace(entry.URL)
+	out.Enabled = &enabled
+
+	version, versionOK := pearTubeConfigInt(entry.Config, PearTubeConfigConsentVersion)
+	migrationRequired, migrationOK := pearTubeConfigBool(entry.Config, PearTubeConfigMigrationRequired)
+	contribute, contributeOK := pearTubeConfigBool(entry.Config, PearTubeConfigContributeWatchedMedia)
+	archive, archiveOK := pearTubeConfigBool(entry.Config, PearTubeConfigArchiveEnabled)
+	if version != PearTubeConsentVersion || !versionOK || !migrationOK || !contributeOK || !archiveOK {
+		return out
+	}
+
+	out.ConsentVersion = version
+	out.MigrationRequired = migrationRequired
+	out.ContributionBudget = pearTubeBudget(
+		entry.Config[PearTubeConfigContributionBudget],
+		PearTubeDefaultContributionBudgetGiB,
+		PearTubeContributionBudgetMinGiB,
+		PearTubeContributionBudgetMaxGiB,
+	)
+	out.ArchiveBudget = pearTubeBudget(
+		entry.Config[PearTubeConfigArchiveBudget],
+		PearTubeDefaultArchiveBudgetGiB,
+		PearTubeArchiveBudgetMinGiB,
+		PearTubeArchiveBudgetMaxGiB,
+	)
+	if !migrationRequired {
+		out.ContributeWatchedMedia = contribute
+		out.ArchiveEnabled = archive
+	}
+	return out
+}
+
+func pearTubeConfigBool(values map[string]string, key string) (bool, bool) {
+	raw, exists := values[key]
+	if !exists {
+		return false, false
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return value, err == nil
+}
+
+func pearTubeConfigInt(values map[string]string, key string) (int, bool) {
+	raw, exists := values[key]
+	if !exists {
+		return 0, false
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	return value, err == nil
+}
+
+func pearTubeBudget(raw string, fallback, minimum, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	if value < minimum {
+		return minimum
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+// NormalizePearTubePoliciesForSave makes every normal write use the current
+// schema. It deliberately ignores legacy autoSeed: only raw-load migration may
+// carry an explicitly persisted legacy choice forward.
+func (s *Settings) NormalizePearTubePoliciesForSave() {
+	s.migrateLegacyPearTubeSettings()
+	first := true
+	for i := range s.TorrentScrapers {
+		entry := &s.TorrentScrapers[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Type), TorrentScraperTypePearTube) {
+			continue
+		}
+		if entry.Config == nil {
+			entry.Config = make(map[string]string)
+		}
+		delete(entry.Config, "autoSeed")
+		if !first {
+			continue
+		}
+		first = false
+
+		version, versionOK := pearTubeConfigInt(entry.Config, PearTubeConfigConsentVersion)
+		migrationRequired, migrationOK := pearTubeConfigBool(entry.Config, PearTubeConfigMigrationRequired)
+		contribute, contributeOK := pearTubeConfigBool(entry.Config, PearTubeConfigContributeWatchedMedia)
+		archive, archiveOK := pearTubeConfigBool(entry.Config, PearTubeConfigArchiveEnabled)
+		if version != PearTubeConsentVersion || !versionOK || !migrationOK || !contributeOK || !archiveOK {
+			migrationRequired = true
+			contribute = false
+			archive = false
+		}
+		if migrationRequired {
+			contribute = false
+			archive = false
+		}
+
+		entry.Config[PearTubeConfigConsentVersion] = strconv.Itoa(PearTubeConsentVersion)
+		entry.Config[PearTubeConfigMigrationRequired] = strconv.FormatBool(migrationRequired)
+		entry.Config[PearTubeConfigContributeWatchedMedia] = strconv.FormatBool(contribute)
+		entry.Config[PearTubeConfigContributionBudget] = strconv.Itoa(pearTubeBudget(
+			entry.Config[PearTubeConfigContributionBudget],
+			PearTubeDefaultContributionBudgetGiB,
+			PearTubeContributionBudgetMinGiB,
+			PearTubeContributionBudgetMaxGiB,
+		))
+		entry.Config[PearTubeConfigArchiveEnabled] = strconv.FormatBool(archive)
+		entry.Config[PearTubeConfigArchiveBudget] = strconv.Itoa(pearTubeBudget(
+			entry.Config[PearTubeConfigArchiveBudget],
+			PearTubeDefaultArchiveBudgetGiB,
+			PearTubeArchiveBudgetMinGiB,
+			PearTubeArchiveBudgetMaxGiB,
+		))
+	}
+	s.PearTube = nil
+}
+
+// migrateLegacyPearTubeSettings handles programmatically constructed legacy
+// settings safely. Persisted files are migrated from raw JSON so field presence
+// and malformed values remain distinguishable.
+func (s *Settings) migrateLegacyPearTubeSettings() {
+	legacy := s.PearTube
+	s.PearTube = nil
+	if legacy == nil {
+		return
+	}
+	if legacy.RelayURL == "" && legacy.Enabled == nil && legacy.AutoSeed == nil {
+		return
+	}
+	for i := range s.TorrentScrapers {
+		if strings.EqualFold(strings.TrimSpace(s.TorrentScrapers[i].Type), TorrentScraperTypePearTube) {
+			return
+		}
+	}
+	s.TorrentScrapers = append(s.TorrentScrapers, TorrentScraperConfig{
+		Name:    "PearTube",
+		Type:    TorrentScraperTypePearTube,
+		URL:     strings.TrimSpace(legacy.RelayURL),
+		Enabled: legacy.Enabled == nil || *legacy.Enabled,
+		Config: map[string]string{
+			PearTubeConfigConsentVersion:         strconv.Itoa(PearTubeConsentVersion),
+			PearTubeConfigMigrationRequired:      "true",
+			PearTubeConfigContributeWatchedMedia: "false",
+			PearTubeConfigContributionBudget:     strconv.Itoa(PearTubeDefaultContributionBudgetGiB),
+			PearTubeConfigArchiveEnabled:         "false",
+			PearTubeConfigArchiveBudget:          strconv.Itoa(PearTubeDefaultArchiveBudgetGiB),
+		},
+	})
 }
 
 type MetadataSettings struct {
@@ -1490,6 +1693,44 @@ func (m *MDBListSettings) RemoveAccount(id string) bool {
 		}
 	}
 	return false
+}
+
+// PearTubeSettings is the typed view of the first PearTube scraper. Relay
+// availability may still come from the environment, but contribution and
+// archive consent come only from this versioned persisted policy.
+type PearTubeSettings struct {
+	RelayURL               string `json:"relayUrl,omitempty"`
+	Enabled                *bool  `json:"enabled,omitempty"`
+	ConsentVersion         int    `json:"consentVersion"`
+	MigrationRequired      bool   `json:"migrationRequired"`
+	ContributeWatchedMedia bool   `json:"contributeWatchedMedia"`
+	ContributionBudget     int    `json:"contributionBudget"`
+	ArchiveEnabled         bool   `json:"archiveEnabled"`
+	ArchiveBudget          int    `json:"archiveBudget"`
+}
+
+// EffectiveMode is the single truthful role exposed to runtime consumers.
+// Migration-required is operationally watch-only, but stays distinct so the
+// admin UI can ask the operator for a current explicit choice.
+func (s PearTubeSettings) EffectiveMode() string {
+	switch {
+	case s.MigrationRequired || s.ConsentVersion != PearTubeConsentVersion:
+		return PearTubeModeMigrationRequired
+	case s.ArchiveEnabled:
+		return PearTubeModeArchiveEnabled
+	case s.ContributeWatchedMedia:
+		return PearTubeModeContributor
+	default:
+		return PearTubeModeWatchOnly
+	}
+}
+
+// LegacyPearTubeSettings exists only to decode the removed top-level block.
+// AutoSeed is read once by the raw migration and is never a runtime setting.
+type LegacyPearTubeSettings struct {
+	RelayURL string `json:"relayUrl,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+	AutoSeed *bool  `json:"autoSeed,omitempty"`
 }
 
 // TraktAccount represents a registered Trakt account with its own credentials and OAuth tokens.
@@ -2932,6 +3173,7 @@ func (m *Manager) Save(s Settings) error {
 	if m.path == "" {
 		return errors.New("config path not set")
 	}
+	s.NormalizePearTubePoliciesForSave()
 	s.Metadata.NormalizeAISettings()
 	s.Metadata.NormalizeLanguages()
 	s.Playback.NormalizeAllowedTrackLanguages()

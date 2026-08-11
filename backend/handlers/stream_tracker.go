@@ -17,6 +17,10 @@ import (
 	"novastream/models"
 )
 
+type playbackAutoSeeder interface {
+	OnPlaybackStarted(models.PlaybackProgressUpdate)
+}
+
 // StreamTracker tracks active video streams for monitoring
 type StreamTracker struct {
 	streams          map[string]*TrackedStream
@@ -26,6 +30,7 @@ type StreamTracker struct {
 	mu               sync.RWMutex
 	counter          uint64
 	playbackObserver PlaybackActivityObserver
+	autoSeeder       playbackAutoSeeder
 }
 
 type recentlyEndedStream struct {
@@ -252,6 +257,17 @@ func (t *StreamTracker) AddPlaybackActivityObserver(observer PlaybackActivityObs
 	t.mu.Unlock()
 }
 
+// SetPlaybackAutoSeeder registers the p2p integration on the only playback
+// signal a native player produces.
+func (t *StreamTracker) SetPlaybackAutoSeeder(seeder playbackAutoSeeder) {
+	if t == nil || seeder == nil {
+		return
+	}
+	t.mu.Lock()
+	t.autoSeeder = seeder
+	t.mu.Unlock()
+}
+
 // AssociateClientWithPlayback binds the authenticated app client sending a
 // playback heartbeat to its active direct transport connections. Older native
 // app bundles did not include clientId in the media URL, even though their API
@@ -469,8 +485,30 @@ func (t *StreamTracker) StartStreamWithAccount(r *http.Request, path string, con
 		activityCounter: activityCounter,
 	}
 
+	newPlayback := !t.hasPlaybackSlotLocked(nil, trackedStreamSlotKey(stream))
 	t.streams[id] = stream
+	if newPlayback {
+		t.observePlaybackStartLocked(stream)
+	}
 	return id, bytesCounter, activityCounter
+}
+
+// observePlaybackStartLocked hands a newly opened playback to the auto-seeder.
+// It never blocks or fails the viewer's stream.
+func (t *StreamTracker) observePlaybackStartLocked(stream *TrackedStream) {
+	if t.autoSeeder == nil {
+		return
+	}
+	update := enrichPlaybackUpdateFromStream(models.PlaybackProgressUpdate{
+		SourcePath:        stream.Path,
+		Timestamp:         stream.StartTime,
+		PlaybackSessionID: "direct:" + trackedStreamSlotKey(stream),
+	}, stream.MediaMetadata)
+	if update.MediaType == "" || update.MediaType == "live" || update.ItemID == "" {
+		return
+	}
+	seeder := t.autoSeeder
+	go seeder.OnPlaybackStarted(update)
 }
 
 // SetStreamCancel attaches a cancellation function to a tracked stream.

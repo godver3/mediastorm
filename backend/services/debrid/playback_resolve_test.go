@@ -55,3 +55,31 @@ func TestResolveSkipsProviderBlockedSelectedFile(t *testing.T) {
 		t.Fatal("expected blocked torrent to be deleted")
 	}
 }
+
+func TestFilterCachedResultsDoesNotInterpretPearTubeAsDebrid(t *testing.T) {
+	mock := &mockProvider{name: "testprovider_peartube_guard"}
+	svc := newTestPlaybackService(t, mock)
+	candidate := models.NZBResult{
+		Title:       "PearTube candidate with poisoned debrid fields",
+		Link:        "magnet:?xt=urn:btih:THIS-MUST-NOT-BE-PARSED",
+		ServiceType: models.ServiceTypePearTube,
+		Attributes: map[string]string{
+			"provider":               mock.name,
+			"infoHash":               "THIS-MUST-NOT-REACH-CACHE-HEALTH",
+			"peartube_candidate_ref": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		},
+	}
+
+	if cached := svc.FilterCachedResults(context.Background(), []models.NZBResult{candidate}); len(cached) != 0 {
+		t.Fatalf("FilterCachedResults returned %d PearTube candidates, want 0", len(cached))
+	}
+	if calls := atomic.LoadInt64(&mock.instantCalls); calls != 0 {
+		t.Fatalf("instant cache calls = %d, want 0", calls)
+	}
+	if calls := atomic.LoadInt64(&mock.addMagnetCalls); calls != 0 {
+		t.Fatalf("magnet add calls = %d, want 0", calls)
+	}
+	if calls := atomic.LoadInt64(&mock.getInfoCalls); calls != 0 {
+		t.Fatalf("torrent info calls = %d, want 0", calls)
+	}
+}

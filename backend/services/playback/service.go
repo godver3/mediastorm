@@ -45,13 +45,26 @@ type metadataService interface {
 	GetFileMetadata(virtualPath string) (*metapb.FileMetadata, error)
 }
 
+type pearTubeResolver interface {
+	Open(ctx context.Context, candidateRef string) (*models.PlaybackResolution, error)
+}
+
+type debridPlaybackService interface {
+	Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error)
+	ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error)
+	PrepareTorrentCandidates(ctx context.Context, candidates []models.NZBResult) []models.NZBResult
+}
+
+var _ debridPlaybackService = (*debrid.PlaybackService)(nil)
+
 // Service coordinates NZB validation and prepares backend-hosted playback streams.
 type Service struct {
-	cfg         *config.Manager
-	httpClient  *http.Client
-	debrid      *debrid.PlaybackService
-	nzbSystem   *integration.NzbSystem
-	metadataSvc metadataService
+	cfg              *config.Manager
+	httpClient       *http.Client
+	debrid           debridPlaybackService
+	pearTubeResolver pearTubeResolver
+	nzbSystem        *integration.NzbSystem
+	metadataSvc      metadataService
 
 	externalMu     sync.Mutex
 	externalJobs   map[int64]*externalUsenetJob
@@ -163,7 +176,14 @@ func safeURLForLog(rawURL string) string {
 }
 
 // NewService returns a new playback service with a default HTTP client when one is not provided.
-func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataSvc metadataService) *Service {
+func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataSvc metadataService, pearTubeResolvers ...pearTubeResolver) *Service {
+	var resolver pearTubeResolver
+	for _, candidate := range pearTubeResolvers {
+		if candidate != nil {
+			resolver = candidate
+			break
+		}
+	}
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 20, // Allow parallel NZB fetches from same indexer
@@ -178,15 +198,16 @@ func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataS
 			Timeout:   60 * time.Second,
 			Transport: transport,
 		},
-		debrid:          debrid.NewPlaybackService(cfg, nil),
-		nzbSystem:       nzbSystem,
-		metadataSvc:     metadataSvc,
-		externalJobs:    make(map[int64]*externalUsenetJob),
-		externalByKey:   make(map[string]int64),
-		externalClaims:  make(map[string]chan struct{}),
-		externalReady:   make(map[string]*externalResolvedResult),
-		externalDone:    make(map[int64]*externalResolvedResult),
-		providerBreaker: providerbreaker.Shared(),
+		debrid:           debrid.NewPlaybackService(cfg, nil),
+		nzbSystem:        nzbSystem,
+		metadataSvc:      metadataSvc,
+		pearTubeResolver: resolver,
+		externalJobs:     make(map[int64]*externalUsenetJob),
+		externalByKey:    make(map[string]int64),
+		externalClaims:   make(map[string]chan struct{}),
+		externalReady:    make(map[string]*externalResolvedResult),
+		externalDone:     make(map[int64]*externalResolvedResult),
+		providerBreaker:  providerbreaker.Shared(),
 	}
 	service.externalNextID.Store(externalQueueIDBase)
 	return service
@@ -224,6 +245,17 @@ func (s *Service) ResolveBatch(ctx context.Context, candidate models.NZBResult, 
 // Resolve ingests the supplied NZB search result and returns a streaming path.
 func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
 	log.Printf("[playback] resolve start title=%q downloadURL=%q link=%q serviceType=%q", strings.TrimSpace(candidate.Title), safeURLForLog(candidate.DownloadURL), safeURLForLog(candidate.Link), candidate.ServiceType)
+
+	if candidate.ServiceType == models.ServiceTypePearTube {
+		if s.pearTubeResolver == nil {
+			return nil, fmt.Errorf("peartube resolver not configured")
+		}
+		candidateRef := strings.TrimSpace(candidate.Attributes["peartube_candidate_ref"])
+		if candidateRef == "" {
+			return nil, fmt.Errorf("peartube candidate is missing candidate reference")
+		}
+		return s.pearTubeResolver.Open(ctx, candidateRef)
+	}
 
 	// Route to debrid service if this is a debrid result
 	if candidate.ServiceType == models.ServiceTypeDebrid {
@@ -428,7 +460,32 @@ func (s *Service) PrepareTorrentCandidates(ctx context.Context, candidates []mod
 	if s == nil || s.debrid == nil {
 		return candidates
 	}
-	return s.debrid.PrepareTorrentCandidates(ctx, candidates)
+
+	var nonPearTube []models.NZBResult
+	var indexes []int
+	for index := range candidates {
+		if candidates[index].ServiceType == models.ServiceTypePearTube {
+			continue
+		}
+		nonPearTube = append(nonPearTube, candidates[index])
+		indexes = append(indexes, index)
+	}
+	if len(nonPearTube) == len(candidates) {
+		return s.debrid.PrepareTorrentCandidates(ctx, candidates)
+	}
+	if len(nonPearTube) == 0 {
+		return candidates
+	}
+
+	prepared := s.debrid.PrepareTorrentCandidates(ctx, nonPearTube)
+	if len(prepared) != len(indexes) {
+		return candidates
+	}
+	out := append([]models.NZBResult(nil), candidates...)
+	for index, originalIndex := range indexes {
+		out[originalIndex] = prepared[index]
+	}
+	return out
 }
 
 // preflightVerdictGrace bounds how long a failed full resolve waits for a
