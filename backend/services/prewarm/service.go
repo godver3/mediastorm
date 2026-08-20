@@ -706,6 +706,22 @@ func (s *Service) Stop() {
 	}
 }
 
+// ClearAll drops every warm entry (memory + persistence) so the next play
+// cannot reuse pre-warmed resolution work. Used by the latency cold-test flush.
+func (s *Service) ClearAll() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.entries = make(map[string]*WarmEntry)
+	_ = s.saveLocked()
+	s.mu.Unlock()
+	s.adhocMu.Lock()
+	s.adhocEntries = make(map[string]time.Time)
+	s.adhocMu.Unlock()
+	log.Printf("[prewarm] cleared all warm entries (cold-test flush)")
+}
+
 // RunOnce performs a legacy-compatible prewarm cycle.
 func (s *Service) RunOnce(ctx context.Context) (SyncResult, error) {
 	return s.RunOnceWithConfig(ctx, nil)

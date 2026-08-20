@@ -11,13 +11,17 @@ import (
 
 // Manager provides centralized NNTP connection pool management
 type Manager interface {
-	// GetPool returns the current connection pool or error if not available
+	// GetPool returns the current connection pool, recreating it from the last
+	// configured providers if it was cleared (e.g. by a cold-test flush) so a
+	// cleared pool is not permanently broken.
 	GetPool() (nntppool.UsenetConnectionPool, error)
 
 	// SetProviders creates/recreates the pool with new providers
 	SetProviders(providers []nntppool.UsenetProviderConfig) error
 
-	// ClearPool shuts down and removes the current pool
+	// ClearPool shuts down and drops the live pool. The provider configuration
+	// is retained, so the next GetPool reconstitutes it with fresh connections
+	// (a "cold pool" rather than a disabled one).
 	ClearPool() error
 
 	// HasPool returns true if a pool is currently available
@@ -26,8 +30,9 @@ type Manager interface {
 
 // manager implements the Manager interface
 type manager struct {
-	mu   sync.RWMutex
-	pool nntppool.UsenetConnectionPool
+	mu        sync.RWMutex
+	pool      nntppool.UsenetConnectionPool
+	providers []nntppool.UsenetProviderConfig // last configured set, rebuilt lazily after ClearPool
 }
 
 // NewManager creates a new pool manager
@@ -35,15 +40,31 @@ func NewManager() Manager {
 	return &manager{}
 }
 
-// GetPool returns the current connection pool or error if not available
+// GetPool returns the current connection pool, recreating it from the last
+// configured providers if it was cleared. Rebuilding under the write lock is
+// safe: it only happens after a clear, and callers block briefly only then.
 func (m *manager) GetPool() (nntppool.UsenetConnectionPool, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	pool := m.pool
+	hasProviders := len(m.providers) > 0
+	m.mu.RUnlock()
 
-	if m.pool == nil {
+	if pool != nil {
+		return pool, nil
+	}
+	if !hasProviders {
 		return nil, fmt.Errorf("NNTP connection pool not available - no providers configured")
 	}
 
+	// No live pool but providers are configured: rebuild it (double-checked).
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pool != nil {
+		return m.pool, nil
+	}
+	if err := m.buildPoolLocked(); err != nil {
+		return nil, err
+	}
 	return m.pool, nil
 }
 
@@ -51,6 +72,8 @@ func (m *manager) GetPool() (nntppool.UsenetConnectionPool, error) {
 func (m *manager) SetProviders(providers []nntppool.UsenetProviderConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.providers = append([]nntppool.UsenetProviderConfig(nil), providers...)
 
 	// Shut down existing pool if present
 	if m.pool != nil {
@@ -65,33 +88,17 @@ func (m *manager) SetProviders(providers []nntppool.UsenetProviderConfig) error 
 		return nil
 	}
 
-	// Create new pool with providers
-	// Keep MinConnections > 0 to maintain warm connections for faster health checks
-	// MaxConnections is set per-provider from user config (UsenetSettings.Connections)
-	slog.Info("Creating NNTP connection pool", "provider_count", len(providers))
-	pool, err := nntppool.NewConnectionPool(nntppool.Config{
-		Providers:      providers,
-		Logger:         slog.Default(),
-		DelayType:      nntppool.DelayTypeFixed,
-		RetryDelay:     10 * time.Millisecond,
-		MinConnections: 2, // Keep 2 warm connections per provider for faster STAT commands
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create NNTP connection pool: %w", err)
-	}
-
-	m.pool = pool
-	slog.Info("NNTP connection pool created successfully")
-	return nil
+	return m.buildPoolLocked()
 }
 
-// ClearPool shuts down and removes the current pool
+// ClearPool shuts down and drops the live pool. Provider configuration is kept
+// so the next GetPool recreates fresh connections — a cold pool, not a dead one.
 func (m *manager) ClearPool() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.pool != nil {
-		slog.Info("Clearing NNTP connection pool")
+		slog.Info("Clearing NNTP connection pool (providers retained for lazy rebuild)")
 		m.pool.Quit()
 		m.pool = nil
 	}
@@ -105,4 +112,27 @@ func (m *manager) HasPool() bool {
 	defer m.mu.RUnlock()
 
 	return m.pool != nil
+}
+
+// buildPoolLocked creates the pool from the retained provider config. Caller
+// must hold m.mu (write).
+func (m *manager) buildPoolLocked() error {
+	// Create new pool with providers
+	// Keep MinConnections > 0 to maintain warm connections for faster health checks
+	// MaxConnections is set per-provider from user config (UsenetSettings.Connections)
+	slog.Info("Creating NNTP connection pool", "provider_count", len(m.providers))
+	pool, err := nntppool.NewConnectionPool(nntppool.Config{
+		Providers:      m.providers,
+		Logger:         slog.Default(),
+		DelayType:      nntppool.DelayTypeFixed,
+		RetryDelay:     10 * time.Millisecond,
+		MinConnections: 2, // Keep 2 warm connections per provider for faster STAT commands
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create NNTP connection pool: %w", err)
+	}
+
+	m.pool = pool
+	slog.Info("NNTP connection pool created successfully")
+	return nil
 }

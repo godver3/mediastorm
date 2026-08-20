@@ -292,6 +292,20 @@ func (c *resolvedNZBCache) delete(ctx context.Context, key string) error {
 	return c.saveLocked(idx)
 }
 
+func (c *resolvedNZBCache) clear() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	idx, err := c.loadLocked()
+	if err != nil {
+		return err
+	}
+	idx.Entries = make(map[string]ResolvedNZBEntry)
+	return c.saveLocked(idx)
+}
+
 func (c *resolvedNZBCache) touchLocked(idx *resolvedNZBIndex, entry ResolvedNZBEntry) {
 	entry.LastUsedAt = time.Now().Unix()
 	entry.Hits++

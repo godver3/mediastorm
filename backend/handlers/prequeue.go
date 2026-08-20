@@ -78,6 +78,7 @@ type PrequeueHandler struct {
 	movieMetadataSvc      MovieDetailsProvider  // For movie anime detection
 	subtitleExtractor     SubtitlePreExtractor  // For pre-extracting subtitles
 	prewarmSvc            PrewarmService        // For checking pre-warmed entries
+	latencyTracker        *PlaybackLatencyTracker
 	failures              *streamFailureRegistry
 	badStreamsSvc         *badstreams.Service
 	externalURLValidator  func(context.Context, string) error
@@ -738,6 +739,9 @@ func validatePrequeueEpisodeDuration(mediaType string, episode *models.EpisodeRe
 // HLSCreator interface for creating HLS sessions
 type HLSCreator interface {
 	CreateHLSSession(ctx context.Context, path string, hasDV bool, dvProfile string, hasHDR bool, audioTrackIndex int, subtitleTrackIndex int, profileID string, startOffset float64, prequeueType string) (*HLSSessionResult, error)
+	// LinkHLSSessionPrequeue tags a session created by the prequeue worker with
+	// its prequeue ID so end-to-end latency can be measured at first frame.
+	LinkHLSSessionPrequeue(sessionID, prequeueID string)
 }
 
 // HLSSessionResult contains HLS session info
@@ -860,6 +864,11 @@ func (h *PrequeueHandler) SetSubtitleExtractor(extractor SubtitlePreExtractor) {
 // SetPrewarmService sets the prewarm service for checking pre-warmed entries
 func (h *PrequeueHandler) SetPrewarmService(svc PrewarmService) {
 	h.prewarmSvc = svc
+}
+
+// SetPlaybackLatencyTracker wires click→first-frame instrumentation.
+func (h *PrequeueHandler) SetPlaybackLatencyTracker(t *PlaybackLatencyTracker) {
+	h.latencyTracker = t
 }
 
 func (h *PrequeueHandler) SetBadStreamsService(svc *badstreams.Service) {
@@ -1045,6 +1054,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 							h.prewarmSvc.UpdateFromPrequeue(warmEntry.ID)
 						}
 						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s scope=%s", warm.PrequeueID, req.TitleID, req.UserID, settingsScopeKey)
+						h.latencyTracker.NotePrequeueRequested(warm.PrequeueID, req.TitleID, titleName, mediaType)
 						resp := playback.PrequeueResponse{
 							PrequeueID:    warm.PrequeueID,
 							TargetEpisode: warmEntry.TargetEpisode,
@@ -1090,6 +1100,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s scope=%s", existing.ID, req.TitleID, req.UserID, settingsScopeKey)
+					h.latencyTracker.NotePrequeueRequested(existing.ID, req.TitleID, titleName, mediaType)
 					resp := playback.PrequeueResponse{
 						PrequeueID:    existing.ID,
 						TargetEpisode: existing.TargetEpisode,
@@ -1108,6 +1119,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[prequeue] Reusing existing in-progress entry %s status=%s for title=%s user=%s scope=%s",
 				existing.ID, existing.Status, req.TitleID, req.UserID, settingsScopeKey)
+			h.latencyTracker.NotePrequeueRequested(existing.ID, req.TitleID, titleName, mediaType)
 			resp := playback.PrequeueResponse{
 				PrequeueID:    existing.ID,
 				TargetEpisode: existing.TargetEpisode,
@@ -1123,6 +1135,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 
 	// Create prequeue entry
 	entry, _ := h.store.CreateScoped(req.TitleID, titleName, req.UserID, mediaType, req.Year, targetEpisode, req.Reason, settingsScopeKey)
+	h.latencyTracker.NotePrequeueRequested(entry.ID, req.TitleID, titleName, mediaType)
 
 	// Register with prewarm so it keeps the entry alive via dynamic TTL
 	if h.prewarmSvc != nil {
@@ -1367,6 +1380,7 @@ func (h *PrequeueHandler) AdoptMigration(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.refreshAdoptedMigrationMetadata(prequeueID, req.StreamPath)
+	h.latencyTracker.NotePrequeueReady(prequeueID)
 	if h.prewarmSvc != nil {
 		h.prewarmSvc.UpdateFromPrequeue(prequeueID)
 	}
@@ -2517,6 +2531,9 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 						e.HLSSessionID = hlsResult.SessionID
 						e.HLSPlaylistURL = hlsResult.PlaylistURL
 					})
+					if h.hlsCreator != nil {
+						h.hlsCreator.LinkHLSSessionPrequeue(hlsResult.SessionID, prequeueID)
+					}
 					log.Printf("[prequeue] TIMING: HLS session created: %s (HLS took: %v, total elapsed: %v)", hlsResult.SessionID, time.Since(hlsStart), time.Since(workerStart))
 				}
 			}
@@ -2532,6 +2549,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		e.ProgressCurrent = 0
 		e.ProgressTotal = 0
 	})
+	h.latencyTracker.NotePrequeueReady(prequeueID)
 	if h.prewarmSvc != nil {
 		h.prewarmSvc.UpdateFromPrequeue(prequeueID)
 	}

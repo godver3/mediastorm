@@ -772,6 +772,42 @@ func (h *VideoHandler) SetPrewarmService(svc PrewarmService) {
 	h.prewarmSvc = svc
 }
 
+// LinkHLSSessionPrequeue tags a session created by the prequeue worker with
+// its prequeue ID so click→first-frame latency can be measured end to end.
+func (h *VideoHandler) LinkHLSSessionPrequeue(sessionID, prequeueID string) {
+	if h == nil || h.hlsManager == nil || prequeueID == "" {
+		return
+	}
+	h.hlsManager.SetSessionPrequeue(sessionID, prequeueID, "", "")
+}
+
+// linkPreparedSessionToPrequeue correlates an ad-hoc HLS start (POST
+// /video/hls/start) back to the ready prequeue entry whose stream it opened,
+// carrying service metadata forward for latency reporting.
+func (h *VideoHandler) linkPreparedSessionToPrequeue(sessionID, cleanPath string) {
+	if h == nil || h.hlsManager == nil || h.prequeueStore == nil {
+		return
+	}
+	entry, ok := h.prequeueStore.FindReadyByStreamPath(cleanPath)
+	if !ok || entry == nil {
+		return
+	}
+	serviceType := entry.ServiceType
+	if serviceType == "" {
+		p := strings.ToLower(strings.TrimSpace(entry.StreamPath))
+		if strings.HasPrefix(p, "/debrid/") {
+			serviceType = "debrid"
+		} else if p != "" {
+			serviceType = "usenet"
+		}
+	}
+	provider := entry.DebridProvider
+	if serviceType == "usenet" && provider == "" && entry.SelectedResult != nil {
+		provider = entry.SelectedResult.Indexer
+	}
+	h.hlsManager.SetSessionPrequeue(sessionID, entry.ID, serviceType, provider)
+}
+
 func (h *VideoHandler) invalidatePrequeuesForFailedPath(streamPath string) {
 	if h == nil || h.prequeueStore == nil {
 		return
@@ -4278,6 +4314,10 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	session.ClientID = clientID
 	session.ViaShareLink = auth.IsShareLinkRequest(r)
 	session.mu.Unlock()
+
+	// Correlate with the prequeue request that resolved this stream so the
+	// first-frame latency sample covers the whole click→frame path.
+	h.linkPreparedSessionToPrequeue(session.ID, cleanPath)
 
 	session.mu.RLock()
 	actualStartOffset := session.ActualStartOffset

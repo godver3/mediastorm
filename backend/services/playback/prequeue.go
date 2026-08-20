@@ -1001,6 +1001,39 @@ func normalizePrequeueStreamPath(streamPath string) string {
 	return strings.TrimPrefix(p, "/")
 }
 
+// FindReadyByStreamPath locates the most recently created ready entry whose
+// stream path matches (after the same normalization the delete path uses). It
+// is the read-only counterpart to DeleteByStreamPath and is used to correlate
+// ad-hoc HLS starts (POST /video/hls/start) back to the prequeue request so
+// end-to-end latency can be measured.
+func (s *PrequeueStore) FindReadyByStreamPath(streamPath string) (*PrequeueEntry, bool) {
+	streamPath = strings.TrimSpace(streamPath)
+	if streamPath == "" {
+		return nil, false
+	}
+	normalized := normalizePrequeueStreamPath(streamPath)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var best *PrequeueEntry
+	for _, entry := range s.entries {
+		if entry.Status != PrequeueStatusReady {
+			continue
+		}
+		if strings.TrimSpace(entry.StreamPath) != streamPath && normalizePrequeueStreamPath(entry.StreamPath) != normalized {
+			continue
+		}
+		if best == nil || entry.CreatedAt.After(best.CreatedAt) {
+			best = entry
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return best, true
+}
+
 // DeleteAll removes all prequeue entries
 func (s *PrequeueStore) DeleteAll() {
 	s.mu.Lock()

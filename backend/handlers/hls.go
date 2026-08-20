@@ -231,7 +231,7 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Log upstream response status for debugging
 	if resp.StatusCode >= 400 {
-		log.Printf("[hls] session %s: proxy upstream returned %d %s for host: %s", p.session.ID, resp.StatusCode, resp.Status, requestsecurity.URLForLog(p.targetURL))
+		log.Printf("[hls] session %s: proxy upstream returned %d %s for target: %s (requestPath=%q fromClient=%q)", p.session.ID, resp.StatusCode, resp.Status, logWebDAVURL(encodedURL), req.URL.Path, r.URL.Path)
 	}
 
 	// Copy response headers
@@ -400,11 +400,17 @@ type HLSSession struct {
 	UsesSubtitleRendition bool
 
 	// Performance tracking
-	StreamStartTime  time.Time
-	FirstSegmentTime time.Time
-	BytesStreamed    int64
-	SegmentsCreated  int
-	FFmpegCPUStart   float64
+	StreamStartTime    time.Time
+	FirstSegmentTime   time.Time
+	FirstSegmentSentAt time.Time // t4: first playback segment response began streaming
+	BytesStreamed      int64
+	SegmentsCreated    int
+	FFmpegCPUStart     float64
+
+	// Latency correlation back to the prequeue request that spawned this session.
+	PrequeueID      string // prequeueId ("" when the session is ad-hoc / live)
+	ServiceType     string // "usenet" | "debrid" when known
+	ServiceProvider string // indexer / debrid provider when known
 	// Rolling throughput sample state (bits/sec), updated atomically.
 	throughputLastBytes  int64
 	throughputLastNanos  int64
@@ -1314,6 +1320,8 @@ type HLSManager struct {
 	localWebDAVPrefix  string
 	configManager      ConfigProvider
 	playbackObserver   PlaybackActivityObserver
+	// Click→first-frame latency instrumentation (optional; nil in reduced setups)
+	latencyTracker *PlaybackLatencyTracker
 	// Global probe cache - shared between prequeue (ProbeVideoFull) and HLS (probeAllMetadata)
 	probeCache   map[string]*cachedProbeEntry
 	probeCacheMu sync.RWMutex
@@ -1339,6 +1347,74 @@ func (m *HLSManager) AddPlaybackActivityObserver(observer PlaybackActivityObserv
 	m.mu.Lock()
 	m.playbackObserver = addPlaybackObserver(m.playbackObserver, observer)
 	m.mu.Unlock()
+}
+
+// SetPlaybackLatencyTracker wires the click→first-frame sample sink.
+// Safe to call once at startup; nil disables instrumentation.
+func (m *HLSManager) SetPlaybackLatencyTracker(t *PlaybackLatencyTracker) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.latencyTracker = t
+	m.mu.Unlock()
+}
+
+// SetSessionPrequeue links an HLS session back to the prequeue request that
+// produced it so first-frame latency can be measured end to end.
+func (m *HLSManager) SetSessionPrequeue(sessionID, prequeueID, serviceType, serviceProvider string) {
+	if m == nil || prequeueID == "" {
+		return
+	}
+	session, ok := m.GetSession(sessionID)
+	if !ok {
+		return
+	}
+	session.mu.Lock()
+	session.PrequeueID = prequeueID
+	if serviceType != "" {
+		session.ServiceType = serviceType
+	}
+	if serviceProvider != "" {
+		session.ServiceProvider = serviceProvider
+	}
+	session.mu.Unlock()
+}
+
+// ClearPlaybackCaches resets everything HLSManager-side that would make a
+// repeat transcode warm: the probe cache, hardware-accel detection, and all
+// live sessions (killing FFmpeg). Returns the number of sessions torn down.
+func (m *HLSManager) ClearPlaybackCaches() (int, error) {
+	if m == nil {
+		return 0, nil
+	}
+
+	m.probeCacheMu.Lock()
+	nProbe := len(m.probeCache)
+	m.probeCache = make(map[string]*cachedProbeEntry)
+	m.probeCacheMu.Unlock()
+
+	m.hwAccelMu.Lock()
+	m.hwAccel = HWAccelCaps{}
+	m.hwAccelPref = ""
+	m.hwAccelReady = false
+	m.hwAccelRetryAfter = time.Time{}
+	m.hwAccelMu.Unlock()
+
+	m.mu.RLock()
+	sessions := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		sessions = append(sessions, id)
+	}
+	m.mu.RUnlock()
+	nSessions := len(sessions)
+
+	log.Printf("[hls] ClearPlaybackCaches: probeCache=%d hwaccelReset sessions=%d killed", nProbe, nSessions)
+	for _, id := range sessions {
+		// CleanupSession is heavy (kills FFmpeg, removes dirs); run outside the manager lock.
+		m.CleanupSession(id)
+	}
+	return nSessions, nil
 }
 
 // UpdateSharePlaybackProgress records live dashboard-only progress for
@@ -1733,12 +1809,26 @@ func (m *HLSManager) buildLocalWebDAVURL(session *HLSSession) (string, bool) {
 	}
 
 	if !strings.HasPrefix(original, prefix) {
+		log.Printf("[hls] buildLocalWebDAVURL: original %q does not start with prefix %q (base=%s) — dropping to other paths",
+			original, prefix, requestsecurity.URLForLog(base))
 		return "", false
 	}
 
 	full := strings.TrimRight(base, "/") + original
-	log.Printf("[hls] using local WebDAV direct URL for session %s: %s", session.ID, requestsecurity.URLForLog(full))
+	log.Printf("[hls] buildLocalWebDAVURL: resolved to %s (original=%q)", logWebDAVURL(full), original)
 	return full, true
+}
+
+// logWebDAVURL logs a WebDAV URL with any embedded credentials masked but the
+// path retained, so latency/diagnostic logs show exactly which file is targeted
+// without leaking the username/password.
+func logWebDAVURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 // buildLocalWebDAVURLFromPath builds a WebDAV URL from just a path (no session required).
@@ -5752,7 +5842,9 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 
 	// Parse segment number from filename (e.g., "segment123.ts" -> 123)
 	var segmentNum int
+	parsedSegmentOK := false
 	if _, err := fmt.Sscanf(segmentName, "segment%d.", &segmentNum); err == nil {
+		parsedSegmentOK = true
 		// Update tracking for this segment request
 		session.mu.Lock()
 		if session.MinSegmentRequested < 0 || segmentNum < session.MinSegmentRequested {
@@ -5881,6 +5973,42 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	session.mu.Lock()
 	session.BytesStreamed += segmentSize
 	session.mu.Unlock()
+
+	// First playback frame: when the first media segment response is about to
+	// be written, snapshot t4 and emit the click→first-frame sample. Only
+	// actual segment requests (segmentN.ext) count — init.mp4 / captions / VTT
+	// playlist fetches do not constitute a playback frame. Emits exactly once
+	// per session (FirstSegmentSentAt transitions zero → set).
+	emitLatency := false
+	if parsedSegmentOK {
+		session.mu.Lock()
+		if session.FirstSegmentSentAt.IsZero() {
+			session.FirstSegmentSentAt = time.Now()
+			emitLatency = true
+		}
+		sentAt := session.FirstSegmentSentAt
+		readyAt := session.FirstSegmentTime
+		createdAt := session.StreamStartTime
+		sessionID := session.ID
+		prequeueID := session.PrequeueID
+		serviceType := session.ServiceType
+		serviceProvider := session.ServiceProvider
+		session.mu.Unlock()
+		if emitLatency && m.latencyTracker != nil && !sentAt.IsZero() {
+			requestedAt, prequeueReadyAt := m.latencyTracker.PrequeueTimes(prequeueID)
+			m.latencyTracker.Record(PlaybackLatencySample{
+				PrequeueID:          prequeueID,
+				SessionID:           sessionID,
+				ServiceType:         serviceType,
+				ServiceProvider:     serviceProvider,
+				ClientRequestedAt:   requestedAt,
+				PrequeueReadyAt:     prequeueReadyAt,
+				HLSSessionCreatedAt: createdAt,
+				FirstSegmentReadyAt: readyAt,
+				FirstSegmentSentAt:  sentAt,
+			})
+		}
+	}
 
 	serveStart := time.Now()
 	http.ServeFile(w, r, segmentPath)

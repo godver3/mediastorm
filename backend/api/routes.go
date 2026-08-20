@@ -129,6 +129,7 @@ func Register(
 	shareHandler *handlers.ShareHandler,
 	watchRoomsHandler *handlers.WatchRoomsHandler,
 	homepageAPIKey string,
+	latencyAdmin *handlers.PlaybackLatencyAdmin,
 ) {
 	api := r.PathPrefix("/api").Subrouter()
 

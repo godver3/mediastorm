@@ -892,6 +892,19 @@ func main() {
 		}()
 	}
 
+	// Click→first-frame latency instrumentation. Passive: records prequeue + HLS
+	// phase timestamps into a rolling window, exposes /admin/latency, and the
+	// cold-test flush endpoint ("delete the warm path").
+	latencyTracker := handlers.NewPlaybackLatencyTracker(400)
+	latencyAdmin := handlers.NewPlaybackLatencyAdmin(latencyTracker)
+	latencyAdmin.SetPrequeueStore(prequeueHandler.GetStore())
+	latencyAdmin.SetIndexerService(indexerService)
+	latencyAdmin.SetPoolManager(poolManager)
+	latencyAdmin.SetImporterService(nzbSystem.ImporterService())
+	latencyAdmin.SetHLSManager(videoHandler.GetHLSManager())
+	prequeueHandler.SetPlaybackLatencyTracker(latencyTracker)
+	videoHandler.GetHLSManager().SetPlaybackLatencyTracker(latencyTracker)
+
 	api.Register(
 		r,
 		settingsHandler,
@@ -931,6 +944,7 @@ func main() {
 		shareHandler,
 		watchRoomsHandler,
 		settings.Server.HomepageAPIKey,
+		latencyAdmin,
 	)
 
 	// Register Trakt accounts API routes
@@ -996,6 +1010,14 @@ func main() {
 
 	// Login/logout routes (no auth required)
 	r.HandleFunc("/admin/login", adminUIHandler.LoginPage).Methods(http.MethodGet)
+	r.HandleFunc("/admin/latency", adminUIHandler.RequireAuth(latencyAdmin.ServeLatencyPage)).Methods(http.MethodGet, http.MethodOptions)
+	// Latency API + cold-flush are admin-only JSON endpoints. They sit on the
+	// cookie-authenticated /admin/api/* namespace (same as the other browser
+	// admin APIs) rather than the bearer-token /api history so the latency page
+	// can call them from the browser without extra plumbing.
+	r.HandleFunc("/admin/api/latency", adminUIHandler.RequireMasterAuth(latencyAdmin.ServePlaybackLatencyJSON)).Methods(http.MethodGet, http.MethodOptions)
+	r.HandleFunc("/admin/api/latency/flush", adminUIHandler.RequireMasterAuth(latencyAdmin.FlushPlaybackCaches)).Methods(http.MethodPost, http.MethodOptions)
+	r.HandleFunc("/admin/api/latency/clear", adminUIHandler.RequireMasterAuth(latencyAdmin.ClearLatencySamples)).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc("/admin/login", api.RateLimitHandlerFunc(adminLoginLimiter, adminUIHandler.LoginSubmit)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/logout", adminUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
@@ -1374,6 +1396,7 @@ func main() {
 	prewarmService.SetScopeKeyFunc(prequeueHandler.PrequeueSettingsScopeKey)
 	schedulerService.SetPrewarmService(prewarmService)
 	prequeueHandler.SetPrewarmService(prewarmService)
+	latencyAdmin.SetPrewarmService(prewarmService)
 	if videoHandler != nil {
 		videoHandler.SetPrewarmService(prewarmService)
 	}

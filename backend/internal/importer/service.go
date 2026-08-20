@@ -1055,6 +1055,21 @@ func (s *Service) DeleteResolvedNZB(ctx context.Context, key string) error {
 	return s.resolvedCache.delete(ctx, key)
 }
 
+// ClearResolvedNZBs drops the resolved-NZB index (memory + JSON file) so the
+// next resolution re-fetches and re-processes the NZB. Storage directories are
+// left in place; only the lookup index is cleared. Used by the latency
+// cold-test flush to force the full download+parse path.
+func (s *Service) ClearResolvedNZBs() {
+	if s == nil || s.resolvedCache == nil {
+		return
+	}
+	if err := s.resolvedCache.clear(); err != nil {
+		s.log.Error("failed to clear resolved NZB cache", "err", err)
+	} else {
+		s.log.Info("cleared resolved NZB cache (cold-test flush)")
+	}
+}
+
 // sanitizeFileName removes unsafe characters from a filename
 func sanitizeFileName(name string) string {
 	// Remove path separators and other unsafe characters
