@@ -99,14 +99,16 @@ type SubtitleTrackInfo struct {
 
 // PrequeueStatusResponse is the full status of a prequeue entry
 type PrequeueStatusResponse struct {
-	PrequeueID      string                   `json:"prequeueId"`
-	Status          PrequeueStatus           `json:"status"`
-	UserID          string                   `json:"userId,omitempty"` // The user who created this prequeue
-	TargetEpisode   *models.EpisodeReference `json:"targetEpisode,omitempty"`
-	ProgressStage   string                   `json:"progressStage,omitempty"`
-	ProgressDetail  string                   `json:"progressDetail,omitempty"`
-	ProgressCurrent int                      `json:"progressCurrent,omitempty"`
-	ProgressTotal   int                      `json:"progressTotal,omitempty"`
+	PrequeueID         string                   `json:"prequeueId"`
+	Status             PrequeueStatus           `json:"status"`
+	UserID             string                   `json:"userId,omitempty"` // The user who created this prequeue
+	TargetEpisode      *models.EpisodeReference `json:"targetEpisode,omitempty"`
+	ProgressStage      string                   `json:"progressStage,omitempty"`
+	ProgressDetail     string                   `json:"progressDetail,omitempty"`
+	ProgressCurrent    int                      `json:"progressCurrent,omitempty"`
+	ProgressCurrentMin int                      `json:"progressCurrentMin,omitempty"` // Lowest candidate (1-based) in flight during concurrent resolution
+	ProgressCurrentMax int                      `json:"progressCurrentMax,omitempty"` // Highest candidate (1-based) in flight during concurrent resolution
+	ProgressTotal      int                      `json:"progressTotal,omitempty"`
 
 	// When ready:
 	StreamPath     string `json:"streamPath,omitempty"`
@@ -169,17 +171,19 @@ type PrequeueEntry struct {
 	Reason           string                   `json:"reason"`
 	Persistent       bool                     `json:"persistent,omitempty"`
 
-	Status          PrequeueStatus `json:"status"`
-	ProgressStage   string         `json:"progressStage,omitempty"`
-	ProgressDetail  string         `json:"progressDetail,omitempty"`
-	ProgressCurrent int            `json:"progressCurrent,omitempty"`
-	ProgressTotal   int            `json:"progressTotal,omitempty"`
-	StreamPath      string         `json:"streamPath,omitempty"`
-	MagnetLink      string         `json:"magnetLink,omitempty"` // Original magnet link for re-adding expired torrents
-	ServiceType     string         `json:"serviceType,omitempty"`
-	DebridProvider  string         `json:"debridProvider,omitempty"`
-	FileSize        int64          `json:"fileSize,omitempty"`
-	HealthStatus    string         `json:"healthStatus,omitempty"`
+	Status             PrequeueStatus `json:"status"`
+	ProgressStage      string         `json:"progressStage,omitempty"`
+	ProgressDetail     string         `json:"progressDetail,omitempty"`
+	ProgressCurrent    int            `json:"progressCurrent,omitempty"`
+	ProgressCurrentMin int            `json:"progressCurrentMin,omitempty"` // Lowest candidate (1-based) in flight during concurrent resolution
+	ProgressCurrentMax int            `json:"progressCurrentMax,omitempty"` // Highest candidate (1-based) in flight during concurrent resolution
+	ProgressTotal      int            `json:"progressTotal,omitempty"`
+	StreamPath         string         `json:"streamPath,omitempty"`
+	MagnetLink         string         `json:"magnetLink,omitempty"` // Original magnet link for re-adding expired torrents
+	ServiceType        string         `json:"serviceType,omitempty"`
+	DebridProvider     string         `json:"debridProvider,omitempty"`
+	FileSize           int64          `json:"fileSize,omitempty"`
+	HealthStatus       string         `json:"healthStatus,omitempty"`
 
 	// HDR detection
 	HasDolbyVision           bool                             `json:"hasDolbyVision,omitempty"`
@@ -1250,6 +1254,8 @@ func (e *PrequeueEntry) ToResponse() *PrequeueStatusResponse {
 		ProgressStage:            e.ProgressStage,
 		ProgressDetail:           e.ProgressDetail,
 		ProgressCurrent:          e.ProgressCurrent,
+		ProgressCurrentMin:       e.ProgressCurrentMin,
+		ProgressCurrentMax:       e.ProgressCurrentMax,
 		ProgressTotal:            e.ProgressTotal,
 		StreamPath:               e.StreamPath,
 		ServiceType:              serviceType,

@@ -9,10 +9,13 @@ func TestPlaybackLatencyTrackerRecordsCompleteSample(t *testing.T) {
 	tr := NewPlaybackLatencyTracker(10)
 
 	t0 := time.Now()
-	tr.NotePrequeueRequested("pq1", "tt123", "Test Movie", "movie")
+	tr.NotePrequeueRequested("pq1", "tt123", "user-1", "Test Movie", "movie")
+	tr.NotePrequeueMetadata("pq1", "tt1798709", 2013)
 	<-time.After(5 * time.Millisecond) // simulate search+resolve+probe
 	t1 := time.Now()
 	tr.NotePrequeueReady("pq1")
+	// The resolution phase picks the release after ready; the sample must carry it.
+	tr.NotePrequeueRelease("pq1", "Test.Movie.2013.1080p.BluRay.x264-GROUP")
 	<-time.After(3 * time.Millisecond) // simulate session spin-up
 
 	// Simulate the HLS session + first segment (mirrors what ServeSegment does).
@@ -42,6 +45,12 @@ func TestPlaybackLatencyTrackerRecordsCompleteSample(t *testing.T) {
 	if !s.Complete {
 		t.Fatalf("expected complete sample: %+v", s)
 	}
+	if s.ReleaseName != "Test.Movie.2013.1080p.BluRay.x264-GROUP" {
+		t.Errorf("releaseName = %q, want the selected release", s.ReleaseName)
+	}
+	if s.ImdbID != "tt1798709" || s.Year != 2013 {
+		t.Errorf("imdb/year = %q/%d, want tt1798709/2013 (bench must re-scope the same search)", s.ImdbID, s.Year)
+	}
 	// Phases must be non-negative and roughly match the sleep budget; the total
 	// must be the sum of the phase nanoseconds (allow jitter slack).
 	if s.TotalMs < 14 || s.TotalMs > 300 {
@@ -61,6 +70,42 @@ func TestPlaybackLatencyTrackerRecordsCompleteSample(t *testing.T) {
 	reqAt, readyAt := tr.PrequeueTimes("pq1")
 	if !reqAt.IsZero() || !readyAt.IsZero() {
 		t.Errorf("pending state should be cleared after Record, got %v/%v", reqAt, readyAt)
+	}
+}
+
+// When no HLS session served a segment (non-HLS stream), the bench must still
+// surface the iteration as a prequeue-only sample instead of dropping it.
+func TestPlaybackLatencyTrackerNotePrequeueOnlySample(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+
+	tr.NotePrequeueRequested("pq1", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueMetadata("pq1", "tt1798709", 2013)
+	tr.NotePrequeueReady("pq1")
+	tr.NotePrequeueRelease("pq1", "Her.2013.1080p.BluRay.x265-LAMA")
+	tr.NotePrequeueOnlySample("pq1")
+
+	latest := tr.Latest(1)
+	if len(latest) != 1 {
+		t.Fatalf("expected 1 sample, got %d", len(latest))
+	}
+	s := latest[0]
+	if s.Complete {
+		t.Fatalf("prequeue-only sample must not be complete: %+v", s)
+	}
+	if s.PrequeueMs < 0 {
+		t.Fatalf("prequeueMs = %d, want >= 0", s.PrequeueMs)
+	}
+	if s.ReleaseName != "Her.2013.1080p.BluRay.x265-LAMA" {
+		t.Fatalf("releaseName = %q", s.ReleaseName)
+	}
+	if s.ImdbID != "tt1798709" || s.Year != 2013 {
+		t.Fatalf("imdb/year = %q/%d", s.ImdbID, s.Year)
+	}
+
+	// A second call must be a no-op (pending was consumed).
+	tr.NotePrequeueOnlySample("pq1")
+	if n := tr.Count(); n != 1 {
+		t.Fatalf("count = %d after duplicate synthesis, want 1", n)
 	}
 }
 
@@ -130,11 +175,11 @@ func TestPlaybackLatencyTrackerRingAndStats(t *testing.T) {
 
 func TestPlaybackLatencyTrackerReClickOverwritesT0(t *testing.T) {
 	tr := NewPlaybackLatencyTracker(10)
-	tr.NotePrequeueRequested("pq1", "tt1", "Title", "movie")
+	tr.NotePrequeueRequested("pq1", "tt1", "user-1", "Title", "movie")
 	tr.NotePrequeueReady("pq1")
 	<-time.After(2 * time.Millisecond)
 	// Client clicks again on an already-ready entry: t0 moves, t1 stays.
-	tr.NotePrequeueRequested("pq1", "tt1", "Title", "movie")
+	tr.NotePrequeueRequested("pq1", "tt1", "user-1", "Title", "movie")
 	reqAt, readyAt := tr.PrequeueTimes("pq1")
 	if !reqAt.After(readyAt) {
 		t.Errorf("after re-click t0 (%v) should be after t1 (%v)", reqAt, readyAt)

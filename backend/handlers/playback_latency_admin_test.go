@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,7 +145,92 @@ func TestServeLatencyEndpoints(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("page status=%d", rec2.Code)
 	}
-	if len(rec2.Body.String()) < 1000 {
-		t.Fatalf("page body suspiciously small: %d bytes", len(rec2.Body.String()))
+	body := rec2.Body.String()
+	if len(body) < 1000 {
+		t.Fatalf("page body suspiciously small: %d bytes", len(body))
+	}
+	// The per-row benchmark command builder must be present (data-bench buttons
+	// that prefill a latency_bench.sh invocation for that sample/release).
+	for _, want := range []string{
+		"data-bench", "data-bench-run", "copyBenchRow", "runBenchRow", "buildBenchCmdFor",
+		"mediastorm_admin_session", "latency_bench.sh", "latency/bench", "session-token", "id=\"toast\"",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("latency page missing %q", want)
+		}
+	}
+}
+
+// The session cookie is HttpOnly, so the page must fetch the token from the
+// master-only endpoint rather than document.cookie.
+func TestServeLatencySessionToken(t *testing.T) {
+	admin := NewPlaybackLatencyAdmin(NewPlaybackLatencyTracker(10))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/latency/session-token", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "token-abc"})
+	rec := httptest.NewRecorder()
+	admin.ServeLatencySessionToken(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Token != "token-abc" {
+		t.Fatalf("token = %q, want token-abc", body.Token)
+	}
+
+	// Missing cookie → 401 so the page quietly degrades to an empty token.
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/api/latency/session-token", nil)
+	rec2 := httptest.NewRecorder()
+	admin.ServeLatencySessionToken(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("no-cookie status=%d, want 401", rec2.Code)
+	}
+}
+
+// The backend-side bench must validate its body and acknowledge the background
+// run (the actual worker/HLS driving happens without a handler wired in tests).
+func TestRunPlaybackBenchValidatesAndStarts(t *testing.T) {
+	admin := NewPlaybackLatencyAdmin(NewPlaybackLatencyTracker(10))
+
+	// Valid -> 200 + started
+	body := strings.NewReader(`{"titleId":"tmdb:movie:1","titleName":"Her","userId":"u1","iterations":3,"scope":"resolve"}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/latency/bench", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	admin.RunPlaybackBench(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Started    bool `json:"started"`
+		Iterations int  `json:"iterations"`
+		Scope      string
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.Started || resp.Iterations != 3 || resp.Scope != "resolve" {
+		t.Fatalf("bench ack = %+v", resp)
+	}
+
+	// Missing titleId -> 400
+	bad := httptest.NewRequest(http.MethodPost, "/admin/api/latency/bench", strings.NewReader(`{"titleName":"Her","userId":"u1"}`))
+	badRec := httptest.NewRecorder()
+	admin.RunPlaybackBench(badRec, bad)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("missing-title status=%d, want 400", badRec.Code)
+	}
+
+	// Bad scope -> 400
+	bad2 := httptest.NewRequest(http.MethodPost, "/admin/api/latency/bench", strings.NewReader(`{"titleId":"t","titleName":"n","userId":"u","scope":"bogus"}`))
+	badRec2 := httptest.NewRecorder()
+	admin.RunPlaybackBench(badRec2, bad2)
+	if badRec2.Code != http.StatusBadRequest {
+		t.Fatalf("bad-scope status=%d, want 400", badRec2.Code)
 	}
 }

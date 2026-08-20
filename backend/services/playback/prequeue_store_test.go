@@ -2,7 +2,9 @@ package playback
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -315,6 +317,47 @@ func TestPrequeueEntryToResponseIncludesMigrationCandidates(t *testing.T) {
 	}
 	if len(resp.MigrationCandidates) != 3 {
 		t.Fatalf("MigrationCandidates length = %d, want 3", len(resp.MigrationCandidates))
+	}
+}
+
+// TestPrequeueProgressWindowFieldsAreAdditiveAndOmitEmpty pins the API
+// contract for the OPP-1 in-flight window: the fields must ride along in
+// ToResponse and be omitted from JSON when unset (0), so older OTA'd frontends
+// keep parsing the response unchanged and newer frontends can update safely
+// against older (admin-deployed) backends.
+func TestPrequeueProgressWindowFieldsAreAdditiveAndOmitEmpty(t *testing.T) {
+	// Set: both fields flow through ToResponse and into JSON.
+	entry := &PrequeueEntry{
+		ID:                 "pq_contract",
+		Status:             PrequeueStatusResolving,
+		ProgressStage:      "resolving_candidate",
+		ProgressCurrentMin: 1,
+		ProgressCurrentMax: 4,
+		ProgressTotal:      21,
+	}
+	resp := entry.ToResponse()
+	if resp.ProgressCurrentMin != 1 || resp.ProgressCurrentMax != 4 {
+		t.Fatalf("ToResponse window = %d..%d, want 1..4", resp.ProgressCurrentMin, resp.ProgressCurrentMax)
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	raw := string(data)
+	if !strings.Contains(raw, "\"progressCurrentMin\":1") || !strings.Contains(raw, "\"progressCurrentMax\":4") {
+		t.Fatalf("JSON missing in-flight window fields: %s", raw)
+	}
+
+	// Unset: older frontend parsers must see the exact same shape they always
+	// did — new fields absent, not zero-valued.
+	empty := (&PrequeueEntry{ID: "pq_contract", Status: PrequeueStatusResolving}).ToResponse()
+	data, err = json.Marshal(empty)
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	raw = string(data)
+	if strings.Contains(raw, "progressCurrentMin") || strings.Contains(raw, "progressCurrentMax") {
+		t.Fatalf("JSON must omit unset window fields: %s", raw)
 	}
 }
 

@@ -4,6 +4,46 @@
 > Everything an agent needs to measure, verify, and iterate on the items below lives
 > in this section. Read it before touching code.
 
+---
+
+## ▶ SESSION HANDOFF (2026-08-20, end of session — read this FIRST)
+
+**Status:** OPP-1 implemented + verified (tests, race-detector). Benchmark
+harness built (backend-side ▶ bench + curl `latency_bench.sh`). Latency page has
+per-row ⚡ (copy curl cmd) / ▶ (run server-side bench) + `releaseName`,
+`userId`, `imdbId`, `year` on every sample.
+
+**Where things live (UNCOMMITTED unless noted):** backend branch
+`feature/usenet-speed-audit` (work committed by the user); files in the tree:
+handlers/{playback_latency.go, playback_latency_test.go,
+playback_latency_admin_test.go, prequeue.go, prequeue_test.go}, services/playback
+/{prequeue.go, prequeue_store_test.go}, main.go, this notes file. **
+`backend/scripts/latency_bench.sh` is gitignored (`.gitignore: scripts/`) and
+must be `git add -f`'d** if it should be committed. Frontend PR is already out
+(commit `f7a1a867`, branch `feat/support-racing-resolution-results`, repo
+mediastorm-frontend).
+
+**Baseline measured (Her, resolve-cold, search-warm, 10× ▶ bench):** all
+prequeue-only (`complete=false`, no t2→t4 — winner was the non-HLS SDR release,
+LAMA-family): prequeue p50 ≈ **8.8s**, mean ≈ 9.5s, min 7.8s, max 12.3s. NOT
+comparable to the 24–37s row in the baseline table below (different provider
+state + the winning release varies; the REMUX d3g ran ~14.6s, LAMA ~8s).
+**Always diff same-release↔same-release.**
+
+**Auth gotcha (backend bench needed no auth — this is why it was built):** the
+admin session cookie is `HttpOnly`; `cmd` copies get the token from
+`/admin/api/latency/session-token` (master-only). A 403 on"/admin/api/latency" means the cookie value is invalid/expired/non-master — not
+an OPP issue. The ▶ bench sidesteps auth entirely.
+
+**Queued / next session:** 1) OPP-2 (search results per source) — the notes below;
+2) add a **Release column + `serviceType` on prequeue-only samples** (synthesized
+rows currently show `service=–`), so bench pastes are ambiguity-free;
+3) optional bench knob to **prefer HLS-eligible releases** when the goal is
+`complete` (total/ffmpegWarmup) samples; 4) know that the ▶ worker + `ServeSegment`
+path is exercised end-to-end (segment blocking wait records t3/t4).
+
+---
+
 ## Instrumentation: click → first frame is measured end to end
 
 A **passive** measurement pipeline already exists. It records the real "time between a
@@ -120,7 +160,81 @@ Buttons for all three are on `/admin/latency`.
 
 ---
 
+## Benchmarks: repeatable cold-cache timing per media/release
+
+Goal: measure the SAME title (and the same selected release) on a cold cache,
+N times, so OPP landings can be diffed over the span of the work. A baseline
+name to record next to any run: media title + exact release + flush scope +
+iteration count. The dev baseline table above is the reference point.
+
+* **Sampling:** samples now also carry `releaseName` (the exact selected release),
+  backfilled into the latency tracker from the prequeue's selected result. This
+  is what makes runs comparable — a different release means a different
+  measurement. Set via `NotePrequeueRelease` in `runPrequeueWorker`; validated
+  in `TestPlaybackLatencyTrackerRecordsCompleteSample`.
+* **Harness:** `backend/scripts/latency_bench.sh` drives the REAL prequeue + HLS
+  flow over HTTP (no browser): per iteration it flushes the chosen scope, POSTs
+  the prequeue for a title, polls to ready, pulls the HLS session to its first
+  media segment (landing t2→t4), reads the server-side sample from
+  `/admin/api/latency`, and appends a CSV row.
+    - One-click start: `/admin/latency` now has an ⚡ button on every sample
+      row that copies a fully-prefilled invocation for that measured release
+      (origin, session token, `USER_ID`/`TITLE_ID`/`TITLE_NAME`, and the
+      release pinned via `-f`), because the operator picking the row is the
+      manual part (they've already validated that release in the app).
+    - **Preferred: the ▶ button on the same row runs the benchmark entirely
+      server-side** (`POST /admin/api/latency/bench`, master-only). It loops
+      flush → real prequeue worker → first HLS segment (through the real
+      `ServeSegment` path, whose blocking wait records t3/t4) into the passive
+      tracker — no curl, no auth tokens, nothing to paste. Rows land in the
+      table as each iteration completes. This sidesteps the cookie/auth
+      fragility of the curl harness (admin session cookie is HttpOnly; a 403
+      = invalid/expired/non-master session). When the winning release needs no
+      transcode (SDR/AAC — no HLS session), the bench synthesizes a
+      **prequeue-only row** (complete=false, valid prequeueMs) so the resolve
+      phase is never lost to an invisible iteration.
+    - Samples carry `imdbId` + `year` (threaded from the prequeue request) so a
+      ▶/⚡ re-run scopes the search exactly like the original click (searching
+      a title like "Her" with `year=0` rejects everything — the #1 gotcha here;
+      the filter logs show `expected title=…, year=0` when it's missing).
+    - Requires: `TOKEN` (account/master Bearer token — also drives HLS since
+      those routes sit on the protected router), `ADMIN_COOKIE`
+      (`strmr_admin_session`), `USER_ID`, `TITLE_ID`, `TITLE_NAME`.
+    - Flags: `-n` iterations (default 10), `-s` scope `all|resolve|stream`
+      (default `resolve`, isolating resolve+parse = OPP-1/3/12),
+      `-f RELEASE` to filter the summary to one release.
+    - Output: `backend/cache/latency-bench/<titleId>-<scope>-<date>.csv`
+      (gitignored) with columns `ts,iteration,titleName,titleId,releaseName,
+      serviceType,serviceProvider,complete,totalMs,prequeueMs,hlsCreateMs,
+      ffmpegWarmupMs,serveWaitMs,notes` plus a mean/p50/p95 + per-release
+      breakdown on stdout.
+    - Only titles that produce an HLS session (HDR/DV/TrueHD/DTS) yield
+      `complete=true`; SDR/native titles have no media segment to serve, so the
+      script records a **client-measured `prequeueMs`** (t0→t1 wall-clock at the
+      harness) row marked `complete=no` / "prequeueMs client-measured" — the
+      resolve phase is still comparable (that's the OPP-1/2/3/12 metric), just
+      not t2→t4. Rows are only ever attributed by their `prequeueId`; the
+      admin flush and sample reads verify the HTTP status so a bad/expired
+      `ADMIN_COOKIE` fails loudly (it used to silently no-op the flush and
+      crash the recorder on the empty 401).
+* **Workflow:** before starting an OPP, run a cold round and save the CSV as the
+  before-baseline (e.g. `cp` to a non-ephemeral name); after the OPP lands and
+  the dev server is restarted, run the same command again and diff the CSV
+  (`-f` same release, same scope). Note the release can legitimately change
+  when candidate selection changes (OPP-1 first-success-wins).
+
+---
+
 ## OPP-1: Race top-K candidates instead of serial resolution
+
+> **STATUS (2026-08-20): DONE.** `resolveCandidates()` races the ranked list with a
+> width-4 worker pool (`racePrequeueResolutions`, prequeue analog of
+> `checkFastestMode`); first fully validated candidate wins, losers abort on a
+> cancelled race ctx, deferred debrid preflight kept via a once-only gate, bad-stream
+> marking preserved. Aborted (superseded) losers log as "superseded by winner", not
+> "Failed to resolve". OPP-1 verification tests + a race-detector pass in place.
+> A still-open **release-selection nuance**: first-success-wins can pick a slightly
+> lower-ranked release that happens to resolve fast over a slow-but-healthy #1.
 
 **Problem.** The prequeue worker resolves candidates one at a time, in rank order,
 fully downloading and probing each before touching the next. If the #1-ranked
@@ -145,6 +259,29 @@ whole queue" scenario; bounds resolution to the fastest healthy candidate.
 **Verification.** Add a test with a slow/failing top candidate and a fast second
 candidate; assert the fast one is adopted and elapsed wall-clock is not the sum of
 both.
+
+
+---
+
+## OPP-1 API contract: progress during concurrent resolution (frontend OTA skew)
+
+> Backend ships via admin action; the frontend is OTA. Keep the prequeue status API
+> **additive and skew-tolerant**.
+>
+> * `PrequeueStatusResponse`/`PrequeueEntry` gained `progressCurrentMin` /
+>   `progressCurrentMax` (1-based in-flight candidate window) + `progressCurrent`
+>   now equals the window max. All `omitempty` → older clients see the unchanged JSON.
+> * Frontend (`features/details/prequeue-progress.ts`) must read them with a fallback:
+>   `const min = status.progressCurrentMin ?? status.progressCurrent ?? 0` (same for
+>   max), render `X–Y of Z` when `min < max`, single `N of Z` otherwise. Old-backend +
+>   new-frontend degrades to today's copy; old-frontend + new-backend still shows the
+>   window max (truthful, less precise). No new stage strings were introduced.
+> * Pinned by `TestPrequeueProgressWindowFieldsAreAdditiveAndOmitEmpty`
+>   (services/playback/prequeue_store_test.go) — the fields ride ToResponse and are
+>   absent from JSON when unset.
+> * Progress numerics are now owned by the race owner; worker updates carry only
+>   stage + release detail (`updatePrequeueStageDetail`), so "stream 4 of 10" can no
+>   longer be the serial left-over.
 
 ---
 

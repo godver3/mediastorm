@@ -902,6 +902,8 @@ func main() {
 	latencyAdmin.SetPoolManager(poolManager)
 	latencyAdmin.SetImporterService(nzbSystem.ImporterService())
 	latencyAdmin.SetHLSManager(videoHandler.GetHLSManager())
+	latencyAdmin.SetHLSSegmentDriver(videoHandler.GetHLSManager())
+	latencyAdmin.SetPrequeueHandler(prequeueHandler)
 	prequeueHandler.SetPlaybackLatencyTracker(latencyTracker)
 	videoHandler.GetHLSManager().SetPlaybackLatencyTracker(latencyTracker)
 
@@ -1018,6 +1020,13 @@ func main() {
 	r.HandleFunc("/admin/api/latency", adminUIHandler.RequireMasterAuth(latencyAdmin.ServePlaybackLatencyJSON)).Methods(http.MethodGet, http.MethodOptions)
 	r.HandleFunc("/admin/api/latency/flush", adminUIHandler.RequireMasterAuth(latencyAdmin.FlushPlaybackCaches)).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc("/admin/api/latency/clear", adminUIHandler.RequireMasterAuth(latencyAdmin.ClearLatencySamples)).Methods(http.MethodPost, http.MethodOptions)
+	// The admin session cookie is HttpOnly (unreadable from JS), so the latency
+	// page fetches the session token from this master-only endpoint to prefill
+	// latency_bench.sh commands. It doubles as the Bearer token for the user API.
+	r.HandleFunc("/admin/api/latency/session-token", adminUIHandler.RequireMasterAuth(latencyAdmin.ServeLatencySessionToken)).Methods(http.MethodGet, http.MethodOptions)
+	// Backend-side cold-cache benchmark: runs N flush→prequeue→first-segment
+	// iterations in-process and records them into the passive tracker.
+	r.HandleFunc("/admin/api/latency/bench", adminUIHandler.RequireMasterAuth(latencyAdmin.RunPlaybackBench)).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc("/admin/login", api.RateLimitHandlerFunc(adminLoginLimiter, adminUIHandler.LoginSubmit)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/logout", adminUIHandler.Logout).Methods(http.MethodGet, http.MethodPost)
 
