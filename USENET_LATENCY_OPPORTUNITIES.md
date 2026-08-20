@@ -35,12 +35,15 @@ admin session cookie is `HttpOnly`; `cmd` copies get the token from
 `/admin/api/latency/session-token` (master-only). A 403 on"/admin/api/latency" means the cookie value is invalid/expired/non-master — not
 an OPP issue. The ▶ bench sidesteps auth entirely.
 
-**Queued / next session:** 1) OPP-2 (search results per source) — the notes below;
-2) add a **Release column + `serviceType` on prequeue-only samples** (synthesized
-rows currently show `service=–`), so bench pastes are ambiguity-free;
-3) optional bench knob to **prefer HLS-eligible releases** when the goal is
-`complete` (total/ffmpegWarmup) samples; 4) know that the ▶ worker + `ServeSegment`
-path is exercised end-to-end (segment blocking wait records t3/t4).
+**Queued / next session:** 1) OPP-3 (pre-download Usenet availability probe) —
+the notes below; 2) OPP-2's cross-source ordering nuance is documented in its
+STATUS block (arrival-order vs global-score order) in case we want a hybrid
+install's debrid-fast case to feed first; 3) add a **Release column +
+`serviceType` on prequeue-only samples** (synthesized rows currently show
+`service=–`), so bench pastes are ambiguity-free; 4) optional bench knob to
+**prefer HLS-eligible releases** when the goal is `complete`
+(total/ffmpegWarmup) samples; 5) know that the ▶ worker + `ServeSegment` path
+is exercised end-to-end (segment blocking wait records t3/t4).
 
 ---
 
@@ -100,7 +103,7 @@ Buttons for all three are on `/admin/latency`.
 ### Baseline numbers observed (2026-08-20, dev container, `Her` x265-LAMA)
 
 * `prequeue` (resolve+parse, search warm): **24–37s** ← dominant cost, target of OPP-1/3/12
-* `prequeue` including a cold search: **~90–99s**
+* `prequeue` including a cold search: **~90–99s** (User's note here: I'm casting doubt on these, don't rely on the 90+s figure too hard)
 * `hlsCreate` warm-probe: **~1.6–1.8s**; cold (hwaccel + probe from scratch): **~7s**
 * `ffmpegWarmup` probe-cached: **~2.6–2.9s**; cold: **~12.9s**
 * `serveWait`: **0ms** (healthy)
@@ -286,6 +289,35 @@ both.
 ---
 
 ## OPP-2: Stream search results per source (don't wait for both usenet + debrid)
+
+> **STATUS (2026-08-21): DONE.** The prequeue now resolves candidates as each
+> search source streams in instead of waiting for both (`SearchWithScoringSplit`
+> emits each source's filtered+ranked **passed** candidates the moment that
+> source completes — a background drain, so the call returns channels
+> immediately; usenet typically lands while debrid scrapers are still gated).
+> The resolution race now consumes a `prequeueCandidateSource`
+> (`resolveCandidates(src, …)`): a fixed `sliceCandidateSource` (tests/derived
+> paths) and a `streamCandidateSource` the feeder publishes into. Per-source
+> bad-stream marking, episode annotation, a `maxCandidates` (50) cap, and the
+> deferred debrid `PrepareTorrentCandidates` preflight all moved to the feeder;
+> the shared "raw" search-cache write is preserved (after both sources settle,
+> only when none failed and none was incomplete). Search-chunk probes: usenet
+> resolution *starts and completes* before debrid exists
+> (`TestResolveCandidatesStreamsUsenetBeforeDebrid`, handler-level) and the
+> split emits usenet while debrid is still gated
+> (`TestSearchWithScoringSplitEmitsUsenetBeforeSlowDebrid`, service-level).
+>
+> Tradeoffs to keep in mind:
+>   - Cross-source order is now source-arrival order (usenet-before-debrid for a
+>     typical usenet-first install), not a global score sort — first-validated
+>     wins can pick a usenet candidate that a higher-scored (but still
+>     searching) debrid candidate might have beaten. That is the intended
+>     OPP-2 tradeoff for usenet-prioritized installs.
+>   - Debris search is cancelled (via the feed context) once a winner is
+>     adopted, rather than left to finish.
+>   - Prequeue-only latency samples (`complete=false`) are unaffected; the OPP-2
+>     win is entirely in the `prequeue` phase, which the `resolve`-scope bench
+>     isolates.
 
 **Problem.** The play path waits for *all* search sources to finish before resolving
 anything. `searchRawResults` closes its results channel only after `wg.Wait()` over

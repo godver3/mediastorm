@@ -1777,82 +1777,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		searchOpts.AbsoluteEpisodeNumber = targetEpisode.AbsoluteEpisodeNumber
 	}
 
-	scoredResults, searchErr := h.indexerSvc.SearchWithScoring(ctx, indexer.SearchOptions{
-		Query:                 searchOpts.Query,
-		Categories:            searchOpts.Categories,
-		IMDBID:                searchOpts.IMDBID,
-		MediaType:             searchOpts.MediaType,
-		Year:                  searchOpts.Year,
-		CountryCode:           searchOpts.CountryCode,
-		UserID:                searchOpts.UserID,
-		ClientID:              searchOpts.ClientID,
-		EpisodeResolver:       searchOpts.EpisodeResolver,
-		TotalSeriesEpisodes:   searchOpts.TotalSeriesEpisodes,
-		AbsoluteEpisodeNumber: searchOpts.AbsoluteEpisodeNumber,
-		IsAnime:               searchOpts.IsAnime,
-		IsDaily:               searchOpts.IsDaily,
-		TargetAirDate:         searchOpts.TargetAirDate,
-		EpisodeAirYear:        searchOpts.EpisodeAirYear,
-		EpisodeReleased:       searchOpts.EpisodeReleased,
-		IncludeFiltered:       true,
-	})
-	if searchErr != nil {
-		h.failPrequeue(prequeueID, searchErr.Error())
-		return
-	}
-
-	badStreamCount := 0
-	if h.badStreamsSvc != nil {
-		for i := range scoredResults {
-			if !h.badStreamsSvc.IsBad(scoredResults[i].NZBResult) {
-				continue
-			}
-			badStreamCount++
-			scoredResults[i].FilterStatus = "filtered"
-			if scoredResults[i].FilterReason == "" {
-				scoredResults[i].FilterReason = "marked bad stream"
-			} else if !strings.Contains(strings.ToLower(scoredResults[i].FilterReason), "marked bad stream") {
-				scoredResults[i].FilterReason += "; marked bad stream"
-			}
-		}
-	}
-
-	logPrequeueCandidateList(scoredResults)
-
-	var allResults []models.NZBResult
-	for _, scored := range scoredResults {
-		if scored.FilterStatus == "filtered" {
-			continue
-		}
-		candidate := scored.NZBResult
-		annotateResultEpisode(&candidate, targetEpisode)
-		allResults = append(allResults, candidate)
-	}
-	if len(allResults) > searchOpts.MaxResults {
-		allResults = allResults[:searchOpts.MaxResults]
-	}
-	if len(allResults) == 0 {
-		errMsg := "no results found"
-		if badStreamCount > 0 {
-			errMsg = "all results are filtered or marked bad"
-		}
-		h.failPrequeue(prequeueID, errMsg)
-		return
-	}
-	h.updatePrequeueProgress(prequeueID, "ranking", "", len(allResults), len(scoredResults))
-	log.Printf("[prequeue] TIMING: scored search complete, %d passed candidate(s) selected from %d total result(s), badStreams=%d (elapsed: %v)", len(allResults), len(scoredResults), badStreamCount, time.Since(workerStart))
-
-	// Update status to resolving
-	h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
-		e.Status = playback.PrequeueStatusResolving
-		e.ProgressStage = "preparing_candidates"
-		e.ProgressDetail = ""
-		e.ProgressCurrent = 0
-		e.ProgressTotal = len(allResults)
-	})
-
-	// Load filter settings for DV profile compatibility checking
-	// Priority: client settings > user settings > global settings > default
+	// Load filter settings for DV profile compatibility checking and track
+	// selection. Priority: client settings > user settings > global settings >
+	// default. Computed before the resolution phase starts, since resolution now
+	// begins while the split search is still feeding.
 	var hdrDVPolicy models.HDRDVPolicy
 	unknownTrackPolicy := "none"
 	var allowedTrackLanguages []string
@@ -1910,15 +1838,45 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	needsAllowedLanguageCheck := len(allowedTrackLanguages) > 0
 	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v, unknownTrackPolicy: %s, needsUnknownTrackCheck: %v, allowedTrackLanguages: %v, needsAllowedLanguageCheck: %v", hdrDVPolicy, needsDVCheck, unknownTrackPolicy, needsUnknownTrackCheck, allowedTrackLanguages, needsAllowedLanguageCheck)
 
-	// Resolution phase — race the ranked candidate list concurrently (bounded
-	// worker pool, see OPP-1) and adopt the first fully validated candidate
-	// instead of resolving it serially. Deprioritized unknown-track results are
-	// kept as a fallback and used only when nothing validates.
-	resolveStart := time.Now()
-	log.Printf("[prequeue] TIMING: starting resolution phase (%d results, elapsed: %v)",
-		len(allResults), time.Since(workerStart))
+	// The split search (SearchWithScoringSplit) runs usenet and debrid
+	// concurrently and streams each source's scored candidates as soon as that
+	// source completes, so the top usenet candidates begin resolving while
+	// debrid scrapers are still in flight (OPP-2). The feeder publishes
+	// candidates into a streamCandidateSource; the resolution phase races over
+	// that stream instead of a pre-merged list.
+	if h.indexerSvc == nil {
+		h.failPrequeue(prequeueID, "search service not configured")
+		return
+	}
+	feedCtx, cancelFeed := context.WithCancel(ctx)
+	feedState := newPrequeueFeedState()
+	usenetCh, debridCh := h.indexerSvc.SearchWithScoringSplit(feedCtx, searchOpts)
+	candidates := newStreamCandidateSource()
+	go h.prequeueSearchFeeder(feedCtx, candidates, usenetCh, debridCh, feedState, prequeueFeederConfig{
+		prequeueID:    prequeueID,
+		maxCandidates: searchOpts.MaxResults,
+		targetEpisode: targetEpisode,
+		workerStart:   workerStart,
+	})
 
-	choice, resolveErr := h.resolveCandidates(ctx, prequeueID, allResults, prequeueResolutionOptions{
+	// Update status to resolving. Numeric progress from here on is owned by the
+	// race (in-flight candidate window); the feeder only advances the stage.
+	h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
+		e.Status = playback.PrequeueStatusResolving
+		e.ProgressStage = "preparing_candidates"
+		e.ProgressDetail = ""
+		e.ProgressCurrent = 0
+		e.ProgressTotal = 0
+	})
+
+	// Resolution phase — race the candidate stream concurrently (bounded worker
+	// pool, see OPP-1) and adopt the first fully validated candidate instead of
+	// resolving serially. Deprioritized unknown-track results are kept as a
+	// fallback and used only when nothing validates.
+	resolveStart := time.Now()
+	log.Printf("[prequeue] TIMING: starting resolution phase (streaming candidates, elapsed: %v)", time.Since(workerStart))
+
+	choice, resolveErr := h.resolveCandidates(ctx, prequeueID, candidates, prequeueResolutionOptions{
 		mediaType:                 mediaType,
 		targetEpisode:             targetEpisode,
 		userID:                    userID,
@@ -1930,9 +1888,26 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		needsAllowedLanguageCheck: needsAllowedLanguageCheck,
 		workerStart:               workerStart,
 	})
+
+	// The race has concluded: stop feeding (a winner needs no more candidates; an
+	// exhausted stream is already closed), abort any in-flight debrid preflight /
+	// split-search work, and join the feeder so its settled outcome is readable.
+	cancelFeed()
+	candidates.Stop()
+	<-feedState.done
+
 	if choice.resolution == nil {
 		if errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded) {
 			h.failPrequeue(prequeueID, "cancelled")
+		} else if errors.Is(resolveErr, errNoSearchCandidates) {
+			badStreams, _ := feedState.snapshot()
+			errMsg := "no results found"
+			if feedState.allSourcesFailed() {
+				errMsg = "all search sources failed"
+			} else if badStreams > 0 {
+				errMsg = "all results are filtered or marked bad"
+			}
+			h.failPrequeue(prequeueID, errMsg)
 		} else {
 			errMsg := "all results failed to resolve"
 			if resolveErr != nil {
@@ -1942,6 +1917,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		}
 		return
 	}
+
 	resolution := choice.resolution
 	selectedResult := choice.selectedResult
 	selectedResultIndex := choice.selectedResultIndex
@@ -1986,8 +1962,6 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		}
 		if len(choice.migrationCandidates) > 0 {
 			e.MigrationCandidates = append([]models.NZBResult(nil), choice.migrationCandidates...)
-		} else if len(allResults) > 0 {
-			e.MigrationCandidates = append([]models.NZBResult(nil), allResults...)
 		}
 	})
 
@@ -2364,7 +2338,7 @@ const prequeueResolutionRaceWidth = 4
 // deprioritized by the unknown-track policy (usable only as a last resort);
 // err reports why the candidate cannot be used (nil for accepted, deprioritized
 // or silently skipped candidates).
-type prequeueCandidateProcessor func(ctx context.Context, index int) (accepted, deprioritized *candidateResolution, err error)
+type prequeueCandidateProcessor func(ctx context.Context, index int, candidate models.NZBResult) (accepted, deprioritized *candidateResolution, err error)
 
 // candidateResolution is the outcome of resolving one prequeue candidate.
 type candidateResolution struct {
@@ -2373,9 +2347,9 @@ type candidateResolution struct {
 	resolution     *models.PlaybackResolution
 	probeResult    *VideoFullResult
 	metadataResult *VideoMetadataResult
-	// migrationSnapshot is a lock-safe snapshot of the candidate list taken at
+	// migrationSnapshot is a snapshot of the candidates fed so far taken at
 	// accept/deprioritize time, so the worker's MigrationCandidates copy never
-	// races with a still-aborting loser or an in-flight debrid preflight.
+	// races with a still-aborting loser or a still-feeding source.
 	migrationSnapshot []models.NZBResult
 }
 
@@ -2406,105 +2380,224 @@ type prequeueResolutionOptions struct {
 	workerStart               time.Time
 }
 
-// prequeuePreflight coordinates the one-shot, slice-wide debrid candidate
-// preparation (PrepareTorrentCandidates) so racing workers never run it twice
-// and never read a candidate mid-rewrite. Crucially, the metainfo downloads run
-// outside the lock, so Usenet resolution is never blocked on debrid preflight.
-type prequeuePreflight struct {
-	mu        sync.Mutex
-	done      bool
-	preparing bool
-	from      int
-	doneCh    chan struct{}
+// prequeueCandidateSource yields candidates to the resolution race in feed
+// order. The race owns the source: at any time exactly one goroutine consumes
+// Next (the race's dispenser), so implementations need no read-side locking.
+//
+// Two shapes cover both resolution modes:
+//   - sliceCandidateSource: a fixed, already-final ranked list (tests and
+//     derived callers).
+//   - streamCandidateSource: candidates arrive as each search source completes
+//     (OPP-2), so the race can begin resolving the first-ready source's
+//     candidates while other sources are still feeding.
+//
+// Total reports how many candidates have been fed so far (a slice never grows;
+// a stream grows as its feeder publishes). Snapshot returns a copy of everything
+// fed so far, for the migration candidate list persisted on the winning
+// prequeue entry.
+type prequeueCandidateSource interface {
+	Next(ctx context.Context) (idx int, candidate models.NZBResult, ok bool)
+	Total() int
+	Snapshot() []models.NZBResult
 }
 
-func newPrequeuePreflight() *prequeuePreflight {
-	return &prequeuePreflight{doneCh: make(chan struct{})}
+// streamedCandidate is one candidate handed to the race alongside its 0-based
+// feed index (used for the in-flight progress window and fallback ordering).
+type streamedCandidate struct {
+	idx  int
+	cand models.NZBResult
 }
 
-// start claims this worker as the preflight runner the first time an eligible
-// debrid candidate is reached. The slice-wide preparation stays deferred: it
-// only begins once a worker actually needs a debrid candidate (matching the
-// serial loop's deferral).
-func (p *prequeuePreflight) start(from int) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.done || p.preparing {
+// sliceCandidateSource serves a fixed candidate list in order, preserving
+// ranking for the prequeue's derived/tests callers.
+type sliceCandidateSource struct {
+	ch  chan streamedCandidate
+	n   int
+	all []models.NZBResult
+}
+
+func newSliceCandidateSource(candidates []models.NZBResult) *sliceCandidateSource {
+	ch := make(chan streamedCandidate, len(candidates))
+	for i, c := range candidates {
+		ch <- streamedCandidate{idx: i, cand: c}
+	}
+	close(ch)
+	return &sliceCandidateSource{ch: ch, n: len(candidates), all: candidates}
+}
+
+func (s *sliceCandidateSource) Next(ctx context.Context) (int, models.NZBResult, bool) {
+	select {
+	case <-ctx.Done():
+		return 0, models.NZBResult{}, false
+	case it, ok := <-s.ch:
+		return it.idx, it.cand, ok
+	}
+}
+
+func (s *sliceCandidateSource) Total() int { return s.n }
+
+func (s *sliceCandidateSource) Snapshot() []models.NZBResult {
+	return append([]models.NZBResult(nil), s.all...)
+}
+
+// streamCandidateSource hands candidates to the resolution race as search
+// sources publish them. The feeder calls Feed (single feeder at a time) until
+// it returns false, which happens once the race has concluded (Stop) or every
+// source has settled and the feeder called Close. Snapshot reflects everything
+// fed so far, so a winner's migration list always contains the winning
+// candidate even when later sources were still feeding (their candidates simply
+// never reached the queue).
+type streamCandidateSource struct {
+	ch      chan streamedCandidate
+	done    chan struct{}
+	mu      sync.Mutex
+	total   int
+	acc     []models.NZBResult
+	stopped bool
+}
+
+func newStreamCandidateSource() *streamCandidateSource {
+	return &streamCandidateSource{ch: make(chan streamedCandidate), done: make(chan struct{})}
+}
+
+// Feed publishes one candidate in feed order. It returns false when the source
+// has been stopped (the race adopted a winner and no longer consumes) or closed
+// (no more candidates will arrive). The mutex is never held across the channel
+// send, so Stop/Close can always acquire it and unblock an in-flight Feed.
+func (s *streamCandidateSource) Feed(cand models.NZBResult) bool {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
 		return false
 	}
-	p.preparing = true
-	p.from = from
-	return true
+	idx := s.total
+	s.mu.Unlock()
+
+	select {
+	case s.ch <- streamedCandidate{idx: idx, cand: cand}:
+		// The candidate reached the queue. Commit it to the source (so a winner's
+		// migration snapshot includes it); if Stop raced us, leave it uncounted —
+		// the race is gone and this entry is harmless either way.
+		s.mu.Lock()
+		if !s.stopped {
+			s.total++
+			s.acc = append(s.acc, cand)
+		}
+		s.mu.Unlock()
+		return true
+	case <-s.done:
+		return false
+	}
 }
 
-// wait blocks until the in-flight (or already completed) preparation is
-// published back into the candidate slice.
-func (p *prequeuePreflight) wait() {
-	p.mu.Lock()
-	done := p.done
-	p.mu.Unlock()
-	if done {
+// Stop unblocks a blocked feeder and makes Next report exhaustion, for when the
+// race adopts a winner before all sources have finished feeding.
+func (s *streamCandidateSource) Stop() {
+	s.mu.Lock()
+	if !s.stopped {
+		s.stopped = true
+		close(s.done)
+	}
+	s.mu.Unlock()
+}
+
+// Close marks the source exhausted: the race concludes once every handed
+// candidate has been processed. The feeder calls it exactly once after every
+// enabled source has settled.
+func (s *streamCandidateSource) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
 		return
 	}
-	<-p.doneCh
+	close(s.done)
 }
 
-// finish publishes the enriched slice back into allResults in place (so later
-// candidates and MigrationCandidates see the enrichment) and releases waiters.
-func (p *prequeuePreflight) finish(candidates []models.NZBResult, prepared []models.NZBResult, from int) {
-	p.mu.Lock()
-	copy(candidates[from:], prepared)
-	p.done = true
-	p.mu.Unlock()
-	close(p.doneCh)
-}
-
-// snapshot copies the candidate list under the preflight lock so the caller can
-// publish MigrationCandidates without racing an in-flight preflight copy-back or
-// an aborted loser still holding shared references.
-func (p *prequeuePreflight) snapshot(candidates []models.NZBResult) []models.NZBResult {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]models.NZBResult(nil), candidates...)
-}
-
-// racePrequeueResolutions resolves count candidates concurrently (bounded to
-// width in flight at once) and returns the first fully validated candidate —
-// the prequeue analog of the debrid multiprovider's checkFastestMode. The
-// lowest-ranked deprioritized unknown-track candidate is kept as a fallback and
-// returned only when nothing validates. On a winner, losing workers are
-// cancelled and released immediately; on exhaustion every candidate has already
-// reported, so the caller may safely observe shared candidate state afterwards.
-// report (optional) receives the 0-based in-flight candidate window whenever it
-// changes, so callers can publish honest "racing candidates X–Y" progress.
-func racePrequeueResolutions(ctx context.Context, count, width int, process prequeueCandidateProcessor, report func(inFlightMin, inFlightMax int)) (winner *candidateResolution, usedFallback bool, err error) {
-	if count == 0 {
-		return nil, false, fmt.Errorf("no candidates to resolve")
+func (s *streamCandidateSource) Next(ctx context.Context) (int, models.NZBResult, bool) {
+	select {
+	case <-ctx.Done():
+		return 0, models.NZBResult{}, false
+	case <-s.done:
+		return 0, models.NZBResult{}, false
+	case it, ok := <-s.ch:
+		return it.idx, it.cand, ok
 	}
+}
+
+func (s *streamCandidateSource) Total() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.total
+}
+
+func (s *streamCandidateSource) Snapshot() []models.NZBResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]models.NZBResult(nil), s.acc...)
+}
+
+// racePrequeueResolutions resolves candidates concurrently (bounded to width in
+// flight at once) and returns the first fully validated candidate — the
+// prequeue analog of the debrid multiprovider's checkFastestMode. Candidates are
+// pulled from src in feed order, so a streaming source lets the race begin on
+// the first-ready search source's candidates while later sources are still
+// feeding. The lowest-indexed deprioritized unknown-track candidate is kept as a
+// fallback and returned only when nothing validates. On a winner, losing workers
+// are cancelled and released immediately; on exhaustion every handed candidate
+// has already reported, so the caller may safely observe shared candidate state
+// afterwards. report (optional) receives the 0-based in-flight candidate window
+// whenever it changes, so callers can publish honest "racing candidates X–Y"
+// progress.
+func racePrequeueResolutions(ctx context.Context, src prequeueCandidateSource, width int, process prequeueCandidateProcessor, report func(inFlightMin, inFlightMax int)) (winner *candidateResolution, usedFallback bool, err error) {
 	if width <= 0 {
 		width = 1
 	}
-	if width > count {
-		width = count
-	}
 
-	raceCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	next := make(chan int, count)
-	for i := 0; i < count; i++ {
-		next <- i
-	}
+	raceCtx, cancelRace := context.WithCancel(ctx)
+	defer cancelRace()
 
 	type raceReport struct {
+		idx           int
 		accepted      *candidateResolution
 		deprioritized *candidateResolution
 		err           error
 	}
-	results := make(chan raceReport, count)
+	results := make(chan raceReport, 512)
 	// dispatch carries candidate indices as workers pick them up, so the owner
 	// can track the in-flight window for progress reporting.
-	dispatch := make(chan int, count)
+	dispatch := make(chan int, 512)
+
+	// work flows candidates from the source into the worker pool. The dispenser
+	// goroutine pumps src.Next in the background so a streaming source can keep
+	// publishing while workers process, and closes feedsDone once the source is
+	// exhausted or the race is concluded. handedCh reports each candidate that a
+	// worker actually received, so the owner can tell "stream drained AND every
+	// handed candidate has reported" (exhaustion) apart from work that is still
+	// mid-flight.
+	work := make(chan streamedCandidate)
+	handedCh := make(chan int)
+	feedsDone := make(chan struct{})
+	go func() {
+		defer close(feedsDone)
+		for {
+			idx, cand, ok := src.Next(raceCtx)
+			if !ok {
+				close(work)
+				return
+			}
+			select {
+			case work <- streamedCandidate{idx: idx, cand: cand}:
+			case <-raceCtx.Done():
+				close(work)
+				return
+			}
+			select {
+			case handedCh <- idx:
+			case <-raceCtx.Done():
+				return
+			}
+		}
+	}()
 
 	var wg sync.WaitGroup
 	for w := 0; w < width; w++ {
@@ -2515,15 +2608,18 @@ func racePrequeueResolutions(ctx context.Context, count, width int, process preq
 				select {
 				case <-raceCtx.Done():
 					return
-				case i := <-next:
+				case it, ok := <-work:
+					if !ok {
+						return
+					}
 					select {
-					case dispatch <- i:
+					case dispatch <- it.idx:
 					case <-raceCtx.Done():
 						return
 					}
-					accepted, deprioritized, perr := process(raceCtx, i)
+					accepted, deprioritized, perr := process(raceCtx, it.idx, it.cand)
 					select {
-					case results <- raceReport{accepted: accepted, deprioritized: deprioritized, err: perr}:
+					case results <- raceReport{idx: it.idx, accepted: accepted, deprioritized: deprioritized, err: perr}:
 					case <-raceCtx.Done():
 						return
 					}
@@ -2534,41 +2630,55 @@ func racePrequeueResolutions(ctx context.Context, count, width int, process preq
 
 	var fallback *candidateResolution
 	var firstErr error
+	handed := 0
 	reported := 0
-	active := 0
-	windowMin, windowMax := -1, -1
+	streamExhausted := false
+	activeSet := map[int]struct{}{}
 	publishWindow := func() {
 		if report == nil {
 			return
 		}
-		if active == 0 {
+		if len(activeSet) == 0 {
 			report(-1, -1) // idle: nothing in flight
 			return
 		}
-		report(windowMin, windowMax)
+		min, max := -1, -1
+		for idx := range activeSet {
+			if min == -1 || idx < min {
+				min = idx
+			}
+			if max == -1 || idx > max {
+				max = idx
+			}
+		}
+		report(min, max)
 	}
-	for reported < count {
+
+	for {
 		select {
 		case <-ctx.Done():
-			cancel()
+			cancelRace()
 			wg.Wait() // release workers touching shared candidate state
 			return nil, false, ctx.Err()
+		case <-feedsDone:
+			streamExhausted = true
+		case <-handedCh:
+			handed++
 		case i := <-dispatch:
-			if active == 0 {
-				windowMin, windowMax = i, i
-			} else if i > windowMax {
-				windowMax = i
+			if _, ok := activeSet[i]; !ok {
+				activeSet[i] = struct{}{}
+				publishWindow()
 			}
-			active++
-			publishWindow()
 		case r := <-results:
 			reported++
-			active--
+			delete(activeSet, r.idx)
 			publishWindow()
 			if r.accepted != nil {
 				// Adopt the winner immediately; losing workers abort on the
-				// cancelled context and finish in the background.
-				cancel()
+				// cancelled context and finish in the background, and the
+				// dispenser stops feeding (the feeder's Stop cue is publisher-
+				// side, in the prequeue worker).
+				cancelRace()
 				return r.accepted, false, nil
 			}
 			if r.deprioritized != nil {
@@ -2581,12 +2691,20 @@ func racePrequeueResolutions(ctx context.Context, count, width int, process preq
 				firstErr = r.err
 			}
 		}
+
+		// Every handed candidate has reported and no further candidates are
+		// coming: the race is exhausted. "Handed" counts candidates a worker
+		// actually received (not just dispatched), so a still-mid-flight worker
+		// can never be cut off by the exhaustion check.
+		if streamExhausted && handed == reported {
+			break
+		}
 	}
 
-	// Every candidate reported and nothing validated. Fall back to the
-	// deprioritized unknown-track result if one exists, otherwise surface the
-	// first failure observed.
-	cancel()
+	// Nothing validated. Fall back to the deprioritized unknown-track result if
+	// one exists, otherwise surface the first failure observed, or a sentinel
+	// when the stream carried no candidates at all.
+	cancelRace()
 	wg.Wait()
 	if fallback != nil {
 		return fallback, true, nil
@@ -2594,31 +2712,22 @@ func racePrequeueResolutions(ctx context.Context, count, width int, process preq
 	if firstErr != nil {
 		return nil, false, firstErr
 	}
-	return nil, false, fmt.Errorf("all results failed to resolve")
+	return nil, false, errNoSearchCandidates
 }
 
-// resolveCandidates races the ranked candidate list (bounded worker pool) and
+// resolveCandidates races the candidate source (bounded worker pool) and
 // returns the winning resolution together with the candidate and probe data the
 // rest of the worker needs. It preserves the serial loop's semantics: the first
 // fully validated candidate wins; deprioritized unknown-track results are a
-// fallback only when nothing validates; IsArticleUnavailable failures still mark
-// bad streams; and the debrid torrent preflight stays deferred until an eligible
-// debrid candidate is actually reached.
-func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID string, allResults []models.NZBResult, opts prequeueResolutionOptions) (prequeueResolutionChoice, error) {
+// fallback only when nothing validates; and IsArticleUnavailable failures still
+// mark bad streams. Candidates flow from src, so a streaming source lets the
+// race start resolving the first-ready search source while later sources are
+// still feeding (see OPP-2); the debrid torrent preflight runs on the feeder
+// side (prequeueSearchFeeder) before a debrid batch is published.
+func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID string, src prequeueCandidateSource, opts prequeueResolutionOptions) (prequeueResolutionChoice, error) {
 	resolveStart := time.Now()
-	preflight := newPrequeuePreflight()
 
-	process := func(raceCtx context.Context, i int) (*candidateResolution, *candidateResolution, error) {
-		// Reads of allResults[i] are synchronized with the one-shot preflight
-		// copy-back so a concurrent rewrite is never observed half-written.
-		readCandidate := func() models.NZBResult {
-			preflight.mu.Lock()
-			defer preflight.mu.Unlock()
-			return allResults[i]
-		}
-
-		result := readCandidate()
-
+	process := func(raceCtx context.Context, i int, result models.NZBResult) (*candidateResolution, *candidateResolution, error) {
 		// Check episode match for anime absolute numbering
 		if opts.targetEpisode != nil && opts.targetEpisode.AbsoluteEpisodeNumber > 0 {
 			if result.EpisodeCount <= 1 {
@@ -2633,23 +2742,6 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 					}
 				}
 			}
-		}
-
-		// Torrent preflight can spend several seconds downloading metainfo to
-		// discover hashes for TorBox cache checks. Defer that work until a debrid
-		// result is actually eligible for resolution so higher-ranked Usenet
-		// candidates keep resolving concurrently.
-		if result.ServiceType == models.ServiceTypeDebrid {
-			if preflight.start(i) {
-				preflightStart := time.Now()
-				prepared := h.playbackSvc.PrepareTorrentCandidates(raceCtx, allResults[i:])
-				preflight.finish(allResults, prepared, i)
-				log.Printf("[prequeue] TIMING: deferred debrid candidate preparation complete at result [%d] (elapsed: %v)",
-					i, time.Since(preflightStart))
-			} else {
-				preflight.wait()
-			}
-			result = readCandidate()
 		}
 
 		h.updatePrequeueStageDetail(prequeueID, "resolving_candidate", result.Title)
@@ -2799,26 +2891,29 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 			if probeResult != nil || metadataResult != nil {
 				if rejected, reason := unknownTrackPolicyRejects(opts.unknownTrackPolicy, audioStreams, subtitleStreams); rejected {
 					log.Printf("[prequeue] Result [%d] deprioritized by unknown track policy %q: %s; trying next result: %s", i, opts.unknownTrackPolicy, reason, result.Title)
-					return nil, &candidateResolution{result: result, index: i, resolution: resolution, probeResult: probeResult, metadataResult: metadataResult, migrationSnapshot: preflight.snapshot(allResults)}, nil
+					return nil, &candidateResolution{result: result, index: i, resolution: resolution, probeResult: probeResult, metadataResult: metadataResult, migrationSnapshot: src.Snapshot()}, nil
 				}
 			}
 		}
 
-		return &candidateResolution{result: result, index: i, resolution: resolution, probeResult: probeResult, metadataResult: metadataResult, migrationSnapshot: preflight.snapshot(allResults)}, nil, nil
+		return &candidateResolution{result: result, index: i, resolution: resolution, probeResult: probeResult, metadataResult: metadataResult, migrationSnapshot: src.Snapshot()}, nil, nil
 	}
 
-	log.Printf("[prequeue] TIMING: racing %d candidate(s) with width %d (elapsed: %v)", len(allResults), prequeueResolutionRaceWidth, time.Since(resolveStart))
+	log.Printf("[prequeue] TIMING: starting streaming candidate resolution (width=%d, elapsed: %v)", prequeueResolutionRaceWidth, time.Since(resolveStart))
 	// Publish the in-flight window as 1-based candidate numbers. During the race
 	// only this publisher owns numeric progress; worker updates carry stage and
-	// release detail only, so the UI can render "trying streams X–Y of Z".
+	// release detail only, so the UI can render "trying streams X–Y of Z". The
+	// total is the source's fed count, which grows while a feeder is still
+	// publishing debrid results behind an in-flight usenet race.
 	reportProgress := func(inFlightMin, inFlightMax int) {
-		if inFlightMin < 0 {
-			h.updatePrequeueRaceProgress(prequeueID, 0, 0, len(allResults))
+		total := src.Total()
+		if inFlightMin < 0 || total == 0 {
+			h.updatePrequeueRaceProgress(prequeueID, 0, 0, total)
 			return
 		}
-		h.updatePrequeueRaceProgress(prequeueID, inFlightMin+1, inFlightMax+1, len(allResults))
+		h.updatePrequeueRaceProgress(prequeueID, inFlightMin+1, inFlightMax+1, total)
 	}
-	winner, usedFallback, raceErr := racePrequeueResolutions(ctx, len(allResults), prequeueResolutionRaceWidth, process, reportProgress)
+	winner, usedFallback, raceErr := racePrequeueResolutions(ctx, src, prequeueResolutionRaceWidth, process, reportProgress)
 	if winner == nil {
 		return prequeueResolutionChoice{}, raceErr
 	}
@@ -2894,12 +2989,12 @@ func (h *PrequeueHandler) updatePrequeueRaceProgress(prequeueID string, minCurre
 	})
 }
 
-func logPrequeueCandidateList(scoredResults []models.ScoredNZBResult) {
+func logPrequeueCandidateList(scoredResults []models.ScoredNZBResult, source string) {
 	limit := 10
 	if len(scoredResults) < limit {
 		limit = len(scoredResults)
 	}
-	log.Printf("[prequeue] candidate decision list: showing %d of %d result(s)", limit, len(scoredResults))
+	log.Printf("[prequeue] candidate decision list (%s): showing %d of %d result(s)", source, limit, len(scoredResults))
 	for i := 0; i < limit; i++ {
 		result := scoredResults[i]
 		badStream := strings.Contains(strings.ToLower(result.FilterReason), "marked bad stream")
@@ -2915,6 +3010,167 @@ func logPrequeueCandidateList(scoredResults []models.ScoredNZBResult) {
 			result.FilterReason,
 		)
 	}
+}
+
+// errNoSearchCandidates signals that the resolution phase received no
+// candidates at all (the stream exhausted empty). The worker maps it to the
+// user-facing "no results found" / "all search sources failed" messages.
+var errNoSearchCandidates = errors.New("no candidates to resolve")
+
+// prequeueFeedState carries the aggregate outcome of the streaming search feeder
+// to the worker: how many candidates made it past bad-stream marking, which
+// enabled sources failed outright, and a done channel the worker joins after the
+// resolution phase so it can read the settled values.
+type prequeueFeedState struct {
+	done           chan struct{}
+	mu             sync.Mutex
+	badStreamCount int
+	sourceFailures int
+	enabledSources int
+	fedCount       int
+}
+
+func newPrequeueFeedState() *prequeueFeedState {
+	return &prequeueFeedState{done: make(chan struct{})}
+}
+
+func (s *prequeueFeedState) allSourcesFailed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enabledSources > 0 && s.sourceFailures == s.enabledSources
+}
+
+func (s *prequeueFeedState) snapshot() (badStreams, fed int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.badStreamCount, s.fedCount
+}
+
+// prequeueFeederConfig is the stream-feeder's per-prequeue configuration.
+type prequeueFeederConfig struct {
+	prequeueID    string
+	maxCandidates int // cap on total candidates fed (searchOpts.MaxResults)
+	targetEpisode *models.EpisodeReference
+	workerStart   time.Time
+}
+
+// prequeueSearchFeeder consumes the split search sources as each completes,
+// applies the prequeue's bad-stream marking, annotates episodes, runs the
+// deferred debrid torrent preflight on the debrid batch, and publishes
+// candidates into the streaming source in completion order. It never blocks
+// resolution: usenet candidates are fed (and raced) while debrid is still
+// searching, and the debrid preflight only delays debrid candidates, not
+// in-flight usenet resolution. The stream is closed once every source settles;
+// on context cancellation (worker teardown or a winning candidate) the feeder
+// returns without closing it — the worker's Stop unblocks a blocked Feed.
+func (h *PrequeueHandler) prequeueSearchFeeder(ctx context.Context, src *streamCandidateSource, usenetCh, debridCh <-chan indexer.ScoredSplitSearchResult, state *prequeueFeedState, cfg prequeueFeederConfig) {
+	defer close(state.done)
+
+	usenetDone, debridDone := false, false
+	fed := 0
+	for !usenetDone || !debridDone {
+		select {
+		case <-ctx.Done():
+			return
+		case res, ok := <-usenetCh:
+			if !ok {
+				usenetDone = true
+				continue
+			}
+			if done := h.feedSourceResults(ctx, src, state, cfg, res, &fed); done {
+				return
+			}
+		case res, ok := <-debridCh:
+			if !ok {
+				debridDone = true
+				continue
+			}
+			if done := h.feedSourceResults(ctx, src, state, cfg, res, &fed); done {
+				return
+			}
+		}
+	}
+	// Every enabled source has settled; the race may conclude as exhausted once
+	// the hand-fed candidates are processed.
+	src.Close()
+}
+
+// feedSourceResults processes one completed search source batch: bad-stream
+// marking, candidate decision logging, the deferred debrid preflight, then
+// feeding each surviving candidate into the stream. It returns done=true when
+// the source has stopped accepting candidates (the race adopted a winner), in
+// which case the feeder should stop.
+func (h *PrequeueHandler) feedSourceResults(ctx context.Context, src *streamCandidateSource, state *prequeueFeedState, cfg prequeueFeederConfig, res indexer.ScoredSplitSearchResult, fed *int) (done bool) {
+	if res.Disabled {
+		return false // source not in the active service mode; nothing to count or feed
+	}
+	state.mu.Lock()
+	state.enabledSources++
+	if res.Err != nil {
+		state.sourceFailures++
+	}
+	state.mu.Unlock()
+	if res.Err != nil {
+		log.Printf("[prequeue] %s search failed (streaming): %v", res.Source, res.Err)
+		return false
+	}
+	h.updatePrequeueStageDetail(cfg.prequeueID, "ranking", "")
+
+	// Bad-stream marking + decision log (mirrors the non-streaming path).
+	if h.badStreamsSvc != nil {
+		for i := range res.Scored {
+			scored := &res.Scored[i]
+			if !h.badStreamsSvc.IsBad(scored.NZBResult) {
+				continue
+			}
+			state.mu.Lock()
+			state.badStreamCount++
+			state.mu.Unlock()
+			scored.FilterStatus = "filtered"
+			if scored.FilterReason == "" {
+				scored.FilterReason = "marked bad stream"
+			} else if !strings.Contains(strings.ToLower(scored.FilterReason), "marked bad stream") {
+				scored.FilterReason += "; marked bad stream"
+			}
+		}
+	}
+	logPrequeueCandidateList(res.Scored, res.Source)
+
+	batch := make([]models.NZBResult, 0, len(res.Scored))
+	for _, scored := range res.Scored {
+		if scored.FilterStatus == "filtered" {
+			continue
+		}
+		batch = append(batch, scored.NZBResult)
+	}
+
+	// Deferred debrid torrent preflight (metainfo download for TorBox hash
+	// discovery) before this batch can feed. Usenet resolution is already racing
+	// in the worker pool, so this never blocks it; on a usenet win the feed
+	// context is cancelled and the preflight aborts.
+	if res.Source == "debrid" && len(batch) > 0 && h.playbackSvc != nil {
+		preflightStart := time.Now()
+		batch = h.playbackSvc.PrepareTorrentCandidates(ctx, batch)
+		log.Printf("[prequeue] TIMING: deferred debrid candidate preparation complete (%d prepared, elapsed: %v)",
+			len(batch), time.Since(preflightStart))
+	}
+
+	for _, cand := range batch {
+		if *fed >= cfg.maxCandidates {
+			log.Printf("[prequeue] streamed candidate cap %d reached; dropping lower-ranked %s candidates", cfg.maxCandidates, res.Source)
+			break
+		}
+		annotated := cand
+		annotateResultEpisode(&annotated, cfg.targetEpisode)
+		if !src.Feed(annotated) {
+			return true // race concluded (winner adopted); stop feeding
+		}
+		*fed++
+		state.mu.Lock()
+		state.fedCount = *fed
+		state.mu.Unlock()
+	}
+	return false
 }
 
 func (h *PrequeueHandler) waitForPlaybackQueue(ctx context.Context, prequeueID string, queueID int64, title string) (*models.PlaybackResolution, error) {

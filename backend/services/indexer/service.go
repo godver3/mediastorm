@@ -158,7 +158,7 @@ type Service struct {
 	// Usenet search call counters for diagnostics (atomic, safe for concurrent use).
 	// Grep logs for [search-stats] to see totals during playback.
 	searchCount        atomic.Int64 // top-level Search calls (manual search)
-	searchSplitCount   atomic.Int64 // top-level SearchSplit calls (prequeue)
+	searchSplitCount   atomic.Int64 // top-level SearchWithScoringSplit calls (prequeue streaming search)
 	usenetAPICallCount atomic.Int64 // individual usenet/torznab indexer API calls
 	providerBreaker    *providerbreaker.Breaker
 }
@@ -1874,6 +1874,408 @@ func capScoredResults(results []models.ScoredNZBResult, max int) []models.Scored
 	}
 	log.Printf("[indexer] MaxResults=%d applied after ranking: %d -> %d", max, len(results), max)
 	return results[:max]
+}
+
+// ScoredSplitSearchResult is one split search source's completed output. Each
+// channel is closed exactly once, once its source settles; an enabled source
+// sends exactly one value (Scored on success, Err on failure) before the close,
+// and a source outside the active service mode sends one value with
+// Disabled=true (so callers never wait on a source that will never run).
+//
+// Scored carries the source's passed-only, ranked candidates — the same shape
+// SearchWithScoring would produce for the combined set, restricted to this
+// source — so a caller can start resolving them while other sources are still
+// in flight. RawCount/FilteredCount are diagnostics (raw fetched/rejected).
+type ScoredSplitSearchResult struct {
+	Source        string
+	Scored        []models.ScoredNZBResult
+	RawCount      int
+	FilteredCount int
+	Err           error
+	Disabled      bool
+}
+
+// searchSplitOutcome is the internal per-source completion record used by
+// SearchWithScoringSplit both to emit scored results to the caller and to
+// reconstruct the aggregated raw set for the shared "raw" search cache.
+type searchSplitOutcome struct {
+	source     string
+	scored     []models.ScoredNZBResult
+	raw        []models.NZBResult
+	incomplete bool
+	filtered   int
+	err        error
+	disabled   bool
+}
+
+// SearchWithScoringSplit runs the usenet and debrid searches concurrently and
+// emits each source's filtered+ranked passed candidates as soon as THAT source
+// completes, instead of waiting for both (Search/searchRawResults wait for all
+// sources via wg.Wait). A usenet-prioritized install can start resolving its
+// usenet candidates while debrid scrapers are still in flight (OPP-2).
+//
+// Each returned channel receives exactly one ScoredSplitSearchResult and is then
+// closed; callers must drain both (a disabled source reports Disabled=true so
+// both channels always settle). Within-source ranking/merge semantics and the
+// search-cache write behavior match the non-split paths: per-source filters,
+// per-source scoring/ranking, and a single aggregate "raw" cache write once
+// both sources settle (only when neither failed and no source was incomplete).
+func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions) (usenetCh, debridCh <-chan ScoredSplitSearchResult) {
+	callNum := s.searchSplitCount.Add(1)
+	searchStart := time.Now()
+	log.Printf("[search-stats] SearchSplit #%d started (query=%q, mediaType=%q, user=%q, client=%q)",
+		callNum, opts.Query, opts.MediaType, opts.UserID, opts.ClientID)
+	log.Printf("[indexer] TIMING: SearchSplit started for query=%q mediaType=%q", opts.Query, opts.MediaType)
+
+	usenetOut := make(chan ScoredSplitSearchResult, 1)
+	debridOut := make(chan ScoredSplitSearchResult, 1)
+	if s.cfg == nil {
+		cfgErr := errors.New("config manager not configured")
+		usenetOut <- ScoredSplitSearchResult{Source: "usenet", Err: cfgErr}
+		debridOut <- ScoredSplitSearchResult{Source: "debrid", Err: cfgErr}
+		close(usenetOut)
+		close(debridOut)
+		return usenetOut, debridOut
+	}
+
+	settings, err := s.cfg.Load()
+	if err != nil {
+		usenetOut <- ScoredSplitSearchResult{Source: "usenet", Err: fmt.Errorf("load settings: %w", err)}
+		debridOut <- ScoredSplitSearchResult{Source: "debrid", Err: fmt.Errorf("load settings: %w", err)}
+		close(usenetOut)
+		close(debridOut)
+		return usenetOut, debridOut
+	}
+	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+
+	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
+	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
+
+	filterBundle, animeSettings, filterOverrides := s.getEffectiveFilterBundle(opts.UserID, opts.ClientID, settings)
+	filterSettings := filterBundle.Default
+
+	// Inject anime language filter-out terms early (before search/filter calls),
+	// mirroring Search/SearchWithScoring.
+	if opts.IsAnime && models.BoolVal(animeSettings.AnimeLanguageEnabled, false) {
+		langCode := ""
+		if animeSettings.AnimePreferredLanguage != nil {
+			langCode = *animeSettings.AnimePreferredLanguage
+		}
+		if langCode == "" {
+			langCode = "eng"
+		}
+		_, _, animeFilterOut := filter.GetAnimeLanguageTerms(langCode)
+		if len(animeFilterOut) > 0 {
+			filterBundle.Default.FilterOutTerms = append(filterBundle.Default.FilterOutTerms, animeFilterOut...)
+			filterBundle.Debrid.FilterOutTerms = append(filterBundle.Debrid.FilterOutTerms, animeFilterOut...)
+			filterBundle.Usenet.FilterOutTerms = append(filterBundle.Usenet.FilterOutTerms, animeFilterOut...)
+			log.Printf("[indexer] Anime language filter-out: injected %d terms for lang=%s", len(animeFilterOut), langCode)
+		}
+	}
+
+	alternateTitles := s.resolveAlternateTitles(ctx, opts, s.getEffectiveMetadataLanguage(opts.UserID, settings), settings.Streaming.MaxAlternateTitleSearches)
+	if len(alternateTitles) > 0 {
+		log.Printf("[indexer] resolved %d alternate title(s) for %q: %v", len(alternateTitles), opts.Query, alternateTitles)
+	}
+
+	parsedQuery := debrid.ParseQuery(opts.Query)
+	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
+	rankingBundle := s.getEffectiveRankingBundle(opts.UserID, opts.ClientID, settings)
+	rankingCriteria := rankingBundle.Default
+
+	// Check the shared raw cache once so a warm search never re-fetches or waits
+	// on a slow scraper (same key searchRawResults would use).
+	cacheKey := s.searchCacheKey("raw", opts, settings, alternateTitles, filterSettings, filterBundle, animeSettings, filterOverrides, rankingCriteria, rankingBundle)
+	if cached, ok := s.getCachedSearchResults(cacheKey, searchStart); ok {
+		log.Printf("[indexer] raw search cache hit for query=%q mediaType=%q user=%q client=%q results=%d", opts.Query, opts.MediaType, opts.UserID, opts.ClientID, len(cached))
+		// A cache hit carries only the merged aggregate, so partition it by the
+		// ServiceType the fetchers stamped and emit each partition as its own
+		// source batch (both are immediately available).
+		bySource := partitionResultsBySource(cached)
+		for _, out := range bySource {
+			s.emitSplitSourceBatch(usenetOut, debridOut, settings, opts, out)
+		}
+		close(usenetOut)
+		close(debridOut)
+		return usenetOut, debridOut
+	}
+
+	sourceOpts := opts
+	sourceOpts.MaxResults = 0 // ranking is final-order; source caps would truncate before it
+
+	resultsCh := make(chan searchSplitOutcome, 2)
+
+	// Launch usenet source
+	if includeUsenet {
+		go func() {
+			out := s.splitSearchUsenet(ctx, settings, sourceOpts, parsedQuery, alternateTitles, searchQueries, filterBundle, animeSettings, filterOverrides, rankingBundle)
+			resultsCh <- out
+		}()
+	} else {
+		resultsCh <- searchSplitOutcome{source: "usenet", disabled: true}
+	}
+
+	// Launch debrid source
+	if includeDebrid {
+		go func() {
+			out := s.splitSearchDebrid(ctx, settings, sourceOpts, opts, alternateTitles, filterBundle, animeSettings, filterOverrides, rankingBundle)
+			resultsCh <- out
+		}()
+	} else {
+		resultsCh <- searchSplitOutcome{source: "debrid", disabled: true}
+	}
+
+	// Drain the two source outcomes AS EACH completes, emitting that source's
+	// scored candidates to the caller immediately — the whole point of the split
+	// is that the first-ready source (typically usenet) is published while the
+	// other source is still in flight, so the caller can start resolving it. This
+	// runs in the background so SearchWithScoringSplit returns the channels
+	// right away instead of blocking on the slowest source. The raw aggregate is
+	// accumulated for the shared "raw" search cache, written once BOTH sources
+	// settle.
+	go func() {
+		errCount := 0
+		incompleteSearch := false
+		var aggregated []models.NZBResult
+		pending := 2
+		for pending > 0 {
+			select {
+			case <-ctx.Done():
+				// The caller stopped consuming (e.g. a winner was adopted before
+				// the slow source finished). Leave the channels open — there is no
+				// reader — and let the in-flight source goroutines finish or abort
+				// on this context; the cache is deliberately not written.
+				return
+			case out := <-resultsCh:
+				pending--
+				if out.err != nil {
+					log.Printf("[indexer] %s search failed: %v", out.source, out.err)
+					errCount++
+					// Emit the failure so the caller can count this source as an
+					// enabled source that failed (vs. a disabled/absent source).
+					s.emitSplitSourceBatch(usenetOut, debridOut, settings, opts, out)
+					continue
+				}
+				if out.disabled {
+					// Not part of the active service mode: emit Disabled=true so
+					// the caller can treat every channel as carrying one value.
+					s.emitSplitSourceBatch(usenetOut, debridOut, settings, opts, out)
+					continue
+				}
+				if len(out.raw) > 0 {
+					if out.incomplete {
+						incompleteSearch = true
+					}
+					aggregated = append(aggregated, out.raw...)
+				}
+				s.emitSplitSourceBatch(usenetOut, debridOut, settings, opts, out)
+			}
+		}
+
+		// Preserve searchRawResults' cache write semantics: write the aggregate
+		// only when every source succeeded and none reported an incomplete search.
+		if errCount == 0 && !incompleteSearch {
+			s.setCachedSearchResults(cacheKey, aggregated, time.Now())
+		} else {
+			log.Printf("[indexer] skipping raw search cache for query=%q because one or more providers failed", opts.Query)
+		}
+		close(usenetOut)
+		close(debridOut)
+
+		log.Printf("[search-stats] SearchSplit #%d complete: %d results in %v (totals: search=%d, splitSearch=%d, usenetAPICalls=%d)",
+			callNum, len(aggregated), time.Since(searchStart),
+			s.searchCount.Load(), s.searchSplitCount.Load(), s.usenetAPICallCount.Load())
+	}()
+
+	return usenetOut, debridOut
+}
+
+// emitSplitSourceBatch routes one completed source's scored batch to the
+// appropriate caller-facing channel (usenet vs debrid).
+func (s *Service) emitSplitSourceBatch(usenetOut, debridOut chan ScoredSplitSearchResult, settings config.Settings, opts SearchOptions, out searchSplitOutcome) {
+	sr := ScoredSplitSearchResult{
+		Source:        out.source,
+		Scored:        out.scored,
+		RawCount:      len(out.raw),
+		FilteredCount: out.filtered,
+		Err:           out.err,
+		Disabled:      out.disabled,
+	}
+	if out.source == "debrid" {
+		debridOut <- sr
+	} else {
+		usenetOut <- sr
+	}
+}
+
+// partitionResultsBySource splits a cached raw aggregate into per-source batches
+// by the ServiceType the fetchers stamped onto each result.
+func partitionResultsBySource(raw []models.NZBResult) []searchSplitOutcome {
+	var usenet, debrid []models.NZBResult
+	for _, r := range raw {
+		switch r.ServiceType {
+		case models.ServiceTypeDebrid:
+			debrid = append(debrid, r)
+		default:
+			usenet = append(usenet, r)
+		}
+	}
+	var out []searchSplitOutcome
+	if len(usenet) > 0 {
+		out = append(out, searchSplitOutcome{source: "usenet", raw: usenet})
+	}
+	if len(debrid) > 0 {
+		out = append(out, searchSplitOutcome{source: "debrid", raw: debrid})
+	}
+	return out
+}
+
+// splitSearchUsenet fetches and scores the usenet source for the split search.
+func (s *Service) splitSearchUsenet(ctx context.Context, settings config.Settings, opts SearchOptions, parsedQuery debrid.ParsedQuery, alternateTitles, searchQueries []string, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingBundle effectiveRankingBundle) searchSplitOutcome {
+	usenetStart := time.Now()
+	log.Printf("[indexer] TIMING: split usenet search starting (query=%q)", opts.Query)
+	out := searchSplitOutcome{source: "usenet"}
+
+	raw, err := s.fetchUsenetResultsAllQueries(ctx, settings, opts, searchQueries)
+	if err != nil {
+		out.err = err
+		return out
+	}
+	incomplete := false
+	for i := range raw {
+		if raw[i].ServiceType == models.ServiceTypeUnknown {
+			raw[i].ServiceType = models.ServiceTypeUsenet
+		}
+		if raw[i].Attributes != nil && strings.EqualFold(strings.TrimSpace(raw[i].Attributes["searchIncomplete"]), "true") {
+			incomplete = true
+		}
+	}
+	out.raw = raw
+	out.incomplete = incomplete
+	out.scored, out.filtered = s.scoreSourceCandidates(opts, settings, raw, s.buildFilterOptions(opts, filterBundle.Usenet), filterBundle, animeSettings, filterOverrides, rankingBundle)
+	log.Printf("[indexer] TIMING: split usenet search complete (took: %v, raw=%d, passed=%d)", time.Since(usenetStart), len(raw), len(out.scored))
+	return out
+}
+
+// splitSearchDebrid fetches and scores the debrid source for the split search.
+func (s *Service) splitSearchDebrid(ctx context.Context, settings config.Settings, opts SearchOptions, rawOpts SearchOptions, alternateTitles []string, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingBundle effectiveRankingBundle) searchSplitOutcome {
+	debridStart := time.Now()
+	log.Printf("[indexer] TIMING: split debrid search starting (query=%q)", opts.Query)
+	out := searchSplitOutcome{source: "debrid"}
+	if s.debrid == nil {
+		out.err = fmt.Errorf("debrid search service not configured")
+		return out
+	}
+	debOpts := debrid.SearchOptions{
+		Query:                 opts.Query,
+		Categories:            append([]string{}, opts.Categories...),
+		MaxResults:            rawOpts.MaxResults,
+		IMDBID:                opts.IMDBID,
+		MediaType:             opts.MediaType,
+		Year:                  opts.Year,
+		AlternateTitles:       append([]string{}, alternateTitles...),
+		UserID:                opts.UserID,
+		ClientID:              opts.ClientID,
+		TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
+		EpisodeResolver:       opts.EpisodeResolver,
+		AbsoluteEpisodeNumber: opts.AbsoluteEpisodeNumber,
+		IsAnime:               opts.IsAnime,
+		IsDaily:               opts.IsDaily,
+		TargetAirDate:         opts.TargetAirDate,
+		EpisodeAirYear:        opts.EpisodeAirYear,
+		EpisodeReleased:       opts.EpisodeReleased,
+		SkipFilter:            true,
+	}
+	raw, err := s.debrid.Search(ctx, debOpts)
+	if err != nil {
+		out.err = err
+		return out
+	}
+	incomplete := false
+	for i := range raw {
+		if raw[i].ServiceType == models.ServiceTypeUnknown {
+			raw[i].ServiceType = models.ServiceTypeDebrid
+		}
+		if raw[i].Attributes != nil && strings.EqualFold(strings.TrimSpace(raw[i].Attributes["searchIncomplete"]), "true") {
+			incomplete = true
+		}
+	}
+	out.raw = raw
+	out.incomplete = incomplete
+	out.scored, out.filtered = s.scoreSourceCandidates(opts, settings, raw, s.buildFilterOptions(opts, filterBundle.Debrid), filterBundle, animeSettings, filterOverrides, rankingBundle)
+	log.Printf("[indexer] TIMING: split debrid search complete (took: %v, raw=%d, passed=%d)", time.Since(debridStart), len(raw), len(out.scored))
+	return out
+}
+
+// scoreSourceCandidates runs the same filter→score→rank pipeline SearchWithScoring
+// applies to the combined source set, restricted to one source's raw results, and
+// returns the passed-only scored list (ranked within the source) plus the count of
+// raw results rejected by the filter. Scoring shares the DEFAULT filter settings
+// for the context and per-service criteria for each result, exactly like the
+// non-split path, so one source's candidates keep the same relative order they
+// would have inside the merged list.
+func (s *Service) scoreSourceCandidates(opts SearchOptions, settings config.Settings, raw []models.NZBResult, filterOpts filter.Options, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingBundle effectiveRankingBundle) ([]models.ScoredNZBResult, int) {
+	expectedYear := opts.Year
+	if expectedYear == 0 {
+		expectedYear = debrid.ParseQuery(opts.Query).Year
+	}
+
+	detailed := make([]filter.FilteredResult, 0, len(raw))
+	for _, r := range raw {
+		details := filter.ResultsWithDetails([]models.NZBResult{r}, filterOpts)
+		if len(details) > 0 {
+			detailed = append(detailed, details[0])
+		}
+	}
+	passedResults := make([]models.NZBResult, 0, len(detailed))
+	for _, result := range detailed {
+		if result.Passed {
+			passedResults = append(passedResults, result.Result)
+		}
+	}
+	applyEpisodeYearPriority(passedResults, expectedYear, opts.EpisodeAirYear)
+	passedIndex := 0
+	for i := range detailed {
+		if detailed[i].Passed {
+			detailed[i].Result = passedResults[passedIndex]
+			passedIndex++
+		}
+	}
+
+	filteredCount := 0
+	passed := make([]models.ScoredNZBResult, 0, len(detailed))
+	for _, fr := range detailed {
+		if !fr.Passed {
+			filteredCount++
+			continue
+		}
+		resultCtx := s.buildScoringContextForResult(opts, settings, filterBundle, rankingBundle, animeSettings, fr.Result)
+		score, _ := ScoreResult(fr.Result, resultCtx)
+		passed = append(passed, models.ScoredNZBResult{NZBResult: fr.Result, TotalScore: score, FilterStatus: "passed"})
+	}
+	if len(passed) > 0 {
+		scoringCtx := s.buildScoringContextWithCriteria(opts, settings, filterBundle.Default, animeSettings, rankingBundle.Default)
+		if rankingBundle.NewestReleaseFirst {
+			sortScoredResultsNewestReleaseFirst(passed)
+		} else {
+			sortScoredResultsByRankingBundle(passed, scoringCtx, rankingBundle)
+		}
+		maxPerRes := models.IntVal(filterOverrides.MaxResultsPerResolution, 0)
+		if maxPerRes > 0 {
+			resolutionCounts := map[int]int{}
+			var limited []models.ScoredNZBResult
+			for _, r := range passed {
+				res := extractResolutionFromResult(r.NZBResult)
+				if resolutionCounts[res] < maxPerRes {
+					limited = append(limited, r)
+					resolutionCounts[res]++
+				}
+			}
+			log.Printf("[indexer] Per-resolution limit=%d applied to %s passed results: %d -> %d", maxPerRes, "split", len(passed), len(limited))
+			passed = limited
+		}
+	}
+	return passed, filteredCount
 }
 
 // SearchTest runs search with full scoring breakdown and filter details for the admin search tester.

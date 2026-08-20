@@ -140,6 +140,27 @@ func (s maxAwareDebridSearchService) Search(_ context.Context, opts debrid.Searc
 	return results, nil
 }
 
+// gatedDebridSearchService is a debrid scraper the test controls: it signals
+// when it starts searching and then blocks until released, simulating the slow
+// debrid tail a usenet-prioritized prequeue must not wait on (OPP-2).
+type gatedDebridSearchService struct {
+	started  chan struct{}
+	finished chan struct{}
+	release  chan struct{}
+	results  []models.NZBResult
+}
+
+func (s *gatedDebridSearchService) Search(ctx context.Context, _ debrid.SearchOptions) ([]models.NZBResult, error) {
+	close(s.started)
+	defer close(s.finished)
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return append([]models.NZBResult(nil), s.results...), nil
+}
+
 type mutableClientSettingsProvider struct {
 	settings atomic.Value
 }
@@ -1146,6 +1167,104 @@ func TestSearchSplitBypassesRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
 	}
 	if got := debridResult.Results[0].Title; got != "Movie.720p.WEB-DL" {
 		t.Fatalf("expected split AIOStreams order to bypass ranking, got first title %q", got)
+	}
+}
+
+// TestSearchWithScoringSplitEmitsUsenetBeforeSlowDebrid is the service-level
+// OPP-2 verification: the split search must emit the usenet source's scored
+// candidates while the debrid scraper is still blocked (its slow tail must not
+// gate usenet resolution). The debrid scraper is gated on an explicit release so
+// the ordering is deterministic.
+func TestSearchWithScoringSplitEmitsUsenetBeforeSlowDebrid(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+<channel>
+  <item>
+    <title>Her.2013.1080p.BluRay.x264</title>
+    <guid>nzb-her-1</guid>
+    <link>http://example.com/nzb/1</link>
+    <pubDate>Tue, 21 Jan 2014 10:00:00 GMT</pubDate>
+    <newznab:attr name="size" value="1500000000"/>
+  </item>
+</channel>
+</rss>`))
+	}))
+	defer mockServer.Close()
+
+	cfgPath := filepath.Join(t.TempDir(), "settings.json")
+	mgr := config.NewManager(cfgPath)
+
+	settings := config.DefaultSettings()
+	settings.Indexers = []config.IndexerConfig{
+		{Name: "UsenetIndexer", URL: mockServer.URL, APIKey: "key", Type: "newznab", Categories: "2000,2040", Enabled: true},
+	}
+	settings.Streaming.ServiceMode = config.StreamingServiceModeHybrid
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	debridGated := &gatedDebridSearchService{
+		started:  make(chan struct{}),
+		finished: make(chan struct{}),
+		release:  make(chan struct{}),
+		results: []models.NZBResult{
+			{Title: "Her.2013.2160p.DV.Remux", ServiceType: models.ServiceTypeDebrid},
+		},
+	}
+	svc := NewService(mgr, nil, debridGated)
+
+	usenetCh, debridCh := svc.SearchWithScoringSplit(t.Context(), SearchOptions{
+		Query:     "Her 2013",
+		MediaType: "movie",
+		Year:      2013,
+	})
+
+	// Wait until the debrid scraper is actually mid-search (started but still
+	// blocked on release) before asserting the usenet source is emitted during
+	// the stall.
+	select {
+	case <-debridGated.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("debrid scraper never started")
+	}
+
+	// The usenet source must be emitted while debrid is still blocked.
+	var usenetRes ScoredSplitSearchResult
+	select {
+	case usenetRes = <-usenetCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("usenet source was not emitted during the debrid stall")
+	}
+	select {
+	case <-debridGated.finished:
+		t.Fatal("debrid source completed before usenet was emitted")
+	default:
+	}
+	if usenetRes.Err != nil {
+		t.Fatalf("usenet emit error: %v", usenetRes.Err)
+	}
+	if usenetRes.RawCount == 0 {
+		t.Fatal("usenet emitted no raw results")
+	}
+	if len(usenetRes.Scored) == 0 {
+		t.Fatal("usenet emitted no passed candidates during the debrid stall")
+	}
+
+	// Release the debrid scraper; its own source must then be emitted too.
+	close(debridGated.release)
+	var debridRes ScoredSplitSearchResult
+	select {
+	case debridRes = <-debridCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("debrid source was never emitted after release")
+	}
+	if debridRes.Err != nil {
+		t.Fatalf("debrid emit error: %v", debridRes.Err)
+	}
+	if len(debridRes.Scored) == 0 {
+		t.Fatal("debrid emitted no passed candidates")
 	}
 }
 
