@@ -1268,6 +1268,91 @@ func TestSearchWithScoringSplitEmitsUsenetBeforeSlowDebrid(t *testing.T) {
 	}
 }
 
+// TestSearchWithScoringSplitCacheHitStillEmitsScoredUsenet is a regression for
+// the two-iteration bench crash: a second split call hits the shared "raw" search
+// cache, and the cached partitions must still be filtered/scored before being
+// emitted — otherwise the prequeue has nothing to resolve on a warm cache
+// (it used to emit 0 passed candidates, force the race into exhaustion, and the
+// worker's Stop() then panicked on the closed source).
+func TestSearchWithScoringSplitCacheHitStillEmitsScoredUsenet(t *testing.T) {
+	var usenetRequests atomic.Int32
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		usenetRequests.Add(1)
+		w.Header().Set("Content-Type", "application/xml")
+		w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+<channel>
+  <item>
+    <title>Her.2013.1080p.BluRay.x264</title>
+    <guid>nzb-her-1</guid>
+    <link>http://example.com/nzb/1</link>
+    <pubDate>Tue, 21 Jan 2014 10:00:00 GMT</pubDate>
+    <newznab:attr name="size" value="1500000000"/>
+  </item>
+</channel>
+</rss>`))
+	}))
+	defer mockServer.Close()
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	settings := config.DefaultSettings()
+	settings.Indexers = []config.IndexerConfig{
+		{Name: "UsenetIndexer", URL: mockServer.URL, APIKey: "key", Type: "newznab", Categories: "2000,2040", Enabled: true},
+	}
+	settings.Streaming.ServiceMode = config.StreamingServiceModeHybrid
+	if err := mgr.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	svc := NewService(mgr, nil, stubDebridSearchService{
+		results: []models.NZBResult{{Title: "Her.2013.2160p.DV.Remux", ServiceType: models.ServiceTypeDebrid}},
+	})
+	opts := SearchOptions{Query: "Her 2013", MediaType: "movie", Year: 2013}
+
+	run := func() ScoredSplitSearchResult {
+		usenetCh, debridCh := svc.SearchWithScoringSplit(t.Context(), opts)
+		var us ScoredSplitSearchResult
+		select {
+		case us = <-usenetCh:
+		case <-time.After(3 * time.Second):
+			t.Fatal("usenet source not emitted")
+		}
+		select {
+		case <-debridCh:
+		case <-time.After(3 * time.Second):
+			t.Fatal("debrid source not settled")
+		}
+		for range usenetCh {
+		}
+		for range debridCh {
+		}
+		return us
+	}
+
+	first := run()
+	if first.Err != nil {
+		t.Fatalf("first call usenet error: %v", first.Err)
+	}
+	if len(first.Scored) == 0 {
+		t.Fatal("first call emitted no usenet passed candidates")
+	}
+	if usenetRequests.Load() != 1 {
+		t.Fatalf("indexer called %d times after first call, want 1", usenetRequests.Load())
+	}
+
+	// Second call must be served from the warm cache — and still emit scored
+	// usenet candidates.
+	second := run()
+	if second.Err != nil {
+		t.Fatalf("cache-hit usenet error: %v", second.Err)
+	}
+	if len(second.Scored) == 0 {
+		t.Fatal("warm-cache call emitted no usenet passed candidates (cache-hit scoring regression)")
+	}
+	if got := usenetRequests.Load(); got != 1 {
+		t.Fatalf("indexer called %d times total, want 1 (second call must be a cache hit)", got)
+	}
+}
+
 func TestSearchWithScoringBypassesFilteringAndRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "settings.json")
 	mgr := config.NewManager(cfgPath)

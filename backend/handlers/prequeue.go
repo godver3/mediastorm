@@ -2503,13 +2503,16 @@ func (s *streamCandidateSource) Stop() {
 
 // Close marks the source exhausted: the race concludes once every handed
 // candidate has been processed. The feeder calls it exactly once after every
-// enabled source has settled.
+// enabled source has settled. Like Stop, it is idempotent — the first caller
+// wins — so a later Stop (the worker's unconditional winner/exhaustion teardown)
+// is a no-op instead of a double close.
 func (s *streamCandidateSource) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
 		return
 	}
+	s.stopped = true
 	close(s.done)
 }
 

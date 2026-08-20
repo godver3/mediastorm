@@ -1993,6 +1993,15 @@ func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions
 		// source batch (both are immediately available).
 		bySource := partitionResultsBySource(cached)
 		for _, out := range bySource {
+			// A cache hit stores raw results only, so each partitioned source must
+			// be filtered/scored/ranked exactly like a freshly-fetched source
+			// before it is emitted — otherwise the caller sees zero passed
+			// candidates on a warm cache.
+			filterOpts := s.buildFilterOptions(opts, filterBundle.Usenet)
+			if out.source == "debrid" {
+				filterOpts = s.buildFilterOptions(opts, filterBundle.Debrid)
+			}
+			out.scored, out.filtered = s.scoreSourceCandidates(opts, settings, out.raw, filterOpts, filterBundle, animeSettings, filterOverrides, rankingBundle)
 			s.emitSplitSourceBatch(usenetOut, debridOut, settings, opts, out)
 		}
 		close(usenetOut)

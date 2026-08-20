@@ -571,6 +571,32 @@ func TestStreamCandidateSourceStopUnblocksBlockedFeed(t *testing.T) {
 	}
 }
 
+// TestStreamCandidateSourceCloseAndStopIdempotent guards against the
+// benchmark crash ("close of closed channel"): on the exhaustion path the feeder
+// Close()s the source and then the worker Stop()s it — both teardown paths must
+// be idempotent in either order.
+func TestStreamCandidateSourceCloseAndStopIdempotent(t *testing.T) {
+	// Exhaustion order: feeder Close first, worker Stop after.
+	src := newStreamCandidateSource()
+	src.Close()
+	src.Stop() // was panicking: double-close of s.done
+	src.Close()
+	src.Stop()
+	if src.Feed(models.NZBResult{Title: "c"}) {
+		t.Fatal("Feed after Close must be refused")
+	}
+
+	// Winner order: worker Stop first, feeder Close after.
+	src2 := newStreamCandidateSource()
+	src2.Stop()
+	src2.Close()
+	src2.Stop()
+	src2.Close()
+	if src2.Feed(models.NZBResult{Title: "c"}) {
+		t.Fatal("Feed after Stop must be refused")
+	}
+}
+
 // mockMovieDetailsProvider implements MovieDetailsProvider for testing
 type mockMovieDetailsProvider struct {
 	title *models.Title

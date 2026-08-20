@@ -318,6 +318,19 @@ both.
 >   - Prequeue-only latency samples (`complete=false`) are unaffected; the OPP-2
 >     win is entirely in the `prequeue` phase, which the `resolve`-scope bench
 >     isolates.
+>
+> **Bench crash find (2026-08-21, fixed in the follow-up commit):** the first
+> ▶-bench run died with `panic: close of closed channel` in
+> `streamCandidateSource.Stop`, and the iteration before it showed a warm-cache
+> `usenet` emit of 0 passed candidates. Two bugs: (1) `streamCandidateSource.Close`
+> closed `s.done` without setting `stopped`, so the worker's unconditional
+> `Stop()` after an exhausted race double-closed it — `Close` now sets `stopped`,
+> making both teardown paths idempotent; (2) the split's **cache-hit path** emitted
+> the raw-cache partitions without re-scoring them (`Scored` was nil), so on a
+> warm cache the prequeue had nothing to resolve; the cache-hit path now runs
+> `scoreSourceCandidates` per partition. Regression tests:
+> `TestStreamCandidateSourceCloseAndStopIdempotent` and
+> `TestSearchWithScoringSplitCacheHitStillEmitsScoredUsenet`.
 
 **Problem.** The play path waits for *all* search sources to finish before resolving
 anything. `searchRawResults` closes its results channel only after `wg.Wait()` over
