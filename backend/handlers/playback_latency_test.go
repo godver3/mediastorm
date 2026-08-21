@@ -174,6 +174,11 @@ func TestPlaybackLatencyTrackerRingAndStats(t *testing.T) {
 }
 
 func TestPlaybackLatencyTrackerReClickOverwritesT0(t *testing.T) {
+	// Tracker-level primitive only: calling NotePrequeueRequested alone moves t0
+	// and leaves t1 untouched. The HTTP handler's ready-entry reuse path stamps
+	// NotePrequeueReady immediately after (see
+	// TestPlaybackLatencyTrackerReusedReadyEntryIsComplete), so the app flow
+	// produces a complete sample instead of an incomplete one.
 	tr := NewPlaybackLatencyTracker(10)
 	tr.NotePrequeueRequested("pq1", "tt1", "user-1", "Title", "movie")
 	tr.NotePrequeueReady("pq1")
@@ -197,5 +202,79 @@ func TestPlaybackLatencyTrackerReClickOverwritesT0(t *testing.T) {
 	s := tr.Latest(1)[0]
 	if s.PrequeueReadyAt != readyAt {
 		t.Errorf("ready time was not preserved across re-click")
+	}
+}
+
+// A reused-ready prequeue must yield a complete sample: the handler stamps t1
+// (NotePrequeueReady) right after refreshing t0, so the click→frame is fully
+// measurable with a ~0ms prequeue phase instead of complete=false/prequeue=-1.
+func TestPlaybackLatencyTrackerReusedReadyEntryIsComplete(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+	tr.NotePrequeueRequested("pq-reuse", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueMetadata("pq-reuse", "tt1798709", 2013)
+	// The reuse path stamps requested + ready back-to-back.
+	tr.NotePrequeueReady("pq-reuse")
+	reqAt, readyAt := tr.PrequeueTimes("pq-reuse")
+	if readyAt.Before(reqAt) {
+		t.Fatalf("reused-ready t1 (%v) must be at/after t0 (%v)", readyAt, reqAt)
+	}
+	now := time.Now()
+	tr.Record(PlaybackLatencySample{
+		PrequeueID:          "pq-reuse",
+		ClientRequestedAt:   reqAt,
+		PrequeueReadyAt:     readyAt,
+		HLSSessionCreatedAt: now.Add(50 * time.Millisecond),
+		FirstSegmentReadyAt: now.Add(120 * time.Millisecond),
+		FirstSegmentSentAt:  now.Add(150 * time.Millisecond),
+	})
+	s := tr.Latest(1)[0]
+	if !s.Complete {
+		t.Fatalf("reused-ready sample must be complete: %+v", s)
+	}
+	if s.PrequeueMs > 5 {
+		t.Errorf("prequeueMs=%d, want ≈0 for a reused-ready entry", s.PrequeueMs)
+	}
+}
+
+// The aggregate stats must surface the phases each sample actually measured, even
+// for incomplete samples — a prequeue-only bench (SDR, no HLS segment) used to
+// leave every p50/p95 chip at -1ms because Snapshot gated everything on Complete.
+func TestPlaybackLatencySnapshotAggregatesIncompletePhases(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(20)
+	tr.NotePrequeueRequested("pq-sdr", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueReady("pq-sdr")
+	tr.NotePrequeueOnlySample("pq-sdr") // complete=false, but prequeueMs>0
+
+	// A session that measured t2..t4 but lacked t1 (e.g. reused ready prequeue
+	// whose pending was consumed): complete=false, yet hlsCreate/ffmpegWarmup/
+	// serveWait/total are real and must feed the stats.
+	t0 := time.Now()
+	tr.Record(PlaybackLatencySample{
+		PrequeueID:          "pq-partial",
+		SessionID:           "s-partial",
+		ClientRequestedAt:   t0.Add(-2000 * time.Millisecond),
+		HLSSessionCreatedAt: t0.Add(-1300 * time.Millisecond),
+		FirstSegmentReadyAt: t0.Add(-600 * time.Millisecond),
+		FirstSegmentSentAt:  t0.Add(-500 * time.Millisecond),
+	})
+
+	snap := tr.Snapshot(10)
+	if snap.Complete != 0 {
+		t.Fatalf("complete=%d, want 0 (both samples are incomplete)", snap.Complete)
+	}
+	if snap.Total != 2 {
+		t.Fatalf("total=%d, want 2", snap.Total)
+	}
+	if snap.Stats.PrequeueMs.P50 < 0 {
+		t.Errorf("prequeue p50=%d, want the SDR sample's prequeueMs to feed the stats", snap.Stats.PrequeueMs.P50)
+	}
+	if snap.Stats.HLSCreateMs.P50 != 700 {
+		t.Errorf("hlsCreate p50=%d, want 700 (partial sample still measured its phases)", snap.Stats.HLSCreateMs.P50)
+	}
+	if snap.Stats.FFmpegWarmupMs.P50 != 700 {
+		t.Errorf("ffmpegWarmup p50=%d, want 700", snap.Stats.FFmpegWarmupMs.P50)
+	}
+	if snap.Stats.TotalMs.P50 != 1500 {
+		t.Errorf("total p50=%d, want 1500 (partial sample measured t0..t4 minus t1)", snap.Stats.TotalMs.P50)
 	}
 }

@@ -1066,6 +1066,10 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[prequeue] Using pre-warmed entry %s for title=%s user=%s scope=%s", warm.PrequeueID, req.TitleID, req.UserID, settingsScopeKey)
 						h.latencyTracker.NotePrequeueRequested(warm.PrequeueID, req.TitleID, req.UserID, titleName, mediaType)
 						h.latencyTracker.NotePrequeueMetadata(warm.PrequeueID, req.ImdbID, req.Year)
+						// A reused ready entry costs the client no prequeue wait: stamp
+						// t1=now so the measured sample is complete (prequeueMs≈0) instead
+						// of complete=false with prequeueMs=-1.
+						h.latencyTracker.NotePrequeueReady(warm.PrequeueID)
 						resp := playback.PrequeueResponse{
 							PrequeueID:    warm.PrequeueID,
 							TargetEpisode: warmEntry.TargetEpisode,
@@ -1113,6 +1117,10 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[prequeue] Reusing existing ready entry %s for title=%s user=%s scope=%s", existing.ID, req.TitleID, req.UserID, settingsScopeKey)
 					h.latencyTracker.NotePrequeueRequested(existing.ID, req.TitleID, req.UserID, titleName, mediaType)
 					h.latencyTracker.NotePrequeueMetadata(existing.ID, req.ImdbID, req.Year)
+					// A reused ready entry costs the client no prequeue wait: stamp
+					// t1=now so the measured sample is complete (prequeueMs≈0) instead
+					// of complete=false with prequeueMs=-1.
+					h.latencyTracker.NotePrequeueReady(existing.ID)
 					resp := playback.PrequeueResponse{
 						PrequeueID:    existing.ID,
 						TargetEpisode: existing.TargetEpisode,

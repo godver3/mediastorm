@@ -422,11 +422,19 @@ func (t *PlaybackLatencyTracker) Snapshot(limit int) PlaybackLatencySnapshot {
 	snap := PlaybackLatencySnapshot{Total: len(t.samples)}
 	var totalVals, prequeueVals, hlsVals, warmupVals, serveVals []int64
 	for _, s := range t.samples {
-		if !s.Complete {
-			continue
+		if s.Complete {
+			snap.Complete++
 		}
-		snap.Complete++
-		totalVals = append(totalVals, s.TotalMs)
+		// Aggregate each phase from whatever the sample actually measures. A
+		// prequeue-only sample (native SDR playback — no HLS segment) still has a
+		// real prequeueMs, and a session that reused a ready prequeue still has
+		// real hlsCreate/ffmpegWarmup/serveWait/total. Only the fully-correlated
+		// ones count toward snap.Complete. Gating the stats on Complete alone is
+		// what left every p50/p95 chip at -1ms whenever the bench was resolving
+		// SDR releases.
+		if s.TotalMs >= 0 {
+			totalVals = append(totalVals, s.TotalMs)
+		}
 		if s.PrequeueMs >= 0 {
 			prequeueVals = append(prequeueVals, s.PrequeueMs)
 		}
