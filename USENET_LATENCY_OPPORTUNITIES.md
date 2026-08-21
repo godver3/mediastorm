@@ -226,6 +226,32 @@ iteration count. The dev baseline table above is the reference point.
   (`-f` same release, same scope). Note the release can legitimately change
   when candidate selection changes (OPP-1 first-success-wins).
 
+### Reference baseline — 2026-08-21 (`Her`, resolve-cold / search-warm, ▶ bench)
+
+Recorded after OPP-1 + OPP-2 had both landed and the crash/warm-cache fixes
+were in (`09c96276`), dev container, **2×10 ▶ bench iterations**
+(`scope=resolve`, 10 iterations per run, two runs back-to-back). All rows are
+prequeue-only (`complete=false`, SDR winner — same shape as the OPP-1
+measurement; release varies via first-success-wins), so these are the
+`prequeue` phase numbers the OPP-1/2/3/12 work targets.
+
+| run | n | min | p50 | mean | max |
+|-----|---|----:|----:|-----:|----:|
+| run 1 (18:02) | 10 | 4922ms | 7160ms | 7206ms | 9915ms |
+| run 2 (18:10) | 10 | 4663ms | 7044ms | 7442ms | 11550ms |
+| **combined** | **20** | **4663ms** | **7044ms** | **7324ms** | **11550ms** |
+
+Raw (combined, sorted ms): `4663, 4922, 5043, 5090, 5602, 6719, 6834, 6868,
+6885, 7012, 7075, 7487, 7565, 7880, 8033, 8325, 9128, 9880, 9915, 11550`.
+
+Compared with the OPP-1 session's own 10× ▶ baseline (p50 ≈ 8.8s, mean ≈
+9.5s, min 7.8s, max 12.3s), the post-OPP-1+OPP-2 median/mean is ~7.0–7.3s.
+Same caveats as always: provider state and the *winning release* vary between
+runs (benchmarks recorded OPP-1's 24–37s row as *not* comparable; the d3g
+REMUX resolves slower than the LAMA-family SDR that keeps winning here), so
+this is a same-setup, same-title trend line, not a controlled A/B. The raw
+runs above are the source of truth if a precise diff is ever needed again.
+
 ---
 
 ## OPP-1: Race top-K candidates instead of serial resolution

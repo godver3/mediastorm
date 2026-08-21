@@ -1036,7 +1036,7 @@ async function runBenchRow(id) {
       return;
     }
     showToast("▶ Bench started: " + (s.titleName || "?") + " · " + payload.iterations + "× flush " + payload.scope +
-      " — watch the table fill in (server-side, no auth needed).");
+      " — watch the table fill in.");
   } catch (e) {
     showToast("⚠ Bench start failed: " + e, "#8a5f1f");
   }
