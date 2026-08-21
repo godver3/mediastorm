@@ -199,6 +199,19 @@ Buttons for all three are on `/admin/latency`.
   provider config and lazily rebuilds on the next `GetPool()` (a "cold pool", not a
   dead one). An earlier flush that permanently nilled the pool broke every NZB
   resolution afterwards ("no providers configured" on all candidates).
+* **NNTP pool verify burns a full 60s per (re)build when a provider is
+  unreachable.** Upstream nntppool v1.5.5 `verifyProviders` hardcodes a single
+  60s context with no config knob; the pool manager builds synchronously, so
+  the 60s lands on startup, settings save, and the first `GetPool()` after a
+  cold flush (the importer's pool use — on the resolve critical path).
+  Reproduced 2026-08-21 with a blackhole provider: bench resolves measured
+  71s/77s ≈ 60s verify + work. Follow-up fix deferred to a dedicated session
+  (async pool init — nothing consumes the pool eagerly, so non-blocking is
+  safe). **Bench rule:** never run the ▶ bench with an unreachable provider
+  configured — the verify is ~1-2s when all providers are reachable. The OPP-4
+  breaker is NOT involved (no `[usenet-circuit]` lines in the repro): the pool
+  path bypasses it entirely; probes were satisfied by the healthy provider
+  alone.
 * **Frontend `+` → space query bug** (frontend repo, `godver3/mediastorm-frontend`):
   release filenames containing `+` (e.g. `...HDMa5.1.+.Multi...`) break playback
   because the web player inserts a literal `+` into the query string, which Go decodes
@@ -567,6 +580,9 @@ cheap probe (no full download) and the bad-stream marking still fires.
 > breaker on hung providers, raise `UsenetPreflightProbeSec` above 12s.
 > Observable via log lines: `[usenet-circuit] opened/closed/allowing recovery
 > probe` and `[usenet] provider %q skipped; circuit open, retry in ~…`.
+> ⚠ Do NOT test this by pointing a provider at an unreachable host — the pool
+> rebuild (startup + every cold flush) then burns the upstream 60s verify;
+> see the Known issues entry.
 >
 > Verification: `services/usenet/circuit_breaker_test.go` —
 > `TestProviderCircuitFailsFastFallsOverAndShortCircuits` (the verification
@@ -578,6 +594,13 @@ cheap probe (no full download) and the bad-stream marking still fires.
 > `TestParentCancellationDoesNotOpenCircuit`, `TestDeadlineWithoutWorkerErrorSurfacesAsFailure`,
 > `TestNNTPCircuitBreakerBackoffAndHalfOpenProbe`; race-detector pass (usenet,
 > playback, handlers; the debrid flake is pre-existing backlog item 3).
+>
+> Post-bench sanity (2026-08-21, after the dead-provider config was removed):
+> two 10× ▶ `resolve`-scope runs completed within normal variance — per-iteration
+> elapsed 5.8–16.8s and 6.3–18.2s (p50 ≈ 9s, vs the 71s/77s rows the dead
+> provider's 60s pool verify produced), and zero `[usenet-circuit]` log lines:
+> the breaker is inert under healthy providers — zero added happy-path latency,
+> as designed.
 
 **Problem.** A slow or failing NNTP provider blocks and aborts the whole health
 check (and therefore availability), with no breaker/backoff. The existing
