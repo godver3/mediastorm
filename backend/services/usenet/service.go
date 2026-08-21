@@ -38,6 +38,7 @@ type Service struct {
 	httpClient  *http.Client
 	dialer      dialerFunc
 	poolManager pool.Manager // Connection pool for faster health checks
+	breaker     *nntpCircuitBreaker
 	maxSegments int
 	rand        *rand.Rand
 }
@@ -55,6 +56,7 @@ func NewService(cfg *config.Manager, poolManager pool.Manager) *Service {
 		httpClient:  &http.Client{Timeout: defaultRequestTimeout},
 		dialer:      newNNTPClient,
 		poolManager: poolManager,
+		breaker:     newNNTPCircuitBreaker(),
 		maxSegments: defaultSegmentSample,
 		rand:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
@@ -664,15 +666,79 @@ func (s *Service) checkSegmentsWithDialer(ctx context.Context, segments []string
 
 	// Carry only missing segments forward to the next provider. This keeps the
 	// "present on any provider" semantics while avoiding a fresh NNTP login per
-	// sampled segment.
+	// sampled segment. A provider that errors (or is inside an open circuit)
+	// is skipped for its cooldown window instead of aborting the whole check,
+	// so one bad provider never blocks a healthy secondary.
+	checkedAny := false
+	var lastErr error
+	var minRetry time.Duration
+	skippedAny := false
 	for _, provider := range providers {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("usenet health check aborted: %w", err)
+		}
+
+		key := nntpProviderKey(provider)
+		allowed, probe, retryIn := s.breaker.allow(key)
+		if !allowed {
+			skippedAny = true
+			if retryIn > 0 && (minRetry == 0 || retryIn < minRetry) {
+				minRetry = retryIn
+			}
+			displayRetry := retryIn
+			if displayRetry <= 0 {
+				displayRetry = time.Second
+			}
+			log.Printf("[usenet] provider %q skipped; circuit open, retry in ~%s", nntpProviderLabel(provider), displayRetry.Round(time.Second))
+			continue
+		}
+
 		missing, err := s.checkSegmentsOnProvider(ctx, remaining, provider)
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				// The caller went away (e.g. probe budget); this says nothing
+				// about provider health, so no verdict is recorded.
+				s.breaker.releaseProbe(key, probe)
+			} else {
+				s.breaker.recordFailure(key)
+			}
+			lastErr = err
+			log.Printf("[usenet] provider %q failed (%v); falling over to the next provider", nntpProviderLabel(provider), err)
+			continue
 		}
+		s.breaker.recordSuccess(key)
+		checkedAny = true
 		remaining = missing
 		if len(remaining) == 0 {
 			return nil, nil
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("usenet health check aborted: %w", err)
+	}
+	if len(remaining) > 0 {
+		if !checkedAny {
+			// No provider yielded an answer. Surface the outage as an error so
+			// the availability probe stays fail-open.
+			if lastErr != nil {
+				return nil, fmt.Errorf("all usenet providers failed: %w", lastErr)
+			}
+			if minRetry <= 0 {
+				minRetry = time.Second
+			}
+			return nil, fmt.Errorf("usenet health check aborted: all providers in cooldown (retry in ~%s)", minRetry.Round(time.Second))
+		}
+		if skippedAny || lastErr != nil {
+			// Some provider answered but another was unavailable (errored or
+			// in cooldown). Segments missing from the checked providers are NOT
+			// a definitive "missing from all providers" verdict — the release
+			// may live on the unavailable provider — so fail open instead.
+			reason := "provider(s) in cooldown"
+			if lastErr != nil {
+				reason = lastErr.Error()
+			}
+			return nil, fmt.Errorf("usenet health check incomplete: %d segment(s) missing from the checked providers, some providers unavailable (%s)", len(remaining), reason)
 		}
 	}
 
@@ -685,6 +751,17 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 		return nil, nil
 	}
 
+	// Bound the whole provider pass (dial + sampled article checks + retries)
+	// so a hanging provider fails fast (~12s) and trips the circuit breaker
+	// instead of holding the health check hostage until the outer deadline.
+	// An earlier outer deadline (e.g. the preflight probe budget) still wins.
+	providerTimeout := s.breaker.timeout
+	if providerTimeout <= 0 {
+		providerTimeout = defaultNNTPProviderTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, providerTimeout)
+	defer cancel()
+
 	maxConcurrency := provider.Connections
 	if maxConcurrency <= 0 {
 		maxConcurrency = 1
@@ -692,9 +769,6 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 	if maxConcurrency > len(segments) {
 		maxConcurrency = len(segments)
 	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	segmentCh := make(chan string)
 	errCh := make(chan error, 1)
@@ -849,6 +923,13 @@ func (s *Service) checkSegmentsOnProvider(ctx context.Context, segments []string
 	case err := <-errCh:
 		return nil, err
 	default:
+	}
+
+	// A pass that ended because a deadline fired while no worker reported an
+	// error (workers exit silently on ctx.Done) must surface as a failure, not
+	// a partial-coverage verdict that could falsely reject a healthy release.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("usenet provider check aborted: %w", err)
 	}
 
 	return uniqueStrings(missing), nil

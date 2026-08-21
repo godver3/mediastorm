@@ -75,10 +75,7 @@ admin session cookie is `HttpOnly`; `cmd` copies get the token from
 `/admin/api/latency/session-token` (master-only). A 403 on"/admin/api/latency" means the cookie value is invalid/expired/non-master — not
 an OPP issue. The ▶ bench sidesteps auth entirely.
 
-**Queued / next session:** 1) OPP-4 (NNTP provider circuit breaker + failover)
-— the evening stall/retry chains visible in every run (superseded losers p50
-≈12.7s, 17–19s outliers on both OPP-3-era AND pre-OPP-3 binaries) are exactly
-its target; 2) the superseded-losers-keep-downloading behavior (importer
+**Queued / next session:** 1) ~~OPP-4 (NNTP provider circuit breaker + failover)~~ — DONE 2026-08-21, see the OPP-4 STATUS below (fail-fast + failover + cooldown are in; the breaker lives in the health-check layer, so the evening stall/retry chains on superseded losers — importer-worker stalls — remain OPP-7/2 territory); 2) the superseded-losers-keep-downloading behavior (importer
 workers outlive the caller ctx ~10s+) is worth its own fix — kill in-flight
 importer jobs properly on race cancellation; 3) OPP-2's cross-source ordering
 nuance is documented in its STATUS block (arrival-order vs global-score order)
@@ -529,6 +526,58 @@ cheap probe (no full download) and the bad-stream marking still fires.
 ---
 
 ## OPP-4: NNTP provider circuit breaker + failover
+
+> **STATUS (2026-08-21): DONE.** NNTP health checks now run through a
+> per-provider circuit breaker + failover loop — the debrid resolution-circuit
+> pattern (`services/debrid/resolution_circuit.go`) ported to the NNTP layer.
+> `checkSegmentsWithDialer` no longer aborts on the first provider error: a
+> failing provider fails fast — its whole pass (dial + sampled BODY checks +
+> retries) is bounded by a ~12s per-provider timeout — and is skipped for an
+> exponential cooldown (30s → 5min, capped), admitting exactly one half-open
+> recovery probe after the cooldown; a secondary provider serves the check
+> instead of the outage serializing/failing it. Provider outcomes are recorded
+> per call: caller-side cancellation (e.g. probe budget) never opens a circuit,
+> in-flight failures during an already-open circuit never extend the cooldown.
+>
+> Failure semantics preserved (fail-open): a "missing from all providers"
+> verdict is emitted ONLY when every non-skipped provider actually answered.
+> If any provider was unavailable (errored or in cooldown) the check errors
+> instead — `usenet health check incomplete: N segment(s) missing from the
+> checked providers, some providers unavailable (…)` / `all usenet providers
+> failed: …` / `all providers in cooldown (retry in ~…)` — so the OPP-3 probe
+> stays inconclusive → full resolve (a release living on a down provider can
+> never be rejected on its outage). This also fixed a latent hole the new
+> per-provider timeout would have made reachable: a provider pass ending on a
+> deadline with no worker error returned a partial-coverage missing verdict; it
+> now surfaces as an error.
+>
+> Files: `services/usenet/circuit_breaker.go` (new) + `circuit_breaker_test.go`
+> (new); `services/usenet/service.go` (`checkSegmentsWithDialer` failover
+> loop; `checkSegmentsOnProvider` pass timeout + deadline-as-error guard). The
+> breaker is per-Service, keyed by provider name (host:port fallback),
+> constants only (12s / 30s / 5min) — no settings fields, mirrors debrid.
+>
+> Bench/probe caveats: the breaker lives in the health-check layer (preflight
+> probe + `/usenet/health` handler); provider stalls during *full downloads*
+> (importer workers outliving the caller) are a separate concern — handoff
+> item 2 / OPP-7. The probe budget (5s default) is usually shorter than the
+> 12s pass timeout, so a *hung* provider inside a probe is cut by the budget
+> (inconclusive, no circuit opened); fast-fail outages (conn refused, auth)
+> open the circuit even during probes. If you want probes to actually trip the
+> breaker on hung providers, raise `UsenetPreflightProbeSec` above 12s.
+> Observable via log lines: `[usenet-circuit] opened/closed/allowing recovery
+> probe` and `[usenet] provider %q skipped; circuit open, retry in ~…`.
+>
+> Verification: `services/usenet/circuit_breaker_test.go` —
+> `TestProviderCircuitFailsFastFallsOverAndShortCircuits` (the verification
+> scenario: hanging provider → fail fast at the pass timeout → healthy via
+> fallover → short-circuited on the immediately following call → recovery
+> probe re-opens with doubled backoff → probe success closes the circuit),
+> `TestAllProvidersInCooldownIsNotAMissingVerdict`,
+> `TestMissingWithUnavailableProviderIsFailOpen`,
+> `TestParentCancellationDoesNotOpenCircuit`, `TestDeadlineWithoutWorkerErrorSurfacesAsFailure`,
+> `TestNNTPCircuitBreakerBackoffAndHalfOpenProbe`; race-detector pass (usenet,
+> playback, handlers; the debrid flake is pre-existing backlog item 3).
 
 **Problem.** A slow or failing NNTP provider blocks and aborts the whole health
 check (and therefore availability), with no breaker/backoff. The existing
