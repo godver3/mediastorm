@@ -361,9 +361,10 @@ func main() {
 	indexerHandler.SetBadStreamsService(badStreamsService)
 
 	playbackService := playback.NewService(cfgManager, nzbSystem, nzbSystem.MetadataReader())
-	// Wire the OPP-3 pre-download availability probe: usenet candidates are
-	// segment-sampled before the full download so dead releases are rejected
-	// cheaply (fail-open — only a definitive missing-segments verdict rejects).
+	// Wire the preflight availability probe: usenet candidates are
+	// segment-sampled concurrently with the full resolve, so dead releases are
+	// cancelled and rejected cheaply (fail-open — only a definitive
+	// missing-segments verdict rejects).
 	playbackService.SetUsenetHealthChecker(usenetService)
 	playbackHandler := handlers.NewPlaybackHandler(playbackService)
 	playbackHandler.SetBadStreamsService(badStreamsService)

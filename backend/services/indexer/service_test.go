@@ -142,7 +142,7 @@ func (s maxAwareDebridSearchService) Search(_ context.Context, opts debrid.Searc
 
 // gatedDebridSearchService is a debrid scraper the test controls: it signals
 // when it starts searching and then blocks until released, simulating the slow
-// debrid tail a usenet-prioritized prequeue must not wait on (OPP-2).
+// debrid tail a usenet-prioritized prequeue must not wait on.
 type gatedDebridSearchService struct {
 	started  chan struct{}
 	finished chan struct{}
@@ -1171,7 +1171,7 @@ func TestSearchSplitBypassesRankingForAIOStreamsOnlyDebridMode(t *testing.T) {
 }
 
 // TestSearchWithScoringSplitEmitsUsenetBeforeSlowDebrid is the service-level
-// OPP-2 verification: the split search must emit the usenet source's scored
+// verification for the split search: it must emit the usenet source's scored
 // candidates while the debrid scraper is still blocked (its slow tail must not
 // gate usenet resolution). The debrid scraper is gated on an explicit release so
 // the ordering is deterministic.

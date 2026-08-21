@@ -139,7 +139,7 @@ func TestValidatePrequeueVideoProbe(t *testing.T) {
 }
 
 // stubPlaybackService implements the prequeue playback-service seam so the
-// OPP-1 resolution race can be exercised without a live importer/NNTP stack.
+// concurrent resolution race can be exercised without a live importer/NNTP stack.
 type stubPlaybackService struct {
 	resolve func(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error)
 }
@@ -167,7 +167,7 @@ func (*raceProbeResult) ProbeVideoFull(ctx context.Context, path string) (*Video
 
 // slowFailingResolve fails slowly at a generous 3s cadence but aborts instantly
 // once its context is cancelled — the shape of a dead/slow top-ranked release
-// whose articles stall resolution (OPP-1).
+// whose articles stall resolution.
 func slowFailingResolve(ctx context.Context, _ models.NZBResult) (*models.PlaybackResolution, error) {
 	select {
 	case <-ctx.Done():
@@ -178,7 +178,7 @@ func slowFailingResolve(ctx context.Context, _ models.NZBResult) (*models.Playba
 }
 
 func TestRacePrequeueResolutionsAdoptsFastSecondCandidate(t *testing.T) {
-	// OPP-1 verification: a slow/failing top candidate must not stall the race;
+	// Regression coverage: a slow/failing top candidate must not stall the race;
 	// the fast healthy candidate is adopted and wall-clock is far less than the
 	// serial sum of the two resolutions.
 	process := func(ctx context.Context, i int, _ models.NZBResult) (*candidateResolution, *candidateResolution, error) {
@@ -398,10 +398,11 @@ func TestRacePrequeueResolutionsCancelledContext(t *testing.T) {
 	}
 }
 
-// TestResolveCandidatesAdoptsFastHealthyCandidate is the handler-level OPP-1
-// verification: the wired resolution phase (preflight gate, resolve, probe,
-// policy checks) races candidates and adopts the fast healthy second candidate
-// even though the top-ranked candidate fails slowly on the wire.
+// TestResolveCandidatesAdoptsFastHealthyCandidate is the handler-level
+// verification for the concurrent resolution race: the wired resolution phase
+// (preflight gate, resolve, probe, policy checks) races candidates and adopts
+// the fast healthy second candidate even though the top-ranked candidate fails
+// slowly on the wire.
 func TestResolveCandidatesAdoptsFastHealthyCandidate(t *testing.T) {
 	playbackSvc := &stubPlaybackService{
 		resolve: func(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
@@ -449,10 +450,10 @@ func TestResolveCandidatesAdoptsFastHealthyCandidate(t *testing.T) {
 	}
 }
 
-// TestResolveCandidatesProbeRejectionMarksBadStream is the OPP-3 handler-level
-// verification: a candidate rejected by the cheap availability probe (surfaced
-// as playback.ErrUsenetProbeRejected, which wraps importer.ErrArticleUnavailable)
-// must be marked bad immediately and the race must adopt the next healthy
+// TestResolveCandidatesProbeRejectionMarksBadStream covers the bad-stream
+// marking of a candidate rejected by the cheap availability probe (surfaced
+// as playback.ErrUsenetProbeRejected, which wraps importer.ErrArticleUnavailable):
+// it must be marked bad immediately and the race must adopt the next healthy
 // candidate — with the latency tracker recording the probe_rejected attempt.
 func TestResolveCandidatesProbeRejectionMarksBadStream(t *testing.T) {
 	badStreamsSvc := badstreams.New(filepath.Join(t.TempDir(), "bad_streams.json"))
@@ -504,9 +505,9 @@ func TestResolveCandidatesProbeRejectionMarksBadStream(t *testing.T) {
 		t.Fatalf("bad-stream reason = %q, want prequeue:usenet-articles-unavailable", entries[0].Reason)
 	}
 
-	// The latency tracker must carry the per-candidate attempts (OPP-3
-	// instrumentation): probe_rejected for the dead release, adopted for the
-	// winner, rejection quicker than adoption.
+	// The latency tracker must carry the per-candidate attempts:
+	// probe_rejected for the dead release, adopted for the winner, rejection
+	// quicker than adoption.
 	tracker.NotePrequeueOnlySample("prequeue-probe-test")
 	samples := tracker.Latest(1)
 	if len(samples) != 1 {
@@ -527,8 +528,8 @@ func TestResolveCandidatesProbeRejectionMarksBadStream(t *testing.T) {
 	}
 }
 
-// TestResolveCandidatesStreamsUsenetBeforeDebrid is the handler-level OPP-2
-// verification: with a streaming candidate source, the resolution phase must
+// TestResolveCandidatesStreamsUsenetBeforeDebrid is the handler-level
+// verification for streaming candidate sources: the resolution phase must
 // start (and complete) on the first-ready source's candidates while the slower
 // source has not even been published yet — the prequeue no longer waits for
 // debrid scrapers before resolving usenet.

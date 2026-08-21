@@ -280,7 +280,7 @@ func TestPlaybackLatencySnapshotAggregatesIncompletePhases(t *testing.T) {
 	}
 }
 
-// OPP-3 instrumentation: candidate-resolution attempts attach to the sample
+// Candidate-resolution attempts attach to the sample
 // with outcome + duration so dead-release rejections are measurable even when
 // they lose the race to a faster candidate.
 func TestPlaybackLatencyTrackerCandidateAttemptsAttachToPrequeueOnlySample(t *testing.T) {
@@ -340,7 +340,7 @@ func TestPlaybackLatencyTrackerCompleteSampleCarriesCandidates(t *testing.T) {
 	}
 }
 
-// OPP-3 instrumentation: a prequeue that never reaches ready (all candidates
+// A prequeue that never reaches ready (all candidates
 // dead/rejected) must still emit a failure sample with its candidate attempts,
 // so the all-dead path is measurable end to end instead of silently absent.
 func TestPlaybackLatencyTrackerFailedPrequeueEmitsFailureSample(t *testing.T) {

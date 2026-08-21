@@ -321,7 +321,7 @@ func TestPrequeueEntryToResponseIncludesMigrationCandidates(t *testing.T) {
 }
 
 // TestPrequeueProgressWindowFieldsAreAdditiveAndOmitEmpty pins the API
-// contract for the OPP-1 in-flight window: the fields must ride along in
+// contract for the in-flight candidate window: the fields must ride along in
 // ToResponse and be omitted from JSON when unset (0), so older OTA'd frontends
 // keep parsing the response unchanged and newer frontends can update safely
 // against older (admin-deployed) backends.

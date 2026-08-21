@@ -1912,7 +1912,7 @@ type searchSplitOutcome struct {
 // emits each source's filtered+ranked passed candidates as soon as THAT source
 // completes, instead of waiting for both (Search/searchRawResults wait for all
 // sources via wg.Wait). A usenet-prioritized install can start resolving its
-// usenet candidates while debrid scrapers are still in flight (OPP-2).
+// usenet candidates while debrid scrapers are still in flight.
 //
 // Each returned channel receives exactly one ScoredSplitSearchResult and is then
 // closed; callers must drain both (a disabled source reports Disabled=true so

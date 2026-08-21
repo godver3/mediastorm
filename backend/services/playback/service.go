@@ -66,14 +66,14 @@ type Service struct {
 	nzbFetchCount   atomic.Int64 // NZB file downloads from indexers
 	nzbProcessCount atomic.Int64 // NZB files sent for immediate processing
 	providerBreaker *providerbreaker.Breaker
-	// usenetHealth runs the cheap availability probe (OPP-3): a header/body-only
+	// usenetHealth runs the cheap availability probe: a header/body-only
 	// pass over a small sample of the NZB's segments that rejects releases whose
 	// articles are missing from every enabled provider, run concurrently with the
 	// full download+parse instead of gating it. Nil disables the probe.
 	usenetHealth usenetHealthChecker
 }
 
-// usenetHealthChecker is the subset of the usenet service used for OPP-3's
+// usenetHealthChecker is the subset of the usenet service used for the
 // pre-download availability probe. CheckHealthWithNZB parses the already-fetched
 // NZB payload, samples first/middle/last payload segments and checks them across
 // the enabled providers without downloading the release.
@@ -81,8 +81,8 @@ type usenetHealthChecker interface {
 	CheckHealthWithNZB(ctx context.Context, candidate models.NZBResult, nzbBytes []byte, fileName string) (*models.NZBHealthCheck, error)
 }
 
-// ErrUsenetProbeRejected identifies releases rejected by the cheap pre-download
-// availability probe (OPP-3). It deliberately wraps importer.ErrArticleUnavailable
+// ErrUsenetProbeRejected identifies releases rejected by the cheap
+// availability probe. It deliberately wraps importer.ErrArticleUnavailable
 // so existing article-unavailable handling (bad-stream marking, IsArticleUnavailable
 // checks) keeps working, while callers can still tell a probe rejection apart
 // from a full-download failure.
@@ -192,7 +192,7 @@ func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataS
 	return service
 }
 
-// SetUsenetHealthChecker wires the OPP-3 availability probe. When set, usenet
+// SetUsenetHealthChecker wires the availability probe. When set, usenet
 // candidates are segment-sampled concurrently with the full resolve, so dead or
 // incomplete releases are cancelled and rejected cheaply. Nil (default) disables
 // the probe.
@@ -285,7 +285,7 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		processNum, fileName, s.nzbFetchCount.Load(), s.nzbProcessCount.Load())
 	log.Printf("[playback] processing NZB immediately fileName=%q", fileName)
 
-	// The OPP-3 availability probe runs CONCURRENTLY with the full resolve, not
+	// The availability probe runs CONCURRENTLY with the full resolve, not
 	// before it: a healthy release pays zero added latency (the probe verdict is
 	// simply discarded once the resolve succeeds), while a definitive
 	// missing-segments verdict cancels the in-flight resolve and rejects the
@@ -382,7 +382,7 @@ func (s *Service) PrepareTorrentCandidates(ctx context.Context, candidates []mod
 // (healthy verdict or rejection while the resolve is still grinding) never wait.
 const preflightVerdictGrace = 2 * time.Second
 
-// preflightProbe is the OPP-3 availability probe running concurrently with the
+// preflightProbe is the availability probe running concurrently with the
 // full resolve. rejected receives (buffered, never blocks) when the probe
 // delivers a definitive missing-segments verdict; done closes when the probe
 // goroutine exits (verdict known or aborted); cancel tears down the probe's
@@ -393,8 +393,8 @@ type preflightProbe struct {
 	cancel   context.CancelFunc
 }
 
-// startUsenetPreflight launches the OPP-3 probe in the background and returns
-// its handle, or nil when no probe applies (no checker wired, or the candidate
+// startUsenetPreflight launches the availability probe in the background and
+// returns its handle, or nil when no probe applies (no checker wired, or the candidate
 // is headed to an external usenet engine). The probe runs with its own budget
 // (UsenetPreflightProbeSec) under parent, so it can never outlive the resolve
 // attempt or its caller.
@@ -446,7 +446,7 @@ func preflightProbeRejectedAfter(p *preflightProbe, grace time.Duration) bool {
 	}
 }
 
-// probeUsenetAvailability runs the OPP-3 probe on an already-fetched NZB payload
+// probeUsenetAvailability runs the probe on an already-fetched NZB payload
 // and reports whether the release should be rejected. Rejection is a definitive
 // verdict only: at least one sampled segment is missing from every enabled
 // provider. Anything inconclusive (checker error, no providers, budget timeout,

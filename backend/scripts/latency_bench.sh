@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# latency_bench.sh — repeatable cold-cache latency benchmark (OPP measurement).
+# latency_bench.sh — repeatable cold-cache latency benchmark.
 #
 # Drives the REAL prequeue + HLS playback HTTP flow (no browser) a set number
 # of times against a running backend. Before each iteration it forces a cold
-# state via the admin flush (scope = resolve by default, matching OPP-1/3/12);
+# state via the admin flush (scope = resolve by default, matching the resolve-phase targets);
 # the same title is then prequeued, played to its first HLS segment, and the
 # server-side click→first-frame sample is written to a local CSV together with
-# the exact release that was selected. Later OPP runs append to their own CSV so
+# the exact release that was selected. Later benchmark runs append to their own CSV so
 # you can diff improvements per media/release over the span of the work.
 #
 # Requirements
@@ -266,7 +266,7 @@ def write_row(row):
 
 if pick is None:
     # No server HLS sample for this prequeue (non-HLS stream / no segment
-    # served). Prequeue is the phase every OPP cares about, so record the
+    # served). Prequeue is the phase the latency work targets, so record the
     # client-measured t0->t1 instead of dropping the iteration.
     write_row(sys.argv[3].split(',', 1) + [
         os.environ.get('TITLE_NAME','') or '', os.environ.get('TITLE_ID','') or '',
@@ -359,7 +359,7 @@ ps = [p for _, _, p in rows if p >= 0]
 print(f"   iterations={len(rows)}  complete(samples)={len(complete)}  prequeue-only={len(rows)-len(complete)}")
 print(f"   total    {stat([t for _, t, _ in complete])}   (complete samples only)")
 print(f"   prequeue {stat(ps)}   (all rows; client-measured for non-HLS)")
-# OPP-3: per-candidate outcomes across the run — probe_rejected/"articles_unavailable"
+# Per-candidate outcomes across the run — probe_rejected/"articles_unavailable"
 # durations are the dead-release rejection latency, diffable before/after.
 outcomes = {}
 for row, _, _ in rows:

@@ -1849,7 +1849,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// The split search (SearchWithScoringSplit) runs usenet and debrid
 	// concurrently and streams each source's scored candidates as soon as that
 	// source completes, so the top usenet candidates begin resolving while
-	// debrid scrapers are still in flight (OPP-2). The feeder publishes
+	// debrid scrapers are still in flight. The feeder publishes
 	// candidates into a streamCandidateSource; the resolution phase races over
 	// that stream instead of a pre-merged list.
 	if h.indexerSvc == nil {
@@ -1878,7 +1878,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	})
 
 	// Resolution phase — race the candidate stream concurrently (bounded worker
-	// pool, see OPP-1) and adopt the first fully validated candidate instead of
+	// pool) and adopt the first fully validated candidate instead of
 	// resolving serially. Deprioritized unknown-track results are kept as a
 	// fallback and used only when nothing validates.
 	resolveStart := time.Now()
@@ -2335,7 +2335,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 }
 
 // prequeueResolutionRaceWidth bounds how many prequeue candidates are resolved
-// concurrently during the resolution phase (OPP-1). Resolving the top ranked
+// concurrently during the resolution phase. Resolving the top ranked
 // candidates in parallel bounds the phase to the fastest healthy candidate
 // instead of the serial sum of every dead or slow candidate.
 const prequeueResolutionRaceWidth = 4
@@ -2395,8 +2395,8 @@ type prequeueResolutionOptions struct {
 // Two shapes cover both resolution modes:
 //   - sliceCandidateSource: a fixed, already-final ranked list (tests and
 //     derived callers).
-//   - streamCandidateSource: candidates arrive as each search source completes
-//     (OPP-2), so the race can begin resolving the first-ready source's
+//   - streamCandidateSource: candidates arrive as each search source completes,
+//     so the race can begin resolving the first-ready source's
 //     candidates while other sources are still feeding.
 //
 // Total reports how many candidates have been fed so far (a slice never grows;
@@ -2746,14 +2746,14 @@ func prequeueCandidateAttempt(index int, result models.NZBResult, outcome string
 // fallback only when nothing validates; and IsArticleUnavailable failures still
 // mark bad streams. Candidates flow from src, so a streaming source lets the
 // race start resolving the first-ready search source while later sources are
-// still feeding (see OPP-2); the debrid torrent preflight runs on the feeder
+// still feeding; the debrid torrent preflight runs on the feeder
 // side (prequeueSearchFeeder) before a debrid batch is published.
 func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID string, src prequeueCandidateSource, opts prequeueResolutionOptions) (prequeueResolutionChoice, error) {
 	resolveStart := time.Now()
 
 	process := func(raceCtx context.Context, i int, result models.NZBResult) (accepted *candidateResolution, deprioritized *candidateResolution, err error) {
 		// Record the per-candidate attempt outcome + duration for the latency
-		// tracker on every terminal path (OPP-3 instrumentation): probe
+		// tracker on every terminal path: probe
 		// rejections and article-unavailable failures are the measurable signal.
 		attemptStart := time.Now()
 		defer func() {
@@ -3269,7 +3269,7 @@ func (h *PrequeueHandler) waitForPlaybackQueue(ctx context.Context, prequeueID s
 func (h *PrequeueHandler) failPrequeue(prequeueID, errMsg string) {
 	log.Printf("[prequeue] Prequeue %s failed: %s", prequeueID, errMsg)
 	// Emit a failure sample (complete=false, t0→failure, candidates attached) so
-	// the all-candidates-dead path — the OPP-3 showcase — is measurable instead
+	// the all-candidates-dead path is measurable instead
 	// of silently absent from the latency window.
 	if h.latencyTracker != nil {
 		h.latencyTracker.NotePrequeueFailedSample(prequeueID, errMsg)

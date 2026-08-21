@@ -44,7 +44,7 @@ type PlaybackLatencySample struct {
 	// Candidates lists every candidate the resolution race tried for this
 	// prequeue, with its outcome and wall-clock duration, so dead-release
 	// rejections (probe_rejected / articles_unavailable) are measurable even
-	// when they lose the race to a faster candidate (OPP-3 instrumentation).
+	// when they lose the race to a faster candidate.
 	Candidates []PlaybackCandidateAttempt `json:"candidates,omitempty"`
 
 	ServiceType     string `json:"serviceType,omitempty"`     // "usenet" | "debrid" | ""
@@ -88,7 +88,7 @@ type pendingPrequeueTimes struct {
 const (
 	// PrequeueCandidateAdopted: fully validated; became the selected release.
 	PrequeueCandidateAdopted = "adopted"
-	// PrequeueCandidateProbeRejected: rejected by the OPP-3 cheap availability
+	// PrequeueCandidateProbeRejected: rejected by the cheap availability
 	// probe before any full download (sampled segments missing from all providers).
 	PrequeueCandidateProbeRejected = "probe_rejected"
 	// PrequeueCandidateArticlesUnavailable: full resolve failed because the
@@ -213,11 +213,11 @@ func (t *PlaybackLatencyTracker) NotePrequeueMetadata(prequeueID, imdbID string,
 }
 
 // NotePrequeueCandidate records one candidate-resolution attempt of a prequeue
-// so latency samples carry the per-candidate outcome + duration — the OPP-3
-// measurement surface ("probe_rejected in seconds" vs "articles_unavailable
-// after minutes"). Upserts by index (each candidate reports once; an adopted
-// fallback re-marks its earlier deprioritized attempt via
-// MarkPrequeueCandidateAdopted). Also emits a grep-able [latency]
+// so latency samples carry the per-candidate outcome + duration — the
+// measurement surface for dead-release rejections ("probe_rejected in seconds"
+// vs "articles_unavailable after minutes"). Upserts by index (each candidate
+// reports once; an adopted fallback re-marks its earlier deprioritized attempt
+// via MarkPrequeueCandidateAdopted). Also emits a grep-able [latency]
 // PREQUEUE_CANDIDATE log line.
 func (t *PlaybackLatencyTracker) NotePrequeueCandidate(prequeueID string, attempt PlaybackCandidateAttempt) {
 	if t == nil || prequeueID == "" || attempt.Index <= 0 {
@@ -340,7 +340,7 @@ func (t *PlaybackLatencyTracker) storeAndLog(s PlaybackLatencySample) {
 // NotePrequeueOnlySample records a prequeue-phase-only sample (t0→t1) when no
 // HLS session ever served a media segment (non-HLS stream, or the segment never
 // materialized). It surfaces those iterations in the latency table as
-// complete=false with a valid prequeueMs — precisely the phase the OPP-1/2/3/12
+// complete=false with a valid prequeueMs — precisely the phase the resolution
 // work targets. No-op once a full sample has consumed the pending state.
 func (t *PlaybackLatencyTracker) NotePrequeueOnlySample(prequeueID string) {
 	if t == nil || prequeueID == "" {
@@ -374,7 +374,7 @@ func (t *PlaybackLatencyTracker) NotePrequeueOnlySample(prequeueID string) {
 
 // NotePrequeueFailedSample records a prequeue that never reached ready (every
 // candidate failed or was rejected, cancelled, ...) as a complete=false row so
-// the failure path — OPP-3's all-dead-release showcase — is measurable with its
+// the all-candidates-dead path is measurable with its
 // per-candidate attempts. Consumes the pending state like
 // NotePrequeueOnlySample; no-op once a full sample already did.
 func (t *PlaybackLatencyTracker) NotePrequeueFailedSample(prequeueID, reason string) {

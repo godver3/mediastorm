@@ -1,8 +1,8 @@
 package playback
 
-// OPP-3 verification tests: the cheap pre-download availability probe rejects
+// Verification tests for the pre-download availability probe: it rejects
 // releases whose sampled segments are missing from every provider BEFORE the
-// expensive full download (ProcessNZBImmediatelyWithSource) starts, and stays
+// expensive full download (ProcessNZBImmediatelyWithSource) completes, and stays
 // fail-open — errors/timeouts/healthy verdicts all fall through to the full
 // resolve so a healthy release can never be rejected by an inconclusive probe.
 
@@ -36,7 +36,7 @@ func (s *stubAvailabilityChecker) CheckHealthWithNZB(ctx context.Context, candid
 }
 
 // deadlineProbeChecker wraps a stub checker and records whether the probe
-// context carried a deadline plus how far out it was (the OPP-3 budget).
+// context carried a deadline plus how far out it was (the probe budget).
 type deadlineProbeChecker struct {
 	inner   *stubAvailabilityChecker
 	mu      sync.Mutex
@@ -114,7 +114,7 @@ func usenetCandidate(downloadURL string) models.NZBResult {
 	}
 }
 
-// TestResolveProbeMissingRejectsPromptly is the OPP-3 core verification: a
+// TestResolveProbeMissingRejectsPromptly is the core probe verification: a
 // definitive missing-segments verdict (delivered while the full resolve is
 // grinding — here the importer fails instantly and the verdict still wins via
 // the grace path) rejects the release cheaply: no resolution is produced and
@@ -154,7 +154,7 @@ func TestResolveProbeMissingRejectsPromptly(t *testing.T) {
 	}
 	// The importer entry was STARTED (parallel probe) but the probe verdict won;
 	// rejection must be prompt — seconds, not the multi-minute download the
-	// pre-OPP-3 path paid.
+	// pre-probe path paid.
 	if n := service.nzbProcessCount.Load(); n != 1 {
 		t.Fatalf("nzbProcessCount = %d, want 1 (process started, then cancelled by the probe verdict)", n)
 	}
