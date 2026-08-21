@@ -83,7 +83,7 @@ else
   mkdir -p "$(dirname "$OUT")"
 fi
 
-CSV_HEADER="ts,iteration,titleName,titleId,releaseName,serviceType,serviceProvider,complete,totalMs,prequeueMs,hlsCreateMs,ffmpegWarmupMs,serveWaitMs,notes"
+CSV_HEADER="ts,iteration,titleName,titleId,releaseName,serviceType,serviceProvider,complete,totalMs,prequeueMs,hlsCreateMs,ffmpegWarmupMs,serveWaitMs,candidates,notes"
 [ -s "$OUT" ] || echo "$CSV_HEADER" >> "$OUT"
 
 admin_curl() { curl -sS -H "Cookie: $ADMIN_COOKIE" "$@"; }
@@ -251,6 +251,15 @@ for s in samples:                       # Latest() is newest-first
     if s.get('prequeueId') == target:
         pick = s; break
 
+def cand_summary(cands):
+    if not cands:
+        return ""
+    parts = []
+    for c in cands:
+        parts.append("%d:%s:%s:%d" % (c.get('index', 0) or 0, c.get('releaseName','') or '',
+                                       c.get('outcome','') or '', c.get('durationMs', -1) or -1))
+    return ';'.join(parts)
+
 def write_row(row):
     with open(sys.argv[2], 'a', newline='') as f:
         csv.writer(f).writerow(row)
@@ -261,7 +270,7 @@ if pick is None:
     # client-measured t0->t1 instead of dropping the iteration.
     write_row(sys.argv[3].split(',', 1) + [
         os.environ.get('TITLE_NAME','') or '', os.environ.get('TITLE_ID','') or '',
-        '', '', '', 'no', -1, int(sys.argv[5] or 0), -1, -1, -1,
+        '', '', '', 'no', -1, int(sys.argv[5] or 0), -1, -1, -1, '',
         'no server HLS sample; prequeueMs client-measured (non-HLS stream)'])
     print("   (no server sample — recorded client-measured prequeueMs=%sms)" % sys.argv[5], file=sys.stderr)
     sys.exit(0)
@@ -273,7 +282,8 @@ write_row(sys.argv[3].split(',', 1) + [pick.get('titleName','') or '', pick.get(
       pick.get('releaseName','') or '', pick.get('serviceType','') or '',
       pick.get('serviceProvider','') or '', 'yes' if pick.get('complete') else 'no',
       field('totalMs'), field('prequeueMs'), field('hlsCreateMs'),
-      field('ffmpegWarmupMs'), field('serveWaitMs'), ';'.join(pick.get('notes',[]) or [])])
+      field('ffmpegWarmupMs'), field('serveWaitMs'), cand_summary(pick.get('candidates') or []),
+      ';'.join(pick.get('notes',[]) or [])])
 PY
   rm -f "$tmp"
 }
@@ -349,6 +359,32 @@ ps = [p for _, _, p in rows if p >= 0]
 print(f"   iterations={len(rows)}  complete(samples)={len(complete)}  prequeue-only={len(rows)-len(complete)}")
 print(f"   total    {stat([t for _, t, _ in complete])}   (complete samples only)")
 print(f"   prequeue {stat(ps)}   (all rows; client-measured for non-HLS)")
+# OPP-3: per-candidate outcomes across the run — probe_rejected/"articles_unavailable"
+# durations are the dead-release rejection latency, diffable before/after.
+outcomes = {}
+for row, _, _ in rows:
+    for item in (row.get("candidates") or "").split(";"):
+        if not item:
+            continue
+        parts = item.split(":")
+        if len(parts) < 4:
+            continue
+        outcome = parts[2]
+        try:
+            ms = int(parts[3])
+        except Exception:
+            ms = -1
+        bucket = outcomes.setdefault(outcome, [])
+        if ms >= 0:
+            bucket.append(ms)
+if outcomes:
+    pieces = []
+    for outcome, ms in sorted(outcomes.items()):
+        label = f"{outcome} x{len(ms)}"
+        if ms:
+            label += f" (mean={statistics.mean(ms):.0f}ms)"
+        pieces.append(label)
+    print("   candidates: " + ", ".join(pieces))
 print("   releases:")
 by_release = {}
 for row, t, p in rows:

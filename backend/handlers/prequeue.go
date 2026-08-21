@@ -2726,6 +2726,19 @@ func racePrequeueResolutions(ctx context.Context, src prequeueCandidateSource, w
 	return nil, false, errNoSearchCandidates
 }
 
+// prequeueCandidateAttempt builds a latency-tracker candidate attempt record
+// for the resolution race. index is the 0-based feed order; attempts are
+// recorded with 1-based indexes so CSV/log ordering matches the UI's "N of Z".
+func prequeueCandidateAttempt(index int, result models.NZBResult, outcome string, start time.Time) PlaybackCandidateAttempt {
+	return PlaybackCandidateAttempt{
+		Index:       index + 1,
+		ReleaseName: result.Title,
+		ServiceType: string(result.ServiceType),
+		Outcome:     outcome,
+		DurationMs:  time.Since(start).Milliseconds(),
+	}
+}
+
 // resolveCandidates races the candidate source (bounded worker pool) and
 // returns the winning resolution together with the candidate and probe data the
 // rest of the worker needs. It preserves the serial loop's semantics: the first
@@ -2738,7 +2751,31 @@ func racePrequeueResolutions(ctx context.Context, src prequeueCandidateSource, w
 func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID string, src prequeueCandidateSource, opts prequeueResolutionOptions) (prequeueResolutionChoice, error) {
 	resolveStart := time.Now()
 
-	process := func(raceCtx context.Context, i int, result models.NZBResult) (*candidateResolution, *candidateResolution, error) {
+	process := func(raceCtx context.Context, i int, result models.NZBResult) (accepted *candidateResolution, deprioritized *candidateResolution, err error) {
+		// Record the per-candidate attempt outcome + duration for the latency
+		// tracker on every terminal path (OPP-3 instrumentation): probe
+		// rejections and article-unavailable failures are the measurable signal.
+		attemptStart := time.Now()
+		defer func() {
+			if h.latencyTracker == nil {
+				return
+			}
+			switch {
+			case accepted != nil:
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateAdopted, attemptStart))
+			case deprioritized != nil:
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateDeprioritized, attemptStart))
+			case err != nil && errors.Is(err, playback.ErrUsenetProbeRejected):
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateProbeRejected, attemptStart))
+			case err != nil && importer.IsArticleUnavailable(err):
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateArticlesUnavailable, attemptStart))
+			case err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateSuperseded, attemptStart))
+			case err != nil:
+				h.latencyTracker.NotePrequeueCandidate(prequeueID, prequeueCandidateAttempt(i, result, PrequeueCandidateFailed, attemptStart))
+			}
+		}()
+
 		// Check episode match for anime absolute numbering
 		if opts.targetEpisode != nil && opts.targetEpisode.AbsoluteEpisodeNumber > 0 {
 			if result.EpisodeCount <= 1 {
@@ -2929,6 +2966,11 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 		return prequeueResolutionChoice{}, raceErr
 	}
 	if usedFallback {
+		// The fallback candidate was recorded as deprioritized when it completed;
+		// it is now the winner — flip the attempt outcome so samples read truthfully.
+		if h.latencyTracker != nil {
+			h.latencyTracker.MarkPrequeueCandidateAdopted(prequeueID, winner.index+1)
+		}
 		log.Printf("[prequeue] All fully known candidates failed or were unavailable; using first deprioritized unknown-track result: %s", winner.result.Title)
 	} else {
 		log.Printf("[prequeue] TIMING: resolved (took: %v, total elapsed: %v)", time.Since(resolveStart), time.Since(opts.workerStart))
@@ -3226,6 +3268,12 @@ func (h *PrequeueHandler) waitForPlaybackQueue(ctx context.Context, prequeueID s
 // failPrequeue marks a prequeue as failed
 func (h *PrequeueHandler) failPrequeue(prequeueID, errMsg string) {
 	log.Printf("[prequeue] Prequeue %s failed: %s", prequeueID, errMsg)
+	// Emit a failure sample (complete=false, t0→failure, candidates attached) so
+	// the all-candidates-dead path — the OPP-3 showcase — is measurable instead
+	// of silently absent from the latency window.
+	if h.latencyTracker != nil {
+		h.latencyTracker.NotePrequeueFailedSample(prequeueID, errMsg)
+	}
 	h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
 		e.Status = playback.PrequeueStatusFailed
 		e.ProgressStage = "failed"

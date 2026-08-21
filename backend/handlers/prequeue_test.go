@@ -20,6 +20,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/badstreams"
 	"novastream/services/playback"
 )
 
@@ -445,6 +446,84 @@ func TestResolveCandidatesAdoptsFastHealthyCandidate(t *testing.T) {
 	// total elapsed must be far below its 3s serial stall.
 	if elapsed >= time.Second {
 		t.Fatalf("resolution phase took %v; the slow top candidate was not raced concurrently (serial sum is >3s)", elapsed)
+	}
+}
+
+// TestResolveCandidatesProbeRejectionMarksBadStream is the OPP-3 handler-level
+// verification: a candidate rejected by the cheap availability probe (surfaced
+// as playback.ErrUsenetProbeRejected, which wraps importer.ErrArticleUnavailable)
+// must be marked bad immediately and the race must adopt the next healthy
+// candidate — with the latency tracker recording the probe_rejected attempt.
+func TestResolveCandidatesProbeRejectionMarksBadStream(t *testing.T) {
+	badStreamsSvc := badstreams.New(filepath.Join(t.TempDir(), "bad_streams.json"))
+	playbackSvc := &stubPlaybackService{
+		resolve: func(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
+			if strings.Contains(candidate.Title, "DEAD") {
+				return nil, fmt.Errorf("usenet availability probe rejected: %w", playback.ErrUsenetProbeRejected)
+			}
+			// The healthy candidate takes a touch longer so the dead one's
+			// rejection deterministically reports before adoption.
+			time.Sleep(30 * time.Millisecond)
+			return &models.PlaybackResolution{WebDAVPath: "/webdav/good.mkv", HealthStatus: "healthy"}, nil
+		},
+	}
+	tracker := NewPlaybackLatencyTracker(16)
+	handler := &PrequeueHandler{
+		store:          playback.NewPrequeueStore(time.Minute),
+		playbackSvc:    playbackSvc,
+		fullProber:     &raceProbeResult{},
+		badStreamsSvc:  badStreamsSvc,
+		latencyTracker: tracker,
+	}
+
+	allResults := []models.NZBResult{
+		{Title: "Dead.Release.DEAD.2020.1080p", ServiceType: models.ServiceTypeUsenet},
+		{Title: "Good.Release.2020.1080p", ServiceType: models.ServiceTypeUsenet},
+	}
+
+	choice, err := handler.resolveCandidates(context.Background(), "prequeue-probe-test", newSliceCandidateSource(allResults), prequeueResolutionOptions{
+		mediaType:          "movie",
+		hdrDVPolicy:        models.HDRDVPolicyIncludeHDRDV,
+		unknownTrackPolicy: "none",
+	})
+	if err != nil {
+		t.Fatalf("resolveCandidates returned error: %v", err)
+	}
+	if choice.selectedResultIndex != 1 {
+		t.Fatalf("selectedResultIndex = %d, want 1 (healthy second candidate)", choice.selectedResultIndex)
+	}
+
+	entries := badStreamsSvc.List()
+	if len(entries) != 1 {
+		t.Fatalf("bad-stream entries = %d, want exactly the probe-rejected release", len(entries))
+	}
+	if !strings.Contains(entries[0].ReleaseName, "DEAD") {
+		t.Fatalf("bad-stream release = %q, want the dead release", entries[0].ReleaseName)
+	}
+	if entries[0].Reason != "prequeue:usenet-articles-unavailable" {
+		t.Fatalf("bad-stream reason = %q, want prequeue:usenet-articles-unavailable", entries[0].Reason)
+	}
+
+	// The latency tracker must carry the per-candidate attempts (OPP-3
+	// instrumentation): probe_rejected for the dead release, adopted for the
+	// winner, rejection quicker than adoption.
+	tracker.NotePrequeueOnlySample("prequeue-probe-test")
+	samples := tracker.Latest(1)
+	if len(samples) != 1 {
+		t.Fatalf("tracker samples = %d, want 1", len(samples))
+	}
+	cands := samples[0].Candidates
+	if len(cands) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(cands))
+	}
+	if cands[0].Outcome != PrequeueCandidateProbeRejected {
+		t.Fatalf("candidate[0].Outcome = %q, want probe_rejected", cands[0].Outcome)
+	}
+	if cands[1].Outcome != PrequeueCandidateAdopted {
+		t.Fatalf("candidate[1].Outcome = %q, want adopted", cands[1].Outcome)
+	}
+	if cands[0].DurationMs > cands[1].DurationMs {
+		t.Fatalf("probe rejection (%dms) must be quicker than the adopted resolve (%dms)", cands[0].DurationMs, cands[1].DurationMs)
 	}
 }
 

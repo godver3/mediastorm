@@ -41,6 +41,12 @@ type PlaybackLatencySample struct {
 	// from the prequeue's selected result once resolution makes its choice.
 	ReleaseName string `json:"releaseName,omitempty"`
 
+	// Candidates lists every candidate the resolution race tried for this
+	// prequeue, with its outcome and wall-clock duration, so dead-release
+	// rejections (probe_rejected / articles_unavailable) are measurable even
+	// when they lose the race to a faster candidate (OPP-3 instrumentation).
+	Candidates []PlaybackCandidateAttempt `json:"candidates,omitempty"`
+
 	ServiceType     string `json:"serviceType,omitempty"`     // "usenet" | "debrid" | ""
 	ServiceProvider string `json:"serviceProvider,omitempty"` // indexer / debrid provider when known
 
@@ -72,6 +78,40 @@ type pendingPrequeueTimes struct {
 	titleName   string
 	mediaType   string
 	releaseName string
+	// candidates maps 1-based feed index → last reported attempt outcome.
+	candidates map[int]PlaybackCandidateAttempt
+}
+
+// PrequeueCandidateOutcome describes what happened to one prequeue candidate
+// during the resolution race. Values are stable, kebab-case strings suitable
+// for log greps and bench CSV summaries.
+const (
+	// PrequeueCandidateAdopted: fully validated; became the selected release.
+	PrequeueCandidateAdopted = "adopted"
+	// PrequeueCandidateProbeRejected: rejected by the OPP-3 cheap availability
+	// probe before any full download (sampled segments missing from all providers).
+	PrequeueCandidateProbeRejected = "probe_rejected"
+	// PrequeueCandidateArticlesUnavailable: full resolve failed because the
+	// articles are unavailable from every provider.
+	PrequeueCandidateArticlesUnavailable = "articles_unavailable"
+	// PrequeueCandidateFailed: resolve/probe/validation failed for another reason.
+	PrequeueCandidateFailed = "failed"
+	// PrequeueCandidateDeprioritized: unknown-track fallback; usable only when
+	// nothing else validates (flipped to adopted if it ends up winning).
+	PrequeueCandidateDeprioritized = "deprioritized"
+	// PrequeueCandidateSuperseded: cancelled mid-flight when another candidate won.
+	PrequeueCandidateSuperseded = "superseded"
+)
+
+// PlaybackCandidateAttempt is one candidate-resolution attempt of a prequeue.
+// Index is the 1-based feed order; DurationMs covers the attempt itself
+// (resolve + availability probe + validation), not the whole prequeue.
+type PlaybackCandidateAttempt struct {
+	Index       int    `json:"index"` // 1-based feed order
+	ReleaseName string `json:"releaseName,omitempty"`
+	ServiceType string `json:"serviceType,omitempty"`
+	Outcome     string `json:"outcome"`
+	DurationMs  int64  `json:"durationMs,omitempty"`
 }
 
 // PlaybackLatencyTracker correlates prequeue timestamps with HLS session
@@ -172,6 +212,54 @@ func (t *PlaybackLatencyTracker) NotePrequeueMetadata(prequeueID, imdbID string,
 	}
 }
 
+// NotePrequeueCandidate records one candidate-resolution attempt of a prequeue
+// so latency samples carry the per-candidate outcome + duration — the OPP-3
+// measurement surface ("probe_rejected in seconds" vs "articles_unavailable
+// after minutes"). Upserts by index (each candidate reports once; an adopted
+// fallback re-marks its earlier deprioritized attempt via
+// MarkPrequeueCandidateAdopted). Also emits a grep-able [latency]
+// PREQUEUE_CANDIDATE log line.
+func (t *PlaybackLatencyTracker) NotePrequeueCandidate(prequeueID string, attempt PlaybackCandidateAttempt) {
+	if t == nil || prequeueID == "" || attempt.Index <= 0 {
+		return
+	}
+	t.mu.Lock()
+	p := t.pending[prequeueID]
+	if p == nil {
+		p = &pendingPrequeueTimes{}
+		t.pending[prequeueID] = p
+	}
+	if p.candidates == nil {
+		p.candidates = make(map[int]PlaybackCandidateAttempt)
+	}
+	p.candidates[attempt.Index] = attempt
+	t.mu.Unlock()
+
+	log.Printf("[latency] PREQUEUE_CANDIDATE index=%d release=%q service=%s outcome=%s ms=%d prequeueId=%s",
+		attempt.Index, attempt.ReleaseName, orUnknown(attempt.ServiceType), attempt.Outcome, attempt.DurationMs, prequeueID)
+}
+
+// MarkPrequeueCandidateAdopted flips a previously deprioritized (unknown-track
+// fallback) candidate to adopted once it wins the race, preserving its measured
+// duration. No-op when no attempt was recorded for the index.
+func (t *PlaybackLatencyTracker) MarkPrequeueCandidateAdopted(prequeueID string, index int) {
+	if t == nil || prequeueID == "" || index <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	p := t.pending[prequeueID]
+	if p == nil {
+		return
+	}
+	attempt, ok := p.candidates[index]
+	if !ok {
+		return
+	}
+	attempt.Outcome = PrequeueCandidateAdopted
+	p.candidates[index] = attempt
+}
+
 // PrequeueTimes returns the recorded t0/t1 for a prequeue ID.
 func (t *PlaybackLatencyTracker) PrequeueTimes(prequeueID string) (requestedAt, readyAt time.Time) {
 	if t == nil || prequeueID == "" {
@@ -222,6 +310,9 @@ func (t *PlaybackLatencyTracker) Record(s PlaybackLatencySample) {
 		if s.MediaType == "" {
 			s.MediaType = p.mediaType
 		}
+		if len(s.Candidates) == 0 && len(p.candidates) > 0 {
+			s.Candidates = sortedCandidateAttempts(p.candidates)
+		}
 		delete(t.pending, prequeueID)
 	}
 	t.mu.Unlock()
@@ -262,6 +353,7 @@ func (t *PlaybackLatencyTracker) NotePrequeueOnlySample(prequeueID string) {
 		return // already recorded (a full sample consumed it) or unknown
 	}
 	delete(t.pending, prequeueID)
+	candidates := sortedCandidateAttempts(p.candidates)
 	t.mu.Unlock()
 
 	t.storeAndLog(PlaybackLatencySample{
@@ -275,8 +367,63 @@ func (t *PlaybackLatencyTracker) NotePrequeueOnlySample(prequeueID string) {
 		ReleaseName:       p.releaseName,
 		ClientRequestedAt: p.requestedAt,
 		PrequeueReadyAt:   p.readyAt,
+		Candidates:        candidates,
 		Notes:             []string{"no HLS session served a segment — prequeue phase only"},
 	})
+}
+
+// NotePrequeueFailedSample records a prequeue that never reached ready (every
+// candidate failed or was rejected, cancelled, ...) as a complete=false row so
+// the failure path — OPP-3's all-dead-release showcase — is measurable with its
+// per-candidate attempts. Consumes the pending state like
+// NotePrequeueOnlySample; no-op once a full sample already did.
+func (t *PlaybackLatencyTracker) NotePrequeueFailedSample(prequeueID, reason string) {
+	if t == nil || prequeueID == "" {
+		return
+	}
+	t.mu.Lock()
+	p := t.pending[prequeueID]
+	if p == nil {
+		t.mu.Unlock()
+		return // already recorded (a full sample consumed it) or unknown
+	}
+	delete(t.pending, prequeueID)
+	candidates := sortedCandidateAttempts(p.candidates)
+	failedAt := time.Now()
+	t.mu.Unlock()
+
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		trimmed = "prequeue failed"
+	}
+	t.storeAndLog(PlaybackLatencySample{
+		PrequeueID:        prequeueID,
+		TitleID:           p.titleID,
+		UserID:            p.userID,
+		ImdbID:            p.imdbID,
+		Year:              p.year,
+		TitleName:         p.titleName,
+		MediaType:         p.mediaType,
+		ReleaseName:       p.releaseName,
+		ClientRequestedAt: p.requestedAt,
+		PrequeueReadyAt:   failedAt,
+		Candidates:        candidates,
+		Notes:             []string{"prequeue failed: " + trimmed},
+	})
+	log.Printf("[latency] PREQUEUE_FAILURE prequeueMs=%dms reason=%q candidates=%d prequeueId=%s",
+		time.Since(p.requestedAt).Milliseconds(), trimmed, len(candidates), prequeueID)
+}
+
+func sortedCandidateAttempts(m map[int]PlaybackCandidateAttempt) []PlaybackCandidateAttempt {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]PlaybackCandidateAttempt, 0, len(m))
+	for _, attempt := range m {
+		out = append(out, attempt)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Index < out[j].Index })
+	return out
 }
 
 func orUnknown(v string) string {
@@ -830,6 +977,12 @@ const latencyPageHTML = `<!DOCTYPE html>
   button.mini { background: transparent; border: 1px solid #2e3c4d; border-radius: 5px;
     padding: 1px 9px; font-size: 13px; }
   button.mini:hover { background: #27445f; }
+  .cands { margin-top: 3px; font-size: 11px; line-height: 1.6; color: #8aa0b4; }
+  .cand { display: inline-block; margin-right: 6px; padding: 1px 6px; border-radius: 4px;
+    background: #1d2733; border: 1px solid #2e3c4d; }
+  .cand.probe_rejected, .cand.articles_unavailable { color: #ff9d9d; border-color: #5f2e2e; }
+  .cand.adopted { color: #6fdc8c; border-color: #1f4d33; }
+  .cand.superseded { color: #8aa0b4; }
   .toast { position: fixed; bottom: 24px; right: 24px; background: #1f7a45; color: #fff;
     padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .25s; }
   .toast.show { opacity: 1; }
@@ -895,10 +1048,14 @@ async function refresh() {
       var title = x.titleName || "–";
       var prov = x.serviceProvider ? " (" + escapeHtml(x.serviceProvider) + ")" : "";
       var when = fmtTime(x.firstSegmentSentAt || x.clientRequestedAt);
+      var cands = (x.candidates || []).map(function (c) {
+        return '<span class="cand ' + c.outcome + '" title="' + escapeHtml(c.releaseName || "") + '">' +
+          '#' + c.index + '·' + c.outcome + '·' + fmtMs(c.durationMs) + 'ms</span>';
+      }).join("");
       return '<tr>' +
         '<td class="l muted">' + x.id + '</td>' +
         '<td class="l muted" title="' + note + '">' + when + '</td>' +
-        '<td class="l">' + escapeHtml(title) + '</td>' +
+        '<td class="l">' + escapeHtml(title) + (cands ? '<div class="cands">' + cands + '</div>' : '') + '</td>' +
         '<td class="l muted">' + (x.serviceType || "–") + prov + '</td>' +
         '<td class="' + cls(x.totalMs) + '">' + fmtMs(x.totalMs) + '</td>' +
         '<td class="' + cls(x.prequeueMs) + '">' + fmtMs(x.prequeueMs) + '</td>' +

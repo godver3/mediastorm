@@ -361,6 +361,10 @@ func main() {
 	indexerHandler.SetBadStreamsService(badStreamsService)
 
 	playbackService := playback.NewService(cfgManager, nzbSystem, nzbSystem.MetadataReader())
+	// Wire the OPP-3 pre-download availability probe: usenet candidates are
+	// segment-sampled before the full download so dead releases are rejected
+	// cheaply (fail-open — only a definitive missing-segments verdict rejects).
+	playbackService.SetUsenetHealthChecker(usenetService)
 	playbackHandler := handlers.NewPlaybackHandler(playbackService)
 	playbackHandler.SetBadStreamsService(badStreamsService)
 	// Prequeue handler will be created later after historyService is available

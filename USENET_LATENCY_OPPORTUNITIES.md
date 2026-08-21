@@ -6,22 +6,62 @@
 
 ---
 
-## ▶ SESSION HANDOFF (2026-08-20, end of session — read this FIRST)
+## ▶ SESSION HANDOFF (2026-08-21, end of session — read this FIRST)
 
-**Status:** OPP-1 implemented + verified (tests, race-detector). Benchmark
-harness built (backend-side ▶ bench + curl `latency_bench.sh`). Latency page has
-per-row ⚡ (copy curl cmd) / ▶ (run server-side bench) + `releaseName`,
-`userId`, `imdbId`, `year` on every sample.
+**Status:** OPP-1, OPP-2, **OPP-3** implemented + verified (tests, race-detector).
+Benchmark harness built (backend-side ▶ bench + curl `latency_bench.sh`). Latency
+page has per-row ⚡ (copy curl cmd) / ▶ (run server-side bench) + `releaseName`,
+`userId`, `imdbId`, `year` on every sample, and now **per-candidate attempts**
+(see Instrumentation below).
 
-**Where things live (UNCOMMITTED unless noted):** backend branch
-`feature/usenet-speed-audit` (work committed by the user); files in the tree:
+**OPP-3 post-bench revision (2026-08-21 evening): the probe is now CONCURRENT
+with the full resolve, not sequential.** First implementation probed before
+`ProcessNZBImmediatelyWithSource`; the 2×10 ▶ bench regressed prequeue p50 7044→
+≈8790ms / mean 7442→≈9386ms (probe mean 864ms per candidate, on the winner's
+critical path — 4 probes per iteration). Revision: `Resolve` starts the importer
+immediately and runs the probe in a goroutine (`startUsenetPreflight`); a
+definitive missing verdict cancels the resolve ctx and returns
+`ErrUsenetProbeRejected`; a fast-failing resolve waits up to `preflightVerdictGrace`
+(2s) for a pending verdict so rejection isn't masked by a quicker resolve error;
+resolve success always wins (proof of availability, e.g. par2 repair). Healthy
+happy path now pays **zero** added latency. Tradeoff: a rejected release's
+process may have *started* (cancellation is best-effort — importer workers
+already outlive caller ctx, see superseded durations below) — "no full download"
+became "no full download completes".
+
+**Where things live:** backend branch
+`feature/usenet-speed-audit`, **OPP-3 committed at `99ee360b`** (feat(usenet):
+concurrent pre-download availability probe (OPP-3)); files in the tree:
 handlers/{playback_latency.go, playback_latency_test.go,
 playback_latency_admin_test.go, prequeue.go, prequeue_test.go}, services/playback
-/{prequeue.go, prequeue_store_test.go}, main.go, this notes file. **
+/{prequeue.go, prequeue_store_test.go, service.go, service_preflight_test.go},
+config/settings.go, main.go, this notes file. OPP-3's preflight probe: new
+`UsenetPreflightProbeSec` setting (default 5s, 0 disables via backfill→default
+is NOT disableable — set it low instead), `playback.ErrUsenetProbeRejected`
+(wraps `importer.ErrArticleUnavailable`), `SetUsenetHealthChecker` wired in
+main.go; probe runs in `playback.Service.Resolve` concurrent with
+`ProcessNZBImmediatelyWithSource`, fail-open semantics (only a definitive
+missing-segments verdict rejects; errors/timeouts/deadline fall through to the
+full resolve). **
 `backend/scripts/latency_bench.sh` is gitignored (`.gitignore: scripts/`) and
 must be `git add -f`'d** if it should be committed. Frontend PR is already out
 (commit `f7a1a867`, branch `feat/support-racing-resolution-results`, repo
 mediastorm-frontend).
+
+**Instrumentation upgraded for OPP-3 (was NOT sufficient before):** samples
+now carry `candidates: [{index, releaseName, serviceType, outcome,
+ durationMs}]` — every candidate the resolution race tried, with outcome
+`adopted | probe_rejected | articles_unavailable | failed | deprioritized |
+superseded` and its own wall-clock. Plus **failure samples**: a prequeue that
+never reaches ready (all-dead showcase) emits a `complete=false` row with the
+candidate list + `notes: "prequeue failed: …"` instead of nothing. Emitted from
+`failPrequeue`; consumed pending like the prequeue-only synthesis (mutually
+exclusive). Each attempt also logs `[latency] PREQUEUE_CANDIDATE index=…
+release=… service=… outcome=… ms=… prequeueId=…`. The ▶ bench CSV now has a
+`candidates` column (`idx:release:outcome:ms;…`) and the stdout summary prints a
+per-outcome breakdown (count + mean ms) — this is the OPP-3 diff surface:
+before, dead releases appeared as `superseded` (cancelled at winner adoption)
+or nothing; after, they appear as `probe_rejected` with ms in the seconds.
 
 **Baseline measured (Her, resolve-cold, search-warm, 10× ▶ bench):** all
 prequeue-only (`complete=false`, no t2→t4 — winner was the non-HLS SDR release,
@@ -35,15 +75,22 @@ admin session cookie is `HttpOnly`; `cmd` copies get the token from
 `/admin/api/latency/session-token` (master-only). A 403 on"/admin/api/latency" means the cookie value is invalid/expired/non-master — not
 an OPP issue. The ▶ bench sidesteps auth entirely.
 
-**Queued / next session:** 1) OPP-3 (pre-download Usenet availability probe) —
-the notes below; 2) OPP-2's cross-source ordering nuance is documented in its
-STATUS block (arrival-order vs global-score order) in case we want a hybrid
-install's debrid-fast case to feed first; 3) add a **Release column +
-`serviceType` on prequeue-only samples** (synthesized rows currently show
-`service=–`), so bench pastes are ambiguity-free; 4) optional bench knob to
-**prefer HLS-eligible releases** when the goal is `complete`
-(total/ffmpegWarmup) samples; 5) know that the ▶ worker + `ServeSegment` path
-is exercised end-to-end (segment blocking wait records t3/t4).
+**Queued / next session:** 1) OPP-4 (NNTP provider circuit breaker + failover)
+— the evening stall/retry chains visible in every run (superseded losers p50
+≈12.7s, 17–19s outliers on both OPP-3-era AND pre-OPP-3 binaries) are exactly
+its target; 2) the superseded-losers-keep-downloading behavior (importer
+workers outlive the caller ctx ~10s+) is worth its own fix — kill in-flight
+importer jobs properly on race cancellation; 3) OPP-2's cross-source ordering
+nuance is documented in its STATUS block (arrival-order vs global-score order)
+— the user may still want to A/B dropping the OPP-2 streaming hypothesis
+entirely and measure; 4) add a **Release column + `serviceType` on
+prequeue-only samples** (synthesized rows currently show `service=–`), so bench
+pastes are ambiguity-free; 5) optional bench knob to **prefer HLS-eligible
+releases** when the goal is `complete` (total/ffmpegWarmup) samples; 6) consider
+adding `probeMs` (the provider canary, currently log-only) to the bench CSV;
+7) new `UsenetPreflightProbeSec` is server-wide (settings JSON) — no admin page
+field was added for it (set it in `cache/settings.json` or via the settings
+save API).
 
 ---
 
@@ -69,6 +116,21 @@ Derived phases: `prequeue` (t0→t1, search+resolve+probe), `hlsCreate` (t1→t2
 `ffmpegWarmup` (t2→t3, first segment ready), `serveWait` (t3→t4), `total` (t0→t4).
 Emits **exactly one** `[latency] PLAYBACK_LATENCY total=... prequeue=... complete=true ...`
 log line per session. Native (non-HLS) clients stop at t1 and log `[latency] PREQUEUE_LATENCY`.
+
+**Per-candidate attempts (OPP-3 instrumentation, 2026-08-21):** every candidate
+the resolution race tried rides on the sample as
+`candidates: [{index, releaseName, serviceType, outcome, durationMs}]`
+(`index` is 1-based feed order; `durationMs` is that attempt's own wall-clock,
+not the prequeue). Outcomes: `adopted | probe_rejected | articles_unavailable |
+failed | deprioritized | superseded`. Recorded inside `resolveCandidates.process`
+(deferred named-return hook, every terminal path), upserted by index; a
+fallback winner is flipped `deprioritized → adopted` via
+`MarkPrequeueCandidateAdopted`. Each attempt also emits
+`[latency] PREQUEUE_CANDIDATE index=… release=… service=… outcome=… ms=…
+prequeueId=…`. **Failure samples:** a prequeue that never reaches ready (every
+candidate dead/rejected, cancelled, …) additionally emits a `complete=false`
+row with candidates attached and `notes: "prequeue failed: <reason>"` from
+`failPrequeue` — the all-dead-release path was previously invisible.
 
 Sessions are correlated back to the prequeue two ways: prequeue-created HLS sessions
 (HDR/audio transcode) via `LinkHLSSessionPrequeue`; ad-hoc web sessions (`POST /video/hls/start`)
@@ -209,8 +271,11 @@ iteration count. The dev baseline table above is the reference point.
     - Output: `backend/cache/latency-bench/<titleId>-<scope>-<date>.csv`
       (gitignored) with columns `ts,iteration,titleName,titleId,releaseName,
       serviceType,serviceProvider,complete,totalMs,prequeueMs,hlsCreateMs,
-      ffmpegWarmupMs,serveWaitMs,notes` plus a mean/p50/p95 + per-release
-      breakdown on stdout.
+      ffmpegWarmupMs,serveWaitMs,candidates,notes` plus a mean/p50/p95 +
+      per-release breakdown on stdout, and a **per-candidate outcome summary**
+      (`probe_rejected x2 (mean=1900ms), adopted x10 (mean=7100ms)` — the
+      OPP-3 rejection-latency diff surface). `candidates` is
+      `idx:releaseName:outcome:ms;…`, one per race candidate.
     - Only titles that produce an HLS session (HDR/DV/TrueHD/DTS) yield
       `complete=true`; SDR/native titles have no media segment to serve, so the
       script records a **client-measured `prequeueMs`** (t0→t1 wall-clock at the
@@ -381,6 +446,62 @@ indexer; assert usenet resolution starts (and completes) before debrid returns.
 ---
 
 ## OPP-3: Pre-download Usenet availability probe (reject dead releases cheaply)
+
+> **STATUS (2026-08-21): DONE — concurrent revision.** `playback.Service.Resolve`
+> runs a cheap availability probe **parallel to** `ProcessNZBImmediatelyWithSource`
+> (started first, goroutine-backed via `startUsenetPreflight`), reusing the
+> existing health-check machinery verbatim (`usenet.Service.CheckHealthWithNZB`
+> → `sampleSegmentsForHealth` first/middle/last sampling + concurrent BODY
+> checks across enabled providers — no new NNTP code). A definitive
+> missing-segments verdict cancels the resolve ctx and returns
+> `playback.ErrUsenetProbeRejected` (wraps `importer.ErrArticleUnavailable`), so
+> the existing prequeue bad-stream marking (reason
+> `prequeue:usenet-articles-unavailable`) fires unchanged and the instrumentation
+> can tell probe rejection apart from full-download failure. A resolve that
+> fails before the verdict lands waits up to `preflightVerdictGrace` (2s) for it
+> (`preflightProbeRejectedAfter`), so a fast-decaying resolve error never masks
+> a rejection; resolve *success* always wins (fully downloaded = available, e.g.
+> par2 repair), and the probe ctx is cancelled with the resolve outcome.
+> **Fail-open by design:** no checker wired / checker error / no providers /
+> budget timeout are all *inconclusive* → resolve outcome stands; only `Healthy
+> == false` rejects. Budget = `Streaming.UsenetPreflightProbeSec` (default 5s;
+> 0 = backfilled to 5s — lower it if a provider is slow). Skips: resolved-NZB
+> cache hits, debrid candidates, external-engine candidates (probe is
+> direct-provider-only).
+>
+> **Why concurrent (bench data):** the first implementation probed *before* the
+> full resolve and paid on the happy path — 2×10 ▶ bench, same title/scope:
+> prequeue p50 7044→≈8790ms, mean 7442→≈9386ms, probe mean 864ms per candidate
+> (80 probes), all on the winner's critical path plus provider contention from 4
+> concurrent probes per iteration. The concurrent revision removes the tax for
+> healthy releases; the price is that a rejected release's download may have
+> started (importer cancellation is best-effort — superseded losers already run
+> ~10s+ past adoption, see instrumentation) — "no full download" became "no
+> full download completes".
+>
+> **Provider-vs-code control (2026-08-21, definitive):** the remaining ~2s over
+> the 18:10 baseline survives on a **pre-OPP-3 binary**. The working tree was
+> stashed and the server rebuilt at `5e5da737`; a 10× ▶ bench at 19:20 (same
+> title/scope, ZERO availability-probe code in the binary) measured prequeue p50
+> ≈ 9218ms / mean ≈ 10701ms / max 18824ms — at or above the OPP-3-era runs
+> (18:45–19:09: p50 8432–9518, means 9285–10325). Also the probe itself acts as
+> a provider canary: `probeMs` mean rose 864ms (18:45) → 1575ms (19:07).
+> Conclusion: the evening uptick vs the 18:02/18:10 reference baseline is
+> provider-side (time-of-day congestion), not OPP-3. Bench discipline note:
+> same-day, same-cadence runs; treat the 18:10 numbers as the best provider
+> state, not a code guarantee.
+>
+> Verification: `services/playback/service_preflight_test.go`
+> (`TestResolveProbeMissingRejectsPromptly` — missing verdict wins over the
+> importer error via the grace path, prompt, both error predicates hold;
+> `TestResolveProbeVerdictWaitsOutFastResolveError` — gated checker proves a
+> pending verdict is waited out, not masked;
+> healthy/error/timeout/no-checker → fall through; budget deadline applied) +
+> handler-level `TestResolveCandidatesProbeRejectionMarksBadStream` (bad-stream
+> entry created, next candidate adopted, tracker records `probe_rejected`
+> quicker than `adopted`) + race-detector pass. Instrumentation (candidate
+> attempts + failure samples, see handoff) was added in the same session because
+> the old surface could not measure the rejection path.
 
 **Problem.** Usenet has no "instant availability" signal. The first time a release
 is known to be incomplete/dead is after the article fetch (full download + parse),

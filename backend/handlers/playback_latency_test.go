@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -276,5 +277,123 @@ func TestPlaybackLatencySnapshotAggregatesIncompletePhases(t *testing.T) {
 	}
 	if snap.Stats.TotalMs.P50 != 1500 {
 		t.Errorf("total p50=%d, want 1500 (partial sample measured t0..t4 minus t1)", snap.Stats.TotalMs.P50)
+	}
+}
+
+// OPP-3 instrumentation: candidate-resolution attempts attach to the sample
+// with outcome + duration so dead-release rejections are measurable even when
+// they lose the race to a faster candidate.
+func TestPlaybackLatencyTrackerCandidateAttemptsAttachToPrequeueOnlySample(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+
+	tr.NotePrequeueRequested("pq1", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueReady("pq1")
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 1, ReleaseName: "Her.2013.DEAD", ServiceType: "usenet", Outcome: PrequeueCandidateProbeRejected, DurationMs: 2100})
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 2, ReleaseName: "Her.2013.SLOWDEAD", ServiceType: "usenet", Outcome: PrequeueCandidateArticlesUnavailable, DurationMs: 420000})
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 3, ReleaseName: "Her.2013.1080p.BluRay.x265-LAMA", ServiceType: "usenet", Outcome: PrequeueCandidateAdopted, DurationMs: 7044})
+	tr.NotePrequeueOnlySample("pq1")
+
+	s := tr.Latest(1)[0]
+	if len(s.Candidates) != 3 {
+		t.Fatalf("candidates = %d, want 3", len(s.Candidates))
+	}
+	if s.Candidates[0].Index != 1 || s.Candidates[0].Outcome != PrequeueCandidateProbeRejected || s.Candidates[0].DurationMs != 2100 {
+		t.Errorf("candidate[0] = %+v", s.Candidates[0])
+	}
+	if s.Candidates[1].Index != 2 || s.Candidates[1].Outcome != PrequeueCandidateArticlesUnavailable || s.Candidates[1].DurationMs != 420000 {
+		t.Errorf("candidate[1] = %+v", s.Candidates[1])
+	}
+	if s.Candidates[2].Index != 3 || s.Candidates[2].Outcome != PrequeueCandidateAdopted {
+		t.Errorf("candidate[2] = %+v", s.Candidates[2])
+	}
+}
+
+// A complete sample (HLS path) must carry the candidate attempts too — the
+// Record path flushes the pending per-candidate state into the sample.
+func TestPlaybackLatencyTrackerCompleteSampleCarriesCandidates(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+	t0 := time.Now()
+	tr.NotePrequeueRequested("pq1", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueReady("pq1")
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 1, ReleaseName: "Her.DEAD", ServiceType: "usenet", Outcome: PrequeueCandidateProbeRejected, DurationMs: 900})
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 2, ReleaseName: "Her.GOOD", ServiceType: "usenet", Outcome: PrequeueCandidateAdopted, DurationMs: 5000})
+
+	t2 := t0.Add(100 * time.Millisecond)
+	t3 := t0.Add(110 * time.Millisecond)
+	t4 := t0.Add(120 * time.Millisecond)
+	tr.Record(PlaybackLatencySample{
+		PrequeueID:          "pq1",
+		SessionID:           "sess1",
+		ClientRequestedAt:   t0,
+		PrequeueReadyAt:     t0.Add(30 * time.Millisecond),
+		HLSSessionCreatedAt: t2,
+		FirstSegmentReadyAt: t3,
+		FirstSegmentSentAt:  t4,
+	})
+
+	s := tr.Latest(1)[0]
+	if len(s.Candidates) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(s.Candidates))
+	}
+	if s.Candidates[0].Outcome != PrequeueCandidateProbeRejected || s.Candidates[1].Outcome != PrequeueCandidateAdopted {
+		t.Fatalf("candidates = %+v", s.Candidates)
+	}
+}
+
+// OPP-3 instrumentation: a prequeue that never reaches ready (all candidates
+// dead/rejected) must still emit a failure sample with its candidate attempts,
+// so the all-dead path is measurable end to end instead of silently absent.
+func TestPlaybackLatencyTrackerFailedPrequeueEmitsFailureSample(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+
+	tr.NotePrequeueRequested("pq-fail", "tt123", "user-1", "Her", "movie")
+	tr.NotePrequeueCandidate("pq-fail", PlaybackCandidateAttempt{Index: 1, ReleaseName: "DEAD-1", ServiceType: "usenet", Outcome: PrequeueCandidateProbeRejected, DurationMs: 1900})
+	tr.NotePrequeueCandidate("pq-fail", PlaybackCandidateAttempt{Index: 2, ReleaseName: "DEAD-2", ServiceType: "usenet", Outcome: PrequeueCandidateProbeRejected, DurationMs: 2400})
+	tr.NotePrequeueFailedSample("pq-fail", "all results failed to resolve")
+
+	s := tr.Latest(1)[0]
+	if s.Complete {
+		t.Fatalf("failure sample must not be complete: %+v", s)
+	}
+	if s.PrequeueMs < 0 {
+		t.Fatalf("failure sample prequeueMs = %d, want >= 0", s.PrequeueMs)
+	}
+	if len(s.Candidates) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(s.Candidates))
+	}
+	hasReason := false
+	for _, note := range s.Notes {
+		if strings.Contains(note, "all results failed to resolve") {
+			hasReason = true
+		}
+	}
+	if !hasReason {
+		t.Fatalf("notes = %v, want the failure reason", s.Notes)
+	}
+	// Pending must be consumed: a later prequeue-only synthesis is a no-op.
+	tr.NotePrequeueOnlySample("pq-fail")
+	if n := tr.Count(); n != 1 {
+		t.Fatalf("count = %d after failure sample + duplicate synthesis, want 1", n)
+	}
+}
+
+// The unknown-track fallback records as deprioritized and flips to adopted when
+// it ends up winning the race — preserving its measured duration.
+func TestPlaybackLatencyTrackerMarkCandidateAdoptedFlipsDeprioritized(t *testing.T) {
+	tr := NewPlaybackLatencyTracker(10)
+
+	tr.NotePrequeueCandidate("pq1", PlaybackCandidateAttempt{Index: 2, ReleaseName: "FALLBACK", ServiceType: "usenet", Outcome: PrequeueCandidateDeprioritized, DurationMs: 5000})
+	tr.MarkPrequeueCandidateAdopted("pq1", 2)
+	tr.NotePrequeueOnlySample("pq1")
+
+	s := tr.Latest(1)[0]
+	if len(s.Candidates) != 1 {
+		t.Fatalf("candidates = %d, want 1", len(s.Candidates))
+	}
+	if s.Candidates[0].Outcome != PrequeueCandidateAdopted {
+		t.Fatalf("outcome = %q, want adopted", s.Candidates[0].Outcome)
+	}
+	if s.Candidates[0].DurationMs != 5000 {
+		t.Fatalf("durationMs = %d, want preserved 5000", s.Candidates[0].DurationMs)
 	}
 }

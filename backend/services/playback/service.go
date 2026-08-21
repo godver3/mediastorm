@@ -66,7 +66,27 @@ type Service struct {
 	nzbFetchCount   atomic.Int64 // NZB file downloads from indexers
 	nzbProcessCount atomic.Int64 // NZB files sent for immediate processing
 	providerBreaker *providerbreaker.Breaker
+	// usenetHealth runs the cheap availability probe (OPP-3): a header/body-only
+	// pass over a small sample of the NZB's segments that rejects releases whose
+	// articles are missing from every enabled provider, run concurrently with the
+	// full download+parse instead of gating it. Nil disables the probe.
+	usenetHealth usenetHealthChecker
 }
+
+// usenetHealthChecker is the subset of the usenet service used for OPP-3's
+// pre-download availability probe. CheckHealthWithNZB parses the already-fetched
+// NZB payload, samples first/middle/last payload segments and checks them across
+// the enabled providers without downloading the release.
+type usenetHealthChecker interface {
+	CheckHealthWithNZB(ctx context.Context, candidate models.NZBResult, nzbBytes []byte, fileName string) (*models.NZBHealthCheck, error)
+}
+
+// ErrUsenetProbeRejected identifies releases rejected by the cheap pre-download
+// availability probe (OPP-3). It deliberately wraps importer.ErrArticleUnavailable
+// so existing article-unavailable handling (bad-stream marking, IsArticleUnavailable
+// checks) keeps working, while callers can still tell a probe rejection apart
+// from a full-download failure.
+var ErrUsenetProbeRejected = fmt.Errorf("usenet availability probe rejected: %w", importer.ErrArticleUnavailable)
 
 type externalUsenetJob struct {
 	ID             int64
@@ -172,6 +192,14 @@ func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataS
 	return service
 }
 
+// SetUsenetHealthChecker wires the OPP-3 availability probe. When set, usenet
+// candidates are segment-sampled concurrently with the full resolve, so dead or
+// incomplete releases are cancelled and rejected cheaply. Nil (default) disables
+// the probe.
+func (s *Service) SetUsenetHealthChecker(checker usenetHealthChecker) {
+	s.usenetHealth = checker
+}
+
 // ResolveBatch performs a single set of provider API calls and resolves all episodes from memory.
 // Only supported for debrid results.
 func (s *Service) ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error) {
@@ -257,13 +285,32 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		processNum, fileName, s.nzbFetchCount.Load(), s.nzbProcessCount.Load())
 	log.Printf("[playback] processing NZB immediately fileName=%q", fileName)
 
+	// The OPP-3 availability probe runs CONCURRENTLY with the full resolve, not
+	// before it: a healthy release pays zero added latency (the probe verdict is
+	// simply discarded once the resolve succeeds), while a definitive
+	// missing-segments verdict cancels the in-flight resolve and rejects the
+	// release in seconds instead of after a multi-minute download attempt. The
+	// probe stays fail-open: errors, timeouts and an absent verdict are
+	// inconclusive and leave the resolve untouched. This is the debrid analog
+	// (CheckInstantAvailability) done right for NNTP, where the check costs
+	// real round-trips.
+	resolveCtx, cancelResolve := context.WithCancel(ctx)
+	defer cancelResolve()
+
 	// Apply usenet resolution timeout if configured
-	processCtx := ctx
+	processCtx := resolveCtx
 	if cfg.Streaming.UsenetResolutionTimeoutSec > 0 {
 		var cancel context.CancelFunc
-		processCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.Streaming.UsenetResolutionTimeoutSec)*time.Second)
+		processCtx, cancel = context.WithTimeout(resolveCtx, time.Duration(cfg.Streaming.UsenetResolutionTimeoutSec)*time.Second)
 		defer cancel()
 		log.Printf("[playback] usenet resolution timeout set to %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
+	}
+
+	// Start the probe before the importer call so both begin from the same
+	// moment; its context dies with the resolve (success, rejection, timeout).
+	probe := s.startUsenetPreflight(processCtx, cfg, downloadURL, nzbBytes, fileName, candidate, externalUsenetEnabled)
+	if probe != nil {
+		defer probe.cancel()
 	}
 
 	storagePath, err := service.ProcessNZBImmediatelyWithSource(processCtx, fileName, nzbBytes, importer.ResolvedNZBSource{
@@ -273,12 +320,24 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 		FileSize:    estimateNZBFileSize(nzbBytes),
 	})
 	if err != nil {
+		// The resolve failed; if the probe delivered (or is about to deliver) a
+		// definitive rejection, surface that instead — it is the cheap, decisive
+		// verdict (a dead release whose resolve happened to fail fast otherwise
+		// looks like a transient failure and skips bad-stream marking).
+		if probe != nil && preflightProbeRejectedAfter(probe, preflightVerdictGrace) {
+			cancelResolve()
+			return nil, ErrUsenetProbeRejected
+		}
 		if processCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("usenet resolution timed out after %d seconds", cfg.Streaming.UsenetResolutionTimeoutSec)
 		}
 		return nil, fmt.Errorf("process NZB immediately: %w", err)
 	}
 
+	// Success wins even if the probe concurrently reported missing segments: a
+	// fully downloaded and indexed release is proof of availability (e.g. par2
+	// repair of exactly the sampled articles). The deferred probe.cancel() tears
+	// down any still-running probe connections.
 	log.Printf("[playback] NZB processed successfully, storagePath=%q", storagePath)
 
 	// If storagePath is a directory (multi-file NZB), find the best playable file within it
@@ -313,6 +372,112 @@ func (s *Service) PrepareTorrentCandidates(ctx context.Context, candidates []mod
 		return candidates
 	}
 	return s.debrid.PrepareTorrentCandidates(ctx, candidates)
+}
+
+// preflightVerdictGrace bounds how long a failed full resolve waits for a
+// still-running probe verdict: a definitive rejection arriving within the grace
+// window beats the resolve error (it is the cheap, decisive signal and feeds
+// bad-stream marking); after the grace window the resolve error is surfaced.
+// Only reached when the resolve failed faster than the probe — the common cases
+// (healthy verdict or rejection while the resolve is still grinding) never wait.
+const preflightVerdictGrace = 2 * time.Second
+
+// preflightProbe is the OPP-3 availability probe running concurrently with the
+// full resolve. rejected receives (buffered, never blocks) when the probe
+// delivers a definitive missing-segments verdict; done closes when the probe
+// goroutine exits (verdict known or aborted); cancel tears down the probe's
+// context (and its NNTP connections) once the resolve outcome is decided.
+type preflightProbe struct {
+	rejected chan struct{}
+	done     chan struct{}
+	cancel   context.CancelFunc
+}
+
+// startUsenetPreflight launches the OPP-3 probe in the background and returns
+// its handle, or nil when no probe applies (no checker wired, or the candidate
+// is headed to an external usenet engine). The probe runs with its own budget
+// (UsenetPreflightProbeSec) under parent, so it can never outlive the resolve
+// attempt or its caller.
+func (s *Service) startUsenetPreflight(parent context.Context, cfg config.Settings, downloadURL string, nzbBytes []byte, fileName string, candidate models.NZBResult, externalUsenetEnabled bool) *preflightProbe {
+	if s.usenetHealth == nil || externalUsenetEnabled {
+		return nil
+	}
+	probeCtx, cancel := context.WithCancel(parent)
+	p := &preflightProbe{
+		rejected: make(chan struct{}, 1),
+		done:     make(chan struct{}),
+		cancel:   cancel,
+	}
+	go func() {
+		defer close(p.done)
+		defer cancel()
+		if s.probeUsenetAvailability(probeCtx, cfg, downloadURL, nzbBytes, fileName, candidate) {
+			select {
+			case p.rejected <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return p
+}
+
+// preflightProbeRejectedAfter reports whether the probe rejected the release,
+// waiting up to grace only while the probe is still running. When the probe has
+// already finished without a rejection (healthy/inconclusive), it returns false
+// immediately — a resolve failure is never delayed by a settled probe.
+func preflightProbeRejectedAfter(p *preflightProbe, grace time.Duration) bool {
+	select {
+	case <-p.rejected:
+		return true
+	default:
+	}
+	select {
+	case <-p.done:
+		return false // settled without a rejection; none is coming
+	case <-p.rejected:
+		return true
+	case <-time.After(grace):
+	}
+	select {
+	case <-p.rejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// probeUsenetAvailability runs the OPP-3 probe on an already-fetched NZB payload
+// and reports whether the release should be rejected. Rejection is a definitive
+// verdict only: at least one sampled segment is missing from every enabled
+// provider. Anything inconclusive (checker error, no providers, budget timeout,
+// healthy sample) returns false so the caller falls through to the full resolve
+// — the probe must never reject a release it could not actually check.
+func (s *Service) probeUsenetAvailability(ctx context.Context, cfg config.Settings, downloadURL string, nzbBytes []byte, fileName string, candidate models.NZBResult) bool {
+	budget := time.Duration(cfg.Streaming.UsenetPreflightProbeSec) * time.Second
+	if budget <= 0 {
+		budget = 5 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	start := time.Now()
+	result, err := s.usenetHealth.CheckHealthWithNZB(probeCtx, candidate, nzbBytes, fileName)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || probeCtx.Err() == context.DeadlineExceeded {
+			log.Printf("[playback] availability probe inconclusive (budget %s) downloadURLHash=%q title=%q: %v — proceeding with full resolve", budget, shortSHA256String(downloadURL), strings.TrimSpace(candidate.Title), err)
+		} else {
+			log.Printf("[playback] availability probe inconclusive downloadURLHash=%q title=%q: %v — proceeding with full resolve", shortSHA256String(downloadURL), strings.TrimSpace(candidate.Title), err)
+		}
+		return false
+	}
+	if result == nil || result.Healthy {
+		log.Printf("[playback] availability probe healthy title=%q checked=%d total=%d sampled=%t probeMs=%d — proceeding with full resolve",
+			strings.TrimSpace(candidate.Title), result.CheckedSegments, result.TotalSegments, result.Sampled, time.Since(start).Milliseconds())
+		return false
+	}
+	log.Printf("[playback] availability probe REJECTED title=%q missing=%d checked=%d total=%d probeMs=%d downloadURLHash=%q",
+		strings.TrimSpace(candidate.Title), len(result.MissingSegments), result.CheckedSegments, result.TotalSegments, time.Since(start).Milliseconds(), shortSHA256String(downloadURL))
+	return true
 }
 
 func (s *Service) buildInternalPlaybackResolution(cfg config.Settings, candidate models.NZBResult, storagePath, sourceNZBPath string, fileSize int64, healthStatus string) (*models.PlaybackResolution, error) {
