@@ -49,10 +49,6 @@ type stubRelay struct {
 	archiveBytes          []byte
 	archiveName           string
 	archiveIdempotencyKey string
-	// archiveJSON is the decoded body of a URL seed, and archiveRefusal is a
-	// verbatim error envelope the relay answers a URL seed with instead of 202.
-	archiveJSON    map[string]any
-	archiveRefusal string
 }
 
 // gateBody is verbatim what a relay bound to a non-loopback address answers
@@ -62,23 +58,6 @@ const gateBody = `{"error":{"code":"OPEN_ACCESS_NOT_ENABLED","message":"the rela
 func (stub *stubRelay) handleArchive(w http.ResponseWriter, r *http.Request) {
 	stub.archiveCalls++
 	stub.archiveIdempotencyKey = r.Header.Get("Idempotency-Key")
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		stub.archiveJSON = map[string]any{}
-		body, _ := io.ReadAll(r.Body)
-		if err := json.Unmarshal(body, &stub.archiveJSON); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if stub.archiveRefusal != "" {
-			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, stub.archiveRefusal)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(ArchiveJob{JobID: "arch_0123456789abcdef", Status: "queued", EntityHint: "movie:9522"})
-		return
-	}
 	reader, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -686,164 +665,6 @@ func TestArchiveRejectsIncompleteEpisodeCoordinates(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("an episode without an episode number was accepted")
-	}
-}
-
-// A debrid or usenet stream is only seedable because the relay fetches the URL
-// itself: this backend never holds those bytes.
-func TestArchiveURLSendsMovieCoordinatesWithoutEpisodeFields(t *testing.T) {
-	stub, client := newStubRelay(t)
-
-	job, err := client.ArchiveURL(context.Background(), ArchiveURLRequest{
-		SourceURL:      "https://cdn.example.net/d/TOKEN/Wedding.Crashers.2005.mkv",
-		IdempotencyKey: "mediastorm-v1:movie-9522-source-a",
-		ArchiveCoordinates: ArchiveCoordinates{
-			ContentKind: "movie",
-			TMDBID:      "9522",
-			TMDBTitle:   "Wedding Crashers",
-			TMDBYear:    2005,
-			Runtime:     119,
-			Genres:      "Comedy,Romance",
-		},
-	})
-	if err != nil {
-		t.Fatalf("ArchiveURL: %v", err)
-	}
-	if job.JobID != "arch_0123456789abcdef" || job.Status != "queued" || job.EntityHint != "movie:9522" {
-		t.Fatalf("job = %+v", job)
-	}
-	if stub.archiveIdempotencyKey != "mediastorm-v1:movie-9522-source-a" {
-		t.Fatalf("Idempotency-Key = %q", stub.archiveIdempotencyKey)
-	}
-	if stub.archiveBytes != nil {
-		t.Fatalf("a URL seed uploaded %d bytes", len(stub.archiveBytes))
-	}
-	for field, want := range map[string]any{
-		"url":         "https://cdn.example.net/d/TOKEN/Wedding.Crashers.2005.mkv",
-		"contentKind": "movie",
-		"tmdbId":      "9522",
-		"tmdbTitle":   "Wedding Crashers",
-		"tmdbYear":    "2005",
-		"tmdbRuntime": "119",
-		"tmdbGenres":  "Comedy,Romance",
-	} {
-		if stub.archiveJSON[field] != want {
-			t.Fatalf("field %s = %#v, want %#v", field, stub.archiveJSON[field], want)
-		}
-	}
-	// The relay rejects season/episode on a movie outright, so they must be
-	// absent rather than zero.
-	for _, field := range []string{"tmdbSeason", "tmdbEpisode"} {
-		if _, ok := stub.archiveJSON[field]; ok {
-			t.Fatalf("a movie URL seed carried %s", field)
-		}
-	}
-}
-
-func TestArchiveURLSendsEpisodeCoordinates(t *testing.T) {
-	stub, client := newStubRelay(t)
-
-	if _, err := client.ArchiveURL(context.Background(), ArchiveURLRequest{
-		SourceURL: "https://cdn.example.net/d/TOKEN/GoT.S01E02.mkv",
-		ArchiveCoordinates: ArchiveCoordinates{
-			ContentKind: "episode",
-			TMDBID:      "1399",
-			TMDBTitle:   "Game of Thrones",
-			TMDBSeason:  1,
-			TMDBEpisode: 2,
-		},
-	}); err != nil {
-		t.Fatalf("ArchiveURL: %v", err)
-	}
-	if stub.archiveJSON["tmdbSeason"] != float64(1) || stub.archiveJSON["tmdbEpisode"] != float64(2) {
-		t.Fatalf("season/episode = %#v/%#v", stub.archiveJSON["tmdbSeason"], stub.archiveJSON["tmdbEpisode"])
-	}
-	if stub.archiveJSON["contentKind"] != "episode" {
-		t.Fatalf("contentKind = %#v", stub.archiveJSON["contentKind"])
-	}
-}
-
-// A URL the relay will not fetch has to be distinguishable from a relay that is
-// broken: only the first is fixed by supplying a different source.
-func TestArchiveURLSurfacesARefusedSource(t *testing.T) {
-	stub, client := newStubRelay(t)
-	stub.archiveRefusal = `{"error":{"code":"SOURCE_HOST_NOT_PUBLIC","message":"source host 10.0.0.5 is not publicly routable","field":"url"}}`
-
-	_, err := client.ArchiveURL(context.Background(), ArchiveURLRequest{
-		SourceURL: "https://10.0.0.5/movie.mkv",
-		ArchiveCoordinates: ArchiveCoordinates{
-			ContentKind: "movie",
-			TMDBID:      "9522",
-			TMDBTitle:   "Wedding Crashers",
-		},
-	})
-	if !IsSourceRefused(err) {
-		t.Fatalf("error = %v, want a refused source", err)
-	}
-	if IsRelayNotOpen(err) {
-		t.Fatalf("a refused source was mistaken for the open-access gate: %v", err)
-	}
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("error = %T (%v), want *APIError", err, err)
-	}
-	if apiErr.Status != http.StatusBadRequest || apiErr.Code != "SOURCE_HOST_NOT_PUBLIC" || apiErr.Field != "url" {
-		t.Fatalf("apiErr = %+v", apiErr)
-	}
-}
-
-// Every other relay failure must stay outside the sentinel, or "give me a
-// different URL" becomes the advice for problems a different URL cannot fix.
-func TestArchiveURLDoesNotTreatEveryRefusalAsASourceProblem(t *testing.T) {
-	stub, client := newStubRelay(t)
-	stub.archiveRefusal = `{"error":{"code":"UPLOAD_DIR_UNAVAILABLE","message":"the relay cannot write to its upload directory","field":null}}`
-
-	_, err := client.ArchiveURL(context.Background(), ArchiveURLRequest{
-		SourceURL: "https://cdn.example.net/d/TOKEN/movie.mkv",
-		ArchiveCoordinates: ArchiveCoordinates{
-			ContentKind: "movie",
-			TMDBID:      "9522",
-			TMDBTitle:   "Wedding Crashers",
-		},
-	})
-	if err == nil {
-		t.Fatal("a failing relay was reported as success")
-	}
-	if IsSourceRefused(err) {
-		t.Fatalf("a relay-side failure was blamed on the source URL: %v", err)
-	}
-}
-
-// An obvious mistake must not cost a round trip.
-func TestArchiveURLValidatesBeforeReachingTheRelay(t *testing.T) {
-	for name, req := range map[string]ArchiveURLRequest{
-		"no url": {ArchiveCoordinates: ArchiveCoordinates{ContentKind: "movie", TMDBID: "9522", TMDBTitle: "Wedding Crashers"}},
-		"relative url": {
-			SourceURL:          "/debrid/torbox/12345/file/9",
-			ArchiveCoordinates: ArchiveCoordinates{ContentKind: "movie", TMDBID: "9522", TMDBTitle: "Wedding Crashers"},
-		},
-		"episode without an episode number": {
-			SourceURL:          "https://cdn.example.net/d/TOKEN/GoT.S01E02.mkv",
-			ArchiveCoordinates: ArchiveCoordinates{ContentKind: "episode", TMDBID: "1399", TMDBTitle: "Game of Thrones", TMDBSeason: 1},
-		},
-		"movie carrying episode coordinates": {
-			SourceURL:          "https://cdn.example.net/d/TOKEN/movie.mkv",
-			ArchiveCoordinates: ArchiveCoordinates{ContentKind: "movie", TMDBID: "9522", TMDBTitle: "Wedding Crashers", TMDBSeason: 1, TMDBEpisode: 1},
-		},
-		"unknown content kind": {
-			SourceURL:          "https://cdn.example.net/d/TOKEN/movie.mkv",
-			ArchiveCoordinates: ArchiveCoordinates{ContentKind: "season", TMDBID: "9522", TMDBTitle: "Wedding Crashers"},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			stub, client := newStubRelay(t)
-			if _, err := client.ArchiveURL(context.Background(), req); err == nil {
-				t.Fatal("accepted")
-			}
-			if stub.archiveCalls != 0 {
-				t.Fatalf("the relay was contacted %d times", stub.archiveCalls)
-			}
-		})
 	}
 }
 

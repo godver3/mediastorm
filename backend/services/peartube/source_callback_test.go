@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -214,11 +215,19 @@ func TestSourceGrantExpiresRevokesAndDetectsSourceDrift(t *testing.T) {
 	registry := newTestSourceRegistry(t, func() time.Time { return now }, bytes.NewReader(bytes.Repeat([]byte{9}, 256)), 8, 8)
 	secret := testSourceSecret()
 
+	// A lapsed grant answers 401, not 410. The distinction is load-bearing for a
+	// long archive: a companion that reads "expired" re-attaches to the same job
+	// and keeps the bytes it has already confirmed, where "gone" would tell it to
+	// destroy hours of transfer. Either way no byte of this source is served.
 	expired := issueTestSource(t, registry, []byte("expired-source"), "ing_expired", now.Add(time.Second))
 	now = now.Add(2 * time.Second)
 	expiredRequest := signedSourceRequest(t, http.MethodHead, expired.Capability, "ing_expired", expired.ETag, "", "peartube-companion", secret, now, "nonce-expired")
-	if got := serveSource(registry, expiredRequest).Code; got != http.StatusGone {
-		t.Fatalf("expired HEAD = %d, want %d", got, http.StatusGone)
+	expiredResponse := serveSource(registry, expiredRequest)
+	if expiredResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("expired HEAD = %d, want %d", expiredResponse.Code, http.StatusUnauthorized)
+	}
+	if expiredResponse.Header().Get("Content-Length") == strconv.Itoa(len("expired-source")) {
+		t.Fatal("expired HEAD described the source it no longer grants")
 	}
 
 	now = now.Add(time.Second)
@@ -312,11 +321,17 @@ func TestActiveRevokedAndExpiredGrantsRemainCapacityChargedUntilReaderExits(t *t
 			} else {
 				registry.RevokeJob("ing_reader")
 			}
+			// Revoked is terminal, so 410. Expired is not, so 401. Both must
+			// still refuse the lookup while a reader is mid-flight.
+			wantStatus := http.StatusGone
+			if mode == "expired" {
+				wantStatus = http.StatusUnauthorized
+			}
 			replay := signedSourceRequest(t, http.MethodHead, grant.Capability, "ing_reader", grant.ETag, "", "peartube-companion", testSourceSecret(), now, "nonce-reader-replay")
 			recorder := httptest.NewRecorder()
 			registry.ServeHTTP(recorder, replay)
-			if recorder.Code != http.StatusGone {
-				t.Fatalf("revoked active lookup = %d, want %d", recorder.Code, http.StatusGone)
+			if recorder.Code != wantStatus {
+				t.Fatalf("%s active lookup = %d, want %d", mode, recorder.Code, wantStatus)
 			}
 
 			nextPath := filepath.Join(t.TempDir(), "next-source.mkv")
@@ -472,6 +487,80 @@ func TestArchiveSourceFailureRevokesGrantAndNeverSendsLocalPath(t *testing.T) {
 	capability, ok := submission["sourceCapability"].(string)
 	if !ok || !validSourceCapability(capability) {
 		t.Fatal("companion submission omitted the opaque source capability")
+	}
+}
+
+// A seed the relay declines because of the source itself has to stay
+// distinguishable from a relay that is simply broken: only the first is fixed by
+// offering a different source, and only the second is worth retrying as-is.
+// These assertions used to ride on the URL seed transport, which no longer
+// exists; the classification they defend belongs to the granted ingest that
+// replaced it, so they now run against that.
+func TestGrantedSourceRefusalStaysDistinctFromARelayFailure(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		envelope string
+		refused  bool
+	}{
+		"a source the relay will not accept": {
+			envelope: `{"error":{"code":"SOURCE_HOST_NOT_PUBLIC","message":"source host 10.0.0.5 is not publicly routable","field":"url"}}`,
+			refused:  true,
+		},
+		"a relay that cannot write its own storage": {
+			envelope: `{"error":{"code":"UPLOAD_DIR_UNAVAILABLE","message":"the relay cannot write to its upload directory","field":null}}`,
+			refused:  false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(CompanionSharedSecretEnv, strings.Repeat("4d", 32))
+			sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+			if err := os.WriteFile(sourcePath, []byte("source-bytes"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			companion := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(response, testCase.envelope)
+			}))
+			defer companion.Close()
+			client, err := New(companion.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.companionHTTP = companion.Client()
+			registry := newTestSourceRegistry(t, time.Now, rand.Reader, 4, 4)
+			_, err = client.ArchiveSource(context.Background(), ArchiveRequest{
+				FilePath:       sourcePath,
+				IdempotencyKey: "mediastorm-v1_" + strings.Repeat("34", 32),
+				ArchiveCoordinates: ArchiveCoordinates{
+					ContentKind: "movie",
+					TMDBID:      "9522",
+					TMDBTitle:   "Wedding Crashers",
+				},
+			}, registry)
+			if err == nil {
+				t.Fatal("a refused submission was reported as success")
+			}
+			if IsSourceRefused(err) != testCase.refused {
+				t.Fatalf("IsSourceRefused = %v, want %v for %v", IsSourceRefused(err), testCase.refused, err)
+			}
+			if IsRelayNotOpen(err) {
+				t.Fatalf("a seed refusal was mistaken for the open-access gate: %v", err)
+			}
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("error = %T (%v), want *APIError", err, err)
+			}
+			if apiErr.Status != http.StatusBadRequest {
+				t.Fatalf("apiErr = %+v", apiErr)
+			}
+			// Whichever kind of refusal it was, the capability must not survive it.
+			registry.mu.Lock()
+			remaining := len(registry.grants)
+			registry.mu.Unlock()
+			if remaining != 0 {
+				t.Fatal("a refused submission retained a live source grant")
+			}
+		})
 	}
 }
 

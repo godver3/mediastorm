@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"novastream/config"
 	"novastream/models"
 	"novastream/services/peartube"
 )
@@ -27,7 +30,9 @@ type autoSeedRelay struct {
 	// broken relay can be simulated.
 	catalogStatus int
 	catalogBody   string
-	// archiveStatus overrides the seed answer, so a refusal can be simulated.
+	// archiveStatus overrides the seed answer, so a refusal can be simulated. It
+	// applies to both seed transports: the legacy URL archive and the granted
+	// ingest job that replaced it for remote sources.
 	archiveStatus int
 	// archiveDelay holds the seed submission open, so a caller that waits on it
 	// is visible as a caller that waits.
@@ -36,12 +41,19 @@ type autoSeedRelay struct {
 	mu           sync.Mutex
 	catalogReads int
 	archives     []map[string]any
+	ingests      []map[string]any
 }
 
 func (relay *autoSeedRelay) archiveCount() int {
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
 	return len(relay.archives)
+}
+
+func (relay *autoSeedRelay) ingestCount() int {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	return len(relay.ingests)
 }
 
 func (relay *autoSeedRelay) lastArchive() map[string]any {
@@ -53,10 +65,26 @@ func (relay *autoSeedRelay) lastArchive() map[string]any {
 	return relay.archives[len(relay.archives)-1]
 }
 
+func (relay *autoSeedRelay) lastIngest() map[string]any {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	if len(relay.ingests) == 0 {
+		return nil
+	}
+	return relay.ingests[len(relay.ingests)-1]
+}
+
 func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		// Every seed re-reconciles the versioned policy before it sends
+		// anything, so a relay that cannot answer this refuses every seed.
+		case r.URL.Path == "/api/v2/policy":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"policy":{"policyVersion":2}}`))
+			return
+
 		case strings.HasPrefix(r.URL.Path, "/api/v1/catalog"):
 			relay.mu.Lock()
 			relay.catalogReads++
@@ -87,6 +115,26 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"jobId":"arch_1","status":"queued","entityHint":"movie:603"}`))
 
+		// Remote sources now arrive as granted ingest jobs, so a refusal has to
+		// be simulatable on this transport too.
+		case r.URL.Path == "/api/v2/ingest/jobs":
+			if relay.archiveDelay > 0 {
+				time.Sleep(relay.archiveDelay)
+			}
+			body := map[string]any{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			relay.mu.Lock()
+			relay.ingests = append(relay.ingests, body)
+			relay.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if relay.archiveStatus != 0 {
+				w.WriteHeader(relay.archiveStatus)
+				_, _ = w.Write([]byte(`{"error":{"code":"INTERNAL","message":"relay exploded","field":null}}`))
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"job":{"jobId":"` + r.Header.Get("X-PearTube-Job-ID") + `","state":"queued"}}`))
+
 		default:
 			http.NotFound(w, r)
 		}
@@ -99,16 +147,32 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 	return client
 }
 
-// newAutoSeedHandler builds the handler as main.go wires it, with the switch on
-// and a stream resolver that stands in for the composite streaming provider.
+// newAutoSeedHandler builds the handler as main.go wires it: the switch on, a
+// stream resolver standing in for the composite streaming provider, and a live
+// source-grant registry, because both seed transports are now granted sources.
+//
+// resolved carries the versioned consent the seed closure re-checks before it
+// sends anything. Without it every submission fails closed, which would make a
+// test that asserts "nothing was submitted" pass for the wrong reason.
 func newAutoSeedHandler(t *testing.T, relay *autoSeedRelay, resolver *fakeStreamResolver) *PearTubeHandler {
 	t.Helper()
+	// Set before the client is built: both the companion client and the callback
+	// registry read this identity once, at construction.
+	t.Setenv(peartube.CompanionSharedSecretEnv, strings.Repeat("4d", 32))
+	sourceGrants := peartube.NewSourceGrantRegistryFromEnv()
+	t.Cleanup(sourceGrants.Close)
 	var clockMu sync.Mutex
 	now := time.Unix(1_700_000_000, 0)
 	return &PearTubeHandler{
 		relay:                  relay.client(t),
 		streams:                resolver,
+		sourceGrants:           sourceGrants,
 		contributeWatchedMedia: true,
+		resolved: peartube.Resolved{
+			ConsentVersion:         config.PearTubeConsentVersion,
+			ContributeWatchedMedia: true,
+			ContributionBudget:     1,
+		},
 		playbackNow: func() time.Time {
 			clockMu.Lock()
 			defer clockMu.Unlock()
@@ -175,9 +239,18 @@ func TestAutoSeedIsInertWhenDisabled(t *testing.T) {
 // A playback sends a heartbeat every few seconds and a player opens hundreds of
 // byte-range requests, none of which reach this handler. Every heartbeat of one
 // playback must collapse to a single submission.
+//
+// A debrid stream is now published by granting the relay range access, not by
+// handing over the address it resolved to, so this also pins the shape of that
+// submission: an ingest job carrying an opaque capability, the authoritative
+// byte length, and a byte-identity ETag — and no address anywhere. The address
+// is likewise absent from the idempotency key, so the same title resolved again
+// is recognised as the same seed.
 func TestAutoSeedSubmitsOncePerTitleAcrossManyHeartbeats(t *testing.T) {
+	t.Setenv(peartube.CompanionClientEnv, "mediastorm-test")
 	relay := &autoSeedRelay{}
-	resolver := &fakeStreamResolver{url: "https://cdn.example.net/d/FRESH-TOKEN/The.Matrix.1999.mkv"}
+	const resolvedAddress = "https://cdn.example.net/d/FRESH-TOKEN/The.Matrix.1999.mkv"
+	resolver := &fakeStreamResolver{url: resolvedAddress, content: []byte(strings.Repeat("matrix", 512))}
 	handler := newAutoSeedHandler(t, relay, resolver)
 
 	update := moviePlayback()
@@ -191,7 +264,7 @@ func TestAutoSeedSubmitsOncePerTitleAcrossManyHeartbeats(t *testing.T) {
 			t.Fatalf("claim key = %q", plan.key)
 		}
 		// The player's own URL is never forwarded: the seed names the stream
-		// path and the seed path re-resolves it.
+		// path and the seed path grants access to it.
 		if plan.request.SourceURL != "" || plan.request.StreamPath != update.SourcePath {
 			t.Fatalf("seed request = %+v", plan.request)
 		}
@@ -199,10 +272,98 @@ func TestAutoSeedSubmitsOncePerTitleAcrossManyHeartbeats(t *testing.T) {
 	}
 
 	if got := relay.archiveCount(); got != 0 {
-		t.Fatalf("legacy archive submissions = %d, want 0", got)
+		t.Fatalf("a remote source still used the URL archive transport: %d calls", got)
+	}
+	if got := relay.ingestCount(); got != 1 {
+		t.Fatalf("granted ingest submissions = %d, want 1", got)
+	}
+	submission := relay.lastIngest()
+	capability, _ := submission["sourceCapability"].(string)
+	if len(capability) != 43 {
+		t.Fatalf("submission capability = %q, want an opaque 43-character token", capability)
+	}
+	request, _ := submission["request"].(map[string]any)
+	expected, _ := request["expected"].(map[string]any)
+	if expected["byteLength"] != float64(len(resolver.body())) {
+		t.Fatalf("declared byte length = %v, want the probed total %d", expected["byteLength"], len(resolver.body()))
+	}
+	if expected["etag"] != peartube.RemoteSourceETag(update.SourcePath, int64(len(resolver.body()))) {
+		t.Fatalf("declared etag = %v, want the stream path's byte identity", expected["etag"])
+	}
+	if _, claimed := expected["sha256"]; claimed {
+		t.Fatal("a remote source claimed a whole-file digest it cannot have computed")
+	}
+	if request["retentionClass"] != "contribution-cache" {
+		t.Fatalf("retention class = %v, want the consented contribution budget", request["retentionClass"])
+	}
+	// The address the player would have used must not appear anywhere in the
+	// submission, in any field.
+	encoded, err := json.Marshal(submission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "cdn.example.net") || strings.Contains(string(encoded), "FRESH-TOKEN") {
+		t.Fatalf("submission leaked the resolved address: %s", encoded)
+	}
+	if strings.Contains(string(encoded), update.SourcePath) {
+		t.Fatalf("submission leaked the internal stream path: %s", encoded)
 	}
 	if resolver.asked != update.SourcePath {
 		t.Fatalf("resolver was asked for %q, want %q", resolver.asked, update.SourcePath)
+	}
+	// One probe, and nothing more: the relay pulls the body on its own clock.
+	if len(resolver.ranges) != 1 || resolver.ranges[0] != "bytes=0-0" {
+		t.Fatalf("upstream reads during planning = %v, want one length probe", resolver.ranges)
+	}
+}
+
+// The local-library path is untouched by the remote change: a stream path that
+// resolves to a file this process holds is still published from that open file,
+// with the whole-file digest a local source can actually state.
+func TestAutoSeedOfALocalStreamPathStillPublishesFromTheFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "The.Matrix.1999.mkv")
+	if err := os.WriteFile(path, []byte(strings.Repeat("on-disk", 128)), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{url: path}
+	handler := newAutoSeedHandler(t, relay, resolver)
+	handler.localMedia = fakeLibrary{libraries: []models.LocalMediaLibrary{{RootPath: root}}}
+
+	plan, ok := handler.planAutoSeed(moviePlayback())
+	if !ok {
+		t.Fatal("a locally held movie was not seedable")
+	}
+	plan.submit()
+
+	if got := relay.archiveCount(); got != 0 {
+		t.Fatalf("the local path used the URL archive transport: %d calls", got)
+	}
+	if got := relay.ingestCount(); got != 1 {
+		t.Fatalf("local granted ingest submissions = %d, want 1", got)
+	}
+	submission := relay.lastIngest()
+	request, _ := submission["request"].(map[string]any)
+	expected, _ := request["expected"].(map[string]any)
+	digest, _ := expected["sha256"].(string)
+	if len(digest) != 64 {
+		t.Fatalf("local source digest = %q, want a whole-file SHA-256", digest)
+	}
+	etag, _ := expected["etag"].(string)
+	if etag != `"sha256-`+digest+`"` {
+		t.Fatalf("local source etag = %q, want the file's content hash", etag)
+	}
+	// The local file was never read through the streaming provider.
+	if len(resolver.ranges) != 0 {
+		t.Fatalf("local seed pulled ranges from the streaming layer: %v", resolver.ranges)
+	}
+	encoded, err := json.Marshal(submission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), path) {
+		t.Fatalf("submission exposed the local source path: %s", encoded)
 	}
 }
 
@@ -605,7 +766,7 @@ func TestAutoSeedWithoutAResolverDoesNotSubmitAnUnidentifiedTitle(t *testing.T) 
 	handler := newAutoSeedHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/x.mkv"})
 
 	handler.OnPlaybackStarted(appPlayback())
-	waitForArchives(t, relay, 0)
+	waitForSeeds(t, relay, 0)
 
 	if relay.catalogReads != 0 || relay.archiveCount() != 0 {
 		t.Fatalf("relay was contacted: %d catalog reads, %d archives", relay.catalogReads, relay.archiveCount())

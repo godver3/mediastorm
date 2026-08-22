@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"novastream/config"
 	"novastream/models"
 	"novastream/services/peartube"
+	"novastream/services/streaming"
 )
 
 type fakeLibrary struct {
@@ -37,17 +39,49 @@ func (f fakeLibrary) ListLibraries(context.Context) ([]models.LocalMediaLibrary,
 	return f.libraries, nil
 }
 
-// fakeStreamResolver stands in for the composite streaming provider, which is
-// what turns a /debrid/... stream path into the CDN URL it points at right now.
+// fakeStreamResolver stands in for the composite streaming provider. It does
+// both jobs the real one does for a seed: it says what a /debrid/... stream path
+// currently resolves to, and it serves the byte ranges a granted remote source
+// is pulled through.
 type fakeStreamResolver struct {
 	url   string
 	err   error
 	asked string
+	// content is the remote body served by range. Empty means a small default.
+	content []byte
+	ranges  []string
 }
 
 func (f *fakeStreamResolver) GetDirectURL(_ context.Context, path string) (string, error) {
 	f.asked = path
 	return f.url, f.err
+}
+
+func (f *fakeStreamResolver) body() []byte {
+	if len(f.content) > 0 {
+		return f.content
+	}
+	return bytes.Repeat([]byte("remote-source-bytes\n"), 8)
+}
+
+func (f *fakeStreamResolver) Stream(_ context.Context, req streaming.Request) (*streaming.Response, error) {
+	f.ranges = append(f.ranges, req.RangeHeader)
+	body := f.body()
+	var start, end int64
+	if _, err := fmt.Sscanf(req.RangeHeader, "bytes=%d-%d", &start, &end); err != nil {
+		return nil, fmt.Errorf("fake resolver got an unusable range %q", req.RangeHeader)
+	}
+	if start < 0 || end < start || end >= int64(len(body)) {
+		return nil, fmt.Errorf("fake resolver got an out-of-bounds range %q", req.RangeHeader)
+	}
+	headers := http.Header{}
+	headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(body)))
+	return &streaming.Response{
+		Status:        http.StatusPartialContent,
+		Headers:       headers,
+		ContentLength: end - start + 1,
+		Body:          io.NopCloser(bytes.NewReader(body[start : end+1])),
+	}, nil
 }
 
 type seedCapture struct {

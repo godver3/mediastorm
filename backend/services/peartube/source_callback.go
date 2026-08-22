@@ -1,6 +1,7 @@
 package peartube
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -69,11 +70,94 @@ type IssuedSourceGrant struct {
 	ExpiresAt   time.Time
 }
 
-// PreparedSource holds an open, hashed local file before its job ID is known.
-// Issue transfers ownership to the registry; otherwise callers must Close it.
+// errSourceDrift marks a backing whose bytes are no longer the bytes the grant
+// was prepared from and which cannot be recovered by re-resolving: a local file
+// replaced under an already-open descriptor.
+var errSourceDrift = errors.New("source changed under the grant")
+
+// ErrSourceUnavailable marks a range read that failed for a reason a later
+// attempt can recover from — an upstream address being re-resolved, a provider
+// throttling, a dropped connection. The callback answers 503 so the companion
+// keeps the progress it has already confirmed and asks again.
+var ErrSourceUnavailable = errors.New("source range is temporarily unavailable")
+
+// ErrSourceGone marks a backing whose content no longer exists, or whose
+// upstream stopped describing the same bytes. The callback answers 410 so the
+// companion stops rather than splicing two different sources together.
+var ErrSourceGone = errors.New("source content is gone")
+
+// sourceBacking supplies the bytes behind one grant. It is the seam that lets a
+// grant be backed by something other than an open local file: a file backing
+// pins one exact open descriptor, while a remote backing re-resolves an
+// expiring upstream address underneath every range it serves.
+type sourceBacking interface {
+	// verify reports whether the backing still names the bytes it was prepared
+	// from. It runs before every request, so it must not block on an upstream.
+	verify() error
+	// open returns exactly count bytes starting at start. It is called before
+	// any response status is written, so a range that cannot be served becomes
+	// a status rather than a truncated body.
+	open(ctx context.Context, start, count int64) (io.ReadCloser, error)
+	close() error
+}
+
+// fileBacking is the original local-file source: one open descriptor whose
+// exact identity is pinned at Prepare and re-checked on every request.
+type fileBacking struct {
+	file *os.File
+	info os.FileInfo
+}
+
+func (b *fileBacking) verify() error {
+	if b.file == nil {
+		return errSourceDrift
+	}
+	current, err := b.file.Stat()
+	if err != nil || !sameSourceIdentity(b.info, current) {
+		return errSourceDrift
+	}
+	return nil
+}
+
+func (b *fileBacking) open(_ context.Context, start, count int64) (io.ReadCloser, error) {
+	if b.file == nil {
+		return nil, errSourceDrift
+	}
+	return io.NopCloser(io.NewSectionReader(b.file, start, count)), nil
+}
+
+func (b *fileBacking) close() error {
+	if b.file == nil {
+		return nil
+	}
+	file := b.file
+	b.file = nil
+	return file.Close()
+}
+
+// sourceBackingStatus maps a backing failure onto the callback status the
+// companion keys its retry decision on. An unclassified failure is retryable:
+// the companion keeps its confirmed progress and asks again, which is the safe
+// direction, because a genuinely permanent fault still ends at the grant's own
+// expiry instead of destroying hours of confirmed transfer.
+func sourceBackingStatus(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, errSourceDrift):
+		return http.StatusConflict
+	case errors.Is(err, ErrSourceGone):
+		return http.StatusGone
+	default:
+		return http.StatusServiceUnavailable
+	}
+}
+
+// PreparedSource holds a prepared, identified source before its job ID is
+// known. Issue transfers ownership to the registry; otherwise callers must
+// Close it.
 type PreparedSource struct {
-	file        *os.File
-	info        os.FileInfo
+	backing     sourceBacking
 	length      int64
 	sha256      string
 	etag        string
@@ -82,16 +166,26 @@ type PreparedSource struct {
 }
 
 func (p *PreparedSource) Close() error {
-	if p == nil || p.closed || p.file == nil {
+	if p == nil || p.closed || p.backing == nil {
 		return nil
 	}
 	p.closed = true
-	return p.file.Close()
+	return p.backing.close()
+}
+
+// facts are the source facts an ingest submission states before any capability
+// exists. A remote source leaves SHA256 empty: see PrepareRemote.
+func (p *PreparedSource) facts() IssuedSourceGrant {
+	return IssuedSourceGrant{
+		Length:      p.length,
+		SHA256:      p.sha256,
+		ETag:        p.etag,
+		ContentType: p.contentType,
+	}
 }
 
 type sourceGrant struct {
-	file        *os.File
-	info        os.FileInfo
+	backing     sourceBacking
 	companionID string
 	jobID       string
 	length      int64
@@ -116,6 +210,12 @@ type SourceGrantRegistry struct {
 	grants map[[32]byte]*sourceGrant
 	byJob  map[string]map[[32]byte]struct{}
 	nonces map[string]sourceNonce
+	// revoked remembers the capabilities that ended terminally, so a job that is
+	// really over answers 410 while everything else the registry has simply
+	// forgotten — a lapsed grant, or every grant this process held before a
+	// restart — answers the re-attachable 401. Getting that the wrong way round
+	// is what makes a companion destroy an unfinished transfer.
+	revoked map[[32]byte]time.Time
 
 	now           func() time.Time
 	random        io.Reader
@@ -171,6 +271,7 @@ func NewSourceGrantRegistry(options SourceGrantOptions) (*SourceGrantRegistry, e
 		grants:        make(map[[32]byte]*sourceGrant),
 		byJob:         make(map[string]map[[32]byte]struct{}),
 		nonces:        make(map[string]sourceNonce),
+		revoked:       make(map[[32]byte]time.Time),
 		now:           now,
 		random:        randomSource,
 		ttl:           ttl,
@@ -238,27 +339,49 @@ func validCompanionCallbackID(value string) bool {
 	return true
 }
 
-// Prepare opens one regular file, hashes it without buffering the media, and
-// retains that exact open file identity for a later grant.
-func (r *SourceGrantRegistry) Prepare(filePath, contentType string) (*PreparedSource, error) {
+// prepareGuard reports whether the registry can hand out a new prepared source
+// at all. Prepare and PrepareRemote share it, so a closed registry or an
+// unconfigured callback identity fails closed for every kind of source.
+func (r *SourceGrantRegistry) prepareGuard() error {
 	if r == nil {
-		return nil, errors.New("source grants are unavailable")
+		return errors.New("source grants are unavailable")
 	}
 	r.mu.Lock()
 	closed := r.closed
 	authErr := r.authError
 	r.mu.Unlock()
 	if closed {
-		return nil, errors.New("source grants are closed")
+		return errors.New("source grants are closed")
 	}
 	if authErr != nil {
-		return nil, errors.New("source callback authentication is not configured")
+		return errors.New("source callback authentication is not configured")
+	}
+	return nil
+}
+
+func normalizeSourceContentType(contentType string) (string, error) {
+	contentType = strings.TrimSpace(strings.ToLower(contentType))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if len(contentType) > maxSourceContentTypeBytes || !validHeaderText(contentType) {
+		return "", errors.New("source content type is invalid")
+	}
+	return contentType, nil
+}
+
+// Prepare opens one regular file, hashes it without buffering the media, and
+// retains that exact open file identity for a later grant.
+func (r *SourceGrantRegistry) Prepare(filePath, contentType string) (*PreparedSource, error) {
+	if err := r.prepareGuard(); err != nil {
+		return nil, err
 	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, errors.New("open source file")
 	}
-	prepared := &PreparedSource{file: file}
+	backing := &fileBacking{file: file}
+	prepared := &PreparedSource{backing: backing}
 	success := false
 	defer func() {
 		if !success {
@@ -286,15 +409,12 @@ func (r *SourceGrantRegistry) Prepare(filePath, contentType string) (*PreparedSo
 	if err != nil || !sameSourceIdentity(before, after) {
 		return nil, errors.New("source changed while preparing grant")
 	}
-	contentType = strings.TrimSpace(strings.ToLower(contentType))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	if len(contentType) > maxSourceContentTypeBytes || !validHeaderText(contentType) {
-		return nil, errors.New("source content type is invalid")
+	contentType, err = normalizeSourceContentType(contentType)
+	if err != nil {
+		return nil, err
 	}
 	digest := hex.EncodeToString(hasher.Sum(nil))
-	prepared.info = after
+	backing.info = after
 	prepared.length = after.Size()
 	prepared.sha256 = digest
 	prepared.etag = `"sha256-` + digest + `"`
@@ -311,10 +431,11 @@ func sameSourceIdentity(expected, actual os.FileInfo) bool {
 		expected.ModTime().Equal(actual.ModTime())
 }
 
-// Issue binds a prepared file to one job and transfers file ownership to the
-// registry. Only the opaque token leaves this process in the companion request.
+// Issue binds a prepared source to one job and transfers ownership of its
+// backing to the registry. Only the opaque token leaves this process in the
+// companion request.
 func (r *SourceGrantRegistry) Issue(prepared *PreparedSource, scope SourceGrantScope) (IssuedSourceGrant, error) {
-	if r == nil || prepared == nil || prepared.file == nil || prepared.closed {
+	if r == nil || prepared == nil || prepared.backing == nil || prepared.closed {
 		return IssuedSourceGrant{}, errors.New("prepared source is invalid")
 	}
 	if scope.CompanionID != r.companionID || !validSourceJobID(scope.JobID) {
@@ -365,8 +486,7 @@ func (r *SourceGrantRegistry) Issue(prepared *PreparedSource, scope SourceGrantS
 		return IssuedSourceGrant{}, errors.New("source capability collision limit reached")
 	}
 	grant := &sourceGrant{
-		file:        prepared.file,
-		info:        prepared.info,
+		backing:     prepared.backing,
 		companionID: scope.CompanionID,
 		jobID:       scope.JobID,
 		length:      prepared.length,
@@ -382,7 +502,7 @@ func (r *SourceGrantRegistry) Issue(prepared *PreparedSource, scope SourceGrantS
 	}
 	r.byJob[scope.JobID][digest] = struct{}{}
 	prepared.closed = true
-	prepared.file = nil
+	prepared.backing = nil
 	return IssuedSourceGrant{
 		Capability:  capability,
 		Length:      grant.length,
@@ -430,12 +550,40 @@ func validSourceCapability(capability string) bool {
 	return true
 }
 
+// revokedSourceGrace is how long a terminally revoked capability keeps saying so
+// before it becomes indistinguishable from one the registry never held. It only
+// has to outlive requests already in flight for a job the companion has been
+// told is finished.
+const revokedSourceGrace = 10 * time.Minute
+
+// sourceRevocationReason separates a grant that ended because its job did from
+// one that merely ran out of time.
+type sourceRevocationReason int
+
+const (
+	// sourceRevokedTerminal is a finished job or a withdrawn consent: stop.
+	sourceRevokedTerminal sourceRevocationReason = iota
+	// sourceRevokedLapsed is a grant that outlived its TTL mid-transfer: the
+	// companion should re-attach, not give up.
+	sourceRevokedLapsed
+)
+
 func (r *SourceGrantRegistry) pruneLocked(now time.Time) {
 	for digest, grant := range r.grants {
 		if now.Before(grant.expiresAt) {
 			continue
 		}
-		r.revokeLocked(digest, grant)
+		r.revokeLocked(digest, grant, sourceRevokedLapsed)
+	}
+	for digest, at := range r.revoked {
+		if at.Add(revokedSourceGrace).Before(now) {
+			delete(r.revoked, digest)
+		}
+	}
+	if len(r.revoked) > r.maxEntries {
+		// Falling back to 401 for a forgotten terminal job costs one wasted
+		// re-attach; growing this map without bound costs the process.
+		clear(r.revoked)
 	}
 	minimumNonceTime := now.Add(-r.maxClockSkew)
 	for key, nonce := range r.nonces {
@@ -449,18 +597,21 @@ func (r *SourceGrantRegistry) retireLocked(digest [32]byte, grant *sourceGrant) 
 	if current := r.grants[digest]; current == grant {
 		delete(r.grants, digest)
 	}
-	if grant.file != nil {
-		_ = grant.file.Close()
-		grant.file = nil
+	if grant.backing != nil {
+		_ = grant.backing.close()
+		grant.backing = nil
 	}
 }
 
-func (r *SourceGrantRegistry) revokeLocked(digest [32]byte, grant *sourceGrant) {
+func (r *SourceGrantRegistry) revokeLocked(digest [32]byte, grant *sourceGrant, reason sourceRevocationReason) {
 	if grant == nil || grant.revoked {
 		return
 	}
 	grant.revoked = true
 	close(grant.revokedCh)
+	if reason == sourceRevokedTerminal {
+		r.revoked[digest] = r.now()
+	}
 	if jobs := r.byJob[grant.jobID]; jobs != nil {
 		delete(jobs, digest)
 		if len(jobs) == 0 {
@@ -472,23 +623,36 @@ func (r *SourceGrantRegistry) revokeLocked(digest [32]byte, grant *sourceGrant) 
 	}
 }
 
-func (r *SourceGrantRegistry) acquire(capability string) ([32]byte, *sourceGrant, func()) {
+// acquire pins a live grant, or reports the status its absence deserves.
+//
+// Only a terminally revoked capability is 410. A grant that lapsed, and a
+// capability this registry simply does not hold — every capability it held
+// before a restart, for instance — is 401: the companion's transfer is
+// unfinished rather than unwanted, and it must be able to obtain a fresh
+// capability for the same job instead of discarding hours of confirmed
+// progress.
+func (r *SourceGrantRegistry) acquire(capability string) ([32]byte, *sourceGrant, func(), int) {
 	var zero [32]byte
+	noRelease := func() {}
 	if !validSourceCapability(capability) {
-		return zero, nil, func() {}
+		return zero, nil, noRelease, http.StatusGone
 	}
 	digest := sourceCapabilityDigest(capability)
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return zero, nil, func() {}
+		return zero, nil, noRelease, http.StatusGone
 	}
 	now := r.now()
 	r.pruneLocked(now)
 	grant := r.grants[digest]
 	if grant == nil || grant.revoked || !now.Before(grant.expiresAt) {
+		_, terminal := r.revoked[digest]
 		r.mu.Unlock()
-		return zero, nil, func() {}
+		if terminal {
+			return zero, nil, noRelease, http.StatusGone
+		}
+		return zero, nil, noRelease, http.StatusUnauthorized
 	}
 	grant.active++
 	r.mu.Unlock()
@@ -499,7 +663,7 @@ func (r *SourceGrantRegistry) acquire(capability string) ([32]byte, *sourceGrant
 			r.retireLocked(digest, grant)
 		}
 		r.mu.Unlock()
-	}
+	}, 0
 }
 
 // RevokeJob removes every outstanding capability for one terminal job.
@@ -510,7 +674,7 @@ func (r *SourceGrantRegistry) RevokeJob(jobID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for digest := range r.byJob[jobID] {
-		r.revokeLocked(digest, r.grants[digest])
+		r.revokeLocked(digest, r.grants[digest], sourceRevokedTerminal)
 	}
 }
 
@@ -537,7 +701,7 @@ func (r *SourceGrantRegistry) RevokeAll() {
 	defer r.mu.Unlock()
 	r.policyEpoch++
 	for digest, grant := range r.grants {
-		r.revokeLocked(digest, grant)
+		r.revokeLocked(digest, grant, sourceRevokedTerminal)
 	}
 }
 
@@ -553,7 +717,7 @@ func (r *SourceGrantRegistry) Close() {
 	}
 	r.closed = true
 	for digest, grant := range r.grants {
-		r.revokeLocked(digest, grant)
+		r.revokeLocked(digest, grant, sourceRevokedTerminal)
 	}
 	clear(r.nonces)
 	for index := range r.secret {
@@ -659,10 +823,24 @@ func parseSourceRange(value string, length, maximum int64) (int64, int64, bool) 
 	return start, end, true
 }
 
+// sourceRetryAfterSeconds paces a companion around a transient upstream fault.
+// It is deliberately short: the companion is resuming a transfer, not polling a
+// queue, and the grant it holds has a bounded life.
+const sourceRetryAfterSeconds = 5
+
 func sourceError(response http.ResponseWriter, status int) {
 	message := "source request refused"
-	if status == http.StatusGone {
+	switch status {
+	case http.StatusGone:
 		message = "source grant unavailable"
+	case http.StatusUnauthorized:
+		// A lapsed grant is not a withdrawn one. Saying so distinctly is what
+		// lets a companion re-attach to the same job instead of destroying an
+		// unfinished transfer it has already confirmed most of.
+		message = "source grant expired"
+	case http.StatusServiceUnavailable:
+		response.Header().Set("Retry-After", strconv.Itoa(sourceRetryAfterSeconds))
+		message = "source range temporarily unavailable"
 	}
 	http.Error(response, message, status)
 }
@@ -689,19 +867,18 @@ func (r *SourceGrantRegistry) ServeHTTP(response http.ResponseWriter, request *h
 		sourceError(response, http.StatusForbidden)
 		return
 	}
-	digest, grant, release := r.acquire(capability)
+	digest, grant, release, acquireStatus := r.acquire(capability)
 	defer release()
 	if grant == nil {
-		sourceError(response, http.StatusGone)
+		sourceError(response, acquireStatus)
 		return
 	}
 	if grant.companionID != clientID || grant.jobID != jobID {
 		sourceError(response, http.StatusForbidden)
 		return
 	}
-	current, err := grant.file.Stat()
-	if err != nil || !sameSourceIdentity(grant.info, current) {
-		sourceError(response, http.StatusConflict)
+	if status := sourceBackingStatus(grant.backing.verify()); status != 0 {
+		sourceError(response, status)
 		return
 	}
 
@@ -711,7 +888,7 @@ func (r *SourceGrantRegistry) ServeHTTP(response http.ResponseWriter, request *h
 			return
 		}
 		r.mu.Lock()
-		r.revokeLocked(digest, grant)
+		r.revokeLocked(digest, grant, sourceRevokedTerminal)
 		r.mu.Unlock()
 		response.WriteHeader(http.StatusNoContent)
 		return
@@ -745,10 +922,18 @@ func (r *SourceGrantRegistry) ServeHTTP(response http.ResponseWriter, request *h
 		return
 	}
 	count := end - start + 1
+	// The range is opened before any status is written, so an upstream that is
+	// mid-re-resolution becomes a clean retryable status instead of a 206 with a
+	// short body, which no companion can tell from real content.
+	reader, openErr := grant.backing.open(request.Context(), start, count)
+	if openErr != nil {
+		sourceError(response, sourceBackingStatus(openErr))
+		return
+	}
+	defer reader.Close()
 	response.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, grant.length))
 	response.Header().Set("Content-Length", strconv.FormatInt(count, 10))
 	response.WriteHeader(http.StatusPartialContent)
-	reader := io.NewSectionReader(grant.file, start, count)
 	buffer := make([]byte, sourceServeChunkBytes)
 	defer func() {
 		for index := range buffer {

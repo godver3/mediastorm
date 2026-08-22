@@ -895,9 +895,11 @@ func main() {
 	defer sourceGrants.Close()
 	pearTubeHandler.SetSourceGrants(sourceGrants)
 	r.Handle(peartube.SourceCallbackRoute, sourceGrants).Methods(http.MethodHead, http.MethodGet, http.MethodDelete)
-	// Lets a seed name the stream path a playback resolve returned, so a debrid
-	// or usenet source is re-resolved to a current URL at seed time instead of
-	// the caller shipping an expired one.
+	// Lets a seed name the stream path a playback resolve returned. The same
+	// provider then serves the relay's byte ranges through an authenticated
+	// grant, re-resolving the expiring debrid address underneath, so no caller
+	// ever ships a URL that can go stale mid-archive.
+	var _ peartube.RemoteRangeReader = compositeProvider
 	pearTubeHandler.SetStreamResolver(compositeProvider)
 	// Configure the integration from the stored settings, and again on every
 	// settings save, so a relay can be added, moved, or switched off from the

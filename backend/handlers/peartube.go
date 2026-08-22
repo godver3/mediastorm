@@ -1270,28 +1270,114 @@ func seedIdempotencyKey(coordinates peartube.ArchiveCoordinates, sourceIdentity 
 	return "mediastorm-v1_" + hex.EncodeToString(sum[:])
 }
 
-// planQualifiedAutoSeed only hands Plan 11 an already-authorized local file.
-// Remote/debrid URLs remain private playback inputs and never enter automatic
-// contribution requests.
+// planQualifiedAutoSeed resolves the playback's stream path server-side and
+// picks the seed transport that source needs.
+//
+// Both transports are now authenticated source grants; what differs is what is
+// behind the grant. A path that resolves to a file this process already holds is
+// published from that open file. A path that resolves to somebody else's CDN — a
+// debrid or usenet stream — is published from a grant backed by the streaming
+// layer, which re-resolves the expiring address underneath every range the
+// relay asks for. No media bytes are buffered in this process either way, and
+// no address ever leaves it.
+//
+// The resolution still happens here and never on the player's request path. It
+// is no longer done to obtain something to hand over — it is done to learn which
+// kind of source this is, and it warms the streaming layer's address cache for
+// the first range the relay asks for.
 func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *peartube.Client, req SeedRequest) (func(context.Context) (*peartube.ArchiveJob, error), error) {
-	if h.streams == nil || strings.TrimSpace(req.StreamPath) == "" {
+	streamPath := strings.TrimSpace(req.StreamPath)
+	if h.streams == nil || streamPath == "" {
 		return nil, errAutoSeedSourceUnavailable
 	}
-	localPath, err := h.streams.GetDirectURL(ctx, strings.TrimSpace(req.StreamPath))
+	resolved, err := h.streams.GetDirectURL(ctx, streamPath)
 	if err != nil {
 		return nil, errAutoSeedSourceUnavailable
 	}
-	if strings.HasPrefix(localPath, "http://") || strings.HasPrefix(localPath, "https://") {
+	resolved = strings.TrimSpace(resolved)
+	if resolved == "" {
 		return nil, errAutoSeedSourceUnavailable
 	}
-	req.FilePath = strings.TrimSpace(localPath)
 	req.StreamPath = ""
-	req.SourceURL = ""
 	req.retentionClass = peartube.RetentionClassContributionCache
-	if req.FilePath == "" {
+	if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {
+		req.FilePath = ""
+		req.SourceURL = ""
+		return h.planRemoteAutoSeed(relay, req, streamPath)
+	}
+	req.FilePath = resolved
+	req.SourceURL = ""
+	return h.planSeed(ctx, relay, req)
+}
+
+// planRemoteAutoSeed grants the relay range access to a remote title instead of
+// handing it an address.
+//
+// The address is what used to make this fragile: it expires in about ten
+// minutes, so an archive that took forty-two minutes lost every byte it had
+// transferred the moment the viewer moved on. A grant has none of that coupling.
+// It is bound to the job, not to a session; the streaming layer re-resolves
+// underneath it; and it is revoked only when the job reaches a terminal status
+// or consent is withdrawn.
+//
+// The consent re-check is the same one the local path makes, and for the same
+// reason: settings can change between the heartbeat that decided to seed and the
+// moment the request is actually sent, and a withdrawn consent must stop it. It
+// now also pins the source-grant policy epoch, so a consent downgrade that races
+// grant preparation cannot be followed by a live capability.
+func (h *PearTubeHandler) planRemoteAutoSeed(relay *peartube.Client, req SeedRequest, streamPath string) (func(context.Context) (*peartube.ArchiveJob, error), error) {
+	coordinates := seedCoordinates(req)
+	if err := coordinates.Validate(); err != nil {
+		return nil, err
+	}
+	// The grant is served by the same provider playback streams through, which
+	// is what makes debrid re-resolution free here. A resolver that cannot serve
+	// ranges is not a source this process can grant access to.
+	reader, rangeReadable := h.streams.(peartube.RemoteRangeReader)
+	if !rangeReadable {
 		return nil, errAutoSeedSourceUnavailable
 	}
-	return h.planSeed(ctx, relay, req)
+	archive := peartube.ArchiveRemoteRequest{
+		Source: peartube.RemoteSource{Reader: reader, StreamPath: streamPath},
+		// Watched media is a contribution, not a deliberate archive pin: it is
+		// charged against the contribution budget the viewer consented to and
+		// evicted by that budget's rules.
+		RetentionClass:     peartube.RetentionClassContributionCache,
+		ArchiveCoordinates: coordinates,
+	}
+	archive.SourceGrantPolicyEpoch = h.sourceGrants.PolicyEpoch()
+	// The stream path is the stable identity: the same episode resolved twice is
+	// the same seed. Keying on an address would submit it again on every play.
+	archive.IdempotencyKey = seedIdempotencyKey(coordinates, "stream:"+streamPath)
+	if err := archive.Validate(); err != nil {
+		return nil, err
+	}
+	log.Printf("[peartube] seeding %s tmdb=%s title=%q from an authenticated remote source grant",
+		coordinates.ContentKind, coordinates.TMDBID, coordinates.TMDBTitle)
+	return func(ctx context.Context) (*peartube.ArchiveJob, error) {
+		h.retentionMu.RLock()
+		defer h.retentionMu.RUnlock()
+		retentionAllowed := func() bool {
+			h.configMu.RLock()
+			currentRelay, currentPolicy := h.relay, h.resolved
+			h.configMu.RUnlock()
+			return currentRelay == relay &&
+				!currentPolicy.MigrationRequired &&
+				currentPolicy.ConsentVersion == config.PearTubeConsentVersion &&
+				currentPolicy.ContributeWatchedMedia &&
+				h.sourceGrants.PolicyEpoch() == archive.SourceGrantPolicyEpoch
+		}
+		if !retentionAllowed() {
+			return nil, errors.New("explicit retention consent is required")
+		}
+		if err := h.reconcileRelayPolicy(ctx, relay); err != nil {
+			return nil, err
+		}
+		if !retentionAllowed() {
+			return nil, errors.New("explicit retention consent is required")
+		}
+		return relay.ArchiveRemoteSource(ctx, archive, h.sourceGrants)
+	}, nil
 }
 
 // planSeed picks the relay transport a seed request needs and validates

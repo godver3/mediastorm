@@ -1109,9 +1109,14 @@ type companionIngestMeasuredFacts struct {
 }
 
 type companionIngestExpected struct {
-	ByteLength int64  `json:"byteLength"`
-	SHA256     string `json:"sha256"`
-	ETag       string `json:"etag"`
+	ByteLength int64 `json:"byteLength"`
+	// SHA256 is the whole-file digest a local source can state up front. A
+	// granted remote source cannot: hashing it would mean pulling the entire
+	// title through this process, which is the cost this path exists to avoid.
+	// It is omitted rather than sent empty so the relay can tell "no up-front
+	// digest" from "a digest that is wrong".
+	SHA256 string `json:"sha256,omitempty"`
+	ETag   string `json:"etag"`
 }
 
 type companionIngestBundleProvenance struct {
@@ -1144,30 +1149,37 @@ type companionIngestPublicJob struct {
 	ErrorCode     string `json:"errorCode"`
 }
 
-func companionSourceRequest(req ArchiveRequest, source IssuedSourceGrant) companionIngestRequest {
-	context := companionIngestMediaContext{Kind: req.ContentKind}
-	if req.ContentKind == "movie" {
-		context.Namespace = "tmdb"
-		context.Identifier = strings.TrimSpace(req.TMDBID)
-	} else {
-		context.SeriesNamespace = "tmdb"
-		context.SeriesIdentifier = strings.TrimSpace(req.TMDBID)
-		context.SeasonNumber = req.TMDBSeason
-		context.EpisodeNumber = req.TMDBEpisode
-	}
-	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(req.FilePath)), ".")
+// sourceContainer names the container from whatever path identifies the source.
+func sourceContainer(path string) string {
+	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 	if container == "" {
 		container = "bin"
 	}
+	return container
+}
+
+// companionSourceRequest describes the ingest one granted source will feed. The
+// container arrives from the caller because a local file and a remote stream
+// path name it in different places.
+func companionSourceRequest(coordinates ArchiveCoordinates, retentionClass, container string, source IssuedSourceGrant) companionIngestRequest {
+	context := companionIngestMediaContext{Kind: coordinates.ContentKind}
+	if coordinates.ContentKind == "movie" {
+		context.Namespace = "tmdb"
+		context.Identifier = strings.TrimSpace(coordinates.TMDBID)
+	} else {
+		context.SeriesNamespace = "tmdb"
+		context.SeriesIdentifier = strings.TrimSpace(coordinates.TMDBID)
+		context.SeasonNumber = coordinates.TMDBSeason
+		context.EpisodeNumber = coordinates.TMDBEpisode
+	}
 	measured := companionIngestMeasuredFacts{
-		Title:      norm.NFC.String(strings.TrimSpace(req.TMDBTitle)),
+		Title:      norm.NFC.String(strings.TrimSpace(coordinates.TMDBTitle)),
 		ByteLength: source.Length,
 		Container:  container,
 	}
-	if req.Runtime > 0 {
-		measured.DurationMS = int64(req.Runtime) * int64(time.Minute/time.Millisecond)
+	if coordinates.Runtime > 0 {
+		measured.DurationMS = int64(coordinates.Runtime) * int64(time.Minute/time.Millisecond)
 	}
-	retentionClass := req.RetentionClass
 	if retentionClass == "" {
 		retentionClass = RetentionClassArchivePin
 	}
@@ -1248,14 +1260,8 @@ func companionEntityHint(coordinates ArchiveCoordinates) string {
 // already-authorized local file. Only the opaque capability crosses the
 // control request; the local path never leaves this process.
 func (c *Client) ArchiveSource(ctx context.Context, req ArchiveRequest, registry *SourceGrantRegistry) (*ArchiveJob, error) {
-	if c == nil {
-		return nil, errors.New("peartube relay is not configured")
-	}
-	if registry == nil {
-		return nil, errors.New("peartube source grants are unavailable")
-	}
-	if c.companionAuthError != nil {
-		return nil, c.companionAuthError
+	if err := c.grantedIngestGuard(registry); err != nil {
+		return nil, err
 	}
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -1273,21 +1279,111 @@ func (c *Client) ArchiveSource(ctx context.Context, req ArchiveRequest, registry
 		return nil, err
 	}
 	defer prepared.Close()
-	sourceFacts := IssuedSourceGrant{
-		Length:      prepared.length,
-		SHA256:      prepared.sha256,
-		ETag:        prepared.etag,
-		ContentType: prepared.contentType,
+	ingestRequest := companionSourceRequest(
+		req.ArchiveCoordinates, req.RetentionClass, sourceContainer(req.FilePath), prepared.facts())
+	return c.submitGrantedIngest(ctx, registry, prepared, grantedIngestSubmission{
+		IdempotencyKey: idempotencyKey,
+		PolicyEpoch:    req.SourceGrantPolicyEpoch,
+		Request:        ingestRequest,
+		Coordinates:    req.ArchiveCoordinates,
+	})
+}
+
+// ArchiveRemoteRequest describes a range-readable remote title the companion
+// pulls through an authenticated grant.
+//
+// This is what replaces handing over a CDN address. The companion never learns
+// where the bytes live, so its transfer no longer dies when a debrid address
+// expires or a viewer closes the player: it asks this process for a range, and
+// this process re-resolves the address underneath.
+type ArchiveRemoteRequest struct {
+	Source                 RemoteSource
+	IdempotencyKey         string
+	RetentionClass         string
+	SourceGrantPolicyEpoch uint64
+	ArchiveCoordinates
+}
+
+func (r ArchiveRemoteRequest) Validate() error {
+	if strings.TrimSpace(r.Source.StreamPath) == "" {
+		return errors.New("streamPath is required")
 	}
-	ingestRequest := companionSourceRequest(req, sourceFacts)
-	jobID, err := companionIngestJobID(idempotencyKey, ingestRequest)
+	if r.Source.Reader == nil {
+		return errors.New("a streaming provider is required")
+	}
+	if r.RetentionClass != "" &&
+		r.RetentionClass != RetentionClassContributionCache &&
+		r.RetentionClass != RetentionClassArchivePin {
+		return errors.New("retention class is invalid")
+	}
+	return r.ArchiveCoordinates.Validate()
+}
+
+// ArchiveRemoteSource grants one authenticated companion job resumable range
+// access to a remote title. The stream path, the provider credential and every
+// resolved address stay inside this process.
+func (c *Client) ArchiveRemoteSource(ctx context.Context, req ArchiveRemoteRequest, registry *SourceGrantRegistry) (*ArchiveJob, error) {
+	if err := c.grantedIngestGuard(registry); err != nil {
+		return nil, err
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
+	if !validSourceJobID(idempotencyKey) {
+		return nil, errors.New("idempotency key is required")
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(req.Source.StreamPath)))
+	if separator := strings.IndexByte(contentType, ';'); separator >= 0 {
+		contentType = contentType[:separator]
+	}
+	prepared, err := registry.PrepareRemote(ctx, req.Source, contentType)
+	if err != nil {
+		return nil, err
+	}
+	defer prepared.Close()
+	ingestRequest := companionSourceRequest(
+		req.ArchiveCoordinates, req.RetentionClass, sourceContainer(req.Source.StreamPath), prepared.facts())
+	return c.submitGrantedIngest(ctx, registry, prepared, grantedIngestSubmission{
+		IdempotencyKey: idempotencyKey,
+		PolicyEpoch:    req.SourceGrantPolicyEpoch,
+		Request:        ingestRequest,
+		Coordinates:    req.ArchiveCoordinates,
+	})
+}
+
+func (c *Client) grantedIngestGuard(registry *SourceGrantRegistry) error {
+	if c == nil {
+		return errors.New("peartube relay is not configured")
+	}
+	if registry == nil {
+		return errors.New("peartube source grants are unavailable")
+	}
+	return c.companionAuthError
+}
+
+// grantedIngestSubmission is everything a granted ingest needs that does not
+// depend on which kind of source is behind it.
+type grantedIngestSubmission struct {
+	IdempotencyKey string
+	PolicyEpoch    uint64
+	Request        companionIngestRequest
+	Coordinates    ArchiveCoordinates
+}
+
+// submitGrantedIngest derives the job identity, issues the capability for the
+// prepared source, and hands the companion the job. It takes ownership of
+// prepared: a submission the companion did not accept revokes the grant, so a
+// refusal never leaves a live capability behind.
+func (c *Client) submitGrantedIngest(ctx context.Context, registry *SourceGrantRegistry, prepared *PreparedSource, ingest grantedIngestSubmission) (*ArchiveJob, error) {
+	jobID, err := companionIngestJobID(ingest.IdempotencyKey, ingest.Request)
 	if err != nil {
 		return nil, errors.New("encode companion ingest identity")
 	}
 	issued, err := registry.Issue(prepared, SourceGrantScope{
 		CompanionID: registry.companionID,
 		JobID:       jobID,
-		PolicyEpoch: req.SourceGrantPolicyEpoch,
+		PolicyEpoch: ingest.PolicyEpoch,
 	})
 	if err != nil {
 		return nil, err
@@ -1299,8 +1395,8 @@ func (c *Client) ArchiveSource(ctx context.Context, req ArchiveRequest, registry
 		}
 	}()
 	submission := companionIngestSubmission{
-		IdempotencyKey:   idempotencyKey,
-		Request:          ingestRequest,
+		IdempotencyKey:   ingest.IdempotencyKey,
+		Request:          ingest.Request,
 		SourceCapability: issued.Capability,
 	}
 	encoded, err := json.Marshal(submission)
@@ -1349,36 +1445,8 @@ func (c *Client) ArchiveSource(ctx context.Context, req ArchiveRequest, registry
 	return &ArchiveJob{
 		JobID:      jobID,
 		Status:     envelope.Job.State,
-		EntityHint: companionEntityHint(req.ArchiveCoordinates),
+		EntityHint: companionEntityHint(ingest.Coordinates),
 	}, nil
-}
-
-// ArchiveURLRequest describes a URL the relay fetches for itself. This is what
-// makes a debrid or usenet stream seedable: this backend never holds those
-// bytes, so it hands over an address instead of a body.
-type ArchiveURLRequest struct {
-	SourceURL      string
-	IdempotencyKey string
-	ArchiveCoordinates
-}
-
-func (r ArchiveURLRequest) Validate() error {
-	// Only the structural checks live here. Whether the host is publicly
-	// routable, whether the scheme is allowed, and whether embedded credentials
-	// disqualify the URL are the relay's calls, and its refusal codes are more
-	// specific than anything this side could re-derive.
-	trimmed := strings.TrimSpace(r.SourceURL)
-	if trimmed == "" {
-		return errors.New("url is required")
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return fmt.Errorf("url is not a valid URL: %w", err)
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return errors.New("url must be absolute, with a scheme and a host")
-	}
-	return r.ArchiveCoordinates.Validate()
 }
 
 // Archive uploads a file to the relay for publication. The body is streamed
@@ -1423,85 +1491,6 @@ func (c *Client) Archive(ctx context.Context, req ArchiveRequest) (*ArchiveJob, 
 	resp, err := c.uploads.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("archive upload: %w", err)
-	}
-	defer resp.Body.Close()
-	var job ArchiveJob
-	if err := decodeResponse(resp, &job); err != nil {
-		return nil, err
-	}
-	return &job, nil
-}
-
-// archiveURLBody is the relay's JSON seed contract. The relay rejects any field
-// it does not know, and requires season/episode to be absent for a movie, so
-// every optional field is omitted rather than zeroed.
-type archiveURLBody struct {
-	URL            string `json:"url"`
-	ContentKind    string `json:"contentKind"`
-	TMDBID         string `json:"tmdbId"`
-	TMDBTitle      string `json:"tmdbTitle"`
-	TMDBSeason     int    `json:"tmdbSeason,omitempty"`
-	TMDBEpisode    int    `json:"tmdbEpisode,omitempty"`
-	TMDBYear       string `json:"tmdbYear,omitempty"`
-	TMDBPosterPath string `json:"tmdbPosterPath,omitempty"`
-	TMDBOverview   string `json:"tmdbOverview,omitempty"`
-	TMDBRuntime    string `json:"tmdbRuntime,omitempty"`
-	TMDBGenres     string `json:"tmdbGenres,omitempty"`
-}
-
-// ArchiveURL asks the relay to fetch a URL itself and publish what it finds.
-//
-// This is the seed path for content this backend only ever proxies: a debrid or
-// usenet stream lives on someone else's CDN, so there is no file to upload. No
-// media bytes cross this process.
-//
-// A URL the relay will not fetch comes back as an *APIError that satisfies
-// IsSourceRefused, which is a different problem from the relay being down.
-func (c *Client) ArchiveURL(ctx context.Context, req ArchiveURLRequest) (*ArchiveJob, error) {
-	if c == nil {
-		return nil, errors.New("peartube relay is not configured")
-	}
-	if err := req.Validate(); err != nil {
-		return nil, err
-	}
-
-	body := archiveURLBody{
-		URL:            strings.TrimSpace(req.SourceURL),
-		ContentKind:    req.ContentKind,
-		TMDBID:         strings.TrimSpace(req.TMDBID),
-		TMDBTitle:      strings.TrimSpace(req.TMDBTitle),
-		TMDBPosterPath: strings.TrimSpace(req.PosterPath),
-		TMDBOverview:   strings.TrimSpace(req.Overview),
-		TMDBGenres:     strings.TrimSpace(req.Genres),
-	}
-	if req.ContentKind == "episode" {
-		body.TMDBSeason = req.TMDBSeason
-		body.TMDBEpisode = req.TMDBEpisode
-	}
-	if req.TMDBYear > 0 {
-		body.TMDBYear = strconv.Itoa(req.TMDBYear)
-	}
-	if req.Runtime > 0 {
-		body.TMDBRuntime = strconv.Itoa(req.Runtime)
-	}
-
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode archive request: %w", err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+apiPrefix+"/archive", bytes.NewReader(encoded))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	if key := strings.TrimSpace(req.IdempotencyKey); key != "" {
-		httpReq.Header.Set("Idempotency-Key", key)
-	}
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("archive by url: %w", err)
 	}
 	defer resp.Body.Close()
 	var job ArchiveJob

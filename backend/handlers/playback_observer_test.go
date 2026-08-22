@@ -45,21 +45,26 @@ func appPlaybackRequest(rangeStart int64) *http.Request {
 
 const appStreamPath = "/debrid/torbox/55944852/file/0/The.Matrix.1999.mkv"
 
-// waitForArchives waits for the relay to receive want submissions and then
-// confirms no further one arrives, so "exactly once" is asserted rather than
-// "at least once".
-func waitForArchives(t *testing.T, relay *autoSeedRelay, want int) {
+// waitForSeeds waits for the relay to receive want granted ingest submissions
+// and then confirms no further one arrives, so "exactly once" is asserted rather
+// than "at least once". The URL archive transport must stay at zero either way:
+// a remote source is published by granting range access to it, never by handing
+// over the address it currently resolves to.
+func waitForSeeds(t *testing.T, relay *autoSeedRelay, want int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for relay.archiveCount() < want {
+	for relay.ingestCount() < want {
 		if time.Now().After(deadline) {
-			t.Fatalf("archive submissions = %d, want %d", relay.archiveCount(), want)
+			t.Fatalf("granted ingest submissions = %d, want %d", relay.ingestCount(), want)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	time.Sleep(250 * time.Millisecond)
-	if got := relay.archiveCount(); got != want {
-		t.Fatalf("archive submissions = %d, want %d", got, want)
+	if got := relay.ingestCount(); got != want {
+		t.Fatalf("granted ingest submissions = %d, want %d", got, want)
+	}
+	if got := relay.archiveCount(); got != 0 {
+		t.Fatalf("a seed used the URL archive transport: %d calls", got)
 	}
 }
 
@@ -91,15 +96,14 @@ func TestAutoSeedFiresOncePerPlaybackAcrossEveryPlaybackSignal(t *testing.T) {
 		seeder.HandlePlaybackUpdate("profile", update, float64(beat))
 	}
 
-	waitForArchives(t, relay, 0)
+	// Two hundred range requests and fifty heartbeats, and exactly one seed —
+	// through a grant, so the transfer no longer depends on this playback.
+	waitForSeeds(t, relay, 1)
 	if relay.catalogReads != 1 {
 		t.Fatalf("catalog reads = %d, want 1", relay.catalogReads)
 	}
 	if resolver.asked != appStreamPath {
 		t.Fatalf("resolver was asked for %q, want %q", resolver.asked, appStreamPath)
-	}
-	if relay.archiveCount() != 0 {
-		t.Fatal("qualified remote playback entered the legacy ArchiveURL path")
 	}
 }
 
@@ -119,7 +123,7 @@ func TestAppEpisodePlaybackSeedsUnderItsSeriesCoordinates(t *testing.T) {
 			"&seasonNumber=1&episodeNumber=2&tmdb=1399", nil)
 	tracker.StartStreamWithAccount(request, streamPath, 4194304, 0, 0, "acct1")
 
-	waitForArchives(t, relay, 0)
+	waitForSeeds(t, relay, 0)
 	if resolver.asked != "" {
 		t.Fatalf("range-only playback resolved a contribution source: %q", resolver.asked)
 	}
@@ -175,7 +179,7 @@ func TestHLSKeepAliveFeedsEveryObserverASeedableUpdate(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the first observer lost its callback to the fanout")
 	}
-	waitForArchives(t, relay, 0)
+	waitForSeeds(t, relay, 0)
 }
 
 // A playback the tracker is already following must not re-announce itself on
@@ -315,7 +319,7 @@ func TestPlaybackObserverFanoutKeepsNotificationsAndSeeding(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the notification service lost its callback to the fanout")
 	}
-	waitForArchives(t, relay, 0)
+	waitForSeeds(t, relay, 0)
 }
 
 // The viewer and the notification service are the point; the swarm is a bonus. A
@@ -372,7 +376,7 @@ func TestSeedFailureDisturbsNeitherPlaybackNorNotifications(t *testing.T) {
 
 	// A remote source is skipped before any legacy archive submission, and the
 	// outcome never leaves the detached observer.
-	waitForArchives(t, relay, 0)
+	waitForSeeds(t, relay, 0)
 }
 
 // watchStartedRepo is the smallest notification store that produces a watch
