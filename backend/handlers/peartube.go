@@ -1306,13 +1306,20 @@ func (p autoSeedPlan) submitContext(ctx context.Context) (*peartube.ArchiveJob, 
 
 	submit, err := p.handler.planQualifiedAutoSeed(ctx, p.relay, p.request)
 	if err != nil {
-		if !errors.Is(err, errAutoSeedSourceUnavailable) {
-			p.releaseClaims()
-		}
 		if errors.Is(err, errAutoSeedSourceUnavailable) {
 			p.handler.playbackMu.Lock()
 			p.handler.recordAutoSeedErrorLocked("CONTRIBUTION_SOURCE_UNAVAILABLE")
 			p.handler.playbackMu.Unlock()
+			// This used to hold the claim for the whole guard window, because
+			// "source unavailable" once meant a source that could never be
+			// contributed. It no longer does: remote sources archive through a
+			// grant now, so the remaining reasons are all failures to RESOLVE a
+			// path - which the next watch may well resolve. Holding the claim
+			// locked such a title out for six hours; one that only just became
+			// seedable stayed refused long after the cause was fixed.
+			p.shortenClaims(time.Now())
+		} else {
+			p.releaseClaims()
 		}
 		log.Printf("[peartube] autoseed %s: not seedable: %v", p.key, err)
 		return nil, err
