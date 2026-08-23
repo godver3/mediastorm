@@ -325,8 +325,16 @@ func TestAutoSeedSubmitsOncePerTitleAcrossManyHeartbeats(t *testing.T) {
 	if expected["etag"] != peartube.RemoteSourceETag(update.SourcePath, int64(len(resolver.body()))) {
 		t.Fatalf("declared etag = %v, want the stream path's byte identity", expected["etag"])
 	}
-	if _, claimed := expected["sha256"]; claimed {
-		t.Fatal("a remote source claimed a whole-file digest it cannot have computed")
+	// The relay's canonical form always carries sha256, null when the source
+	// could not state one, and the job id is hashed over that form - so omitting
+	// the key made every granted archive come back as a mismatched job. What must
+	// never happen is a remote source CLAIMING a digest it cannot have computed.
+	digest, present := expected["sha256"]
+	if !present {
+		t.Fatal("sha256 was omitted; the relay hashes it as null and the job ids will diverge")
+	}
+	if digest != nil {
+		t.Fatalf("a remote source claimed a whole-file digest it cannot have computed: %v", digest)
 	}
 	if request["retentionClass"] != "contribution-cache" {
 		t.Fatalf("retention class = %v, want the consented contribution budget", request["retentionClass"])
