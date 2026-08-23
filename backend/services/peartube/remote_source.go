@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -172,6 +173,13 @@ func (b *remoteBacking) open(ctx context.Context, start, count int64) (io.ReadCl
 		// The upstream is no longer describing the same bytes. Serving them
 		// would splice a different source into the companion's transfer, so this
 		// is terminal rather than retryable.
+		//
+		// Say which numbers disagreed. This surfaces to the relay as an opaque
+		// 410 and then as SOURCE_GRANT_UNAVAILABLE, so without the totals an
+		// operator cannot tell a re-resolved file apart from a provider that
+		// simply describes its length differently per request.
+		log.Printf("[peartube] granted source %s length changed under the grant: promised %d, upstream now reports %d",
+			b.path, b.length, total)
 		response.Close()
 		return nil, ErrSourceGone
 	}
