@@ -376,7 +376,7 @@ func TestCompanionIngestJobIdentityGoldenVector(t *testing.T) {
 		},
 		Expected: companionIngestExpected{
 			ByteLength: 12,
-			SHA256:     strings.Repeat("ab", 32),
+			SHA256:     optionalDigest(strings.Repeat("ab", 32)),
 			ETag:       `"source-immutable-v1"`,
 		},
 		BundleProvenance: &companionIngestBundleProvenance{

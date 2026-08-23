@@ -1110,13 +1110,20 @@ type companionIngestMeasuredFacts struct {
 
 type companionIngestExpected struct {
 	ByteLength int64 `json:"byteLength"`
-	// SHA256 is the whole-file digest a local source can state up front. A
-	// granted remote source cannot: hashing it would mean pulling the entire
-	// title through this process, which is the cost this path exists to avoid.
-	// It is omitted rather than sent empty so the relay can tell "no up-front
-	// digest" from "a digest that is wrong".
-	SHA256 string `json:"sha256,omitempty"`
-	ETag   string `json:"etag"`
+	// The job id is blake2b over the canonical JSON of this request, and the
+	// relay computes it over its NORMALIZED form, so the shape here has to match
+	// that form byte for byte or the ids diverge and the submission comes back
+	// as a mismatched job.
+	//
+	// The relay's normalizeExpected always emits sha256 - null when there is no
+	// up-front digest - and emits etag only when one was supplied. So sha256 is
+	// a pointer that serializes as null rather than being omitted, and etag is
+	// omitted when empty. A granted remote source cannot state a digest without
+	// pulling the whole title through this process, which is the cost this path
+	// exists to avoid, so null is the honest value and the relay still tells it
+	// apart from a digest that is wrong.
+	SHA256 *string `json:"sha256"`
+	ETag   string  `json:"etag,omitempty"`
 }
 
 type companionIngestBundleProvenance struct {
@@ -1158,6 +1165,17 @@ func sourceContainer(path string) string {
 	return container
 }
 
+// optionalDigest keeps an absent digest distinguishable from an empty one on the
+// wire: the relay's canonical form carries sha256 as null when a source could
+// not state it, and the job id is hashed over that form.
+func optionalDigest(digest string) *string {
+	digest = strings.TrimSpace(digest)
+	if digest == "" {
+		return nil
+	}
+	return &digest
+}
+
 // companionSourceRequest describes the ingest one granted source will feed. The
 // container arrives from the caller because a local file and a remote stream
 // path name it in different places.
@@ -1189,7 +1207,7 @@ func companionSourceRequest(coordinates ArchiveCoordinates, retentionClass, cont
 		MeasuredFacts:  measured,
 		Expected: companionIngestExpected{
 			ByteLength: source.Length,
-			SHA256:     source.SHA256,
+			SHA256:     optionalDigest(source.SHA256),
 			ETag:       source.ETag,
 		},
 	}
