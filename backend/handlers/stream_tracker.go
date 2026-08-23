@@ -504,7 +504,16 @@ func (t *StreamTracker) observePlaybackStartLocked(stream *TrackedStream) {
 		Timestamp:         stream.StartTime,
 		PlaybackSessionID: "direct:" + trackedStreamSlotKey(stream),
 	}, stream.MediaMetadata)
+	// A stream's coordinates come from the query the player opened it with, so a
+	// request that omits mediaType or itemId can never be archived - and used to
+	// say nothing at all, which is indistinguishable from archiving being off.
+	// Observed live: a usenet title streamed for minutes with no seed attempt and
+	// no log line explaining the silence.
 	if update.MediaType == "" || update.MediaType == "live" || update.ItemID == "" {
+		if update.MediaType != "live" {
+			log.Printf("[peartube] playback not archivable: no swarm coordinates on the stream request (mediaType=%q itemId=%q path=%q)",
+				update.MediaType, update.ItemID, stream.Path)
+		}
 		return
 	}
 	seeder := t.autoSeeder

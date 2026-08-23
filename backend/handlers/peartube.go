@@ -972,14 +972,24 @@ func (h *PearTubeHandler) planAutoSeed(update models.PlaybackProgressUpdate) (au
 	if h == nil {
 		return autoSeedPlan{}, false
 	}
+	// Every refusal below used to be silent, and this runs at most once per source
+	// per observation TTL - it is only reached once a playback has qualified - so
+	// naming the reason costs one line per title rather than one per heartbeat.
 	h.configMu.RLock()
 	relay, contribute := h.relay, h.contributeWatchedMedia
 	h.configMu.RUnlock()
-	if relay == nil || !contribute {
+	if relay == nil {
+		log.Printf("[peartube] autoseed skipped: no relay configured")
+		return autoSeedPlan{}, false
+	}
+	if !contribute {
+		log.Printf("[peartube] autoseed skipped: contributeWatchedMedia is off")
 		return autoSeedPlan{}, false
 	}
 	request, ok := autoSeedRequest(update)
 	if !ok {
+		log.Printf("[peartube] autoseed skipped: playback carries nothing to publish under (sourcePath=%q mediaType=%q itemId=%q)",
+			update.SourcePath, update.MediaType, update.ItemID)
 		return autoSeedPlan{}, false
 	}
 	// A playback that already names a TMDB id is claimed by the swarm's own key,
@@ -994,9 +1004,11 @@ func (h *PearTubeHandler) planAutoSeed(update models.PlaybackProgressUpdate) (au
 		plan.key = plan.pendingKey
 	}
 	if plan.key == "" {
+		log.Printf("[peartube] autoseed skipped: no swarm key for %q", request.TMDBTitle)
 		return autoSeedPlan{}, false
 	}
 	if !h.claimAutoSeed(plan.key) {
+		log.Printf("[peartube] autoseed skipped: %s is already claimed by an attempt in this guard window", plan.key)
 		return autoSeedPlan{}, false
 	}
 	return plan, true
