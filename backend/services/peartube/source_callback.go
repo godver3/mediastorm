@@ -27,13 +27,20 @@ const (
 	sourceCapabilityDigestDomain = "peartube.mediastorm.source-capability.v1"
 	defaultSourceGrantTTL        = 30 * time.Minute
 	defaultSourceGrantCapacity   = 128
-	defaultSourceMaxRangeBytes   = 4 * 1024 * 1024
-	defaultSourceNonceCapacity   = 4096
-	sourceCapabilityBytes        = 32
-	sourceHashBufferBytes        = 256 * 1024
-	sourceServeChunkBytes        = 32 * 1024
-	maxSourceContentTypeBytes    = 128
-	maxSourceJobIDBytes          = 128
+	// The largest range the callback will serve, and the ceiling a companion's
+	// own request size has to stay under: an over-large Range is refused with
+	// 416 rather than trimmed, so this must never drop below the relay's
+	// MAX_SOURCE_CHUNK_BYTES (packages/cli/src/constants.js), which is the same
+	// 16 MiB. The response is streamed in sourceServeChunkBytes pieces, so the
+	// figure costs MediaStorm no resident memory; it is the relay that holds a
+	// range whole, and the relay that picked the size.
+	defaultSourceMaxRangeBytes = 16 * 1024 * 1024
+	defaultSourceNonceCapacity = 4096
+	sourceCapabilityBytes      = 32
+	sourceHashBufferBytes      = 256 * 1024
+	sourceServeChunkBytes      = 32 * 1024
+	maxSourceContentTypeBytes  = 128
+	maxSourceJobIDBytes        = 128
 )
 
 // SourceGrantOptions controls the bounded in-memory source registry. Callback
