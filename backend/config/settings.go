@@ -219,7 +219,13 @@ const (
 	PearTubeDefaultContributionBudgetGiB = 21
 	PearTubeDefaultArchiveBudgetGiB      = 144
 	PearTubeContributionBudgetMinGiB     = 1
-	PearTubeContributionBudgetMaxGiB     = 610
+	// Contribution shared the archive bound so an operator who has moved the
+	// relay's bytes into an object store can actually set what they asked for.
+	// The old 610 clamped a configured 1024 GiB down without saying so, and the
+	// real ceiling was never this number anyway: block offload keeps roughly
+	// half a gigabyte on disk per terabyte archived, so capacity is the bucket's
+	// and this only bounds what one title may claim.
+	PearTubeContributionBudgetMaxGiB     = 1597
 	PearTubeArchiveBudgetMinGiB          = 1
 	PearTubeArchiveBudgetMaxGiB          = 1597
 	PearTubeConfigConsentVersion         = "consentVersion"
