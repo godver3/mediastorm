@@ -228,6 +228,7 @@ const (
 	PearTubeConfigContributionBudget     = "contributionBudget"
 	PearTubeConfigArchiveEnabled         = "archiveEnabled"
 	PearTubeConfigArchiveBudget          = "archiveBudget"
+	PearTubeConfigArchiveOnPlaybackStart = "archiveOnPlaybackStart"
 	PearTubeModeWatchOnly                = "watch-only"
 	PearTubeModeContributor              = "contributor"
 	PearTubeModeArchiveEnabled           = "archive-enabled"
@@ -251,6 +252,11 @@ func defaultPearTubeSettings() PearTubeSettings {
 		ContributionBudget: PearTubeDefaultContributionBudgetGiB,
 		ArchiveBudget:      PearTubeDefaultArchiveBudgetGiB,
 		MigrationRequired:  true,
+		// Archiving a whole title as soon as it is played is the intended
+		// behaviour of contribution, so it is on unless the operator says
+		// otherwise. It grants nothing: it only takes effect where
+		// ContributeWatchedMedia is already true.
+		ArchiveOnPlaybackStart: true,
 	}
 }
 
@@ -259,6 +265,15 @@ func pearTubeSettingsFromScraper(entry *TorrentScraperConfig) PearTubeSettings {
 	enabled := entry.Enabled
 	out.RelayURL = strings.TrimSpace(entry.URL)
 	out.Enabled = &enabled
+
+	// Read ahead of the consent gate below on purpose. This is timing, not
+	// permission — it decides when a consented contribution starts, never
+	// whether one may happen — so a consent block this binary cannot read
+	// still falls back to watch-only without silently flipping the operator's
+	// timing choice back on. Absent or malformed is the default, which is on.
+	if archiveOnStart, ok := pearTubeConfigBool(entry.Config, PearTubeConfigArchiveOnPlaybackStart); ok {
+		out.ArchiveOnPlaybackStart = archiveOnStart
+	}
 
 	version, versionOK := pearTubeConfigInt(entry.Config, PearTubeConfigConsentVersion)
 	migrationRequired, migrationOK := pearTubeConfigBool(entry.Config, PearTubeConfigMigrationRequired)
@@ -345,6 +360,13 @@ func (s *Settings) NormalizePearTubePoliciesForSave() {
 		migrationRequired, migrationOK := pearTubeConfigBool(entry.Config, PearTubeConfigMigrationRequired)
 		contribute, contributeOK := pearTubeConfigBool(entry.Config, PearTubeConfigContributeWatchedMedia)
 		archive, archiveOK := pearTubeConfigBool(entry.Config, PearTubeConfigArchiveEnabled)
+		// Not part of the consent gate below: a malformed consent block must
+		// fall back to watch-only, but it must not silently flip the operator's
+		// timing choice. Absent means the default, which is on.
+		archiveOnStart, archiveOnStartOK := pearTubeConfigBool(entry.Config, PearTubeConfigArchiveOnPlaybackStart)
+		if !archiveOnStartOK {
+			archiveOnStart = true
+		}
 		if version != PearTubeConsentVersion || !versionOK || !migrationOK || !contributeOK || !archiveOK {
 			migrationRequired = true
 			contribute = false
@@ -371,6 +393,7 @@ func (s *Settings) NormalizePearTubePoliciesForSave() {
 			PearTubeArchiveBudgetMinGiB,
 			PearTubeArchiveBudgetMaxGiB,
 		))
+		entry.Config[PearTubeConfigArchiveOnPlaybackStart] = strconv.FormatBool(archiveOnStart)
 	}
 	s.PearTube = nil
 }
@@ -1707,6 +1730,11 @@ type PearTubeSettings struct {
 	ContributionBudget     int    `json:"contributionBudget"`
 	ArchiveEnabled         bool   `json:"archiveEnabled"`
 	ArchiveBudget          int    `json:"archiveBudget"`
+	// ArchiveOnPlaybackStart archives the whole title as soon as playback
+	// starts, instead of waiting for continuous playback evidence and then
+	// abandoning the transfer when the viewer stops. It is a timing choice
+	// inside consented contribution and grants nothing on its own.
+	ArchiveOnPlaybackStart bool `json:"archiveOnPlaybackStart"`
 }
 
 // EffectiveMode is the single truthful role exposed to runtime consumers.

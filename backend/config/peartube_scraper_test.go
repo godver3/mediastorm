@@ -160,3 +160,72 @@ func TestPearTubeBudgetsAreClampedIndependentlyOnSave(t *testing.T) {
 		t.Fatalf("budget normalization changed explicit roles: %+v", got)
 	}
 }
+
+// Archiving on playback start is the intended behaviour of contribution, so an
+// install that predates the option gets it without being asked again — and
+// without gaining any permission it had not already granted. An operator who
+// turns it off keeps it off across a save.
+func TestPearTubeArchiveOnPlaybackStartDefaultsOnAndRoundTrips(t *testing.T) {
+	consented := map[string]string{
+		PearTubeConfigConsentVersion:         "1",
+		PearTubeConfigMigrationRequired:      "false",
+		PearTubeConfigContributeWatchedMedia: "true",
+		PearTubeConfigContributionBudget:     "21",
+		PearTubeConfigArchiveEnabled:         "false",
+		PearTubeConfigArchiveBudget:          "144",
+	}
+	scraper := func(config map[string]string) Settings {
+		return Settings{TorrentScrapers: []TorrentScraperConfig{{
+			Name:    "PearTube",
+			Type:    TorrentScraperTypePearTube,
+			URL:     "http://relay:8174",
+			Enabled: true,
+			Config:  config,
+		}}}
+	}
+
+	if got := scraper(consented).PearTubeConfig(); !got.ArchiveOnPlaybackStart || !got.ContributeWatchedMedia {
+		t.Fatalf("a config predating the option did not default to archiving on start: %+v", got)
+	}
+
+	// No scraper at all is watch-only, and the timing default still stands so
+	// that granting consent later does not need a second decision.
+	if got := (Settings{}).PearTubeConfig(); !got.ArchiveOnPlaybackStart ||
+		got.ContributeWatchedMedia || !got.MigrationRequired {
+		t.Fatalf("default policy = %+v", got)
+	}
+
+	// A consent block this binary cannot read falls back to watch-only, and the
+	// timing choice is not silently flipped on the way.
+	stale := map[string]string{}
+	for key, value := range consented {
+		stale[key] = value
+	}
+	stale[PearTubeConfigConsentVersion] = "99"
+	stale[PearTubeConfigArchiveOnPlaybackStart] = "false"
+	if got := scraper(stale).PearTubeConfig(); got.ArchiveOnPlaybackStart || got.ContributeWatchedMedia {
+		t.Fatalf("unreadable consent kept contribution or flipped the timing choice: %+v", got)
+	}
+
+	off := map[string]string{}
+	for key, value := range consented {
+		off[key] = value
+	}
+	off[PearTubeConfigArchiveOnPlaybackStart] = "false"
+	manager := NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	settings := DefaultSettings()
+	settings.TorrentScrapers = scraper(off).TorrentScrapers
+	if err := manager.Save(settings); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	saved, err := manager.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if entry := findPearTubeScraper(t, saved); entry.Config[PearTubeConfigArchiveOnPlaybackStart] != "false" {
+		t.Fatalf("the operator's choice was not persisted: %v", entry.Config)
+	}
+	if got := saved.PearTubeConfig(); got.ArchiveOnPlaybackStart || !got.ContributeWatchedMedia {
+		t.Fatalf("saved policy = %+v", got)
+	}
+}

@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"novastream/config"
 	"novastream/internal/datastore"
 	"novastream/models"
 	"novastream/services/notifications"
@@ -517,6 +519,54 @@ func TestAutoSeedJobStatesTransitionOnceAndRetireActiveCapacity(t *testing.T) {
 	}
 }
 
+// An archive the relay accepted must survive the age sweep. Age says how long a
+// PLAYBACK is interesting; it says nothing about a download the relay drives on
+// its own clock. A relay-side cancel is terminal - it reclaims the staged blocks
+// - so expiring an accepted job by age threw away hours of good work, and on a
+// debrid link measured as low as 0.38 MB/s a large title could never finish
+// inside ANY window worth holding a viewer's observation open for. Raising the
+// window only moves that cliff; the accepted job has to be skipped outright.
+func TestAgedArchiveKeepsRunningWhileItsTrackingSlotIsFreed(t *testing.T) {
+	handler := &PearTubeHandler{activeAcquisitions: map[string]*autoSeedAcquisition{}}
+
+	cancels := 0
+	handler.playbackMu.Lock()
+	handler.activeAcquisitions["accepted"] = &autoSeedAcquisition{
+		cancel:    func() { cancels++ },
+		state:     "acquiring",
+		jobID:     "arch_accepted",
+		createdAt: time.Now().Add(-100 * peartube.DefaultPlaybackObservationTTL),
+	}
+	jobs := handler.expireAutoSeedAcquisitionsLocked(time.Now())
+	handler.playbackMu.Unlock()
+
+	if len(jobs) != 0 {
+		t.Fatalf("an accepted archive was queued for cancellation by age: %d job(s)", len(jobs))
+	}
+	if cancels != 0 {
+		t.Fatalf("an accepted archive had its context cancelled by age: cancels=%d", cancels)
+	}
+	// The slot is still freed, so the active cap cannot be starved by long work.
+	if len(handler.activeAcquisitions) != 0 {
+		t.Fatalf("aged acquisition kept its tracking slot: active=%d", len(handler.activeAcquisitions))
+	}
+
+	// An acquisition the relay never accepted has nothing worth preserving, so
+	// it is still cancelled outright.
+	unacceptedCancels := 0
+	handler.playbackMu.Lock()
+	handler.activeAcquisitions["never-submitted"] = &autoSeedAcquisition{
+		cancel:    func() { unacceptedCancels++ },
+		state:     "acquiring",
+		createdAt: time.Now().Add(-peartube.DefaultPlaybackObservationTTL),
+	}
+	handler.expireAutoSeedAcquisitionsLocked(time.Now())
+	handler.playbackMu.Unlock()
+	if unacceptedCancels != 1 || len(handler.activeAcquisitions) != 0 {
+		t.Fatalf("an unsubmitted acquisition was not cancelled: cancels=%d active=%d", unacceptedCancels, len(handler.activeAcquisitions))
+	}
+}
+
 // channel, so both listings return it.
 func (r watchStartedRepo) ListAllChannels(ctx context.Context) ([]models.NotificationChannel, error) {
 	return r.ListChannels(ctx, "profile")
@@ -604,4 +654,179 @@ func TestFallbackPlaybackRestartsAfterEarlyAbandonWithoutSourceDedup(t *testing.
 			t.Fatalf("restart never qualified: %q", state)
 		}
 	}
+}
+
+// startArchivePlayback is one title being started, named the way the stream
+// tracker names a transport start.
+func startArchivePlayback() models.PlaybackProgressUpdate {
+	update := moviePlayback()
+	update.SourcePath = appStreamPath
+	update.PlaybackSessionID = "direct:profile|movie|tmdb:movie:603"
+	// A start carries no watch evidence at all: position zero, nothing ended.
+	update.Position = 0
+	update.PlaybackEnded = false
+	return update
+}
+
+// waitForRelayCancellations waits for want cancellations and then confirms no
+// further one arrives, so "never cancelled" is asserted rather than "not
+// cancelled yet".
+func waitForRelayCancellations(t *testing.T, relay *autoSeedRelay, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for relay.cancelledCount() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("relay ingest cancellations = %d, want %d", relay.cancelledCount(), want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if got := relay.cancelledCount(); got != want {
+		t.Fatalf("relay ingest cancellations = %d, want %d", got, want)
+	}
+}
+
+// The operator's ask: clicking play archives the whole piece of content. One
+// start, no progress observations at all, one whole-title submission — and
+// starting the same title again, in the same session or a new one, adds nothing.
+func TestArchiveOnPlaybackStartArchivesTheWholeTitleFromOneStart(t *testing.T) {
+	t.Setenv(peartube.CompanionClientEnv, "mediastorm-test")
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{
+		url:     "https://cdn.example.net/d/FRESH/The.Matrix.1999.mkv",
+		content: []byte(strings.Repeat("matrix", 512)),
+	}
+	handler := newStartArchiveHandler(t, relay, resolver)
+
+	update := startArchivePlayback()
+	if state := handler.observePlayback("", update); state != peartube.PlaybackQualified {
+		t.Fatalf("start state = %q, want qualified without any watch evidence", state)
+	}
+	waitForSeeds(t, relay, 1)
+
+	// The whole title, not the range the player happens to be reading: the
+	// submission declares the file's full length and the only upstream read
+	// this process made was the one-byte probe that learned it.
+	submission := relay.lastIngest()
+	request, _ := submission["request"].(map[string]any)
+	expected, _ := request["expected"].(map[string]any)
+	if expected["byteLength"] != float64(len(resolver.body())) {
+		t.Fatalf("declared byte length = %v, want the whole title's %d bytes",
+			expected["byteLength"], len(resolver.body()))
+	}
+	// Consent and budget are unchanged by the timing choice: this is still a
+	// contribution charged against the contribution budget.
+	if request["retentionClass"] != "contribution-cache" {
+		t.Fatalf("retention class = %v, want the consented contribution budget", request["retentionClass"])
+	}
+	if len(resolver.ranges) != 1 || resolver.ranges[0] != "bytes=0-0" {
+		t.Fatalf("upstream reads = %v, want one length probe", resolver.ranges)
+	}
+
+	// Idempotency, both carriers. Restarting the same session and a second
+	// viewer on the same stream are stopped by the observer's per-source
+	// ledger; a second viewer whose provider handed them a different stream for
+	// the same title reaches the title claim, which is what stops it.
+	handler.observePlayback("", update)
+	sameSource := startArchivePlayback()
+	sameSource.PlaybackSessionID = "direct:other-profile|movie|tmdb:movie:603"
+	handler.observePlayback("", sameSource)
+	otherSource := startArchivePlayback()
+	otherSource.PlaybackSessionID = "direct:third-profile|movie|tmdb:movie:603"
+	otherSource.SourcePath = "/debrid/realdebrid/70001/file/3/The.Matrix.1999.mkv"
+	if state := handler.observePlayback("", otherSource); state != peartube.PlaybackQualified {
+		t.Fatalf("second source state = %q, want qualified and then claimed away", state)
+	}
+	waitForSeeds(t, relay, 1)
+}
+
+// The point of the change: the archive is a separate task, so the viewer walking
+// away must not throw away the bytes the relay has already confirmed.
+func TestArchiveOnPlaybackStartSurvivesAbandonedPlayback(t *testing.T) {
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{url: "https://cdn.example.net/d/FRESH/The.Matrix.1999.mkv"}
+	handler := newStartArchiveHandler(t, relay, resolver)
+
+	update := startArchivePlayback()
+	handler.OnPlaybackStarted(update)
+	waitForSeeds(t, relay, 1)
+
+	ended := update
+	ended.PlaybackEnded = true
+	ended.Position = 4
+	handler.observePlayback("", ended)
+	// A repeat, because an app reports the end more than once.
+	handler.observePlayback("", ended)
+
+	waitForRelayCancellations(t, relay, 0)
+	handler.playbackMu.Lock()
+	acquisition := handler.activeAcquisitions[update.PlaybackSessionID]
+	handler.playbackMu.Unlock()
+	if acquisition == nil {
+		t.Fatal("the abandoned playback retired its archive")
+	}
+	if acquisition.cancelled {
+		t.Fatal("the abandoned playback cancelled its archive")
+	}
+}
+
+// Consent is still the whole gate. Withdrawing it cancels the archive at the
+// relay and revokes the source grants it was pulling through, whatever the
+// start-archive setting says.
+func TestArchiveOnPlaybackStartIsCancelledByConsentWithdrawal(t *testing.T) {
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{url: "https://cdn.example.net/d/FRESH/The.Matrix.1999.mkv"}
+	handler := newStartArchiveHandler(t, relay, resolver)
+
+	handler.OnPlaybackStarted(startArchivePlayback())
+	waitForSeeds(t, relay, 1)
+	epochBeforeWithdrawal := handler.sourceGrants.PolicyEpoch()
+
+	// An empty policy is the withdrawal an operator performs by turning
+	// contribution off: no relay, no consent, migration required.
+	if err := handler.ApplyPearTubeSettings(config.PearTubeSettings{}); err != nil {
+		t.Fatalf("withdraw consent: %v", err)
+	}
+
+	waitForRelayCancellations(t, relay, 1)
+	if handler.sourceGrants.PolicyEpoch() <= epochBeforeWithdrawal {
+		t.Fatalf("source grants survived the withdrawal: epoch %d -> %d",
+			epochBeforeWithdrawal, handler.sourceGrants.PolicyEpoch())
+	}
+	handler.playbackMu.Lock()
+	remaining := len(handler.activeAcquisitions)
+	handler.playbackMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("withdrawn consent left %d active acquisitions", remaining)
+	}
+}
+
+// With the option off nothing about the old contract moves: a start alone is
+// zero evidence and contributes nothing, sustained continuous progress is what
+// qualifies, and an abandoned playback still takes its archive with it.
+func TestWithoutArchiveOnPlaybackStartTheEvidencePathIsUnchanged(t *testing.T) {
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{url: "https://cdn.example.net/d/FRESH/The.Matrix.1999.mkv"}
+	handler := newAutoSeedHandler(t, relay, resolver)
+
+	update := startArchivePlayback()
+	if state := handler.observePlayback("", update); state != peartube.PlaybackUnqualified {
+		t.Fatalf("start state = %q, want unqualified", state)
+	}
+	waitForSeeds(t, relay, 0)
+	if resolver.asked != "" {
+		t.Fatalf("a zero-evidence start resolved a contribution source: %q", resolver.asked)
+	}
+
+	// The clock advances ten seconds per observation, so four continuous beats
+	// clear the thirty seconds of evidence this playback needs.
+	for _, position := range []float64{10, 20, 30, 40} {
+		update.Position = position
+		handler.observePlayback("", update)
+	}
+	waitForSeeds(t, relay, 1)
+
+	update.PlaybackEnded = true
+	handler.observePlayback("", update)
+	waitForRelayCancellations(t, relay, 1)
 }

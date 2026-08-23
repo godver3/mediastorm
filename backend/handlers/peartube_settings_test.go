@@ -430,6 +430,7 @@ func TestPearTubeSchemaExposesSeparateExplicitPolicies(t *testing.T) {
 
 	for _, fieldKey := range []string{
 		"config.contributeWatchedMedia",
+		"config.archiveOnPlaybackStart",
 		"config.contributionBudget",
 		"config.archiveEnabled",
 		"config.archiveBudget",
@@ -440,6 +441,19 @@ func TestPearTubeSchemaExposesSeparateExplicitPolicies(t *testing.T) {
 		}
 		if !showsForPearTube(field) {
 			t.Fatalf("%s hidden for peartube", fieldKey)
+		}
+	}
+	// The two consent switches stay opt-in. The timing switch defaults on: it
+	// only takes effect where contribution consent is already granted, so it
+	// changes when a contribution starts rather than whether one may happen.
+	for fieldKey, wantDefault := range map[string]bool{
+		"config.contributeWatchedMedia": false,
+		"config.archiveEnabled":         false,
+		"config.archiveOnPlaybackStart": true,
+	} {
+		field := fields[fieldKey].(map[string]interface{})
+		if field["default"] != wantDefault {
+			t.Fatalf("%s default = %v, want %v", fieldKey, field["default"], wantDefault)
 		}
 	}
 	if _, exists := fields["config.autoSeed"]; exists {

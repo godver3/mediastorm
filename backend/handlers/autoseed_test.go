@@ -42,6 +42,10 @@ type autoSeedRelay struct {
 	catalogReads int
 	archives     []map[string]any
 	ingests      []map[string]any
+	// cancelledJobs are the ingest jobs the relay was asked to cancel. An
+	// archive that outlives its playback is only proved by nothing arriving
+	// here, so cancellation has to be observable.
+	cancelledJobs []string
 }
 
 func (relay *autoSeedRelay) archiveCount() int {
@@ -54,6 +58,12 @@ func (relay *autoSeedRelay) ingestCount() int {
 	relay.mu.Lock()
 	defer relay.mu.Unlock()
 	return len(relay.ingests)
+}
+
+func (relay *autoSeedRelay) cancelledCount() int {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	return len(relay.cancelledJobs)
 }
 
 func (relay *autoSeedRelay) lastArchive() map[string]any {
@@ -135,6 +145,14 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"job":{"jobId":"` + r.Header.Get("X-PearTube-Job-ID") + `","state":"queued"}}`))
 
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+			relay.mu.Lock()
+			relay.cancelledJobs = append(relay.cancelledJobs,
+				strings.TrimPrefix(r.URL.Path, "/api/v2/ingest/jobs/"))
+			relay.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"job":{"jobId":"cancelled","state":"cancelled"}}`))
+
 		default:
 			http.NotFound(w, r)
 		}
@@ -154,6 +172,10 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 // resolved carries the versioned consent the seed closure re-checks before it
 // sends anything. Without it every submission fails closed, which would make a
 // test that asserts "nothing was submitted" pass for the wrong reason.
+//
+// archiveOnPlaybackStart is off, which pins the evidence path: a start alone
+// contributes nothing, sustained progress qualifies, and abandonment cancels.
+// Tests of the start-archive behaviour use newStartArchiveHandler instead.
 func newAutoSeedHandler(t *testing.T, relay *autoSeedRelay, resolver *fakeStreamResolver) *PearTubeHandler {
 	t.Helper()
 	// Set before the client is built: both the companion client and the callback
@@ -168,6 +190,7 @@ func newAutoSeedHandler(t *testing.T, relay *autoSeedRelay, resolver *fakeStream
 		streams:                resolver,
 		sourceGrants:           sourceGrants,
 		contributeWatchedMedia: true,
+		archiveOnPlaybackStart: false,
 		resolved: peartube.Resolved{
 			ConsentVersion:         config.PearTubeConsentVersion,
 			ContributeWatchedMedia: true,
@@ -180,6 +203,18 @@ func newAutoSeedHandler(t *testing.T, relay *autoSeedRelay, resolver *fakeStream
 			return now
 		},
 	}
+}
+
+// newStartArchiveHandler is the same install with the operator's choice made:
+// consented contribution that archives the whole title as soon as playback
+// starts. Only the timing setting differs, so a behaviour difference between
+// this and newAutoSeedHandler is attributable to that setting alone.
+func newStartArchiveHandler(t *testing.T, relay *autoSeedRelay, resolver *fakeStreamResolver) *PearTubeHandler {
+	t.Helper()
+	handler := newAutoSeedHandler(t, relay, resolver)
+	handler.archiveOnPlaybackStart = true
+	handler.resolved.ArchiveOnPlaybackStart = true
+	return handler
 }
 
 func moviePlayback() models.PlaybackProgressUpdate {

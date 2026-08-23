@@ -20,6 +20,12 @@ type Resolved struct {
 	ContributionBudget     int
 	ArchiveEnabled         bool
 	ArchiveBudget          int
+	// ArchiveOnPlaybackStart moves a consented contribution from "after
+	// sustained watch evidence" to "as soon as playback starts", and makes it
+	// survive the viewer stopping. It is not consent and is not gated on the
+	// migration prompt: it only ever applies where ContributeWatchedMedia is
+	// already true.
+	ArchiveOnPlaybackStart bool
 	EffectiveMode          string
 
 	RelayURLFromEnv bool
@@ -77,6 +83,7 @@ func resolve(stored config.PearTubeSettings, getenv func(string) string) Resolve
 	if resolved.ArchiveBudget == 0 {
 		resolved.ArchiveBudget = config.PearTubeDefaultArchiveBudgetGiB
 	}
+	resolved.ArchiveOnPlaybackStart = stored.ArchiveOnPlaybackStart
 	if !resolved.MigrationRequired {
 		resolved.ContributeWatchedMedia = stored.ContributeWatchedMedia
 		resolved.ArchiveEnabled = stored.ArchiveEnabled

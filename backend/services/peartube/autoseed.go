@@ -43,6 +43,12 @@ type PlaybackEvent struct {
 	Buffering        bool
 	Abandoned        bool
 	RestartCancelled bool
+	// QualifiesImmediately makes this observation enough on its own, which is
+	// what an operator asks for by archiving whole titles on playback start.
+	// It never overrides abandonment, and it is deduplicated by the same
+	// per-source ledger continuous progress writes, so a title still qualifies
+	// once per TTL however it got there.
+	QualifiesImmediately bool
 }
 
 type PlaybackObservation struct {
@@ -136,6 +142,9 @@ func (t *PlaybackObserver) Observe(event PlaybackEvent) PlaybackObservation {
 			entry.state = PlaybackCancelled
 			return PlaybackObservation{State: entry.state, FirstCancelled: true}
 		}
+		if event.QualifiesImmediately && entry.state == PlaybackUnqualified {
+			return t.qualifyLocked(entry, sourceID, now)
+		}
 		return PlaybackObservation{State: entry.state}
 	}
 
@@ -147,6 +156,9 @@ func (t *PlaybackObserver) Observe(event PlaybackEvent) PlaybackObservation {
 	}
 	if entry.state != PlaybackUnqualified {
 		return PlaybackObservation{State: entry.state, Accumulated: entry.accumulated}
+	}
+	if event.QualifiesImmediately {
+		return t.qualifyLocked(entry, sourceID, now)
 	}
 
 	elapsed := now.Sub(entry.lastObservedAt)
@@ -172,11 +184,22 @@ func (t *PlaybackObserver) Observe(event PlaybackEvent) PlaybackObservation {
 	if entry.accumulated < t.meaningfulThreshold(event.Duration) {
 		return PlaybackObservation{State: entry.state, Accumulated: entry.accumulated}
 	}
+	return t.qualifyLocked(entry, sourceID, now)
+}
+
+// qualifyLocked promotes a playback to qualified and reports whether this is the
+// first time its source has qualified inside the TTL. That per-source ledger is
+// the only thing standing between one title and one submission per heartbeat, so
+// every route to qualification has to go through it.
+func (t *PlaybackObserver) qualifyLocked(
+	entry *playbackObservationEntry,
+	sourceID string,
+	now time.Time,
+) PlaybackObservation {
+	entry.state = PlaybackQualified
 	if until := t.qualifiedSources[sourceID]; until.After(now) {
-		entry.state = PlaybackQualified
 		return PlaybackObservation{State: entry.state, Accumulated: entry.accumulated}
 	}
-	entry.state = PlaybackQualified
 	t.qualifiedSources[sourceID] = now.Add(t.config.EntryTTL)
 	return PlaybackObservation{State: entry.state, Accumulated: entry.accumulated, FirstQualified: true}
 }

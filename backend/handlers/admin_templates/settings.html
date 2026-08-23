@@ -4789,6 +4789,7 @@
         if (!scraper || scraper.type !== 'peartube') return;
         if (!scraper.config || typeof scraper.config !== 'object' || Array.isArray(scraper.config)) scraper.config = {};
         if (scraper.config.contributeWatchedMedia === undefined) scraper.config.contributeWatchedMedia = 'false';
+        if (scraper.config.archiveOnPlaybackStart === undefined) scraper.config.archiveOnPlaybackStart = 'true';
         if (scraper.config.contributionBudget === undefined) scraper.config.contributionBudget = '21';
         if (scraper.config.archiveEnabled === undefined) scraper.config.archiveEnabled = 'false';
         if (scraper.config.archiveBudget === undefined) scraper.config.archiveBudget = '144';
@@ -4802,6 +4803,7 @@
         scraper.config.migrationRequired = 'false';
         scraper.config.contributeWatchedMedia = String(scraper.config.contributeWatchedMedia === true || scraper.config.contributeWatchedMedia === 'true');
         scraper.config.archiveEnabled = String(scraper.config.archiveEnabled === true || scraper.config.archiveEnabled === 'true');
+        scraper.config.archiveOnPlaybackStart = String(scraper.config.archiveOnPlaybackStart === undefined || scraper.config.archiveOnPlaybackStart === true || scraper.config.archiveOnPlaybackStart === 'true');
         if (!scraper.config.contributionBudget) scraper.config.contributionBudget = '21';
         if (!scraper.config.archiveBudget) scraper.config.archiveBudget = '144';
     }
@@ -5686,7 +5688,7 @@
         const newItem = {};
         for (const [fieldKey, fieldDef] of Object.entries(sectionDef.fields)) {
             if (fieldKey.startsWith('config.') &&
-                ['config.contributeWatchedMedia', 'config.contributionBudget', 'config.archiveEnabled', 'config.archiveBudget'].includes(fieldKey) &&
+                ['config.contributeWatchedMedia', 'config.archiveOnPlaybackStart', 'config.contributionBudget', 'config.archiveEnabled', 'config.archiveBudget'].includes(fieldKey) &&
                 newItem.type !== 'peartube') {
                 continue;
             }

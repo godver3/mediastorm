@@ -95,6 +95,11 @@ type PearTubeHandler struct {
 	// contributeWatchedMedia is explicit persisted consent for the existing
 	// watch-triggered contribution path.
 	contributeWatchedMedia bool
+	// archiveOnPlaybackStart makes a consented contribution start with playback
+	// and outlive it: the whole title is submitted on the transport start with
+	// no watch evidence, and the viewer stopping is no longer a reason to throw
+	// the transfer away. It gates nothing on its own.
+	archiveOnPlaybackStart bool
 	// resolved is the effective relay availability and versioned policy exposed
 	// by Status.
 	resolved peartube.Resolved
@@ -245,6 +250,7 @@ func (h *PearTubeHandler) ApplyPearTubeSettings(stored config.PearTubeSettings) 
 
 	h.configMu.Lock()
 	h.contributeWatchedMedia = resolved.ContributeWatchedMedia
+	h.archiveOnPlaybackStart = resolved.ArchiveOnPlaybackStart
 	h.resolved = resolved
 	h.configMu.Unlock()
 	return nil
@@ -579,14 +585,21 @@ const (
 // imdb-keyed id carries no TMDB number, and the swarm keys everything by TMDB.
 var tmdbPlaybackID = regexp.MustCompile(`(?i)\btmdb:(?:movie|tv|show):([1-9][0-9]{0,9})\b`)
 
-// OnPlaybackStarted records a zero-evidence transport start. Range opens never
-// qualify by themselves; only later continuous progress observations can.
+// OnPlaybackStarted handles a transport start.
+//
+// With archiveOnPlaybackStart on, the start is enough on its own: the whole
+// title is submitted from the first signal this playback produces, and nothing
+// about the rest of the session is waited on. Off, it stays a zero-evidence
+// observation — range opens never qualify by themselves, and only later
+// continuous progress can.
 func (h *PearTubeHandler) OnPlaybackStarted(update models.PlaybackProgressUpdate) {
 	h.observePlayback("", update)
 }
 
 // HandlePlaybackUpdate receives the stable playback/source identity matched by
-// the stream tracker and never blocks the playback caller.
+// the stream tracker and never blocks the playback caller. It is the evidence
+// half of the same observation: the accumulator that decides whether a playback
+// nobody archived on sight has been watched enough to deserve a contribution.
 func (h *PearTubeHandler) HandlePlaybackUpdate(userID string, update models.PlaybackProgressUpdate, _ float64) {
 	h.observePlayback(userID, update)
 }
@@ -606,6 +619,7 @@ func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackP
 	}
 	h.configMu.RLock()
 	relay, contribute := h.relay, h.contributeWatchedMedia
+	archiveOnStart := h.archiveOnPlaybackStart
 	h.configMu.RUnlock()
 	sourceID := autoSeedSourceID(update.SourcePath)
 	playbackID := strings.TrimSpace(update.PlaybackSessionID)
@@ -617,6 +631,10 @@ func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackP
 		return peartube.PlaybackUnqualified
 	}
 	if !contribute || relay == nil {
+		// Consent is the gate, and this is the only end-of-playback cancel that
+		// survives archiveOnPlaybackStart: contribution is off or the relay is
+		// gone, so nothing may still be being published on this install's
+		// behalf. A withdrawal cancels here whatever the start setting says.
 		if update.PlaybackEnded {
 			h.cancelAutoSeedAcquisition(playbackID)
 		}
@@ -643,8 +661,20 @@ func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackP
 		Buffering:        update.IsBuffering,
 		Abandoned:        update.PlaybackEnded,
 		RestartCancelled: fallbackPlaybackID && !update.PlaybackEnded,
+		// The operator asked for the whole title, archived when playback
+		// starts. The observer's evidence machinery exists to decide whether an
+		// unevidenced playback deserves a contribution, and that question is
+		// already answered — but its per-source ledger still runs, so a title
+		// is submitted once however many signals this playback produces.
+		QualifiesImmediately: archiveOnStart,
 	})
-	if observation.FirstCancelled {
+	// A viewer who stops watching no longer takes the archive with them. The
+	// relay pulls its ranges through a grant bound to the job rather than to
+	// this session, and an interrupted ingest resumes from its last confirmed
+	// block, so an abandoned playback is not a reason to discard confirmed
+	// bytes. Consent withdrawal above, an explicit cancel, and the acquisition
+	// TTL sweep remain the ways an archive ends early.
+	if observation.FirstCancelled && !archiveOnStart {
 		h.cancelAutoSeedAcquisition(playbackID)
 	}
 	if !observation.FirstQualified {
@@ -733,19 +763,36 @@ func (h *PearTubeHandler) startAutoSeedAcquisition(playbackID string, plan autoS
 	}()
 }
 
+// expireAutoSeedAcquisitionsLocked frees the tracking slot an aged acquisition
+// holds. It does NOT cancel an archive the relay has already accepted.
+//
+// Age is a statement about how long a PLAYBACK is interesting, and it was the
+// wrong clock to cancel an archive by: the relay drives the fetch itself, and a
+// feature-length title on a debrid link measured as low as 0.38 MB/s takes far
+// longer than any window worth keeping a viewer's observation alive for. A
+// relay-side cancel is terminal - it reclaims the staged blocks - so expiring an
+// accepted job by age threw away hours of good work and could never finish a
+// large title at all.
+//
+// Dropping our handle does not weaken consent. Withdrawal calls
+// sourceGrants.RevokeAll(), which starves every in-flight archive of bytes
+// whether we still hold a handle to it or not, so enforcement never depended on
+// this map. An accepted job therefore keeps running on the relay's clock, and
+// anything that never reached the relay is cancelled here as before, because
+// there is nothing to preserve.
 func (h *PearTubeHandler) expireAutoSeedAcquisitionsLocked(now time.Time) []autoSeedJobCancellation {
 	var jobs []autoSeedJobCancellation
 	for playbackID, acquisition := range h.activeAcquisitions {
 		if now.Sub(acquisition.createdAt) < peartube.DefaultPlaybackObservationTTL {
 			continue
 		}
-		acquisition.cancelled = true
-		acquisition.cancel()
+		accepted := acquisition.jobID != ""
+		if !accepted {
+			acquisition.cancelled = true
+			acquisition.cancel()
+		}
 		h.transitionAutoSeedJobStateLocked(acquisition, "")
 		delete(h.activeAcquisitions, playbackID)
-		if acquisition.jobID != "" {
-			jobs = append(jobs, autoSeedJobCancellation{relay: acquisition.relay, jobID: acquisition.jobID})
-		}
 	}
 	return jobs
 }
