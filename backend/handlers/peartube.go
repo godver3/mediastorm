@@ -578,6 +578,12 @@ const (
 	// re-resolve, and the relay's acceptance. The relay's own fetch of the file
 	// happens after that and is not waited on.
 	autoSeedTimeout = 2 * time.Minute
+
+	// autoSeedRetryWindow is how long a claim survives a refusal the relay
+	// itself calls transient. Long enough that a heartbeat every few seconds
+	// does not resubmit, short enough that the next episode-length watch asks
+	// again rather than the title being locked out for the guard window.
+	autoSeedRetryWindow = 2 * time.Minute
 )
 
 // A player's item or series id is namespaced when it came from TMDB
@@ -1158,11 +1164,34 @@ func (h *PearTubeHandler) releaseAutoSeed(key string) {
 	delete(h.autoSeedClaims, key)
 }
 
+// shortenAutoSeed pulls a claim's expiry in without dropping it. A relay that
+// was not ready should be asked again soon, but not on the very next playback
+// heartbeat: those arrive seconds apart, and one refusal per guard window is the
+// right amount of noise.
+func (h *PearTubeHandler) shortenAutoSeed(key string, until time.Time) {
+	h.autoSeedMu.Lock()
+	defer h.autoSeedMu.Unlock()
+	if held, ok := h.autoSeedClaims[key]; ok && held.After(until) {
+		h.autoSeedClaims[key] = until
+	}
+}
+
 // releaseClaims drops everything this plan claimed, so a later watch asks again.
 func (p autoSeedPlan) releaseClaims() {
 	p.handler.releaseAutoSeed(p.key)
 	if p.pendingKey != "" && p.pendingKey != p.key {
 		p.handler.releaseAutoSeed(p.pendingKey)
+	}
+}
+
+// shortenClaims keeps this plan's claims but makes them lapse soon, so a relay
+// that was merely not ready is retried by a later watch instead of being locked
+// out for the whole guard window.
+func (p autoSeedPlan) shortenClaims(now time.Time) {
+	until := now.Add(autoSeedRetryWindow)
+	p.handler.shortenAutoSeed(p.key, until)
+	if p.pendingKey != "" && p.pendingKey != p.key {
+		p.handler.shortenAutoSeed(p.pendingKey, until)
 	}
 }
 
@@ -1243,6 +1272,21 @@ func (p autoSeedPlan) submit() {
 	_, _ = p.submitContext(ctx)
 }
 
+// autoSeedRefusalIsTransient reports whether the relay's refusal was about its
+// own readiness rather than about this request. Anything that is not a decision
+// the relay made about the submission - a transport failure, a timeout, a 5xx -
+// is worth asking again on the next watch.
+func autoSeedRefusalIsTransient(err error) bool {
+	var apiErr *peartube.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status >= 500 || apiErr.Status == http.StatusTooManyRequests ||
+			apiErr.Status == http.StatusRequestTimeout
+	}
+	// No HTTP answer at all: the relay was unreachable or the request died in
+	// flight, which says nothing about whether the title is seedable.
+	return true
+}
+
 func (p autoSeedPlan) submitContext(ctx context.Context) (*peartube.ArchiveJob, error) {
 	p, ok := p.identified(ctx)
 	if !ok {
@@ -1275,6 +1319,23 @@ func (p autoSeedPlan) submitContext(ctx context.Context) (*peartube.ArchiveJob, 
 	}
 	job, err := submit(ctx)
 	if err != nil {
+		// A source the relay genuinely refuses keeps its claim: it would be
+		// refused again on the next heartbeat, and one log line per guard window
+		// is the right amount of noise.
+		//
+		// A relay that was merely NOT READY is a different thing, and holding the
+		// claim through it locked the title out for the whole six-hour window.
+		// Watching again is the only retry trigger this design has, so a restart
+		// or a policy not yet re-pushed made a title silently unarchivable for
+		// the rest of the day. Observed live: a seed arrived nine seconds before
+		// the relay finished restarting, and replaying the episode did nothing.
+		//
+		// The relay already says which it is. 5xx and transport failures are
+		// "ask me again"; a 4xx is a decision about this request that a retry
+		// cannot change.
+		if autoSeedRefusalIsTransient(err) {
+			p.shortenClaims(time.Now())
+		}
 		log.Printf("[peartube] autoseed %s: relay refused the seed: %v", p.key, err)
 		return nil, err
 	}

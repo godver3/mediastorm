@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -838,5 +839,50 @@ func TestAutoSeedDoesNotLookUpATitleThatNamesItsTMDBID(t *testing.T) {
 	}
 	if got := relay.archiveCount(); got != 0 {
 		t.Fatalf("tmdb-native remote playback entered legacy archive: %d calls", got)
+	}
+}
+
+// A claim shortened after a transient refusal must actually lapse. Holding it for
+// the full guard window locked a title out for six hours, and watching again is
+// the only retry trigger this design has - so a relay that was merely restarting
+// made that title silently unarchivable for the rest of the day.
+func TestShortenedAutoSeedClaimLapses(t *testing.T) {
+	handler := &PearTubeHandler{autoSeedClaims: map[string]time.Time{}}
+	const key = "movie:603"
+
+	if !handler.claimAutoSeed(key) {
+		t.Fatal("the first claim was refused")
+	}
+	if handler.claimAutoSeed(key) {
+		t.Fatal("a held claim was handed out twice")
+	}
+
+	// What a transient refusal does: pull the expiry in rather than dropping it.
+	handler.shortenAutoSeed(key, time.Now().Add(-time.Second))
+
+	if !handler.claimAutoSeed(key) {
+		t.Fatal("a shortened claim never lapsed, so the title stays locked out")
+	}
+}
+
+// Only the relay's own readiness is transient. A decision it made about this
+// request is not, and retrying it on every heartbeat would be pure noise.
+func TestAutoSeedRefusalTransienceFollowsTheRelaysAnswer(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		err       error
+		transient bool
+	}{
+		{"relay not ready", &peartube.APIError{Status: http.StatusServiceUnavailable}, true},
+		{"relay bug", &peartube.APIError{Status: http.StatusInternalServerError}, true},
+		{"rate limited", &peartube.APIError{Status: http.StatusTooManyRequests}, true},
+		{"unreachable", errors.New("dial tcp: connection refused"), true},
+		{"request refused", &peartube.APIError{Status: http.StatusBadRequest}, false},
+		{"consent denied", &peartube.APIError{Status: http.StatusForbidden}, false},
+		{"conflict", &peartube.APIError{Status: http.StatusConflict}, false},
+	} {
+		if got := autoSeedRefusalIsTransient(testCase.err); got != testCase.transient {
+			t.Fatalf("%s: transient = %v, want %v", testCase.name, got, testCase.transient)
+		}
 	}
 }
