@@ -886,3 +886,26 @@ func TestAutoSeedRefusalTransienceFollowsTheRelaysAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A usenet title plays from a WebDAV path, and the streaming providers are keyed
+// on the path underneath that prefix. Passing the prefixed path through meant no
+// provider matched, so every usenet title reported "automatic contribution source
+// unavailable" while the same file played perfectly. Usenet is the case worth
+// getting right: it is already a local file, so it archives at disk speed with no
+// expiring address and no debrid API calls competing with playback.
+func TestAutoSeedStreamPathDropsTheWebDAVPrefix(t *testing.T) {
+	for _, testCase := range []struct{ in, want string }{
+		{"/webdav/1787508427603176000_The.Wild.Robot.2024.mkv", "/1787508427603176000_The.Wild.Robot.2024.mkv"},
+		{"webdav/1787508427603176000_The.Wild.Robot.2024.mkv", "/1787508427603176000_The.Wild.Robot.2024.mkv"},
+		{"  /webdav/spaced.mkv  ", "/spaced.mkv"},
+		// A debrid path has no WebDAV prefix and must be handed over untouched.
+		{"/debrid/torbox/12345/File/9/The.Matrix.1999.mkv", "/debrid/torbox/12345/File/9/The.Matrix.1999.mkv"},
+		// Not the prefix, just a file that happens to start with the letters.
+		{"/webdavish/file.mkv", "/webdavish/file.mkv"},
+		{"", ""},
+	} {
+		if got := normalizeAutoSeedStreamPath(testCase.in); got != testCase.want {
+			t.Fatalf("normalize(%q) = %q, want %q", testCase.in, got, testCase.want)
+		}
+	}
+}

@@ -1381,6 +1381,27 @@ func seedIdempotencyKey(coordinates peartube.ArchiveCoordinates, sourceIdentity 
 // planQualifiedAutoSeed resolves the playback's stream path server-side and
 // picks the seed transport that source needs.
 //
+// normalizeAutoSeedStreamPath strips the WebDAV prefix a resolved playback hands
+// back, because the streaming providers are keyed on the path underneath it.
+// main.go does the same before it probes a stream path, and skipping it here is
+// why a usenet title was never seedable: its resolved path is "/webdav/<file>",
+// no provider matched that, and the seed died as "automatic contribution source
+// unavailable" while the very same file played fine.
+//
+// Usenet is the case worth getting right. It lands as a real local file, so it
+// archives at disk speed through a file-backed grant, with no expiring address
+// and no debrid API calls competing with playback.
+func normalizeAutoSeedStreamPath(value string) string {
+	path := strings.TrimSpace(value)
+	if trimmed := strings.TrimPrefix(path, "/webdav/"); trimmed != path {
+		return "/" + trimmed
+	}
+	if trimmed := strings.TrimPrefix(path, "webdav/"); trimmed != path {
+		return "/" + trimmed
+	}
+	return path
+}
+
 // Both transports are now authenticated source grants; what differs is what is
 // behind the grant. A path that resolves to a file this process already holds is
 // published from that open file. A path that resolves to somebody else's CDN — a
@@ -1393,8 +1414,10 @@ func seedIdempotencyKey(coordinates peartube.ArchiveCoordinates, sourceIdentity 
 // is no longer done to obtain something to hand over — it is done to learn which
 // kind of source this is, and it warms the streaming layer's address cache for
 // the first range the relay asks for.
+//
+// The stream path is normalized first: see normalizeAutoSeedStreamPath.
 func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *peartube.Client, req SeedRequest) (func(context.Context) (*peartube.ArchiveJob, error), error) {
-	streamPath := strings.TrimSpace(req.StreamPath)
+	streamPath := normalizeAutoSeedStreamPath(req.StreamPath)
 	if h.streams == nil || streamPath == "" {
 		return nil, errAutoSeedSourceUnavailable
 	}
