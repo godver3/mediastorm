@@ -909,3 +909,470 @@ func TestAutoSeedStreamPathDropsTheWebDAVPrefix(t *testing.T) {
 		}
 	}
 }
+
+// redriveRelay is a relay that also answers "how is that job doing?", which is
+// what a revival turns on and the seed-only harness above never served. It keeps
+// every submission in order, because a resume is only a resume if the second one
+// lands on the job id the first one created.
+type redriveRelay struct {
+	mu          sync.Mutex
+	submissions []map[string]any
+	jobIDs      []string
+	// job is what GET /api/v2/ingest/jobs/<id> reports, minus the id itself,
+	// which the relay always echoes back from the request.
+	job map[string]any
+	// queries counts the asks, so "MediaStorm stopped asking" is observable.
+	queries int
+	// submitStatus refuses submissions with an HTTP status, so a re-drive that
+	// arrives while the relay is still coming up can be simulated.
+	submitStatus int
+}
+
+func (relay *redriveRelay) reports(job map[string]any) {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	relay.job = job
+}
+
+func (relay *redriveRelay) refuseSubmissions(status int) {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	relay.submitStatus = status
+}
+
+func (relay *redriveRelay) submissionCount() int {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	return len(relay.submissions)
+}
+
+func (relay *redriveRelay) queryCount() int {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	return relay.queries
+}
+
+func (relay *redriveRelay) submission(index int) map[string]any {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	if index >= len(relay.submissions) {
+		return nil
+	}
+	return relay.submissions[index]
+}
+
+func (relay *redriveRelay) jobID(index int) string {
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	if index >= len(relay.jobIDs) {
+		return ""
+	}
+	return relay.jobIDs[index]
+}
+
+func (relay *redriveRelay) client(t *testing.T) *peartube.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v2/policy":
+			_, _ = w.Write([]byte(`{"policy":{"policyVersion":2}}`))
+
+		case strings.HasPrefix(r.URL.Path, "/api/v1/catalog"):
+			_, _ = w.Write([]byte(`{"entities":[],"nextCursor":null}`))
+
+		case r.URL.Path == "/api/v2/ingest/jobs":
+			body := map[string]any{}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			jobID := r.Header.Get("X-PearTube-Job-ID")
+			relay.mu.Lock()
+			relay.submissions = append(relay.submissions, body)
+			relay.jobIDs = append(relay.jobIDs, jobID)
+			refusal := relay.submitStatus
+			relay.mu.Unlock()
+			if refusal != 0 {
+				w.WriteHeader(refusal)
+				_, _ = w.Write([]byte(`{"error":{"code":"UNAVAILABLE","message":"still starting","field":null}}`))
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"job":{"jobId":"` + jobID + `","state":"queued"}}`))
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+			relay.mu.Lock()
+			relay.queries++
+			report := map[string]any{}
+			for name, value := range relay.job {
+				report[name] = value
+			}
+			relay.mu.Unlock()
+			report["jobId"] = strings.TrimPrefix(r.URL.Path, "/api/v2/ingest/jobs/")
+			encoded, err := json.Marshal(map[string]any{"job": report})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write(encoded)
+
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+			_, _ = w.Write([]byte(`{"job":{"jobId":"cancelled","state":"cancelled"}}`))
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := peartube.New(server.URL)
+	if err != nil {
+		t.Fatalf("peartube.New: %v", err)
+	}
+	return client
+}
+
+// newRedriveHandler is the same consented install newAutoSeedHandler builds,
+// pointed at a relay that answers job queries.
+func newRedriveHandler(t *testing.T, relay *redriveRelay, resolver *fakeStreamResolver) *PearTubeHandler {
+	t.Helper()
+	t.Setenv(peartube.CompanionSharedSecretEnv, strings.Repeat("4d", 32))
+	sourceGrants := peartube.NewSourceGrantRegistryFromEnv()
+	t.Cleanup(sourceGrants.Close)
+	return &PearTubeHandler{
+		relay:                  relay.client(t),
+		streams:                resolver,
+		sourceGrants:           sourceGrants,
+		contributeWatchedMedia: true,
+		resolved: peartube.Resolved{
+			ConsentVersion:         config.PearTubeConsentVersion,
+			ContributeWatchedMedia: true,
+			ContributionBudget:     1,
+		},
+	}
+}
+
+// acceptedRedriveJob submits a movie the ordinary way and returns the job id the
+// relay derived for it, which is the identity a revival has to land back on.
+func acceptedRedriveJob(t *testing.T, handler *PearTubeHandler, relay *redriveRelay) string {
+	t.Helper()
+	plan, ok := handler.planAutoSeed(moviePlayback())
+	if !ok {
+		t.Fatal("the movie was not seedable")
+	}
+	plan.submit()
+	if got := relay.submissionCount(); got != 1 {
+		t.Fatalf("initial submissions = %d, want 1", got)
+	}
+	return relay.jobID(0)
+}
+
+func requestFingerprint(t *testing.T, submission map[string]any) string {
+	t.Helper()
+	encoded, err := json.Marshal(submission["request"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+// The archive that has to stop dying. A relay restarted for an update, killed by
+// a crash, or bounced by restart=on-failure leaves the job failed and
+// recoverable with every confirmed byte still staged, waiting for a capability
+// whose grant lifetime is far shorter than the transfer it was serving. Only this
+// process can issue one, and nothing ever asked - so three archives died in one
+// day at 528, 448 and 100 MiB of real transferred bytes.
+func TestAutoSeedRedrivesARecoverableFailureFromItsConfirmedBytes(t *testing.T) {
+	relay := &redriveRelay{}
+	resolver := &fakeStreamResolver{
+		url:     "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv",
+		content: []byte(strings.Repeat("matrix", 512)),
+	}
+	handler := newRedriveHandler(t, relay, resolver)
+	accepted := acceptedRedriveJob(t, handler, relay)
+
+	relay.reports(map[string]any{
+		"state":         "failed",
+		"errorCode":     "PUBLICATION_RESULT_UNAVAILABLE",
+		"recoverable":   true,
+		"bytesReceived": 553648128,
+		"expectedBytes": 1073741824,
+	})
+	handler.sweepAutoSeedJobs(context.Background())
+
+	if got := relay.queryCount(); got != 1 {
+		t.Fatalf("job queries = %d, want the sweep to ask exactly once", got)
+	}
+	if got := relay.submissionCount(); got != 2 {
+		t.Fatalf("submissions = %d, want the interrupted job re-driven once", got)
+	}
+	// Resuming and restarting are told apart by the job id: the relay derives it
+	// from the idempotency key and the request, and reopens a recoverable job at
+	// the offset it reached. A different id is a new job at byte zero.
+	if got := relay.jobID(1); got != accepted {
+		t.Fatalf("re-drive landed on job %q, want %q - a different id discards the staged bytes", got, accepted)
+	}
+	first, second := relay.submission(0), relay.submission(1)
+	if second["idempotencyKey"] != first["idempotencyKey"] {
+		t.Fatalf("re-drive idempotency key = %v, want the original %v", second["idempotencyKey"], first["idempotencyKey"])
+	}
+	if got, want := requestFingerprint(t, second), requestFingerprint(t, first); got != want {
+		t.Fatalf("re-drive request changed, so the relay hashes a different job:\n got %s\nwant %s", got, want)
+	}
+	// A fresh capability is the whole point of asking MediaStorm rather than
+	// letting the relay retry itself: the original grant expired long before the
+	// relay came back.
+	capability, _ := second["sourceCapability"].(string)
+	if len(capability) != 43 {
+		t.Fatalf("re-drive capability = %q, want an opaque 43-character token", capability)
+	}
+	if capability == first["sourceCapability"] {
+		t.Fatal("re-drive reused the dead capability instead of issuing a fresh one")
+	}
+}
+
+// A failure the relay calls unrecoverable is a statement that the staged bytes
+// cannot become the title this job asked for. No capability answers that, so
+// re-driving it would be a resubmit loop with a guaranteed outcome.
+func TestAutoSeedDoesNotRedriveAnUnrecoverableFailure(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+	acceptedRedriveJob(t, handler, relay)
+
+	relay.reports(map[string]any{
+		"state":         "failed",
+		"errorCode":     "SOURCE_LENGTH_MISMATCH",
+		"recoverable":   false,
+		"bytesReceived": 4096,
+		"expectedBytes": 1073741824,
+	})
+	handler.sweepAutoSeedJobs(context.Background())
+
+	if got := relay.submissionCount(); got != 1 {
+		t.Fatalf("submissions = %d, want the unrecoverable job left alone", got)
+	}
+	// And it is not asked about again: a verdict that cannot change is not worth
+	// a round trip per sweep for the rest of the process's life.
+	handler.sweepAutoSeedJobs(context.Background())
+	if got := relay.queryCount(); got != 1 {
+		t.Fatalf("job queries = %d, want MediaStorm to stop asking after the verdict", got)
+	}
+}
+
+// A job that is still working must never be resubmitted: its bytes are already
+// moving, and a second submission would only race the first.
+func TestAutoSeedDoesNotResubmitALiveJob(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+	acceptedRedriveJob(t, handler, relay)
+
+	relay.reports(map[string]any{
+		"state":         "acquiring",
+		"recoverable":   false,
+		"bytesReceived": 104857600,
+		"expectedBytes": 1073741824,
+	})
+	handler.sweepAutoSeedJobs(context.Background())
+	handler.sweepAutoSeedJobs(context.Background())
+
+	if got := relay.submissionCount(); got != 1 {
+		t.Fatalf("submissions = %d, want a live job left to run", got)
+	}
+	// It stays answerable, because this is the job that will need reviving if the
+	// relay dies while it runs.
+	if got := relay.queryCount(); got != 2 {
+		t.Fatalf("job queries = %d, want the live job still watched", got)
+	}
+	// The other half of the guard, and the one that predates this: the title's
+	// claim is what stops a heartbeat resubmitting while the job runs.
+	if _, ok := handler.planAutoSeed(moviePlayback()); ok {
+		t.Fatal("a title with a live job was claimed for a second seed")
+	}
+}
+
+// One re-drive per failure, and the sweep that follows must not send another.
+// This is the loop that would otherwise cost a whole-file fetch attempt every
+// sweep, forever, for a title that cannot get past the same offset.
+func TestAutoSeedRedrivesOneFailureExactlyOnce(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+	acceptedRedriveJob(t, handler, relay)
+
+	stalled := map[string]any{
+		"state":         "failed",
+		"errorCode":     "PUBLICATION_RESULT_UNAVAILABLE",
+		"recoverable":   true,
+		"bytesReceived": 104857600,
+		"expectedBytes": 1073741824,
+	}
+	relay.reports(stalled)
+	for range 3 {
+		handler.sweepAutoSeedJobs(context.Background())
+	}
+
+	if got := relay.submissionCount(); got != 2 {
+		t.Fatalf("submissions = %d, want one re-drive for one failure", got)
+	}
+	// Two failures at the same offset are a loop, so the handle goes: the third
+	// sweep does not even ask.
+	if got := relay.queryCount(); got != 2 {
+		t.Fatalf("job queries = %d, want MediaStorm to give up after a second failure at the same offset", got)
+	}
+}
+
+// Progress is what licenses another attempt. Confirmed bytes moving forward mean
+// the last re-drive did real work and the next one starts further along, so a
+// feature-length title survives any number of interruptions - which is the whole
+// reason the bound is drawn on the offset rather than on an attempt count.
+func TestAutoSeedRedrivesAgainOnlyAfterMoreBytesLand(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+	accepted := acceptedRedriveJob(t, handler, relay)
+
+	for _, confirmed := range []int{104857600, 553648128} {
+		relay.reports(map[string]any{
+			"state":         "failed",
+			"errorCode":     "PUBLICATION_RESULT_UNAVAILABLE",
+			"recoverable":   true,
+			"bytesReceived": confirmed,
+			"expectedBytes": 1073741824,
+		})
+		handler.sweepAutoSeedJobs(context.Background())
+	}
+
+	if got := relay.submissionCount(); got != 3 {
+		t.Fatalf("submissions = %d, want a re-drive for each interruption that moved the offset", got)
+	}
+	if got := relay.jobID(2); got != accepted {
+		t.Fatalf("second re-drive landed on job %q, want %q", got, accepted)
+	}
+}
+
+// A re-drive the relay refuses because it is not ready yet has not answered the
+// question, so the next sweep - a whole interval later, never a hot loop - asks
+// again. A refusal the relay decided on stands. The distinction is the one a
+// first submission already makes.
+//
+// Retrying a transient refusal is not licence to retry it forever: a relay that
+// keeps refusing costs maxAutoSeedRedriveAttempts round trips at one offset and
+// then nothing at all, however many sweeps follow. Without that bound one stuck
+// job was resubmitted once a minute for the life of the process.
+func TestAutoSeedRedriveRefusalFollowsTheRelaysAnswer(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		status      int
+		sweeps      int
+		submissions int
+	}{
+		{"relay still starting is retried", http.StatusServiceUnavailable, 2, 3},
+		{"a relay refusing forever is not", http.StatusServiceUnavailable, 20, 1 + maxAutoSeedRedriveAttempts},
+		{"relay refused the request", http.StatusBadRequest, 2, 2},
+	} {
+		relay := &redriveRelay{}
+		handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+		acceptedRedriveJob(t, handler, relay)
+
+		relay.reports(map[string]any{
+			"state":         "failed",
+			"errorCode":     "PUBLICATION_RESULT_UNAVAILABLE",
+			"recoverable":   true,
+			"bytesReceived": 104857600,
+			"expectedBytes": 1073741824,
+		})
+		relay.refuseSubmissions(testCase.status)
+		for range testCase.sweeps {
+			handler.sweepAutoSeedJobs(context.Background())
+		}
+
+		if got := relay.submissionCount(); got != testCase.submissions {
+			t.Fatalf("%s: submissions = %d, want %d", testCase.name, got, testCase.submissions)
+		}
+	}
+}
+
+// Progress earns a fresh round of attempts even when the earlier ones were
+// refused in transit: bytes past the offset those attempts were spent on are
+// evidence a re-drive did real work, and that is the only thing that licenses
+// asking again. The passage of time is not.
+func TestAutoSeedRedrivesAgainAfterTransientRefusalsWhenBytesAdvance(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+	accepted := acceptedRedriveJob(t, handler, relay)
+
+	stalled := func(confirmed int) map[string]any {
+		return map[string]any{
+			"state":         "failed",
+			"errorCode":     "PUBLICATION_RESULT_UNAVAILABLE",
+			"recoverable":   true,
+			"bytesReceived": confirmed,
+			"expectedBytes": 1073741824,
+		}
+	}
+
+	// One attempt refused in transit. It is counted, not given back.
+	relay.reports(stalled(104857600))
+	relay.refuseSubmissions(http.StatusServiceUnavailable)
+	handler.sweepAutoSeedJobs(context.Background())
+	if got := relay.submissionCount(); got != 2 {
+		t.Fatalf("submissions = %d, want the transient refusal to have been attempted", got)
+	}
+
+	// The relay comes back and confirms more bytes: real progress, so the job is
+	// owed a fresh round of attempts from the new offset.
+	relay.refuseSubmissions(0)
+	relay.reports(stalled(553648128))
+	handler.sweepAutoSeedJobs(context.Background())
+
+	if got := relay.submissionCount(); got != 3 {
+		t.Fatalf("submissions = %d, want a re-drive licensed by the advanced offset", got)
+	}
+	if got := relay.jobID(2); got != accepted {
+		t.Fatalf("the licensed re-drive landed on job %q, want %q", got, accepted)
+	}
+
+	// And that landed submission spends the new offset outright: no progress, no
+	// further attempt, however many sweeps follow.
+	for range 5 {
+		handler.sweepAutoSeedJobs(context.Background())
+	}
+	if got := relay.submissionCount(); got != 3 {
+		t.Fatalf("submissions = %d, want a landed re-drive to spend its offset", got)
+	}
+}
+
+// The sweep must be free while nothing is wrong, and must never make the player
+// wait: a heartbeat arrives every few seconds and the relay round trip belongs to
+// nobody's request.
+func TestAutoSeedJobSweepIsBoundedAndOffTheRequestPath(t *testing.T) {
+	relay := &redriveRelay{}
+	handler := newRedriveHandler(t, relay, &fakeStreamResolver{url: "https://cdn.example.net/d/TOKEN/The.Matrix.1999.mkv"})
+
+	// Nothing submitted yet: a heartbeat costs no relay call at all.
+	handler.maybeSweepAutoSeedJobs()
+	if got := relay.queryCount(); got != 0 {
+		t.Fatalf("job queries with nothing to watch = %d, want 0", got)
+	}
+
+	acceptedRedriveJob(t, handler, relay)
+	relay.reports(map[string]any{
+		"state":         "acquiring",
+		"bytesReceived": 4096,
+		"expectedBytes": 1073741824,
+	})
+	for range 100 {
+		handler.maybeSweepAutoSeedJobs()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		handler.autoSeedWatchMu.Lock()
+		sweeping := handler.autoSeedSweeping
+		handler.autoSeedWatchMu.Unlock()
+		if !sweeping {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the job sweep never finished")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := relay.queryCount(); got != 1 {
+		t.Fatalf("job queries across 100 heartbeats = %d, want one sweep per interval", got)
+	}
+}

@@ -890,6 +890,74 @@ func (c *Client) ArchiveStatus(ctx context.Context, jobID string) (*ArchiveStatu
 }
 
 func (c *Client) companionArchiveStatus(ctx context.Context, jobID string) (*ArchiveStatus, error) {
+	job, err := c.fetchIngestJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	status := &ArchiveStatus{
+		JobID:  jobID,
+		Status: job.State,
+		Error:  job.ErrorCode,
+	}
+	if job.State == "completed" {
+		status.Source = &ArchiveSource{
+			PublicationID: job.PublicationID,
+			ManifestID:    job.ManifestID,
+			RenditionID:   job.RenditionID,
+			CoreKey:       job.CoreKey,
+		}
+	}
+	return status, nil
+}
+
+// IngestJob is the relay's own account of one granted ingest job. It carries the
+// two facts a resubmission turns on and ArchiveStatus does not expose: the
+// offset the transfer actually reached, and whether the relay holds those bytes
+// to be a truthful prefix of the title the job asked for.
+type IngestJob struct {
+	JobID         string
+	State         string
+	BytesReceived int64
+	ExpectedBytes int64
+	ErrorCode     string
+	// Recoverable is the relay's verdict that a resubmission may resume from
+	// BytesReceived rather than start the title again.
+	Recoverable bool
+}
+
+// IngestJob asks the relay how one granted ingest job stands.
+//
+// Nothing used to ask. A job the relay loses to a restart ends `failed` and
+// `recoverable`, keeps every byte it confirmed, and waits for a capability whose
+// grant lifetime is far shorter than the archive it was serving — so only this
+// process can revive it, and until something asked, those bytes sat on the
+// relay's disk while the title's claim blocked any resubmission.
+func (c *Client) IngestJob(ctx context.Context, jobID string) (*IngestJob, error) {
+	if c == nil {
+		return nil, errors.New("peartube relay is not configured")
+	}
+	jobID = strings.TrimSpace(jobID)
+	if !strings.HasPrefix(jobID, "ing_") || !validSourceJobID(jobID) {
+		return nil, errors.New("companion ingest job id is required")
+	}
+	job, err := c.fetchIngestJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return &IngestJob{
+		JobID:         job.JobID,
+		State:         job.State,
+		BytesReceived: job.BytesReceived,
+		ExpectedBytes: job.ExpectedBytes,
+		ErrorCode:     job.ErrorCode,
+		Recoverable:   job.Recoverable,
+	}, nil
+}
+
+// fetchIngestJob is the one authenticated read of the companion ingest job
+// route. Both the status proxy and the revival query decode the same answer, so
+// neither can drift from what the relay actually reports.
+func (c *Client) fetchIngestJob(ctx context.Context, jobID string) (*companionIngestPublicJob, error) {
 	target := companionAPIPrefix + "/ingest/jobs/" + url.PathEscape(jobID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+target, nil)
 	if err != nil {
@@ -919,20 +987,7 @@ func (c *Client) companionArchiveStatus(ctx context.Context, jobID string) (*Arc
 	if envelope.Job.JobID != jobID || envelope.Job.State == "" {
 		return nil, errors.New("companion returned a mismatched ingest job")
 	}
-	status := &ArchiveStatus{
-		JobID:  jobID,
-		Status: envelope.Job.State,
-		Error:  envelope.Job.ErrorCode,
-	}
-	if envelope.Job.State == "completed" {
-		status.Source = &ArchiveSource{
-			PublicationID: envelope.Job.PublicationID,
-			ManifestID:    envelope.Job.ManifestID,
-			RenditionID:   envelope.Job.RenditionID,
-			CoreKey:       envelope.Job.CoreKey,
-		}
-	}
-	return status, nil
+	return &envelope.Job, nil
 }
 
 // CompanionNetworkPolicy is the complete explicit policy snapshot accepted by
@@ -1154,6 +1209,12 @@ type companionIngestPublicJob struct {
 	AssetID       string `json:"assetId"`
 	CoreKey       string `json:"coreKey"`
 	ErrorCode     string `json:"errorCode"`
+	// BytesReceived, ExpectedBytes and Recoverable are what a resubmission needs
+	// from a job that ended badly: how far it got, how far it had to go, and
+	// whether the relay will let a fresh capability carry on from there.
+	BytesReceived int64 `json:"bytesReceived"`
+	ExpectedBytes int64 `json:"expectedBytes"`
+	Recoverable   bool  `json:"recoverable"`
 }
 
 // sourceContainer names the container from whatever path identifies the source.

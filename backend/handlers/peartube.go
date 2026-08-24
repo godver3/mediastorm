@@ -118,6 +118,15 @@ type PearTubeHandler struct {
 	activeAcquisitions  map[string]*autoSeedAcquisition
 	autoSeedJobsByState map[string]int
 	autoSeedErrors      []string
+
+	// autoSeedWatchMu guards the relay jobs this process is still answerable
+	// for, keyed by relay job id. A job the relay loses mid-transfer can only be
+	// revived from here, so the handle outlives the acquisition that made it.
+	// See sweepAutoSeedJobs.
+	autoSeedWatchMu  sync.Mutex
+	autoSeedWatches  map[string]*autoSeedWatch
+	autoSeedSweptAt  time.Time
+	autoSeedSweeping bool
 }
 
 // The handler is registered on every playback signal this backend produces, and
@@ -584,6 +593,13 @@ const (
 	// does not resubmit, short enough that the next episode-length watch asks
 	// again rather than the title being locked out for the guard window.
 	autoSeedRetryWindow = 2 * time.Minute
+
+	// autoSeedSweepInterval bounds how often the relay is asked how the jobs
+	// this process is answerable for are doing. Heartbeats arrive every few
+	// seconds and each sweep costs one authenticated GET per watched job, so the
+	// interval - not the heartbeat rate - is what keeps the check free while
+	// nothing is wrong.
+	autoSeedSweepInterval = time.Minute
 )
 
 // A player's item or series id is namespaced when it came from TMDB
@@ -646,6 +662,12 @@ func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackP
 		}
 		return peartube.PlaybackUnqualified
 	}
+
+	// A consented heartbeat is also the cheapest trigger this process has for
+	// asking after the archives it already started: it means the relay is
+	// configured, consent stands, and somebody is watching something. The check
+	// itself is a mutex and a clock read, and the asking happens elsewhere.
+	h.maybeSweepAutoSeedJobs()
 
 	h.playbackMu.Lock()
 	if h.playbackObserver == nil {
@@ -871,9 +893,15 @@ func (h *PearTubeHandler) cancelAllAutoSeedAcquisitions() {
 	for _, playbackID := range ids {
 		h.cancelAutoSeedAcquisition(playbackID)
 	}
+	// Nothing may still be published on this install's behalf, so the revival
+	// handles go too - including the ones whose acquisition already aged out of
+	// the tracking map, which the loop above cannot reach.
+	h.forgetAllAutoSeedJobs()
 }
 
 func (h *PearTubeHandler) cancelAutoSeedJob(relay *peartube.Client, jobID string) {
+	// A job cancelled on purpose is not a job to revive.
+	h.forgetAutoSeedJob(jobID)
 	ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
 	defer cancel()
 	if err := relay.CancelArchive(ctx, jobID); err != nil {
@@ -943,6 +971,236 @@ func (h *PearTubeHandler) recordAutoSeedErrorLocked(code string) {
 	if len(h.autoSeedErrors) > 8 {
 		h.autoSeedErrors = h.autoSeedErrors[len(h.autoSeedErrors)-8:]
 	}
+}
+
+// autoSeedWatch is one job the relay accepted, together with the plan that can
+// re-drive it.
+//
+// The plan is retained rather than rebuilt because reviving a job means issuing
+// a fresh capability for the SAME source under the SAME idempotency key: the
+// relay hashes the job id out of the request, so re-driving an unchanged plan
+// lands on the job that already holds the confirmed bytes instead of starting
+// the title again from zero.
+//
+// The map is in memory only. A MediaStorm restart therefore forgets what it was
+// answerable for, and the title's claim lapsing is what lets a later watch
+// resubmit - which resumes just the same, because the job id is derived, not
+// remembered.
+type autoSeedWatch struct {
+	plan autoSeedPlan
+	// redrivenFrom is the confirmed offset the current round of attempts is
+	// being spent on, attempts how many of them have been spent there, and
+	// landed whether one of them actually reached the relay. Bytes moving past
+	// redrivenFrom start a fresh round; nothing else does. See
+	// reviveAutoSeedJob.
+	redrivenFrom int64
+	attempts     int
+	landed       bool
+}
+
+// maxAutoSeedRedriveAttempts bounds how many times one confirmed offset may be
+// asked about when no submission has landed there yet. A sweep happens at most
+// once per autoSeedSweepInterval, so three attempts spans about three minutes -
+// long enough to outlast a relay restart or an update, short enough that a relay
+// refusing forever costs three round trips and then silence. A submission that
+// does land spends the offset outright: failing again at bytes a re-drive
+// already ran from is a loop with a known outcome.
+const maxAutoSeedRedriveAttempts = 3
+
+// watchAutoSeedJob makes an accepted job answerable, so a transfer the relay
+// loses can be resumed rather than abandoned.
+func (h *PearTubeHandler) watchAutoSeedJob(jobID string, plan autoSeedPlan) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return
+	}
+	h.autoSeedWatchMu.Lock()
+	defer h.autoSeedWatchMu.Unlock()
+	if h.autoSeedWatches == nil {
+		h.autoSeedWatches = make(map[string]*autoSeedWatch)
+	}
+	if existing := h.autoSeedWatches[jobID]; existing != nil {
+		// A resubmission of the same job takes the fresher plan but keeps the
+		// re-drive bookkeeping: it IS a revival, so forgetting how many this job
+		// has already had is how a stalled title starts costing round trips
+		// forever.
+		existing.plan = plan
+		return
+	}
+	if len(h.autoSeedWatches) >= peartube.DefaultPlaybackObservationCap {
+		return
+	}
+	h.autoSeedWatches[jobID] = &autoSeedWatch{plan: plan}
+}
+
+func (h *PearTubeHandler) forgetAutoSeedJob(jobID string) {
+	h.autoSeedWatchMu.Lock()
+	defer h.autoSeedWatchMu.Unlock()
+	delete(h.autoSeedWatches, jobID)
+}
+
+func (h *PearTubeHandler) forgetAllAutoSeedJobs() {
+	h.autoSeedWatchMu.Lock()
+	defer h.autoSeedWatchMu.Unlock()
+	h.autoSeedWatches = nil
+}
+
+// maybeSweepAutoSeedJobs runs the sweep off the caller's goroutine, at most once
+// per autoSeedSweepInterval and never when there is nothing to ask about. The
+// caller is a playback heartbeat, so the decision has to cost a mutex and a
+// clock read and nothing else.
+func (h *PearTubeHandler) maybeSweepAutoSeedJobs() {
+	now := time.Now()
+	h.autoSeedWatchMu.Lock()
+	if len(h.autoSeedWatches) == 0 || h.autoSeedSweeping ||
+		now.Sub(h.autoSeedSweptAt) < autoSeedSweepInterval {
+		h.autoSeedWatchMu.Unlock()
+		return
+	}
+	h.autoSeedSweeping = true
+	h.autoSeedSweptAt = now
+	h.autoSeedWatchMu.Unlock()
+	go func() {
+		defer func() {
+			h.autoSeedWatchMu.Lock()
+			h.autoSeedSweeping = false
+			h.autoSeedWatchMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), autoSeedTimeout)
+		defer cancel()
+		h.sweepAutoSeedJobs(ctx)
+	}()
+}
+
+// sweepAutoSeedJobs asks the relay how each job this process is answerable for
+// is doing, and re-drives the ones that ended in a way a fresh capability
+// answers.
+//
+// This is the half MediaStorm never had. A relay killed mid-transfer - by an
+// update, a crash, or restart=on-failure - marks the job failed and recoverable,
+// keeps every confirmed byte, and waits for a capability whose grant lifetime is
+// far shorter than the archive it was serving. Only this process can issue one.
+// Nothing asked, so those bytes sat there while the title's own claim blocked
+// any resubmission: three archives died that way in one day, at 528, 448 and 100
+// MiB of real transferred bytes.
+func (h *PearTubeHandler) sweepAutoSeedJobs(ctx context.Context) {
+	h.autoSeedWatchMu.Lock()
+	jobIDs := make([]string, 0, len(h.autoSeedWatches))
+	for jobID := range h.autoSeedWatches {
+		jobIDs = append(jobIDs, jobID)
+	}
+	h.autoSeedWatchMu.Unlock()
+	for _, jobID := range jobIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		h.reviveAutoSeedJob(ctx, jobID)
+	}
+}
+
+// reviveAutoSeedJob decides what one watched job deserves, and is where every
+// guard against a resubmit loop lives.
+func (h *PearTubeHandler) reviveAutoSeedJob(ctx context.Context, jobID string) {
+	h.autoSeedWatchMu.Lock()
+	watch := h.autoSeedWatches[jobID]
+	h.autoSeedWatchMu.Unlock()
+	if watch == nil {
+		return
+	}
+	job, err := watch.plan.relay.IngestJob(ctx, jobID)
+	if err != nil {
+		// A relay that cannot be asked is not a relay that lost the job. Nothing
+		// is submitted and nothing is forgotten; the next sweep asks again.
+		return
+	}
+	if normalizeAutoSeedJobState(job.State) != "failed" {
+		// A job still working is never resubmitted: its bytes are already
+		// moving, and a second submission would only race the first. A finished
+		// one has nothing left to answer for.
+		if isTerminalAutoSeedJobState(job.State) {
+			h.forgetAutoSeedJob(jobID)
+			h.sourceGrants.RevokeJob(jobID)
+		}
+		return
+	}
+	if !job.Recoverable {
+		// The relay is saying the staged bytes cannot become the title this job
+		// asked for - a length or identity disagreement, or consent withdrawn.
+		// No capability this process can issue changes that, and the claim stays
+		// held for the guard window exactly as a refused seed's does.
+		log.Printf("[peartube] autoseed %s: job %s failed unrecoverably (%s), not re-driving",
+			watch.plan.key, jobID, job.ErrorCode)
+		h.forgetAutoSeedJob(jobID)
+		h.sourceGrants.RevokeJob(jobID)
+		return
+	}
+	h.autoSeedWatchMu.Lock()
+	if h.autoSeedWatches[jobID] != watch {
+		h.autoSeedWatchMu.Unlock()
+		return
+	}
+	if watch.attempts > 0 && job.BytesReceived <= watch.redrivenFrom {
+		// No progress since the last round of attempts. A landed submission has
+		// already had its chance at these bytes, and an unlanded one only gets
+		// maxAutoSeedRedriveAttempts of them; either way the handle goes, so
+		// this job is never asked about again. Confirmed bytes moving forward
+		// means the last attempt did real work and the next one starts further
+		// along, so a feature-length title survives any number of
+		// interruptions - but progress, not the clock, is what licenses it.
+		if watch.landed || watch.attempts >= maxAutoSeedRedriveAttempts {
+			h.autoSeedWatchMu.Unlock()
+			log.Printf("[peartube] autoseed %s: job %s failed again at %d bytes (%s) after %d attempt(s), abandoning the resume",
+				watch.plan.key, jobID, job.BytesReceived, job.ErrorCode, watch.attempts)
+			h.forgetAutoSeedJob(jobID)
+			return
+		}
+	} else {
+		watch.attempts = 0
+		watch.landed = false
+	}
+	watch.redrivenFrom = job.BytesReceived
+	watch.attempts++
+	h.autoSeedWatchMu.Unlock()
+
+	log.Printf("[peartube] autoseed %s: re-driving job %s from %d/%d confirmed bytes (%s)",
+		watch.plan.key, jobID, job.BytesReceived, job.ExpectedBytes, job.ErrorCode)
+	revived, err := watch.plan.redrive(ctx)
+	if err != nil {
+		h.playbackMu.Lock()
+		h.recordAutoSeedErrorLocked("CONTRIBUTION_REDRIVE_FAILED")
+		h.playbackMu.Unlock()
+		log.Printf("[peartube] autoseed %s: re-drive of job %s refused: %v", watch.plan.key, jobID, err)
+		// The same distinction a first submission makes. A relay that was merely
+		// not ready has not answered the question, so the next sweep - a whole
+		// interval later, never a hot loop - asks again, until this offset's
+		// attempts are spent. The attempt itself is NOT given back: that is what
+		// turned a relay refusing forever into one resubmission per minute for
+		// the life of the process. A refusal the relay decided on stands, and
+		// the handle goes now.
+		if !autoSeedRefusalIsTransient(err) {
+			h.forgetAutoSeedJob(jobID)
+		}
+		return
+	}
+	h.autoSeedWatchMu.Lock()
+	if h.autoSeedWatches[jobID] == watch {
+		// A submission reached the relay for these bytes. Nothing but progress
+		// past them licenses another.
+		watch.landed = true
+	}
+	h.autoSeedWatchMu.Unlock()
+	if revived.JobID != jobID {
+		// The source no longer hashes to the job holding the bytes, so nothing
+		// was resumed - a genuinely different source under the same title. Watch
+		// what was actually accepted instead.
+		log.Printf("[peartube] autoseed %s: re-drive of job %s landed on %s, the staged bytes were not resumed",
+			watch.plan.key, jobID, revived.JobID)
+		h.forgetAutoSeedJob(jobID)
+		h.watchAutoSeedJob(revived.JobID, watch.plan)
+		return
+	}
+	log.Printf("[peartube] autoseed %s: job %s resumed from %d bytes (%s)",
+		watch.plan.key, jobID, job.BytesReceived, revived.Status)
 }
 
 // autoSeedPlan is an automatic seed that has claimed its title and is waiting to
@@ -1359,7 +1617,28 @@ func (p autoSeedPlan) submitContext(ctx context.Context) (*peartube.ArchiveJob, 
 		return nil, err
 	}
 	log.Printf("[peartube] autoseed %s: relay accepted job %s (%s)", p.key, job.JobID, job.Status)
+	// From here the relay owns the transfer, and this process owns the only thing
+	// that can revive it if the relay loses it: a fresh capability for the same
+	// source. Keep the handle.
+	p.handler.watchAutoSeedJob(job.JobID, p)
 	return job, nil
+}
+
+// redrive resubmits a job the relay accepted and then lost, resuming from the
+// bytes it confirmed instead of starting the title again.
+//
+// It deliberately skips the checks submitContext makes rather than calling it.
+// Identification already happened; the catalog check would be answered by the
+// very relay still holding this title's staged bytes; and the claim is the one
+// this plan already holds, so re-taking it would fail and abandon the revival.
+// What matters is that the request is unchanged, because the relay hashes the
+// job id out of it - an unchanged request lands on the job with the bytes.
+func (p autoSeedPlan) redrive(ctx context.Context) (*peartube.ArchiveJob, error) {
+	submit, err := p.handler.planQualifiedAutoSeed(ctx, p.relay, p.request)
+	if err != nil {
+		return nil, err
+	}
+	return submit(ctx)
 }
 
 // seedCoordinates are the TMDB coordinates a seed request publishes under.
