@@ -1770,8 +1770,9 @@ func normalizeAutoSeedStreamPath(value string) string {
 // the first range the relay asks for.
 //
 // The stream path is normalized first: see normalizeAutoSeedStreamPath.
-func parseDirectSourceDescriptor(streamPath string) (map[string]any, bool) {
-	clean := strings.TrimPrefix(strings.TrimSpace(streamPath), "/")
+func parseDirectSourceDescriptor(streamPath, resolved string) (map[string]any, bool) {
+	raw := strings.TrimSpace(streamPath)
+	clean := strings.TrimPrefix(raw, "/")
 	if strings.HasPrefix(clean, "debrid/torbox/") {
 		parts := strings.Split(clean, "/")
 		if len(parts) >= 5 {
@@ -1786,8 +1787,20 @@ func parseDirectSourceDescriptor(streamPath string) (map[string]any, bool) {
 			}
 		}
 	}
+	// For Usenet / stream cache files on disk (e.g. from internal Usenet engine or NZBDav):
+	if strings.HasPrefix(raw, "/webdav/") || strings.HasPrefix(raw, "webdav/") || strings.Contains(resolved, "cache/streams") || strings.Contains(resolved, "mediastorm-local") {
+		if resolved != "" && !strings.HasPrefix(resolved, "http://") && !strings.HasPrefix(resolved, "https://") {
+			if fi, err := os.Stat(resolved); err == nil && !fi.IsDir() && fi.Size() > 0 {
+				return map[string]any{
+					"provider": "local-file",
+					"filePath": resolved,
+				}, true
+			}
+		}
+	}
 	return nil, false
 }
+
 
 
 func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *peartube.Client, req SeedRequest) (func(context.Context) (*peartube.ArchiveJob, error), error) {
@@ -1804,7 +1817,7 @@ func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *pear
 		return nil, errAutoSeedSourceUnavailable
 	}
 
-	if descriptor, ok := parseDirectSourceDescriptor(streamPath); ok {
+	if descriptor, ok := parseDirectSourceDescriptor(req.StreamPath, resolved); ok {
 		coordinates := seedCoordinates(req)
 		if err := coordinates.Validate(); err != nil {
 			return nil, err

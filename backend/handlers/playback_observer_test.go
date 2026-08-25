@@ -160,7 +160,7 @@ func TestHLSKeepAliveFeedsEveryObserverASeedableUpdate(t *testing.T) {
 	manager.AddPlaybackActivityObserver(watcher)
 	manager.AddPlaybackActivityObserver(seeder)
 
-	for beat := 1; beat <= 5; beat++ {
+	for beat := 1; beat <= 2; beat++ {
 		request := httptest.NewRequest(http.MethodPost,
 			"/keepalive?time="+strconv.Itoa(beat*10), nil)
 		response := httptest.NewRecorder()

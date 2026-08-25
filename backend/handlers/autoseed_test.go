@@ -909,6 +909,42 @@ func TestAutoSeedStreamPathDropsTheWebDAVPrefix(t *testing.T) {
 	}
 }
 
+func TestAutoSeedUsenetStreamSubmitsDirectLocalFileDescriptor(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "1787508427603176000_The.Wild.Robot.2024.mkv")
+	if err := os.WriteFile(filePath, []byte(strings.Repeat("usenet-media-bytes", 64)), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	relay := &autoSeedRelay{}
+	resolver := &fakeStreamResolver{url: filePath}
+	handler := newAutoSeedHandler(t, relay, resolver)
+
+	update := moviePlayback()
+	update.SourcePath = "/webdav/1787508427603176000_The.Wild.Robot.2024.mkv"
+	update.MovieName = "The Wild Robot"
+	update.ItemID = "tmdb:movie:1184918"
+
+	plan, ok := handler.planAutoSeed(update)
+	if !ok {
+		t.Fatal("usenet stream was not seedable")
+	}
+	plan.submit()
+
+	if got := relay.ingestCount(); got != 1 {
+		t.Fatalf("ingest submissions = %d, want 1", got)
+	}
+	submission := relay.lastIngest()
+	descriptor, _ := submission["sourceDescriptor"].(map[string]any)
+	if descriptor["provider"] != "local-file" || descriptor["filePath"] != filePath {
+		t.Fatalf("submission direct descriptor = %v, want local-file %s", descriptor, filePath)
+	}
+	request, _ := submission["request"].(map[string]any)
+	expected, _ := request["expected"].(map[string]any)
+	if expected["byteLength"] != float64(len(strings.Repeat("usenet-media-bytes", 64))) {
+		t.Fatalf("expected byteLength = %v, want %d", expected["byteLength"], len(strings.Repeat("usenet-media-bytes", 64)))
+	}
+}
+
 // redriveRelay is a relay that also answers "how is that job doing?", which is
 // what a revival turns on and the seed-only harness above never served. It keeps
 // every submission in order, because a resume is only a resume if the second one
