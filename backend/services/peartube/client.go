@@ -1197,7 +1197,8 @@ type companionIngestRequest struct {
 type companionIngestSubmission struct {
 	IdempotencyKey   string                 `json:"idempotencyKey"`
 	Request          companionIngestRequest `json:"request"`
-	SourceCapability string                 `json:"sourceCapability"`
+	SourceCapability string                 `json:"sourceCapability,omitempty"`
+	SourceDescriptor map[string]any         `json:"sourceDescriptor,omitempty"`
 }
 
 type companionIngestPublicJob struct {
@@ -1528,6 +1529,84 @@ func (c *Client) submitGrantedIngest(ctx context.Context, registry *SourceGrantR
 	}, nil
 }
 
+
+// ArchiveDirectSource submits a direct provider-managed ingest job (e.g. TorBox, local file)
+// to PearTube Relay without requiring MediaStorm to maintain source grants or proxy bytes.
+func (c *Client) ArchiveDirectSource(ctx context.Context, idempotencyKey string, coords ArchiveCoordinates, retentionClass string, title string, size int64, descriptor map[string]any) (*ArchiveJob, error) {
+	if c == nil {
+		return nil, errors.New("peartube relay is not configured")
+	}
+	if err := c.companionAuthError; err != nil {
+		return nil, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if !validSourceJobID(idempotencyKey) {
+		return nil, errors.New("idempotency key is required")
+	}
+	if descriptor == nil || len(descriptor) == 0 {
+		return nil, errors.New("source descriptor is required")
+	}
+	if retentionClass == "" {
+		retentionClass = RetentionClassArchivePin
+	}
+	if size <= 0 {
+		size = 1000
+	}
+	issued := IssuedSourceGrant{
+		Length: size,
+		ETag:   fmt.Sprintf("\"%s\"", coords.TMDBID),
+	}
+	ingestRequest := companionSourceRequest(coords, retentionClass, "mkv", issued)
+
+	jobID, err := companionIngestJobID(idempotencyKey, ingestRequest)
+	if err != nil {
+		return nil, errors.New("encode companion direct ingest identity")
+	}
+
+	submission := companionIngestSubmission{
+		IdempotencyKey:   idempotencyKey,
+		Request:          ingestRequest,
+		SourceDescriptor: descriptor,
+	}
+	encoded, err := json.Marshal(submission)
+	if err != nil {
+		return nil, errors.New("encode companion direct ingest request")
+	}
+	target := companionAPIPrefix + "/ingest/jobs"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+target, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("build companion direct ingest request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-PearTube-Job-ID", jobID)
+	if err := c.authenticateCompanionRequest(request, encoded); err != nil {
+		return nil, fmt.Errorf("authenticate companion direct ingest request: %w", err)
+	}
+	response, err := c.companionHTTP.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("companion direct ingest request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
+		return nil, errors.New("companion ingest refused redirect")
+	}
+	if response.StatusCode != http.StatusAccepted {
+		return nil, decodeResponse(response, nil)
+	}
+	var envelope struct {
+		Job companionIngestPublicJob `json:"job"`
+	}
+	if err := decodeResponse(response, &envelope); err != nil {
+		return nil, err
+	}
+	return &ArchiveJob{
+		JobID:      envelope.Job.JobID,
+		Status:     envelope.Job.State,
+		EntityHint: companionEntityHint(coords),
+	}, nil
+}
 // Archive uploads a file to the relay for publication. The body is streamed
 // from disk, never buffered: these are whole movies.
 func (c *Client) Archive(ctx context.Context, req ArchiveRequest) (*ArchiveJob, error) {

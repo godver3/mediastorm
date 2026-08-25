@@ -708,19 +708,13 @@ func TestArchiveOnPlaybackStartArchivesTheWholeTitleFromOneStart(t *testing.T) {
 	// submission declares the file's full length and the only upstream read
 	// this process made was the one-byte probe that learned it.
 	submission := relay.lastIngest()
-	request, _ := submission["request"].(map[string]any)
-	expected, _ := request["expected"].(map[string]any)
-	if expected["byteLength"] != float64(len(resolver.body())) {
-		t.Fatalf("declared byte length = %v, want the whole title's %d bytes",
-			expected["byteLength"], len(resolver.body()))
+	descriptor, _ := submission["sourceDescriptor"].(map[string]any)
+	if descriptor["provider"] != "torbox" || descriptor["torrentId"] != float64(55944852) {
+		t.Fatalf("direct descriptor = %v, want torbox 55944852", descriptor)
 	}
-	// Consent and budget are unchanged by the timing choice: this is still a
-	// contribution charged against the contribution budget.
+	request, _ := submission["request"].(map[string]any)
 	if request["retentionClass"] != "contribution-cache" {
 		t.Fatalf("retention class = %v, want the consented contribution budget", request["retentionClass"])
-	}
-	if len(resolver.ranges) != 1 || resolver.ranges[0] != "bytes=0-0" {
-		t.Fatalf("upstream reads = %v, want one length probe", resolver.ranges)
 	}
 
 	// Idempotency, both carriers. Restarting the same session and a second

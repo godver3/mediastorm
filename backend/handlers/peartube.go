@@ -1770,6 +1770,26 @@ func normalizeAutoSeedStreamPath(value string) string {
 // the first range the relay asks for.
 //
 // The stream path is normalized first: see normalizeAutoSeedStreamPath.
+func parseDirectSourceDescriptor(streamPath string) (map[string]any, bool) {
+	clean := strings.TrimPrefix(strings.TrimSpace(streamPath), "/")
+	if strings.HasPrefix(clean, "debrid/torbox/") {
+		parts := strings.Split(clean, "/")
+		if len(parts) >= 5 {
+			torrentID, errT := strconv.Atoi(parts[2])
+			fileID, errF := strconv.Atoi(parts[4])
+			if errT == nil && errF == nil {
+				return map[string]any{
+					"provider":  "torbox",
+					"torrentId": torrentID,
+					"fileId":    fileID,
+				}, true
+			}
+		}
+	}
+	return nil, false
+}
+
+
 func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *peartube.Client, req SeedRequest) (func(context.Context) (*peartube.ArchiveJob, error), error) {
 	streamPath := normalizeAutoSeedStreamPath(req.StreamPath)
 	if h.streams == nil || streamPath == "" {
@@ -1783,6 +1803,50 @@ func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *pear
 	if resolved == "" {
 		return nil, errAutoSeedSourceUnavailable
 	}
+
+	if descriptor, ok := parseDirectSourceDescriptor(streamPath); ok {
+		coordinates := seedCoordinates(req)
+		if err := coordinates.Validate(); err != nil {
+			return nil, err
+		}
+		var size int64 = 0
+		if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {
+			headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, resolved, nil)
+			if err == nil {
+				if resp, err := http.DefaultClient.Do(headReq); err == nil {
+					if resp.ContentLength > 0 {
+						size = resp.ContentLength
+					}
+					resp.Body.Close()
+				}
+			}
+			if size <= 0 {
+				if reader, ok := h.streams.(peartube.RemoteRangeReader); ok {
+					if total, err := peartube.ProbeRemoteSourceLength(ctx, reader, streamPath); err == nil && total > 0 {
+						size = total
+					}
+				}
+			}
+		}
+		if size <= 0 && resolved != "" && !strings.HasPrefix(resolved, "http") {
+			if fi, err := os.Stat(resolved); err == nil && fi.Size() > 0 {
+				size = fi.Size()
+			}
+		}
+		idempotencyKey := seedIdempotencyKey(coordinates, "stream:"+streamPath)
+		log.Printf("[peartube] seeding %s tmdb=%s title=%q via direct %s source descriptor (size=%d)",
+			coordinates.ContentKind, coordinates.TMDBID, coordinates.TMDBTitle, descriptor["provider"], size)
+		return func(ctx context.Context) (*peartube.ArchiveJob, error) {
+			h.retentionMu.RLock()
+			currentPolicy := h.resolved
+			h.retentionMu.RUnlock()
+			if !currentPolicy.ArchiveEnabled && !currentPolicy.ContributeWatchedMedia {
+				return nil, errors.New("retention permission withdrawn")
+			}
+			return relay.ArchiveDirectSource(ctx, idempotencyKey, coordinates, peartube.RetentionClassContributionCache, coordinates.TMDBTitle, size, descriptor)
+		}, nil
+	}
+
 	req.StreamPath = ""
 	req.retentionClass = peartube.RetentionClassContributionCache
 	if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {

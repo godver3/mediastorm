@@ -87,7 +87,7 @@ func (r *SourceGrantRegistry) PrepareRemote(ctx context.Context, source RemoteSo
 	if err != nil {
 		return nil, err
 	}
-	length, err := probeRemoteSourceLength(ctx, source.Reader, streamPath)
+	length, err := ProbeRemoteSourceLength(ctx, source.Reader, streamPath)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +104,9 @@ func (r *SourceGrantRegistry) PrepareRemote(ctx context.Context, source RemoteSo
 	}, nil
 }
 
-// probeRemoteSourceLength asks the streaming layer for one byte and reads the
+// ProbeRemoteSourceLength asks the streaming layer for one byte and reads the
 // total out of the Content-Range it answers with.
-func probeRemoteSourceLength(ctx context.Context, reader RemoteRangeReader, streamPath string) (int64, error) {
+func ProbeRemoteSourceLength(ctx context.Context, reader RemoteRangeReader, streamPath string) (int64, error) {
 	response, err := reader.Stream(ctx, streaming.Request{
 		Path:        streamPath,
 		Method:      http.MethodGet,

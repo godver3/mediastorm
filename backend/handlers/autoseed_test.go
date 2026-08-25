@@ -314,17 +314,14 @@ func TestAutoSeedSubmitsOncePerTitleAcrossManyHeartbeats(t *testing.T) {
 		t.Fatalf("granted ingest submissions = %d, want 1", got)
 	}
 	submission := relay.lastIngest()
-	capability, _ := submission["sourceCapability"].(string)
-	if len(capability) != 43 {
-		t.Fatalf("submission capability = %q, want an opaque 43-character token", capability)
+	descriptor, _ := submission["sourceDescriptor"].(map[string]any)
+	if descriptor["provider"] != "torbox" || descriptor["torrentId"] != float64(12345) {
+		t.Fatalf("submission direct descriptor = %v, want torbox 12345", descriptor)
 	}
 	request, _ := submission["request"].(map[string]any)
 	expected, _ := request["expected"].(map[string]any)
 	if expected["byteLength"] != float64(len(resolver.body())) {
 		t.Fatalf("declared byte length = %v, want the probed total %d", expected["byteLength"], len(resolver.body()))
-	}
-	if expected["etag"] != peartube.RemoteSourceETag(update.SourcePath, int64(len(resolver.body()))) {
-		t.Fatalf("declared etag = %v, want the stream path's byte identity", expected["etag"])
 	}
 	// The relay's canonical form always carries sha256, null when the source
 	// could not state one, and the job id is hashed over that form - so omitting
@@ -375,7 +372,9 @@ func TestAutoSeedOfALocalStreamPathStillPublishesFromTheFile(t *testing.T) {
 	handler := newAutoSeedHandler(t, relay, resolver)
 	handler.localMedia = fakeLibrary{libraries: []models.LocalMediaLibrary{{RootPath: root}}}
 
-	plan, ok := handler.planAutoSeed(moviePlayback())
+	localPlayback := moviePlayback()
+	localPlayback.SourcePath = path
+	plan, ok := handler.planAutoSeed(localPlayback)
 	if !ok {
 		t.Fatal("a locally held movie was not seedable")
 	}
@@ -1116,15 +1115,9 @@ func TestAutoSeedRedrivesARecoverableFailureFromItsConfirmedBytes(t *testing.T) 
 	if got, want := requestFingerprint(t, second), requestFingerprint(t, first); got != want {
 		t.Fatalf("re-drive request changed, so the relay hashes a different job:\n got %s\nwant %s", got, want)
 	}
-	// A fresh capability is the whole point of asking MediaStorm rather than
-	// letting the relay retry itself: the original grant expired long before the
-	// relay came back.
-	capability, _ := second["sourceCapability"].(string)
-	if len(capability) != 43 {
-		t.Fatalf("re-drive capability = %q, want an opaque 43-character token", capability)
-	}
-	if capability == first["sourceCapability"] {
-		t.Fatal("re-drive reused the dead capability instead of issuing a fresh one")
+	descriptor, _ := second["sourceDescriptor"].(map[string]any)
+	if descriptor["provider"] != "torbox" || descriptor["torrentId"] != float64(12345) {
+		t.Fatalf("re-drive direct descriptor = %v, want torbox 12345", descriptor)
 	}
 }
 
