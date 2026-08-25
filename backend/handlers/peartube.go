@@ -127,6 +127,17 @@ type PearTubeHandler struct {
 	autoSeedWatches  map[string]*autoSeedWatch
 	autoSeedSweptAt  time.Time
 	autoSeedSweeping bool
+
+	// Whether this process is being told about playback at all. Guarded by
+	// playbackMu. The designed archive trigger is a playback heartbeat, and the
+	// endpoint that delivers one logs nothing, so a client that never reports
+	// progress is indistinguishable from archiving being switched off — a whole
+	// day of viewing produced 4831 log lines and not one of them was about a
+	// playback. Reported at most once a minute, so a per-second heartbeat costs
+	// one line.
+	playbackSeen       int
+	playbackDropped    int
+	playbackReportedAt time.Time
 }
 
 // The handler is registered on every playback signal this backend produces, and
@@ -635,6 +646,31 @@ type autoSeedAcquisition struct {
 	createdAt time.Time
 }
 
+// recordPlaybackSignal proves whether this process is being told about playback.
+// The archive trigger is a heartbeat, and nothing on that path logged, so a
+// client that reports no progress looked exactly like archiving being off.
+// Rate-limited to one line a minute, because a heartbeat arrives every few
+// seconds per stream and the question this answers is only ever binary.
+func (h *PearTubeHandler) recordPlaybackSignal(dropped bool) {
+	h.playbackMu.Lock()
+	defer h.playbackMu.Unlock()
+	h.playbackSeen++
+	if dropped {
+		h.playbackDropped++
+	}
+	// Deliberately the wall clock, not the injectable playbackNow: this is a log
+	// rate-limiter, and a diagnostic that consumes a tick from a test's injected
+	// clock sequence changes the behaviour it was added to observe. It did
+	// exactly that once — a fixture handing out a fixed list of times ran off
+	// the end of it.
+	now := time.Now()
+	if !h.playbackReportedAt.IsZero() && now.Sub(h.playbackReportedAt) < time.Minute {
+		return
+	}
+	h.playbackReportedAt = now
+	log.Printf("[peartube] playback signals observed: %d (%d carried no source or session)", h.playbackSeen, h.playbackDropped)
+}
+
 func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackProgressUpdate) peartube.PlaybackState {
 	if h == nil {
 		return peartube.PlaybackUnqualified
@@ -649,6 +685,7 @@ func (h *PearTubeHandler) observePlayback(userID string, update models.PlaybackP
 	if fallbackPlaybackID && sourceID != "" && strings.TrimSpace(userID) != "" {
 		playbackID = autoSeedPlaybackID(userID, update, sourceID)
 	}
+	h.recordPlaybackSignal(sourceID == "" || playbackID == "")
 	if sourceID == "" || playbackID == "" {
 		return peartube.PlaybackUnqualified
 	}
