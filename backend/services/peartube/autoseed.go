@@ -204,6 +204,28 @@ func (t *PlaybackObserver) qualifyLocked(
 	return PlaybackObservation{State: entry.state, Accumulated: entry.accumulated, FirstQualified: true}
 }
 
+// ForgetQualifiedSource drops a source's qualification so the next heartbeat can
+// qualify it again.
+//
+// The per-source ledger and the swarm-key claim are two independent guards, and
+// releasing only the claim leaves the stricter one in force. Observed live: Thor
+// Ragnarok qualified on its very first heartbeat, a moment before the debrid link
+// it needed had been unrestricted, so the attempt failed for a reason that was
+// gone seconds later. The claim was shortened to two minutes, correctly — and
+// nothing retried, because qualification is once per source per six hours and no
+// later heartbeat could reach the attempt at all.
+//
+// So a transient failure has to release both. The claim window is what stops
+// this becoming a retry every heartbeat.
+func (t *PlaybackObserver) ForgetQualifiedSource(sourceID string) {
+	if t == nil || sourceID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.qualifiedSources, sourceID)
+}
+
 func (t *PlaybackObserver) meaningfulThreshold(duration time.Duration) time.Duration {
 	threshold := t.config.MeaningfulWatchDuration
 	if duration > 0 {

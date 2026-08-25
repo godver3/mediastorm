@@ -1494,12 +1494,31 @@ func (p autoSeedPlan) releaseClaims() {
 // shortenClaims keeps this plan's claims but makes them lapse soon, so a relay
 // that was merely not ready is retried by a later watch instead of being locked
 // out for the whole guard window.
+//
+// It also releases the source's qualification, because that is the stricter of
+// the two guards and shortening the claim alone achieves nothing: qualification
+// is once per source per six hours, so no later heartbeat would reach the
+// attempt the shortened claim was making room for. Thor Ragnarok proved it —
+// claim shortened to two minutes, and five minutes later nothing had retried.
 func (p autoSeedPlan) shortenClaims(now time.Time) {
 	until := now.Add(autoSeedRetryWindow)
 	p.handler.shortenAutoSeed(p.key, until)
 	if p.pendingKey != "" && p.pendingKey != p.key {
 		p.handler.shortenAutoSeed(p.pendingKey, until)
 	}
+	p.handler.forgetQualifiedSource(autoSeedSourceID(p.update.SourcePath))
+}
+
+// forgetQualifiedSource lets the next heartbeat qualify this source again. Guards
+// the observer's own nil case, because a handler with no relay never built one.
+func (h *PearTubeHandler) forgetQualifiedSource(sourceID string) {
+	if h == nil || sourceID == "" {
+		return
+	}
+	h.playbackMu.Lock()
+	observer := h.playbackObserver
+	h.playbackMu.Unlock()
+	observer.ForgetQualifiedSource(sourceID)
 }
 
 // identified supplies the TMDB id the swarm keys on when the player named the

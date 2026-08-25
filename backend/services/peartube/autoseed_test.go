@@ -260,3 +260,67 @@ func TestPlaybackObservationIgnoresNoiseAndCancelsOnlyOwningPlayback(t *testing.
 		t.Fatalf("unqualified abandonment state = %+v", got)
 	}
 }
+
+// A source qualifies once per TTL, which is what stops one title becoming one
+// submission per heartbeat. But an attempt that fails for a reason gone seconds
+// later — a debrid link not yet unrestricted, a relay still starting — must be
+// reachable again, and shortening the swarm-key claim alone cannot achieve that:
+// no later heartbeat qualifies, so nothing ever reaches the attempt. Observed
+// live: Thor Ragnarok qualified on its first heartbeat a moment before its link
+// was ready, the claim was shortened to two minutes, and five minutes later
+// nothing had retried.
+func TestForgettingAQualifiedSourceLetsALaterHeartbeatQualifyItAgain(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tracker := NewPlaybackObserver(PlaybackObserverConfig{
+		MeaningfulWatchDuration: 10 * time.Second,
+		MeaningfulWatchFraction: 0.05,
+		MaxObservationGap:       15 * time.Second,
+		EntryTTL:                6 * time.Hour,
+		Capacity:                8,
+	})
+	observe := func(playbackID string, position, advance time.Duration) PlaybackObservation {
+		now = now.Add(advance)
+		return tracker.Observe(PlaybackEvent{
+			PlaybackID: playbackID,
+			SourceID:   "source-digest",
+			Position:   position,
+			Duration:   2 * time.Hour,
+			ObservedAt: now,
+		})
+	}
+
+	observe("playback-1", 0, 0)
+	first := observe("playback-1", 10*time.Second, 10*time.Second)
+	if !first.FirstQualified {
+		t.Fatalf("continuous watching did not qualify: %+v", first)
+	}
+
+	// The second attempt is the one the six-hour ledger refuses.
+	observe("playback-2", 0, time.Second)
+	blocked := observe("playback-2", 10*time.Second, 10*time.Second)
+	if blocked.FirstQualified {
+		t.Fatal("a source qualified twice inside its TTL, so one title can submit per heartbeat")
+	}
+
+	tracker.ForgetQualifiedSource("source-digest")
+
+	observe("playback-3", 0, time.Second)
+	revived := observe("playback-3", 10*time.Second, 10*time.Second)
+	if !revived.FirstQualified {
+		t.Fatalf("a forgotten source did not qualify again, so a transient failure is still terminal for six hours: %+v", revived)
+	}
+
+	// Forgetting one source must not open the floodgates for it either: the
+	// ledger is back in force immediately afterwards.
+	observe("playback-4", 0, time.Second)
+	if again := observe("playback-4", 10*time.Second, 10*time.Second); again.FirstQualified {
+		t.Fatal("qualification stayed open after being used, so the ledger no longer bounds submissions")
+	}
+
+	// An empty source id is a no-op rather than a panic or a wildcard.
+	tracker.ForgetQualifiedSource("")
+	observe("playback-5", 0, time.Second)
+	if got := observe("playback-5", 10*time.Second, 10*time.Second); got.FirstQualified {
+		t.Fatal("forgetting an empty source id cleared a real one")
+	}
+}
