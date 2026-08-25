@@ -464,6 +464,17 @@ func CandidateMatchesEpisode(candidateLabel string, target EpisodeCode) bool {
 	return false
 }
 
+// CandidateExplicitlyMismatchesEpisode returns true if candidateLabel carries an explicit
+// SXXEXX code that does not match the target episode. Season packs and releases without
+// explicit episode numbers return false so they remain eligible for multi-file resolution.
+func CandidateExplicitlyMismatchesEpisode(candidateLabel string, target EpisodeCode) bool {
+	season, episode, ok := parseEpisodeFromString(candidateLabel)
+	if ok && (season != target.Season || episode != target.Episode) {
+		return true
+	}
+	return false
+}
+
 func parseEpisodeFromString(value string) (int, int, bool) {
 	if strings.TrimSpace(value) == "" {
 		return 0, 0, false
