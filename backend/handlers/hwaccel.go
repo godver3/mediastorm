@@ -117,7 +117,7 @@ func (m *HLSManager) hwAccelCaps() HWAccelCaps {
 // markHWAccelFailed moves subsequent sessions to software encoding after a
 // real media graph fails on the selected hardware path. Auto detection is
 // retried later in case the failure was a transient driver/session-limit issue.
-func (m *HLSManager) markHWAccelFailed(kind HWAccelKind) {
+func (m *HLSManager) markHWAccelFailed(kind HWAccelKind, retainToneMapper bool) {
 	if kind == HWNone {
 		return
 	}
@@ -128,15 +128,19 @@ func (m *HLSManager) markHWAccelFailed(kind HWAccelKind) {
 			kind, m.hwAccel.Encode, m.hwAccelReady)
 		return
 	}
-	log.Printf("[hwaccel] quarantining failed encoder=%s for %s; subsequent web transcodes will use software encoding",
-		kind, hwAccelFailureRetryDelay)
-	m.hwAccel = detectHWAccel(m.ffmpegPath, string(HWNone))
+	if retainToneMapper {
+		log.Printf("[hwaccel] quarantining failed encoder=%s for %s; retaining tone mapper=%s",
+			kind, hwAccelFailureRetryDelay, effectiveTonemapName(m.hwAccel))
+		m.hwAccel.Encode = HWNone
+		m.hwAccel.EncodeDevice = ""
+	} else {
+		log.Printf("[hwaccel] quarantining failed encoder=%s for %s; using software fallback",
+			kind, hwAccelFailureRetryDelay)
+		m.hwAccel = detectHWAccel(m.ffmpegPath, string(HWNone))
+	}
 	m.hwAccelPref = currentHWAccelPreference(m.configManager)
 	m.hwAccelReady = true
 	m.hwAccelRetryAfter = time.Now().Add(hwAccelFailureRetryDelay)
-	log.Printf("[hwaccel] software fallback active: configuredPreference=%s encoder=%s tonemap=%s retryAfter=%s",
-		m.hwAccelPref, effectiveEncoderName(m.hwAccel), effectiveTonemapName(m.hwAccel),
-		formatHWAccelRetryTime(m.hwAccelRetryAfter))
 }
 
 func currentHWAccelPreference(provider ConfigProvider) string {
@@ -188,6 +192,10 @@ func effectiveTonemapName(caps HWAccelCaps) string {
 		return "none"
 	}
 	return caps.Tonemap
+}
+
+func supportsDolbyVisionToneMap(caps HWAccelCaps, profile string) bool {
+	return !IsDVProfile5(profile) || caps.Tonemap == "libplacebo"
 }
 
 func formatHWAccelRetryTime(retryAfter time.Time) string {
@@ -331,7 +339,7 @@ func libplaceboUsable(ffmpegPath string) bool {
 	ok, output, err := runFilterProbeWithOutput(ffmpegPath,
 		[]string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"},
 		"color=c=black:s=128x128:d=0.1",
-		"libplacebo=format=yuv420p",
+		"libplacebo=format=yuv420p:apply_dolbyvision=true",
 		"verbose")
 	if !ok {
 		log.Printf("[hwaccel] tone mapper candidate rejected: kind=libplacebo reason=probe failed error=%v output=%q",

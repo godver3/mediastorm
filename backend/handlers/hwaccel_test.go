@@ -77,6 +77,28 @@ func TestBuildVideoEncodePlanLibplaceboTonemap(t *testing.T) {
 	}
 }
 
+func TestSupportsDolbyVisionToneMap(t *testing.T) {
+	tests := []struct {
+		name    string
+		caps    HWAccelCaps
+		profile string
+		want    bool
+	}{
+		{name: "profile 5 with libplacebo", caps: HWAccelCaps{Tonemap: "libplacebo"}, profile: "dvhe.05.06", want: true},
+		{name: "profile 5 with zscale", caps: HWAccelCaps{Tonemap: "zscale"}, profile: "dvhe.05.06", want: false},
+		{name: "profile 5 with OpenCL", caps: HWAccelCaps{Tonemap: "opencl"}, profile: "dvhe.05.09", want: false},
+		{name: "profile 8 with zscale fallback", caps: HWAccelCaps{Tonemap: "zscale"}, profile: "dvhe.08.06", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := supportsDolbyVisionToneMap(tt.caps, tt.profile); got != tt.want {
+				t.Fatalf("supportsDolbyVisionToneMap(%q) = %v, want %v", tt.profile, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildVideoEncodePlanOpenCLTonemap(t *testing.T) {
 	plan := buildVideoEncodePlan(HWAccelCaps{Encode: HWNVENC, Tonemap: "opencl"}, true)
 	if !strings.Contains(plan.Filter, "tonemap_opencl") {
@@ -279,7 +301,7 @@ func TestHWAccelCacheRefreshesWhenPreferenceChanges(t *testing.T) {
 	}
 }
 
-func TestMarkHWAccelFailedQuarantinesHardware(t *testing.T) {
+func TestMarkHWAccelFailedPreservesProfile5ToneMapper(t *testing.T) {
 	provider := &mutableHWAccelConfigProvider{settings: config.DefaultSettings()}
 	provider.settings.Transmux.HardwareAcceleration = "auto"
 	manager := NewHLSManager(t.TempDir(), "", "", nil)
@@ -288,13 +310,39 @@ func TestMarkHWAccelFailedQuarantinesHardware(t *testing.T) {
 	manager.hwAccelPref = "auto"
 	manager.hwAccelReady = true
 
-	manager.markHWAccelFailed(HWNVENC)
+	manager.markHWAccelFailed(HWNVENC, true)
 	status := manager.HardwareAccelerationStatus()
 	if status.EffectiveEncoder != "libx264" || status.HardwareEncode {
 		t.Fatalf("status after failure = %+v, want software fallback", status)
 	}
+	if status.ToneMapper != "libplacebo" {
+		t.Fatalf("hardware encoder failure discarded tone mapper: %+v", status)
+	}
 	if status.RetryAfter == "" {
 		t.Fatal("expected failed hardware path to have a retry time")
+	}
+	plan := buildVideoEncodePlan(manager.hwAccel, true)
+	if plan.HardwareEncode || !strings.Contains(plan.Filter, "libplacebo") {
+		t.Fatalf("fallback plan = %+v, want libx264 with libplacebo", plan)
+	}
+	if strings.Contains(joinArgs(plan.GlobalArgs), "-hwaccel videotoolbox") {
+		t.Fatalf("fallback must disable VideoToolbox decode too: %v", plan.GlobalArgs)
+	}
+}
+
+func TestMarkHWAccelFailedResetsToneMapperForOtherSources(t *testing.T) {
+	provider := &mutableHWAccelConfigProvider{settings: config.DefaultSettings()}
+	provider.settings.Transmux.HardwareAcceleration = "auto"
+	manager := NewHLSManager(t.TempDir(), "", "", nil)
+	manager.SetConfigManager(provider)
+	manager.hwAccel = HWAccelCaps{Encode: HWNVENC, Tonemap: "libplacebo"}
+	manager.hwAccelPref = "auto"
+	manager.hwAccelReady = true
+
+	manager.markHWAccelFailed(HWNVENC, false)
+	status := manager.HardwareAccelerationStatus()
+	if status.EffectiveEncoder != "libx264" || status.HardwareEncode || status.ToneMapper != "" {
+		t.Fatalf("status after ordinary failure = %+v, want original software fallback", status)
 	}
 }
 

@@ -4319,6 +4319,13 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		} else if errors.Is(err, errExternalStreamPlaceholder) {
 			h.invalidatePrequeuesForFailedPath(path)
 			http.Error(w, "external stream expired — please re-resolve", http.StatusGone)
+		} else if errors.Is(err, errDolbyVisionToneMapUnavailable) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "DOLBY_VISION_TONEMAP_UNAVAILABLE",
+				"message": err.Error(),
+			})
 		} else {
 			http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
 		}

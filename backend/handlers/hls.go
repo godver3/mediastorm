@@ -62,6 +62,7 @@ var hlsRedirectHTTPClient = &http.Client{
 }
 
 var errExternalStreamPlaceholder = errors.New("external stream resolved to unavailable-content placeholder")
+var errDolbyVisionToneMapUnavailable = errors.New("Dolby Vision Profile 5 tone mapping unavailable")
 
 func isHTTPDirectURL(raw string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
@@ -1904,6 +1905,15 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 			duration = pd.Duration
 			log.Printf("[hls] unified probe for session %s: duration=%.2fs startTime=%.3fs colorTransfer=%q audioStreams=%d",
 				sessionID, duration, pd.StartTime, pd.ColorTransfer, len(pd.AudioStreams))
+			if hasDV != pd.HasDolbyVision || dvProfile != pd.DolbyVisionProfile || hasHDR != pd.HasHDR10 {
+				log.Printf(
+					"[hls] session %s: replacing caller HDR hints DV=%v profile=%q HDR10=%v with probe DV=%v profile=%q HDR10=%v",
+					sessionID, hasDV, dvProfile, hasHDR, pd.HasDolbyVision, pd.DolbyVisionProfile, pd.HasHDR10,
+				)
+			}
+			hasDV = pd.HasDolbyVision
+			dvProfile = pd.DolbyVisionProfile
+			hasHDR = pd.HasHDR10
 
 			// Check for incorrect color tagging on DV Profile 8 content
 			// Some re-encodes (e.g., YTS) have DV RPU data but wrong color metadata (bt709 instead of smpte2084)
@@ -1964,6 +1974,18 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		normalizedPlaybackTarget = "web"
 	}
 	stableCastMode := castMode && !directCastMode
+	if stableCastMode && hasDV {
+		caps := m.hwAccelCaps()
+		if !supportsDolbyVisionToneMap(caps, dvProfile) {
+			cancel()
+			_ = os.RemoveAll(outputDir)
+			return nil, fmt.Errorf(
+				"%w: %s is available; Cast requires libplacebo, so trying another release",
+				errDolbyVisionToneMapUnavailable,
+				effectiveTonemapName(caps),
+			)
+		}
+	}
 	subtitleStreamsForSeek := []subtitleStreamInfo(nil)
 	if probeData != nil {
 		subtitleStreamsForSeek = probeData.SubtitleStreams
@@ -4596,7 +4618,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	) {
 		log.Printf("[hls] session %s: hardware encoder %s failed before producing a segment; retrying with software encoding",
 			session.ID, webEncodePlan.Kind)
-		m.markHWAccelFailed(webEncodePlan.Kind)
+		m.markHWAccelFailed(webEncodePlan.Kind, session.HasDV && IsDVProfile5(session.DVProfile))
 		files, _ := filepath.Glob(filepath.Join(session.OutputDir, "*"))
 		for _, file := range files {
 			_ = os.Remove(file)
