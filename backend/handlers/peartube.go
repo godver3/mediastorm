@@ -1856,6 +1856,9 @@ func (h *PearTubeHandler) planQualifiedAutoSeed(ctx context.Context, relay *pear
 			if !currentPolicy.ArchiveEnabled && !currentPolicy.ContributeWatchedMedia {
 				return nil, errors.New("retention permission withdrawn")
 			}
+			if err := h.reconcileRelayPolicy(ctx, relay); err != nil {
+				return nil, err
+			}
 			return relay.ArchiveDirectSource(ctx, idempotencyKey, coordinates, peartube.RetentionClassContributionCache, coordinates.TMDBTitle, size, descriptor)
 		}, nil
 	}
