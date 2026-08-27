@@ -9,6 +9,7 @@ import (
 	"novastream/internal/mediaresolve"
 	metapb "novastream/internal/nzb/metadata/proto"
 	"novastream/models"
+	"novastream/services/debrid"
 )
 
 type validationMetadataService struct {
@@ -278,6 +279,8 @@ func (*mixedCandidatePreparer) Resolve(context.Context, models.NZBResult) (*mode
 func (*mixedCandidatePreparer) ResolveBatch(context.Context, models.NZBResult, []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error) {
 	return nil, nil
 }
+
+func (*mixedCandidatePreparer) SetFullProber(debrid.PreResolvedFullProber) {}
 
 func (p *mixedCandidatePreparer) PrepareTorrentCandidates(_ context.Context, candidates []models.NZBResult) []models.NZBResult {
 	p.received = append([]models.NZBResult(nil), candidates...)

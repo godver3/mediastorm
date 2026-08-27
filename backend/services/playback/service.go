@@ -53,6 +53,7 @@ type debridPlaybackService interface {
 	Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error)
 	ResolveBatch(ctx context.Context, candidate models.NZBResult, episodes []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error)
 	PrepareTorrentCandidates(ctx context.Context, candidates []models.NZBResult) []models.NZBResult
+	SetFullProber(prober debrid.PreResolvedFullProber)
 }
 
 var _ debridPlaybackService = (*debrid.PlaybackService)(nil)
