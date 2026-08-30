@@ -48,9 +48,9 @@ const (
 	// CompanionClientEnv and CompanionSharedSecretEnv configure authenticated
 	// companion v2 control requests. Credentials are headers only.
 	CompanionClientEnv       = "PEARTUBE_COMPANION_CLIENT"
+	CompanionPublisherIDEnv  = "PEARTUBE_COMPANION_PUBLISHER_ID"
 	CompanionSharedSecretEnv = "PEARTUBE_COMPANION_SHARED_SECRET"
 	DefaultCompanionClient   = "mediastorm"
-	// DefaultRelayURL is where `peartube relay` listens out of the box.
 	DefaultRelayURL = "http://127.0.0.1:8174"
 
 	apiPrefix          = "/api/v1"
@@ -171,7 +171,7 @@ func New(rawBaseURL string) (*Client, error) {
 		return nil, errors.New("relay URL must not include credentials, query parameters, or a fragment")
 	}
 	base := strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/")
-	clientID, secret, authErr := companionCredentials(os.Getenv)
+	clientID, publisherID, secret, authErr := companionCredentials(os.Getenv)
 	return &Client{
 		baseURL: base,
 		http:    &http.Client{Timeout: requestTimeout},
@@ -181,31 +181,40 @@ func New(rawBaseURL string) (*Client, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-		uploads:            &http.Client{},
-		companionClient:    clientID,
-		companionSecret:    secret,
-		companionAuthError: authErr,
+		uploads:              &http.Client{},
+		companionClient:      clientID,
+		companionPublisherID: publisherID,
+		companionSecret:      secret,
+		companionAuthError:   authErr,
 	}, nil
 }
 
-func companionCredentials(getenv func(string) string) (string, [32]byte, error) {
+func companionCredentials(getenv func(string) string) (string, string, [32]byte, error) {
 	var key [32]byte
 	clientID := getenv(CompanionClientEnv)
 	if clientID == "" {
 		clientID = DefaultCompanionClient
 	}
 	if clientID != strings.TrimSpace(clientID) || len(clientID) > 128 || !validHeaderText(clientID) {
-		return "", key, fmt.Errorf("%s must be a non-empty header-safe value of at most 128 bytes", CompanionClientEnv)
+		return "", "", key, fmt.Errorf("%s must be a non-empty header-safe value of at most 128 bytes", CompanionClientEnv)
+	}
+
+	publisherID := getenv(CompanionPublisherIDEnv)
+	if publisherID == "" {
+		publisherID = clientID
+	}
+	if publisherID != strings.TrimSpace(publisherID) || len(publisherID) > 128 || !validHeaderText(publisherID) {
+		return clientID, "", key, fmt.Errorf("%s must be a non-empty header-safe value of at most 128 bytes", CompanionPublisherIDEnv)
 	}
 
 	secret := getenv(CompanionSharedSecretEnv)
 	if len(secret) != 64 || secret != strings.ToLower(secret) {
-		return clientID, key, fmt.Errorf("%s must be 64 lowercase hexadecimal characters", CompanionSharedSecretEnv)
+		return clientID, publisherID, key, fmt.Errorf("%s must be 64 lowercase hexadecimal characters", CompanionSharedSecretEnv)
 	}
 	if _, err := hex.Decode(key[:], []byte(secret)); err != nil {
-		return clientID, [32]byte{}, fmt.Errorf("%s must be 64 lowercase hexadecimal characters", CompanionSharedSecretEnv)
+		return clientID, publisherID, [32]byte{}, fmt.Errorf("%s must be 64 lowercase hexadecimal characters", CompanionSharedSecretEnv)
 	}
-	return clientID, key, nil
+	return clientID, publisherID, key, nil
 }
 
 func validHeaderText(value string) bool {
@@ -227,10 +236,10 @@ type Client struct {
 	companionHTTP *http.Client
 	uploads       *http.Client
 
-	companionClient    string
-	companionSecret    [32]byte
-	companionAuthError error
-
+	companionClient      string
+	companionPublisherID string
+	companionSecret      [32]byte
+	companionAuthError   error
 	// The v1 catalog state remains for archive/probe callers only.
 	mu          sync.Mutex
 	cached      []CatalogEntity
@@ -245,6 +254,14 @@ func (c *Client) BaseURL() string {
 		return ""
 	}
 	return c.baseURL
+}
+
+// PublisherID returns the companion publisher identifier configured for this client.
+func (c *Client) PublisherID() string {
+	if c == nil {
+		return ""
+	}
+	return c.companionPublisherID
 }
 
 // CompanionCandidateV2 is the bounded, URL-free part of one companion v2
@@ -879,7 +896,7 @@ func (c *Client) ArchiveStatus(ctx context.Context, jobID string) (*ArchiveStatu
 	if !validSourceJobID(jobID) {
 		return nil, errors.New("job id is required")
 	}
-	if strings.HasPrefix(jobID, "ing_") {
+	if strings.HasPrefix(jobID, "ing_") || strings.HasPrefix(jobID, "acq_") {
 		return c.companionArchiveStatus(ctx, jobID)
 	}
 	var status ArchiveStatus
@@ -937,7 +954,7 @@ func (c *Client) IngestJob(ctx context.Context, jobID string) (*IngestJob, error
 		return nil, errors.New("peartube relay is not configured")
 	}
 	jobID = strings.TrimSpace(jobID)
-	if !strings.HasPrefix(jobID, "ing_") || !validSourceJobID(jobID) {
+	if (!strings.HasPrefix(jobID, "ing_") && !strings.HasPrefix(jobID, "acq_")) || !validSourceJobID(jobID) {
 		return nil, errors.New("companion ingest job id is required")
 	}
 	job, err := c.fetchIngestJob(ctx, jobID)
@@ -1010,6 +1027,27 @@ func (c *Client) ApplyNetworkPolicy(ctx context.Context, policy CompanionNetwork
 	if c == nil {
 		return errors.New("peartube relay is not configured")
 	}
+	if policy.PolicyVersion == 0 {
+		policy.PolicyVersion = 2
+	}
+	if policy.ConsentVersion == 0 {
+		policy.ConsentVersion = 1
+	}
+	if policy.UploadPermission == "" {
+		if policy.ContributeWatchedMedia || policy.ArchiveEnabled {
+			policy.UploadPermission = "enabled"
+		} else {
+			policy.UploadPermission = "disabled"
+		}
+	}
+	expectedCeiling := int64(0)
+	if policy.ContributeWatchedMedia {
+		expectedCeiling += policy.ContributionBudgetBytes
+	}
+	if policy.ArchiveEnabled {
+		expectedCeiling += policy.ArchiveBudgetBytes
+	}
+	policy.UploadCeilingBytes = expectedCeiling
 	body, err := json.Marshal(policy)
 	if err != nil {
 		return err
@@ -1605,6 +1643,97 @@ func (c *Client) ArchiveDirectSource(ctx context.Context, idempotencyKey string,
 		JobID:      envelope.Job.JobID,
 		Status:     envelope.Job.State,
 		EntityHint: companionEntityHint(coords),
+	}, nil
+}
+
+type AcquisitionRequest struct {
+	SchemaVersion  int    `json:"schemaVersion"`
+	ResolutionRef  string `json:"resolutionRef"`
+	PublisherID    string `json:"publisherId"`
+	RetentionClass string `json:"retentionClass"`
+	SourceFileName string `json:"sourceFileName,omitempty"`
+}
+
+type AcquisitionSubmission struct {
+	IdempotencyKey string             `json:"idempotencyKey"`
+	Request        AcquisitionRequest `json:"request"`
+}
+
+func (c *Client) RequestAcquisition(ctx context.Context, idempotencyKey string, req AcquisitionRequest) (*ArchiveJob, error) {
+	if c == nil {
+		return nil, errors.New("peartube relay is not configured")
+	}
+	if err := c.companionAuthError; err != nil {
+		return nil, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if !validSourceJobID(idempotencyKey) {
+		return nil, errors.New("idempotency key is required")
+	}
+	if req.SchemaVersion == 0 {
+		req.SchemaVersion = 1
+	}
+	if req.PublisherID == "" {
+		req.PublisherID = c.companionPublisherID
+	}
+	if req.RetentionClass == "" {
+		req.RetentionClass = RetentionClassContributionCache
+	}
+	submission := AcquisitionSubmission{
+		IdempotencyKey: idempotencyKey,
+		Request:        req,
+	}
+	encoded, err := json.Marshal(submission)
+	if err != nil {
+		return nil, fmt.Errorf("encode companion acquisition request: %w", err)
+	}
+	target := companionAPIPrefix + "/acquisitions"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+target, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("build companion acquisition request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-PearTube-Job-ID", idempotencyKey)
+	if err := c.authenticateCompanionRequest(request, encoded); err != nil {
+		return nil, fmt.Errorf("authenticate companion acquisition request: %w", err)
+	}
+	response, err := c.companionHTTP.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("companion acquisition request failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
+		return nil, errors.New("companion acquisition refused redirect")
+	}
+	if response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusOK {
+		return nil, decodeResponse(response, nil)
+	}
+	var envelope struct {
+		Acquisition struct {
+			AcquisitionID string `json:"acquisitionId"`
+			State         string `json:"state"`
+		} `json:"acquisition"`
+		Job struct {
+			JobID string `json:"jobId"`
+			State string `json:"state"`
+		} `json:"job"`
+	}
+	if err := decodeResponse(response, &envelope); err != nil {
+		return nil, err
+	}
+	jobID := envelope.Acquisition.AcquisitionID
+	state := envelope.Acquisition.State
+	if jobID == "" {
+		jobID = envelope.Job.JobID
+		state = envelope.Job.State
+	}
+	if state == "" {
+		return nil, errors.New("companion returned a mismatched acquisition")
+	}
+	return &ArchiveJob{
+		JobID:  jobID,
+		Status: state,
 	}, nil
 }
 // Archive uploads a file to the relay for publication. The body is streamed

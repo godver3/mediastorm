@@ -109,3 +109,50 @@ func TestLiveRelayReturnsDeferredCandidates(t *testing.T) {
 		t.Fatalf("live search marked candidate resolved: %+v", got.Attributes)
 	}
 }
+
+func TestLiveCompanionPolicyAndAcquisition(t *testing.T) {
+	client := liveRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	policy := CompanionNetworkPolicy{
+		PolicyVersion:           2,
+		ConsentVersion:          1,
+		MigrationRequired:       false,
+		ContributeWatchedMedia:  true,
+		ArchiveEnabled:          true,
+		ContributionBudgetBytes: 10737418240,
+		ArchiveBudgetBytes:      68719476736,
+		UploadPermission:        "enabled",
+		UploadCeilingBytes:      10737418240 + 68719476736,
+	}
+	if err := client.ApplyNetworkPolicy(ctx, policy); err != nil {
+		t.Logf("ApplyNetworkPolicy live note: %v", err)
+	} else {
+		t.Logf("ApplyNetworkPolicy live success")
+	}
+
+	// Test search on live companion
+	searchReq := SearchRequest{
+		Title:     "Matrix",
+		MediaType: "movie",
+	}
+	candidates, err := client.Search(ctx, searchReq)
+	if err != nil {
+		t.Fatalf("Search on live companion failed: %v", err)
+	}
+	t.Logf("Live companion search returned %d candidates", len(candidates))
+
+	// Test acquisition POST: assert expected contract error for unresolvable ref
+	acqReq := AcquisitionRequest{
+		SchemaVersion:  1,
+		ResolutionRef:  "test-live-resolution-ref-1234567890123456",
+		PublisherID:    client.PublisherID(),
+		RetentionClass: "contribution-cache",
+	}
+	_, err = client.RequestAcquisition(ctx, "idem-test-live-1", acqReq)
+	if err == nil {
+		t.Fatal("expected error for unresolvable resolutionRef, got nil")
+	}
+	t.Logf("Acquisition POST contract verified, got expected refusal: %v", err)
+}

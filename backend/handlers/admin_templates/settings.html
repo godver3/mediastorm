@@ -1195,6 +1195,7 @@
     let mediaLibrariesData = []; // Configured local, Plex, and Jellyfin libraries
     let hasDefaultPassword = false; // Whether admin has default password
     let hardwareAccelerationStatus = null;
+    let pearTubeStatus = null;
     let userOverrides = {{json .UserOverrides}}; // Map of userId -> hasOverrides
     const isAdmin = {{json .IsAdmin}};
     const settingsScopeUsername = {{json .Username}};
@@ -7029,6 +7030,7 @@
                     btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
                     showToast('Settings saved successfully');
                     void loadHardwareAccelerationStatus();
+                    void loadPearTubeStatus();
                     setTimeout(() => renderSettings(), 500);
                     await updateProfileSaveImpact(changedGroups);
                     renderSettings();
@@ -12419,6 +12421,7 @@
                     originalSettings = JSON.parse(JSON.stringify(currentSettings));
                     showToast('Settings saved successfully');
                     void loadHardwareAccelerationStatus();
+                    void loadPearTubeStatus();
                     if (committedPendingTextArrays) renderSettings();
                     await updateProfileSaveImpact(changedGroups);
                     renderSettings();
@@ -12448,6 +12451,7 @@
 
         if (isAdmin) {
             void loadHardwareAccelerationStatus();
+            void loadPearTubeStatus();
             await Promise.all([loadProfiles(), loadAccounts(), loadSettingsScopeClients(), loadTraktAccounts(), loadSimklAccounts(), loadLetterboxdLists(), loadMediaLibraries(), checkDefaultPassword()]);
             const selector = document.getElementById('userSelector');
             // Pre-select from query param if provided

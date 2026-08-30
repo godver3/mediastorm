@@ -123,7 +123,7 @@ func newSeedRelay(t *testing.T, capture *seedCapture) *peartube.Client {
 				io.WriteString(w, capture.refusal)
 				return
 			}
-			if r.URL.Path == "/api/v2/ingest/jobs" {
+			if r.URL.Path == "/api/v2/acquisitions" || r.URL.Path == "/api/v2/ingest/jobs" {
 				jobID := r.Header.Get("X-PearTube-Job-ID")
 				capture.events = append(capture.events, "ingest")
 				w.WriteHeader(http.StatusAccepted)
@@ -336,7 +336,7 @@ func TestConsentCutoverWaitsForStartedCompanionHandoff(t *testing.T) {
 			io.WriteString(w, `{"policy":{"policyVersion":2}}`)
 			return
 		}
-		if r.URL.Path != "/api/v2/ingest/jobs" {
+		if r.URL.Path != "/api/v2/acquisitions" && r.URL.Path != "/api/v2/ingest/jobs" {
 			http.NotFound(w, r)
 			return
 		}

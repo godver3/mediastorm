@@ -347,6 +347,23 @@ func (c *Client) CatalogHasEntity(ctx context.Context, coords ArchiveCoordinates
 	if key == "" {
 		return false, nil
 	}
+	searchReq := SearchRequest{
+		MediaType: coords.ContentKind,
+		TMDBID:    coords.TMDBID,
+		Season:    coords.TMDBSeason,
+		Episode:   coords.TMDBEpisode,
+		Title:     coords.TMDBTitle,
+		Year:      coords.TMDBYear,
+	}
+	candidates, err := c.Search(ctx, searchReq)
+	if err == nil {
+		for _, cand := range candidates {
+			if cand.Publication != nil && cand.Publication.PublicationID != "" {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	entities, err := c.Catalog(ctx)
 	if err != nil {
 		return false, err

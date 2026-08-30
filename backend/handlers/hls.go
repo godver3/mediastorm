@@ -5566,7 +5566,16 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 			http.Error(w, "playlist not ready", http.StatusInternalServerError)
 			return
 		}
-		if playlistHasMediaSegment(content) {
+		hasMinSegments := playlistHasMediaSegment(content)
+		if session != nil && session.IsLive {
+			session.mu.RLock()
+			isInitialStartup := session.MaxSegmentRequested < 0
+			session.mu.RUnlock()
+			if isInitialStartup && playlistSegmentCount(content) < 3 && time.Since(session.StreamStartTime) < 8*time.Second {
+				hasMinSegments = false
+			}
+		}
+		if hasMinSegments {
 			break
 		}
 		if livePlaylistStartupFailed(session) {
@@ -5741,14 +5750,19 @@ func livePlaylistStartupFailed(session *HLSSession) bool {
 	return session.IsLive && session.Completed && session.FatalError != ""
 }
 
-func playlistHasMediaSegment(content []byte) bool {
+func playlistSegmentCount(content []byte) int {
+	count := 0
 	for _, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "segment") && (strings.HasSuffix(line, ".ts") || strings.HasSuffix(line, ".m4s")) {
-			return true
+			count++
 		}
 	}
-	return false
+	return count
+}
+
+func playlistHasMediaSegment(content []byte) bool {
+	return playlistSegmentCount(content) > 0
 }
 
 func buildStableCastPlaylist(session *HLSSession) string {

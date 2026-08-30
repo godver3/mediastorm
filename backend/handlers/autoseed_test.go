@@ -128,7 +128,7 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 
 		// Remote sources now arrive as granted ingest jobs, so a refusal has to
 		// be simulatable on this transport too.
-		case r.URL.Path == "/api/v2/ingest/jobs":
+		case r.URL.Path == "/api/v2/acquisitions" || r.URL.Path == "/api/v2/ingest/jobs":
 			if relay.archiveDelay > 0 {
 				time.Sleep(relay.archiveDelay)
 			}
@@ -146,7 +146,7 @@ func (relay *autoSeedRelay) client(t *testing.T) *peartube.Client {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"job":{"jobId":"` + r.Header.Get("X-PearTube-Job-ID") + `","state":"queued"}}`))
 
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+		case r.Method == http.MethodDelete && (strings.HasPrefix(r.URL.Path, "/api/v2/acquisitions/") || strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/")):
 			relay.mu.Lock()
 			relay.cancelledJobs = append(relay.cancelledJobs,
 				strings.TrimPrefix(r.URL.Path, "/api/v2/ingest/jobs/"))
@@ -1016,7 +1016,7 @@ func (relay *redriveRelay) client(t *testing.T) *peartube.Client {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/catalog"):
 			_, _ = w.Write([]byte(`{"entities":[],"nextCursor":null}`))
 
-		case r.URL.Path == "/api/v2/ingest/jobs":
+		case r.URL.Path == "/api/v2/acquisitions" || r.URL.Path == "/api/v2/ingest/jobs":
 			body := map[string]any{}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			jobID := r.Header.Get("X-PearTube-Job-ID")
@@ -1033,7 +1033,7 @@ func (relay *redriveRelay) client(t *testing.T) *peartube.Client {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"job":{"jobId":"` + jobID + `","state":"queued"}}`))
 
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+		case r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/api/v2/acquisitions/") || strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/")):
 			relay.mu.Lock()
 			relay.queries++
 			report := map[string]any{}
@@ -1041,7 +1041,7 @@ func (relay *redriveRelay) client(t *testing.T) *peartube.Client {
 				report[name] = value
 			}
 			relay.mu.Unlock()
-			report["jobId"] = strings.TrimPrefix(r.URL.Path, "/api/v2/ingest/jobs/")
+			report["jobId"] = strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v2/acquisitions/"), "/api/v2/ingest/jobs/")
 			encoded, err := json.Marshal(map[string]any{"job": report})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1049,7 +1049,7 @@ func (relay *redriveRelay) client(t *testing.T) *peartube.Client {
 			}
 			_, _ = w.Write(encoded)
 
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/"):
+		case r.Method == http.MethodDelete && (strings.HasPrefix(r.URL.Path, "/api/v2/acquisitions/") || strings.HasPrefix(r.URL.Path, "/api/v2/ingest/jobs/")):
 			_, _ = w.Write([]byte(`{"job":{"jobId":"cancelled","state":"cancelled"}}`))
 
 		default:

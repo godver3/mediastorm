@@ -1176,6 +1176,11 @@ func main() {
 		r.HandleFunc("/account/api/numbers-station/answer", adminUIHandler.RequireAuth(api.RateLimitHandlerFunc(numbersStationLimiter, numbersStationHandler.Submit))).Methods(http.MethodPost)
 	}
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/p2p/status", adminUIHandler.RequireAuth(pearTubeHandler.Status)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/p2p/status", adminUIHandler.RequireAuth(pearTubeHandler.Status)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/peartube/status", adminUIHandler.RequireAuth(pearTubeHandler.Status)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/peartube/seed", adminUIHandler.RequireAuth(pearTubeHandler.Seed)).Methods(http.MethodPost)
+	r.HandleFunc("/admin/api/peartube/seed/{jobId}", adminUIHandler.RequireAuth(pearTubeHandler.SeedStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
