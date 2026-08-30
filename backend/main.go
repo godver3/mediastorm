@@ -1900,11 +1900,12 @@ func main() {
 
 	log.Printf("[startup] phase=route-and-background-wiring duration=%s", time.Since(startupPhaseStarted))
 	startupPhaseStarted = time.Now()
-	listener, err := net.Listen("tcp", addr)
+	listenAddr := fmt.Sprintf(":%d", settings.Server.Port)
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
-	log.Printf("[startup] phase=listener-bind duration=%s", time.Since(startupPhaseStarted))
+	log.Printf("[startup] phase=listener-bind duration=%s addr=%s", time.Since(startupPhaseStarted), listenAddr)
 	if remoteAccessService != nil {
 		go superviseRemoteAccess(remoteAccessService)
 	}

@@ -2644,10 +2644,10 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 			args = append(args, "-user_agent", liveStreamUserAgent)
 		}
 		args = append(args,
-			"-rw_timeout", "4000000",
+			"-rw_timeout", "30000000",
 			"-reconnect", "1",
 			"-reconnect_streamed", "1",
-			"-reconnect_delay_max", "2",
+			"-reconnect_delay_max", "5",
 		)
 		if headerArg := ffmpegHeadersArg(session.LiveTuning.RequestHeaders); headerArg != "" {
 			args = append(args, "-headers", headerArg)
@@ -2937,8 +2937,9 @@ const liveNativeSegmentKeepBehind = 60
 
 // The watchdog must be derived from the media playlist, not -hls_time. Stream-copy can only cut
 // at source keyframes: Toonami advertises TARGETDURATION 14 even though our requested HLS time is
-// two seconds. Three target durations is the same safe live-edge distance RFC 8216 recommends.
-const liveStallTimeoutFloor = 12 * time.Second
+// two seconds. Three target durations (42s) is the safe live-edge distance RFC 8216 recommends,
+// so the floor is 45s to avoid false restarts when local FFmpeg outputs small segments.
+const liveStallTimeoutFloor = 45 * time.Second
 const liveStallTargetDurations = 3
 
 func liveStallTimeoutForOutputDir(outputDir string) time.Duration {

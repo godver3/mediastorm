@@ -218,10 +218,18 @@ func TestLiveStallTimeoutUsesPlaylistTargetDuration(t *testing.T) {
 	if got := liveStallTimeoutForOutputDir(dir); got != liveStallTimeoutFloor {
 		t.Fatalf("missing playlist timeout = %v, want %v", got, liveStallTimeoutFloor)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "stream.m3u8"), []byte(liveTestPlaylist(0, 1, 14, false)), 0o600); err != nil {
+	// Output TARGETDURATION:4 should use the 45s floor to prevent false restarts on 14s broadcast gaps.
+	if err := os.WriteFile(filepath.Join(dir, "stream.m3u8"), []byte(liveTestPlaylist(0, 1, 4, false)), 0o600); err != nil {
 		t.Fatalf("write playlist: %v", err)
 	}
-	if got, want := liveStallTimeoutForOutputDir(dir), 42*time.Second; got != want {
-		t.Fatalf("target-derived timeout = %v, want %v", got, want)
+	if got, want := liveStallTimeoutForOutputDir(dir), liveStallTimeoutFloor; got != want {
+		t.Fatalf("small target duration timeout = %v, want floor %v", got, want)
+	}
+	// Large TARGETDURATION:16 derives 16 * 3 = 48s (> floor).
+	if err := os.WriteFile(filepath.Join(dir, "stream.m3u8"), []byte(liveTestPlaylist(0, 1, 16, false)), 0o600); err != nil {
+		t.Fatalf("write playlist: %v", err)
+	}
+	if got, want := liveStallTimeoutForOutputDir(dir), 48*time.Second; got != want {
+		t.Fatalf("large target-derived timeout = %v, want %v", got, want)
 	}
 }
