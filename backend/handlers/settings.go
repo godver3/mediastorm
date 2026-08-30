@@ -39,6 +39,13 @@ type SearchCacheClearer interface {
 	ClearSearchCache()
 }
 
+// PearTubeConfigurer applies saved PearTube settings to the running p2p
+// integration, so a relay change takes effect without a container restart.
+// *PearTubeHandler satisfies it.
+type PearTubeConfigurer interface {
+	ApplyPearTubeSettings(config.PearTubeSettings) error
+}
+
 func shouldClearPrequeueForGlobalSettingsChange(oldSettings, newSettings config.Settings) bool {
 	if oldSettings.Streaming.ResolveFirstReadySource != newSettings.Streaming.ResolveFirstReadySource ||
 		oldSettings.Streaming.ResolutionEndRaceEarly != newSettings.Streaming.ResolutionEndRaceEarly ||
@@ -71,6 +78,7 @@ type SettingsHandler struct {
 	ClientSettingsBatch user_settings.ClientSettingsBatch
 	PrequeueStore       PrequeueClearer
 	SearchCache         SearchCacheClearer
+	PearTube            PearTubeConfigurer
 }
 
 func NewSettingsHandler(m *config.Manager) *SettingsHandler {
@@ -134,6 +142,12 @@ func (h *SettingsHandler) SetPrequeueStore(ps PrequeueClearer) {
 // SetSearchCacheClearer sets the search cache invalidator for ranking/filtering changes.
 func (h *SettingsHandler) SetSearchCacheClearer(sc SearchCacheClearer) {
 	h.SearchCache = sc
+}
+
+// SetPearTubeConfigurer sets the p2p integration for hot reloading the relay URL
+// and the seeding switches.
+func (h *SettingsHandler) SetPearTubeConfigurer(pt PearTubeConfigurer) {
+	h.PearTube = pt
 }
 
 // SettingsResponse wraps config.Settings with additional runtime information.
@@ -889,6 +903,7 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	// This prevents non-master users from accidentally overwriting secrets when they
 	// save settings that were returned with redacted values.
 	preserveRedactedFields(&s, &oldSettings)
+	s.NormalizePearTubePoliciesForSave()
 	if err := s.Server.NormalizeAllowedPrivateMediaOrigins(); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -950,8 +965,12 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		go h.UserSettingsService.StripRedundantOverrides(s, h.ClientsLister, h.ClientSettingsBatch)
 	}
 
-	// Hot reload services that need it
-	h.reloadServices(s)
+	// Hot reload services that need it. A relay policy failure must fail this
+	// save response rather than claiming a downgrade was applied remotely.
+	if err := h.reloadServices(s); err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 
 	// Auto-refresh EPG if new sources were added
 	h.triggerEPGRefreshIfNewSources(oldSettings, s)
@@ -1155,8 +1174,15 @@ func displayName(name, fallback string) string {
 	return strings.TrimSpace(name)
 }
 
-// reloadServices reloads services that cache configuration at startup
-func (h *SettingsHandler) reloadServices(s config.Settings) {
+// reloadServices reloads services that cache configuration at startup.
+func (h *SettingsHandler) reloadServices(s config.Settings) error {
+	// Reconcile the p2p relay first: settings success is the remote revocation
+	// acknowledgement for a role, budget, relay, or explicit-disable cutover.
+	if h.PearTube != nil {
+		if err := h.PearTube.ApplyPearTubeSettings(s.PearTubeConfig()); err != nil {
+			return fmt.Errorf("failed to apply PearTube settings: %w", err)
+		}
+	}
 	// Reload NNTP connection pool with new usenet providers
 	if h.PoolManager != nil {
 		providers := config.ToNNTPProviders(s.Usenet)
@@ -1195,6 +1221,7 @@ func (h *SettingsHandler) reloadServices(s config.Settings) {
 	if h.DebridSearchService != nil {
 		h.DebridSearchService.ReloadScrapers()
 	}
+	return nil
 }
 
 // ClearMetadataCache clears all cached metadata files and images

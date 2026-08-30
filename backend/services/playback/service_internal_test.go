@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"novastream/internal/mediaresolve"
 	metapb "novastream/internal/nzb/metadata/proto"
 	"novastream/models"
+	"novastream/services/debrid"
 )
 
 type validationMetadataService struct {
@@ -263,5 +265,66 @@ func TestBuildInternalPlaybackResolutionReselectsCachedSeasonPackEpisode(t *test
 	}
 	if !strings.HasSuffix(resolution.WebDAVPath, "/Jackie.Chan.Adventures.S01E01.mkv") {
 		t.Fatalf("selected %q, want S01E01", resolution.WebDAVPath)
+	}
+}
+
+type mixedCandidatePreparer struct {
+	received []models.NZBResult
+}
+
+func (*mixedCandidatePreparer) Resolve(context.Context, models.NZBResult) (*models.PlaybackResolution, error) {
+	return nil, nil
+}
+
+func (*mixedCandidatePreparer) ResolveBatch(context.Context, models.NZBResult, []models.BatchEpisodeTarget) (*models.BatchResolveResponse, error) {
+	return nil, nil
+}
+
+func (*mixedCandidatePreparer) SetFullProber(debrid.PreResolvedFullProber) {}
+
+func (p *mixedCandidatePreparer) PrepareTorrentCandidates(_ context.Context, candidates []models.NZBResult) []models.NZBResult {
+	p.received = append([]models.NZBResult(nil), candidates...)
+	prepared := append([]models.NZBResult(nil), candidates...)
+	for index := range prepared {
+		prepared[index].Title += " prepared"
+	}
+	return prepared
+}
+
+func TestPrepareTorrentCandidatesMergesMixedResultsWithoutMovingPearTube(t *testing.T) {
+	preparer := &mixedCandidatePreparer{}
+	service := &Service{debrid: preparer}
+	candidates := []models.NZBResult{
+		{
+			Title:       "PearTube first",
+			ServiceType: models.ServiceTypePearTube,
+			Attributes:  map[string]string{"peartube_candidate_ref": "first-ref"},
+		},
+		{Title: "Debrid second", ServiceType: models.ServiceTypeDebrid},
+		{
+			Title:       "PearTube third",
+			ServiceType: models.ServiceTypePearTube,
+			Attributes:  map[string]string{"peartube_candidate_ref": "third-ref"},
+		},
+		{Title: "Usenet fourth", ServiceType: models.ServiceTypeUsenet},
+	}
+
+	got := service.PrepareTorrentCandidates(context.Background(), candidates)
+	if len(preparer.received) != 2 ||
+		preparer.received[0].Title != "Debrid second" ||
+		preparer.received[1].Title != "Usenet fourth" {
+		t.Fatalf("debrid preparer received wrong candidates: %+v", preparer.received)
+	}
+	if got[0].Title != "PearTube first" || got[0].Attributes["peartube_candidate_ref"] != "first-ref" {
+		t.Fatalf("first PearTube position changed: %+v", got[0])
+	}
+	if got[1].Title != "Debrid second prepared" {
+		t.Fatalf("second candidate = %+v, want prepared debrid output", got[1])
+	}
+	if got[2].Title != "PearTube third" || got[2].Attributes["peartube_candidate_ref"] != "third-ref" {
+		t.Fatalf("third PearTube position changed: %+v", got[2])
+	}
+	if got[3].Title != "Usenet fourth prepared" {
+		t.Fatalf("fourth candidate = %+v, want prepared Usenet output", got[3])
 	}
 }

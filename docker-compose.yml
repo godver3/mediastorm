@@ -32,6 +32,9 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - DATABASE_URL=postgres://mediastorm:${POSTGRES_PASSWORD:-mediastorm}@postgres:5432/mediastorm?sslmode=disable
+      # Optional relay fallback for p2p search and playback discovery. Contribution
+      # and archive consent are configured explicitly in persisted admin settings.
+      - PEARTUBE_RELAY_URL=${PEARTUBE_RELAY_URL:-}
     restart: unless-stopped
     # Leave enough time for the synchronous shutdown notification and the
     # backend's existing 30-second graceful cleanup before Docker sends SIGKILL.

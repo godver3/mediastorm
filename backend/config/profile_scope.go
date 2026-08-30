@@ -77,7 +77,14 @@ func filterTorrentScrapersForProfile(items []TorrentScraperConfig, profileID str
 		return items
 	}
 	filtered := make([]TorrentScraperConfig, 0, len(items))
+	pearTubeSelected := false
 	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item.Type), TorrentScraperTypePearTube) {
+			if pearTubeSelected {
+				continue
+			}
+			pearTubeSelected = true
+		}
 		if IsProfileAllowed(item.AllowedProfiles, profileID) {
 			filtered = append(filtered, item)
 		}

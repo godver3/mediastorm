@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +21,203 @@ func MigrateRawSettings(raw map[string]interface{}) {
 	migratePrewarmFrequencyClear(raw)
 	migratePrewarmContinueWatchingOnly(raw)
 	migrateGeminiAISettings(raw)
+	migratePearTubeConsent(raw)
+}
+
+// migratePearTubeConsent is the only place a persisted legacy AutoSeed value
+// may become current contribution consent. It works on raw JSON so missing,
+// malformed, and explicit false remain distinguishable.
+func migratePearTubeConsent(raw map[string]interface{}) {
+	scrapers, _ := raw["torrentScrapers"].([]interface{})
+	var firstPearTube map[string]interface{}
+	for _, value := range scrapers {
+		entry, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		entryType, _ := entry["type"].(string)
+		if strings.EqualFold(strings.TrimSpace(entryType), TorrentScraperTypePearTube) {
+			firstPearTube = entry
+			break
+		}
+	}
+
+	legacy, hasLegacy := raw["peartube"].(map[string]interface{})
+	migratedGlobal := false
+	if firstPearTube == nil && hasLegacy && legacyPearTubeBlockHasValues(legacy) {
+		if len(scrapers) == 0 {
+			scrapers = append(scrapers, map[string]interface{}{
+				"name":    "Torrentio",
+				"type":    "torrentio",
+				"enabled": true,
+				"options": "sort=qualitysize|qualityfilter=480p,scr,cam",
+			})
+		}
+		firstPearTube = map[string]interface{}{
+			"name":    "PearTube",
+			"type":    TorrentScraperTypePearTube,
+			"url":     rawString(legacy["relayUrl"]),
+			"enabled": rawLegacyEnabled(legacy["enabled"]),
+		}
+		scrapers = append(scrapers, firstPearTube)
+		raw["torrentScrapers"] = scrapers
+		migratedGlobal = true
+	}
+	delete(raw, "peartube")
+	if firstPearTube == nil {
+		return
+	}
+
+	configMap, _ := firstPearTube["config"].(map[string]interface{})
+	if configMap == nil {
+		configMap = make(map[string]interface{})
+		firstPearTube["config"] = configMap
+	}
+
+	if currentPearTubePolicy(configMap) {
+		normalizeRawPearTubePolicy(configMap)
+		removeLegacyPearTubeAutoSeed(scrapers)
+		return
+	}
+
+	legacyValue, persisted := false, false
+	if !hasAnyPearTubeCurrentPolicyField(configMap) {
+		if rawValue, exists := configMap["autoSeed"]; exists {
+			legacyValue, persisted = rawLegacyScraperBool(rawValue)
+		} else if migratedGlobal {
+			legacyValue, persisted = rawLegacyGlobalBool(legacy["autoSeed"])
+		}
+	}
+
+	configMap[PearTubeConfigConsentVersion] = strconv.Itoa(PearTubeConsentVersion)
+	configMap[PearTubeConfigMigrationRequired] = strconv.FormatBool(!persisted)
+	configMap[PearTubeConfigContributeWatchedMedia] = strconv.FormatBool(persisted && legacyValue)
+	configMap[PearTubeConfigContributionBudget] = strconv.Itoa(PearTubeDefaultContributionBudgetGiB)
+	configMap[PearTubeConfigArchiveEnabled] = "false"
+	configMap[PearTubeConfigArchiveBudget] = strconv.Itoa(PearTubeDefaultArchiveBudgetGiB)
+	removeLegacyPearTubeAutoSeed(scrapers)
+}
+
+func hasAnyPearTubeCurrentPolicyField(values map[string]interface{}) bool {
+	for _, key := range []string{
+		PearTubeConfigConsentVersion,
+		PearTubeConfigMigrationRequired,
+		PearTubeConfigContributeWatchedMedia,
+		PearTubeConfigContributionBudget,
+		PearTubeConfigArchiveEnabled,
+		PearTubeConfigArchiveBudget,
+	} {
+		if _, exists := values[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func removeLegacyPearTubeAutoSeed(scrapers []interface{}) {
+	for _, value := range scrapers {
+		entry, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		entryType, _ := entry["type"].(string)
+		if !strings.EqualFold(strings.TrimSpace(entryType), TorrentScraperTypePearTube) {
+			continue
+		}
+		if configMap, ok := entry["config"].(map[string]interface{}); ok {
+			delete(configMap, "autoSeed")
+		}
+	}
+}
+
+func legacyPearTubeBlockHasValues(legacy map[string]interface{}) bool {
+	for _, key := range []string{"relayUrl", "enabled", "autoSeed"} {
+		if _, exists := legacy[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func rawString(value interface{}) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
+}
+
+func rawLegacyEnabled(value interface{}) bool {
+	enabled, ok := value.(bool)
+	return !ok || enabled
+}
+
+func rawLegacyGlobalBool(value interface{}) (bool, bool) {
+	enabled, ok := value.(bool)
+	return enabled, ok
+}
+
+func rawLegacyScraperBool(value interface{}) (bool, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return false, false
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(text))
+	return enabled, err == nil
+}
+
+func currentPearTubePolicy(values map[string]interface{}) bool {
+	versionText, versionOK := values[PearTubeConfigConsentVersion].(string)
+	version, versionErr := strconv.Atoi(strings.TrimSpace(versionText))
+	if !versionOK || versionErr != nil || version != PearTubeConsentVersion {
+		return false
+	}
+	for _, key := range []string{
+		PearTubeConfigMigrationRequired,
+		PearTubeConfigContributeWatchedMedia,
+		PearTubeConfigArchiveEnabled,
+	} {
+		text, ok := values[key].(string)
+		if !ok {
+			return false
+		}
+		if _, err := strconv.ParseBool(strings.TrimSpace(text)); err != nil {
+			return false
+		}
+	}
+	for _, key := range []string{PearTubeConfigContributionBudget, PearTubeConfigArchiveBudget} {
+		text, ok := values[key].(string)
+		if !ok {
+			return false
+		}
+		if _, err := strconv.Atoi(strings.TrimSpace(text)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeRawPearTubePolicy(values map[string]interface{}) {
+	migrationRequired, _ := strconv.ParseBool(strings.TrimSpace(values[PearTubeConfigMigrationRequired].(string)))
+	contribute, _ := strconv.ParseBool(strings.TrimSpace(values[PearTubeConfigContributeWatchedMedia].(string)))
+	archive, _ := strconv.ParseBool(strings.TrimSpace(values[PearTubeConfigArchiveEnabled].(string)))
+	if migrationRequired {
+		contribute = false
+		archive = false
+	}
+	values[PearTubeConfigConsentVersion] = strconv.Itoa(PearTubeConsentVersion)
+	values[PearTubeConfigMigrationRequired] = strconv.FormatBool(migrationRequired)
+	values[PearTubeConfigContributeWatchedMedia] = strconv.FormatBool(contribute)
+	values[PearTubeConfigContributionBudget] = strconv.Itoa(pearTubeBudget(
+		values[PearTubeConfigContributionBudget].(string),
+		PearTubeDefaultContributionBudgetGiB,
+		PearTubeContributionBudgetMinGiB,
+		PearTubeContributionBudgetMaxGiB,
+	))
+	values[PearTubeConfigArchiveEnabled] = strconv.FormatBool(archive)
+	values[PearTubeConfigArchiveBudget] = strconv.Itoa(pearTubeBudget(
+		values[PearTubeConfigArchiveBudget].(string),
+		PearTubeDefaultArchiveBudgetGiB,
+		PearTubeArchiveBudgetMinGiB,
+		PearTubeArchiveBudgetMaxGiB,
+	))
 }
 
 // migratePrewarmContinueWatchingOnly temporarily removes speculative home

@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"novastream/internal/mediaidentity"
 	"novastream/internal/ytdlp"
 	"novastream/models"
 	"novastream/services/calendar"
@@ -1424,6 +1425,56 @@ func (s *Service) getTMDBIDForIMDBTV(ctx context.Context, imdbID string) int64 {
 		log.Printf("[metadata] failed to cache TMDB TV ID mapping: %v", err)
 	}
 
+	return tmdbID
+}
+
+// TMDBIDForExternalIDs recovers the numeric TMDB id of a title a client
+// identified with external provider IDs, or 0 when it cannot be resolved.
+func (s *Service) TMDBIDForExternalIDs(ctx context.Context, contentKind string, externalIDs map[string]string, title string, year int) int64 {
+	if s == nil {
+		return 0
+	}
+	ids := mediaidentity.NormalizeExternalIDs(externalIDs)
+	if parsed, err := strconv.ParseInt(strings.TrimSpace(ids["tmdb"]), 10, 64); err == nil && parsed > 0 {
+		return parsed
+	}
+	isMovie := mediaidentity.NormalizeMediaType(contentKind) == "movie"
+	if imdbID := strings.TrimSpace(ids["imdb"]); imdbID != "" {
+		if isMovie {
+			if tmdbID := s.getTMDBIDForIMDB(ctx, imdbID); tmdbID > 0 {
+				return tmdbID
+			}
+		} else if tmdbID := s.getTMDBIDForIMDBTV(ctx, imdbID); tmdbID > 0 {
+			return tmdbID
+		}
+	}
+	if isMovie {
+		return s.resolveTMDBMovieByTitleYear(ctx, strings.TrimSpace(title), year)
+	}
+	return s.resolveTMDBSeriesByTVDBID(ctx, strings.TrimSpace(ids["tvdb"]))
+}
+
+func (s *Service) resolveTMDBSeriesByTVDBID(ctx context.Context, tvdbID string) int64 {
+	if s == nil || s.tmdb == nil || tvdbID == "" {
+		return 0
+	}
+	cacheID := cacheKey("id", "tvdb-to-tmdb", "tv", tvdbID)
+	var cached int64
+	if s.idCache != nil {
+		if ok, _ := s.idCache.get(cacheID, &cached); ok {
+			return cached
+		}
+	}
+	tmdbID, err := s.tmdb.findTVByTVDBID(ctx, tvdbID)
+	if err != nil {
+		log.Printf("[metadata] failed to fetch TMDB TV ID for TVDB %s: %v", tvdbID, err)
+		return 0
+	}
+	if s.idCache != nil {
+		if err := s.idCache.set(cacheID, tmdbID); err != nil {
+			log.Printf("[metadata] failed to cache TMDB TV ID mapping: %v", err)
+		}
+	}
 	return tmdbID
 }
 

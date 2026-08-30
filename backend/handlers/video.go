@@ -1943,16 +1943,28 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 			writeDlnaMpegTsHeaders(w, r)
 		}
 
+		duration := 0.0
 		if h.ffprobePath != "" {
 			if meta, err := h.runFFProbeFromProvider(ctx, cleanPath); err == nil && meta != nil {
-				if duration := parseFloat(meta.Format.Duration); duration > 0 {
-					dur := fmt.Sprintf("%.3f", duration)
-					w.Header().Set("X-Content-Duration", dur)
-					w.Header().Set("Content-Duration", dur)
-				}
+				duration = parseFloat(meta.Format.Duration)
 			} else if err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("[video] provider ffprobe duration lookup failed for %q: %v", cleanPath, err)
 			}
+		}
+
+		if container == outputMpegTs {
+			// The renderer HEADs before it opens the stream, and the answer has
+			// to describe the same cut the GET will serve.
+			if startOffset := h.resolveMpegTsStartOffset(ctx, cleanPath, parseStartOffsetParam(r), duration); startOffset > 0 {
+				w.Header().Set(dlnaStartOffsetHeader, fmt.Sprintf("%.3f", startOffset))
+				duration = math.Max(duration-startOffset, 0)
+			}
+		}
+
+		if duration > 0 {
+			dur := fmt.Sprintf("%.3f", duration)
+			w.Header().Set("X-Content-Duration", dur)
+			w.Header().Set("Content-Duration", dur)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -1983,8 +1995,13 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 
 	var plan transmuxPlan
 	if container == outputMpegTs {
-		plan = h.buildMpegTsPlan(meta, "pipe:0", fallbackReason)
-		log.Printf("[video] DLNA avc-ts output path=%q duration=%.3f ffmpeg=%s", cleanPath, plan.duration, strings.Join(plan.args, " "))
+		itemDuration := 0.0
+		if meta != nil {
+			itemDuration = parseFloat(meta.Format.Duration)
+		}
+		startOffset := h.resolveMpegTsStartOffset(ctx, cleanPath, parseStartOffsetParam(r), itemDuration)
+		plan = h.buildMpegTsPlan(meta, "pipe:0", fallbackReason, startOffset)
+		log.Printf("[video] DLNA avc-ts output path=%q start=%.3f remaining=%.3f ffmpeg=%s", cleanPath, plan.startOffset, plan.duration, strings.Join(plan.args, " "))
 	} else {
 		plan = h.buildTransmuxPlan(meta, "pipe:0", forceAAC, fallbackReason)
 	}
@@ -2057,6 +2074,9 @@ func (h *VideoHandler) streamWithTransmuxProvider(w http.ResponseWriter, r *http
 	w.Header().Set("Accept-Ranges", "none")
 	if plan.container == outputMpegTs {
 		writeDlnaMpegTsHeaders(w, r)
+		if plan.startOffset > 0 {
+			w.Header().Set(dlnaStartOffsetHeader, fmt.Sprintf("%.3f", plan.startOffset))
+		}
 	}
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -3134,6 +3154,9 @@ type mpegTsEncodeInput struct {
 	audioChannels  int
 	hdr            bool
 	sourceTransfer string
+	// startOffset is where in the item the mux begins, already keyframe-aligned
+	// and validated. Zero starts at the beginning.
+	startOffset float64
 }
 
 // buildMpegTsArgs assembles the complete ffmpeg invocation for the legacy DLNA
@@ -3159,6 +3182,14 @@ func buildMpegTsArgs(in mpegTsEncodeInput, caps HWAccelCaps) []string {
 	args = append(args, "-nostdin", "-loglevel", "error")
 	// Hardware device initialization has to precede -i.
 	args = append(args, encode.GlobalArgs...)
+	if in.startOffset > 0 {
+		// Input seeking, so the demuxer discards everything before the offset
+		// instead of the encoder throwing away decoded frames. Accurate seek is
+		// left on and costs nothing here: the offset is already a keyframe, and
+		// the mux has to begin exactly where the response says it does because
+		// the renderer's clock restarts at zero and reports no absolute time.
+		args = append(args, "-ss", fmt.Sprintf("%.3f", in.startOffset))
+	}
 	args = append(args, "-i", in.inputURL)
 
 	videoMap := strings.TrimSpace(in.videoMap)
@@ -3248,12 +3279,48 @@ func (h *VideoHandler) dlnaEncodeCaps() HWAccelCaps {
 	return h.dlnaCaps
 }
 
+// dlnaStartOffsetHeader names the second of the item the transport stream
+// begins at. A renderer on this rung restarts its clock at zero and reports no
+// absolute time, so this is the only thing that lets a caller turn that clock
+// back into a position in the item.
+const dlnaStartOffsetHeader = "X-Start-Offset"
+
+// resolveMpegTsStartOffset turns a requested start offset into the one the mux
+// will really begin at: clamped inside the item the way an HLS session clamps
+// its own, then moved onto the keyframe FFmpeg's input seek lands on. The
+// reported offset therefore describes the stream that is served, not the one
+// that was asked for.
+func (h *VideoHandler) resolveMpegTsStartOffset(ctx context.Context, cleanPath string, requested, duration float64) float64 {
+	if requested <= 0 {
+		return 0
+	}
+	if duration > 0 && requested >= duration {
+		requested = math.Max(duration-4, 0)
+		if requested == 0 {
+			return 0
+		}
+	}
+	// Keyframe probing needs a seekable URL for the source, which only the HLS
+	// manager knows how to resolve; without it the requested second stands.
+	if h.hlsManager == nil {
+		return requested
+	}
+	aligned := h.hlsManager.probeKeyframePosition(ctx, cleanPath, requested)
+	if aligned <= 0 || math.IsNaN(aligned) || math.IsInf(aligned, 0) || (duration > 0 && aligned >= duration) {
+		return requested
+	}
+	return aligned
+}
+
 // buildMpegTsPlan produces the H.264/AC3 MPEG-TS transcode plan for legacy DLNA
-// renderers.
-func (h *VideoHandler) buildMpegTsPlan(meta *ffprobeOutput, inputSpecifier, fallbackReason string) transmuxPlan {
+// renderers. startOffset is where in the item the mux begins; the plan's
+// duration is then the remainder, because a stream cut at an offset carries
+// only what is left of the item.
+func (h *VideoHandler) buildMpegTsPlan(meta *ffprobeOutput, inputSpecifier, fallbackReason string, startOffset float64) transmuxPlan {
 	plan := transmuxPlan{
-		container: outputMpegTs,
-		videoMap:  "0:v:0",
+		container:   outputMpegTs,
+		videoMap:    "0:v:0",
+		startOffset: startOffset,
 		audio: audioPlan{
 			mode:   audioPlanTranscode,
 			reason: "dlna avc-ts renderers require ac3 audio",
@@ -3263,7 +3330,8 @@ func (h *VideoHandler) buildMpegTsPlan(meta *ffprobeOutput, inputSpecifier, fall
 		inputURL: inputSpecifier,
 		videoMap: plan.videoMap,
 		// The "?" keeps ffmpeg from failing outright on a video-only source.
-		audioMap: "0:a:0?",
+		audioMap:    "0:a:0?",
+		startOffset: startOffset,
 	}
 
 	if meta == nil {
@@ -3275,7 +3343,7 @@ func (h *VideoHandler) buildMpegTsPlan(meta *ffprobeOutput, inputSpecifier, fall
 	}
 
 	plan.usedProbe = true
-	plan.duration = parseFloat(meta.Format.Duration)
+	plan.duration = math.Max(parseFloat(meta.Format.Duration)-startOffset, 0)
 
 	if stream := selectPrimaryVideoStream(meta); stream != nil {
 		plan.videoMap = fmt.Sprintf("0:%d", stream.Index)
@@ -3693,6 +3761,30 @@ func parseFloat(value string) float64 {
 	return v
 }
 
+// parseStartOffsetParam reads the seconds-into-the-item a stream was asked to
+// begin at. "startOffset" is what the frontend sends and "start" is the older
+// name; both the HLS session endpoint and the progressive MPEG-TS arm accept
+// either. Anything absent, unparseable, negative or non-finite means "from the
+// beginning", so a malformed value never changes what the caller receives.
+func parseStartOffsetParam(r *http.Request) float64 {
+	if r == nil || r.URL == nil {
+		return 0
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get("startOffset"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("start"))
+	}
+	if raw == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil || parsed < 0 || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		log.Printf("[video] invalid start offset %q; starting from the beginning", raw)
+		return 0
+	}
+	return parsed
+}
+
 func parseInt(value string) int {
 	v, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
@@ -3760,7 +3852,11 @@ type transmuxPlan struct {
 	dolbyVisionProfile string
 	usedProbe          bool
 	movflags           string
-	duration           float64
+	// duration is the length of what this plan actually produces: the item's
+	// duration less startOffset.
+	duration float64
+	// startOffset is where in the item the produced stream begins.
+	startOffset float64
 }
 
 type ffprobeOutput struct {
@@ -4213,11 +4309,6 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 			forceAAC = settings.Playback.ForceAACTranscoding
 		}
 	}
-	// Check both "startOffset" (frontend) and "start" (legacy) parameter names
-	startParam := strings.TrimSpace(r.URL.Query().Get("startOffset"))
-	if startParam == "" {
-		startParam = strings.TrimSpace(r.URL.Query().Get("start"))
-	}
 
 	if hasDV && isDolbyVisionProfile7(dvProfile) {
 		videoTracef("[video] Dolby Vision profile 7 detected for path=%q; falling back to HDR10-only HLS output", cleanPath)
@@ -4226,14 +4317,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		hasHDR = true // DV Profile 7 has HDR10 base layer
 	}
 
-	startSeconds := 0.0
-	if startParam != "" {
-		if parsed, err := strconv.ParseFloat(startParam, 64); err == nil && parsed >= 0 {
-			startSeconds = parsed
-		} else {
-			log.Printf("[video] invalid start offset %q for HLS session; defaulting to 0", startParam)
-		}
-	}
+	startSeconds := parseStartOffsetParam(r)
 
 	// Support percentage-based resume (from Trakt imports where real duration is unknown).
 	// If startPercent is provided and startOffset is not, probe the file duration and compute.

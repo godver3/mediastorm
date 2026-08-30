@@ -2958,15 +2958,20 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 			}
 		}()
 
-		// Check episode match for anime absolute numbering
-		if opts.targetEpisode != nil && opts.targetEpisode.AbsoluteEpisodeNumber > 0 {
-			if result.EpisodeCount <= 1 {
+		// Check episode match for target episode
+		if opts.targetEpisode != nil && opts.targetEpisode.SeasonNumber > 0 && opts.targetEpisode.EpisodeNumber > 0 {
+			episodeCode := mediaresolve.EpisodeCode{Season: opts.targetEpisode.SeasonNumber, Episode: opts.targetEpisode.EpisodeNumber}
+			if mediaresolve.CandidateExplicitlyMismatchesEpisode(result.Title, episodeCode) {
+				log.Printf("[prequeue] Skipping result [%d] - release explicitly mismatches target (S%02dE%02d): %s",
+					i, opts.targetEpisode.SeasonNumber, opts.targetEpisode.EpisodeNumber, result.Title)
+				return nil, nil, nil
+			}
+			if opts.targetEpisode.AbsoluteEpisodeNumber > 0 && result.EpisodeCount <= 1 {
 				parsedEp, hasEpisode := mediaresolve.ParseAbsoluteEpisodeNumber(result.Title)
 				if hasEpisode {
-					episodeCode := mediaresolve.EpisodeCode{Season: opts.targetEpisode.SeasonNumber, Episode: opts.targetEpisode.EpisodeNumber}
 					matchesSXXEXX := mediaresolve.CandidateMatchesEpisode(result.Title, episodeCode)
 					if !matchesSXXEXX && parsedEp != opts.targetEpisode.AbsoluteEpisodeNumber {
-						log.Printf("[prequeue] Skipping result [%d] - episode %d doesn't match target (S%02dE%02d/abs:%d): %s",
+						log.Printf("[prequeue] Skipping result [%d] - absolute episode %d doesn't match target (S%02dE%02d/abs:%d): %s",
 							i, parsedEp, opts.targetEpisode.SeasonNumber, opts.targetEpisode.EpisodeNumber, opts.targetEpisode.AbsoluteEpisodeNumber, result.Title)
 						return nil, nil, nil
 					}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -368,7 +370,7 @@ func TestBuildMpegTsPlanFromProbe(t *testing.T) {
 		Format: ffprobeFormat{Duration: "7200.500"},
 	}
 
-	plan := h.buildMpegTsPlan(meta, "pipe:0", "")
+	plan := h.buildMpegTsPlan(meta, "pipe:0", "", 0)
 	joined := strings.Join(plan.args, " ")
 
 	if plan.container != outputMpegTs {
@@ -396,7 +398,7 @@ func TestBuildMpegTsPlanFromProbe(t *testing.T) {
 func TestBuildMpegTsPlanWithoutProbe(t *testing.T) {
 	h := &VideoHandler{}
 
-	plan := h.buildMpegTsPlan(nil, "pipe:0", "ffprobe failed: boom")
+	plan := h.buildMpegTsPlan(nil, "pipe:0", "ffprobe failed: boom", 0)
 	joined := strings.Join(plan.args, " ")
 
 	if plan.container != outputMpegTs {
@@ -695,5 +697,321 @@ func TestStreamVideoDLNAProfileProducesPlayableMpegTs(t *testing.T) {
 		if !strings.Contains(report, want) {
 			t.Fatalf("ffprobe report %q missing %q", report, want)
 		}
+	}
+}
+
+// End-to-end proof against the real encoder that the offset cuts the stream
+// rather than being carried and ignored: only the remainder of the item is
+// muxed, and it is a transport stream the renderer still accepts.
+func TestStreamVideoDLNAProfileStreamsOnlyTheRemainder(t *testing.T) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	ffprobePath, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	build := exec.Command(ffmpegPath, "-nostdin", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc=size=320x240:rate=24:duration=8",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "24", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-shortest", sourcePath)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Skipf("could not build the test source: %v (%s)", err, out)
+	}
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read test source: %v", err)
+	}
+
+	h := NewVideoHandlerWithProvider(true, ffmpegPath, ffprobePath, t.TempDir(), &mockProvider{data: source})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/video/stream?path=movies/title.mkv&dlnaProfile=avc-ts&start=6", nil)
+	rec := httptest.NewRecorder()
+
+	h.StreamVideo(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) == 0 {
+		t.Fatal("empty response body")
+	}
+	if body[0] != 0x47 {
+		t.Fatalf("first byte = %#x, want the 0x47 transport stream sync byte", body[0])
+	}
+
+	outPath := filepath.Join(t.TempDir(), "out.ts")
+	if err := os.WriteFile(outPath, body, 0o644); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	probe := exec.Command(ffprobePath, "-v", "error",
+		"-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", outPath)
+	out, err := probe.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe response: %v (%s)", err, out)
+	}
+	served, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		t.Fatalf("parse served duration %q: %v", out, err)
+	}
+	// Six seconds into an eight second item leaves two, give or take the
+	// keyframe the input seek lands on and the muxer's trailing packets.
+	if served > 3.5 {
+		t.Fatalf("served %.3fs of an 8s item from a 6s offset, want only the remainder", served)
+	}
+	if served < 0.5 {
+		t.Fatalf("served %.3fs, want the remainder of the item rather than nothing", served)
+	}
+}
+
+func TestParseStartOffsetParam(t *testing.T) {
+	testCases := []struct {
+		name  string
+		query string
+		want  float64
+	}{
+		{name: "absent", query: "", want: 0},
+		{name: "empty", query: "?start=", want: 0},
+		{name: "legacy name", query: "?start=900", want: 900},
+		{name: "fractional", query: "?start=900.25", want: 900.25},
+		{name: "frontend name wins", query: "?startOffset=120&start=900", want: 120},
+		{name: "negative", query: "?start=-30", want: 0},
+		{name: "not a number", query: "?start=soon", want: 0},
+		{name: "not a number (nan)", query: "?start=NaN", want: 0},
+		{name: "not finite", query: "?start=Inf", want: 0},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/video/stream"+tc.query, nil)
+			if got := parseStartOffsetParam(req); got != tc.want {
+				t.Fatalf("parseStartOffsetParam() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Without a keyframe probe available the requested second stands, so this
+// covers the validation on its own.
+func TestResolveMpegTsStartOffsetValidation(t *testing.T) {
+	h := &VideoHandler{}
+	testCases := []struct {
+		name      string
+		requested float64
+		duration  float64
+		want      float64
+	}{
+		{name: "absent", requested: 0, duration: 3600, want: 0},
+		{name: "negative", requested: -30, duration: 3600, want: 0},
+		{name: "inside the item", requested: 900, duration: 3600, want: 900},
+		{name: "duration unknown", requested: 900, duration: 0, want: 900},
+		{name: "at the very end", requested: 3600, duration: 3600, want: 3596},
+		{name: "past the end", requested: 99999, duration: 3600, want: 3596},
+		{name: "item shorter than the clamp", requested: 10, duration: 3, want: 0},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := h.resolveMpegTsStartOffset(context.Background(), "movies/title.mkv", tc.requested, tc.duration)
+			if got != tc.want {
+				t.Fatalf("resolveMpegTsStartOffset(%v, %v) = %v, want %v", tc.requested, tc.duration, got, tc.want)
+			}
+		})
+	}
+}
+
+// argIndex reports where a flag sits in an ffmpeg argument vector, so the tests
+// can assert on ordering rather than on a substring.
+func argIndex(args []string, flag string) int {
+	for i, arg := range args {
+		if arg == flag {
+			return i
+		}
+	}
+	return -1
+}
+
+// A transport stream has no byte offsets, so the only way to start mid-item is
+// to seek the input before the transcode.
+func TestBuildMpegTsArgsSeeksInputToStartOffset(t *testing.T) {
+	base := mpegTsEncodeInput{
+		inputURL:      "pipe:0",
+		videoMap:      "0:0",
+		audioMap:      "0:1",
+		sourceWidth:   1920,
+		sourceHeight:  1080,
+		audioChannels: 6,
+	}
+	caps := HWAccelCaps{Encode: HWNone}
+
+	fromZero := buildMpegTsArgs(base, caps)
+	if argIndex(fromZero, "-ss") >= 0 {
+		t.Fatalf("a zero offset must not seek: %q", strings.Join(fromZero, " "))
+	}
+
+	seeking := base
+	seeking.startOffset = 900
+	args := buildMpegTsArgs(seeking, caps)
+
+	ssIdx := argIndex(args, "-ss")
+	if ssIdx < 0 {
+		t.Fatalf("offset never reached the transcode args: %q", strings.Join(args, " "))
+	}
+	if got := args[ssIdx+1]; got != "900.000" {
+		t.Fatalf("-ss = %q, want 900.000", got)
+	}
+	// After -i the demuxer has already read the offset past; the seek only skips
+	// work when it precedes the input.
+	if inputIdx := argIndex(args, "-i"); ssIdx > inputIdx {
+		t.Fatalf("-ss must precede -i, got %q", strings.Join(args, " "))
+	}
+
+	// The offset is the only difference: drop the seek and the invocation is the
+	// one a start-at-zero request produces.
+	withoutSeek := append(append([]string{}, args[:ssIdx]...), args[ssIdx+2:]...)
+	if strings.Join(withoutSeek, " ") != strings.Join(fromZero, " ") {
+		t.Fatalf("offset changed more than the seek:\n got %q\nwant %q", withoutSeek, fromZero)
+	}
+}
+
+// A stream cut at an offset carries only what is left of the item, and the
+// duration it advertises has to say so.
+func TestBuildMpegTsPlanReportsRemainderFromStartOffset(t *testing.T) {
+	h := &VideoHandler{}
+	meta := &ffprobeOutput{
+		Streams: []ffprobeStream{
+			{Index: 0, CodecType: "video", CodecName: "h264", Width: 1920, Height: 1080},
+			{Index: 1, CodecType: "audio", CodecName: "ac3", Channels: 6},
+		},
+		Format: ffprobeFormat{Duration: "3600.000"},
+	}
+
+	plan := h.buildMpegTsPlan(meta, "pipe:0", "", 900)
+
+	if plan.startOffset != 900 {
+		t.Fatalf("startOffset = %v, want 900", plan.startOffset)
+	}
+	if plan.duration != 2700 {
+		t.Fatalf("duration = %v, want the 2700s remainder", plan.duration)
+	}
+	if joined := strings.Join(plan.args, " "); !strings.Contains(joined, "-ss 900.000 -i pipe:0") {
+		t.Fatalf("plan must seek the input: %q", joined)
+	}
+}
+
+// argvCapturingFFmpegHandler is fakeFFmpegHandler with a script that records the
+// argument vector it was invoked with before copying stdin to stdout.
+func argvCapturingFFmpegHandler(t *testing.T, payload []byte) (*VideoHandler, func() []string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake ffmpeg shell script is POSIX-only")
+	}
+
+	dir := t.TempDir()
+	argvPath := filepath.Join(dir, "argv")
+	scriptPath := filepath.Join(dir, "fake-ffmpeg.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvPath + "\nexec cat\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake ffmpeg: %v", err)
+	}
+
+	// An unresolvable ffprobe keeps the plan on its no-metadata path, which also
+	// leaves the keyframe probe out of the way: the requested second stands.
+	h := NewVideoHandlerWithProvider(true, scriptPath, filepath.Join(dir, "absent-ffprobe"), dir, &mockProvider{data: payload})
+	return h, func() []string {
+		t.Helper()
+		recorded, err := os.ReadFile(argvPath)
+		if err != nil {
+			t.Fatalf("read recorded ffmpeg argv: %v", err)
+		}
+		return strings.Split(strings.TrimSuffix(string(recorded), "\n"), "\n")
+	}
+}
+
+// Resuming a cast has to move the stream, because this renderer cannot be asked
+// to jump: the offset on the URL must reach FFmpeg as an input seek.
+func TestStreamVideoDLNAProfileSeeksMuxToStartOffset(t *testing.T) {
+	h, recordedArgv := argvCapturingFFmpegHandler(t, []byte("TRANSPORT-STREAM-PAYLOAD"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/video/stream?path=movies/title.mkv&dlnaProfile=avc-ts&start=900", nil)
+	rec := httptest.NewRecorder()
+
+	h.StreamVideo(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", res.StatusCode, rec.Body.String())
+	}
+	if got, want := res.Header.Get("X-Start-Offset"), "900.000"; got != want {
+		t.Fatalf("X-Start-Offset = %q, want %q", got, want)
+	}
+	// A stream cut at an offset is still a live mux with no byte offsets, so
+	// nothing the rung promises about seeking may change.
+	if got, want := res.Header.Get("Accept-Ranges"), "none"; got != want {
+		t.Fatalf("Accept-Ranges = %q, want %q", got, want)
+	}
+	features := res.Header["contentFeatures.dlna.org"]
+	if len(features) != 1 {
+		t.Fatalf("contentFeatures.dlna.org = %v, want exactly one value", features)
+	}
+	for _, want := range []string{"DLNA.ORG_OP=00", "DLNA.ORG_CI=1"} {
+		if !strings.Contains(features[0], want) {
+			t.Fatalf("contentFeatures.dlna.org = %q, want it to contain %q", features[0], want)
+		}
+	}
+
+	argv := recordedArgv()
+	ssIdx := argIndex(argv, "-ss")
+	if ssIdx < 0 {
+		t.Fatalf("offset never reached ffmpeg: %q", strings.Join(argv, " "))
+	}
+	if got := argv[ssIdx+1]; got != "900.000" {
+		t.Fatalf("ffmpeg -ss = %q, want 900.000", got)
+	}
+	if inputIdx := argIndex(argv, "-i"); ssIdx > inputIdx {
+		t.Fatalf("-ss must precede -i, got %q", strings.Join(argv, " "))
+	}
+}
+
+// Every stream that starts at the beginning must invoke FFmpeg exactly as it did
+// before offsets existed.
+func TestStreamVideoDLNAProfileWithoutStartOffsetIsUnchanged(t *testing.T) {
+	h, recordedArgv := argvCapturingFFmpegHandler(t, []byte("TRANSPORT-STREAM-PAYLOAD"))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/video/stream?path=movies/title.mkv&dlnaProfile=avc-ts", nil)
+	rec := httptest.NewRecorder()
+
+	h.StreamVideo(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", res.StatusCode, rec.Body.String())
+	}
+	if got := res.Header.Get("X-Start-Offset"); got != "" {
+		t.Fatalf("X-Start-Offset = %q, want it absent", got)
+	}
+
+	argv := recordedArgv()
+	if argIndex(argv, "-ss") >= 0 {
+		t.Fatalf("an absent start parameter must not seek: %q", strings.Join(argv, " "))
+	}
+	want := h.buildMpegTsPlan(nil, "pipe:0", "", 0).args
+	if strings.Join(argv, " ") != strings.Join(want, " ") {
+		t.Fatalf("ffmpeg argv drifted from the no-offset plan:\n got %q\nwant %q", argv, want)
 	}
 }

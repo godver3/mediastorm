@@ -2,16 +2,30 @@ package playback_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/blake2b"
 
 	"novastream/config"
 	"novastream/internal/database"
 	"novastream/internal/integration"
 	metapb "novastream/internal/nzb/metadata/proto"
 	"novastream/internal/pool"
+	"novastream/models"
+	"novastream/services/peartube"
 	"novastream/services/playback"
 )
 
@@ -709,5 +723,392 @@ func TestQueueStatusCompleted_SkipsSampleDirectory(t *testing.T) {
 	}
 	if !strings.HasSuffix(status.WebDAVPath, "/Show.S01E03.2160p.WEB-DL.mkv") {
 		t.Fatalf("expected main file to be selected, got %q", status.WebDAVPath)
+	}
+}
+
+const (
+	companionOpenTestSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	companionOpenTestRef    = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+)
+
+type recordingPearTubeResolver struct {
+	calls        atomic.Int64
+	candidateRef string
+	resolution   *models.PlaybackResolution
+	err          error
+}
+
+func (r *recordingPearTubeResolver) Open(_ context.Context, candidateRef string) (*models.PlaybackResolution, error) {
+	r.calls.Add(1)
+	r.candidateRef = candidateRef
+	return r.resolution, r.err
+}
+
+func TestResolveDispatchesPearTubeBeforeDebridAndUsenetPreflight(t *testing.T) {
+	want := &models.PlaybackResolution{
+		WebDAVPath:   "http://companion.test/api/v2/stream/publication/rendition?cap=lease",
+		HealthStatus: "cached",
+	}
+	resolver := &recordingPearTubeResolver{resolution: want}
+	service := playback.NewService(
+		config.NewManager(filepath.Join(t.TempDir(), "settings.json")),
+		nil,
+		nil,
+		resolver,
+	)
+
+	got, err := service.Resolve(context.Background(), models.NZBResult{
+		Title:       "Selected PearTube candidate",
+		Link:        "magnet:?xt=urn:btih:THIS-MUST-NOT-BE-PARSED",
+		DownloadURL: "http://usenet-preflight.invalid/this-must-not-be-fetched.nzb",
+		ServiceType: models.ServiceTypePearTube,
+		Attributes: map[string]string{
+			"peartube_candidate_ref": "candidate-1",
+			"provider":               "this-must-not-reach-debrid",
+			"infoHash":               "this-must-not-reach-cache-health",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got != want {
+		t.Fatalf("Resolve returned %+v, want resolver result %+v", got, want)
+	}
+	if calls := resolver.calls.Load(); calls != 1 {
+		t.Fatalf("PearTube resolver calls = %d, want 1", calls)
+	}
+	if resolver.candidateRef != "candidate-1" {
+		t.Fatalf("candidate ref = %q, want candidate-1", resolver.candidateRef)
+	}
+
+	if _, err := service.ResolveBatch(context.Background(), models.NZBResult{
+		ServiceType: models.ServiceTypePearTube,
+		Attributes:  map[string]string{"peartube_candidate_ref": "candidate-1"},
+	}, []models.BatchEpisodeTarget{{SeasonNumber: 1, EpisodeNumber: 1}}); err == nil {
+		t.Fatal("ResolveBatch accepted a PearTube candidate")
+	}
+	if calls := resolver.calls.Load(); calls != 1 {
+		t.Fatalf("batch resolution called PearTube resolver; calls = %d, want 1", calls)
+	}
+
+}
+
+func TestPrepareTorrentCandidatesLeavesPearTubeCandidatesUntouched(t *testing.T) {
+	var preflightRequests atomic.Int64
+	preflight := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		preflightRequests.Add(1)
+	}))
+	defer preflight.Close()
+
+	cfg := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	settings := config.DefaultSettings()
+	settings.Streaming.DebridProviders = []config.DebridProviderSettings{{
+		Provider: "torbox",
+		APIKey:   "test-key",
+		Enabled:  true,
+	}}
+	if err := cfg.Save(settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	service := playback.NewService(cfg, nil, nil, nil, &recordingPearTubeResolver{})
+	candidates := []models.NZBResult{
+		{
+			Title:       "PearTube one",
+			ServiceType: models.ServiceTypePearTube,
+			DownloadURL: preflight.URL + "/one.torrent",
+			Link:        "magnet:?xt=urn:btih:PEARTUBEONE",
+			Attributes: map[string]string{
+				"peartube_candidate_ref": companionOpenTestRef,
+				"torrentURL":             preflight.URL + "/one.torrent",
+			},
+		},
+		{
+			Title:       "PearTube two",
+			ServiceType: models.ServiceTypePearTube,
+			DownloadURL: preflight.URL + "/two.torrent",
+			Link:        "magnet:?xt=urn:btih:PEARTUBETWO",
+			Attributes: map[string]string{
+				"peartube_candidate_ref": companionOpenTestRef,
+				"torrentURL":             preflight.URL + "/two.torrent",
+			},
+		},
+	}
+
+	got := service.PrepareTorrentCandidates(context.Background(), candidates)
+	if len(got) != len(candidates) {
+		t.Fatalf("prepared candidate count = %d, want %d", len(got), len(candidates))
+	}
+	for i := range candidates {
+		if got[i].ServiceType != models.ServiceTypePearTube ||
+			got[i].Attributes["peartube_candidate_ref"] != companionOpenTestRef ||
+			got[i].Attributes["infoHash"] != "" {
+			t.Fatalf("PearTube candidate %d was reinterpreted: %+v", i, got[i])
+		}
+	}
+	if calls := preflightRequests.Load(); calls != 0 {
+		t.Fatalf("torrent preflight requests = %d, want 0", calls)
+	}
+}
+
+func TestPearTubeAuthenticatedStreamOpenReturnsCompanionResolution(t *testing.T) {
+	var serverURL string
+	service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+		verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"url":"/api/v2/stream/publication-1/rendition-1?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expiresAt":1786406460000,"publicationId":"publication-1","renditionId":"rendition-1"}`)
+	}, &serverURL)
+
+	resolution, err := service.Resolve(context.Background(), models.NZBResult{
+		ServiceType: models.ServiceTypePearTube,
+		Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	wantURL := serverURL + "/api/v2/stream/publication-1/rendition-1?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	if resolution.WebDAVPath != wantURL {
+		t.Fatalf("WebDAVPath = %q, want %q", resolution.WebDAVPath, wantURL)
+	}
+	if resolution.SourceNZBPath != "" {
+		t.Fatalf("SourceNZBPath = %q, want no duplicated capability URL", resolution.SourceNZBPath)
+	}
+	if resolution.HealthStatus != "cached" {
+		t.Fatalf("HealthStatus = %q, want cached", resolution.HealthStatus)
+	}
+}
+
+func TestPearTubeStreamOpenAcceptsEncodedColonIDs(t *testing.T) {
+	var serverURL string
+	service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+		verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"url":"/api/v2/stream/publication%3A1/rendition%3Amain?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expiresAt":1786406460000,"publicationId":"publication:1","renditionId":"rendition:main"}`)
+	}, &serverURL)
+
+	resolution, err := service.Resolve(context.Background(), models.NZBResult{
+		ServiceType: models.ServiceTypePearTube,
+		Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	wantURL := serverURL + "/api/v2/stream/publication%3A1/rendition%3Amain?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	if resolution.WebDAVPath != wantURL {
+		t.Fatalf("WebDAVPath = %q, want %q", resolution.WebDAVPath, wantURL)
+	}
+}
+
+func TestPearTubeStreamOpenMapsStructuredCompanionErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		code   string
+		want   error
+	}{
+		{name: "candidate expired", status: http.StatusGone, code: "CANDIDATE_EXPIRED", want: peartube.ErrCandidateExpired},
+		{name: "source not current", status: http.StatusConflict, code: "SOURCE_NOT_CURRENT", want: peartube.ErrSourceNotCurrent},
+		{name: "backend unavailable", status: http.StatusServiceUnavailable, code: "BACKEND_UNAVAILABLE", want: peartube.ErrUnavailable},
+		{name: "capability unavailable", status: http.StatusNotImplemented, code: "CAPABILITY_UNAVAILABLE", want: peartube.ErrUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+				verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": map[string]string{"code": test.code, "message": "bounded companion failure"},
+				})
+			}, nil)
+
+			_, err := service.Resolve(context.Background(), models.NZBResult{
+				ServiceType: models.ServiceTypePearTube,
+				Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Resolve error = %v, want errors.Is(_, %v)", err, test.want)
+			}
+		})
+	}
+}
+
+func TestPearTubeStreamOpenRejectsForeignAndOffRouteURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "foreign origin", url: "https://attacker.invalid/api/v2/stream/publication-1/rendition-1?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},
+		{name: "off route", url: "/api/v2/status?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},
+		{name: "wrong lease query", url: "/api/v2/stream/publication-1/rendition-1?next=https%3A%2F%2Fattacker.invalid"},
+		{name: "encoded identity mismatch", url: "/api/v2/stream/publication%3Aother/rendition-1?cap=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+				verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"url":           test.url,
+					"expiresAt":     1786406460000,
+					"publicationId": "publication-1",
+					"renditionId":   "rendition-1",
+				})
+			}, nil)
+
+			if _, err := service.Resolve(context.Background(), models.NZBResult{
+				ServiceType: models.ServiceTypePearTube,
+				Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+			}); err == nil {
+				t.Fatal("Resolve accepted an unowned or off-route companion URL")
+			}
+		})
+	}
+}
+
+func TestPearTubeStreamOpenRefusesAuthenticatedRedirects(t *testing.T) {
+	var redirectedRequests atomic.Int64
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		redirectedRequests.Add(1)
+	}))
+	defer destination.Close()
+
+	service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+		verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+		w.Header().Set("Location", destination.URL+"/api/v2/streams/open")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}, nil)
+	if _, err := service.Resolve(context.Background(), models.NZBResult{
+		ServiceType: models.ServiceTypePearTube,
+		Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+	}); err == nil {
+		t.Fatal("Resolve followed or accepted a companion redirect")
+	}
+	if calls := redirectedRequests.Load(); calls != 0 {
+		t.Fatalf("redirect destination requests = %d, want 0", calls)
+	}
+}
+
+func TestPearTubeStreamOpenHonorsContextCancellationAndBoundsResponses(t *testing.T) {
+	t.Run("error body cancellation", func(t *testing.T) {
+		headersSent := make(chan struct{})
+		service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+			verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.(http.Flusher).Flush()
+			close(headersSent)
+			<-r.Context().Done()
+		}, nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := service.Resolve(ctx, models.NZBResult{
+				ServiceType: models.ServiceTypePearTube,
+				Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+			})
+			errCh <- err
+		}()
+		select {
+		case <-headersSent:
+		case <-time.After(2 * time.Second):
+			t.Fatal("companion did not send error headers")
+		}
+		cancel()
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Resolve error = %v, want context.Canceled", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Resolve did not return after context cancellation")
+		}
+	})
+
+	t.Run("oversized response", func(t *testing.T) {
+		service := newCompanionPlaybackService(t, func(w http.ResponseWriter, r *http.Request) {
+			verifyCompanionOpenRequest(t, r, companionOpenTestRef)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"url":"`+strings.Repeat("x", 70<<10)+`"}`)
+		}, nil)
+		if _, err := service.Resolve(context.Background(), models.NZBResult{
+			ServiceType: models.ServiceTypePearTube,
+			Attributes:  map[string]string{"peartube_candidate_ref": companionOpenTestRef},
+		}); err == nil {
+			t.Fatal("Resolve accepted an oversized companion response")
+		}
+	})
+}
+
+func newCompanionPlaybackService(t *testing.T, handler http.HandlerFunc, serverURL *string) *playback.Service {
+	t.Helper()
+	t.Setenv(peartube.CompanionClientEnv, "mediastorm-test")
+	t.Setenv(peartube.CompanionSharedSecretEnv, companionOpenTestSecret)
+	server := httptest.NewServer(handler)
+	if serverURL != nil {
+		*serverURL = server.URL
+	}
+	peartube.Configure(peartube.Resolved{
+		RelayURL: server.URL,
+		Enabled:  true,
+	})
+	t.Cleanup(func() {
+		peartube.Configure(peartube.Resolved{})
+		server.Close()
+	})
+	return playback.NewService(
+		config.NewManager(filepath.Join(t.TempDir(), "settings.json")),
+		nil,
+		nil,
+		nil,
+		&peartube.Resolver{},
+	)
+}
+
+func verifyCompanionOpenRequest(t *testing.T, request *http.Request, candidateRef string) {
+	t.Helper()
+	if request.Method != http.MethodPost {
+		t.Errorf("method = %q, want POST", request.Method)
+	}
+	if request.URL.RequestURI() != "/api/v2/streams/open" {
+		t.Errorf("request target = %q, want /api/v2/streams/open", request.URL.RequestURI())
+	}
+	if contentType := request.Header.Get("Content-Type"); contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", contentType)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Errorf("read request body: %v", err)
+		return
+	}
+	wantBody := `{"candidateRef":"` + candidateRef + `"}`
+	if string(body) != wantBody {
+		t.Errorf("request body = %s, want only %s", body, wantBody)
+	}
+
+	timestamp := request.Header.Get("X-PearTube-Timestamp")
+	nonce := request.Header.Get("X-PearTube-Nonce")
+	if request.Header.Get("X-PearTube-Client") != "mediastorm-test" || timestamp == "" || nonce == "" {
+		t.Errorf("missing companion authentication headers")
+		return
+	}
+	key, err := hex.DecodeString(companionOpenTestSecret)
+	if err != nil {
+		t.Errorf("decode companion test secret: %v", err)
+		return
+	}
+	bodyHash := blake2b.Sum256(body)
+	canonical := strings.Join([]string{
+		http.MethodPost,
+		"/api/v2/streams/open",
+		timestamp,
+		nonce,
+		hex.EncodeToString(bodyHash[:]),
+	}, "\n")
+	mac := hmac.New(sha512.New, key)
+	_, _ = mac.Write([]byte(canonical))
+	wantMAC := hex.EncodeToString(mac.Sum(nil)[:32])
+	if got := request.Header.Get("X-PearTube-MAC"); got != wantMAC {
+		t.Errorf("X-PearTube-MAC = %q, want body-authenticated %q", got, wantMAC)
 	}
 }

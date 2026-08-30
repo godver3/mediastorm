@@ -439,6 +439,41 @@ func TestCandidateMatchesEpisode(t *testing.T) {
 	}
 }
 
+func TestCandidateExplicitlyMismatchesEpisode(t *testing.T) {
+	target := EpisodeCode{Season: 1, Episode: 4}
+
+	tests := []struct {
+		name      string
+		candidate string
+		want      bool
+	}{
+		// Explicit mismatch cases (must be rejected)
+		{"S01E01 mismatches S01E04", "FUBAR.S01E01.Take.Your.Daughter.to.Work.Day.2160p.mkv", true},
+		{"S01E02 mismatches S01E04", "FUBAR.S01E02.1080p.mkv", true},
+		{"S02E04 mismatches S01E04", "FUBAR.S02E04.1080p.mkv", true},
+		{"Lowercase s01e01", "fubar.s01e01.720p.mkv", true},
+
+		// Matching cases (not a mismatch)
+		{"S01E04 matches target", "FUBAR.S01E04.Armed.and.Dane-gerous.1080p.mkv", false},
+		{"Lowercase s01e04", "fubar.s01e04.1080p.mkv", false},
+
+		// Season packs / unparsed titles without explicit SxxExx (not an explicit mismatch, eligible for pack unpack)
+		{"Season 1 complete pack", "FUBAR.S01.COMPLETE.1080p.WEB-DL", false},
+		{"General title without SxxExx", "FUBAR.2023.1080p.NF.WEB-DL", false},
+		{"Empty title", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CandidateExplicitlyMismatchesEpisode(tt.candidate, target)
+			if got != tt.want {
+				t.Errorf("CandidateExplicitlyMismatchesEpisode(%q, S%02dE%02d) = %v, want %v",
+					tt.candidate, target.Season, target.Episode, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSelectBestCandidate_AbsoluteEpisode(t *testing.T) {
 	// Test that absolute episode matching works when SXXEXX fails
 	candidates := []Candidate{

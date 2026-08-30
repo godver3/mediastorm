@@ -85,6 +85,32 @@ func TestFilterSettingsForProfile(t *testing.T) {
 	}
 }
 
+func TestFilterTorrentScrapersPreservesFirstPearTubeAuthority(t *testing.T) {
+	t.Run("profile exclusion cannot promote a duplicate", func(t *testing.T) {
+		items := []TorrentScraperConfig{
+			{Name: "Authoritative", Type: TorrentScraperTypePearTube, Enabled: true, AllowedProfiles: []string{"profile-2"}},
+			{Name: "Stale duplicate", Type: TorrentScraperTypePearTube, Enabled: true, AllowedProfiles: []string{"profile-1"}},
+			{Name: "Torrentio", Type: "torrentio", Enabled: true, AllowedProfiles: []string{"profile-1"}},
+		}
+		got := filterTorrentScrapersForProfile(items, "profile-1")
+		if names := scraperNames(got); !equalStrings(names, []string{"Torrentio"}) {
+			t.Fatalf("scraper names = %v, want [Torrentio]", names)
+		}
+	})
+
+	t.Run("allowed authoritative source remains first", func(t *testing.T) {
+		items := []TorrentScraperConfig{
+			{Name: "Authoritative", Type: TorrentScraperTypePearTube, Enabled: true, AllowedProfiles: []string{"profile-1"}},
+			{Name: "Stale duplicate", Type: TorrentScraperTypePearTube, Enabled: true, AllowedProfiles: []string{"profile-1"}},
+			{Name: "Torrentio", Type: "torrentio", Enabled: true, AllowedProfiles: []string{"profile-1"}},
+		}
+		got := filterTorrentScrapersForProfile(items, "profile-1")
+		if names := scraperNames(got); !equalStrings(names, []string{"Authoritative", "Torrentio"}) {
+			t.Fatalf("scraper names = %v, want [Authoritative Torrentio]", names)
+		}
+	})
+}
+
 func usenetNames(items []UsenetSettings) []string {
 	names := make([]string, 0, len(items))
 	for _, item := range items {

@@ -2740,6 +2740,32 @@ func (c *tmdbClient) findTVByIMDBID(ctx context.Context, imdbID string) (int64, 
 	return 0, lastErr
 }
 
+// findTVByTVDBID looks up a TV show's TMDB id from its TVDB id.
+func (c *tmdbClient) findTVByTVDBID(ctx context.Context, tvdbID string) (int64, error) {
+	if !c.isConfigured() {
+		return 0, errors.New("tmdb api key not configured")
+	}
+	tvdbID = strings.TrimSpace(tvdbID)
+	if tvdbID == "" {
+		return 0, errors.New("tvdb id required")
+	}
+
+	endpoint := fmt.Sprintf("%s/find/%s?api_key=%s&external_source=tvdb_id",
+		tmdbBaseURL, url.PathEscape(tvdbID), c.apiKey)
+	var payload struct {
+		TVResults []struct {
+			ID int64 `json:"id"`
+		} `json:"tv_results"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return 0, err
+	}
+	if len(payload.TVResults) == 0 {
+		return 0, fmt.Errorf("no TV show found for TVDB ID %s", tvdbID)
+	}
+	return payload.TVResults[0].ID, nil
+}
+
 func mapTMDBReleaseType(releaseType int) string {
 	switch releaseType {
 	case 1:

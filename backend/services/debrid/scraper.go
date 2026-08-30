@@ -15,6 +15,7 @@ type SearchRequest struct {
 	MaxResults      int
 	Parsed          ParsedQuery
 	IMDBID          string // Optional IMDB ID (e.g., "tt11126994") to bypass search
+	TMDBID          string // Optional TMDB ID for exact companion searches
 	IsDaily         bool   // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate   string // For daily shows: the target air date in YYYY-MM-DD format
 	EpisodeReleased bool   // True only when metadata confirms the target episode has aired
