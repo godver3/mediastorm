@@ -514,6 +514,168 @@ func TestNewThrottledReader(t *testing.T) {
 	}
 }
 
+// blockingReader stays blocked until released, standing in for an upstream that
+// has accepted the connection and then stopped delivering.
+type blockingReader struct {
+	release chan struct{}
+}
+
+func (b *blockingReader) Read(p []byte) (int, error) {
+	<-b.release
+	return 0, io.EOF
+}
+
+// A stalled upstream read has to be visible to the starvation monitor, otherwise a
+// cast session starves against a degraded source with nothing able to act on it.
+func TestThrottledReaderExposesBlockedUpstreamRead(t *testing.T) {
+	blocking := &blockingReader{release: make(chan struct{})}
+	throttled := newThrottledReader(blocking, &HLSSession{
+		ID:                  "starved",
+		OutputDir:           t.TempDir(),
+		MaxSegmentRequested: -1,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 8)
+		_, _ = throttled.Read(buf)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for throttled.upstream.startedAt() == 0 {
+		if time.Now().After(deadline) {
+			close(blocking.release)
+			<-done
+			t.Fatal("blocked upstream read was never observable to the starvation monitor")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if blocked := throttled.upstream.blockedFor(time.Now()); blocked <= 0 {
+		t.Fatalf("blockedFor = %v, want a positive duration while the read is stalled", blocked)
+	}
+
+	close(blocking.release)
+	<-done
+
+	if started := throttled.upstream.startedAt(); started != 0 {
+		t.Fatalf("watch still armed after the read returned: startedAt = %d", started)
+	}
+}
+
+// The failure that motivated this: a CDN that keeps the connection alive and
+// trickles. Every individual read returns promptly, so a blocked-read watch never
+// fires, while the transcode starves anyway.
+func TestSlowUpstreamTrickleIsReportedAsSlowNotStalled(t *testing.T) {
+	var gotActual, gotRequired int64
+	calls := 0
+
+	throttled := newThrottledReader(bytes.NewReader(nil), &HLSSession{
+		ID:        "trickle",
+		OutputDir: t.TempDir(),
+	})
+	throttled.requiredBps = 20_000_000 // 20Mbps source
+	throttled.onSlowUpstream = func(actual, required int64) {
+		calls++
+		gotActual, gotRequired = actual, required
+	}
+
+	// Two consecutive deficient windows: 200KB per second of active reading is
+	// 1.6Mbps, the rate measured on the session that prompted this.
+	for range hlsUpstreamLowSamplesNeeded {
+		throttled.windowStart = time.Now().Add(-2 * hlsUpstreamSampleWindow)
+		throttled.sampleUpstreamRate(200_000, time.Second)
+	}
+
+	if calls != 1 {
+		t.Fatalf("slow upstream callbacks = %d, want 1", calls)
+	}
+	if gotRequired != 20_000_000 {
+		t.Errorf("required = %d, want 20000000", gotRequired)
+	}
+	if gotActual > 2_000_000 {
+		t.Errorf("actual = %d bps, want the measured trickle (~1.6Mbps)", gotActual)
+	}
+}
+
+// A single deficient window is not enough; a momentary dip must not hand the
+// session to another source.
+func TestSingleSlowWindowDoesNotRequestMigration(t *testing.T) {
+	calls := 0
+	throttled := newThrottledReader(bytes.NewReader(nil), &HLSSession{ID: "dip", OutputDir: t.TempDir()})
+	throttled.requiredBps = 20_000_000
+	throttled.onSlowUpstream = func(int64, int64) { calls++ }
+
+	throttled.windowStart = time.Now().Add(-2 * hlsUpstreamSampleWindow)
+	throttled.sampleUpstreamRate(200_000, time.Second)
+
+	if calls != 0 {
+		t.Fatalf("slow upstream callbacks = %d, want 0 after one window", calls)
+	}
+}
+
+// The throttle deliberately stalls reads for many seconds when the transcode runs
+// ahead. Because only time inside the read counts, a healthy source stays healthy:
+// measuring against wall time here would report every buffered session as slow.
+func TestThrottledButFastUpstreamIsNotReportedSlow(t *testing.T) {
+	calls := 0
+	throttled := newThrottledReader(bytes.NewReader(nil), &HLSSession{ID: "ahead", OutputDir: t.TempDir()})
+	throttled.requiredBps = 20_000_000
+	throttled.onSlowUpstream = func(int64, int64) { calls++ }
+
+	for range hlsUpstreamLowSamplesNeeded + 1 {
+		// A whole minute of wall clock elapsed, nearly all of it throttle sleep,
+		// but the source handed over 8MB in the one second it was actually read.
+		throttled.windowStart = time.Now().Add(-60 * time.Second)
+		throttled.sampleUpstreamRate(8_000_000, time.Second)
+	}
+
+	if calls != 0 {
+		t.Fatalf("slow upstream callbacks = %d, want 0 for a throttled but fast source", calls)
+	}
+}
+
+// Without a Content-Length or a probed duration there is no rate to compare
+// against, and guessing one would migrate sessions on no evidence.
+func TestSourceRequiredBpsNeedsLengthAndDuration(t *testing.T) {
+	withDuration := &HLSSession{Duration: 1000}
+	if got := hlsSourceRequiredBps(2_500_000_000, withDuration); got != 20_000_000 {
+		t.Errorf("requiredBps = %d, want 20000000", got)
+	}
+	if got := hlsSourceRequiredBps(0, withDuration); got != 0 {
+		t.Errorf("requiredBps without a length = %d, want 0", got)
+	}
+	if got := hlsSourceRequiredBps(2_500_000_000, &HLSSession{}); got != 0 {
+		t.Errorf("requiredBps without a duration = %d, want 0", got)
+	}
+}
+
+// A seek is served as a partial response, so the slice length must not be mistaken
+// for the file length: that would understate the required rate on every seek.
+func TestUpstreamTotalBytesPrefersContentRangeTotal(t *testing.T) {
+	ranged := &http.Response{
+		ContentLength: 1_000_000,
+		Header:        http.Header{"Content-Range": []string{"bytes 2000000-2999999/2500000000"}},
+	}
+	if got := hlsUpstreamTotalBytes(ranged); got != 2_500_000_000 {
+		t.Errorf("total = %d, want the full file size 2500000000", got)
+	}
+
+	whole := &http.Response{ContentLength: 2_500_000_000, Header: http.Header{}}
+	if got := hlsUpstreamTotalBytes(whole); got != 2_500_000_000 {
+		t.Errorf("total = %d, want 2500000000", got)
+	}
+
+	unparseable := &http.Response{
+		ContentLength: 1_000_000,
+		Header:        http.Header{"Content-Range": []string{"bytes 0-99/*"}},
+	}
+	if got := hlsUpstreamTotalBytes(unparseable); got != 1_000_000 {
+		t.Errorf("total = %d, want the Content-Length fallback", got)
+	}
+}
+
 // --- Mock streaming provider for HLS tests ---
 
 type hlsTestProvider struct {

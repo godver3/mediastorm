@@ -118,6 +118,22 @@ func (d *debugReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
+const (
+	// Throttle once the transcode is this many segments ahead of the player.
+	throttleStartThreshold = 15
+
+	// A trickling source never blocks a single read long enough to look stalled,
+	// so delivery rate is sampled over a window and compared against what the
+	// source needs to sustain real-time playback. The headroom, consecutive-window
+	// requirement and cooldown mirror ObserveUpstreamThroughput so both streaming
+	// paths behave the same way.
+	hlsUpstreamSampleWindow     = 5 * time.Second
+	hlsUpstreamHeadroom         = 1.25
+	hlsUpstreamLowSamplesNeeded = 2
+	hlsUpstreamSignalCooldown   = 30 * time.Second
+	hlsUpstreamMinRequiredBps   = int64(1_000_000)
+)
+
 // throttledReader wraps an io.Reader and slows down reads when ffmpeg is
 // generating segments faster than the player is consuming them.
 // This prevents excessive disk usage from buffered segments.
@@ -126,6 +142,21 @@ type throttledReader struct {
 	session       *HLSSession
 	lastThrottle  time.Time
 	throttleCount int64
+	// upstream measures only the blocking upstream read. The deliberate throttle
+	// sleep below is excluded, so a session that is merely far enough ahead to be
+	// slowed down is never mistaken for a starved one.
+	upstream pipelineBlockWatch
+
+	// Delivery-rate sampling. activeRead accumulates only time spent inside the
+	// upstream read, so throttle sleeps and client backpressure cannot depress the
+	// measured rate; what remains is what the source is actually capable of.
+	requiredBps    int64
+	windowStart    time.Time
+	windowBytes    int64
+	activeRead     time.Duration
+	lowSamples     int
+	lastLowSignal  time.Time
+	onSlowUpstream func(actualBps, requiredBps int64)
 }
 
 // throttlingProxy is an HTTP server that proxies requests to a remote URL
@@ -244,6 +275,23 @@ func (p *throttlingProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Wrap with throttled reader and copy to response
 	throttled := newThrottledReader(resp.Body, p.session)
+	// The rate the source must sustain is a property of the source, so it is derived
+	// from the file rather than from client telemetry: an HLS transcode has to read
+	// roughly one second of media per second regardless of what the receiver reports.
+	throttled.requiredBps = hlsSourceRequiredBps(hlsUpstreamTotalBytes(resp), p.session)
+	throttled.onSlowUpstream = func(actualBps, requiredBps int64) {
+		reportHLSSlowUpstream(p.session, actualBps, requiredBps)
+	}
+	stopStarvationWatch := monitorPipelineStarvation(
+		r.Context(),
+		&throttled.upstream,
+		pipelineStarvationTimeout,
+		pipelineStarvationCheckInterval,
+		func(blockedFor time.Duration) bool {
+			return reportHLSUpstreamStarvation(p.session, blockedFor)
+		},
+	)
+	defer stopStarvationWatch()
 	_, err = io.Copy(w, throttled)
 	if err != nil && err != context.Canceled {
 		log.Printf("[hls] session %s: proxy copy error: %v", p.session.ID, err)
@@ -321,7 +369,6 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 		bufferAhead := highestSegment - effectiveMaxRequested
 
 		// Throttle when 15+ segments ahead (~30 seconds at 2s/segment)
-		const throttleStartThreshold = 15
 		if bufferAhead > throttleStartThreshold {
 			excessSegments := bufferAhead - throttleStartThreshold
 			delayMs := 500 + (excessSegments * 100) // 500ms base + 100ms per excess segment
@@ -343,7 +390,134 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 		}
 	}
 
-	return t.r.Read(p)
+	t.upstream.begin()
+	readStart := time.Now()
+	n, err = t.r.Read(p)
+	readElapsed := time.Since(readStart)
+	t.upstream.end()
+
+	t.sampleUpstreamRate(n, readElapsed)
+	return n, err
+}
+
+// sampleUpstreamRate reports a source that is delivering, but too slowly to keep a
+// real-time transcode fed. Only time spent inside the upstream read is counted, so
+// a session slowed by its own throttle still measures the source's true rate.
+func (t *throttledReader) sampleUpstreamRate(n int, readElapsed time.Duration) {
+	if t.requiredBps < hlsUpstreamMinRequiredBps || t.onSlowUpstream == nil {
+		return
+	}
+	if n > 0 {
+		t.windowBytes += int64(n)
+	}
+	t.activeRead += readElapsed
+
+	now := time.Now()
+	if t.windowStart.IsZero() {
+		t.windowStart = now
+		return
+	}
+	if now.Sub(t.windowStart) < hlsUpstreamSampleWindow {
+		return
+	}
+
+	bytes, active := t.windowBytes, t.activeRead
+	t.windowStart, t.windowBytes, t.activeRead = now, 0, 0
+	if bytes <= 0 || active <= 0 {
+		return
+	}
+
+	actual := int64(float64(bytes) * 8 * float64(time.Second) / float64(active))
+	if actual >= int64(float64(t.requiredBps)*hlsUpstreamHeadroom) {
+		t.lowSamples = 0
+		return
+	}
+	t.lowSamples++
+	if t.lowSamples < hlsUpstreamLowSamplesNeeded {
+		return
+	}
+	if !t.lastLowSignal.IsZero() && now.Sub(t.lastLowSignal) < hlsUpstreamSignalCooldown {
+		return
+	}
+	t.lowSamples = 0
+	t.lastLowSignal = now
+	t.onSlowUpstream(actual, t.requiredBps)
+}
+
+// reportHLSUpstreamStarvation asks the player to migrate away from an upstream
+// that has stopped delivering. HLS transcode sessions have no equivalent of the
+// direct path's recovery: FFmpeg cannot re-resolve its own input, so a source
+// that degrades mid-session starves the transcode until the viewer gives up.
+//
+// Returning true marks the block as reported so a single stall is signalled once.
+func reportHLSUpstreamStarvation(session *HLSSession, blockedFor time.Duration) bool {
+	return requestHLSSourceMigration(session, "backend-starvation",
+		fmt.Sprintf("upstream read blocked for %v", blockedFor.Round(time.Millisecond)))
+}
+
+// reportHLSSlowUpstream covers the failure the blocked-read watch cannot see: a
+// source that keeps the connection alive and trickles, which starves the transcode
+// just as effectively while every individual read returns promptly.
+func reportHLSSlowUpstream(session *HLSSession, actualBps, requiredBps int64) {
+	requestHLSSourceMigration(session, "backend-low-throughput",
+		fmt.Sprintf("upstream delivering %.1fMbps against %.1fMbps required",
+			float64(actualBps)/1_000_000, float64(requiredBps)/1_000_000))
+}
+
+func requestHLSSourceMigration(session *HLSSession, reason, detail string) bool {
+	if session == nil {
+		return false
+	}
+	session.mu.RLock()
+	sessionID := session.ID
+	path := session.Path
+	profileID := session.ProfileID
+	profileName := session.ProfileName
+	metadata := session.MediaMetadata
+	session.mu.RUnlock()
+
+	marked := GetStreamTracker().MarkPlaybackMigrationForIdentity(
+		profileID, profileName, metadata.MediaType, metadata.ItemID, path, reason)
+	if marked > 0 {
+		log.Printf("[stream-migration] HLS transcode source is not keeping up: session=%s reason=%s %s",
+			sessionID, reason, detail)
+	} else {
+		// No playback identity to address, so nothing can act on a handoff. Say so
+		// rather than silently dropping the only evidence that the source stalled.
+		log.Printf("[stream-health] HLS transcode source is not keeping up without playback metadata: session=%s reason=%s %s",
+			sessionID, reason, detail)
+	}
+	return true
+}
+
+// hlsUpstreamTotalBytes is the size of the whole file, not of the slice being
+// served. FFmpeg seeks with Range requests, and a partial response's
+// Content-Length describes only that range, which paired with the full duration
+// would understate the bitrate the source has to sustain.
+func hlsUpstreamTotalBytes(resp *http.Response) int64 {
+	if resp == nil {
+		return 0
+	}
+	if total := parseContentRangeTotal(resp.Header.Get("Content-Range")); total > 0 {
+		return total
+	}
+	return resp.ContentLength
+}
+
+// hlsSourceRequiredBps is the average bitrate the source must sustain for the
+// transcode to hold real time. The file size plus the probed duration describes
+// that directly; without both there is nothing to compare a sample against.
+func hlsSourceRequiredBps(totalBytes int64, session *HLSSession) int64 {
+	if totalBytes <= 0 || session == nil {
+		return 0
+	}
+	session.mu.RLock()
+	duration := session.Duration
+	session.mu.RUnlock()
+	if duration <= 0 {
+		return 0
+	}
+	return int64(float64(totalBytes) * 8 / duration)
 }
 
 // HLSSession represents an active HLS transcoding session

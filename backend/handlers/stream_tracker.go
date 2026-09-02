@@ -759,6 +759,45 @@ func (t *StreamTracker) MarkPlaybackMigrationForPath(path, reason string) int {
 	return marked
 }
 
+// MarkPlaybackMigrationForIdentity applies a recommendation to a playback that has
+// no tracked stream to hang it on. HLS transcode sessions fetch upstream through
+// their own proxy rather than StartStream, so nothing registers them here, but the
+// client-side handoff is keyed on playback identity rather than on the stream, so
+// the signal lands the same way once the keys are built the same way.
+//
+// The profile arguments mirror streamPlaybackControlKeys, which treats both the
+// profile ID and the profile name as candidate user identities.
+func (t *StreamTracker) MarkPlaybackMigrationForIdentity(profileID, profileName, mediaType, itemID, sourcePath, reason string) int {
+	if strings.TrimSpace(itemID) == "" {
+		return 0
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "backend-starvation"
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneMigrationSignalsLocked()
+
+	signal := playbackMigrationSignal{reason: reason, expiresAt: time.Now().Add(playbackMigrationSignalDuration)}
+	marked := 0
+	seen := make(map[string]bool)
+	for _, userID := range []string{profileID, profileName} {
+		if strings.TrimSpace(userID) == "" {
+			continue
+		}
+		key := playbackControlKey(userID, mediaType, itemID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		t.recordPlaybackMigrationSignalLocked(playbackMigrationKey(key, sourcePath), signal)
+		marked++
+	}
+	return marked
+}
+
 // ObservePlaybackBandwidth binds the active release's estimated average bitrate
 // to matching direct streams. SourcePath keeps an older range request from
 // inheriting the replacement source's requirement during a handoff.

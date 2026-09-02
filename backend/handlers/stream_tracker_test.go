@@ -734,3 +734,35 @@ func TestMergeDashboardStreamRowsCollapsesNativeConnections(t *testing.T) {
 		t.Errorf("expected via_share_link to survive merge")
 	}
 }
+
+// An HLS transcode session never registers a tracked stream, so the signal has to
+// reach the player from the session's own identity or a starved cast keeps playing
+// against a dead source.
+func TestPlaybackMigrationForIdentityReachesUntrackedHLSPlayback(t *testing.T) {
+	tracker := newTestTracker()
+
+	marked := tracker.MarkPlaybackMigrationForIdentity(
+		"p1", "", "movie", "tmdb:movie:14160", "/debrid/torbox/123/file/0/title.mkv", "backend-starvation")
+	if marked != 1 {
+		t.Fatalf("marked playbacks = %d, want 1", marked)
+	}
+
+	reason, migrate := tracker.ShouldMigratePlayback("p1", models.PlaybackProgressUpdate{
+		MediaType:   "movie",
+		ItemID:      "tmdb:movie:14160",
+		SourcePath:  "/debrid/torbox/123/file/0/title.mkv",
+		IsBuffering: true,
+	})
+	if !migrate || reason != "backend-starvation" {
+		t.Fatalf("starved HLS playback did not receive migration: migrate=%v reason=%q", migrate, reason)
+	}
+}
+
+// Without an item there is no playback to address, so the caller must be able to
+// tell that nothing was signalled rather than assume a handoff is coming.
+func TestPlaybackMigrationForIdentityRequiresAnItem(t *testing.T) {
+	tracker := newTestTracker()
+	if marked := tracker.MarkPlaybackMigrationForIdentity("p1", "", "movie", "", "/x.mkv", "backend-starvation"); marked != 0 {
+		t.Fatalf("marked playbacks = %d, want 0", marked)
+	}
+}
