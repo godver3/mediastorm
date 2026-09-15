@@ -5,6 +5,7 @@ import "time"
 // SportsGameDetail is additive to the legacy game response. Empty data never
 // implies a zero statistic; capability flags describe verified available panels.
 type SportsGameDetail struct {
+	Pregame     *SportsPregame          `json:"pregame,omitempty"`
 	PlayerStats []SportsPlayerGameStats `json:"playerStats,omitempty"`
 	// TournamentContext is the literal soccer provider season/round label, not inferred progression.
 	TournamentContext string                   `json:"tournamentContext,omitempty"`

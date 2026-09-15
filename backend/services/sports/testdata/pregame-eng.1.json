@@ -1,0 +1,709 @@
+{
+  "header": {
+    "id": "401879275",
+    "season": {
+      "year": 2026,
+      "current": true,
+      "type": 14308,
+      "name": "2026-27 English Premier League"
+    },
+    "competitions": [
+      {
+        "id": "401879275",
+        "date": "2026-09-18T19:00Z",
+        "competitors": [
+          {
+            "id": "337",
+            "homeAway": "home",
+            "team": {
+              "id": "337",
+              "name": "Brentford",
+              "displayName": "Brentford",
+              "groups": {
+                "name": "2026-27 English Premier League"
+              }
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "1-3-0",
+                "displayValue": "1-3-0"
+              },
+              {
+                "type": "points",
+                "summary": "6",
+                "displayValue": "6"
+              }
+            ]
+          },
+          {
+            "id": "363",
+            "homeAway": "away",
+            "team": {
+              "id": "363",
+              "name": "Chelsea",
+              "displayName": "Chelsea",
+              "groups": {
+                "name": "2026-27 English Premier League"
+              }
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "2-1-1",
+                "displayValue": "2-1-1"
+              },
+              {
+                "type": "points",
+                "summary": "7",
+                "displayValue": "7"
+              }
+            ]
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "1",
+            "name": "STATUS_SCHEDULED",
+            "state": "pre",
+            "completed": false,
+            "description": "Scheduled",
+            "detail": "Fri, September 18th at 3:00 PM EDT",
+            "shortDetail": "9/18 - 3:00 PM EDT"
+          }
+        },
+        "groups": {
+          "id": "1",
+          "name": "English Premiership 2001-2002"
+        }
+      }
+    ]
+  },
+  "boxscore": {
+    "teams": [
+      {
+        "team": {
+          "id": "337",
+          "name": "Brentford",
+          "displayName": "Brentford"
+        },
+        "statistics": [
+          {
+            "name": "goalDifference",
+            "displayValue": "3",
+            "label": "Goal Difference"
+          },
+          {
+            "name": "totalGoals",
+            "displayValue": "7",
+            "label": "Total Goals"
+          },
+          {
+            "name": "goalAssists",
+            "displayValue": "3",
+            "label": "Assists"
+          },
+          {
+            "name": "goalsConceded",
+            "displayValue": "4",
+            "label": "Goals Against"
+          }
+        ],
+        "homeAway": "home"
+      },
+      {
+        "team": {
+          "id": "363",
+          "name": "Chelsea",
+          "displayName": "Chelsea"
+        },
+        "statistics": [
+          {
+            "name": "goalDifference",
+            "displayValue": "1",
+            "label": "Goal Difference"
+          },
+          {
+            "name": "totalGoals",
+            "displayValue": "10",
+            "label": "Total Goals"
+          },
+          {
+            "name": "goalAssists",
+            "displayValue": "9",
+            "label": "Assists"
+          },
+          {
+            "name": "goalsConceded",
+            "displayValue": "9",
+            "label": "Goals Against"
+          }
+        ],
+        "homeAway": "away"
+      }
+    ]
+  },
+  "lastFiveGames": [
+    {
+      "team": {
+        "id": "337",
+        "displayName": "Brentford"
+      },
+      "events": [
+        {
+          "id": "401879321",
+          "gameDate": "2026-08-22T16:30Z",
+          "score": "3-0",
+          "homeTeamId": "337",
+          "awayTeamId": "367",
+          "gameResult": "W",
+          "opponent": {
+            "id": "367",
+            "displayName": "Tottenham Hotspur"
+          }
+        },
+        {
+          "id": "401907951",
+          "gameDate": "2026-08-25T19:00Z",
+          "score": "6-1",
+          "homeTeamId": "392",
+          "awayTeamId": "337",
+          "gameResult": "W",
+          "opponent": {
+            "id": "392",
+            "displayName": "Birmingham City"
+          }
+        },
+        {
+          "id": "401879315",
+          "gameDate": "2026-08-30T13:00Z",
+          "score": "1-1",
+          "homeTeamId": "357",
+          "awayTeamId": "337",
+          "gameResult": "D",
+          "opponent": {
+            "id": "357",
+            "displayName": "Leeds United"
+          }
+        },
+        {
+          "id": "401879311",
+          "gameDate": "2026-09-05T14:00Z",
+          "score": "1-1",
+          "homeTeamId": "337",
+          "awayTeamId": "366",
+          "gameResult": "D",
+          "opponent": {
+            "id": "366",
+            "displayName": "Sunderland"
+          }
+        },
+        {
+          "id": "401879285",
+          "gameDate": "2026-09-12T14:00Z",
+          "score": "2-2",
+          "homeTeamId": "349",
+          "awayTeamId": "337",
+          "gameResult": "D",
+          "opponent": {
+            "id": "349",
+            "displayName": "AFC Bournemouth"
+          }
+        }
+      ]
+    },
+    {
+      "team": {
+        "id": "363",
+        "displayName": "Chelsea"
+      },
+      "events": [
+        {
+          "id": "401908127",
+          "gameDate": "2026-08-27T18:30Z",
+          "score": "2-0",
+          "homeTeamId": "363",
+          "awayTeamId": "301",
+          "gameResult": "W",
+          "opponent": {
+            "id": "301",
+            "displayName": "Luton Town"
+          }
+        },
+        {
+          "id": "401879317",
+          "gameDate": "2026-08-30T13:00Z",
+          "score": "4-3",
+          "homeTeamId": "363",
+          "awayTeamId": "331",
+          "gameResult": "W",
+          "opponent": {
+            "id": "331",
+            "displayName": "Brighton & Hove Albion"
+          }
+        },
+        {
+          "id": "401879292",
+          "gameDate": "2026-09-06T15:30Z",
+          "score": "2-1",
+          "homeTeamId": "359",
+          "awayTeamId": "363",
+          "gameResult": "L",
+          "opponent": {
+            "id": "359",
+            "displayName": "Arsenal"
+          }
+        },
+        {
+          "id": "401914256",
+          "gameDate": "2026-09-09T19:15Z",
+          "score": "6-3",
+          "homeTeamId": "363",
+          "awayTeamId": "357",
+          "gameResult": "W",
+          "opponent": {
+            "id": "357",
+            "displayName": "Leeds United"
+          }
+        },
+        {
+          "id": "401879283",
+          "gameDate": "2026-09-12T14:00Z",
+          "score": "2-2",
+          "homeTeamId": "363",
+          "awayTeamId": "306",
+          "gameResult": "D",
+          "opponent": {
+            "id": "306",
+            "displayName": "Hull City"
+          }
+        }
+      ]
+    }
+  ],
+  "standings": {
+    "header": "English Premier League Standings",
+    "groups": [
+      {
+        "standings": {
+          "entries": [
+            {
+              "team": "Chelsea",
+              "id": "363",
+              "stats": [
+                {
+                  "name": "gamesPlayed",
+                  "displayName": "Games Played",
+                  "type": "gamesplayed",
+                  "displayValue": "4"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "1"
+                },
+                {
+                  "name": "pointDifferential",
+                  "displayName": "Goal Difference",
+                  "type": "pointdifferential",
+                  "displayValue": "+1"
+                },
+                {
+                  "name": "points",
+                  "displayName": "Points",
+                  "type": "points",
+                  "displayValue": "7"
+                },
+                {
+                  "name": "ties",
+                  "displayName": "Draws",
+                  "type": "ties",
+                  "displayValue": "1"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "2"
+                },
+                {
+                  "name": "rank",
+                  "displayName": "Rank",
+                  "type": "rank",
+                  "displayValue": "6"
+                },
+                {
+                  "id": "0",
+                  "name": "overall",
+                  "displayName": "Overall",
+                  "type": "total",
+                  "summary": "2-1-1",
+                  "displayValue": "2-1-1"
+                }
+              ]
+            },
+            {
+              "team": "Brentford",
+              "id": "337",
+              "stats": [
+                {
+                  "name": "gamesPlayed",
+                  "displayName": "Games Played",
+                  "type": "gamesplayed",
+                  "displayValue": "4"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "0"
+                },
+                {
+                  "name": "pointDifferential",
+                  "displayName": "Goal Difference",
+                  "type": "pointdifferential",
+                  "displayValue": "+3"
+                },
+                {
+                  "name": "points",
+                  "displayName": "Points",
+                  "type": "points",
+                  "displayValue": "6"
+                },
+                {
+                  "name": "ties",
+                  "displayName": "Draws",
+                  "type": "ties",
+                  "displayValue": "3"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "1"
+                },
+                {
+                  "name": "rank",
+                  "displayName": "Rank",
+                  "type": "rank",
+                  "displayValue": "7"
+                },
+                {
+                  "id": "0",
+                  "name": "overall",
+                  "displayName": "Overall",
+                  "type": "total",
+                  "summary": "1-3-0",
+                  "displayValue": "1-3-0"
+                }
+              ]
+            }
+          ]
+        },
+        "header": "English Premier League Standings"
+      }
+    ]
+  },
+  "leaders": [
+    {
+      "team": {
+        "id": "337",
+        "displayName": "Brentford"
+      },
+      "leaders": [
+        {
+          "name": "goalsLeaders",
+          "displayName": "Goals",
+          "leaders": [
+            {
+              "displayValue": "Matches: 4, Goals: 3",
+              "athlete": {
+                "id": "310958",
+                "displayName": "Kevin Schade",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "totalGoals",
+                  "displayName": "Total Goals",
+                  "displayValue": "3"
+                },
+                {
+                  "name": "appearances",
+                  "displayName": "Appearances",
+                  "displayValue": "4"
+                }
+              ],
+              "summary": "4 APP"
+            }
+          ]
+        },
+        {
+          "name": "assistsLeaders",
+          "displayName": "Assists",
+          "leaders": [
+            {
+              "displayValue": "Matches: 4, Assists: 1",
+              "athlete": {
+                "id": "284490",
+                "displayName": "Keane Lewis-Potter",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "goalAssists",
+                  "displayName": "Assists",
+                  "displayValue": "1"
+                },
+                {
+                  "name": "appearances",
+                  "displayName": "Appearances",
+                  "displayValue": "4"
+                }
+              ],
+              "summary": "4 APP"
+            }
+          ]
+        },
+        {
+          "name": "totalShots",
+          "displayName": "Total Shots",
+          "leaders": [
+            {
+              "displayValue": "10",
+              "athlete": {
+                "id": "310958",
+                "displayName": "Kevin Schade",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "team": {
+        "id": "363",
+        "displayName": "Chelsea"
+      },
+      "leaders": [
+        {
+          "name": "goalsLeaders",
+          "displayName": "Goals",
+          "leaders": [
+            {
+              "displayValue": "Matches: 4, Goals: 3",
+              "athlete": {
+                "id": "284960",
+                "displayName": "Jo\u00e3o Pedro",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "totalGoals",
+                  "displayName": "Total Goals",
+                  "displayValue": "3"
+                },
+                {
+                  "name": "appearances",
+                  "displayName": "Appearances",
+                  "displayValue": "4"
+                }
+              ],
+              "summary": "4 APP"
+            }
+          ]
+        },
+        {
+          "name": "assistsLeaders",
+          "displayName": "Assists",
+          "leaders": [
+            {
+              "displayValue": "Matches: 4, Assists: 3",
+              "athlete": {
+                "id": "284960",
+                "displayName": "Jo\u00e3o Pedro",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "goalAssists",
+                  "displayName": "Assists",
+                  "displayValue": "3"
+                },
+                {
+                  "name": "appearances",
+                  "displayName": "Appearances",
+                  "displayValue": "4"
+                }
+              ],
+              "summary": "4 APP"
+            }
+          ]
+        },
+        {
+          "name": "totalShots",
+          "displayName": "Total Shots",
+          "leaders": [
+            {
+              "displayValue": "15",
+              "athlete": {
+                "id": "296395",
+                "displayName": "Cole Palmer",
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "seasonseries": [
+    {
+      "type": "head-to-head",
+      "summary": "CHE leads series 2-0-3",
+      "events": [
+        {
+          "id": "740808",
+          "date": "2026-01-17T15:00:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "363",
+                "displayName": "Chelsea"
+              },
+              "score": "2"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "337",
+                "displayName": "Brentford"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "740634",
+          "date": "2025-09-13T19:00:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "337",
+                "displayName": "Brentford"
+              },
+              "score": "2"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "363",
+                "displayName": "Chelsea"
+              },
+              "score": "2"
+            }
+          ]
+        },
+        {
+          "id": "704579",
+          "date": "2025-04-06T13:00:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "337",
+                "displayName": "Brentford"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "363",
+                "displayName": "Chelsea"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "704432",
+          "date": "2024-12-15T19:00:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "363",
+                "displayName": "Chelsea"
+              },
+              "score": "2"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "337",
+                "displayName": "Brentford"
+              },
+              "score": "1"
+            }
+          ]
+        },
+        {
+          "id": "671295",
+          "date": "2024-03-02T15:00:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "337",
+                "displayName": "Brentford"
+              },
+              "score": "2"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "363",
+                "displayName": "Chelsea"
+              },
+              "score": "2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

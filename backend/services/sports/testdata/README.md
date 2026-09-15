@@ -19,3 +19,11 @@ It retains identity, final status, inning scores, team statistics and four textu
 ## NHL player capture
 
 `nhl-player-captured.json` retains the ESPN historical summary for event 401777460 (Edmonton at Florida, 2025-06-18 UTC), retrieved 2026-09-11. Endpoint: `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event=401777460`. Used for player/goalie column alignment and category tests. In this response `SOG` means shootout goals; ordinary shots use `S`. Season totals are excluded.
+
+## Pregame matchup captures (September 15, 2026)
+
+- `pregame-mlb.json`: https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event=401816943
+- `pregame-nba.json`: https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=401902644
+- `pregame-eng.1.json`: https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/summary?event=401879275
+
+Reduced official summaries retain factual team identities, season/records, selected season statistics, recent results, leaders, probable starters and completed head-to-head results. Standings retain only the matchup's team rows; unrelated media, articles, odds, links and images are removed. The NBA sample is preseason with 0-0 records and must not imply meaningful zero season averages. Minute-only ESPN dates must remain parseable. These undocumented response shapes are optional; no additional requests are issued to populate the pregame preview.

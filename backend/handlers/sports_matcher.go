@@ -417,6 +417,19 @@ func scoreMatchupSegment(target string, home, away sportsTeamIdentity) sportsEvi
 		{sportsTokens(home.location), sportsTokens(away.nickname), 0.84, "Location and opponent nickname"},
 		{sportsTokens(home.nickname), sportsTokens(away.location), 0.84, "Nickname and opponent location"},
 	}
+	// Abbreviations require an explicit matchup marker and distinct whole tokens.
+	homeAbbr, awayAbbr := sportsTokens(home.abbreviation), sportsTokens(away.abbreviation)
+	if containsMatchupMarker(target) {
+		if len(homeAbbr) == 1 && len(homeAbbr[0]) >= 2 {
+			variants = append(variants, matchupVariant{homeAbbr, sportsTokens(away.nickname), 0.86, "Team abbreviation and opponent nickname"})
+		}
+		if len(awayAbbr) == 1 && len(awayAbbr[0]) >= 2 {
+			variants = append(variants, matchupVariant{sportsTokens(home.nickname), awayAbbr, 0.86, "Team nickname and opponent abbreviation"})
+		}
+		if len(homeAbbr) == 1 && len(awayAbbr) == 1 && len(homeAbbr[0]) >= 2 && len(awayAbbr[0]) >= 2 && homeAbbr[0] != awayAbbr[0] {
+			variants = append(variants, matchupVariant{homeAbbr, awayAbbr, 0.86, "Both team abbreviations"})
+		}
+	}
 	for _, variant := range variants {
 		if len(variant.home) == 0 || len(variant.away) == 0 {
 			continue
@@ -447,6 +460,12 @@ func scoreMatchupSegment(target string, home, away sportsTeamIdentity) sportsEvi
 			on:     "matchup-name",
 		}
 	}
+	// A dedicated team channel is plausible; an explicit matchup with a different
+	// opponent is not evidence for this event.
+	if containsMatchupMarker(target) {
+		return scoreFuzzySportsMatchup(target, home, away)
+	}
+
 	if homeScore.score >= awayScore.score && homeScore.score > 0 {
 		homeScore.score = math.Min(homeScore.score, 0.74)
 		homeScore.on = "team-name"
@@ -607,9 +626,15 @@ func rankTeamChannelCandidates(team models.SportsTeamRecord, channels []LiveChan
 }
 
 func sortSportsStreamMatches(matches []models.SportsStreamMatch) {
+	for i := range matches {
+		matches[i].ReportedQuality = reportedSportsQuality(matches[i].ChannelName)
+	}
 	sort.SliceStable(matches, func(i, j int) bool {
 		if matches[i].Confidence != matches[j].Confidence {
 			return matches[i].Confidence > matches[j].Confidence
+		}
+		if order := compareSportsQuality(matches[i].ReportedQuality, matches[j].ReportedQuality); order != 0 {
+			return order < 0
 		}
 		if matches[i].ChannelName != matches[j].ChannelName {
 			return strings.ToLower(matches[i].ChannelName) < strings.ToLower(matches[j].ChannelName)
@@ -665,6 +690,10 @@ func buildSportsStreamGroups(matches []models.SportsStreamMatch) ([]models.Sport
 	byKey := make(map[string]int)
 	for _, match := range unique {
 		key := canonicalSportsGroupKey(match)
+		// A possible feed must never inherit a strong group's confidence or auto-play eligibility.
+		if match.ConfidenceTier != "strong" {
+			key += ":possible"
+		}
 		if index, exists := byKey[key]; exists {
 			groups[index].Alternatives = append(groups[index].Alternatives, match)
 			groups[index].FeedCount++
@@ -757,4 +786,15 @@ func autoLinkCandidatesForTeam(team models.SportsTeamRecord, channels []LiveChan
 		results = append(results, candidate)
 	}
 	return results
+}
+
+// PPV and series can describe live sports; exclude only explicit non-live content here.
+func hasNonLiveSportsLabel(value string) bool {
+	for token := range tokenSet(value) {
+		switch token {
+		case "replay", "archive", "classic", "movie", "movies", "ondemand", "vod":
+			return true
+		}
+	}
+	return false
 }

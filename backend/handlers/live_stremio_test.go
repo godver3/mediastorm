@@ -457,3 +457,147 @@ func TestStremioStreamResourceURL(t *testing.T) {
 		t.Errorf("expected space-encoded id in %q", got)
 	}
 }
+
+// Use an in-memory transport so catalog protocol tests need no network sockets.
+type catalogFixtureTransport struct{ handler http.Handler }
+
+func (transport catalogFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	transport.handler.ServeHTTP(recorder, r)
+	return recorder.Result(), nil
+}
+func newCatalogFixtureClient(handler http.Handler) *http.Client {
+	return &http.Client{Transport: catalogFixtureTransport{handler: handler}}
+}
+
+func TestFetchStremioCatalogShortPages(t *testing.T) {
+	var paths []string
+	srv := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/configured/catalog/tv/live.json":
+			_, _ = w.Write([]byte(`{"metas":[{"id":"one"},{"id":"two"}]}`))
+		case "/configured/catalog/tv/live/skip=2.json":
+			_, _ = w.Write([]byte(`{"metas":[{"id":"three"}]}`))
+		case "/configured/catalog/tv/live/skip=3.json":
+			_, _ = w.Write([]byte(`{"metas":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	metas, err := fetchStremioCatalog(context.Background(), srv, "https://addon.test"+"/configured", stremioCatalogDef{Type: "tv", ID: "live", Extra: []stremioExtraProp{{Name: "skip"}}})
+	if err != nil || len(metas) != 3 {
+		t.Fatalf("got %v, %v; paths %v", metas, err, paths)
+	}
+}
+
+func TestFetchStremioCatalogRequiredGenre(t *testing.T) {
+	for _, options := range []string{`["All","Football"]`, `["Football","Ice Hockey"]`} {
+		t.Run(options, func(t *testing.T) {
+			var catalog stremioCatalogDef
+			if err := json.Unmarshal([]byte(`{"type":"tv","id":"events","extra":[{"name":"genre","isRequired":true,"options":`+options+`}]}`), &catalog); err != nil {
+				t.Fatal(err)
+			}
+			srv := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/catalog/tv/events/genre=All.json":
+					_, _ = w.Write([]byte(`{"metas":[{"id":"football"},{"id":"hockey"}]}`))
+				case "/catalog/tv/events/genre=Football.json":
+					_, _ = w.Write([]byte(`{"metas":[{"id":"football"}]}`))
+				case "/catalog/tv/events/genre=Ice Hockey.json":
+					_, _ = w.Write([]byte(`{"metas":[{"id":"hockey"}]}`))
+				default:
+					http.Error(w, "genre required", 400)
+				}
+			}))
+
+			metas, err := fetchStremioCatalog(context.Background(), srv, "https://addon.test", catalog)
+			if err != nil || len(metas) != 2 {
+				t.Fatalf("got %v, %v", metas, err)
+			}
+		})
+	}
+}
+
+func TestFetchStremioCatalogStopsRepeatedPages(t *testing.T) {
+	hits := 0
+	srv := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"metas":[{"id":"one"},{"id":"two"}]}`))
+	}))
+
+	metas, err := fetchStremioCatalog(context.Background(), srv, "https://addon.test", stremioCatalogDef{Type: "tv", ID: "live", Extra: []stremioExtraProp{{Name: "skip"}}})
+	if err != nil || len(metas) != 2 || hits != 2 {
+		t.Fatalf("metas=%v err=%v requests=%d", metas, err, hits)
+	}
+}
+
+func TestFetchStremioCatalogKeepsRequiredFilterWhilePaging(t *testing.T) {
+	var catalog stremioCatalogDef
+	if err := json.Unmarshal([]byte(`{"type":"tv","id":"events","extra":[{"name":"genre","isRequired":true,"options":["All"]},{"name":"skip"}]}`), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	client := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/catalog/tv/events/genre=All.json":
+			_, _ = w.Write([]byte(`{"metas":[{"id":"first"}]}`))
+		case "/catalog/tv/events/genre=All&skip=1.json":
+			_, _ = w.Write([]byte(`{"metas":[{"id":"second"}]}`))
+		case "/catalog/tv/events/genre=All&skip=2.json":
+			_, _ = w.Write([]byte(`{"metas":[]}`))
+		default:
+			t.Errorf("unexpected catalog path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	metas, err := fetchStremioCatalog(context.Background(), client, "https://addon.test", catalog)
+	if err != nil || len(metas) != 2 {
+		t.Fatalf("got %v, %v", metas, err)
+	}
+}
+
+func TestFetchStremioCatalogRejectsUnbrowsableRequiredExtra(t *testing.T) {
+	var catalog stremioCatalogDef
+	if err := json.Unmarshal([]byte(`{"type":"tv","id":"search","extra":[{"name":"search","isRequired":true}]}`), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	client := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("must not request an invalid browse URL") }))
+	if _, err := fetchStremioCatalog(context.Background(), client, "https://addon.test", catalog); err == nil {
+		t.Fatal("expected an unsupported browse filter error")
+	}
+}
+
+func TestStremioCatalogFilterBounds(t *testing.T) {
+	for _, raw := range []string{
+		`{"extra":[{"name":"genre","isRequired":true}]}`,
+		`{"extra":[{"name":"a","isRequired":true,"options":["1","2","3","4","5","6"]},{"name":"b","isRequired":true,"options":["1","2","3","4","5","6"]}]}`,
+	} {
+		var catalog stremioCatalogDef
+		if err := json.Unmarshal([]byte(raw), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stremioCatalogFilters(catalog); err == nil {
+			t.Fatal("expected bounded browse filter error")
+		}
+	}
+}
+
+func TestStremioCatalogPartialFilters(t *testing.T) {
+	var catalog stremioCatalogDef
+	_ = json.Unmarshal([]byte(`{"type":"tv","id":"events","extra":[{"name":"genre","isRequired":true,"options":["bad","Ice Hockey","duplicate"]}]}`), &catalog)
+	client := newCatalogFixtureClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "genre=bad") {
+			http.Error(w, "failed", 500)
+			return
+		}
+		if strings.Contains(r.URL.Path, "Ice Hockey") && !strings.Contains(r.URL.EscapedPath(), "Ice%20Hockey") {
+			t.Error("space was not escaped")
+		}
+		_, _ = w.Write([]byte(`{"metas":[{"id":"same","type":"tv"}]}`))
+	}))
+	got, err := fetchStremioCatalog(context.Background(), client, "https://addon.test", catalog)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+}

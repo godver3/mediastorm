@@ -120,23 +120,30 @@ type SportsEvent struct {
 // SportsStreamMatch is one candidate Live TV channel/stream for watching a given game,
 // found by heuristically matching the game's teams/broadcasts against the user's
 // configured Live TV channels and EPG now-playing data. Best-effort, not authoritative.
+type SportsReportedQuality struct {
+	ResolutionHeight int    `json:"resolutionHeight,omitempty"`
+	BitrateBps       int64  `json:"bitrateBps,omitempty"`
+	Origin           string `json:"origin"`
+}
+
 type SportsStreamMatch struct {
-	ChannelID      string   `json:"channelId"`
-	ChannelName    string   `json:"channelName"`
-	ChannelURL     string   `json:"channelUrl"`
-	ChannelLogo    string   `json:"channelLogo,omitempty"`
-	ChannelTvgID   string   `json:"channelTvgId,omitempty"`
-	SourceID       string   `json:"sourceId,omitempty"`
-	SourceName     string   `json:"sourceName,omitempty"`
-	ProgramTitle   string   `json:"programTitle,omitempty"`
-	MatchedOn      string   `json:"matchedOn"`             // "broadcast" | "team-name" | "matchup-name" | "epg-title"
-	Broadcast      string   `json:"broadcast,omitempty"`   // set when MatchedOn == "broadcast": which broadcast name matched
-	MatchedTeam    string   `json:"matchedTeam,omitempty"` // set when MatchedOn == "team-name" or "epg-title": which team's name matched
-	Confidence     float64  `json:"confidence"`
-	ConfidenceTier string   `json:"confidenceTier"` // "strong" | "possible"
-	MatchReason    string   `json:"matchReason"`
-	MatchedTerms   []string `json:"matchedTerms,omitempty"`
-	LifecycleState string   `json:"lifecycleState,omitempty"`
+	ReportedQuality *SportsReportedQuality `json:"reportedQuality,omitempty"`
+	ChannelID       string                 `json:"channelId"`
+	ChannelName     string                 `json:"channelName"`
+	ChannelURL      string                 `json:"channelUrl"`
+	ChannelLogo     string                 `json:"channelLogo,omitempty"`
+	ChannelTvgID    string                 `json:"channelTvgId,omitempty"`
+	SourceID        string                 `json:"sourceId,omitempty"`
+	SourceName      string                 `json:"sourceName,omitempty"`
+	ProgramTitle    string                 `json:"programTitle,omitempty"`
+	MatchedOn       string                 `json:"matchedOn"`             // "broadcast" | "team-name" | "matchup-name" | "epg-title"
+	Broadcast       string                 `json:"broadcast,omitempty"`   // set when MatchedOn == "broadcast": which broadcast name matched
+	MatchedTeam     string                 `json:"matchedTeam,omitempty"` // set when MatchedOn == "team-name" or "epg-title": which team's name matched
+	Confidence      float64                `json:"confidence"`
+	ConfidenceTier  string                 `json:"confidenceTier"` // "strong" | "possible"
+	MatchReason     string                 `json:"matchReason"`
+	MatchedTerms    []string               `json:"matchedTerms,omitempty"`
+	LifecycleState  string                 `json:"lifecycleState,omitempty"`
 }
 
 // SportsStreamGroup collapses equivalent playlist entries while preserving every distinct

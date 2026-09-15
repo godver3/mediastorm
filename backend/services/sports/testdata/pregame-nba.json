@@ -1,0 +1,447 @@
+{
+  "header": {
+    "id": "401902644",
+    "season": {
+      "year": 2027,
+      "current": true,
+      "type": 1
+    },
+    "competitions": [
+      {
+        "id": "401902644",
+        "date": "2026-10-03T23:00Z",
+        "competitors": [
+          {
+            "id": "28",
+            "homeAway": "home",
+            "team": {
+              "id": "28",
+              "name": "Raptors",
+              "displayName": "Toronto Raptors"
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              },
+              {
+                "type": "home",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              },
+              {
+                "type": "vsconf",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              }
+            ]
+          },
+          {
+            "id": "14",
+            "homeAway": "away",
+            "team": {
+              "id": "14",
+              "name": "Heat",
+              "displayName": "Miami Heat"
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              },
+              {
+                "type": "road",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              },
+              {
+                "type": "vsconf",
+                "summary": "0-0",
+                "displayValue": "0-0"
+              }
+            ]
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "1",
+            "name": "STATUS_SCHEDULED",
+            "state": "pre",
+            "completed": false,
+            "description": "Scheduled",
+            "detail": "Sat, October 3rd at 7:00 PM EDT",
+            "shortDetail": "10/3 - 7:00 PM EDT"
+          }
+        }
+      }
+    ]
+  },
+  "boxscore": {
+    "teams": [
+      {
+        "team": {
+          "id": "14",
+          "name": "Heat",
+          "displayName": "Miami Heat"
+        },
+        "statistics": [
+          {
+            "name": "streak",
+            "displayValue": "-",
+            "label": "Streak"
+          },
+          {
+            "name": "avgPointsAgainst",
+            "displayValue": "0.0",
+            "label": "Points Against"
+          }
+        ],
+        "homeAway": "away"
+      },
+      {
+        "team": {
+          "id": "28",
+          "name": "Raptors",
+          "displayName": "Toronto Raptors"
+        },
+        "statistics": [
+          {
+            "name": "streak",
+            "displayValue": "-",
+            "label": "Streak"
+          },
+          {
+            "name": "avgPointsAgainst",
+            "displayValue": "0.0",
+            "label": "Points Against"
+          }
+        ],
+        "homeAway": "home"
+      }
+    ]
+  },
+  "lastFiveGames": [
+    {
+      "team": {
+        "id": "28",
+        "displayName": "Toronto Raptors"
+      },
+      "events": [
+        {
+          "id": "401869375",
+          "gameDate": "2026-04-24T00:00Z",
+          "score": "126-104",
+          "homeTeamId": "28",
+          "awayTeamId": "5",
+          "gameResult": "W",
+          "opponent": {
+            "id": "5",
+            "displayName": "Cleveland Cavaliers"
+          }
+        },
+        {
+          "id": "401869377",
+          "gameDate": "2026-04-26T17:00Z",
+          "score": "93-89",
+          "homeTeamId": "28",
+          "awayTeamId": "5",
+          "gameResult": "W",
+          "opponent": {
+            "id": "5",
+            "displayName": "Cleveland Cavaliers"
+          }
+        },
+        {
+          "id": "401869380",
+          "gameDate": "2026-04-29T23:30Z",
+          "score": "125-120",
+          "homeTeamId": "5",
+          "awayTeamId": "28",
+          "gameResult": "L",
+          "opponent": {
+            "id": "5",
+            "displayName": "Cleveland Cavaliers"
+          }
+        },
+        {
+          "id": "401869381",
+          "gameDate": "2026-05-01T23:30Z",
+          "score": "112-110 OT",
+          "homeTeamId": "28",
+          "awayTeamId": "5",
+          "gameResult": "W",
+          "opponent": {
+            "id": "5",
+            "displayName": "Cleveland Cavaliers"
+          }
+        },
+        {
+          "id": "401869384",
+          "gameDate": "2026-05-03T23:30Z",
+          "score": "114-102",
+          "homeTeamId": "5",
+          "awayTeamId": "28",
+          "gameResult": "L",
+          "opponent": {
+            "id": "5",
+            "displayName": "Cleveland Cavaliers"
+          }
+        }
+      ]
+    },
+    {
+      "team": {
+        "id": "14",
+        "displayName": "Miami Heat"
+      },
+      "events": [
+        {
+          "id": "401811006",
+          "gameDate": "2026-04-07T23:30Z",
+          "score": "121-95",
+          "homeTeamId": "28",
+          "awayTeamId": "14",
+          "gameResult": "L",
+          "opponent": {
+            "id": "28",
+            "displayName": "Toronto Raptors"
+          }
+        },
+        {
+          "id": "401811020",
+          "gameDate": "2026-04-09T23:00Z",
+          "score": "128-114",
+          "homeTeamId": "28",
+          "awayTeamId": "14",
+          "gameResult": "L",
+          "opponent": {
+            "id": "28",
+            "displayName": "Toronto Raptors"
+          }
+        },
+        {
+          "id": "401811027",
+          "gameDate": "2026-04-10T23:00Z",
+          "score": "140-117",
+          "homeTeamId": "27",
+          "awayTeamId": "14",
+          "gameResult": "W",
+          "opponent": {
+            "id": "27",
+            "displayName": "Washington Wizards"
+          }
+        },
+        {
+          "id": "401811044",
+          "gameDate": "2026-04-12T22:00Z",
+          "score": "143-117",
+          "homeTeamId": "14",
+          "awayTeamId": "1",
+          "gameResult": "W",
+          "opponent": {
+            "id": "1",
+            "displayName": "Atlanta Hawks"
+          }
+        },
+        {
+          "id": "401866755",
+          "gameDate": "2026-04-14T23:30Z",
+          "score": "127-126 OT",
+          "homeTeamId": "30",
+          "awayTeamId": "14",
+          "gameResult": "L",
+          "opponent": {
+            "id": "30",
+            "displayName": "Charlotte Hornets"
+          }
+        }
+      ]
+    }
+  ],
+  "standings": {
+    "header": "2026-27 Standings",
+    "groups": [
+      {
+        "standings": {
+          "entries": [
+            {
+              "team": "Miami",
+              "id": "14",
+              "stats": [
+                {
+                  "name": "gamesBehind",
+                  "displayName": "Games Back",
+                  "type": "gamesbehind",
+                  "displayValue": "-"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "0"
+                },
+                {
+                  "name": "streak",
+                  "displayName": "Streak",
+                  "type": "streak",
+                  "displayValue": "-"
+                },
+                {
+                  "name": "winPercent",
+                  "displayName": "Win Percentage",
+                  "type": "winpercent",
+                  "displayValue": ".000"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "0"
+                }
+              ]
+            }
+          ]
+        },
+        "header": "2026-27 Southeast Standings"
+      },
+      {
+        "standings": {
+          "entries": [
+            {
+              "team": "Toronto",
+              "id": "28",
+              "stats": [
+                {
+                  "name": "gamesBehind",
+                  "displayName": "Games Back",
+                  "type": "gamesbehind",
+                  "displayValue": "-"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "0"
+                },
+                {
+                  "name": "streak",
+                  "displayName": "Streak",
+                  "type": "streak",
+                  "displayValue": "-"
+                },
+                {
+                  "name": "winPercent",
+                  "displayName": "Win Percentage",
+                  "type": "winpercent",
+                  "displayValue": ".000"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "0"
+                }
+              ]
+            }
+          ]
+        },
+        "header": "2026-27 Atlantic Standings"
+      }
+    ]
+  },
+  "leaders": [
+    {
+      "team": {
+        "id": "28",
+        "displayName": "Toronto Raptors"
+      },
+      "leaders": []
+    },
+    {
+      "team": {
+        "id": "14",
+        "displayName": "Miami Heat"
+      },
+      "leaders": []
+    }
+  ],
+  "seasonseries": [
+    {
+      "type": "season",
+      "summary": "Series starts 1/15",
+      "events": [
+        {
+          "id": "401910345",
+          "date": "2027-01-16T00:30:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "28",
+                "displayName": "Toronto Raptors"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "14",
+                "displayName": "Miami Heat"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "401910640",
+          "date": "2027-03-03T00:30:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "14",
+                "displayName": "Miami Heat"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "28",
+                "displayName": "Toronto Raptors"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "401910649",
+          "date": "2027-03-04T00:30:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "14",
+                "displayName": "Miami Heat"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "28",
+                "displayName": "Toronto Raptors"
+              },
+              "score": "0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

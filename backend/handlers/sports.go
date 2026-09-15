@@ -366,7 +366,8 @@ func (h *SportsHandler) GetGameStreams(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to fetch live channels"}`, http.StatusBadGateway)
 		return
 	}
-	if h.config != nil {
+	// Broader search retains the profile/admin-filtered channels fetched above.
+	if h.config != nil && r.URL.Query().Get("scope") != "all" {
 		if settings, loadErr := h.config.Load(); loadErr == nil {
 			sourceIDs := settings.Sports.DefaultSourceIDs
 			categoryIDs := settings.Sports.DefaultCategoryIDs
@@ -384,19 +385,21 @@ func (h *SportsHandler) GetGameStreams(w http.ResponseWriter, r *http.Request) {
 
 	broadcastFilter := strings.TrimSpace(r.URL.Query().Get("broadcast"))
 	matches := matchGameToChannels(game, channels, h.epgService, broadcastFilter)
-	matches = onlyStrongSportsMatches(matches)
+	matches = selectableSportsMatches(matches)
 	streams, groups := buildSportsStreamGroups(matches)
 	writeSportsJSON(w, map[string]any{"streams": streams, "groups": groups})
 }
 
-func onlyStrongSportsMatches(matches []models.SportsStreamMatch) []models.SportsStreamMatch {
-	strong := make([]models.SportsStreamMatch, 0, len(matches))
+// Keep plausible candidates for explicit selection; a city or generic league is not enough.
+func selectableSportsMatches(matches []models.SportsStreamMatch) []models.SportsStreamMatch {
+	selected := make([]models.SportsStreamMatch, 0, len(matches))
 	for _, match := range matches {
-		if match.Confidence >= strongSportsConfidence {
-			strong = append(strong, match)
+		if match.Confidence >= 0.65 && strings.TrimSpace(match.ChannelURL) != "" &&
+			!hasNonLiveSportsLabel(match.ChannelName) && match.LifecycleState != sportsLifecycleEnded {
+			selected = append(selected, match)
 		}
 	}
-	return strong
+	return selected
 }
 
 func filterSportsChannelsByScope(channels []LiveChannel, sourceIDs, categoryIDs []string) []LiveChannel {
@@ -442,7 +445,7 @@ func writeSportsJSON(w http.ResponseWriter, v any) {
 
 // matchGameToChannels scores every candidate through the same token-aware team/network
 // matcher used by Manage Team Channels. Current and next EPG programs can promote a
-// channel. The endpoint filters weak candidates before returning them.
+// channel. Plausible candidates are returned for manual selection.
 func matchGameToChannels(game models.SportsGame, channels []LiveChannel, epgService LiveEPGNowPlayingProvider, broadcastFilter string) []models.SportsStreamMatch {
 	home := identityFromTeam(game.HomeTeam, game.League)
 	away := identityFromTeam(game.AwayTeam, game.League)
@@ -465,7 +468,7 @@ func matchGameToChannels(game models.SportsGame, channels []LiveChannel, epgServ
 		if channelLifecycle == "" {
 			channelLifecycle = sportsLifecycle(channel.TvgName)
 		}
-		if channelLifecycle == sportsLifecycleEnded {
+		if channelLifecycle == sportsLifecycleEnded || hasNonLiveSportsLabel(channel.Name) || hasNonLiveSportsLabel(channel.TvgName) {
 			continue
 		}
 		var evidence sportsEvidence
@@ -499,29 +502,47 @@ func matchGameToChannels(game models.SportsGame, channels []LiveChannel, epgServ
 				if program == nil {
 					continue
 				}
+				if hasNonLiveSportsLabel(program.Title) || hasNonLiveSportsLabel(program.Description) {
+					continue
+				}
 				programEvidence := scoreMatchupText(program.Title, home, away)
 				if game.EventKind != "" && game.EventKind != "matchup" {
 					programEvidence = scoreSportsEventTitle(program.Title, game.Title)
 				}
+				fromDescription := false
+				descriptionEvidence := scoreMatchupText(program.Description, home, away)
+				if game.EventKind != "" && game.EventKind != "matchup" {
+					descriptionEvidence = scoreSportsEventTitle(program.Description, game.Title)
+				}
+				if descriptionEvidence.score > programEvidence.score {
+					programEvidence = descriptionEvidence
+					fromDescription = true
+				}
 				if programEvidence.score <= 0 {
 					continue
+				}
+				// Descriptions without schedule evidence are suggestions, not confirmed broadcasts.
+				ceiling := 1.0
+				if fromDescription {
+					ceiling = 0.84
 				}
 				if !game.StartTime.IsZero() && !program.Start.IsZero() {
 					distance := program.Start.Sub(game.StartTime)
 					if distance < 0 {
 						distance = -distance
 					}
-					switch {
-					case distance <= 2*time.Hour:
-						programEvidence.score = math.Min(1, programEvidence.score+0.04)
-					case distance > 12*time.Hour:
-						programEvidence.score -= 0.25
-					case distance > 6*time.Hour:
-						programEvidence.score -= 0.15
-					default:
-						programEvidence.score -= 0.06
+					if distance > 6*time.Hour {
+						continue
+					}
+					if distance <= 2*time.Hour {
+						ceiling = 1
+						programEvidence.score = math.Min(ceiling, programEvidence.score+0.04)
+					} else {
+						ceiling = 0.84
 					}
 				}
+				programEvidence.score = math.Min(ceiling, programEvidence.score)
+
 				if broadcastFilter != "" {
 					if programEvidence.score >= strongSportsConfidence {
 						evidence.score = math.Max(evidence.score, 0.99)
@@ -531,10 +552,13 @@ func matchGameToChannels(game models.SportsGame, channels []LiveChannel, epgServ
 						evidence.on = "epg-title"
 					}
 				} else if programEvidence.score > evidence.score {
-					programEvidence.score = math.Min(1, programEvidence.score+0.04)
-					programEvidence.reason = "Both teams in EPG"
+					programEvidence.score = math.Min(ceiling, programEvidence.score+0.04)
+					programEvidence.reason = "EPG: " + programEvidence.reason
 					programEvidence.program = program.Title
 					programEvidence.on = "epg-title"
+					if fromDescription {
+						programEvidence.on = "epg-description"
+					}
 					evidence = programEvidence
 				}
 			}

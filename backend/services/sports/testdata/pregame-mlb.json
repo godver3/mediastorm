@@ -1,0 +1,900 @@
+{
+  "header": {
+    "id": "401816943",
+    "season": {
+      "year": 2026,
+      "current": true,
+      "type": 2
+    },
+    "competitions": [
+      {
+        "id": "401816943",
+        "date": "2026-09-15T22:40Z",
+        "competitors": [
+          {
+            "id": "30",
+            "homeAway": "home",
+            "team": {
+              "id": "30",
+              "name": "Rays",
+              "displayName": "Tampa Bay Rays"
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "90-59",
+                "displayValue": "90-59"
+              },
+              {
+                "type": "home",
+                "summary": "50-25",
+                "displayValue": "50-25"
+              }
+            ],
+            "probables": [
+              {
+                "name": "probableStartingPitcher",
+                "displayName": "Probable Starting Pitcher",
+                "athlete": {
+                  "id": "42604",
+                  "displayName": "Griffin Jax",
+                  "status": {
+                    "id": "1",
+                    "name": "Active",
+                    "type": "active"
+                  }
+                },
+                "statistics": {}
+              }
+            ]
+          },
+          {
+            "id": "11",
+            "homeAway": "away",
+            "team": {
+              "id": "11",
+              "name": "Athletics",
+              "displayName": "Athletics"
+            },
+            "record": [
+              {
+                "type": "total",
+                "summary": "61-89",
+                "displayValue": "61-89"
+              },
+              {
+                "type": "road",
+                "summary": "32-43",
+                "displayValue": "32-43"
+              }
+            ],
+            "probables": [
+              {
+                "name": "probableStartingPitcher",
+                "displayName": "Probable Starting Pitcher",
+                "athlete": {
+                  "id": "4418686",
+                  "displayName": "Jack Perkins",
+                  "status": {
+                    "id": "1",
+                    "name": "Active",
+                    "type": "active"
+                  }
+                },
+                "statistics": {}
+              }
+            ]
+          }
+        ],
+        "status": {
+          "type": {
+            "id": "1",
+            "name": "STATUS_SCHEDULED",
+            "state": "pre",
+            "completed": false,
+            "description": "Scheduled",
+            "detail": "Scheduled",
+            "shortDetail": "9/15 - 6:40 PM EDT"
+          },
+          "periodPrefix": "Top"
+        }
+      }
+    ]
+  },
+  "boxscore": {
+    "teams": [
+      {
+        "team": {
+          "id": "11",
+          "name": "Athletics",
+          "displayName": "Athletics"
+        },
+        "statistics": [
+          {
+            "name": "batting",
+            "displayName": "Batting",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "150"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "displayValue": "656"
+              },
+              {
+                "name": "homeRuns",
+                "displayName": "Home Runs",
+                "displayValue": "183"
+              },
+              {
+                "name": "avg",
+                "displayName": "Batting Average",
+                "displayValue": ".246"
+              },
+              {
+                "name": "OPS",
+                "displayName": "OBP Pct + SLG Pct",
+                "displayValue": ".722"
+              }
+            ]
+          },
+          {
+            "name": "pitching",
+            "displayName": "Pitching",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "150"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "displayValue": "859"
+              },
+              {
+                "name": "homeRuns",
+                "displayName": "Home Runs",
+                "displayValue": "225"
+              },
+              {
+                "name": "ERA",
+                "displayName": "Earned Run Average",
+                "displayValue": "5.42"
+              },
+              {
+                "name": "WHIP",
+                "displayName": "Walks Plus Hits Per Inning Pitched",
+                "displayValue": "1.50"
+              }
+            ]
+          },
+          {
+            "name": "fielding",
+            "displayName": "Fielding",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "150"
+              }
+            ]
+          },
+          {
+            "name": "records",
+            "displayName": "Records",
+            "stats": []
+          }
+        ],
+        "homeAway": "away"
+      },
+      {
+        "team": {
+          "id": "30",
+          "name": "Rays",
+          "displayName": "Tampa Bay Rays"
+        },
+        "statistics": [
+          {
+            "name": "batting",
+            "displayName": "Batting",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "149"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "displayValue": "682"
+              },
+              {
+                "name": "homeRuns",
+                "displayName": "Home Runs",
+                "displayValue": "161"
+              },
+              {
+                "name": "avg",
+                "displayName": "Batting Average",
+                "displayValue": ".261"
+              },
+              {
+                "name": "OPS",
+                "displayName": "OBP Pct + SLG Pct",
+                "displayValue": ".736"
+              }
+            ]
+          },
+          {
+            "name": "pitching",
+            "displayName": "Pitching",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "149"
+              },
+              {
+                "name": "runs",
+                "displayName": "Runs",
+                "displayValue": "613"
+              },
+              {
+                "name": "homeRuns",
+                "displayName": "Home Runs",
+                "displayValue": "186"
+              },
+              {
+                "name": "ERA",
+                "displayName": "Earned Run Average",
+                "displayValue": "3.78"
+              },
+              {
+                "name": "WHIP",
+                "displayName": "Walks Plus Hits Per Inning Pitched",
+                "displayValue": "1.14"
+              }
+            ]
+          },
+          {
+            "name": "fielding",
+            "displayName": "Fielding",
+            "stats": [
+              {
+                "name": "gamesPlayed",
+                "displayName": "Games Played",
+                "displayValue": "149"
+              }
+            ]
+          },
+          {
+            "name": "records",
+            "displayName": "Records",
+            "stats": []
+          }
+        ],
+        "homeAway": "home"
+      }
+    ]
+  },
+  "lastFiveGames": [
+    {
+      "team": {
+        "id": "30",
+        "displayName": "Tampa Bay Rays"
+      },
+      "events": [
+        {
+          "id": "401816874",
+          "gameDate": "2026-09-09T23:15Z",
+          "score": "7-2",
+          "homeTeamId": "15",
+          "awayTeamId": "30",
+          "gameResult": "W",
+          "opponent": {
+            "id": "15",
+            "displayName": "Atlanta Braves"
+          }
+        },
+        {
+          "id": "401816885",
+          "gameDate": "2026-09-10T16:15Z",
+          "score": "3-1",
+          "homeTeamId": "15",
+          "awayTeamId": "30",
+          "gameResult": "L",
+          "opponent": {
+            "id": "15",
+            "displayName": "Atlanta Braves"
+          }
+        },
+        {
+          "id": "401816891",
+          "gameDate": "2026-09-11T23:10Z",
+          "score": "3-1",
+          "homeTeamId": "30",
+          "awayTeamId": "18",
+          "gameResult": "W",
+          "opponent": {
+            "id": "18",
+            "displayName": "Houston Astros"
+          }
+        },
+        {
+          "id": "401816906",
+          "gameDate": "2026-09-12T22:10Z",
+          "score": "3-2",
+          "homeTeamId": "30",
+          "awayTeamId": "18",
+          "gameResult": "W",
+          "opponent": {
+            "id": "18",
+            "displayName": "Houston Astros"
+          }
+        },
+        {
+          "id": "401816921",
+          "gameDate": "2026-09-13T17:40Z",
+          "score": "14-4",
+          "homeTeamId": "30",
+          "awayTeamId": "18",
+          "gameResult": "W",
+          "opponent": {
+            "id": "18",
+            "displayName": "Houston Astros"
+          }
+        }
+      ]
+    },
+    {
+      "team": {
+        "id": "11",
+        "displayName": "Athletics"
+      },
+      "events": [
+        {
+          "id": "401816866",
+          "gameDate": "2026-09-09T01:40Z",
+          "score": "4-2",
+          "homeTeamId": "11",
+          "awayTeamId": "14",
+          "gameResult": "L",
+          "opponent": {
+            "id": "14",
+            "displayName": "Toronto Blue Jays"
+          }
+        },
+        {
+          "id": "401816881",
+          "gameDate": "2026-09-09T19:05Z",
+          "score": "2-0",
+          "homeTeamId": "11",
+          "awayTeamId": "14",
+          "gameResult": "W",
+          "opponent": {
+            "id": "14",
+            "displayName": "Toronto Blue Jays"
+          }
+        },
+        {
+          "id": "401816901",
+          "gameDate": "2026-09-12T01:40Z",
+          "score": "6-5 F/10",
+          "homeTeamId": "11",
+          "awayTeamId": "12",
+          "gameResult": "W",
+          "opponent": {
+            "id": "12",
+            "displayName": "Seattle Mariners"
+          }
+        },
+        {
+          "id": "401816916",
+          "gameDate": "2026-09-13T01:40Z",
+          "score": "19-1",
+          "homeTeamId": "11",
+          "awayTeamId": "12",
+          "gameResult": "L",
+          "opponent": {
+            "id": "12",
+            "displayName": "Seattle Mariners"
+          }
+        },
+        {
+          "id": "401816931",
+          "gameDate": "2026-09-13T20:05Z",
+          "score": "8-7",
+          "homeTeamId": "11",
+          "awayTeamId": "12",
+          "gameResult": "W",
+          "opponent": {
+            "id": "12",
+            "displayName": "Seattle Mariners"
+          }
+        }
+      ]
+    }
+  ],
+  "standings": {
+    "groups": [
+      {
+        "standings": {
+          "entries": [
+            {
+              "team": "Athletics",
+              "id": "11",
+              "stats": [
+                {
+                  "name": "gamesBehind",
+                  "displayName": "Games Back",
+                  "type": "gamesbehind",
+                  "displayValue": "14"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "89"
+                },
+                {
+                  "name": "streak",
+                  "displayName": "Streak",
+                  "type": "streak",
+                  "displayValue": "W1"
+                },
+                {
+                  "name": "winPercent",
+                  "displayName": "Win Percentage",
+                  "type": "winpercent",
+                  "displayValue": ".407"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "61"
+                }
+              ]
+            }
+          ]
+        },
+        "header": "2026 American League West Standings"
+      },
+      {
+        "standings": {
+          "entries": [
+            {
+              "team": "Tampa Bay",
+              "id": "30",
+              "stats": [
+                {
+                  "name": "gamesBehind",
+                  "displayName": "Games Back",
+                  "type": "gamesbehind",
+                  "displayValue": "-"
+                },
+                {
+                  "name": "losses",
+                  "displayName": "Losses",
+                  "type": "losses",
+                  "displayValue": "59"
+                },
+                {
+                  "name": "streak",
+                  "displayName": "Streak",
+                  "type": "streak",
+                  "displayValue": "W3"
+                },
+                {
+                  "name": "winPercent",
+                  "displayName": "Win Percentage",
+                  "type": "winpercent",
+                  "displayValue": ".604"
+                },
+                {
+                  "name": "wins",
+                  "displayName": "Wins",
+                  "type": "wins",
+                  "displayValue": "90"
+                }
+              ]
+            }
+          ]
+        },
+        "header": "2026 American League East Standings"
+      }
+    ]
+  },
+  "leaders": [
+    {
+      "team": {
+        "id": "30",
+        "displayName": "Tampa Bay Rays"
+      },
+      "leaders": [
+        {
+          "name": "avg",
+          "displayName": "Batting Average",
+          "leaders": [
+            {
+              "displayValue": ".305",
+              "athlete": {
+                "id": "4679983",
+                "displayName": "Chandler Simpson",
+                "team": {
+                  "id": "30"
+                },
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".305"
+                },
+                {
+                  "name": "onBasePct",
+                  "displayName": "On Base Percentage",
+                  "displayValue": ".333"
+                },
+                {
+                  "name": "slugAvg",
+                  "displayName": "Slugging Percentage",
+                  "displayValue": ".353"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "homeRuns",
+          "displayName": "Home Runs",
+          "leaders": [
+            {
+              "displayValue": "40",
+              "athlete": {
+                "id": "4905921",
+                "displayName": "Junior Caminero",
+                "team": {
+                  "id": "30"
+                },
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "homeRuns",
+                  "displayName": "Home Runs",
+                  "displayValue": "40"
+                },
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".279"
+                },
+                {
+                  "name": "RBIs",
+                  "displayName": "Runs Batted In",
+                  "displayValue": "95"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "RBIs",
+          "displayName": "Runs Batted In",
+          "leaders": [
+            {
+              "displayValue": "95",
+              "athlete": {
+                "id": "4905921",
+                "displayName": "Junior Caminero",
+                "team": {
+                  "id": "30"
+                },
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "RBIs",
+                  "displayName": "Runs Batted In",
+                  "displayValue": "95"
+                },
+                {
+                  "name": "homeRuns",
+                  "displayName": "Home Runs",
+                  "displayValue": "40"
+                },
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".279"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "team": {
+        "id": "11",
+        "displayName": "Athletics"
+      },
+      "leaders": [
+        {
+          "name": "avg",
+          "displayName": "Batting Average",
+          "leaders": [
+            {
+              "displayValue": ".267",
+              "athlete": {
+                "id": "33900",
+                "displayName": "Jeff McNeil",
+                "team": {
+                  "id": "11"
+                },
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".267"
+                },
+                {
+                  "name": "onBasePct",
+                  "displayName": "On Base Percentage",
+                  "displayValue": ".316"
+                },
+                {
+                  "name": "slugAvg",
+                  "displayName": "Slugging Percentage",
+                  "displayValue": ".370"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "homeRuns",
+          "displayName": "Home Runs",
+          "leaders": [
+            {
+              "displayValue": "23",
+              "athlete": {
+                "id": "42598",
+                "displayName": "Shea Langeliers",
+                "team": {
+                  "id": "11"
+                },
+                "status": {
+                  "id": "1",
+                  "name": "Active",
+                  "type": "active"
+                }
+              },
+              "statistics": [
+                {
+                  "name": "homeRuns",
+                  "displayName": "Home Runs",
+                  "displayValue": "23"
+                },
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".266"
+                },
+                {
+                  "name": "RBIs",
+                  "displayName": "Runs Batted In",
+                  "displayValue": "54"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "RBIs",
+          "displayName": "Runs Batted In",
+          "leaders": [
+            {
+              "displayValue": "69",
+              "athlete": {
+                "id": "4966637",
+                "displayName": "Nick Kurtz",
+                "team": {
+                  "id": "11"
+                },
+                "status": "60-Day-IL"
+              },
+              "statistics": [
+                {
+                  "name": "RBIs",
+                  "displayName": "Runs Batted In",
+                  "displayValue": "69"
+                },
+                {
+                  "name": "homeRuns",
+                  "displayName": "Home Runs",
+                  "displayValue": "21"
+                },
+                {
+                  "name": "avg",
+                  "displayName": "Batting Average",
+                  "displayValue": ".256"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "seasonseries": [
+    {
+      "type": "season",
+      "summary": "TB leads series 3-0",
+      "events": [
+        {
+          "id": "401816477",
+          "date": "2026-08-11T01:40:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "6"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "10"
+            }
+          ]
+        },
+        {
+          "id": "401816492",
+          "date": "2026-08-12T01:40:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "4"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "12"
+            }
+          ]
+        },
+        {
+          "id": "401816507",
+          "date": "2026-08-12T19:05:00Z",
+          "status": "post",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "4"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "8"
+            }
+          ]
+        },
+        {
+          "id": "401816943",
+          "date": "2026-09-15T22:40:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "401816958",
+          "date": "2026-09-16T22:40:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "0"
+            }
+          ]
+        },
+        {
+          "id": "401816973",
+          "date": "2026-09-17T17:10:00Z",
+          "status": "pre",
+          "competitors": [
+            {
+              "homeAway": "home",
+              "team": {
+                "id": "30",
+                "displayName": "Tampa Bay Rays"
+              },
+              "score": "0"
+            },
+            {
+              "homeAway": "away",
+              "team": {
+                "id": "11",
+                "displayName": "Athletics"
+              },
+              "score": "0"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

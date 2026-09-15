@@ -299,18 +299,27 @@ func (s *Service) EnrichGame(ctx context.Context, game models.SportsGame) models
 				err = fmt.Errorf("sports summary HTTP %d", response.StatusCode)
 			} else {
 				decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
+				var raw json.RawMessage
+				err = decoder.Decode(&raw)
 				if game.League == "mlb" {
 					var payload mlbSummary
-					err = decoder.Decode(&payload)
+					if err == nil {
+						err = json.Unmarshal(raw, &payload)
+					}
 					if err == nil {
 						result, err = normalizeMLBDetail(game, payload, time.Now())
 					}
 				} else {
 					var payload teamSportSummary
-					err = decoder.Decode(&payload)
+					if err == nil {
+						err = json.Unmarshal(raw, &payload)
+					}
 					if err == nil {
 						result, err = normalizeTeamDetail(game, payload, time.Now())
 					}
+				}
+				if err == nil && result.Detail != nil {
+					result.Detail.Pregame = normalizePregame(result, raw, time.Now())
 				}
 			}
 		}
