@@ -1,0 +1,6155 @@
+{
+  "year": "2026",
+  "preseason": [
+    {
+      "ID": 6584,
+      "season_id": 75,
+      "season_game_count": 3,
+      "home_team_id": 8,
+      "home_game_count": 1,
+      "away_team_id": 19,
+      "week": -2,
+      "game_type_id": 0,
+      "start_at_local": "2026-05-23T16:00:00",
+      "venue_id": 8,
+      "away_team_score": 20,
+      "game_clock": "00:00:00",
+      "game_status": "\"Finished\"",
+      "home_team_score": 10,
+      "total_periods": 4,
+      "start_at": "2026-05-23T20:00:00+00:00",
+      "genius": {
+        "id": 13419667
+      },
+      "metadata": {
+        "created_at": "2025-12-09T15:56:26Z",
+        "revision_at": "2025-12-09T15:56:26Z",
+        "revision": 1
+      }
+    }
+  ],
+  "season": [
+    {
+      "ID": 6591,
+      "season_id": 75,
+      "season_game_count": 10,
+      "home_team_id": 8,
+      "home_game_count": 2,
+      "away_team_id": 11,
+      "week": 1,
+      "game_type_id": 1,
+      "start_at_local": "2026-06-04T19:30:00",
+      "venue_id": 8,
+      "home_team_score": 27,
+      "away_team_score": 30,
+      "game_status": "Finished",
+      "total_periods": 1,
+      "game_clock": "00:00:00",
+      "start_at": "2026-06-04T23:30:00+00:00",
+      "streaming_availability": "Availability Outside North America",
+      "pregame_at_local": "2026-06-04T19:30:00",
+      "broadcasting_options": [
+        "TSN",
+        "RDS",
+        "CBSSN",
+        "CFL+"
+      ],
+      "genius": {
+        "id": 13419674
+      },
+      "metadata": {
+        "created_at": "2025-12-09T15:56:27Z",
+        "revision_at": "2026-08-05T14:27:47Z",
+        "revision": 4
+      }
+    },
+    {
+      "ID": 6652,
+      "season_id": 75,
+      "season_game_count": 71,
+      "home_team_id": 20,
+      "home_game_count": 10,
+      "away_team_id": 19,
+      "week": 17,
+      "game_type_id": 1,
+      "start_at_local": "2026-09-25T19:00:00",
+      "venue_id": 20,
+      "start_at": "2026-09-26T00:00:00+00:00",
+      "broadcasting_options": [
+        "TSN",
+        "RDS",
+        "CBSSN",
+        "CFL+"
+      ],
+      "streaming_availability": "Availability Outside North America",
+      "pregame_at_local": "2026-09-25T19:00:00",
+      "genius": {
+        "id": 13419735
+      },
+      "metadata": {
+        "created_at": "2025-12-09T15:56:30Z",
+        "revision_at": "2026-08-07T01:07:26Z",
+        "revision": 2
+      }
+    },
+    {
+      "ID": 6653,
+      "season_id": 75,
+      "season_game_count": 72,
+      "home_team_id": 1,
+      "home_game_count": 8,
+      "away_team_id": 17,
+      "week": 17,
+      "game_type_id": 1,
+      "start_at_local": "2026-09-25T19:30:00",
+      "venue_id": 1,
+      "start_at": "2026-09-26T02:30:00+00:00",
+      "broadcasting_options": [
+        "TSN",
+        "CFL+"
+      ],
+      "streaming_availability": "Availability Outside Canada on CFL+",
+      "pregame_at_local": "2026-09-25T19:30:00",
+      "genius": {
+        "id": 13419736
+      },
+      "metadata": {
+        "created_at": "2025-12-09T15:56:30Z",
+        "revision_at": "2026-08-07T01:07:50Z",
+        "revision": 2
+      }
+    }
+  ],
+  "semiFinals": [
+    {
+      "ID": 6672,
+      "season_id": 75,
+      "season_game_count": 91,
+      "home_team_id": null,
+      "home_game_count": null,
+      "away_team_id": null,
+      "week": 22,
+      "game_type_id": 2,
+      "start_at_local": "2026-10-31T15:00:00",
+      "pregame_at_local": "2026-10-31T15:00:00",
+      "start_at": "2026-10-31T19:00:00+00:00",
+      "metadata": {
+        "created_at": "2025-12-09T15:56:31Z",
+        "revision_at": "2026-09-22T17:29:05Z",
+        "revision": 2
+      }
+    }
+  ],
+  "finals": [
+    {
+      "ID": 6676,
+      "season_id": 75,
+      "season_game_count": 95,
+      "home_team_id": null,
+      "home_game_count": 0,
+      "away_team_id": null,
+      "week": 24,
+      "game_type_id": 6,
+      "start_at_local": "2026-11-15T17:00:00",
+      "start_at": "2026-11-15T23:00:00+00:00",
+      "venue_id": 6,
+      "pregame_at_local": "2026-11-15T17:00:00",
+      "metadata": {
+        "created_at": "2025-12-09T15:56:31Z",
+        "revision_at": "2026-09-23T19:13:03Z",
+        "revision": 3
+      }
+    }
+  ],
+  "fixturesByTeam": [
+    {
+      "teamId": 1,
+      "fixturesByWeek": {
+        "2": [
+          {
+            "ID": 6596,
+            "season_id": 75,
+            "season_game_count": 15,
+            "home_team_id": 17,
+            "home_game_count": 2,
+            "away_team_id": 1,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-13T17:00:00",
+            "venue_id": 17,
+            "home_team_score": 31,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-13T23:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-13T17:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419679
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:32:10Z",
+              "revision": 5
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6597,
+            "season_id": 75,
+            "season_game_count": 16,
+            "home_team_id": 8,
+            "home_game_count": 3,
+            "away_team_id": 1,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-19T19:30:00",
+            "venue_id": 8,
+            "home_team_score": 41,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-19T23:30:00+00:00",
+            "pregame_at_local": "2026-06-19T19:30:00",
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419680
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:32:42Z",
+              "revision": 3
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6603,
+            "season_id": 75,
+            "season_game_count": 22,
+            "home_team_id": 1,
+            "home_game_count": 2,
+            "away_team_id": 6,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-27T16:00:00",
+            "venue_id": 39,
+            "start_at": "2026-06-27T23:00:00+00:00",
+            "pregame_at_local": "2026-06-27T16:00:00",
+            "home_team_score": 33,
+            "away_team_score": 41,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 13419686
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:35:32Z",
+              "revision": 4
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6607,
+            "season_id": 75,
+            "season_game_count": 26,
+            "home_team_id": 1,
+            "home_game_count": 3,
+            "away_team_id": 7,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-04T16:00:00",
+            "venue_id": 39,
+            "start_at": "2026-07-04T23:00:00+00:00",
+            "pregame_at_local": "2026-07-04T16:00:00",
+            "home_team_score": 36,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 13419690
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:37:45Z",
+              "revision": 4
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6613,
+            "season_id": 75,
+            "season_game_count": 32,
+            "home_team_id": 7,
+            "home_game_count": 4,
+            "away_team_id": 1,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-17T19:00:00",
+            "venue_id": 7,
+            "home_team_score": 19,
+            "away_team_score": 17,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-18T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-17T19:00:00",
+            "genius": {
+              "id": 13419696
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:40:40Z",
+              "revision": 3
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6619,
+            "season_id": 75,
+            "season_game_count": 38,
+            "home_team_id": 1,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-25T16:00:00",
+            "venue_id": 1,
+            "home_team_score": 12,
+            "away_team_score": 26,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-25T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-25T16:00:00",
+            "genius": {
+              "id": 13419702
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:44:57Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6621,
+            "season_id": 75,
+            "season_game_count": 40,
+            "home_team_id": 20,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-30T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 19,
+            "away_team_score": 35,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-31T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-30T19:30:00",
+            "genius": {
+              "id": 13419704
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:03Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6628,
+            "season_id": 75,
+            "season_game_count": 47,
+            "home_team_id": 1,
+            "home_game_count": 5,
+            "away_team_id": 8,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-08T16:00:00",
+            "venue_id": 1,
+            "start_at": "2026-08-08T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-08T16:00:00",
+            "home_team_score": 27,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:20:00",
+            "genius": {
+              "id": 13419711
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-14T03:57:51Z",
+              "revision": 5
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6629,
+            "season_id": 75,
+            "season_game_count": 48,
+            "home_team_id": 6,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-13T19:00:00",
+            "venue_id": 6,
+            "start_at": "2026-08-14T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-13T19:00:00",
+            "home_team_score": 26,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419712
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-14T03:57:51Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6636,
+            "season_id": 75,
+            "season_game_count": 55,
+            "home_team_id": 1,
+            "home_game_count": 6,
+            "away_team_id": 17,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-23T16:00:00",
+            "venue_id": 1,
+            "start_at": "2026-08-23T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-23T16:00:00",
+            "home_team_score": 30,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419719
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-24T01:47:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6640,
+            "season_id": 75,
+            "season_game_count": 59,
+            "home_team_id": 13,
+            "home_game_count": 7,
+            "away_team_id": 1,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-30T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-08-30T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-30T19:00:00",
+            "home_team_score": 24,
+            "away_team_score": 45,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419723
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-31T02:16:50Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6641,
+            "season_id": 75,
+            "season_game_count": 60,
+            "home_team_id": 11,
+            "home_game_count": 8,
+            "away_team_id": 1,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-04T19:30:00",
+            "venue_id": 11,
+            "start_at": "2026-09-04T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-04T19:30:00",
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419724
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-05T02:43:51Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6648,
+            "season_id": 75,
+            "season_game_count": 67,
+            "home_team_id": 1,
+            "home_game_count": 7,
+            "away_team_id": 11,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-09-13T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Globally on CFL+",
+            "pregame_at_local": "2026-09-12T19:00:00",
+            "home_team_score": 48,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419731
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-13T05:45:54Z",
+              "revision": 5
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6653,
+            "season_id": 75,
+            "season_game_count": 72,
+            "home_team_id": 1,
+            "home_game_count": 8,
+            "away_team_id": 17,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-25T19:30:00",
+            "venue_id": 1,
+            "start_at": "2026-09-26T02:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-25T19:30:00",
+            "genius": {
+              "id": 13419736
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:07:50Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6658,
+            "season_id": 75,
+            "season_game_count": 77,
+            "home_team_id": 19,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-03T15:00:00",
+            "venue_id": 36,
+            "start_at": "2026-10-03T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-03T15:00:00",
+            "genius": {
+              "id": 13419741
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:58Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6661,
+            "season_id": 75,
+            "season_game_count": 80,
+            "home_team_id": 1,
+            "home_game_count": 9,
+            "away_team_id": 13,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-09T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-10-10T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-09T19:00:00",
+            "genius": {
+              "id": 13419744
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-01T21:36:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6667,
+            "season_id": 75,
+            "season_game_count": 86,
+            "home_team_id": 6,
+            "home_game_count": 10,
+            "away_team_id": 1,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-17T17:00:00",
+            "venue_id": 6,
+            "start_at": "2026-10-17T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-17T17:00:00",
+            "genius": {
+              "id": 13419750
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:14:57Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6669,
+            "season_id": 75,
+            "season_game_count": 88,
+            "home_team_id": 1,
+            "home_game_count": 10,
+            "away_team_id": 20,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-23T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-10-24T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-23T19:00:00",
+            "genius": {
+              "id": 13419752
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:15:45Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6586,
+            "season_id": 75,
+            "season_game_count": 5,
+            "home_team_id": 1,
+            "home_game_count": 1,
+            "away_team_id": 7,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T14:00:00",
+            "venue_id": 41,
+            "start_at": "2026-05-23T21:00:00+00:00",
+            "pregame_at_local": "2026-05-23T14:00:00",
+            "away_team_score": 34,
+            "home_team_score": 16,
+            "genius": {
+              "id": 13419668
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-01-23T14:54:21Z",
+              "revision": 3
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6589,
+            "season_id": 75,
+            "season_game_count": 8,
+            "home_team_id": 20,
+            "home_game_count": 1,
+            "away_team_id": 1,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:30:00",
+            "venue_id": 20,
+            "away_team_score": 30,
+            "home_team_score": 19,
+            "start_at": "2026-05-30T00:30:00+00:00",
+            "genius": {
+              "id": 13419672
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T15:56:27Z",
+              "revision": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 6,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6592,
+            "season_id": 75,
+            "season_game_count": 11,
+            "home_team_id": 6,
+            "home_game_count": 2,
+            "away_team_id": 20,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-05T19:00:00",
+            "venue_id": 6,
+            "home_team_score": 28,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:04:59",
+            "start_at": "2026-06-06T01:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-05T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419675
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:28:27Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6600,
+            "season_id": 75,
+            "season_game_count": 19,
+            "home_team_id": 6,
+            "home_game_count": 3,
+            "away_team_id": 17,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T17:00:00",
+            "venue_id": 6,
+            "home_team_score": 37,
+            "away_team_score": 40,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:04:59",
+            "start_at": "2026-06-20T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-20T17:00:00",
+            "genius": {
+              "id": 13419683
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:34:04Z",
+              "revision": 5
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6603,
+            "season_id": 75,
+            "season_game_count": 22,
+            "home_team_id": 1,
+            "home_game_count": 2,
+            "away_team_id": 6,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-27T16:00:00",
+            "venue_id": 39,
+            "start_at": "2026-06-27T23:00:00+00:00",
+            "pregame_at_local": "2026-06-27T16:00:00",
+            "home_team_score": 33,
+            "away_team_score": 41,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 13419686
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:35:32Z",
+              "revision": 4
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6605,
+            "season_id": 75,
+            "season_game_count": 24,
+            "home_team_id": 6,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-02T19:00:00",
+            "venue_id": 6,
+            "home_team_score": 58,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-03T01:00:00+00:00",
+            "pregame_at_local": "2026-07-02T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 13419688
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:36:43Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6611,
+            "season_id": 75,
+            "season_game_count": 30,
+            "home_team_id": 11,
+            "home_game_count": 4,
+            "away_team_id": 6,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-11T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-11T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-11T19:00:00",
+            "genius": {
+              "id": 13419694
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:39:43Z",
+              "revision": 3
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6614,
+            "season_id": 75,
+            "season_game_count": 33,
+            "home_team_id": 6,
+            "home_game_count": 5,
+            "away_team_id": 11,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-18T14:00:00",
+            "venue_id": 6,
+            "home_team_score": 32,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-18T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-18T14:00:00",
+            "genius": {
+              "id": 13419697
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:41:04Z",
+              "revision": 4
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6618,
+            "season_id": 75,
+            "season_game_count": 37,
+            "home_team_id": 20,
+            "home_game_count": 5,
+            "away_team_id": 6,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-24T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 30,
+            "away_team_score": 52,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-25T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-24T19:30:00",
+            "genius": {
+              "id": 13419701
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:44:25Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6623,
+            "season_id": 75,
+            "season_game_count": 42,
+            "home_team_id": 8,
+            "home_game_count": 6,
+            "away_team_id": 6,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-01T15:00:00",
+            "venue_id": 8,
+            "home_team_score": 20,
+            "away_team_score": 44,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-08-01T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-01T15:00:00",
+            "genius": {
+              "id": 13419706
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:56Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6625,
+            "season_id": 75,
+            "season_game_count": 44,
+            "home_team_id": 19,
+            "home_game_count": 2,
+            "away_team_id": 6,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-06T19:30:00",
+            "venue_id": 36,
+            "start_at": "2026-08-06T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-06T19:30:00",
+            "home_team_score": 33,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419708
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-07T02:30:32Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6629,
+            "season_id": 75,
+            "season_game_count": 48,
+            "home_team_id": 6,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-13T19:00:00",
+            "venue_id": 6,
+            "start_at": "2026-08-14T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-13T19:00:00",
+            "home_team_score": 26,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419712
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-14T03:57:51Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6638,
+            "season_id": 75,
+            "season_game_count": 57,
+            "home_team_id": 6,
+            "home_game_count": 7,
+            "away_team_id": 8,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-29T13:00:00",
+            "venue_id": 6,
+            "start_at": "2026-08-29T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-29T13:00:00",
+            "home_team_score": 28,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419721
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-29T21:57:07Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6644,
+            "season_id": 75,
+            "season_game_count": 63,
+            "home_team_id": 6,
+            "home_game_count": 8,
+            "away_team_id": 7,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-07T16:00:00",
+            "venue_id": 6,
+            "start_at": "2026-09-07T22:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-07T16:00:00",
+            "home_team_score": 28,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419727
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-08T01:16:55Z",
+              "revision": 4
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6647,
+            "season_id": 75,
+            "season_game_count": 66,
+            "home_team_id": 7,
+            "home_game_count": 8,
+            "away_team_id": 6,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T17:00:00",
+            "venue_id": 7,
+            "start_at": "2026-09-12T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T17:00:00",
+            "home_team_score": 53,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419730
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-13T02:14:21Z",
+              "revision": 5
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6651,
+            "season_id": 75,
+            "season_game_count": 70,
+            "home_team_id": 6,
+            "home_game_count": 9,
+            "away_team_id": 13,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-19T17:00:00",
+            "venue_id": 6,
+            "start_at": "2026-09-19T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-19T17:00:00",
+            "home_team_score": 40,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419734
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-20T02:24:55Z",
+              "revision": 4
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6654,
+            "season_id": 75,
+            "season_game_count": 73,
+            "home_team_id": 13,
+            "home_game_count": 8,
+            "away_team_id": 6,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-26T15:00:00",
+            "venue_id": 13,
+            "start_at": "2026-09-26T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-26T15:00:00",
+            "genius": {
+              "id": 13419737
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:08:18Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6657,
+            "season_id": 75,
+            "season_game_count": 76,
+            "home_team_id": 17,
+            "home_game_count": 9,
+            "away_team_id": 6,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-02T19:30:00",
+            "venue_id": 17,
+            "start_at": "2026-10-03T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-02T19:30:00",
+            "genius": {
+              "id": 13419740
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:38Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6662,
+            "season_id": 75,
+            "season_game_count": 81,
+            "home_team_id": 20,
+            "home_game_count": 11,
+            "away_team_id": 6,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-10T18:00:00",
+            "venue_id": 20,
+            "start_at": "2026-10-10T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-10T18:00:00",
+            "genius": {
+              "id": 13419745
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:12:38Z",
+              "revision": 2
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6667,
+            "season_id": 75,
+            "season_game_count": 86,
+            "home_team_id": 6,
+            "home_game_count": 10,
+            "away_team_id": 1,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-17T17:00:00",
+            "venue_id": 6,
+            "start_at": "2026-10-17T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-17T17:00:00",
+            "genius": {
+              "id": 13419750
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:14:57Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-3": [
+          {
+            "ID": 6582,
+            "season_id": 75,
+            "season_game_count": 1,
+            "home_team_id": 6,
+            "home_game_count": 1,
+            "away_team_id": 17,
+            "week": -3,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-18T13:00:00",
+            "venue_id": 6,
+            "away_team_score": 15,
+            "home_team_score": 20,
+            "start_at": "2026-05-18T19:00:00+00:00",
+            "genius": {
+              "id": 13419665
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6590,
+            "season_id": 75,
+            "season_game_count": 9,
+            "home_team_id": 7,
+            "home_game_count": 1,
+            "away_team_id": 6,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 42,
+            "start_at": "2026-05-30T01:00:00+00:00",
+            "pregame_at_local": "2026-05-29T19:00:00",
+            "away_team_score": 21,
+            "home_team_score": 18,
+            "genius": {
+              "id": 13419673
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-05-21T22:39:51Z",
+              "revision": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 7,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6593,
+            "season_id": 75,
+            "season_game_count": 12,
+            "home_team_id": 13,
+            "home_game_count": 2,
+            "away_team_id": 7,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-06T19:00:00",
+            "venue_id": 13,
+            "home_team_score": 21,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-06T23:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-06T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419676
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:07Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6599,
+            "season_id": 75,
+            "season_game_count": 18,
+            "home_team_id": 7,
+            "home_game_count": 2,
+            "away_team_id": 11,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T14:00:00",
+            "venue_id": 7,
+            "home_team_score": 32,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-20T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-20T14:00:00",
+            "genius": {
+              "id": 13419682
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:33:33Z",
+              "revision": 4
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6601,
+            "season_id": 75,
+            "season_game_count": 20,
+            "home_team_id": 20,
+            "home_game_count": 3,
+            "away_team_id": 7,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-25T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 18,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-26T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-25T19:30:00",
+            "genius": {
+              "id": 13419684
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:34:48Z",
+              "revision": 3
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6607,
+            "season_id": 75,
+            "season_game_count": 26,
+            "home_team_id": 1,
+            "home_game_count": 3,
+            "away_team_id": 7,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-04T16:00:00",
+            "venue_id": 39,
+            "start_at": "2026-07-04T23:00:00+00:00",
+            "pregame_at_local": "2026-07-04T16:00:00",
+            "home_team_score": 36,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 13419690
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:37:45Z",
+              "revision": 4
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6609,
+            "season_id": 75,
+            "season_game_count": 28,
+            "home_team_id": 7,
+            "home_game_count": 3,
+            "away_team_id": 13,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-09T19:00:00",
+            "venue_id": 7,
+            "home_team_score": 40,
+            "away_team_score": 17,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-10T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-09T19:00:00",
+            "genius": {
+              "id": 13419692
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:38:35Z",
+              "revision": 3
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6613,
+            "season_id": 75,
+            "season_game_count": 32,
+            "home_team_id": 7,
+            "home_game_count": 4,
+            "away_team_id": 1,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-17T19:00:00",
+            "venue_id": 7,
+            "home_team_score": 19,
+            "away_team_score": 17,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-18T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-17T19:00:00",
+            "genius": {
+              "id": 13419696
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:40:40Z",
+              "revision": 3
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6617,
+            "season_id": 75,
+            "season_game_count": 36,
+            "home_team_id": 17,
+            "home_game_count": 5,
+            "away_team_id": 7,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-23T19:00:00",
+            "venue_id": 17,
+            "home_team_score": 34,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-24T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-23T19:00:00",
+            "genius": {
+              "id": 13419700
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:43:54Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6624,
+            "season_id": 75,
+            "season_game_count": 43,
+            "home_team_id": 7,
+            "home_game_count": 5,
+            "away_team_id": 17,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-01T17:00:00",
+            "venue_id": 7,
+            "home_team_score": 26,
+            "away_team_score": 28,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-08-01T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-01T17:00:00",
+            "genius": {
+              "id": 13419707
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:47:20Z",
+              "revision": 4
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6627,
+            "season_id": 75,
+            "season_game_count": 46,
+            "home_team_id": 11,
+            "home_game_count": 6,
+            "away_team_id": 7,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-08T15:00:00",
+            "venue_id": 11,
+            "start_at": "2026-08-08T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-08T15:00:00",
+            "home_team_score": 48,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419710
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-08T22:12:32Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6631,
+            "season_id": 75,
+            "season_game_count": 50,
+            "home_team_id": 7,
+            "home_game_count": 6,
+            "away_team_id": 19,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-15T13:00:00",
+            "venue_id": 7,
+            "start_at": "2026-08-15T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-15T13:00:00",
+            "home_team_score": 42,
+            "away_team_score": 12,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419714
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-15T22:09:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6634,
+            "season_id": 75,
+            "season_game_count": 53,
+            "home_team_id": 7,
+            "home_game_count": 7,
+            "away_team_id": 20,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-21T19:30:00",
+            "venue_id": 7,
+            "start_at": "2026-08-22T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-21T19:30:00",
+            "home_team_score": 22,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419717
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-22T04:27:45Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6644,
+            "season_id": 75,
+            "season_game_count": 63,
+            "home_team_id": 6,
+            "home_game_count": 8,
+            "away_team_id": 7,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-07T16:00:00",
+            "venue_id": 6,
+            "start_at": "2026-09-07T22:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-07T16:00:00",
+            "home_team_score": 28,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419727
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-08T01:16:55Z",
+              "revision": 4
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6647,
+            "season_id": 75,
+            "season_game_count": 66,
+            "home_team_id": 7,
+            "home_game_count": 8,
+            "away_team_id": 6,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T17:00:00",
+            "venue_id": 7,
+            "start_at": "2026-09-12T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T17:00:00",
+            "home_team_score": 53,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419730
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-13T02:14:21Z",
+              "revision": 5
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6650,
+            "season_id": 75,
+            "season_game_count": 69,
+            "home_team_id": 19,
+            "home_game_count": 5,
+            "away_team_id": 7,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-19T15:00:00",
+            "venue_id": 36,
+            "start_at": "2026-09-19T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-19T15:00:00",
+            "home_team_score": 24,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:10",
+            "genius": {
+              "id": 13419733
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-19T22:03:05Z",
+              "revision": 3
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6655,
+            "season_id": 75,
+            "season_game_count": 74,
+            "home_team_id": 7,
+            "home_game_count": 9,
+            "away_team_id": 8,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-26T17:00:00",
+            "venue_id": 7,
+            "start_at": "2026-09-26T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-26T17:00:00",
+            "genius": {
+              "id": 13419738
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:08:41Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6660,
+            "season_id": 75,
+            "season_game_count": 79,
+            "home_team_id": 8,
+            "home_game_count": 10,
+            "away_team_id": 7,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-09T19:00:00",
+            "venue_id": 8,
+            "start_at": "2026-10-09T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+",
+              "RDS2"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-09T19:00:00",
+            "genius": {
+              "id": 13419743
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-01T21:35:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6665,
+            "season_id": 75,
+            "season_game_count": 84,
+            "home_team_id": 7,
+            "home_game_count": 10,
+            "away_team_id": 20,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-16T19:30:00",
+            "venue_id": 7,
+            "start_at": "2026-10-17T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-16T19:30:00",
+            "genius": {
+              "id": 13419748
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:53Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6671,
+            "season_id": 75,
+            "season_game_count": 90,
+            "home_team_id": 17,
+            "home_game_count": 11,
+            "away_team_id": 7,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-24T13:00:00",
+            "venue_id": 17,
+            "start_at": "2026-10-24T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-24T13:00:00",
+            "genius": {
+              "id": 13419754
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:16:28Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6586,
+            "season_id": 75,
+            "season_game_count": 5,
+            "home_team_id": 1,
+            "home_game_count": 1,
+            "away_team_id": 7,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T14:00:00",
+            "venue_id": 41,
+            "start_at": "2026-05-23T21:00:00+00:00",
+            "pregame_at_local": "2026-05-23T14:00:00",
+            "away_team_score": 34,
+            "home_team_score": 16,
+            "genius": {
+              "id": 13419668
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-01-23T14:54:21Z",
+              "revision": 3
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6590,
+            "season_id": 75,
+            "season_game_count": 9,
+            "home_team_id": 7,
+            "home_game_count": 1,
+            "away_team_id": 6,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 42,
+            "start_at": "2026-05-30T01:00:00+00:00",
+            "pregame_at_local": "2026-05-29T19:00:00",
+            "away_team_score": 21,
+            "home_team_score": 18,
+            "genius": {
+              "id": 13419673
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-05-21T22:39:51Z",
+              "revision": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 8,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6591,
+            "season_id": 75,
+            "season_game_count": 10,
+            "home_team_id": 8,
+            "home_game_count": 2,
+            "away_team_id": 11,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-04T19:30:00",
+            "venue_id": 8,
+            "home_team_score": 27,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-04T23:30:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-04T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419674
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:27:47Z",
+              "revision": 4
+            }
+          }
+        ],
+        "2": [
+          {
+            "ID": 6594,
+            "season_id": 75,
+            "season_game_count": 13,
+            "home_team_id": 20,
+            "home_game_count": 2,
+            "away_team_id": 8,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-11T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 27,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-12T00:30:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-11T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419677
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:32Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6597,
+            "season_id": 75,
+            "season_game_count": 16,
+            "home_team_id": 8,
+            "home_game_count": 3,
+            "away_team_id": 1,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-19T19:30:00",
+            "venue_id": 8,
+            "home_team_score": 41,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-19T23:30:00+00:00",
+            "pregame_at_local": "2026-06-19T19:30:00",
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419680
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:32:42Z",
+              "revision": 3
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6608,
+            "season_id": 75,
+            "season_game_count": 27,
+            "home_team_id": 8,
+            "home_game_count": 4,
+            "away_team_id": 20,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-05T19:00:00",
+            "venue_id": 8,
+            "home_team_score": 13,
+            "away_team_score": 14,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-05T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-05T19:00:00",
+            "genius": {
+              "id": 13419691
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:38:07Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6612,
+            "season_id": 75,
+            "season_game_count": 31,
+            "home_team_id": 17,
+            "home_game_count": 4,
+            "away_team_id": 8,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-12T17:00:00",
+            "venue_id": 17,
+            "home_team_score": 38,
+            "away_team_score": 7,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-12T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-12T17:00:00",
+            "genius": {
+              "id": 13419695
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:40:11Z",
+              "revision": 3
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6615,
+            "season_id": 75,
+            "season_game_count": 34,
+            "home_team_id": 8,
+            "home_game_count": 5,
+            "away_team_id": 19,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-18T19:30:00",
+            "venue_id": 8,
+            "start_at": "2026-07-18T23:30:00+00:00",
+            "pregame_at_local": "2026-07-18T19:30:00",
+            "home_team_score": 24,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 14038505
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:41:20Z",
+              "revision": 7
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6620,
+            "season_id": 75,
+            "season_game_count": 39,
+            "home_team_id": 11,
+            "home_game_count": 5,
+            "away_team_id": 8,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-26T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 31,
+            "away_team_score": 18,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-26T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-26T19:00:00",
+            "genius": {
+              "id": 13419703
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:45:24Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6623,
+            "season_id": 75,
+            "season_game_count": 42,
+            "home_team_id": 8,
+            "home_game_count": 6,
+            "away_team_id": 6,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-01T15:00:00",
+            "venue_id": 8,
+            "home_team_score": 20,
+            "away_team_score": 44,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-08-01T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-01T15:00:00",
+            "genius": {
+              "id": 13419706
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:56Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6628,
+            "season_id": 75,
+            "season_game_count": 47,
+            "home_team_id": 1,
+            "home_game_count": 5,
+            "away_team_id": 8,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-08T16:00:00",
+            "venue_id": 1,
+            "start_at": "2026-08-08T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-08T16:00:00",
+            "home_team_score": 27,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:20:00",
+            "genius": {
+              "id": 13419711
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-14T03:57:51Z",
+              "revision": 5
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6632,
+            "season_id": 75,
+            "season_game_count": 51,
+            "home_team_id": 8,
+            "home_game_count": 7,
+            "away_team_id": 17,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-15T19:00:00",
+            "venue_id": 8,
+            "start_at": "2026-08-15T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-15T19:00:00",
+            "home_team_score": 26,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419715
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-16T01:53:10Z",
+              "revision": 4
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6635,
+            "season_id": 75,
+            "season_game_count": 54,
+            "home_team_id": 19,
+            "home_game_count": 3,
+            "away_team_id": 8,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-22T19:00:00",
+            "venue_id": 36,
+            "start_at": "2026-08-22T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-22T19:00:00",
+            "home_team_score": 39,
+            "away_team_score": 20,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419718
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-23T02:49:35Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6638,
+            "season_id": 75,
+            "season_game_count": 57,
+            "home_team_id": 6,
+            "home_game_count": 7,
+            "away_team_id": 8,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-29T13:00:00",
+            "venue_id": 6,
+            "start_at": "2026-08-29T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-29T13:00:00",
+            "home_team_score": 28,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419721
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-29T21:57:07Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6643,
+            "season_id": 75,
+            "season_game_count": 62,
+            "home_team_id": 8,
+            "home_game_count": 8,
+            "away_team_id": 19,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-07T14:30:00",
+            "venue_id": 8,
+            "start_at": "2026-09-07T18:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-07T14:30:00",
+            "home_team_score": 22,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419726
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-07T21:47:20Z",
+              "revision": 3
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6649,
+            "season_id": 75,
+            "season_game_count": 68,
+            "home_team_id": 8,
+            "home_game_count": 9,
+            "away_team_id": 11,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-18T19:30:00",
+            "venue_id": 8,
+            "start_at": "2026-09-18T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-18T19:30:00",
+            "home_team_score": 25,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419732
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-19T02:30:57Z",
+              "revision": 3
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6655,
+            "season_id": 75,
+            "season_game_count": 74,
+            "home_team_id": 7,
+            "home_game_count": 9,
+            "away_team_id": 8,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-26T17:00:00",
+            "venue_id": 7,
+            "start_at": "2026-09-26T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-26T17:00:00",
+            "genius": {
+              "id": 13419738
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:08:41Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6656,
+            "season_id": 75,
+            "season_game_count": 75,
+            "home_team_id": 13,
+            "home_game_count": 9,
+            "away_team_id": 8,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-02T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-10-02T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-02T19:00:00",
+            "genius": {
+              "id": 13419739
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:13Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6660,
+            "season_id": 75,
+            "season_game_count": 79,
+            "home_team_id": 8,
+            "home_game_count": 10,
+            "away_team_id": 7,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-09T19:00:00",
+            "venue_id": 8,
+            "start_at": "2026-10-09T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+",
+              "RDS2"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-09T19:00:00",
+            "genius": {
+              "id": 13419743
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-01T21:35:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6670,
+            "season_id": 75,
+            "season_game_count": 89,
+            "home_team_id": 8,
+            "home_game_count": 11,
+            "away_team_id": 13,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-24T15:00:00",
+            "venue_id": 8,
+            "start_at": "2026-10-24T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-24T15:00:00",
+            "genius": {
+              "id": 13419753
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:16:10Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6584,
+            "season_id": 75,
+            "season_game_count": 3,
+            "home_team_id": 8,
+            "home_game_count": 1,
+            "away_team_id": 19,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T16:00:00",
+            "venue_id": 8,
+            "away_team_score": 20,
+            "game_clock": "00:00:00",
+            "game_status": "\"Finished\"",
+            "home_team_score": 10,
+            "total_periods": 4,
+            "start_at": "2026-05-23T20:00:00+00:00",
+            "genius": {
+              "id": 13419667
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6587,
+            "season_id": 75,
+            "season_game_count": 6,
+            "home_team_id": 19,
+            "home_game_count": 1,
+            "away_team_id": 8,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 35,
+            "start_at": "2026-05-29T23:00:00+00:00",
+            "pregame_at_local": "2026-05-29T19:00:00",
+            "away_team_score": 20,
+            "game_clock": "00:00:00",
+            "game_status": "Finished",
+            "home_team_score": 14,
+            "total_periods": 4,
+            "genius": {
+              "id": 13419671
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T16:58:05Z",
+              "revision": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 11,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6591,
+            "season_id": 75,
+            "season_game_count": 10,
+            "home_team_id": 8,
+            "home_game_count": 2,
+            "away_team_id": 11,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-04T19:30:00",
+            "venue_id": 8,
+            "home_team_score": 27,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-04T23:30:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-04T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419674
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:27:47Z",
+              "revision": 4
+            }
+          }
+        ],
+        "2": [
+          {
+            "ID": 6595,
+            "season_id": 75,
+            "season_game_count": 14,
+            "home_team_id": 11,
+            "home_game_count": 2,
+            "away_team_id": 19,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-12T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-12T23:00:00+00:00",
+            "pregame_at_local": "2026-06-12T19:00:00",
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419678
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:49Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6599,
+            "season_id": 75,
+            "season_game_count": 18,
+            "home_team_id": 7,
+            "home_game_count": 2,
+            "away_team_id": 11,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T14:00:00",
+            "venue_id": 7,
+            "home_team_score": 32,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-20T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-20T14:00:00",
+            "genius": {
+              "id": 13419682
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:33:33Z",
+              "revision": 4
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6604,
+            "season_id": 75,
+            "season_game_count": 23,
+            "home_team_id": 11,
+            "home_game_count": 3,
+            "away_team_id": 13,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-28T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 35,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-28T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-28T19:00:00",
+            "genius": {
+              "id": 13419687
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:36:14Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6611,
+            "season_id": 75,
+            "season_game_count": 30,
+            "home_team_id": 11,
+            "home_game_count": 4,
+            "away_team_id": 6,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-11T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-11T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-11T19:00:00",
+            "genius": {
+              "id": 13419694
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:39:43Z",
+              "revision": 3
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6614,
+            "season_id": 75,
+            "season_game_count": 33,
+            "home_team_id": 6,
+            "home_game_count": 5,
+            "away_team_id": 11,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-18T14:00:00",
+            "venue_id": 6,
+            "home_team_score": 32,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-18T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-18T14:00:00",
+            "genius": {
+              "id": 13419697
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:41:04Z",
+              "revision": 4
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6620,
+            "season_id": 75,
+            "season_game_count": 39,
+            "home_team_id": 11,
+            "home_game_count": 5,
+            "away_team_id": 8,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-26T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 31,
+            "away_team_score": 18,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-26T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-26T19:00:00",
+            "genius": {
+              "id": 13419703
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:45:24Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6622,
+            "season_id": 75,
+            "season_game_count": 41,
+            "home_team_id": 13,
+            "home_game_count": 6,
+            "away_team_id": 11,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-31T19:30:00",
+            "venue_id": 13,
+            "home_team_score": 13,
+            "away_team_score": 34,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-31T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-31T19:30:00",
+            "genius": {
+              "id": 13419705
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:28Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6627,
+            "season_id": 75,
+            "season_game_count": 46,
+            "home_team_id": 11,
+            "home_game_count": 6,
+            "away_team_id": 7,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-08T15:00:00",
+            "venue_id": 11,
+            "start_at": "2026-08-08T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-08T15:00:00",
+            "home_team_score": 48,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419710
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-08T22:12:32Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6633,
+            "season_id": 75,
+            "season_game_count": 52,
+            "home_team_id": 11,
+            "home_game_count": 7,
+            "away_team_id": 13,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-20T19:30:00",
+            "venue_id": 11,
+            "start_at": "2026-08-20T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-20T19:30:00",
+            "home_team_score": 46,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419716
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-21T02:34:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6637,
+            "season_id": 75,
+            "season_game_count": 56,
+            "home_team_id": 20,
+            "home_game_count": 8,
+            "away_team_id": 11,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-28T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-08-29T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-28T19:30:00",
+            "home_team_score": 44,
+            "away_team_score": 28,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419720
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-29T03:31:08Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6641,
+            "season_id": 75,
+            "season_game_count": 60,
+            "home_team_id": 11,
+            "home_game_count": 8,
+            "away_team_id": 1,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-04T19:30:00",
+            "venue_id": 11,
+            "start_at": "2026-09-04T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-04T19:30:00",
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419724
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-05T02:43:51Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6648,
+            "season_id": 75,
+            "season_game_count": 67,
+            "home_team_id": 1,
+            "home_game_count": 7,
+            "away_team_id": 11,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-09-13T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Globally on CFL+",
+            "pregame_at_local": "2026-09-12T19:00:00",
+            "home_team_score": 48,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419731
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-13T05:45:54Z",
+              "revision": 5
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6649,
+            "season_id": 75,
+            "season_game_count": 68,
+            "home_team_id": 8,
+            "home_game_count": 9,
+            "away_team_id": 11,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-18T19:30:00",
+            "venue_id": 8,
+            "start_at": "2026-09-18T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-18T19:30:00",
+            "home_team_score": 25,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419732
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-19T02:30:57Z",
+              "revision": 3
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6659,
+            "season_id": 75,
+            "season_game_count": 78,
+            "home_team_id": 11,
+            "home_game_count": 9,
+            "away_team_id": 20,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-03T19:00:00",
+            "venue_id": 11,
+            "start_at": "2026-10-03T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-03T19:00:00",
+            "genius": {
+              "id": 13419742
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:10:30Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6663,
+            "season_id": 75,
+            "season_game_count": 82,
+            "home_team_id": 11,
+            "home_game_count": 10,
+            "away_team_id": 17,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-12T13:00:00",
+            "venue_id": 11,
+            "start_at": "2026-10-12T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-10-12T13:00:00",
+            "genius": {
+              "id": 13419746
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:16Z",
+              "revision": 2
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6666,
+            "season_id": 75,
+            "season_game_count": 85,
+            "home_team_id": 17,
+            "home_game_count": 10,
+            "away_team_id": 11,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-17T13:00:00",
+            "venue_id": 17,
+            "start_at": "2026-10-17T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-17T13:00:00",
+            "genius": {
+              "id": 13419749
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:14:14Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6668,
+            "season_id": 75,
+            "season_game_count": 87,
+            "home_team_id": 19,
+            "home_game_count": 7,
+            "away_team_id": 11,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-23T19:00:00",
+            "venue_id": 36,
+            "start_at": "2026-10-23T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-23T19:00:00",
+            "genius": {
+              "id": 13419751
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:15:25Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6583,
+            "season_id": 75,
+            "season_game_count": 2,
+            "home_team_id": 11,
+            "home_game_count": 1,
+            "away_team_id": 13,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-22T19:00:00",
+            "venue_id": 11,
+            "away_team_score": 27,
+            "home_team_score": 12,
+            "start_at": "2026-05-22T23:00:00+00:00",
+            "genius": {
+              "id": 13419666
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6588,
+            "season_id": 75,
+            "season_game_count": 7,
+            "home_team_id": 13,
+            "home_game_count": 1,
+            "away_team_id": 11,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 13,
+            "away_team_score": 3,
+            "home_team_score": 27,
+            "start_at": "2026-05-29T23:00:00+00:00",
+            "genius": {
+              "id": 13419670
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T15:56:27Z",
+              "revision": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 13,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6593,
+            "season_id": 75,
+            "season_game_count": 12,
+            "home_team_id": 13,
+            "home_game_count": 2,
+            "away_team_id": 7,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-06T19:00:00",
+            "venue_id": 13,
+            "home_team_score": 21,
+            "away_team_score": 29,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-06T23:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-06T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419676
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:07Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6598,
+            "season_id": 75,
+            "season_game_count": 17,
+            "home_team_id": 13,
+            "home_game_count": 3,
+            "away_team_id": 19,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T13:00:00",
+            "venue_id": 13,
+            "home_team_score": 24,
+            "away_team_score": 44,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-20T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-20T13:00:00",
+            "genius": {
+              "id": 13419681
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:33:09Z",
+              "revision": 3
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6604,
+            "season_id": 75,
+            "season_game_count": 23,
+            "home_team_id": 11,
+            "home_game_count": 3,
+            "away_team_id": 13,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-28T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 35,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-28T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-28T19:00:00",
+            "genius": {
+              "id": 13419687
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:36:14Z",
+              "revision": 3
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6606,
+            "season_id": 75,
+            "season_game_count": 25,
+            "home_team_id": 13,
+            "home_game_count": 4,
+            "away_team_id": 17,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-03T19:30:00",
+            "venue_id": 13,
+            "home_team_score": 22,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-03T23:30:00+00:00",
+            "pregame_at_local": "2026-07-03T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 13419689
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:37:10Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6609,
+            "season_id": 75,
+            "season_game_count": 28,
+            "home_team_id": 7,
+            "home_game_count": 3,
+            "away_team_id": 13,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-09T19:00:00",
+            "venue_id": 7,
+            "home_team_score": 40,
+            "away_team_score": 17,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-10T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-09T19:00:00",
+            "genius": {
+              "id": 13419692
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:38:35Z",
+              "revision": 3
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6616,
+            "season_id": 75,
+            "season_game_count": 35,
+            "home_team_id": 13,
+            "home_game_count": 5,
+            "away_team_id": 20,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-19T19:00:00",
+            "venue_id": 13,
+            "home_team_score": 34,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-19T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-19T19:00:00",
+            "genius": {
+              "id": 13419699
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:43:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6622,
+            "season_id": 75,
+            "season_game_count": 41,
+            "home_team_id": 13,
+            "home_game_count": 6,
+            "away_team_id": 11,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-31T19:30:00",
+            "venue_id": 13,
+            "home_team_score": 13,
+            "away_team_score": 34,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-31T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-31T19:30:00",
+            "genius": {
+              "id": 13419705
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:28Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6626,
+            "season_id": 75,
+            "season_game_count": 45,
+            "home_team_id": 17,
+            "home_game_count": 6,
+            "away_team_id": 13,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-07T19:00:00",
+            "venue_id": 17,
+            "start_at": "2026-08-08T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-07T19:00:00",
+            "home_team_score": 42,
+            "away_team_score": 20,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419709
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-08T04:06:09Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6630,
+            "season_id": 75,
+            "season_game_count": 49,
+            "home_team_id": 20,
+            "home_game_count": 7,
+            "away_team_id": 13,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-14T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-08-15T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+",
+              "RDS2"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-14T19:30:00",
+            "home_team_score": 33,
+            "away_team_score": 21,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419713
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-15T03:32:48Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6633,
+            "season_id": 75,
+            "season_game_count": 52,
+            "home_team_id": 11,
+            "home_game_count": 7,
+            "away_team_id": 13,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-20T19:30:00",
+            "venue_id": 11,
+            "start_at": "2026-08-20T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-20T19:30:00",
+            "home_team_score": 46,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419716
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-21T02:34:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6640,
+            "season_id": 75,
+            "season_game_count": 59,
+            "home_team_id": 13,
+            "home_game_count": 7,
+            "away_team_id": 1,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-30T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-08-30T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-30T19:00:00",
+            "home_team_score": 24,
+            "away_team_score": 45,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419723
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-31T02:16:50Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6645,
+            "season_id": 75,
+            "season_game_count": 64,
+            "home_team_id": 19,
+            "home_game_count": 4,
+            "away_team_id": 13,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T13:00:00",
+            "venue_id": 36,
+            "start_at": "2026-09-12T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T13:00:00",
+            "home_team_score": 26,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419728
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-12T19:48:40Z",
+              "revision": 3
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6651,
+            "season_id": 75,
+            "season_game_count": 70,
+            "home_team_id": 6,
+            "home_game_count": 9,
+            "away_team_id": 13,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-19T17:00:00",
+            "venue_id": 6,
+            "start_at": "2026-09-19T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-19T17:00:00",
+            "home_team_score": 40,
+            "away_team_score": 38,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419734
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-20T02:24:55Z",
+              "revision": 4
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6654,
+            "season_id": 75,
+            "season_game_count": 73,
+            "home_team_id": 13,
+            "home_game_count": 8,
+            "away_team_id": 6,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-26T15:00:00",
+            "venue_id": 13,
+            "start_at": "2026-09-26T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-26T15:00:00",
+            "genius": {
+              "id": 13419737
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:08:18Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6656,
+            "season_id": 75,
+            "season_game_count": 75,
+            "home_team_id": 13,
+            "home_game_count": 9,
+            "away_team_id": 8,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-02T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-10-02T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-02T19:00:00",
+            "genius": {
+              "id": 13419739
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:13Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6661,
+            "season_id": 75,
+            "season_game_count": 80,
+            "home_team_id": 1,
+            "home_game_count": 9,
+            "away_team_id": 13,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-09T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-10-10T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-09T19:00:00",
+            "genius": {
+              "id": 13419744
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-01T21:36:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6664,
+            "season_id": 75,
+            "season_game_count": 83,
+            "home_team_id": 13,
+            "home_game_count": 10,
+            "away_team_id": 19,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-16T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-10-16T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-16T19:00:00",
+            "genius": {
+              "id": 13419747
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:40Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6670,
+            "season_id": 75,
+            "season_game_count": 89,
+            "home_team_id": 8,
+            "home_game_count": 11,
+            "away_team_id": 13,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-24T15:00:00",
+            "venue_id": 8,
+            "start_at": "2026-10-24T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-24T15:00:00",
+            "genius": {
+              "id": 13419753
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:16:10Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6583,
+            "season_id": 75,
+            "season_game_count": 2,
+            "home_team_id": 11,
+            "home_game_count": 1,
+            "away_team_id": 13,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-22T19:00:00",
+            "venue_id": 11,
+            "away_team_score": 27,
+            "home_team_score": 12,
+            "start_at": "2026-05-22T23:00:00+00:00",
+            "genius": {
+              "id": 13419666
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6588,
+            "season_id": 75,
+            "season_game_count": 7,
+            "home_team_id": 13,
+            "home_game_count": 1,
+            "away_team_id": 11,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 13,
+            "away_team_score": 3,
+            "home_team_score": 27,
+            "start_at": "2026-05-29T23:00:00+00:00",
+            "genius": {
+              "id": 13419670
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T15:56:27Z",
+              "revision": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 17,
+      "fixturesByWeek": {
+        "2": [
+          {
+            "ID": 6596,
+            "season_id": 75,
+            "season_game_count": 15,
+            "home_team_id": 17,
+            "home_game_count": 2,
+            "away_team_id": 1,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-13T17:00:00",
+            "venue_id": 17,
+            "home_team_score": 31,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-13T23:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-13T17:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419679
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:32:10Z",
+              "revision": 5
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6600,
+            "season_id": 75,
+            "season_game_count": 19,
+            "home_team_id": 6,
+            "home_game_count": 3,
+            "away_team_id": 17,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T17:00:00",
+            "venue_id": 6,
+            "home_team_score": 37,
+            "away_team_score": 40,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:04:59",
+            "start_at": "2026-06-20T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-20T17:00:00",
+            "genius": {
+              "id": 13419683
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:34:04Z",
+              "revision": 5
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6602,
+            "season_id": 75,
+            "season_game_count": 21,
+            "home_team_id": 17,
+            "home_game_count": 3,
+            "away_team_id": 19,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-26T19:00:00",
+            "venue_id": 17,
+            "start_at": "2026-06-27T01:00:00+00:00",
+            "pregame_at_local": "2026-06-26T19:00:00",
+            "home_team_score": 34,
+            "away_team_score": 40,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 14038501
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:35:11Z",
+              "revision": 5
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6606,
+            "season_id": 75,
+            "season_game_count": 25,
+            "home_team_id": 13,
+            "home_game_count": 4,
+            "away_team_id": 17,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-03T19:30:00",
+            "venue_id": 13,
+            "home_team_score": 22,
+            "away_team_score": 27,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-03T23:30:00+00:00",
+            "pregame_at_local": "2026-07-03T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 13419689
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:37:10Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6612,
+            "season_id": 75,
+            "season_game_count": 31,
+            "home_team_id": 17,
+            "home_game_count": 4,
+            "away_team_id": 8,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-12T17:00:00",
+            "venue_id": 17,
+            "home_team_score": 38,
+            "away_team_score": 7,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-12T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-12T17:00:00",
+            "genius": {
+              "id": 13419695
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:40:11Z",
+              "revision": 3
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6617,
+            "season_id": 75,
+            "season_game_count": 36,
+            "home_team_id": 17,
+            "home_game_count": 5,
+            "away_team_id": 7,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-23T19:00:00",
+            "venue_id": 17,
+            "home_team_score": 34,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-24T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-23T19:00:00",
+            "genius": {
+              "id": 13419700
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:43:54Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6624,
+            "season_id": 75,
+            "season_game_count": 43,
+            "home_team_id": 7,
+            "home_game_count": 5,
+            "away_team_id": 17,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-01T17:00:00",
+            "venue_id": 7,
+            "home_team_score": 26,
+            "away_team_score": 28,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-08-01T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-01T17:00:00",
+            "genius": {
+              "id": 13419707
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:47:20Z",
+              "revision": 4
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6626,
+            "season_id": 75,
+            "season_game_count": 45,
+            "home_team_id": 17,
+            "home_game_count": 6,
+            "away_team_id": 13,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-07T19:00:00",
+            "venue_id": 17,
+            "start_at": "2026-08-08T01:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-07T19:00:00",
+            "home_team_score": 42,
+            "away_team_score": 20,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419709
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-08T04:06:09Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6632,
+            "season_id": 75,
+            "season_game_count": 51,
+            "home_team_id": 8,
+            "home_game_count": 7,
+            "away_team_id": 17,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-15T19:00:00",
+            "venue_id": 8,
+            "start_at": "2026-08-15T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-15T19:00:00",
+            "home_team_score": 26,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419715
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-16T01:53:10Z",
+              "revision": 4
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6636,
+            "season_id": 75,
+            "season_game_count": 55,
+            "home_team_id": 1,
+            "home_game_count": 6,
+            "away_team_id": 17,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-23T16:00:00",
+            "venue_id": 1,
+            "start_at": "2026-08-23T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-23T16:00:00",
+            "home_team_score": 30,
+            "away_team_score": 16,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419719
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-24T01:47:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6639,
+            "season_id": 75,
+            "season_game_count": 58,
+            "home_team_id": 17,
+            "home_game_count": 7,
+            "away_team_id": 19,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-29T17:00:00",
+            "venue_id": 17,
+            "start_at": "2026-08-29T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-29T17:00:00",
+            "home_team_score": 28,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419722
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-30T02:27:19Z",
+              "revision": 4
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6642,
+            "season_id": 75,
+            "season_game_count": 61,
+            "home_team_id": 17,
+            "home_game_count": 8,
+            "away_team_id": 20,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-06T17:00:00",
+            "venue_id": 17,
+            "start_at": "2026-09-06T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-06T17:00:00",
+            "home_team_score": 32,
+            "away_team_score": 26,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419725
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-07T02:13:53Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6646,
+            "season_id": 75,
+            "season_game_count": 65,
+            "home_team_id": 20,
+            "home_game_count": 9,
+            "away_team_id": 17,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T15:00:00",
+            "venue_id": 20,
+            "start_at": "2026-09-12T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T15:00:00",
+            "home_team_score": 19,
+            "away_team_score": 6,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:06:01",
+            "genius": {
+              "id": 13419729
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-13T02:14:24Z",
+              "revision": 5
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6653,
+            "season_id": 75,
+            "season_game_count": 72,
+            "home_team_id": 1,
+            "home_game_count": 8,
+            "away_team_id": 17,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-25T19:30:00",
+            "venue_id": 1,
+            "start_at": "2026-09-26T02:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-25T19:30:00",
+            "genius": {
+              "id": 13419736
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:07:50Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6657,
+            "season_id": 75,
+            "season_game_count": 76,
+            "home_team_id": 17,
+            "home_game_count": 9,
+            "away_team_id": 6,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-02T19:30:00",
+            "venue_id": 17,
+            "start_at": "2026-10-03T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-02T19:30:00",
+            "genius": {
+              "id": 13419740
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:38Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6663,
+            "season_id": 75,
+            "season_game_count": 82,
+            "home_team_id": 11,
+            "home_game_count": 10,
+            "away_team_id": 17,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-12T13:00:00",
+            "venue_id": 11,
+            "start_at": "2026-10-12T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-10-12T13:00:00",
+            "genius": {
+              "id": 13419746
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:16Z",
+              "revision": 2
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6666,
+            "season_id": 75,
+            "season_game_count": 85,
+            "home_team_id": 17,
+            "home_game_count": 10,
+            "away_team_id": 11,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-17T13:00:00",
+            "venue_id": 17,
+            "start_at": "2026-10-17T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-17T13:00:00",
+            "genius": {
+              "id": 13419749
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:14:14Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6671,
+            "season_id": 75,
+            "season_game_count": 90,
+            "home_team_id": 17,
+            "home_game_count": 11,
+            "away_team_id": 7,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-24T13:00:00",
+            "venue_id": 17,
+            "start_at": "2026-10-24T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-24T13:00:00",
+            "genius": {
+              "id": 13419754
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:16:28Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-3": [
+          {
+            "ID": 6582,
+            "season_id": 75,
+            "season_game_count": 1,
+            "home_team_id": 6,
+            "home_game_count": 1,
+            "away_team_id": 17,
+            "week": -3,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-18T13:00:00",
+            "venue_id": 6,
+            "away_team_score": 15,
+            "home_team_score": 20,
+            "start_at": "2026-05-18T19:00:00+00:00",
+            "genius": {
+              "id": 13419665
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6585,
+            "season_id": 75,
+            "season_game_count": 4,
+            "home_team_id": 17,
+            "home_game_count": 1,
+            "away_team_id": 20,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T17:00:00",
+            "venue_id": 40,
+            "start_at": "2026-05-23T23:00:00+00:00",
+            "pregame_at_local": "2026-05-23T17:00:00",
+            "away_team_score": 27,
+            "home_team_score": 31,
+            "genius": {
+              "id": 13419669
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T16:56:03Z",
+              "revision": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 19,
+      "fixturesByWeek": {
+        "2": [
+          {
+            "ID": 6595,
+            "season_id": 75,
+            "season_game_count": 14,
+            "home_team_id": 11,
+            "home_game_count": 2,
+            "away_team_id": 19,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-12T19:00:00",
+            "venue_id": 11,
+            "home_team_score": 37,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-12T23:00:00+00:00",
+            "pregame_at_local": "2026-06-12T19:00:00",
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419678
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:49Z",
+              "revision": 4
+            }
+          }
+        ],
+        "3": [
+          {
+            "ID": 6598,
+            "season_id": 75,
+            "season_game_count": 17,
+            "home_team_id": 13,
+            "home_game_count": 3,
+            "away_team_id": 19,
+            "week": 3,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-20T13:00:00",
+            "venue_id": 13,
+            "home_team_score": 24,
+            "away_team_score": 44,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-20T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-20T13:00:00",
+            "genius": {
+              "id": 13419681
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:33:09Z",
+              "revision": 3
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6602,
+            "season_id": 75,
+            "season_game_count": 21,
+            "home_team_id": 17,
+            "home_game_count": 3,
+            "away_team_id": 19,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-26T19:00:00",
+            "venue_id": 17,
+            "start_at": "2026-06-27T01:00:00+00:00",
+            "pregame_at_local": "2026-06-26T19:00:00",
+            "home_team_score": 34,
+            "away_team_score": 40,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 14038501
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:35:11Z",
+              "revision": 5
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6605,
+            "season_id": 75,
+            "season_game_count": 24,
+            "home_team_id": 6,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-02T19:00:00",
+            "venue_id": 6,
+            "home_team_score": 58,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-03T01:00:00+00:00",
+            "pregame_at_local": "2026-07-02T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "genius": {
+              "id": 13419688
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:36:43Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6610,
+            "season_id": 75,
+            "season_game_count": 29,
+            "home_team_id": 20,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-10T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-07-11T00:30:00+00:00",
+            "pregame_at_local": "2026-07-10T19:30:00",
+            "home_team_score": 30,
+            "away_team_score": 21,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 14038504
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:39:20Z",
+              "revision": 5
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6615,
+            "season_id": 75,
+            "season_game_count": 34,
+            "home_team_id": 8,
+            "home_game_count": 5,
+            "away_team_id": 19,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-18T19:30:00",
+            "venue_id": 8,
+            "start_at": "2026-07-18T23:30:00+00:00",
+            "pregame_at_local": "2026-07-18T19:30:00",
+            "home_team_score": 24,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 14038505
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:41:20Z",
+              "revision": 7
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6619,
+            "season_id": 75,
+            "season_game_count": 38,
+            "home_team_id": 1,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-25T16:00:00",
+            "venue_id": 1,
+            "home_team_score": 12,
+            "away_team_score": 26,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-25T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-25T16:00:00",
+            "genius": {
+              "id": 13419702
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:44:57Z",
+              "revision": 3
+            }
+          }
+        ],
+        "10": [
+          {
+            "ID": 6625,
+            "season_id": 75,
+            "season_game_count": 44,
+            "home_team_id": 19,
+            "home_game_count": 2,
+            "away_team_id": 6,
+            "week": 10,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-06T19:30:00",
+            "venue_id": 36,
+            "start_at": "2026-08-06T23:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-06T19:30:00",
+            "home_team_score": 33,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419708
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-07T02:30:32Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6631,
+            "season_id": 75,
+            "season_game_count": 50,
+            "home_team_id": 7,
+            "home_game_count": 6,
+            "away_team_id": 19,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-15T13:00:00",
+            "venue_id": 7,
+            "start_at": "2026-08-15T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-15T13:00:00",
+            "home_team_score": 42,
+            "away_team_score": 12,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419714
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-15T22:09:38Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6635,
+            "season_id": 75,
+            "season_game_count": 54,
+            "home_team_id": 19,
+            "home_game_count": 3,
+            "away_team_id": 8,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-22T19:00:00",
+            "venue_id": 36,
+            "start_at": "2026-08-22T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-22T19:00:00",
+            "home_team_score": 39,
+            "away_team_score": 20,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419718
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-23T02:49:35Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6639,
+            "season_id": 75,
+            "season_game_count": 58,
+            "home_team_id": 17,
+            "home_game_count": 7,
+            "away_team_id": 19,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-29T17:00:00",
+            "venue_id": 17,
+            "start_at": "2026-08-29T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-29T17:00:00",
+            "home_team_score": 28,
+            "away_team_score": 24,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419722
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-30T02:27:19Z",
+              "revision": 4
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6643,
+            "season_id": 75,
+            "season_game_count": 62,
+            "home_team_id": 8,
+            "home_game_count": 8,
+            "away_team_id": 19,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-07T14:30:00",
+            "venue_id": 8,
+            "start_at": "2026-09-07T18:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-07T14:30:00",
+            "home_team_score": 22,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419726
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-07T21:47:20Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6645,
+            "season_id": 75,
+            "season_game_count": 64,
+            "home_team_id": 19,
+            "home_game_count": 4,
+            "away_team_id": 13,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T13:00:00",
+            "venue_id": 36,
+            "start_at": "2026-09-12T17:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T13:00:00",
+            "home_team_score": 26,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419728
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-12T19:48:40Z",
+              "revision": 3
+            }
+          }
+        ],
+        "16": [
+          {
+            "ID": 6650,
+            "season_id": 75,
+            "season_game_count": 69,
+            "home_team_id": 19,
+            "home_game_count": 5,
+            "away_team_id": 7,
+            "week": 16,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-19T15:00:00",
+            "venue_id": 36,
+            "start_at": "2026-09-19T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-19T15:00:00",
+            "home_team_score": 24,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:10",
+            "genius": {
+              "id": 13419733
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-09-19T22:03:05Z",
+              "revision": 3
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6652,
+            "season_id": 75,
+            "season_game_count": 71,
+            "home_team_id": 20,
+            "home_game_count": 10,
+            "away_team_id": 19,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-25T19:00:00",
+            "venue_id": 20,
+            "start_at": "2026-09-26T00:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-25T19:00:00",
+            "genius": {
+              "id": 13419735
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:07:26Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6658,
+            "season_id": 75,
+            "season_game_count": 77,
+            "home_team_id": 19,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-03T15:00:00",
+            "venue_id": 36,
+            "start_at": "2026-10-03T19:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-03T15:00:00",
+            "genius": {
+              "id": 13419741
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:09:58Z",
+              "revision": 2
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6664,
+            "season_id": 75,
+            "season_game_count": 83,
+            "home_team_id": 13,
+            "home_game_count": 10,
+            "away_team_id": 19,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-16T19:00:00",
+            "venue_id": 13,
+            "start_at": "2026-10-16T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-16T19:00:00",
+            "genius": {
+              "id": 13419747
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:40Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6668,
+            "season_id": 75,
+            "season_game_count": 87,
+            "home_team_id": 19,
+            "home_game_count": 7,
+            "away_team_id": 11,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-23T19:00:00",
+            "venue_id": 36,
+            "start_at": "2026-10-23T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-23T19:00:00",
+            "genius": {
+              "id": 13419751
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:15:25Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6584,
+            "season_id": 75,
+            "season_game_count": 3,
+            "home_team_id": 8,
+            "home_game_count": 1,
+            "away_team_id": 19,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T16:00:00",
+            "venue_id": 8,
+            "away_team_score": 20,
+            "game_clock": "00:00:00",
+            "game_status": "\"Finished\"",
+            "home_team_score": 10,
+            "total_periods": 4,
+            "start_at": "2026-05-23T20:00:00+00:00",
+            "genius": {
+              "id": 13419667
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T15:56:26Z",
+              "revision": 1
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6587,
+            "season_id": 75,
+            "season_game_count": 6,
+            "home_team_id": 19,
+            "home_game_count": 1,
+            "away_team_id": 8,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:00:00",
+            "venue_id": 35,
+            "start_at": "2026-05-29T23:00:00+00:00",
+            "pregame_at_local": "2026-05-29T19:00:00",
+            "away_team_score": 20,
+            "game_clock": "00:00:00",
+            "game_status": "Finished",
+            "home_team_score": 14,
+            "total_periods": 4,
+            "genius": {
+              "id": 13419671
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T16:58:05Z",
+              "revision": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "teamId": 20,
+      "fixturesByWeek": {
+        "1": [
+          {
+            "ID": 6592,
+            "season_id": 75,
+            "season_game_count": 11,
+            "home_team_id": 6,
+            "home_game_count": 2,
+            "away_team_id": 20,
+            "week": 1,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-05T19:00:00",
+            "venue_id": 6,
+            "home_team_score": 28,
+            "away_team_score": 30,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:04:59",
+            "start_at": "2026-06-06T01:00:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-05T19:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419675
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:28:27Z",
+              "revision": 4
+            }
+          }
+        ],
+        "2": [
+          {
+            "ID": 6594,
+            "season_id": 75,
+            "season_game_count": 13,
+            "home_team_id": 20,
+            "home_game_count": 2,
+            "away_team_id": 8,
+            "week": 2,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-11T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 27,
+            "away_team_score": 37,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-12T00:30:00+00:00",
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-06-11T19:30:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CBSSN",
+              "CFL+"
+            ],
+            "genius": {
+              "id": 13419677
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:31:32Z",
+              "revision": 4
+            }
+          }
+        ],
+        "4": [
+          {
+            "ID": 6601,
+            "season_id": 75,
+            "season_game_count": 20,
+            "home_team_id": 20,
+            "home_game_count": 3,
+            "away_team_id": 7,
+            "week": 4,
+            "game_type_id": 1,
+            "start_at_local": "2026-06-25T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 18,
+            "away_team_score": 23,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-06-26T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-06-25T19:30:00",
+            "genius": {
+              "id": 13419684
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2026-08-05T14:34:48Z",
+              "revision": 3
+            }
+          }
+        ],
+        "5": [
+          {
+            "ID": 6608,
+            "season_id": 75,
+            "season_game_count": 27,
+            "home_team_id": 8,
+            "home_game_count": 4,
+            "away_team_id": 20,
+            "week": 5,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-05T19:00:00",
+            "venue_id": 8,
+            "home_team_score": 13,
+            "away_team_score": 14,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-05T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-05T19:00:00",
+            "genius": {
+              "id": 13419691
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:38:07Z",
+              "revision": 3
+            }
+          }
+        ],
+        "6": [
+          {
+            "ID": 6610,
+            "season_id": 75,
+            "season_game_count": 29,
+            "home_team_id": 20,
+            "home_game_count": 4,
+            "away_team_id": 19,
+            "week": 6,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-10T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-07-11T00:30:00+00:00",
+            "pregame_at_local": "2026-07-10T19:30:00",
+            "home_team_score": 30,
+            "away_team_score": 21,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "genius": {
+              "id": 14038504
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:39:20Z",
+              "revision": 5
+            }
+          }
+        ],
+        "7": [
+          {
+            "ID": 6616,
+            "season_id": 75,
+            "season_game_count": 35,
+            "home_team_id": 13,
+            "home_game_count": 5,
+            "away_team_id": 20,
+            "week": 7,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-19T19:00:00",
+            "venue_id": 13,
+            "home_team_score": 34,
+            "away_team_score": 36,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-19T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-07-19T19:00:00",
+            "genius": {
+              "id": 13419699
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:43:23Z",
+              "revision": 3
+            }
+          }
+        ],
+        "8": [
+          {
+            "ID": 6618,
+            "season_id": 75,
+            "season_game_count": 37,
+            "home_team_id": 20,
+            "home_game_count": 5,
+            "away_team_id": 6,
+            "week": 8,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-24T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 30,
+            "away_team_score": 52,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-25T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS2",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-24T19:30:00",
+            "genius": {
+              "id": 13419701
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:44:25Z",
+              "revision": 3
+            }
+          }
+        ],
+        "9": [
+          {
+            "ID": 6621,
+            "season_id": 75,
+            "season_game_count": 40,
+            "home_team_id": 20,
+            "home_game_count": 6,
+            "away_team_id": 1,
+            "week": 9,
+            "game_type_id": 1,
+            "start_at_local": "2026-07-30T19:30:00",
+            "venue_id": 20,
+            "home_team_score": 19,
+            "away_team_score": 35,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "start_at": "2026-07-31T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-07-30T19:30:00",
+            "genius": {
+              "id": 13419704
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:28Z",
+              "revision_at": "2026-08-05T14:46:03Z",
+              "revision": 3
+            }
+          }
+        ],
+        "11": [
+          {
+            "ID": 6630,
+            "season_id": 75,
+            "season_game_count": 49,
+            "home_team_id": 20,
+            "home_game_count": 7,
+            "away_team_id": 13,
+            "week": 11,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-14T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-08-15T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+",
+              "RDS2"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-14T19:30:00",
+            "home_team_score": 33,
+            "away_team_score": 21,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419713
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-15T03:32:48Z",
+              "revision": 3
+            }
+          }
+        ],
+        "12": [
+          {
+            "ID": 6634,
+            "season_id": 75,
+            "season_game_count": 53,
+            "home_team_id": 7,
+            "home_game_count": 7,
+            "away_team_id": 20,
+            "week": 12,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-21T19:30:00",
+            "venue_id": 7,
+            "start_at": "2026-08-22T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-08-21T19:30:00",
+            "home_team_score": 22,
+            "away_team_score": 19,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419717
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-22T04:27:45Z",
+              "revision": 3
+            }
+          }
+        ],
+        "13": [
+          {
+            "ID": 6637,
+            "season_id": 75,
+            "season_game_count": 56,
+            "home_team_id": 20,
+            "home_game_count": 8,
+            "away_team_id": 11,
+            "week": 13,
+            "game_type_id": 1,
+            "start_at_local": "2026-08-28T19:30:00",
+            "venue_id": 20,
+            "start_at": "2026-08-29T00:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-08-28T19:30:00",
+            "home_team_score": 44,
+            "away_team_score": 28,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419720
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-08-29T03:31:08Z",
+              "revision": 3
+            }
+          }
+        ],
+        "14": [
+          {
+            "ID": 6642,
+            "season_id": 75,
+            "season_game_count": 61,
+            "home_team_id": 17,
+            "home_game_count": 8,
+            "away_team_id": 20,
+            "week": 14,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-06T17:00:00",
+            "venue_id": 17,
+            "start_at": "2026-09-06T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-06T17:00:00",
+            "home_team_score": 32,
+            "away_team_score": 26,
+            "game_status": "Finished",
+            "total_periods": 1,
+            "game_clock": "00:00:00",
+            "genius": {
+              "id": 13419725
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-07T02:13:53Z",
+              "revision": 3
+            }
+          }
+        ],
+        "15": [
+          {
+            "ID": 6646,
+            "season_id": 75,
+            "season_game_count": 65,
+            "home_team_id": 20,
+            "home_game_count": 9,
+            "away_team_id": 17,
+            "week": 15,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-12T15:00:00",
+            "venue_id": 20,
+            "start_at": "2026-09-12T20:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CTV",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-09-12T15:00:00",
+            "home_team_score": 19,
+            "away_team_score": 6,
+            "game_status": "Finished",
+            "total_periods": 4,
+            "game_clock": "00:06:01",
+            "genius": {
+              "id": 13419729
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:29Z",
+              "revision_at": "2026-09-13T02:14:24Z",
+              "revision": 5
+            }
+          }
+        ],
+        "17": [
+          {
+            "ID": 6652,
+            "season_id": 75,
+            "season_game_count": 71,
+            "home_team_id": 20,
+            "home_game_count": 10,
+            "away_team_id": 19,
+            "week": 17,
+            "game_type_id": 1,
+            "start_at_local": "2026-09-25T19:00:00",
+            "venue_id": 20,
+            "start_at": "2026-09-26T00:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CBSSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside North America",
+            "pregame_at_local": "2026-09-25T19:00:00",
+            "genius": {
+              "id": 13419735
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:07:26Z",
+              "revision": 2
+            }
+          }
+        ],
+        "18": [
+          {
+            "ID": 6659,
+            "season_id": 75,
+            "season_game_count": 78,
+            "home_team_id": 11,
+            "home_game_count": 9,
+            "away_team_id": 20,
+            "week": 18,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-03T19:00:00",
+            "venue_id": 11,
+            "start_at": "2026-10-03T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "RDS",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-03T19:00:00",
+            "genius": {
+              "id": 13419742
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:10:30Z",
+              "revision": 2
+            }
+          }
+        ],
+        "19": [
+          {
+            "ID": 6662,
+            "season_id": 75,
+            "season_game_count": 81,
+            "home_team_id": 20,
+            "home_game_count": 11,
+            "away_team_id": 6,
+            "week": 19,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-10T18:00:00",
+            "venue_id": 20,
+            "start_at": "2026-10-10T23:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-10T18:00:00",
+            "genius": {
+              "id": 13419745
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:12:38Z",
+              "revision": 2
+            }
+          }
+        ],
+        "20": [
+          {
+            "ID": 6665,
+            "season_id": 75,
+            "season_game_count": 84,
+            "home_team_id": 7,
+            "home_game_count": 10,
+            "away_team_id": 20,
+            "week": 20,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-16T19:30:00",
+            "venue_id": 7,
+            "start_at": "2026-10-17T01:30:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-16T19:30:00",
+            "genius": {
+              "id": 13419748
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:30Z",
+              "revision_at": "2026-08-07T01:13:53Z",
+              "revision": 2
+            }
+          }
+        ],
+        "21": [
+          {
+            "ID": 6669,
+            "season_id": 75,
+            "season_game_count": 88,
+            "home_team_id": 1,
+            "home_game_count": 10,
+            "away_team_id": 20,
+            "week": 21,
+            "game_type_id": 1,
+            "start_at_local": "2026-10-23T19:00:00",
+            "venue_id": 1,
+            "start_at": "2026-10-24T02:00:00+00:00",
+            "broadcasting_options": [
+              "TSN",
+              "CFL+"
+            ],
+            "streaming_availability": "Availability Outside Canada on CFL+",
+            "pregame_at_local": "2026-10-23T19:00:00",
+            "genius": {
+              "id": 13419752
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:31Z",
+              "revision_at": "2026-08-07T01:15:45Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-2": [
+          {
+            "ID": 6585,
+            "season_id": 75,
+            "season_game_count": 4,
+            "home_team_id": 17,
+            "home_game_count": 1,
+            "away_team_id": 20,
+            "week": -2,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-23T17:00:00",
+            "venue_id": 40,
+            "start_at": "2026-05-23T23:00:00+00:00",
+            "pregame_at_local": "2026-05-23T17:00:00",
+            "away_team_score": 27,
+            "home_team_score": 31,
+            "genius": {
+              "id": 13419669
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:26Z",
+              "revision_at": "2025-12-09T16:56:03Z",
+              "revision": 2
+            }
+          }
+        ],
+        "-1": [
+          {
+            "ID": 6589,
+            "season_id": 75,
+            "season_game_count": 8,
+            "home_team_id": 20,
+            "home_game_count": 1,
+            "away_team_id": 1,
+            "week": -1,
+            "game_type_id": 0,
+            "start_at_local": "2026-05-29T19:30:00",
+            "venue_id": 20,
+            "away_team_score": 30,
+            "home_team_score": 19,
+            "start_at": "2026-05-30T00:30:00+00:00",
+            "genius": {
+              "id": 13419672
+            },
+            "metadata": {
+              "created_at": "2025-12-09T15:56:27Z",
+              "revision_at": "2025-12-09T15:56:27Z",
+              "revision": 1
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

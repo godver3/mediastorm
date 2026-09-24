@@ -167,6 +167,7 @@ html { scrollbar-color: var(--text-muted) var(--bg-primary); scrollbar-width: th
     teams = [],
     settings = null,
     availability = new Set();
+  let allSupported = false;
   let snapshot = null,
     draft = null,
     profile = '',
@@ -395,6 +396,7 @@ html { scrollbar-color: var(--text-muted) var(--bg-primary); scrollbar-width: th
     el('availability-count').textContent = `${leagues.filter((l) => availability.has(l.id)).length} of ${leagues.length} leagues enabled`;
   }
   function changeAvailability(items, checked) {
+    allSupported = false;
     for (const item of items) checked ? availability.add(item.id) : availability.delete(item.id);
     serverDirty = true;
     syncAvailability();
@@ -479,9 +481,10 @@ html { scrollbar-color: var(--text-muted) var(--bg-primary); scrollbar-width: th
     status('server-status', 'Loading league availability…');
     try {
       settings = await request('/settings');
-      availability = new Set(settings.enabledLeagues);
+      allSupported = settings.enabledLeagues.includes("*");
+      availability = new Set(allSupported ? leagues.map((item) => item.id) : settings.enabledLeagues);
       serverDirty = false;
-      leagues = leagues.map((item) => ({ ...item, enabled: settings.enabledLeagues.includes(item.id) }));
+      leagues = leagues.map((item) => ({ ...item, enabled: settings.enabledLeagues.includes("*") || settings.enabledLeagues.includes(item.id) }));
       if (draft) renderFavorites();
       renderAvailability();
       el('server-fields').disabled = false;
@@ -502,7 +505,7 @@ html { scrollbar-color: var(--text-muted) var(--bg-primary); scrollbar-width: th
       section.scrollIntoView?.({ block: 'start', behavior: 'instant' });
     });
     el('server-search').addEventListener('input', renderAvailability);
-    el('enable-all').addEventListener('click', () => changeAvailability(leagues, true));
+    el('enable-all').addEventListener('click', () => { changeAvailability(leagues, true); allSupported = true; status('server-status', 'All supported leagues selected, including future validated additions. Save to apply.'); });
     el('disable-all').addEventListener('click', () => changeAvailability(leagues, false));
     el('reload-server').addEventListener('click', () => {
       if (!serverDirty || window.confirm('Discard unsaved availability and reload?')) void loadServer();
@@ -520,9 +523,9 @@ html { scrollbar-color: var(--text-muted) var(--bg-primary); scrollbar-width: th
       status('server-status', 'Saving league availability…');
       try {
         // Preserve stream search scopes and other server settings not edited on this page.
-        settings = await request('/settings', 'PUT', { ...settings, enabledLeagues: [...availability] });
+        settings = await request('/settings', 'PUT', { ...settings, enabledLeagues: allSupported ? ["*"] : [...availability] });
         serverDirty = false;
-        leagues = leagues.map((item) => ({ ...item, enabled: settings.enabledLeagues.includes(item.id) }));
+        leagues = leagues.map((item) => ({ ...item, enabled: settings.enabledLeagues.includes("*") || settings.enabledLeagues.includes(item.id) }));
         if (draft) renderFavorites();
         void loadTeams();
         status(

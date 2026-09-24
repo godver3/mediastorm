@@ -101,7 +101,7 @@ var standingStats = []StandingColumn{{"rank", "Rank"}, {"playoffSeed", "Seed"}, 
 
 func standingsLeague(id string) (League, bool) {
 	for _, league := range LeagueCatalog {
-		if league.ID == id && (league.SupportsTeams || id == "f1" || id == "nascar" || id == "indycar") {
+		if league.ID == id && league.active() && ((!strings.HasPrefix(id, "espn:") && league.SupportsTeams) || league.hasCapability("standings") || id == "f1" || id == "nascar" || id == "indycar") {
 			return league, true
 		}
 	}
@@ -156,7 +156,7 @@ func normalizeLeagueStandings(raw standingsResponse, league string) []LeagueStan
 			}
 			// Points mean standings points only for soccer/hockey or championship points in racing.
 			for _, col := range standingStats {
-				if present[col.Key] && !(col.Key == "points" && !strings.HasPrefix(league, "soccer-") && league != "nhl" && league != "f1" && league != "nascar" && league != "indycar") {
+				if present[col.Key] && !(col.Key == "points" && !strings.HasPrefix(league, "soccer-") && !strings.HasPrefix(league, "espn:soccer:") && !strings.HasPrefix(league, "espn:hockey:") && !strings.HasPrefix(league, "espn:racing:") && league != "nhl" && league != "f1" && league != "nascar" && league != "indycar") {
 					group.Columns = append(group.Columns, col)
 				}
 			}
@@ -184,12 +184,18 @@ func normalizeLeagueStandings(raw standingsResponse, league string) []LeagueStan
 	return groups
 }
 func (s *Service) GetLeagueStandings(ctx context.Context, id string) LeagueStandings {
+	if id == cflLeagueID {
+		return s.fetchCFLStandings(ctx)
+	}
 	value := LeagueStandings{League: id, State: "unavailable", Source: "ESPN", Groups: []LeagueStandingGroup{}, Reason: "Standings are not available for this competition"}
 	league, ok := standingsLeague(id)
 	if !ok {
 		return value
 	}
 	value.SourceURL = "https://site.api.espn.com/apis/v2/sports/" + league.Sport + "/" + league.Slug + "/standings"
+	if strings.HasPrefix(id, "espn:") {
+		value.SourceURL += "?season=" + strconv.Itoa(time.Now().Year())
+	}
 	s.standings.mu.Lock()
 	if s.standings.entries == nil {
 		s.standings.entries = map[string]*standingsSlot{}

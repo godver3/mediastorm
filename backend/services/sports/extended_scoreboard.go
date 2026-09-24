@@ -22,6 +22,8 @@ type espnLineScore struct {
 	Overs       json.RawMessage `json:"overs"`
 	IsBatting   bool            `json:"isBatting"`
 	Description string          `json:"description"`
+	Target      *int            `json:"target"`
+	IsCurrent   json.RawMessage `json:"isCurrent"`
 }
 
 // Cricket uses quoted booleans while other ESPN sports use JSON booleans.
@@ -35,7 +37,11 @@ func (c *espnCompetitor) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	c.Winner = string(raw.Winner) == "true" || string(raw.Winner) == `"true"`
+	winner, err := parseESPNBoolean(raw.Winner)
+	if err != nil {
+		return fmt.Errorf("competitor winner: %w", err)
+	}
+	c.Winner = winner != nil && *winner
 	return nil
 }
 
@@ -60,6 +66,9 @@ func applyScoreboardDetail(g *models.SportsGame, comp espnCompetition, league Le
 		}
 		d.Capabilities.Plays = len(d.Plays) > 0
 	case "golf":
+		if league.Slug == "tgl" {
+			return
+		}
 		g.HomeTeam = models.SportsTeam{}
 		g.AwayTeam = models.SportsTeam{}
 		g.EventKind = "tournament"
@@ -106,16 +115,7 @@ func applyScoreboardDetail(g *models.SportsGame, comp espnCompetition, league Le
 		if comp.Status.Summary != "" {
 			g.StatusDetail = comp.Status.Summary
 		}
-		for _, c := range comp.Competitors {
-			for _, inn := range c.Linescores {
-				// Feed includes non-batting placeholders for the opponent's innings.
-				if !inn.IsBatting || inn.Period < 1 {
-					continue
-				}
-				d.Innings = append(d.Innings, models.SportsCricketInnings{TeamID: competitorTeam(c).ID, Number: inn.Period, Runs: inn.Runs, Wickets: inn.Wickets, Overs: espnScore(inn.Overs), Description: inn.Description})
-			}
-		}
-		sort.SliceStable(d.Innings, func(i, j int) bool { return d.Innings[i].Number < d.Innings[j].Number })
+		d.Innings = normalizeCricketInnings(comp)
 		d.Capabilities.Stats = len(d.Innings) > 0
 	case "tennis":
 		if g.Status == models.SportsGameScheduled {

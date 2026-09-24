@@ -150,10 +150,17 @@ type teamSportSummary struct {
 }
 
 func teamPeriodLabel(league string, period int) string {
+	if strings.HasPrefix(league, "espn:") && !strings.HasPrefix(league, "espn:soccer:") {
+		for _, l := range LeagueCatalog {
+			if l.ID == league {
+				return periodLabel(period, l.Sport)
+			}
+		}
+	}
 	if period <= 0 {
 		return ""
 	}
-	if strings.HasPrefix(league, "soccer-") {
+	if strings.HasPrefix(league, "soccer-") || strings.HasPrefix(league, "espn:soccer:") {
 		switch period {
 		case 1:
 			return "H1"
@@ -194,7 +201,7 @@ func normalizeTeamDetail(game models.SportsGame, p teamSportSummary, now time.Ti
 	if !supportsHubLeague(game.League) || game.League == "mlb" {
 		return game, fmt.Errorf("unsupported detail league")
 	}
-	if p.Header.ID != game.ID || len(p.Header.Competitions) != 1 {
+	if p.Header.ID != providerEventID(game) || len(p.Header.Competitions) != 1 {
 		return game, fmt.Errorf("summary identity mismatch")
 	}
 	c := p.Header.Competitions[0]

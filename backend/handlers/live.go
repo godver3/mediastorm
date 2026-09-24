@@ -344,6 +344,8 @@ type xtreamChannelsFetch struct {
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
+	discoveryOnce      sync.Once
+	discovery          *liveDiscovery
 	client             *http.Client
 	maxSize            int64
 	transmuxEnabled    bool
@@ -1527,7 +1529,7 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL, pr
 	}
 
 	// Check cache first
-	cacheKey := h.getCacheKey(targetURL.String())
+	cacheKey := h.getCacheKey(targetURL.String() + "\x00" + proxyURL)
 	cachedData, _, err := h.getFromCache(cacheKey)
 	if err == nil && cachedData != nil {
 		log.Printf("[live] serving playlist from cache for channels endpoint")
@@ -1544,14 +1546,14 @@ func (h *LiveHandler) fetchPlaylistContents(ctx context.Context, playlistURL, pr
 	// User-Agent, so set the same UA used for stream playback.
 	req.Header.Set("User-Agent", liveStreamUserAgent)
 
-	resp, err := h.liveHTTPClient(proxyURL).Do(req)
+	resp, err := h.discoveryClient(h.liveHTTPClient(proxyURL), proxyURL, time.Minute).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to download playlist: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return "", fmt.Errorf("playlist fetch returned status %d", resp.StatusCode)
+		return "", metadataResponseError(resp)
 	}
 
 	limited := io.LimitReader(resp.Body, h.maxSize+1)
@@ -1596,14 +1598,14 @@ func (h *LiveHandler) fetchM3UCategories(ctx context.Context, playlistURL, proxy
 		return nil, fmt.Errorf("failed to construct playlist request: %w", err)
 	}
 
-	resp, err := h.livePlaylistScanHTTPClient(proxyURL).Do(req)
+	resp, err := h.discoveryClient(h.livePlaylistScanHTTPClient(proxyURL), proxyURL, time.Minute).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download playlist: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("playlist fetch returned status %d", resp.StatusCode)
+		return nil, metadataResponseError(resp)
 	}
 
 	counts := make(map[string]int)
@@ -1823,9 +1825,12 @@ func (h *LiveHandler) fetchXtreamWithUAFallback(ctx context.Context, client *htt
 			log.Printf("[live] Xtream request failed with UA %q: %v", ua, lastErr)
 			continue
 		}
+		if resp.StatusCode == 429 || resp.StatusCode == 401 {
+			return resp, ua, nil
+		}
 		if resp.StatusCode >= http.StatusBadRequest {
 			resp.Body.Close()
-			lastErr = fmt.Errorf("request returned status %d", resp.StatusCode)
+			lastErr = metadataResponseError(resp)
 			log.Printf("[live] Xtream request returned status %d with UA %q", resp.StatusCode, ua)
 			continue
 		}
@@ -1884,37 +1889,45 @@ func (h *LiveHandler) fetchXtreamChannels(ctx context.Context, host, username, p
 	// Finish and retain a catalog refresh even if the initiating app request is
 	// cancelled. Other concurrent requests share this fetch, and the next cold
 	// app launch can use the populated backend cache.
-	fetchCtx, cancel := context.WithTimeout(context.Background(), defaultPlaylistTimeout)
-	channels, err := h.fetchXtreamChannelsUncached(fetchCtx, host, username, password, proxyURL)
-	cancel()
+	go func() {
+		fetchCtx, cancel := context.WithTimeout(context.Background(), defaultPlaylistTimeout)
+		channels, err := h.fetchXtreamChannelsUncached(fetchCtx, host, username, password, proxyURL)
+		cancel()
 
-	h.xtreamMu.Lock()
-	if err == nil {
-		h.xtreamCache[cacheKey] = xtreamChannelsCacheEntry{
-			channels:  channels,
-			expiresAt: time.Now().Add(defaultXtreamCacheTTL),
-		}
-	} else {
-		cached := h.xtreamCache[cacheKey]
-		cached.retryAfter = time.Now().Add(defaultXtreamFailureTTL)
-		cached.lastErr = err
-		h.xtreamCache[cacheKey] = cached
-		if !cached.expiresAt.IsZero() {
-			channels, err = cached.channels, nil
-			log.Printf("[live] Xtream refresh failed; serving %d stale channels for %s", len(channels), defaultXtreamFailureTTL)
+		h.xtreamMu.Lock()
+		if err == nil {
+			h.xtreamCache[cacheKey] = xtreamChannelsCacheEntry{
+				channels:  channels,
+				expiresAt: time.Now().Add(defaultXtreamCacheTTL),
+			}
 		} else {
-			log.Printf("[live] Xtream refresh failed; suppressing retries for %s", defaultXtreamFailureTTL)
+			cached := h.xtreamCache[cacheKey]
+			cached.retryAfter = time.Now().Add(defaultXtreamFailureTTL)
+			cached.lastErr = err
+			h.xtreamCache[cacheKey] = cached
+			if !cached.expiresAt.IsZero() {
+				channels, err = cached.channels, nil
+				log.Printf("[live] Xtream refresh failed; serving %d stale channels for %s", len(channels), defaultXtreamFailureTTL)
+			} else {
+				log.Printf("[live] Xtream refresh failed; suppressing retries for %s", defaultXtreamFailureTTL)
+			}
 		}
+		inFlight.channels = channels
+		inFlight.err = err
+		delete(h.xtreamInFlight, cacheKey)
+		close(inFlight.done)
+		h.xtreamMu.Unlock()
+
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-inFlight.done:
+		return inFlight.channels, inFlight.err
 	}
-	inFlight.channels = channels
-	inFlight.err = err
-	delete(h.xtreamInFlight, cacheKey)
-	close(inFlight.done)
-	h.xtreamMu.Unlock()
-	return channels, err
 }
 
-func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, username, password, proxyURL string) ([]LiveChannel, error) {
+func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, username, password, proxyURL string, categoryNames ...string) ([]LiveChannel, error) {
 	host = strings.TrimRight(host, "/")
 
 	// Fetch categories first to build a category ID -> name map
@@ -1923,7 +1936,11 @@ func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, use
 
 	log.Printf("[live] fetching Xtream categories host=%q", host)
 
-	client := h.liveHTTPClient(proxyURL)
+	ttl := time.Duration(0) // The full catalog has its own shared cache.
+	if len(categoryNames) > 0 {
+		ttl = 5 * time.Minute
+	}
+	client := h.discoveryClient(h.liveHTTPClient(proxyURL), proxyURL, ttl)
 
 	// Try each candidate User-Agent in turn: some providers whitelist only VLC,
 	// others only real browsers, and stall every other request until it times
@@ -1934,6 +1951,9 @@ func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, use
 		return nil, fmt.Errorf("failed to fetch categories: %w", err)
 	}
 	defer catResp.Body.Close()
+	if catResp.StatusCode >= 400 {
+		return nil, metadataResponseError(catResp)
+	}
 
 	var categories []XtreamCategory
 	if err := json.NewDecoder(catResp.Body).Decode(&categories); err != nil {
@@ -1952,25 +1972,40 @@ func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, use
 
 	log.Printf("[live] fetching Xtream streams host=%q", host)
 
-	streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, streamsURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create streams request: %w", err)
+	endpoints := []string{streamsURL}
+	if len(categoryNames) > 0 {
+		endpoints = nil
+		for _, cat := range categories {
+			for _, name := range categoryNames {
+				if strings.EqualFold(strings.TrimSpace(cat.CategoryName), strings.TrimSpace(name)) {
+					endpoints = append(endpoints, streamsURL+"&category_id="+url.QueryEscape(cat.CategoryID))
+					break
+				}
+			}
+		}
 	}
-	streamReq.Header.Set("User-Agent", workingUA)
-
-	streamResp, err := client.Do(streamReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch streams: %w", xtreamRequestError(err))
-	}
-	defer streamResp.Body.Close()
-
-	if streamResp.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("streams fetch returned status %d", streamResp.StatusCode)
-	}
-
 	var streams []XtreamStream
-	if err := json.NewDecoder(streamResp.Body).Decode(&streams); err != nil {
-		return nil, fmt.Errorf("failed to decode streams: %w", err)
+	for _, endpoint := range endpoints {
+		streamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		streamReq.Header.Set("User-Agent", workingUA)
+		streamResp, err := client.Do(streamReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch streams: %w", xtreamRequestError(err))
+		}
+		if streamResp.StatusCode >= 400 {
+			streamResp.Body.Close()
+			return nil, metadataResponseError(streamResp)
+		}
+		var page []XtreamStream
+		err = json.NewDecoder(streamResp.Body).Decode(&page)
+		streamResp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode streams: %w", err)
+		}
+		streams = append(streams, page...)
 	}
 
 	// Convert to LiveChannel format
@@ -2077,54 +2112,79 @@ func (h *LiveHandler) FetchFilteredChannelsForRequest(r *http.Request) ([]LiveCh
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
-
 	src := h.resolveProfileLiveSource(r, settings)
-	filter := config.LiveTVFilterSettings{
-		EnabledCategories: src.EnabledCategories,
-		MaxChannels:       src.MaxChannels,
-	}
-
+	filter := config.LiveTVFilterSettings{EnabledCategories: src.EnabledCategories, MaxChannels: src.MaxChannels}
 	sources := resolvedLiveSources(src)
-	selectedSources := selectM3USources(sources, r.URL.Query().Get("sourceId"))
-	if len(selectedSources) == 0 {
-		return nil, nil
+	selected := selectM3USources(sources, r.URL.Query().Get("sourceId"))
+	discovery := sportsDiscoveryFrom(r.Context())
+	results := make([][]LiveChannel, len(selected))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for n := 0; n < min(4, len(selected)); n++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				source := selected[index]
+				if discovery != nil && !containsSource(discovery.sources, source.ID) {
+					continue
+				}
+				sourceFilter := filter
+				if source.HasFilterOverride {
+					sourceFilter = source.Filter
+				}
+				var channels []LiveChannel
+				var err error
+				switch source.Mode {
+				case "xtream":
+					if discovery != nil && len(discovery.categories) > 0 && sourceFilter.MaxChannels == 0 {
+						channels, err = h.fetchXtreamChannelsUncached(r.Context(), source.XtreamHost, source.XtreamUsername, source.XtreamPassword, source.ProxyURL, discovery.categories...)
+					} else {
+						channels, err = h.fetchXtreamChannels(r.Context(), source.XtreamHost, source.XtreamUsername, source.XtreamPassword, source.ProxyURL)
+					}
+				case "stremio":
+					if discovery != nil {
+						channels, err = h.fetchSportsAddon(r.Context(), source.ManifestURL, source.ProxyURL, discovery, sourceFilter)
+					} else {
+						channels, err = h.fetchStremioChannels(r.Context(), source.ManifestURL, source.ProxyURL)
+					}
+				default:
+					var contents string
+					contents, err = h.fetchPlaylistContents(r.Context(), source.PlaylistURL, source.ProxyURL)
+					if err == nil {
+						channels = h.parsedDiscoveryPlaylist(contents)
+					}
+				}
+				if discovery != nil {
+					discovery.record(source.ID, source.Name, err)
+				}
+				if err != nil && len(channels) == 0 {
+					continue
+				}
+				visible := tagChannelsWithSource(filterChannels(channels, sourceFilter), source, len(sources) > 1)
+				if discovery != nil {
+					visible = filterSportsChannelsByScope(visible, nil, discovery.categories)
+				}
+				results[index] = visible
+			}
+		}()
 	}
-	includeSourceInID := len(sources) > 1
-
-	var allChannels []LiveChannel
-	for _, liveSource := range selectedSources {
-		sourceFilter := filter
-		if liveSource.HasFilterOverride {
-			sourceFilter = liveSource.Filter
+	for index := range selected {
+		select {
+		case jobs <- index:
+		case <-r.Context().Done():
+			close(jobs)
+			workers.Wait()
+			return nil, r.Context().Err()
 		}
-		var sourceChannels []LiveChannel
-		switch liveSource.Mode {
-		case "xtream":
-			channels, err := h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
-			if err != nil {
-				log.Printf("[live] FetchFilteredChannelsForRequest Xtream error for source %q: %v", liveSource.ID, err)
-				continue
-			}
-			sourceChannels = channels
-		case "stremio":
-			channels, err := h.fetchStremioChannels(r.Context(), liveSource.ManifestURL, liveSource.ProxyURL)
-			if err != nil {
-				log.Printf("[live] FetchFilteredChannelsForRequest Stremio error for source %q: %v", liveSource.ID, err)
-				continue
-			}
-			sourceChannels = channels
-		default:
-			contents, err := h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
-			if err != nil {
-				log.Printf("[live] FetchFilteredChannelsForRequest error for source %q: %v", liveSource.ID, err)
-				continue
-			}
-			sourceChannels = parseM3UPlaylist(contents)
-		}
-		allChannels = append(allChannels, tagChannelsWithSource(filterChannels(sourceChannels, sourceFilter), liveSource, includeSourceInID)...)
 	}
-
-	return allChannels, nil
+	close(jobs)
+	workers.Wait()
+	var all []LiveChannel
+	for _, channels := range results {
+		all = append(all, channels...)
+	}
+	return all, nil
 }
 
 // RecordingChannels resolves the complete visible channel list for a profile.

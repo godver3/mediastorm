@@ -1,0 +1,83 @@
+[
+  {
+    "ID": 20,
+    "name": "Blue Bombers",
+    "region_label": "WINNIPEG",
+    "abbreviation": "WPG",
+    "primary_color": "001C51",
+    "accent_color": "FFFFFF",
+    "logo_primary": "https://content.cfl.ca/logos/wpg-dark.svg"
+  },
+  {
+    "ID": 19,
+    "name": "Argonauts",
+    "region_label": "TORONTO",
+    "abbreviation": "TOR",
+    "primary_color": "FFFFFF",
+    "accent_color": "5E8Eb5",
+    "logo_primary": "https://content.cfl.ca/logos/tor-primary.svg"
+  },
+  {
+    "ID": 17,
+    "name": "Roughriders",
+    "region_label": "SASKATCHEWAN",
+    "abbreviation": "SSK",
+    "primary_color": "026241",
+    "accent_color": "000000",
+    "logo_primary": "https://content.cfl.ca/logos/ssk-primary.svg"
+  },
+  {
+    "ID": 13,
+    "name": "REDBLACKS",
+    "region_label": "OTTAWA",
+    "abbreviation": "OTT",
+    "primary_color": "231F20",
+    "accent_color": "B5152D",
+    "logo_primary": "https://content.cfl.ca/logos/ott-primary.svg"
+  },
+  {
+    "ID": 11,
+    "name": "Alouettes",
+    "region_label": "MONTREAL",
+    "abbreviation": "MTL",
+    "primary_color": "0F1F4D",
+    "accent_color": "FFFFFF",
+    "logo_primary": "https://content.cfl.ca/logos/mtl-primary.svg"
+  },
+  {
+    "ID": 8,
+    "name": "Tiger-Cats",
+    "region_label": "HAMILTON",
+    "abbreviation": "HAM",
+    "primary_color": "FFFFFF",
+    "accent_color": "F8BB2F",
+    "logo_primary": "https://content.cfl.ca/logos/ham-primary.svg"
+  },
+  {
+    "ID": 7,
+    "name": "Elks",
+    "region_label": "EDMONTON",
+    "abbreviation": "EDM",
+    "primary_color": "2A5234",
+    "accent_color": "FFB81C",
+    "logo_primary": "https://content.cfl.ca/logos/edm-dark.svg"
+  },
+  {
+    "ID": 6,
+    "name": "Stampeders",
+    "region_label": "CALGARY",
+    "abbreviation": "CGY",
+    "primary_color": "E51937",
+    "accent_color": "000000",
+    "logo_primary": "https://content.cfl.ca/logos/cgy-primary.svg"
+  },
+  {
+    "ID": 1,
+    "name": "Lions",
+    "region_label": "BC",
+    "abbreviation": "BC",
+    "primary_color": "F15623",
+    "accent_color": "000000",
+    "logo_primary": "https://content.cfl.ca/logos/bc-primary.svg"
+  }
+]

@@ -15,7 +15,10 @@ import (
 // Undocumented/unstable third-party API - decode defensively, ignore unknown fields.
 
 type espnScoreboardResponse struct {
-	Events []espnEvent `json:"events"`
+	Events    []espnEvent `json:"events"`
+	Count     int         `json:"count"`
+	PageCount int         `json:"pageCount"`
+	PageIndex int         `json:"pageIndex"`
 }
 
 type espnTeamsResponse struct {
@@ -164,7 +167,8 @@ func scoreboardMLBSituation(raw *espnScoreboardSituation, inning string) *models
 }
 
 type espnCompetition struct {
-	Round struct {
+	EndDate string `json:"endDate"`
+	Round   struct {
 		DisplayName string `json:"displayName"`
 	} `json:"round"`
 	Type struct {
@@ -283,14 +287,16 @@ func espnScore(raw json.RawMessage) string {
 		return strconv.FormatFloat(number, 'f', -1, 64)
 	}
 	var object struct {
-		DisplayValue string  `json:"displayValue"`
-		Value        float64 `json:"value"`
+		DisplayValue string   `json:"displayValue"`
+		Value        *float64 `json:"value"`
 	}
 	if json.Unmarshal(raw, &object) == nil {
 		if object.DisplayValue != "" {
 			return object.DisplayValue
 		}
-		return strconv.FormatFloat(object.Value, 'f', -1, 64)
+		if object.Value != nil {
+			return strconv.FormatFloat(*object.Value, 'f', -1, 64)
+		}
 	}
 	return ""
 }
@@ -375,28 +381,41 @@ func espnEventToGame(event espnEvent, league League) (models.SportsGame, bool) {
 	}
 
 	game := models.SportsGame{
-		ID:           event.ID,
-		Title:        strings.TrimSpace(event.Name),
-		EventKind:    league.EventKind,
-		League:       league.ID,
-		Sport:        league.Sport,
-		StartTime:    parseESPNDate(event.Date),
-		EndTime:      parseESPNDate(event.EndDate),
-		Status:       espnStatusToGameStatus(comp.Status.Type),
-		StatusDetail: statusDetail,
-		Clock:        comp.Status.DisplayClock,
-		HomeTeam:     homeTeam,
-		AwayTeam:     awayTeam,
-		Broadcasts:   broadcasts,
-		VenueName:    venue,
-		Participants: participants,
+		ProviderEventID: event.ID,
+		ID:              event.ID,
+		Title:           strings.TrimSpace(event.Name),
+		EventKind:       league.EventKind,
+		League:          league.ID,
+		Sport:           league.Sport,
+		StartTime:       parseESPNDate(event.Date),
+		EndTime:         parseESPNDate(event.EndDate),
+		Status:          espnStatusToGameStatus(comp.Status.Type),
+		StatusDetail:    statusDetail,
+		Clock:           comp.Status.DisplayClock,
+		HomeTeam:        homeTeam,
+		AwayTeam:        awayTeam,
+		Broadcasts:      broadcasts,
+		VenueName:       venue,
+		Participants:    participants,
+	}
+	if strings.HasPrefix(league.ID, "espn:") && !strings.HasPrefix(game.ID, league.ID+":") {
+		game.ID = league.ID + ":" + game.ID
+	}
+	if game.EndTime.IsZero() {
+		game.EndTime = parseESPNDate(comp.EndDate)
+	}
+	if game.StartTime.IsZero() || event.ID == "" {
+		return models.SportsGame{}, false
+	}
+	if league.EventKind == "matchup" && (homeTeam.ID == "" || awayTeam.ID == "" || homeTeam.Name == "" || awayTeam.Name == "" || homeTeam.ID == awayTeam.ID) {
+		return models.SportsGame{}, false
 	}
 	if game.Title == "" {
 		game.Title = fmt.Sprintf("%s vs %s", awayTeam.Name, homeTeam.Name)
 	}
 	if comp.Status.Period > 0 {
 		game.Period = periodLabel(comp.Status.Period, league.Sport)
-		if strings.Contains(league.ID, "college") || league.Sport == "soccer" {
+		if league.ID == "college-football" || league.ID == "mens-college-basketball" || league.ID == "womens-college-basketball" || league.Sport == "soccer" {
 			game.Period = teamPeriodLabel(league.ID, comp.Status.Period)
 		}
 	}
@@ -413,6 +432,7 @@ func espnEventToGame(event espnEvent, league League) (models.SportsGame, bool) {
 		game.FootballSituation = &models.SportsFootballSituation{Kind: "nfl", Possession: possession, DownDistance: raw.ShortDownDistanceText, FieldPosition: raw.PossessionText, AwayTimeouts: validCount(raw.AwayTimeouts, 3), HomeTimeouts: validCount(raw.HomeTimeouts, 3)}
 	}
 	applyScoreboardDetail(&game, comp, league)
+	applyGenericScoreboardPeriods(&game, comp, league)
 	return game, true
 }
 
@@ -422,8 +442,12 @@ func periodLabel(period int, sport string) string {
 		return ordinal(period) + " inning"
 	case "basketball":
 		return ordinal(period) + " quarter"
-	case "football":
+	case "football", "australian-football":
 		return ordinal(period) + " quarter"
+	case "volleyball":
+		return "Set " + strconv.Itoa(period)
+	case "lacrosse", "field-hockey", "water-polo":
+		return "Period " + strconv.Itoa(period)
 	case "hockey":
 		return ordinal(period) + " period"
 	default:

@@ -1,0 +1,71 @@
+{
+  "events": [
+    {
+      "id": "1525662",
+      "date": "2026-11-15T08:00Z",
+      "endDate": "2026-11-20T23:59Z",
+      "name": "South Africa v Bangladesh",
+      "competitions": [
+        {
+          "id": "1525662",
+          "date": "2026-11-15T08:00Z",
+          "endDate": "2026-11-20T23:59Z",
+          "competitors": [
+            {
+              "id": "3",
+              "homeAway": "home",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "3",
+                "name": "South Africa",
+                "abbreviation": "SA",
+                "displayName": "South Africa"
+              },
+              "linescores": []
+            },
+            {
+              "id": "25",
+              "homeAway": "away",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "25",
+                "name": "Bangladesh",
+                "abbreviation": "BAN",
+                "displayName": "Bangladesh"
+              },
+              "linescores": []
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0'",
+            "period": 0,
+            "summary": "Starts at 10:00 local time",
+            "type": {
+              "id": "0",
+              "description": "Scheduled",
+              "detail": "Scheduled",
+              "shortDetail": "Scheduled",
+              "state": "pre"
+            }
+          }
+        }
+      ],
+      "status": {
+        "clock": 0,
+        "displayClock": "0'",
+        "period": 0,
+        "summary": "Starts at 10:00 local time",
+        "type": {
+          "id": "0",
+          "description": "Scheduled",
+          "detail": "Scheduled",
+          "shortDetail": "Scheduled",
+          "state": "pre"
+        }
+      }
+    }
+  ]
+}

@@ -32,6 +32,9 @@ const (
 
 // SportsGame represents a single scheduled, live, or completed game.
 type SportsGame struct {
+	ProviderEventID string `json:"providerEventId,omitempty"`
+	ParentEventID   string `json:"parentEventId,omitempty"`
+
 	EventContext      string                   `json:"eventContext,omitempty"`
 	EndTime           time.Time                `json:"endTime,omitempty"`
 	FootballSituation *SportsFootballSituation `json:"footballSituation,omitempty"`
@@ -56,6 +59,17 @@ type SportsGame struct {
 
 // SportsLeague identifies a supported league/competition.
 type SportsLeague struct {
+	Provider             string   `json:"provider,omitempty"`
+	ProviderSport        string   `json:"providerSport,omitempty"`
+	ProviderLeague       string   `json:"providerLeague,omitempty"`
+	ApplicationSport     string   `json:"applicationSport,omitempty"`
+	College              bool     `json:"college"`
+	Adapter              string   `json:"adapter,omitempty"`
+	ImplementationStatus string   `json:"implementationStatus,omitempty"`
+	Capabilities         []string `json:"capabilities"`
+	Aliases              []string `json:"aliases,omitempty"`
+	CoverageNote         string   `json:"coverageNote,omitempty"`
+
 	ID            string `json:"id"` // e.g. "mlb"
 	Name          string `json:"name"`
 	Sport         string `json:"sport"`

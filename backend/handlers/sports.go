@@ -237,7 +237,7 @@ func (h *SportsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid sports settings"}`, http.StatusBadRequest)
 		return
 	}
-	known := make(map[string]struct{})
+	known := map[string]struct{}{"*": {}}
 	for _, league := range h.service.Leagues() {
 		known[league.ID] = struct{}{}
 	}
@@ -361,34 +361,33 @@ func (h *SportsHandler) GetGameStreams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channels, err := h.liveHandler.FetchFilteredChannelsForRequest(r)
-	if err != nil {
-		log.Printf("[sports] GetGameStreams: failed to fetch live channels: %v", err)
-		http.Error(w, `{"error":"failed to fetch live channels"}`, http.StatusBadGateway)
-		return
-	}
-	// Broader search retains the profile/admin-filtered channels fetched above.
-	if h.config != nil && r.URL.Query().Get("scope") != "all" {
-		if settings, loadErr := h.config.Load(); loadErr == nil {
-			sourceIDs := settings.Sports.DefaultSourceIDs
-			categoryIDs := settings.Sports.DefaultCategoryIDs
+	discovery := &sportsDiscoveryRequest{game: game, broad: r.URL.Query().Get("scope") == "all"}
+	if h.config != nil && !discovery.broad {
+		if settings, err := h.config.Load(); err == nil {
+			discovery.sources = settings.Sports.DefaultSourceIDs
+			discovery.categories = settings.Sports.DefaultCategoryIDs
 			if override, ok := settings.Sports.LeagueSearchOverrides[game.League]; ok {
 				if len(override.SourceIDs) > 0 {
-					sourceIDs = override.SourceIDs
+					discovery.sources = override.SourceIDs
 				}
 				if len(override.CategoryIDs) > 0 {
-					categoryIDs = override.CategoryIDs
+					discovery.categories = override.CategoryIDs
 				}
 			}
-			channels = filterSportsChannelsByScope(channels, sourceIDs, categoryIDs)
 		}
+	}
+	r = r.WithContext(context.WithValue(r.Context(), sportsDiscoveryKey{}, discovery))
+	channels, err := h.liveHandler.FetchFilteredChannelsForRequest(r)
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch live channels"}`, http.StatusBadGateway)
+		return
 	}
 
 	broadcastFilter := strings.TrimSpace(r.URL.Query().Get("broadcast"))
 	matches := matchGameToChannels(game, channels, h.epgService, broadcastFilter)
 	matches = selectableSportsMatches(matches)
 	streams, groups := buildSportsStreamGroups(matches)
-	writeSportsJSON(w, map[string]any{"streams": streams, "groups": groups})
+	writeSportsJSON(w, map[string]any{"streams": streams, "groups": groups, "sources": discovery.statuses})
 }
 
 // Keep plausible candidates for explicit selection; a city or generic league is not enough.
@@ -696,4 +695,14 @@ func (h *SportsHandler) GetF1Archive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSportsJSON(w, h.service.GetF1Archive(r.Context(), event))
+}
+
+// GetCricketSeries exposes discovery candidates separately from supported leagues.
+func (h *SportsHandler) GetCricketSeries(w http.ResponseWriter, r *http.Request) {
+	series, err := h.service.DiscoverCricketSeries(r.Context())
+	if err != nil && len(series) == 0 {
+		http.Error(w, `{"error":"cricket series discovery unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	writeSportsJSON(w, map[string]any{"series": series, "complete": false, "stale": err != nil, "note": "Discovery candidates require scoreboard validation before activation; provider list is capped."})
 }

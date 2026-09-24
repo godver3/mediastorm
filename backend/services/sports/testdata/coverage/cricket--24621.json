@@ -1,0 +1,71 @@
+{
+  "events": [
+    {
+      "id": "1547201",
+      "date": "2027-09-08T17:30Z",
+      "endDate": "2027-09-10T23:59Z",
+      "name": "England Women v Bangladesh Women",
+      "competitions": [
+        {
+          "id": "1547201",
+          "date": "2027-09-08T17:30Z",
+          "endDate": "2027-09-10T23:59Z",
+          "competitors": [
+            {
+              "id": "975",
+              "homeAway": "home",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "975",
+                "name": "England Women",
+                "abbreviation": "ENG-W",
+                "displayName": "England Women"
+              },
+              "linescores": []
+            },
+            {
+              "id": "299037",
+              "homeAway": "away",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "299037",
+                "name": "Bangladesh Women",
+                "abbreviation": "BAN-W",
+                "displayName": "Bangladesh Women"
+              },
+              "linescores": []
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0'",
+            "period": 0,
+            "summary": "Starts at 18:30 local time",
+            "type": {
+              "id": "0",
+              "description": "Scheduled",
+              "detail": "Scheduled",
+              "shortDetail": "Scheduled",
+              "state": "pre"
+            }
+          }
+        }
+      ],
+      "status": {
+        "clock": 0,
+        "displayClock": "0'",
+        "period": 0,
+        "summary": "Starts at 18:30 local time",
+        "type": {
+          "id": "0",
+          "description": "Scheduled",
+          "detail": "Scheduled",
+          "shortDetail": "Scheduled",
+          "state": "pre"
+        }
+      }
+    }
+  ]
+}

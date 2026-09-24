@@ -136,3 +136,17 @@ func TestPregameUsesOneSummaryRequestAndNoLiveStats(t *testing.T) {
 		})
 	}
 }
+
+func TestPregameCanonicalEventIdentityUsesProviderID(t *testing.T) {
+	game, raw := pregameFixture(t, "mlb")
+	game.ProviderEventID = game.ID
+	game.ID = "espn:baseball:college-baseball:" + game.ID
+	game.League = "espn:baseball:college-baseball"
+	if normalizePregame(game, raw, time.Now()) == nil {
+		t.Fatal("canonical ID discarded identity-matched provider pregame")
+	}
+	game.ProviderEventID = "different-event"
+	if normalizePregame(game, raw, time.Now()) != nil {
+		t.Fatal("different provider event accepted")
+	}
+}

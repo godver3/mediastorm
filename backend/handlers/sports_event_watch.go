@@ -15,7 +15,7 @@ func (h *SportsHandler) streamEvent(ctx context.Context, id, kind, parentID stri
 		return h.service.GetGame(id)
 	}
 	if kind == "racing" {
-		for _, prefix := range []string{"f1:", "nascar:", "indycar:", "motogp:"} {
+		for _, prefix := range []string{"f1:", "nascar:", "indycar:", "motogp:", "espn:racing:nascar-secondary:", "espn:racing:nascar-truck:"} {
 			if strings.HasPrefix(id, prefix) {
 				return raceStreamEvent(h.service.GetRaceBoard(ctx).Events, id, parentID)
 			}
@@ -85,6 +85,9 @@ func watchRaceTitle(value string) string {
 var watchSeriesPattern = regexp.MustCompile(`(?i)\b(f[123]|formula\s*(?:[123]|one|two|three|e)|motogp|moto2|moto3|nascar|indycar)\b`)
 
 func conflictingWatchSeries(value, league string) bool {
+	if strings.HasPrefix(league, "espn:racing:nascar-") {
+		league = "nascar"
+	}
 	for _, raw := range watchSeriesPattern.FindAllString(value, -1) {
 		series := strings.ReplaceAll(strings.ToLower(raw), " ", "")
 		switch series {
@@ -165,6 +168,7 @@ func watchEventTitle(title string, game models.SportsGame) string {
 	labels := map[string][]string{
 		"f1":     {"formula 1", "formula one", "f1"},
 		"motogp": {"motogp"}, "nascar": {"nascar"}, "indycar": {"indycar"},
+		"espn:racing:nascar-secondary": {"nascar", "xfinity", "oreilly"}, "espn:racing:nascar-truck": {"nascar", "trucks", "truck"},
 		"pga":     {"pga tour", "pga", "golf"},
 		"cycling": {"cycling"}, "boxing": {"boxing"}, "ufc": {"mma"},
 	}
@@ -230,7 +234,7 @@ func scoreWatchEvent(value string, game models.SportsGame) sportsEvidence {
 	}
 	if game.EventKind == "race-session" {
 		v := normalizeForMatch(value)
-		series := map[string][]string{"f1": {"formula1", "formulaone"}, "motogp": {"motogp"}, "nascar": {"nascar"}, "indycar": {"indycar"}}
+		series := map[string][]string{"f1": {"formula1", "formulaone"}, "motogp": {"motogp"}, "nascar": {"nascar"}, "indycar": {"indycar"}, "espn:racing:nascar-secondary": {"nascar", "xfinity", "oreilly"}, "espn:racing:nascar-truck": {"nascar", "craftsman", "trucks"}}
 		found := game.League == "f1" && set["f1"]
 		for _, alias := range series[game.League] {
 			if strings.Contains(v, alias) {

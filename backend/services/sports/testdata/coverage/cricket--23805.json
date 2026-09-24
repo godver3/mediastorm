@@ -1,0 +1,161 @@
+{
+  "events": [
+    {
+      "id": "1496584",
+      "date": "2026-09-09T10:00Z",
+      "endDate": "2026-09-13T23:59Z",
+      "name": "England v Pakistan",
+      "competitions": [
+        {
+          "id": "1496584",
+          "date": "2026-09-09T10:00Z",
+          "endDate": "2026-09-13T23:59Z",
+          "competitors": [
+            {
+              "id": "1",
+              "homeAway": "home",
+              "winner": "true",
+              "score": "453 & 130/2 (24.2 ov, target 130)",
+              "team": {
+                "id": "1",
+                "name": "England",
+                "abbreviation": "ENG",
+                "displayName": "England"
+              },
+              "linescores": [
+                {
+                  "period": 1,
+                  "value": 1,
+                  "displayValue": 1,
+                  "wickets": 0,
+                  "runs": 0,
+                  "overs": 33.5,
+                  "isBatting": false,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 2,
+                  "value": 2,
+                  "displayValue": 2,
+                  "wickets": 10,
+                  "runs": 453,
+                  "overs": 89.0,
+                  "isBatting": true,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 3,
+                  "value": 3,
+                  "displayValue": 3,
+                  "wickets": 0,
+                  "runs": 0,
+                  "overs": 96.4,
+                  "isBatting": false,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 4,
+                  "value": 4,
+                  "displayValue": 4,
+                  "wickets": 2,
+                  "runs": 130,
+                  "overs": 24.2,
+                  "isBatting": true,
+                  "description": "target reached",
+                  "isCurrent": 1
+                }
+              ]
+            },
+            {
+              "id": "7",
+              "homeAway": "away",
+              "winner": "false",
+              "score": "133 & 449",
+              "team": {
+                "id": "7",
+                "name": "Pakistan",
+                "abbreviation": "PAK",
+                "displayName": "Pakistan"
+              },
+              "linescores": [
+                {
+                  "period": 1,
+                  "value": 1,
+                  "displayValue": 1,
+                  "wickets": 10,
+                  "runs": 133,
+                  "overs": 33.5,
+                  "isBatting": true,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 2,
+                  "value": 2,
+                  "displayValue": 2,
+                  "wickets": 0,
+                  "runs": 0,
+                  "overs": 89.0,
+                  "isBatting": false,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 3,
+                  "value": 3,
+                  "displayValue": 3,
+                  "wickets": 10,
+                  "runs": 449,
+                  "overs": 96.4,
+                  "isBatting": true,
+                  "description": "all out",
+                  "isCurrent": 0
+                },
+                {
+                  "period": 4,
+                  "value": 4,
+                  "displayValue": 4,
+                  "wickets": 0,
+                  "runs": 0,
+                  "overs": 24.2,
+                  "isBatting": false,
+                  "description": "target reached",
+                  "isCurrent": 1
+                }
+              ]
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0'",
+            "period": 4,
+            "summary": "England won by 8 wkts",
+            "type": {
+              "id": "1",
+              "description": "Result",
+              "detail": "Final",
+              "shortDetail": "Final",
+              "state": "post"
+            }
+          }
+        }
+      ],
+      "status": {
+        "clock": 0,
+        "displayClock": "0'",
+        "period": 4,
+        "summary": "England won by 8 wkts",
+        "type": {
+          "id": "1",
+          "description": "Result",
+          "detail": "Final",
+          "shortDetail": "Final",
+          "state": "post"
+        }
+      }
+    }
+  ]
+}

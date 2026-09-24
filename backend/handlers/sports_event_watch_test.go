@@ -156,6 +156,8 @@ func TestNamedEventsWithoutSportLabels(t *testing.T) {
 	}{
 		{"motogp", "motogp", "racing", "race-session", "Thailand Grand Prix", "Race", "Thailand GP - Race", true},
 		{"nascar", "nascar", "racing", "race-session", "NASCAR Hollywood Casino 400", "Race", "Hollywood Casino 400 - Race", true},
+		{"nascar secondary", "espn:racing:nascar-secondary", "racing", "race-session", "NASCAR Hollywood Casino 400", "Race", "NASCAR Hollywood Casino 400", true},
+		{"nascar trucks", "espn:racing:nascar-truck", "racing", "race-session", "NASCAR UNOH 200", "Race", "NASCAR UNOH 200", true},
 		{"indycar", "indycar", "racing", "race-session", "IndyCar Long Beach Grand Prix", "Qualifying", "Long Beach GP - Qualifying", true},
 		{"wrong series", "motogp", "racing", "race-session", "Thailand Grand Prix", "Race", "Formula 1 Thailand Grand Prix - Race", false},
 		{"generic race", "nascar", "racing", "race-session", "NASCAR Race", "Race", "Live Race", false},

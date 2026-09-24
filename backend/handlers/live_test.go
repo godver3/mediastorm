@@ -1158,6 +1158,17 @@ func TestGetCategoriesSourceIndexIsolatesOtherSources(t *testing.T) {
 	}
 
 	otherFails.Store(false)
+	// Metadata failures now have an endpoint-specific backoff, even after recovery.
+	if status, _ := get(""); status != http.StatusBadGateway {
+		t.Fatal("failure backoff was bypassed")
+	}
+	h.discovery.mu.Lock()
+	for _, entry := range h.discovery.entries {
+		if entry.code >= 500 {
+			entry.expires = time.Now().Add(-time.Second)
+		}
+	}
+	h.discovery.mu.Unlock()
 	status, response = get("")
 	if status != http.StatusOK || len(response.Categories) != 2 {
 		t.Fatalf("unscoped status = %d, categories = %+v, want merged categories", status, response.Categories)

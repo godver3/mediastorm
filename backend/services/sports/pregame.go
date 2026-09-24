@@ -107,7 +107,7 @@ func pregameText(value string) string {
 // Parse only the already-fetched, identity-verified summary. No additional requests.
 func normalizePregame(game models.SportsGame, raw []byte, now time.Time) *models.SportsPregame {
 	var p pregamePayload
-	if json.Unmarshal(raw, &p) != nil || p.Header.ID != game.ID || len(p.Header.Competitions) != 1 {
+	if json.Unmarshal(raw, &p) != nil || p.Header.ID != providerEventID(game) || len(p.Header.Competitions) != 1 {
 		return nil
 	}
 	c := p.Header.Competitions[0]
@@ -250,7 +250,7 @@ func normalizePregame(game models.SportsGame, raw []byte, now time.Time) *models
 			} else if e.AwayTeamID != t.TeamID {
 				continue
 			}
-			if date.IsZero() || !date.Before(cutoff) || e.ID == game.ID || e.ID == "" || seen[e.ID] || e.Opponent.ID != other || other == t.TeamID || pregameText(e.Opponent.DisplayName) == "" {
+			if date.IsZero() || !date.Before(cutoff) || e.ID == providerEventID(game) || e.ID == "" || seen[e.ID] || e.Opponent.ID != other || other == t.TeamID || pregameText(e.Opponent.DisplayName) == "" {
 				continue
 			}
 			if e.GameResult != "W" && e.GameResult != "L" && e.GameResult != "D" && e.GameResult != "T" {

@@ -503,6 +503,8 @@ func Register(
 	if sportsHandler != nil {
 		protected.HandleFunc("/sports/scoreboard", sportsHandler.GetScoreboard).Methods(http.MethodGet)
 		protected.HandleFunc("/sports/scoreboard", sportsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/sports/cricket/series", sportsHandler.GetCricketSeries).Methods(http.MethodGet)
+		protected.HandleFunc("/sports/cricket/series", sportsHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/sports/leagues", sportsHandler.GetLeagues).Methods(http.MethodGet)
 		protected.HandleFunc("/sports/leagues", sportsHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/sports/cycling", sportsHandler.GetCycling).Methods(http.MethodGet)

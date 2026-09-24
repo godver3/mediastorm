@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -487,7 +488,7 @@ func (h *LiveHandler) fetchStremioChannels(ctx context.Context, manifestURL, pro
 	h.stremioMu.Unlock()
 
 	baseURL := normalizeStremioBaseURL(manifestURL)
-	client := h.livePlaylistScanHTTPClient(proxyURL)
+	client := h.discoveryClient(h.livePlaylistScanHTTPClient(proxyURL), proxyURL, stremioChannelsTTL)
 
 	manifest, err := fetchStremioManifest(ctx, client, baseURL)
 	if err != nil {
@@ -679,11 +680,18 @@ func (h *LiveHandler) GetStremioStreamOptions(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	client := h.liveStreamHTTPClientWithTimeout(h.resolveProxyURLForStream(r, parsed), 30*time.Second)
+	proxy := h.resolveProxyURLForStream(r, parsed)
+	client := h.discoveryClient(h.liveStreamHTTPClientWithTimeout(proxy, 30*time.Second), proxy, 15*time.Second)
 	var resp stremioStreamResponse
 	if err := getStremioJSON(ctx, client, streamResourceURL, &resp); err != nil {
 		log.Printf("[live] failed to fetch stremio stream options %q: %v", streamResourceURL, err)
-		http.Error(w, `{"error":"failed to fetch stream options"}`, http.StatusBadGateway)
+		var upstream *providerMetadataError
+		if errors.As(err, &upstream) && upstream.Status == 429 {
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(time.Until(upstream.RetryAt).Seconds()))))
+			http.Error(w, `{"error":"provider rate limited; retry after cooldown"}`, 429)
+		} else {
+			http.Error(w, `{"error":"failed to fetch stream options"}`, http.StatusBadGateway)
+		}
 		return
 	}
 
@@ -708,8 +716,7 @@ func getStremioJSON(ctx context.Context, client *http.Client, endpoint string, o
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return metadataResponseError(resp)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

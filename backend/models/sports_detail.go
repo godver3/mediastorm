@@ -201,6 +201,9 @@ type SportsGolfHole struct {
 	ToPar   string `json:"toPar,omitempty"`
 }
 type SportsCricketInnings struct {
+	Score       string `json:"score,omitempty"`
+	Target      *int   `json:"target,omitempty"`
+	Batting     *bool  `json:"batting,omitempty"`
 	TeamID      string `json:"teamId"`
 	Number      int    `json:"number"`
 	Runs        *int   `json:"runs,omitempty"`

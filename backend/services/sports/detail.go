@@ -262,21 +262,15 @@ func (s *Service) EnrichGame(ctx context.Context, game models.SportsGame) models
 	if game.League == "ufc" {
 		return s.enrichMMA(ctx, game)
 	}
-	sport := map[string]string{"mlb": "baseball", "nfl": "football", "nba": "basketball", "wnba": "basketball", "nhl": "hockey", "college-football": "football", "mens-college-basketball": "basketball", "womens-college-basketball": "basketball"}[game.League]
-	slug := game.League
-	if strings.HasPrefix(game.League, "soccer-") {
-		sport = "soccer"
-		slug = strings.TrimPrefix(game.League, "soccer-")
+	league, known := s.League(game.League)
+	if !known || !league.active() || league.Provider != "espn" {
+		return game
 	}
-	if strings.HasPrefix(game.League, "rugby-") && !strings.HasPrefix(game.League, "rugby-league-") {
-		sport = "rugby"
-		slug = strings.TrimPrefix(game.League, "rugby-")
+	if strings.HasPrefix(league.ID, "espn:") && !league.hasCapability("summary") {
+		return game
 	}
-	if strings.HasPrefix(game.League, "rugby-league-") {
-		sport = "rugby-league"
-		slug = strings.TrimPrefix(game.League, "rugby-league-")
-	}
-	if sport == "" {
+	sport, slug := league.Sport, league.Slug
+	if league.EventKind != "matchup" || slug == "" {
 		return game
 	}
 	cacheID := game.ID
@@ -298,7 +292,7 @@ func (s *Service) EnrichGame(ctx context.Context, game models.SportsGame) models
 	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	endpoint := "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + slug + "/summary?event=" + url.QueryEscape(game.ID)
+	endpoint := "https://site.api.espn.com/apis/site/v2/sports/" + sport + "/" + slug + "/summary?event=" + url.QueryEscape(providerEventID(game))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	var result models.SportsGame
 	if err == nil {

@@ -48,6 +48,12 @@ type raceCompetition struct {
 }
 
 func racingSlug(league string) string {
+	for _, l := range LeagueCatalog {
+		if l.ID == league && l.Sport == "racing" && l.active() {
+			return l.Slug
+		}
+	}
+
 	switch league {
 	case "f1":
 		return "f1"

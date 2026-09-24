@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,6 +33,15 @@ const (
 
 // League describes one supported league's ESPN sport/league slug pair.
 type League struct {
+	Provider             string   `json:"provider,omitempty"`
+	ApplicationSport     string   `json:"applicationSport,omitempty"`
+	College              bool     `json:"college,omitempty"`
+	Adapter              string   `json:"adapter,omitempty"`
+	ImplementationStatus string   `json:"implementationStatus,omitempty"`
+	Capabilities         []string `json:"capabilities,omitempty"`
+	Aliases              []string `json:"aliases,omitempty"`
+	CoverageNote         string   `json:"coverageNote,omitempty"`
+
 	ID            string
 	Name          string
 	Sport         string
@@ -47,7 +57,7 @@ type League struct {
 // shape this package models (models.SportsGame), plus leagues served by a dedicated event
 // contract (currently motorsports). Do not advertise a league here until one of those API
 // contracts can actually surface it in the Sports Hub.
-var LeagueCatalog = []League{
+var LeagueCatalog = extendLeagueCatalog([]League{
 	{ID: "pga", Name: "PGA Tour", Sport: "golf", Slug: "pga", Category: "golf", EventKind: "tournament"},
 	{ID: "boxing", Name: "Boxing", Sport: "boxing", Category: "boxing", EventKind: "fight-card"},
 	{ID: "cricket-8048", Name: "Indian Premier League", Sport: "cricket", Slug: "8048", Category: "cricket", EventKind: "matchup", SupportsTeams: true},
@@ -103,13 +113,15 @@ var LeagueCatalog = []League{
 	{ID: "rcs:giro", Name: "Giro d’Italia", Sport: "cycling", Category: "cycling", EventKind: "race"},
 	{ID: "cro:cro-race", Name: "CRO Race", Sport: "cycling", Category: "cycling", EventKind: "race"},
 	{ID: "uci:road-worlds", Name: "UCI Road World Championships", Sport: "cycling", Category: "cycling", EventKind: "race"},
-}
+})
 
 // Every supported league is enabled by default. Saved configuration can select a subset.
 var defaultLeagueIDs = func() []string {
 	ids := make([]string, 0, len(LeagueCatalog))
 	for _, league := range LeagueCatalog {
-		ids = append(ids, league.ID)
+		if league.active() {
+			ids = append(ids, league.ID)
+		}
 	}
 	return ids
 }()
@@ -125,7 +137,7 @@ func selectLeagues(ids []string) []League {
 	}
 	out := make([]League, 0, len(ids))
 	for _, league := range LeagueCatalog {
-		if _, ok := wanted[league.ID]; ok {
+		if _, ok := wanted[league.ID]; (ok || wantedAll(wanted)) && league.active() {
 			out = append(out, league)
 		}
 	}
@@ -153,24 +165,26 @@ type Service struct {
 	client     *http.Client
 	leagues    []League
 
-	mu          sync.RWMutex
-	games       map[string][]models.SportsGame // league ID -> games
-	teamCatalog map[string][]models.SportsTeamRecord
-	lastUpdated time.Time
-	refreshing  bool
-	lastError   string
+	mu                 sync.RWMutex
+	games              map[string][]models.SportsGame // league ID -> games
+	teamCatalog        map[string][]models.SportsTeamRecord
+	teamCatalogUpdated map[string]time.Time
+	lastUpdated        time.Time
+	refreshing         bool
+	lastError          string
 }
 
 // NewService creates a new sports service and loads any cached scoreboard from disk.
 func NewService(storageDir string) *Service {
 	s := &Service{
 		storageDir: storageDir,
-		client: apiusage.TrackClient(&http.Client{
+		client: boundedSportsClient(apiusage.TrackClient(&http.Client{
 			Timeout: defaultHTTPTimeout,
-		}, "Sports", "ESPN sports fetch"),
-		leagues:     defaultLeagues(),
-		games:       make(map[string][]models.SportsGame),
-		teamCatalog: make(map[string][]models.SportsTeamRecord),
+		}, "Sports", "ESPN sports fetch")),
+		leagues:            defaultLeagues(),
+		games:              make(map[string][]models.SportsGame),
+		teamCatalog:        make(map[string][]models.SportsTeamRecord),
+		teamCatalogUpdated: make(map[string]time.Time),
 	}
 
 	cacheDir := filepath.Join(storageDir, sportsCacheDir)
@@ -186,11 +200,11 @@ func NewService(storageDir string) *Service {
 }
 
 // EnsureTeamCatalog fetches the complete team list for every enabled league that has not
-// already been fetched during this process. Scoreboards only contain teams playing in the
+// been fetched in the last 24 hours. Scoreboards only contain teams playing in the
 // current date window, so they cannot populate the Manage Team Channels screen by
 // themselves (one NBA game would otherwise produce a two-team list).
 //
-// Successful league catalogs are retained in memory. Failed leagues are retried on the
+// Successful league catalogs are retained in memory for 24 hours. Failed leagues are retried on the
 // next refresh tick, while any successful results are still returned to the caller.
 func (s *Service) EnsureTeamCatalog(ctx context.Context) ([]models.SportsTeamRecord, error) {
 	s.mu.RLock()
@@ -219,7 +233,7 @@ func (s *Service) ensureTeamCatalog(ctx context.Context, leagues []League) ([]mo
 			continue
 		}
 		s.mu.RLock()
-		loaded := len(s.teamCatalog[league.ID]) > 0
+		loaded := len(s.teamCatalog[league.ID]) > 0 && time.Since(s.teamCatalogUpdated[league.ID]) < 24*time.Hour
 		s.mu.RUnlock()
 		if loaded {
 			continue
@@ -249,6 +263,10 @@ func (s *Service) ensureTeamCatalog(ctx context.Context, leagues []League) ([]mo
 			}
 			s.mu.Lock()
 			s.teamCatalog[league.ID] = teams
+			if s.teamCatalogUpdated == nil {
+				s.teamCatalogUpdated = map[string]time.Time{}
+			}
+			s.teamCatalogUpdated[league.ID] = time.Now()
 			s.mu.Unlock()
 		}()
 	}
@@ -271,10 +289,13 @@ func (s *Service) Leagues() []models.SportsLeague {
 	for _, l := range s.leagues {
 		enabled[l.ID] = struct{}{}
 	}
-	out := make([]models.SportsLeague, len(LeagueCatalog))
-	for i, l := range LeagueCatalog {
+	out := make([]models.SportsLeague, 0, len(LeagueCatalog))
+	for _, l := range LeagueCatalog {
+		if !l.active() {
+			continue
+		}
 		_, isEnabled := enabled[l.ID]
-		out[i] = models.SportsLeague{ID: l.ID, Name: l.Name, Sport: l.Sport, Category: l.Category, EventKind: l.EventKind, SupportsTeams: l.SupportsTeams, Enabled: isEnabled}
+		out = append(out, l.descriptor(isEnabled))
 	}
 	return out
 }
@@ -356,11 +377,11 @@ func (s *Service) SetEnabledLeagueIDs(ids []string) {
 	}
 	next := make([]League, 0, len(LeagueCatalog))
 	for _, l := range LeagueCatalog {
-		if _, ok := enabled[l.ID]; ok {
+		if _, ok := enabled[l.ID]; (ok || wantedAll(enabled)) && l.active() {
 			next = append(next, l)
 		}
 	}
-	if len(next) == 0 {
+	if len(next) == 0 && len(ids) == 0 {
 		next = defaultLeagues()
 	}
 	s.mu.Lock()
@@ -492,7 +513,11 @@ func (s *Service) Refresh(ctx context.Context) error {
 			if err != nil {
 				log.Printf("[sports] scoreboard fetch failed for %s: %v", league.ID, err)
 				s.mu.RLock()
-				games = s.games[league.ID]
+				if errors.Is(err, errPartialScoreboard) {
+					games = mergeCoverageGames(s.games[league.ID], games)
+				} else {
+					games = s.games[league.ID]
+				}
 				s.mu.RUnlock()
 				resultMu.Lock()
 				if firstErr == nil {
@@ -529,6 +554,9 @@ func (s *Service) fetchLeagueScoreboard(ctx context.Context, league League) ([]m
 }
 
 func (s *Service) fetchLeagueScoreboardDate(ctx context.Context, league League, date string) ([]models.SportsGame, error) {
+	if league.Provider == "cfl" {
+		return s.fetchCFLScoreboardDate(ctx, date)
+	}
 	if league.ID == "boxing" {
 		return s.fetchBoxingDate(ctx, date)
 	}
@@ -579,10 +607,16 @@ func (s *Service) fetchLeagueScoreboardDate(ctx context.Context, league League, 
 	for _, event := range payload.Events {
 		games = append(games, scoreboardEventGames(event, league)...)
 	}
+	if len(payload.Events) >= 200 || payload.Count > len(payload.Events) || payload.PageCount > max(1, payload.PageIndex) {
+		return games, errPartialScoreboard
+	}
 	return games, nil
 }
 
 func (s *Service) fetchLeagueTeams(ctx context.Context, league League) ([]models.SportsTeamRecord, error) {
+	if league.Provider == "cfl" {
+		return s.fetchCFLTeams(ctx)
+	}
 	endpoint := fmt.Sprintf(espnTeamsURLFmt, league.Sport, league.Slug)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

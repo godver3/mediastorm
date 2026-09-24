@@ -2,6 +2,7 @@ package sports
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"novastream/models"
 	"sort"
@@ -11,6 +12,8 @@ import (
 )
 
 type LeagueAvailability struct {
+	Partial     bool      `json:"partial,omitempty"`
+	Reason      string    `json:"reason,omitempty"`
 	League      string    `json:"league"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	Stale       bool      `json:"stale"`
@@ -24,9 +27,18 @@ type DatedScoreboard struct {
 	Date      string               `json:"date"`
 }
 type datedEntry struct {
-	board   DatedScoreboard
-	expires time.Time
+	board    DatedScoreboard
+	expires  time.Time
+	inFlight *datedFlight
 }
+
+type datedFlight struct {
+	done  chan struct{}
+	board DatedScoreboard
+	err   error
+}
+
+const datedCacheLimit = 4096
 
 func ValidateScoreboardDate(date string, now time.Time) error {
 	parsed, err := time.Parse("2006-01-02", date)
@@ -62,14 +74,62 @@ func (s *Service) GetDatedScoreboard(ctx context.Context, date, leagueID string)
 	}
 	key := "board:" + date + ":" + strings.Join(ids, ",")
 	s.dateMu.Lock()
-	defer s.dateMu.Unlock()
 	if s.dated == nil {
 		s.dated = map[string]datedEntry{}
 	}
 	cached, exists := s.dated[key]
+	if cached.inFlight != nil {
+		flight := cached.inFlight
+		s.dateMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return DatedScoreboard{}, ctx.Err()
+		case <-flight.done:
+			return flight.board, flight.err
+		}
+	}
 	if exists && time.Now().Before(cached.expires) {
+		s.dateMu.Unlock()
 		return cached.board, nil
 	}
+	flight := &datedFlight{done: make(chan struct{})}
+	pending := cached
+	pending.inFlight = flight
+	s.dated[key] = pending
+	s.dateMu.Unlock()
+
+	go func() {
+		board, err := s.loadDatedScoreboard(context.WithoutCancel(ctx), date, key, selected, cached, exists)
+		s.dateMu.Lock()
+		if err != nil {
+			if exists {
+				s.dated[key] = cached
+			} else {
+				delete(s.dated, key)
+			}
+		}
+		flight.board, flight.err = board, err
+		entry := s.dated[key]
+		entry.inFlight = nil
+		if err == nil {
+			s.dated[key] = entry
+		}
+		close(flight.done)
+		s.dateMu.Unlock()
+	}()
+	select {
+	case <-ctx.Done():
+		return DatedScoreboard{}, ctx.Err()
+	case <-flight.done:
+		return flight.board, flight.err
+	}
+}
+
+// Cache locks never cover provider requests. Pending work is shared only for
+// the same selected-league/date key; every caller, including the initiator, is
+// only a waiter. Shared work has its own 15-second bound and survives any one
+// caller cancellation.
+func (s *Service) loadDatedScoreboard(ctx context.Context, date, key string, selected []League, cached datedEntry, exists bool) (DatedScoreboard, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	type result struct {
@@ -90,18 +150,29 @@ func (s *Service) GetDatedScoreboard(ctx context.Context, date, leagueID string)
 				return
 			}
 			defer func() { <-slots }()
-			results[i].games, results[i].err = s.fetchLeagueScoreboardDate(ctx, l, date)
+			results[i].games, results[i].err = s.fetchDatedLeagueWithOverlap(ctx, l, date)
 		}(i, l)
 	}
 	wg.Wait()
 
+	s.dateMu.Lock()
+	defer s.dateMu.Unlock()
 	board := DatedScoreboard{Games: []models.SportsGame{}, Leagues: []LeagueAvailability{}, Date: date, UpdatedAt: time.Now()}
 	successful := 0
 	for i, r := range results {
 		leagueKey := "league:" + date + ":" + selected[i].ID
 		previous, hasPrevious := s.dated[leagueKey]
 		availability := LeagueAvailability{League: selected[i].ID, UpdatedAt: board.UpdatedAt}
-		if r.err != nil {
+		if errors.Is(r.err, errPartialScoreboard) {
+			successful++
+			availability.Partial = true
+			availability.Stale = true
+			availability.Reason = r.err.Error()
+			board.Stale = true
+			games := mergeCoverageGames(previous.board.Games, r.games)
+			board.Games = append(board.Games, games...)
+			s.dated[leagueKey] = datedEntry{board: DatedScoreboard{Games: games, UpdatedAt: board.UpdatedAt}, expires: time.Now().Add(30 * time.Second)}
+		} else if r.err != nil {
 			availability.Stale = true
 			board.Stale = true
 			if hasPrevious {
@@ -126,14 +197,20 @@ func (s *Service) GetDatedScoreboard(ctx context.Context, date, leagueID string)
 		}
 	}
 	sort.SliceStable(board.Games, func(i, j int) bool { return board.Games[i].StartTime.Before(board.Games[j].StartTime) })
-	for len(s.dated) >= 128 {
+	for len(s.dated) >= datedCacheLimit {
 		oldestKey := ""
 		var oldest time.Time
 		for k, entry := range s.dated {
+			if entry.inFlight != nil {
+				continue
+			}
 			if oldestKey == "" || entry.expires.Before(oldest) {
 				oldestKey = k
 				oldest = entry.expires
 			}
+		}
+		if oldestKey == "" {
+			break
 		}
 		delete(s.dated, oldestKey)
 	}
@@ -141,7 +218,7 @@ func (s *Service) GetDatedScoreboard(ctx context.Context, date, leagueID string)
 	if board.Stale {
 		ttl = 15 * time.Second
 	}
-	s.dated[key] = datedEntry{board: board, expires: time.Now().Add(ttl)}
+	s.dated[key] = datedEntry{board: board, expires: time.Now().Add(ttl), inFlight: s.dated[key].inFlight}
 	return board, nil
 }
 
@@ -152,4 +229,52 @@ func supportsHubLeague(id string) bool {
 		}
 	}
 	return false
+}
+
+// Cricket date filters may index only the opening day of a multi-day Test.
+// Merge one default series scoreboard, never a request per preceding day.
+func (s *Service) fetchDatedLeagueWithOverlap(ctx context.Context, league League, date string) ([]models.SportsGame, error) {
+	games, datedErr := s.fetchLeagueScoreboardDate(ctx, league, date)
+	if league.Sport != "cricket" || date == "" {
+		return games, datedErr
+	}
+	day, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return games, datedErr
+	}
+	current, currentErr := s.fetchLeagueScoreboardDate(ctx, league, "")
+	if currentErr != nil && !errors.Is(currentErr, errPartialScoreboard) {
+		return games, datedErr
+	}
+	seen := make(map[string]bool, len(games))
+	for _, game := range games {
+		seen[game.ID] = true
+	}
+	// With no client timezone here, retain the union of local-day intervals
+	// across real UTC offsets. The caller/UI applies its final local-day filter.
+	from, to := day.Add(-14*time.Hour), day.Add(38*time.Hour)
+	added := false
+	for _, game := range current {
+		if game.ID == "" || seen[game.ID] || game.StartTime.IsZero() {
+			continue
+		}
+		end := game.EndTime
+		if end.IsZero() || end.Before(game.StartTime) {
+			end = game.StartTime
+		}
+		if game.StartTime.Before(to) && !end.Before(from) {
+			games = append(games, game)
+			seen[game.ID], added = true, true
+		}
+	}
+	if errors.Is(datedErr, errPartialScoreboard) || errors.Is(currentErr, errPartialScoreboard) {
+		return games, errPartialScoreboard
+	}
+	if datedErr != nil {
+		if added {
+			return games, errPartialScoreboard
+		}
+		return games, datedErr
+	}
+	return games, nil
 }

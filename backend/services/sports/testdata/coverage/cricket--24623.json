@@ -1,0 +1,71 @@
+{
+  "events": [
+    {
+      "id": "1547180",
+      "date": "2027-09-07T17:30Z",
+      "endDate": "2027-09-09T23:59Z",
+      "name": "England v New Zealand",
+      "competitions": [
+        {
+          "id": "1547180",
+          "date": "2027-09-07T17:30Z",
+          "endDate": "2027-09-09T23:59Z",
+          "competitors": [
+            {
+              "id": "1",
+              "homeAway": "home",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "1",
+                "name": "England",
+                "abbreviation": "ENG",
+                "displayName": "England"
+              },
+              "linescores": []
+            },
+            {
+              "id": "5",
+              "homeAway": "away",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "5",
+                "name": "New Zealand",
+                "abbreviation": "NZ",
+                "displayName": "New Zealand"
+              },
+              "linescores": []
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0'",
+            "period": 0,
+            "summary": "Starts at 18:30 local time",
+            "type": {
+              "id": "0",
+              "description": "Scheduled",
+              "detail": "Scheduled",
+              "shortDetail": "Scheduled",
+              "state": "pre"
+            }
+          }
+        }
+      ],
+      "status": {
+        "clock": 0,
+        "displayClock": "0'",
+        "period": 0,
+        "summary": "Starts at 18:30 local time",
+        "type": {
+          "id": "0",
+          "description": "Scheduled",
+          "detail": "Scheduled",
+          "shortDetail": "Scheduled",
+          "state": "pre"
+        }
+      }
+    }
+  ]
+}

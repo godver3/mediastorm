@@ -1,0 +1,71 @@
+{
+  "events": [
+    {
+      "id": "1547175",
+      "date": "2027-06-18T10:00Z",
+      "endDate": "2027-06-23T23:59Z",
+      "name": "England v Australia",
+      "competitions": [
+        {
+          "id": "1547175",
+          "date": "2027-06-18T10:00Z",
+          "endDate": "2027-06-23T23:59Z",
+          "competitors": [
+            {
+              "id": "1",
+              "homeAway": "home",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "1",
+                "name": "England",
+                "abbreviation": "ENG",
+                "displayName": "England"
+              },
+              "linescores": []
+            },
+            {
+              "id": "2",
+              "homeAway": "away",
+              "winner": "false",
+              "score": "",
+              "team": {
+                "id": "2",
+                "name": "Australia",
+                "abbreviation": "AUS",
+                "displayName": "Australia"
+              },
+              "linescores": []
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0'",
+            "period": 0,
+            "summary": "Starts at 11:00 local time",
+            "type": {
+              "id": "0",
+              "description": "Scheduled",
+              "detail": "Scheduled",
+              "shortDetail": "Scheduled",
+              "state": "pre"
+            }
+          }
+        }
+      ],
+      "status": {
+        "clock": 0,
+        "displayClock": "0'",
+        "period": 0,
+        "summary": "Starts at 11:00 local time",
+        "type": {
+          "id": "0",
+          "description": "Scheduled",
+          "detail": "Scheduled",
+          "shortDetail": "Scheduled",
+          "state": "pre"
+        }
+      }
+    }
+  ]
+}
