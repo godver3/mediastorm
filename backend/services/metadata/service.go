@@ -5691,6 +5691,13 @@ func (s *Service) BatchSeriesTitleFields(ctx context.Context, queries []models.S
 		cacheID := seriesDetailsCacheKey(s.client.language, tvdbID, query.SeasonType)
 		var cached models.SeriesDetails
 		if ok, _ := s.cache.get(cacheID, &cached); ok {
+			if needsFullArt {
+				tmdbID := cached.Title.TMDBID
+				if tmdbID <= 0 {
+					tmdbID = query.TMDBID
+				}
+				s.applyCachedTMDBImages(ctx, &cached.Title, "series", tmdbID)
+			}
 			extracted := extractTitleFields(&cached.Title, fields)
 			results[i].Details = &models.SeriesDetails{Title: extracted}
 			continue
@@ -5777,7 +5784,7 @@ func (s *Service) BatchMovieTitleFields(ctx context.Context, queries []models.Mo
 
 	for i, query := range queries {
 		results[i].Query = query
-		if title, ok := s.cachedMovieTitleFields(query, fields); ok {
+		if title, ok := s.cachedMovieTitleFields(ctx, query, fields); ok {
 			results[i].Title = title
 			continue
 		}
@@ -5828,7 +5835,7 @@ func (s *Service) BatchMovieTitleFields(ctx context.Context, queries []models.Mo
 	return results
 }
 
-func (s *Service) cachedMovieTitleFields(query models.MovieDetailsQuery, fields []string) (*models.Title, bool) {
+func (s *Service) cachedMovieTitleFields(ctx context.Context, query models.MovieDetailsQuery, fields []string) (*models.Title, bool) {
 	if s.cache == nil {
 		return nil, false
 	}
@@ -5854,6 +5861,13 @@ func (s *Service) cachedMovieTitleFields(query models.MovieDetailsQuery, fields 
 		cacheID := cacheKey("tvdb", "movie", "details", "v6", language, strconv.FormatInt(tvdbID, 10))
 		var cached models.Title
 		if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
+			if titleFieldsNeedFullSeriesArt(fields) {
+				tmdbID := cached.TMDBID
+				if tmdbID <= 0 {
+					tmdbID = query.TMDBID
+				}
+				s.applyCachedTMDBImages(ctx, &cached, "movie", tmdbID)
+			}
 			s.attachCachedMovieRatings(&cached, fields, query)
 			extracted := extractTitleFields(&cached, fields)
 			return &extracted, true
@@ -5861,9 +5875,16 @@ func (s *Service) cachedMovieTitleFields(query models.MovieDetailsQuery, fields 
 	}
 
 	if query.TMDBID > 0 {
-		cacheID := cacheKey("tmdb", "movie", "details", "v3", language, strconv.FormatInt(query.TMDBID, 10))
+		cacheID := cacheKey("tmdb", "movie", "details", "v4", language, strconv.FormatInt(query.TMDBID, 10))
 		var cached models.Title
 		if ok, _ := s.cache.get(cacheID, &cached); ok && cached.ID != "" {
+			if titleFieldsNeedFullSeriesArt(fields) {
+				tmdbID := cached.TMDBID
+				if tmdbID <= 0 {
+					tmdbID = query.TMDBID
+				}
+				s.applyCachedTMDBImages(ctx, &cached, "movie", tmdbID)
+			}
 			s.attachCachedMovieRatings(&cached, fields, query)
 			extracted := extractTitleFields(&cached, fields)
 			return &extracted, true
