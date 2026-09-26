@@ -1772,7 +1772,7 @@ func TestDailyUsenetSearchUsesBoundedTiersAndRemembersSuccessfulSeasonEpisodeFor
 			EpisodeReleased: true,
 		}
 		parsed := debrid.ParseQuery(opts.Query)
-		results, err := svc.searchUsenetWithFilter(context.Background(), settings, opts, parsed, []string{"Corrie"}, nil, models.FilterSettings{})
+		results, err := svc.searchUsenetWithFilter(context.Background(), settings, opts, parsed, []string{"Corrie"}, []string{"Corrie"}, nil, models.FilterSettings{})
 		if err != nil {
 			t.Fatalf("daily search: %v", err)
 		}
@@ -1856,7 +1856,7 @@ func TestDailyUsenetSearchFindsAndRemembersHumanDateFormats(t *testing.T) {
 			svc := &Service{httpc: server.Client(), providerBreaker: providerbreaker.New()}
 			opts := SearchOptions{Query: "Coronation Street S67E154", MediaType: "series", TVDBID: 2521, IsDaily: true, TargetAirDate: "2026-08-24"}
 			parsed := debrid.ParseQuery(opts.Query)
-			results, err := svc.searchUsenetWithFilter(t.Context(), settings, opts, parsed, nil, nil, models.FilterSettings{})
+			results, err := svc.searchUsenetWithFilter(t.Context(), settings, opts, parsed, nil, nil, nil, models.FilterSettings{})
 			if err != nil {
 				t.Fatalf("daily search: %v", err)
 			}
@@ -1869,7 +1869,7 @@ func TestDailyUsenetSearchFindsAndRemembersHumanDateFormats(t *testing.T) {
 			mu.Unlock()
 			opts.Query = "Coronation Street S67E155"
 			opts.TargetAirDate = "2026-08-24"
-			_, err = svc.searchUsenetWithFilter(t.Context(), settings, opts, debrid.ParseQuery(opts.Query), nil, nil, models.FilterSettings{})
+			_, err = svc.searchUsenetWithFilter(t.Context(), settings, opts, debrid.ParseQuery(opts.Query), nil, nil, nil, models.FilterSettings{})
 			if err != nil {
 				t.Fatalf("learned daily search: %v", err)
 			}
@@ -1906,7 +1906,7 @@ func TestDailyUsenetSearchHonorsAttemptCap(t *testing.T) {
 		TargetAirDate: "2026-08-17",
 	}
 	parsed := debrid.ParseQuery(opts.Query)
-	results, err := svc.searchUsenetWithFilter(context.Background(), settings, opts, parsed, []string{"Corrie"}, nil, models.FilterSettings{})
+	results, err := svc.searchUsenetWithFilter(context.Background(), settings, opts, parsed, []string{"Corrie"}, []string{"Corrie"}, nil, models.FilterSettings{})
 	if err != nil {
 		t.Fatalf("daily search: %v", err)
 	}
