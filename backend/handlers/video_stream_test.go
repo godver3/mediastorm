@@ -36,14 +36,16 @@ func (m *mockProvider) Stream(ctx context.Context, req streaming.Request) (*stre
 }
 
 type recordingProvider struct {
-	data      []byte
-	lastPath  string
-	lastRange string
+	data        []byte
+	lastPath    string
+	lastRange   string
+	lastIfRange string
 }
 
 func (p *recordingProvider) Stream(ctx context.Context, req streaming.Request) (*streaming.Response, error) {
 	p.lastPath = req.Path
 	p.lastRange = req.RangeHeader
+	p.lastIfRange = req.IfRange
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "video/x-matroska")
@@ -92,6 +94,7 @@ func TestVideoHandlerBypassesReadAheadPoolsForUsenetPath(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/video/stream?path="+url.QueryEscape("/virtual/title.mkv"), nil)
 	req.Header.Set("Range", "bytes=0-9")
+	req.Header.Set("If-Range", "Fri, 25 Sep 2026 10:00:00 GMT")
 	rr := httptest.NewRecorder()
 
 	handler.StreamVideo(rr, req)
@@ -107,6 +110,9 @@ func TestVideoHandlerBypassesReadAheadPoolsForUsenetPath(t *testing.T) {
 	}
 	if provider.lastRange != "bytes=0-9" {
 		t.Fatalf("provider range = %q, want original range", provider.lastRange)
+	}
+	if provider.lastIfRange != req.Header.Get("If-Range") {
+		t.Fatalf("provider If-Range = %q, want original validator", provider.lastIfRange)
 	}
 }
 

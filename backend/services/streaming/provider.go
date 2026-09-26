@@ -17,6 +17,7 @@ var ErrStaleTorrent = errors.New("debrid torrent expired or deleted")
 type Request struct {
 	Path        string
 	RangeHeader string
+	IfRange     string // Validator for a conditional byte-range request.
 	Method      string
 }
 

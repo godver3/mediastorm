@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/afero"
 	"novastream/config"
 	"novastream/internal/database"
 	"novastream/internal/importer"
@@ -18,7 +19,6 @@ import (
 	"novastream/internal/nzbfilesystem"
 	"novastream/internal/pool"
 	"novastream/services/streaming"
-	"github.com/spf13/afero"
 )
 
 // NzbConfig holds configuration for the NZB system
@@ -283,6 +283,7 @@ func (ns *NzbSystem) streamQueuePath(ctx context.Context, req streaming.Request,
 				"Accept-Ranges":  []string{"bytes"},
 				"Content-Type":   []string{"video/mp4"}, // Default, could be detected
 				"Content-Length": []string{strconv.FormatInt(fileInfo.Size(), 10)},
+				"Last-Modified":  []string{fileInfo.ModTime().UTC().Format(http.TimeFormat)},
 			},
 			Body: io.NopCloser(strings.NewReader("")),
 		}, nil
@@ -308,9 +309,11 @@ func (ns *NzbSystem) streamQueuePath(ctx context.Context, req streaming.Request,
 	headers := http.Header{
 		"Accept-Ranges": []string{"bytes"},
 		"Content-Type":  []string{"video/mp4"},
+		// URLSession needs a validator to preserve partial downloads on pause.
+		"Last-Modified": []string{fileInfo.ModTime().UTC().Format(http.TimeFormat)},
 	}
 
-	if req.RangeHeader != "" {
+	if req.RangeHeader != "" && matchesStreamIfRange(req.IfRange, fileInfo.ModTime()) {
 		// Parse range header (simplified - only handles single range)
 		rangeSpec := strings.TrimPrefix(req.RangeHeader, "bytes=")
 		parts := strings.Split(rangeSpec, "-")
@@ -371,6 +374,7 @@ func (ns *NzbSystem) streamStoragePath(ctx context.Context, req streaming.Reques
 				"Accept-Ranges":  []string{"bytes"},
 				"Content-Type":   []string{"video/mp4"}, // Default, could be detected
 				"Content-Length": []string{strconv.FormatInt(fileInfo.Size(), 10)},
+				"Last-Modified":  []string{fileInfo.ModTime().UTC().Format(http.TimeFormat)},
 			},
 			Body: io.NopCloser(strings.NewReader("")),
 		}, nil
@@ -396,9 +400,11 @@ func (ns *NzbSystem) streamStoragePath(ctx context.Context, req streaming.Reques
 	headers := http.Header{
 		"Accept-Ranges": []string{"bytes"},
 		"Content-Type":  []string{"video/mp4"},
+		// URLSession needs a validator to preserve partial downloads on pause.
+		"Last-Modified": []string{fileInfo.ModTime().UTC().Format(http.TimeFormat)},
 	}
 
-	if req.RangeHeader != "" {
+	if req.RangeHeader != "" && matchesStreamIfRange(req.IfRange, fileInfo.ModTime()) {
 		// Parse range header (simplified - only handles single range)
 		rangeSpec := strings.TrimPrefix(req.RangeHeader, "bytes=")
 		parts := strings.Split(rangeSpec, "-")

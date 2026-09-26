@@ -1376,6 +1376,7 @@ func (h *VideoHandler) streamViaProvider(w http.ResponseWriter, r *http.Request,
 	resp, err := h.streamer.Stream(ctx, streaming.Request{
 		Path:        cleanPath,
 		RangeHeader: rangeHeader,
+		IfRange:     r.Header.Get("If-Range"),
 		Method:      r.Method,
 	})
 	if err != nil {
