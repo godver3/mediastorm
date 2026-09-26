@@ -180,6 +180,7 @@ var (
 	directAudioLine  = regexp.MustCompile(`(?mi)^\s*🎧\s*Audio:\s*(.+?)\s*$`)
 	directTechLine   = regexp.MustCompile(`(?mi)^\s*🎞️\s*(.+?)\s*$`)
 	directSizeLine   = regexp.MustCompile(`(?mi)^\s*💾\s*([\d.,]+)\s*([KMGTP]?B)\s*$`)
+	directInlineSize = regexp.MustCompile(`(?i)([\d]+(?:[.,][\d]+)?)\s*(B|KB|MB|GB|TB|PB|KIB|MIB|GIB|TIB|PIB)\b`)
 	directExt        = regexp.MustCompile(`(?i)\.(mkv|mp4|m4v|avi|webm|ts|m2ts)`)
 	directTagPrefix  = regexp.MustCompile(`^(?:\[[^\]]+\]\s*)+`)
 )
@@ -204,7 +205,16 @@ func (s *DirectStremioScraper) resultFromEntry(entry directStremioEntry, index i
 	if filename == "" {
 		filename = directStremioDisplayTitle(entry.Description)
 	}
+	if filename == "" {
+		filename = normalizeDirectStremioFilename(entry.Title)
+	}
+	if filename == "" {
+		filename = normalizeDirectStremioFilename(entry.Name)
+	}
 	resolution := detectResolution(entry.Name, entry.Description)
+	if resolution == "" {
+		resolution = detectResolution(entry.Title, "")
+	}
 	provider := directStremioMatch(directSourceLine, entry.Description)
 	languages := directStremioLanguages(entry.Description)
 	attrs := map[string]string{
@@ -231,12 +241,20 @@ func (s *DirectStremioScraper) resultFromEntry(entry directStremioEntry, index i
 		attrs["languages"] = strings.Join(languages, ",")
 	}
 	applyDirectStremioTechnicalAttributes(attrs, entry.Description)
+	titleSizeBytes, titleSizeLabel := directStremioSize(entry.Description, entry.Title, entry.Name)
+	if attrs["size"] == "" && titleSizeLabel != "" {
+		attrs["size"] = titleSizeLabel
+	}
+	sizeBytes := entry.BehaviorHints.VideoSize
+	if sizeBytes <= 0 {
+		sizeBytes = titleSizeBytes
+	}
 
 	return ScrapeResult{
 		Title:       filename,
 		Indexer:     s.Name(),
 		TorrentURL:  streamURL,
-		SizeBytes:   entry.BehaviorHints.VideoSize,
+		SizeBytes:   sizeBytes,
 		Provider:    provider,
 		Languages:   languages,
 		Resolution:  resolution,
@@ -319,6 +337,50 @@ func applyDirectStremioTechnicalAttributes(attrs map[string]string, description 
 	if match := directSizeLine.FindStringSubmatch(description); len(match) == 3 && attrs["size"] == "" {
 		attrs["size"] = match[1] + " " + match[2]
 	}
+}
+
+func directStremioSize(values ...string) (int64, string) {
+	for _, value := range values {
+		match := directInlineSize.FindStringSubmatch(value)
+		if len(match) != 3 {
+			continue
+		}
+		number, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", "."), 64)
+		if err != nil {
+			continue
+		}
+		unit := strings.ToUpper(match[2])
+		var factor float64
+		switch unit {
+		case "B":
+			factor = 1
+		case "KB":
+			factor = 1_000
+		case "MB":
+			factor = 1_000_000
+		case "GB":
+			factor = 1_000_000_000
+		case "TB":
+			factor = 1_000_000_000_000
+		case "PB":
+			factor = 1_000_000_000_000_000
+		case "KIB":
+			factor = 1 << 10
+		case "MIB":
+			factor = 1 << 20
+		case "GIB":
+			factor = 1 << 30
+		case "TIB":
+			factor = 1 << 40
+		case "PIB":
+			factor = 1 << 50
+		}
+		if factor == 0 || number <= 0 {
+			continue
+		}
+		return int64(number * factor), match[1] + " " + match[2]
+	}
+	return 0, ""
 }
 
 func appendAttributeValue(existing, value string) string {

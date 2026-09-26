@@ -65,6 +65,31 @@ func TestDirectStremioSearchParsesPenguStyleResponse(t *testing.T) {
 	}
 }
 
+func TestDirectStremioSearchParsesTitleAndSizeFromStreamTitle(t *testing.T) {
+	body := `{"streams":[{"title":"The.Matrix.1999.REMASTERED.1080p.BluRay.REMUX.AVC.DTS-HD.MA.True.mkv [a11 34.2 GB]","url":"https://stream.example/d/opaque"}]}`
+	scraper := NewDirectStremioScraper("https://addon.example/configured/manifest.json", "111477", directStremioTestClient(t, body))
+	results, err := scraper.Search(context.Background(), SearchRequest{
+		IMDBID: "tt0133093",
+		Parsed: ParsedQuery{Title: "The Matrix", MediaType: MediaTypeMovie},
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search() returned %d results", len(results))
+	}
+	result := results[0]
+	if result.Title != "The.Matrix.1999.REMASTERED.1080p.BluRay.REMUX.AVC.DTS-HD.MA.True.mkv" {
+		t.Fatalf("Title = %q", result.Title)
+	}
+	if result.SizeBytes != 34_200_000_000 {
+		t.Fatalf("SizeBytes = %d, want 34200000000", result.SizeBytes)
+	}
+	if result.Attributes["size"] != "34.2 GB" || result.Resolution != "1080p" {
+		t.Fatalf("attributes = %#v, resolution = %q", result.Attributes, result.Resolution)
+	}
+}
+
 func TestRefreshDirectStremioCandidateReplacesSignedURL(t *testing.T) {
 	body := `{"streams":[{"name":"PenguPlay 1080p","description":"🍿 The Matrix (1999)\n🎞️ 1080p • MP4","url":"https://addon.example/direct?psig=new","behaviorHints":{"filename":"The.Matrix.1999.1080p.mp4","videoSize":1234,"bingeGroup":"stable-group"}}]}`
 	settings := config.Settings{TorrentScrapers: []config.TorrentScraperConfig{{
