@@ -103,7 +103,8 @@ func imageTag(url string) string {
 	if url == "" {
 		return ""
 	}
-	sum := sha1.Sum([]byte(url))
+	// Invalidate images cached under the old mismatched DTO/source mapping.
+	sum := sha1.Sum([]byte("artwork-v2\x00" + url))
 	return hex.EncodeToString(sum[:8])
 }
 

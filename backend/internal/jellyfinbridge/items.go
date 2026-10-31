@@ -309,7 +309,8 @@ func (s *Server) childrenOf(ctx context.Context, p *principal, u *userState, q i
 		}
 		return s.seriesSeasons(ctx, u, series)
 	case refSeason:
-		series := s.seriesRefFrom(seriesInfoFromSeasonRef(ref))
+		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
+		series.Ordering = ref.Ctx.SeasonOrdering
 		return s.seriesEpisodes(ctx, u, series, ref.Ctx.Season)
 	case refLocalSeries:
 		g, ok := s.findLocalGroup(ctx, p, ref.Ctx.Extra, ref.Ctx.ViewKey)
@@ -362,7 +363,7 @@ func seriesInfoFromSeasonRef(ref itemRef) titleInfo {
 	seriesSource := ""
 	switch ref.Kind {
 	case refSeason:
-		if i := strings.LastIndex(ref.Source, "/s"); i > 0 {
+		if i := strings.Index(ref.Source, "/s"); i > 0 {
 			seriesSource = ref.Source[:i]
 		}
 	case refEpisode:
@@ -380,9 +381,11 @@ func seriesInfoFromSeasonRef(ref itemRef) titleInfo {
 		Name:        name,
 		Year:        ref.Ctx.Year,
 		ExternalIDs: titleLevelIDs(ext),
-		Poster:      ref.Ctx.Poster,
-		Backdrop:    ref.Ctx.Backdrop,
-		Logo:        ref.Ctx.Logo,
+		// A child's own poster may be a season cover or episode still.
+		// Legacy refs without SeriesPoster recover it via seriesWithArtwork.
+		Poster:   ref.Ctx.SeriesPoster,
+		Backdrop: ref.Ctx.Backdrop,
+		Logo:     ref.Ctx.Logo,
 	}
 }
 
@@ -400,11 +403,12 @@ func (s *Server) seriesWithArtwork(t titleInfo) titleInfo {
 }
 
 func (s *Server) seriesSeasons(ctx context.Context, u *userState, series seriesRef) []dto.BaseItemDto {
-	details, err := s.seriesDetails(ctx, series.Info)
+	details, err := s.seriesDetails(ctx, series.Info, series.Ordering)
 	if err != nil || details == nil {
 		return nil
 	}
 	series = s.refreshSeries(series, details.Title)
+	series.Ordering = details.ActiveOrdering
 	var out []dto.BaseItemDto
 	for _, season := range details.Seasons {
 		if len(airedEpisodes(season.Episodes)) == 0 {
@@ -449,11 +453,12 @@ func airedEpisodes(eps []models.SeriesEpisode) []models.SeriesEpisode {
 // seriesEpisodes lists aired episodes of one season, or all regular seasons
 // (season < 0), in airing order.
 func (s *Server) seriesEpisodes(ctx context.Context, u *userState, series seriesRef, season int) []dto.BaseItemDto {
-	details, err := s.seriesDetails(ctx, series.Info)
+	details, err := s.seriesDetails(ctx, series.Info, series.Ordering)
 	if err != nil || details == nil {
 		return nil
 	}
 	series = s.refreshSeries(series, details.Title)
+	series.Ordering = details.ActiveOrdering
 	var out []dto.BaseItemDto
 	for _, sn := range details.Seasons {
 		if season >= 0 && sn.Number != season {
@@ -462,6 +467,9 @@ func (s *Server) seriesEpisodes(ctx context.Context, u *userState, series series
 		if season < 0 && sn.Number == 0 {
 			continue
 		}
+		// Register the actual season cover even when episodes are requested
+		// first (continue watching, recursive browsing, or a direct link).
+		s.seasonItem(nil, series, sn)
 		for _, ep := range airedEpisodes(sn.Episodes) {
 			out = append(out, s.episodeItem(u, series, episodeFromMetadata(ep)))
 		}
@@ -692,9 +700,11 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		return item, true
 	case refSeason:
 		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
+		series.Ordering = ref.Ctx.SeasonOrdering
 		if detailed {
-			if details, err := s.seriesDetails(ctx, series.Info); err == nil && details != nil {
+			if details, err := s.seriesDetails(ctx, series.Info, series.Ordering); err == nil && details != nil {
 				series = s.refreshSeries(series, details.Title)
+				series.Ordering = details.ActiveOrdering
 				for _, season := range details.Seasons {
 					if season.Number == ref.Ctx.Season {
 						return s.seasonItem(u, series, season), true
@@ -705,15 +715,18 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		return s.seasonItem(u, series, models.SeriesSeason{Number: ref.Ctx.Season}), true
 	case refEpisode:
 		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
+		series.Ordering = ref.Ctx.SeasonOrdering
 		if detailed {
-			if details, err := s.seriesDetails(ctx, series.Info); err == nil && details != nil {
+			if details, err := s.seriesDetails(ctx, series.Info, series.Ordering); err == nil && details != nil {
 				series = s.refreshSeries(series, details.Title)
+				series.Ordering = details.ActiveOrdering
 				for _, season := range details.Seasons {
 					if season.Number != ref.Ctx.Season {
 						continue
 					}
 					for _, ep := range season.Episodes {
 						if ep.EpisodeNumber == ref.Ctx.Episode {
+							s.seasonItem(nil, series, season)
 							return s.episodeItem(u, series, episodeFromMetadata(ep)), true
 						}
 					}
@@ -763,8 +776,9 @@ func (s *Server) people(ctx context.Context, t titleInfo) []dto.Person {
 		if i >= 20 {
 			break
 		}
-		id := s.ids.put(refPerson, "tmdb:person:"+strconv.FormatInt(member.ID, 10), refContext{Name: member.Name, Poster: member.ProfileURL})
-		out = append(out, dto.Person{Name: member.Name, ID: id, Role: member.Character, Type: "Actor", PrimaryImageTag: imageTag(member.ProfileURL)})
+		id := s.ids.putTrusted(refPerson, "tmdb:person:"+strconv.FormatInt(member.ID, 10), refContext{Name: member.Name, Poster: member.ProfileURL})
+		ref, _ := s.ids.get(id)
+		out = append(out, dto.Person{Name: member.Name, ID: id, Role: member.Character, Type: "Actor", PrimaryImageTag: imageTag(imageURLFor(ref, "primary"))})
 	}
 	return out
 }

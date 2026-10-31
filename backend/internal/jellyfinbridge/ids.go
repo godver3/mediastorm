@@ -63,20 +63,22 @@ func normalizeID(raw string) string {
 
 // refContext carries what the bridge needs to rebuild an item from its GUID.
 type refContext struct {
-	Name        string            `json:"n,omitempty"`
-	Year        int               `json:"y,omitempty"`
-	TitleID     string            `json:"t,omitempty"` // mediastorm title ID (movie or series)
-	ExternalIDs map[string]string `json:"x,omitempty"`
-	SeriesName  string            `json:"sn,omitempty"`
-	Season      int               `json:"s,omitempty"`
-	Episode     int               `json:"e,omitempty"`
-	Poster      string            `json:"p,omitempty"`
-	Backdrop    string            `json:"b,omitempty"`
-	Logo        string            `json:"l,omitempty"`
-	Thumb       string            `json:"th,omitempty"`
-	ProfileID   string            `json:"pr,omitempty"`
-	ViewKey     string            `json:"v,omitempty"`
-	Extra       string            `json:"ex,omitempty"` // kind-specific (list ID, channel URL, ...)
+	Name           string            `json:"n,omitempty"`
+	Year           int               `json:"y,omitempty"`
+	TitleID        string            `json:"t,omitempty"` // mediastorm title ID (movie or series)
+	ExternalIDs    map[string]string `json:"x,omitempty"`
+	SeriesName     string            `json:"sn,omitempty"`
+	Season         int               `json:"s,omitempty"`
+	Episode        int               `json:"e,omitempty"`
+	Poster         string            `json:"p,omitempty"`
+	SeriesPoster   string            `json:"sp,omitempty"` // parent artwork, separate from a season poster or episode still
+	SeasonOrdering string            `json:"so,omitempty"`
+	Backdrop       string            `json:"b,omitempty"`
+	Logo           string            `json:"l,omitempty"`
+	Thumb          string            `json:"th,omitempty"`
+	ProfileID      string            `json:"pr,omitempty"`
+	ViewKey        string            `json:"v,omitempty"`
+	Extra          string            `json:"ex,omitempty"` // kind-specific (list ID, channel URL, ...)
 }
 
 type itemRef struct {
@@ -209,6 +211,8 @@ func fillContext(base, in refContext) refContext {
 	fill(&out.TitleID, in.TitleID)
 	fill(&out.SeriesName, in.SeriesName)
 	fill(&out.Poster, in.Poster)
+	fill(&out.SeriesPoster, in.SeriesPoster)
+	fill(&out.SeasonOrdering, in.SeasonOrdering)
 	fill(&out.Backdrop, in.Backdrop)
 	fill(&out.Logo, in.Logo)
 	fill(&out.Thumb, in.Thumb)
@@ -290,6 +294,12 @@ func mergeContext(base, in refContext) refContext {
 	if in.Poster != "" {
 		out.Poster = in.Poster
 	}
+	if in.SeriesPoster != "" {
+		out.SeriesPoster = in.SeriesPoster
+	}
+	if in.SeasonOrdering != "" {
+		out.SeasonOrdering = in.SeasonOrdering
+	}
 	if in.Backdrop != "" {
 		out.Backdrop = in.Backdrop
 	}
@@ -313,7 +323,7 @@ func mergeContext(base, in refContext) refContext {
 
 func contextEqual(a, b refContext) bool {
 	if a.Name != b.Name || a.Year != b.Year || a.TitleID != b.TitleID || a.SeriesName != b.SeriesName ||
-		a.Season != b.Season || a.Episode != b.Episode || a.Poster != b.Poster || a.Backdrop != b.Backdrop ||
+		a.Season != b.Season || a.Episode != b.Episode || a.Poster != b.Poster || a.SeriesPoster != b.SeriesPoster || a.SeasonOrdering != b.SeasonOrdering || a.Backdrop != b.Backdrop ||
 		a.Logo != b.Logo || a.Thumb != b.Thumb || a.ProfileID != b.ProfileID || a.ViewKey != b.ViewKey ||
 		a.Extra != b.Extra || len(a.ExternalIDs) != len(b.ExternalIDs) {
 		return false
