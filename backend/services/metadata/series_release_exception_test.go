@@ -42,7 +42,7 @@ func TestBigBrotherCachedDailyFlagIsCorrected(t *testing.T) {
 			}
 			cacheID := seriesDetailsCacheKey("eng", 76706, "")
 			if mode == "lite-cache" {
-				cacheID = cacheKey("tvdb", "series", "details", "v16-lite", "eng", "76706", "default")
+				cacheID = seriesDetailsLiteCacheKey("eng", 76706, "")
 			}
 			cached := models.SeriesDetails{
 				Title: models.Title{ID: "tvdb:series:76706", Name: "Big Brother (US)", TVDBID: 76706,
