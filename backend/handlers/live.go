@@ -77,6 +77,9 @@ type LiveChannel struct {
 	SourceName     string `json:"sourceName,omitempty"`
 	StreamURL      string `json:"streamUrl,omitempty"`  // Backend-proxied stream URL
 	PlaybackID     string `json:"playbackId,omitempty"` // Provider-local ID used for tune-time resolution
+	// Catchup is set when the provider can replay this channel's past programmes.
+	Catchup       *LiveCatchup       `json:"catchup,omitempty"`
+	catchupSource *liveCatchupSource // server-side only: how to build the archive URL
 }
 
 // LiveSourceOption represents a selectable M3U source exposed to clients.
@@ -276,6 +279,9 @@ type XtreamStream struct {
 	StreamIcon string `json:"stream_icon"`
 	CategoryID string `json:"category_id"`
 	EpgID      string `json:"epg_channel_id"`
+	// Catch-up: tv_archive 1 when the panel keeps an archive of tv_archive_duration days.
+	TVArchive         flexString `json:"tv_archive"`
+	TVArchiveDuration flexString `json:"tv_archive_duration"`
 }
 
 // Regex for parsing M3U attributes
@@ -1133,9 +1139,20 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 	}
 
 	var pending *LiveChannel
+	var pendingAttributes map[string]string
+	// Playlist-wide attributes on #EXTM3U (catch-up defaults).
+	header := map[string]string{}
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
 		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#EXTM3U") {
+			for _, match := range attributeRegex.FindAllStringSubmatch(line, -1) {
+				if len(match) == 3 {
+					header[strings.ToLower(match[1])] = match[2]
+				}
+			}
 			continue
 		}
 
@@ -1182,6 +1199,7 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 				TvgName:     strings.TrimSpace(attributes["tvg-name"]),
 				TvgLanguage: strings.TrimSpace(attributes["tvg-language"]),
 			}
+			pendingAttributes = attributes
 			continue
 		}
 
@@ -1196,6 +1214,7 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 			}
 			pending.ID = assignedID
 			pending.URL = line
+			pending.Catchup, pending.catchupSource = m3uCatchup(pendingAttributes, header, line)
 			channels = append(channels, *pending)
 			pending = nil
 		}
@@ -2244,6 +2263,7 @@ func (h *LiveHandler) fetchXtreamChannelsUncached(ctx context.Context, host, use
 			TvgID:   stream.EpgID,
 			TvgName: stream.Name,
 		}
+		channel.Catchup, channel.catchupSource = xtreamCatchup(stream, host, username, password, proxyURL)
 		channels = append(channels, channel)
 	}
 

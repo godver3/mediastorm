@@ -490,6 +490,8 @@ func Register(
 	protected.HandleFunc("/live/cache/clear", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/stream", liveHandler.StreamChannel).Methods(http.MethodGet, http.MethodHead)
 	protected.HandleFunc("/live/stream", handleOptions).Methods(http.MethodOptions)
+	protected.HandleFunc("/live/catchup", liveHandler.GetCatchup).Methods(http.MethodGet)
+	protected.HandleFunc("/live/catchup", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/library/libraries", localMediaHandler.ListLibraries).Methods(http.MethodGet)
 	protected.HandleFunc("/library/libraries", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/library/libraries/{libraryID}/groups", localMediaHandler.ListGroups).Methods(http.MethodGet)
