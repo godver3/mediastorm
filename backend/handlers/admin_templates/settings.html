@@ -9322,7 +9322,7 @@
         }
         if (groupKey === 'epg') {
             if (!item.epg?.enabled) return 'Disabled';
-            if (item.mode === 'hdhomerun' && !item.epg.xmltvUrl) return 'Automatic HDHomeRun guide · Refresh every 20–28h · Up to 14 days';
+            if (item.mode === 'hdhomerun' && !item.epg.xmltvUrl) return (item.hdhomerunGuideEmail && item.hdhomerunGuideDeviceIds ? 'HDHomeRun account guide' : 'Limited HDHomeRun guide · add guide email + device IDs for the full guide') + ' · Refresh every 20–28h';
             const refresh = item.epg.refreshIntervalHours || 12;
             const retention = item.epg.retentionDays || 7;
             return 'Enabled · Refresh every ' + refresh + 'h · ' + retention + '-day retention';
@@ -9406,7 +9406,7 @@
                     if (!providerTableFieldVisible(item, fieldDef)) return null;
                     if (item.mode === 'hdhomerun') {
                         if (!item.epg?.xmltvUrl && ['epg.refreshIntervalHours', 'epg.retentionDays'].includes(fieldKey)) return null;
-                        if (fieldKey === 'epg.enabled') fieldDef = { ...fieldDef, label: 'Automatic HDHomeRun Guide', description: 'Download the tuner’s guide automatically: 2 days free or 14 days with a DVR guide subscription. Refreshes every 20–28 hours; the previous guide is kept if a download fails.' };
+                        if (fieldKey === 'epg.enabled') fieldDef = { ...fieldDef, label: 'Automatic HDHomeRun Guide', description: 'Download the HDHomeRun guide. The full guide requires the guide email and device IDs under Connection; without them only a limited guide is available. Refreshes every 20–28 hours; the previous guide is kept if a download fails.' };
                     }
                     const fieldValue = fieldKey.includes('.')
                         ? fieldKey.split('.').reduce((obj, key) => obj?.[key], item)

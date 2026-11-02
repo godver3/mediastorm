@@ -9,7 +9,8 @@ import (
 	"strings"
 )
 
-// NormalizeHDHomeRunGuideAuth validates the optional account-based XMLTV method.
+// NormalizeHDHomeRunGuideAuth validates the account-based XMLTV method, which
+// is required for the full guide (automatic DeviceAuth only returns a limited one).
 // Errors intentionally exclude account identifiers so they are safe to log.
 func NormalizeHDHomeRunGuideAuth(email, deviceIDs string) (string, string, error) {
 	email = strings.TrimSpace(email)
@@ -18,7 +19,7 @@ func NormalizeHDHomeRunGuideAuth(email, deviceIDs string) (string, string, error
 		return "", "", nil
 	}
 	if email == "" || deviceIDs == "" {
-		return "", "", errors.New("HDHomeRun guide email and device IDs must both be provided, or both left empty for automatic authentication")
+		return "", "", errors.New("HDHomeRun guide email and device IDs must both be provided for the full guide (leave both empty for the limited automatic guide)")
 	}
 	address, err := mail.ParseAddress(email)
 	if err != nil || address.Address != email {

@@ -26,7 +26,7 @@ func TestHDHomeRunGuideSettingsSchema(t *testing.T) {
 				}
 				condition := field["showWhen"].(map[string]interface{})
 				if field["type"] != "text" || field["required"] == true || condition["field"] != "mode" || condition["value"] != "hdhomerun" {
-					t.Fatalf("incorrect optional HDHomeRun field: %s.%s", name, key)
+					t.Fatalf("incorrect HDHomeRun guide field: %s.%s", name, key)
 				}
 			}
 			found++
