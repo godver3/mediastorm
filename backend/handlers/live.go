@@ -1056,8 +1056,13 @@ func (h *LiveHandler) saveToCache(key string, data []byte, contentType string) e
 	return nil
 }
 
-// ClearCache removes all cached playlists, forcing a fresh fetch on next request.
+// ClearCache removes all cached playlists and marks the in-memory provider
+// catalogues stale, forcing a fresh fetch on the next request.
 func (h *LiveHandler) ClearCache(w http.ResponseWriter, r *http.Request) {
+	if n := h.invalidateCatalogCaches(); n > 0 {
+		log.Printf("[live] invalidated %d in-memory catalogue entries", n)
+	}
+
 	h.cacheMu.Lock()
 	defer h.cacheMu.Unlock()
 
