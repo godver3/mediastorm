@@ -1553,7 +1553,15 @@ func seriesDetailsCacheKey(lang string, tvdbID int64, seasonType string) string 
 	if st == "" {
 		st = "default"
 	}
-	return cacheKey("tvdb", "series", "details", "v17", lang, strconv.FormatInt(tvdbID, 10), st)
+	return cacheKey("tvdb", "series", "details", "v18", lang, strconv.FormatInt(tvdbID, 10), st)
+}
+
+func seriesDetailsLiteCacheKey(lang string, tvdbID int64, seasonType string) string {
+	st := strings.ToLower(strings.TrimSpace(seasonType))
+	if st == "" {
+		st = "default"
+	}
+	return cacheKey("tvdb", "series", "details", "v17-lite", lang, strconv.FormatInt(tvdbID, 10), st)
 }
 
 func applyTVDBSeriesIdentity(title *models.Title, extended tvdbSeriesExtendedData) {
@@ -4986,9 +4994,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		} else if season.Type.Type != "" {
 			target.Type = season.Type.Type
 		}
-		if img := newTVDBImage(season.Image, "poster", 0, 0); img != nil {
-			target.Image = img
-		}
+		target.Image = tvdbSeasonPoster(season.Image, seriesTitle.Poster)
 	}
 
 	// Get localized episodes from parallel fetch
@@ -5380,6 +5386,7 @@ func (s *Service) enrichTMDBEpisodeMetadata(ctx context.Context, details *models
 	type seasonEpisodeResult struct {
 		seasonNumber int
 		episodes     []models.SeriesEpisode
+		poster       *models.Image
 		err          error
 	}
 
@@ -5423,7 +5430,7 @@ func (s *Service) enrichTMDBEpisodeMetadata(ctx context.Context, details *models
 				}
 				episodes = append(episodes, episode)
 			}
-			results <- seasonEpisodeResult{seasonNumber: seasonNumber, episodes: episodes}
+			results <- seasonEpisodeResult{seasonNumber: seasonNumber, episodes: episodes, poster: tmdbSeason.Image}
 		}()
 	}
 
@@ -5438,6 +5445,7 @@ func (s *Service) enrichTMDBEpisodeMetadata(ctx context.Context, details *models
 
 	var tmdbEpisodes []models.SeriesEpisode
 	failedSeasons := 0
+	changeCount := 0
 	for result := range results {
 		if result.err != nil {
 			failedSeasons++
@@ -5447,12 +5455,14 @@ func (s *Service) enrichTMDBEpisodeMetadata(ctx context.Context, details *models
 		if len(result.episodes) > 0 {
 			tmdbEpisodes = append(tmdbEpisodes, result.episodes...)
 		}
+		if applyTMDBSeasonPoster(details, result.seasonNumber, result.poster) {
+			changeCount++
+		}
 	}
 	if len(tmdbEpisodes) == 0 {
-		return false, failedSeasons == 0
+		return changeCount > 0, failedSeasons == 0
 	}
 
-	changeCount := 0
 	for i := range details.Seasons {
 		for j := range details.Seasons[i].Episodes {
 			episode := &details.Seasons[i].Episodes[j]
@@ -5599,11 +5609,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		return &fullCached, nil
 	}
 
-	liteSeasonType := strings.ToLower(strings.TrimSpace(req.SeasonType))
-	if liteSeasonType == "" {
-		liteSeasonType = "default"
-	}
-	cacheID := cacheKey("tvdb", "series", "details", "v16-lite", s.client.language, strconv.FormatInt(tvdbID, 10), liteSeasonType)
+	cacheID := seriesDetailsLiteCacheKey(s.client.language, tvdbID, req.SeasonType)
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && len(cached.Seasons) > 0 {
 		normalizeSeriesDetailsReleaseStatus(&cached)
@@ -5681,7 +5687,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		if strings.Contains(extResult.err.Error(), "404 Not Found") {
 			if altID := s.tryFallbackSeriesTVDBID(ctx, req, tvdbID); altID > 0 {
 				tvdbID = altID
-				cacheID = seriesDetailsCacheKey(s.client.language, tvdbID, req.SeasonType)
+				cacheID = seriesDetailsLiteCacheKey(s.client.language, tvdbID, req.SeasonType)
 				// Drain the translation channel from the failed ID
 				<-transChan
 				// Re-fetch with the correct ID
@@ -5851,9 +5857,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 		} else if season.Type.Type != "" {
 			target.Type = season.Type.Type
 		}
-		if img := newTVDBImage(season.Image, "poster", 0, 0); img != nil {
-			target.Image = img
-		}
+		target.Image = tvdbSeasonPoster(season.Image, seriesTitle.Poster)
 	}
 
 	// Source episode numbering from the active ordering (see SeriesDetails).
