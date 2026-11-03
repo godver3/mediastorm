@@ -24,7 +24,7 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Image not found")
 		return
 	}
-	source := imageURLFor(ref, strings.ToLower(pathVar(r, "type")))
+	source := imageURLFor(s.imageRef(ref), strings.ToLower(pathVar(r, "type")))
 	if source == "" {
 		writeError(w, http.StatusNotFound, "Image not found")
 		return
@@ -96,12 +96,26 @@ func (s *Server) serveLibraryArtwork(w http.ResponseWriter, r *http.Request, ite
 	forward(w, r, system, s.deps.Handlers.LibraryArtwork, target, map[string]string{"itemID": itemID, "kind": kind})
 }
 
+// imageRef restores parent artwork for persisted refs predating SeriesPoster.
+func (s *Server) imageRef(ref itemRef) itemRef {
+	if ref.Kind == refSeason && ref.Ctx.SeriesPoster == "" {
+		series := seriesInfoFromSeasonRef(ref)
+		if parent, ok := s.ids.get(deriveID(refSeries, series.source())); ok {
+			ref.Ctx.SeriesPoster = parent.Ctx.Poster
+		}
+	}
+	return ref
+}
+
 // imageURLFor picks the source URL for a Jellyfin image type.
 func imageURLFor(ref itemRef, imageType string) string {
 	c := ref.Ctx
 	switch imageType {
 	case "primary":
-		if ref.Kind == refEpisode {
+		if ref.Kind == refSeason {
+			return firstNonEmpty(c.Poster, c.SeriesPoster, c.Thumb)
+		}
+		if ref.Kind == refEpisode || (ref.Kind == refLocal && c.ViewKey != "") {
 			// Without a still the series backdrop keeps the card landscape.
 			return firstNonEmpty(c.Thumb, c.Backdrop, c.Poster)
 		}

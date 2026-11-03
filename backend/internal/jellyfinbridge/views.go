@@ -431,7 +431,9 @@ func (s *Server) listFolders(profile models.User) []dto.BaseItemDto {
 				break
 			}
 		}
-		id := s.ids.put(refList, profile.ID+":"+list.ID, refContext{Name: list.Name, ProfileID: profile.ID, Extra: list.ID, Poster: poster})
+		// This ref is profile-scoped; changes to the list's cover are safe to
+		// replace and must match the image tag returned below.
+		id := s.ids.putTrusted(refList, profile.ID+":"+list.ID, refContext{Name: list.Name, ProfileID: profile.ID, Extra: list.ID, Poster: poster})
 		item := dto.BaseItemDto{
 			Name:                    list.Name,
 			ServerID:                s.serverID,

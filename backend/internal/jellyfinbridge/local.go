@@ -146,6 +146,7 @@ func (s *Server) localMovieItem(u *userState, libraryID string, g models.LocalMe
 	item := s.titleItem(u, t)
 	// titleItem registered the catalog identity; point this item at the file.
 	item.ID = id
+	s.storedImageFields(&item)
 	if item.UserData != nil {
 		item.UserData.ItemID = id
 	}
@@ -181,6 +182,7 @@ func (s *Server) localSeriesItem(u *userState, libraryID string, g models.LocalM
 	id := s.ids.putTrusted(refLocalSeries, libraryID+"/"+g.ID, ctx)
 	item := s.titleItem(u, t)
 	item.ID = id
+	s.storedImageFields(&item)
 	item.DisplayPreferencesID = id
 	item.ChildCount = intPtr(len(g.Seasons))
 	if item.UserData != nil {
@@ -206,9 +208,11 @@ func (s *Server) localSeasonItems(u *userState, libraryID string, g models.Local
 		ctx.ViewKey = g.ID
 		ctx.Season = season.SeasonNumber
 		ctx.SeriesName = series.Info.Name
+		ctx.SeriesPoster = series.Info.Poster
 		id := s.ids.putTrusted(refLocalSeason, series.Src+"/s"+strconv.Itoa(season.SeasonNumber), ctx)
 		item := s.seasonItem(u, series, models.SeriesSeason{Number: season.SeasonNumber, EpisodeCount: len(season.Episodes)})
 		item.ID = id
+		s.storedImageFields(&item)
 		item.DisplayPreferencesID = id
 		out = append(out, item)
 	}
@@ -217,6 +221,8 @@ func (s *Server) localSeasonItems(u *userState, libraryID string, g models.Local
 
 func (s *Server) localEpisodeItems(u *userState, libraryID string, g models.LocalMediaItemGroup, seasonNumber int) []dto.BaseItemDto {
 	series := s.localSeriesRef(libraryID, g)
+	// Direct episode requests must register the local season IDs they expose.
+	s.localSeasonItems(nil, libraryID, g)
 	var out []dto.BaseItemDto
 	for _, season := range g.Seasons {
 		if seasonNumber >= 0 && season.SeasonNumber != seasonNumber {
@@ -241,8 +247,12 @@ func (s *Server) localEpisodeItems(u *userState, libraryID string, g models.Loca
 			ctx.ViewKey = g.ID
 			ctx.Season, ctx.Episode, ctx.Name, ctx.Thumb = info.Season, info.Episode, info.Name, info.Still
 			ctx.SeriesName = series.Info.Name
+			ctx.SeriesPoster = series.Info.Poster
 			id := s.ids.putTrusted(refLocal, file.ID, ctx)
 			item.ID = id
+			if ref, ok := s.ids.get(id); ok {
+				episodeImageFields(&item, ref)
+			}
 			item.SeasonID = seasonID
 			item.ParentID = seasonID
 			if item.UserData != nil {
