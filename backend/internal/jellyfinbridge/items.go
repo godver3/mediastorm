@@ -628,6 +628,13 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 	// library this way, which would hit the indexers once per title. Versions
 	// list releases already found; playback starts the search.
 	if ref, ok := s.ids.get(item.ID); ok {
+		// Picking "Find releases…" loads it as an item (Android TV does on
+		// selection, jellyfin-web before playing it): that asks for the
+		// releases, so start the search. They are listed when the item is
+		// opened again.
+		if v := requestedVersion(r); v != "" && v == s.findReleasesID(p, item.ID) && s.releaseVersionCount() > 0 {
+			s.releasesFor(p, item.ID, ref)
+		}
 		s.itemVersions(p, &item, ref)
 	}
 	items := []dto.BaseItemDto{item}

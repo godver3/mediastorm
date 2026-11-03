@@ -30,7 +30,10 @@ const (
 	// Transcoding walks it even when no versions are shown.
 	releaseListSize    = 15
 	maxReleaseVersions = 50
-	releaseListTTL     = 30 * time.Minute
+	// releaseListTTL keeps a release list for a day: lists are only searched
+	// when a user plays or asks for releases, and ranking or filter changes
+	// discard them (rankingGeneration).
+	releaseListTTL = 24 * time.Hour
 	// releaseRetryTTL keeps a failed or empty search (an indexer outage) only
 	// briefly.
 	releaseRetryTTL   = time.Minute
@@ -328,13 +331,19 @@ func (s *Server) itemVersions(p *principal, item *dto.BaseItemDto, ref itemRef) 
 		return
 	}
 	releases := s.shownReleases(s.releasesCached(p, item.ID))
-	if len(releases) == 0 {
-		return
-	}
 	// The default version's ID is the item ID, as in Jellyfin: clients only
 	// load a version as a separate item when its ID differs.
 	versions := []dto.MediaSourceInfo{versionStub(item.ID, "Auto (mediastorm)", item.RunTimeTicks)}
 	s.releases.mu.Lock()
+	if len(releases) == 0 {
+		// No releases searched yet: offer a version that searches when it is
+		// picked (loaded as an item) or played.
+		id := s.findReleasesID(p, item.ID)
+		s.releases.versions[id] = item.ID
+		s.releases.mu.Unlock()
+		item.MediaSources = append(versions, versionStub(id, findReleasesLabel, item.RunTimeTicks))
+		return
+	}
 	for _, r := range releases {
 		id := s.releaseMediaSourceID(p, item.ID, r.Key)
 		s.releases.versions[id] = item.ID
@@ -454,4 +463,15 @@ func (l *releaseList) ttl() time.Duration {
 		return releaseRetryTTL
 	}
 	return releaseListTTL
+}
+
+// findReleasesLabel names the version that searches for releases. Clients
+// keep the version list they loaded with the item, so the releases show up
+// when the item is opened again.
+const findReleasesLabel = "Find releases (reopen to choose)"
+
+// findReleasesID is the media source ID of an item's "Find releases…"
+// version for one profile and device.
+func (s *Server) findReleasesID(p *principal, itemID string) string {
+	return s.mediaSourceID(p.Profile.ID, p.Client.DeviceID, itemID+"|find-releases")
 }

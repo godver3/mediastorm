@@ -260,6 +260,7 @@ func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *prin
 	// Playing is the only request that shows a user wants this item (clients
 	// fetch items in bulk while browsing), so the release list for the
 	// version picker is searched here and shown on later details requests.
+	// Playing "Find releases…" plays the automatic version meanwhile.
 	if s.releaseVersionCount() > 0 {
 		s.releasesFor(p, itemID, ref)
 	}

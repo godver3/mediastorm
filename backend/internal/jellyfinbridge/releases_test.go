@@ -125,17 +125,81 @@ func versionsAfterPlay(t *testing.T, item string, do func(method, path string, b
 	t.Helper()
 	before := decode[dto.BaseItemDto](t, do(http.MethodGet, "/Items/"+item, nil))
 	time.Sleep(50 * time.Millisecond)
-	if len(before.MediaSources) > 1 || searches() != 0 {
-		t.Fatalf("details before playing: %d versions, %d searches; want none", len(before.MediaSources), searches())
+	if len(before.MediaSources) != 2 || before.MediaSources[1].Name != findReleasesLabel || searches() != 0 {
+		t.Fatalf("details before playing: versions %v, %d searches; want Auto and Find releases, no search", sourceNames(before), searches())
 	}
 	do(http.MethodPost, "/Items/"+item+"/PlaybackInfo", map[string]any{"MediaSourceId": item})
 	var got dto.BaseItemDto
 	for deadline := time.Now().Add(5 * time.Second); ; {
 		got = decode[dto.BaseItemDto](t, do(http.MethodGet, "/Items/"+item, nil))
-		if len(got.MediaSources) > 1 || time.Now().After(deadline) {
+		if (len(got.MediaSources) > 1 && got.MediaSources[1].Name != findReleasesLabel) || time.Now().After(deadline) {
 			return got
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func sourceNames(item dto.BaseItemDto) []string {
+	names := make([]string, len(item.MediaSources))
+	for i, ms := range item.MediaSources {
+		names[i] = ms.Name
+	}
+	return names
+}
+
+// "Find releases" is the version that asks for releases: loading it as an
+// item (Android TV does on selection) starts the search without playing, and
+// playing it (jellyfin-web) plays the automatic version. The releases are
+// listed when the item is opened again, and the entry is gone then.
+func TestFindReleasesVersion(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{ReleaseVersions: 3})
+	installFakePlayback(t, h)
+	var searches atomic.Int32
+	h.srv.deps.Handlers.IndexerSearch = func(w http.ResponseWriter, r *http.Request) {
+		searches.Add(1)
+		writeJSON(w, http.StatusOK, []map[string]any{
+			{"title": "Movie.2024.1080p.WEB.H264-ONE", "guid": "g1"},
+			{"title": "Movie.2024.2160p.WEB.H265-TWO", "guid": "g2"},
+		})
+	}
+	tok := h.login("Living Room", "alice-pass")
+	item := movieID(t, h, tok)
+	details := decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+item, tok, nil))
+	if names := sourceNames(details); len(names) != 2 || names[1] != findReleasesLabel {
+		t.Fatalf("versions = %v, want Auto and %q", names, findReleasesLabel)
+	}
+	find := details.MediaSources[1].ID
+
+	// Selecting it: the client loads the version as an item.
+	v := decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+find, tok, nil))
+	if v.ID != find {
+		t.Fatalf("find releases item = %s, want %s", v.ID, find)
+	}
+	var reopened dto.BaseItemDto
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		reopened = decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+item, tok, nil))
+		if len(reopened.MediaSources) == 3 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if names := sourceNames(reopened); len(names) != 3 || !strings.HasPrefix(names[1], "#1 ") || !strings.HasPrefix(names[2], "#2 ") {
+		t.Fatalf("versions after finding = %v, want Auto and the 2 releases", names)
+	}
+	if searches.Load() != 1 {
+		t.Fatalf("searches = %d, want 1", searches.Load())
+	}
+
+	// Playing it plays the automatic version (an unsearched episode).
+	next := decode[dto.QueryResult[dto.BaseItemDto]](t, h.do(http.MethodGet, "/Shows/NextUp", tok, nil))
+	if len(next.Items) == 0 {
+		t.Fatal("no next-up episode")
+	}
+	other := next.Items[0].ID
+	od := decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+other, tok, nil))
+	info := decode[dto.PlaybackInfoResponse](t, h.do(http.MethodPost, "/Items/"+other+"/PlaybackInfo", tok, map[string]any{"MediaSourceId": od.MediaSources[1].ID}))
+	if info.ErrorCode != "" || len(info.MediaSources) != 1 || info.PlaySessionID == "" {
+		t.Fatalf("playing find releases = %+v, want the automatic version", info)
 	}
 }
 
