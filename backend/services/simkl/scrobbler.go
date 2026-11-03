@@ -71,7 +71,13 @@ func (s *Scrobbler) getAccountForUser(userID string) *config.SimklAccount {
 		return nil
 	}
 
-	return settings.Simkl.GetAccountByID(user.SimklAccountID)
+	account := settings.Simkl.GetAccountByID(user.SimklAccountID)
+	if account != nil {
+		if _, err := s.client.EnsureValidToken(account, s.configManager); err != nil {
+			log.Printf("[simkl] token refresh failed for account %s: %v", account.ID, err)
+		}
+	}
+	return account
 }
 
 func (s *Scrobbler) ScrobbleMovie(userID string, tmdbID, tvdbID int, imdbID string, watchedAt time.Time) error {

@@ -1805,6 +1805,9 @@ func (h *MetadataHandler) SimklList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := h.SimklClient.EnsureValidToken(account, h.CfgManager); err != nil {
+		log.Printf("[simkl] token refresh failed for account %s: %v", account.ID, err)
+	}
 	listItems, err := h.SimklClient.GetListItems(account.ClientID, account.AccessToken, mediaType, listType)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusBadGateway)

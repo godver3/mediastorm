@@ -645,6 +645,7 @@ func redactSettings(s *config.Settings) {
 	for i := range s.Simkl.Accounts {
 		mask(&s.Simkl.Accounts[i].ClientSecret)
 		mask(&s.Simkl.Accounts[i].AccessToken)
+		mask(&s.Simkl.Accounts[i].RefreshToken)
 	}
 
 	// Self-hosted Scrob credentials
@@ -839,6 +840,7 @@ func preserveRedactedFields(incoming *config.Settings, existing *config.Settings
 		if i < len(existing.Simkl.Accounts) {
 			restore(&incoming.Simkl.Accounts[i].ClientSecret, existing.Simkl.Accounts[i].ClientSecret)
 			restore(&incoming.Simkl.Accounts[i].AccessToken, existing.Simkl.Accounts[i].AccessToken)
+			restore(&incoming.Simkl.Accounts[i].RefreshToken, existing.Simkl.Accounts[i].RefreshToken)
 		}
 	}
 

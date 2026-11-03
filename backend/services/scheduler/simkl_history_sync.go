@@ -52,6 +52,9 @@ func (s *Service) executeSimklHistorySync(task config.ScheduledTask) (SyncResult
 	if simklAccount.ClientID == "" || simklAccount.AccessToken == "" {
 		return SyncResult{}, errors.New("simkl account not authenticated")
 	}
+	if _, err := simklClient.EnsureValidToken(simklAccount, s.configManager); err != nil {
+		return SyncResult{}, err
+	}
 
 	switch syncDirection {
 	case "simkl_to_local":

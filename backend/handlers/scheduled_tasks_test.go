@@ -800,3 +800,17 @@ func TestValidateScheduledTaskConfigRejectsUnsupportedExportDirections(t *testin
 		}
 	}
 }
+
+func TestValidateScheduledTaskConfigSimklWatchlistSync(t *testing.T) {
+	valid := map[string]string{"simklAccountId": "acc", "profileId": "p", "syncDirection": "bidirectional"}
+	if err := validateScheduledTaskConfig(config.ScheduledTaskTypeSimklWatchlistSync, valid, nil); err != nil {
+		t.Fatalf("bidirectional rejected: %v", err)
+	}
+	if err := validateScheduledTaskConfig(config.ScheduledTaskTypeSimklWatchlistSync, map[string]string{"profileId": "p"}, nil); err == nil {
+		t.Fatal("missing simklAccountId accepted")
+	}
+	bad := map[string]string{"simklAccountId": "acc", "profileId": "p", "syncDirection": "simkl_to_local"}
+	if err := validateScheduledTaskConfig(config.ScheduledTaskTypeSimklWatchlistSync, bad, nil); err == nil {
+		t.Fatal("history-style direction accepted for watchlist sync")
+	}
+}

@@ -353,10 +353,10 @@ func (c *Client) GetDeviceCode() (*DeviceCodeResponse, error) {
 func (c *Client) PollForToken(deviceCode string) (*TokenResponse, error) {
 	clientID, clientSecret := c.credentials()
 	payload := map[string]string{
-		"code":          deviceCode,
-		"client_id":     clientID,
-		"client_secret": clientSecret,
+		"code":      deviceCode,
+		"client_id": clientID,
 	}
+	addClientSecret(payload, clientSecret)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -403,10 +403,10 @@ func (c *Client) RefreshAccessToken(refreshToken string) (*TokenResponse, error)
 	payload := map[string]string{
 		"refresh_token": refreshToken,
 		"client_id":     clientID,
-		"client_secret": clientSecret,
-		"redirect_uri":  "urn:ietf:wg:oauth:2.0:oob",
+		"redirect_uri":  OOBRedirectURI,
 		"grant_type":    "refresh_token",
 	}
+	addClientSecret(payload, clientSecret)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -649,10 +649,24 @@ func NormalizeMediaType(traktType string) string {
 	}
 }
 
-// HasCredentials checks if the client has valid credentials configured
+// OOBRedirectURI is the redirect URI Trakt expects on token refreshes for
+// device-flow apps. Apps must list it under their Redirect URIs.
+const OOBRedirectURI = "urn:ietf:wg:oauth:2.0:oob"
+
+// addClientSecret adds client_secret to an OAuth payload only when one is
+// configured. Trakt stopped issuing secrets for apps created from 2026-10-01
+// (they use PKCE / public-client device flow); legacy apps still send theirs.
+func addClientSecret(payload map[string]string, clientSecret string) {
+	if secret := strings.TrimSpace(clientSecret); secret != "" {
+		payload["client_secret"] = secret
+	}
+}
+
+// HasCredentials reports whether a Client ID is configured. A Client Secret is
+// optional: Trakt no longer issues one for new apps.
 func (c *Client) HasCredentials() bool {
-	clientID, clientSecret := c.credentials()
-	return clientID != "" && clientSecret != ""
+	clientID, _ := c.credentials()
+	return clientID != ""
 }
 
 // UpdateCredentials updates the client credentials in place.

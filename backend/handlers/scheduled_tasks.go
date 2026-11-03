@@ -73,7 +73,7 @@ func (h *ScheduledTasksHandler) taskIntegrationBelongsToAccount(task config.Sche
 				return account.OwnerAccountID == accountID
 			}
 		}
-	case config.ScheduledTaskTypeSimklHistorySync:
+	case config.ScheduledTaskTypeSimklHistorySync, config.ScheduledTaskTypeSimklWatchlistSync:
 		integrationID := strings.TrimSpace(task.Config["simklAccountId"])
 		for _, account := range settings.Simkl.Accounts {
 			if account.ID == integrationID {
@@ -232,6 +232,15 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 			taskConfig["syncDirection"] = "simkl_to_local"
 		} else if taskConfig["syncDirection"] != "simkl_to_local" && taskConfig["syncDirection"] != "local_to_simkl" && taskConfig["syncDirection"] != "bidirectional" {
 			return fmt.Errorf("Invalid sync direction. Must be simkl_to_local, local_to_simkl, or bidirectional")
+		}
+	case config.ScheduledTaskTypeSimklWatchlistSync:
+		if err := requireProfile("simklAccountId", "Simkl watchlist sync requires simklAccountId and profileId in config"); err != nil {
+			return err
+		}
+		switch taskConfig["syncDirection"] {
+		case "", "source_to_target", "target_to_source", "bidirectional":
+		default:
+			return fmt.Errorf("Invalid sync direction. Must be source_to_target, target_to_source, or bidirectional")
 		}
 	case config.ScheduledTaskTypeScrobHistorySync:
 		if err := requireProfile("scrobAccountId", "Scrob history sync requires scrobAccountId and profileId in config"); err != nil {

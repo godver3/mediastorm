@@ -350,6 +350,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeTraktHistorySync(task)
 	case config.ScheduledTaskTypeSimklHistorySync:
 		result, err = s.executeSimklHistorySync(task)
+	case config.ScheduledTaskTypeSimklWatchlistSync:
+		result, err = s.executeSimklWatchlistSync(task)
 	case config.ScheduledTaskTypeScrobHistorySync:
 		result, err = s.executeScrobHistorySync(task)
 	case config.ScheduledTaskTypePrewarm:
@@ -388,6 +390,7 @@ func isWatchlistSyncTask(t config.ScheduledTaskType) bool {
 	case config.ScheduledTaskTypePlexWatchlistSync,
 		config.ScheduledTaskTypeTraktListSync,
 		config.ScheduledTaskTypeMDBListWatchlistSync,
+		config.ScheduledTaskTypeSimklWatchlistSync,
 		config.ScheduledTaskTypeJellyfinFavoritesSync:
 		return true
 	default:
@@ -1411,7 +1414,11 @@ func (s *Service) executeTraktListSync(task config.ScheduledTask) (SyncResult, e
 	case "target_to_source":
 		return s.syncLocalToTrakt(traktAccount, profileID, syncSource, deleteBehavior, watchlistSyncSince(task), dryRun)
 	case "bidirectional":
-		return s.syncTraktBidirectional(traktAccount, profileID, listType, task.Config["customListId"], syncSource, deleteBehavior, conflictResolution, watchlistSyncSince(task), dryRun)
+		tracker, err := s.newWatchlistRemovalTracker(task.ID, "trakt", traktAccountID, profileID)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		return s.syncTraktBidirectional(traktAccount, profileID, listType, task.Config["customListId"], syncSource, deleteBehavior, conflictResolution, watchlistSyncSince(task), dryRun, tracker)
 	default:
 		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", syncDirection)
 	}
@@ -1909,7 +1916,10 @@ func traktSyncIDsFor(id string, externalIDs map[string]string) (trakt.SyncIDs, b
 //   - a local item this task has already synced that is missing from Trakt
 //     was removed there, so it is removed locally;
 //   - a Trakt item the user removed locally after since is removed from Trakt.
-func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, profileID, listType, customListID, syncSource, deleteBehavior, conflictResolution string, since *time.Time, dryRun bool) (SyncResult, error) {
+//
+// tracker (nil without a snapshot store) decides which local items were removed
+// on Trakt; without it the SyncSource marker is used.
+func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, profileID, listType, customListID, syncSource, deleteBehavior, conflictResolution string, since *time.Time, dryRun bool, tracker *watchlistRemovalTracker) (SyncResult, error) {
 	now := time.Now().UTC()
 	result := SyncResult{DryRun: dryRun}
 	propagateDeletes := deleteBehavior != "additive"
@@ -1943,6 +1953,8 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 			traktKeys[key] = true
 		}
 	}
+
+	tracker.setRemote(traktKeys)
 
 	localKeys := make(map[string]bool)
 	for _, item := range localItems {
@@ -2027,9 +2039,13 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 			continue // Already in Trakt
 		}
 
-		// Items this task already synced were on Trakt at an earlier run, so
-		// their absence now means they were removed from Trakt.
-		if propagateDeletes && localItem.SyncSource == syncSource {
+		// An item that was on Trakt at an earlier run and is gone now was
+		// removed from Trakt.
+		removedOnTrakt := localItem.SyncSource == syncSource
+		if tracker != nil {
+			removedOnTrakt = tracker.removedRemotely(localItem)
+		}
+		if propagateDeletes && removedOnTrakt {
 			if dryRun {
 				log.Printf("[scheduler] DRY RUN: Would remove from local (removed from Trakt): %s", localItem.Name)
 				result.ToRemove = append(result.ToRemove, config.DryRunItem{
@@ -2039,7 +2055,13 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 				})
 				continue
 			}
-			if ok, err := s.watchlistService.RemoveSynced(profileID, localItem.MediaType, localItem.ID); err != nil {
+			remove := s.watchlistService.RemoveSynced
+			if tracker != nil {
+				// Record it like a user removal so the other watchlist syncs
+				// (Simkl, …) remove it too instead of importing it back.
+				remove = s.watchlistService.Remove
+			}
+			if ok, err := remove(profileID, localItem.MediaType, localItem.ID); err != nil {
 				log.Printf("[scheduler] Failed to remove watchlist item %s: %v", localItem.Name, err)
 			} else if ok {
 				log.Printf("[scheduler] Removed watchlist item no longer in Trakt: %s", localItem.Name)
@@ -2115,6 +2137,11 @@ func (s *Service) syncTraktBidirectional(traktAccount *config.TraktAccount, prof
 		log.Printf("[scheduler] Removed %d local items no longer in Trakt watchlist", removedFromLocal)
 	}
 
+	if !dryRun {
+		if err := s.saveWatchlistRemovalSnapshot(tracker); err != nil {
+			log.Printf("[scheduler] %v", err)
+		}
+	}
 	// A failed Trakt removal keeps the previous cursor so the next run retries it.
 	if !traktRemovalFailed {
 		result.Config = map[string]string{watchlistSyncCursorKey: now.Format(time.RFC3339Nano)}

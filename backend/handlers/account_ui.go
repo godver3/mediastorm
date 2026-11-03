@@ -1311,8 +1311,8 @@ func (h *AccountUIHandler) CreateTraktAccount(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if strings.TrimSpace(req.ClientID) == "" || strings.TrimSpace(req.ClientSecret) == "" {
-		http.Error(w, "Client ID and Client Secret are required", http.StatusBadRequest)
+	if strings.TrimSpace(req.ClientID) == "" {
+		http.Error(w, "Client ID is required", http.StatusBadRequest)
 		return
 	}
 
@@ -1443,8 +1443,8 @@ func (h *AccountUIHandler) StartTraktAuth(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if account.ClientID == "" || account.ClientSecret == "" {
-		http.Error(w, "Account credentials not configured", http.StatusBadRequest)
+	if account.ClientID == "" {
+		http.Error(w, "Account Client ID not configured", http.StatusBadRequest)
 		return
 	}
 

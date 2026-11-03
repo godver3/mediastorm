@@ -10042,7 +10042,7 @@ func (h *AdminUIHandler) StartSimklAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	pin, err := simkl.NewClient().StartPINAuth(account.ClientID)
+	start, err := simkl.NewClient().StartAccountAuth(account.ID, account.ClientID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -10050,10 +10050,11 @@ func (h *AdminUIHandler) StartSimklAuth(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"userCode":        pin.UserCode,
-		"verificationUrl": pin.VerificationURL,
-		"expiresIn":       pin.ExpiresIn,
-		"interval":        pin.Interval,
+		"userCode":        start.UserCode,
+		"verificationUrl": start.VerificationURL,
+		"expiresIn":       start.ExpiresIn,
+		"interval":        start.Interval,
+		"authVersion":     start.Version,
 	})
 }
 
@@ -10081,20 +10082,26 @@ func (h *AdminUIHandler) CheckSimklAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	token, err := simkl.NewClient().CheckPINAuth(account.ClientID, userCode)
+	result, err := simkl.NewClient().CheckAccountAuth(account.ID, account.ClientID, userCode)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if token.AccessToken == "" {
+	if !result.Done {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"authenticated": false})
 		return
 	}
 
-	account.AccessToken = token.AccessToken
-	if token.UserID != "" {
-		account.Username = token.UserID
+	account.AccessToken = result.AccessToken
+	account.RefreshToken = result.RefreshToken
+	account.ExpiresAt = result.ExpiresAt
+	account.AuthVersion = ""
+	if result.Version == simkl.AuthVersionV2 {
+		account.AuthVersion = simkl.AuthVersionV2
+	}
+	if result.UserID != "" {
+		account.Username = result.UserID
 	}
 	settings.Simkl.UpdateAccount(*account)
 	if err := h.configManager.Save(settings); err != nil {
@@ -10119,7 +10126,15 @@ func (h *AdminUIHandler) DisconnectSimklAccount(w http.ResponseWriter, r *http.R
 		http.Error(w, "Account not found", http.StatusNotFound)
 		return
 	}
+	if account.AuthVersion == simkl.AuthVersionV2 {
+		if err := simkl.NewClient().RevokeToken(account.ClientID, account.RefreshToken); err != nil {
+			log.Printf("[simkl] revoke on disconnect failed for %s: %v", account.ID, err)
+		}
+	}
 	account.AccessToken = ""
+	account.RefreshToken = ""
+	account.ExpiresAt = 0
+	account.AuthVersion = ""
 	account.Username = ""
 	settings.Simkl.UpdateAccount(*account)
 	if err := h.configManager.Save(settings); err != nil {
@@ -12833,7 +12848,7 @@ func (h *AdminUIHandler) TraktGetStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response := map[string]interface{}{
-		"hasCredentials":    settings.Trakt.ClientID != "" && settings.Trakt.ClientSecret != "",
+		"hasCredentials":    settings.Trakt.ClientID != "",
 		"connected":         settings.Trakt.AccessToken != "",
 		"username":          settings.Trakt.Username,
 		"scrobblingEnabled": settings.Trakt.ScrobblingEnabled,
@@ -12908,11 +12923,11 @@ func (h *AdminUIHandler) TraktStartAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if settings.Trakt.ClientID == "" || settings.Trakt.ClientSecret == "" {
+	if settings.Trakt.ClientID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "Trakt credentials not configured. Please save your Client ID and Client Secret first.",
+			"error": "Trakt credentials not configured. Please save your Client ID first.",
 		})
 		return
 	}

@@ -68,7 +68,7 @@ func TestSyncTraktBidirectional_MirrorRemovesLocalItemRemovedFromTrakt(t *testin
 	stub := installTraktWatchlistStub(t, svc, `[]`)
 
 	since := time.Now().Add(-time.Hour)
-	if _, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false); err != nil {
+	if _, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false, nil); err != nil {
 		t.Fatalf("syncTraktBidirectional() error = %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestSyncTraktBidirectional_MirrorRemovesFromTraktAfterLocalRemoval(t *testi
 	}
 	stub := installTraktWatchlistStub(t, svc, duneTraktWatchlistJSON)
 
-	if _, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false); err != nil {
+	if _, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false, nil); err != nil {
 		t.Fatalf("syncTraktBidirectional() error = %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestSyncTraktBidirectional_ExportMarksItemSynced(t *testing.T) {
 	stub := installTraktWatchlistStub(t, svc, `[]`)
 
 	since := time.Now().Add(-time.Hour)
-	result, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false)
+	result, err := svc.syncTraktBidirectional(&config.TraktAccount{AccessToken: "token"}, "profile-1", "watchlist", "", traktWatchlistTestSource, "mirror", "source_wins", &since, false, nil)
 	if err != nil {
 		t.Fatalf("syncTraktBidirectional() error = %v", err)
 	}

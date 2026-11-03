@@ -1732,6 +1732,11 @@ type SimklAccount struct {
 	ClientSecret   string `json:"clientSecret,omitempty"`
 	AccessToken    string `json:"accessToken,omitempty"`
 	Username       string `json:"username,omitempty"`
+	// AUTH V2 apps (Simkl's default for new apps) get 7-day access tokens
+	// renewed with a refresh token. V1 (PIN) tokens leave these empty.
+	AuthVersion  string `json:"authVersion,omitempty"` // "v2" for AUTH V2 grants
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ExpiresAt    int64  `json:"expiresAt,omitempty"` // access token expiry, unix seconds
 }
 
 // SimklSettings defines Simkl integration configuration.
@@ -2005,6 +2010,7 @@ const (
 	ScheduledTaskTypeLocalMediaScan        ScheduledTaskType = "local_media_scan"
 	ScheduledTaskTypeTraktHistorySync      ScheduledTaskType = "trakt_history_sync"
 	ScheduledTaskTypeSimklHistorySync      ScheduledTaskType = "simkl_history_sync"
+	ScheduledTaskTypeSimklWatchlistSync    ScheduledTaskType = "simkl_watchlist_sync"
 	ScheduledTaskTypePrewarm               ScheduledTaskType = "prewarm"
 	ScheduledTaskTypePlexHistorySync       ScheduledTaskType = "plex_history_sync"
 	ScheduledTaskTypeJellyfinFavoritesSync ScheduledTaskType = "jellyfin_favorites_sync"

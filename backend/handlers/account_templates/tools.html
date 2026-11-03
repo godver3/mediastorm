@@ -98,7 +98,7 @@
             </div>
             <div class="modal-body">
                 <p style="margin-bottom: 1rem; color: var(--text-secondary); font-size: 0.875rem;">
-                    Create a Trakt application at <a href="https://trakt.tv/oauth/applications" target="_blank" style="color: var(--accent);">trakt.tv/oauth/applications</a> to get your Client ID and Client Secret.
+                    Create a Trakt application at <a href="https://developer.trakt.tv/apps" target="_blank" style="color: var(--accent);">developer.trakt.tv/apps</a> (Trakt asks you to link GitHub once before your first app) and copy its Client ID. Add <code>urn:ietf:wg:oauth:2.0:oob</code> as a Redirect URI. Apps created since October 2026 have no Client Secret; leave that field empty unless your app is older and shows one.
                 </p>
                 <div class="form-group">
                     <label>Account Name</label>
@@ -109,8 +109,8 @@
                     <input type="text" id="traktClientId" placeholder="Your Trakt Client ID" class="form-control">
                 </div>
                 <div class="form-group">
-                    <label>Client Secret</label>
-                    <input type="password" id="traktClientSecret" placeholder="Your Trakt Client Secret" class="form-control">
+                    <label>Client Secret <span style="color: var(--text-secondary);">(optional, older apps only)</span></label>
+                    <input type="password" id="traktClientSecret" placeholder="Leave empty if Trakt shows “Not issued”" class="form-control">
                 </div>
             </div>
             <div class="modal-footer">
@@ -551,8 +551,8 @@
         const clientId = document.getElementById('traktClientId').value.trim();
         const clientSecret = document.getElementById('traktClientSecret').value.trim();
 
-        if (!clientId || !clientSecret) {
-            showToast('Client ID and Client Secret are required', 'error');
+        if (!clientId) {
+            showToast('Client ID is required', 'error');
             return;
         }
 

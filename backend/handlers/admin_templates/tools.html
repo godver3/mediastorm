@@ -356,7 +356,7 @@
             <!-- Trakt Accounts -->
             <h4 style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-secondary);"><a href="https://trakt.tv/" target="_blank" rel="noopener noreferrer">Trakt</a></h4>
             <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">
-                Create an app at <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener noreferrer">trakt.tv/oauth/applications</a> to get Client ID and Secret.
+                Create an app at <a href="https://developer.trakt.tv/apps" target="_blank" rel="noopener noreferrer">developer.trakt.tv/apps</a> (Trakt asks you to link GitHub once before your first app) and copy its Client ID. Add <code>urn:ietf:wg:oauth:2.0:oob</code> as a Redirect URI. Apps created since October 2026 have no Client Secret; leave that field empty unless your app is older and shows one.
             </p>
             <div id="traktAccountsList" style="margin-bottom: 1rem;">
                 <!-- Accounts will be rendered here -->
@@ -379,11 +379,11 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Client ID</label>
-                    <input type="text" class="form-input" id="newTraktClientId" placeholder="From trakt.tv/oauth/applications">
+                    <input type="text" class="form-input" id="newTraktClientId" placeholder="From developer.trakt.tv/apps">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Client Secret</label>
-                    <input type="password" class="form-input" id="newTraktClientSecret" placeholder="From trakt.tv/oauth/applications">
+                    <label class="form-label">Client Secret <span class="text-muted">(optional, older apps only)</span></label>
+                    <input type="password" class="form-input" id="newTraktClientSecret" placeholder="Leave empty if Trakt shows “Not issued”">
                 </div>
                 <div class="btn-group" style="margin-top: 1rem;">
                     <button class="btn btn-secondary" onclick="hideAddTraktAccountForm()">Cancel</button>
@@ -407,7 +407,7 @@
             <!-- Simkl Accounts -->
             <h4 style="font-size: 0.9rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: var(--text-secondary);"><a href="https://simkl.com/" target="_blank" rel="noopener noreferrer">Simkl</a></h4>
             <p class="text-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">
-                Create an app at <a href="https://simkl.com/settings/developer/new" target="_blank" rel="noopener noreferrer">simkl.com/settings/developer/new</a> and copy the Client ID. Authorization uses Simkl's PIN flow, so no app redirect is needed.
+                Create an app at <a href="https://simkl.com/settings/developer/new" target="_blank" rel="noopener noreferrer">simkl.com/settings/developer/new</a> and copy the Client ID. For a new app pick the <strong>TV, devices &amp; command line</strong> client type; older (AUTH V1) apps keep working. Sign-in uses Simkl's code flow, so no redirect is needed.
             </p>
             <div id="simklAccountsList" style="margin-bottom: 1rem;">
                 <!-- Accounts will be rendered here -->
@@ -430,15 +430,7 @@
                     <label class="form-label">Client ID</label>
                     <input type="text" class="form-input" id="newSimklClientId" placeholder="From simkl.com/settings/developer/new">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Client Secret</label>
-                    <input type="password" class="form-input" id="newSimklClientSecret" placeholder="From simkl.com/settings/developer/new">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Redirect URI</label>
-                    <input type="text" class="form-input" value="Not used by PIN auth" readonly>
-                    <small class="text-muted">If Simkl requires one while creating the app, use urn:ietf:wg:oauth:2.0:oob.</small>
-                </div>
+                <small class="text-muted">Only the Client ID is needed: Simkl's code sign-in doesn't use a Client Secret. Choose the "TV, devices &amp; command line" client type when Simkl asks.</small>
                 <div class="btn-group" style="margin-top: 1rem;">
                     <button class="btn btn-secondary" onclick="hideAddSimklAccountForm()">Cancel</button>
                     <button class="btn btn-primary" onclick="createSimklAccount()">Create Account</button>
@@ -868,6 +860,7 @@
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
                             <option value="simkl_history_sync">Simkl History Sync</option>
+                            <option value="simkl_watchlist_sync">Simkl Watchlist Sync</option>
                             <option value="scrob_history_sync">Scrob History Sync</option>
                             <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
                             <option value="mdblist_history_sync">MDBList History Sync</option>
@@ -1058,6 +1051,26 @@
                             <option value="scrob_to_local" selected>Scrob → Local (Import from Scrob)</option><option value="local_to_scrob">Local → Scrob (Export to Scrob)</option><option value="bidirectional">Bidirectional (Sync both ways)</option>
                         </select><small class="text-muted">Outbound sync requires the username/password stored on the Scrob account.</small></div>
                         <div class="form-group"><label class="form-label">Sync to Profile</label><select id="newTaskScrobHistoryProfile" class="form-select">{{range .Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+                    </div>
+
+                    <!-- Simkl Watchlist Sync specific config -->
+                    <div id="simklWatchlistSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Simkl Account</label>
+                            <select id="newTaskSimklWatchlistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                            <small class="text-muted">Syncs Simkl's Plan to Watch list. Items you're watching or have finished on Simkl are never moved back to Plan to Watch.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="newTaskSimklWatchlistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
                     </div>
 
                     <!-- MDBList Watchlist Sync specific config -->
@@ -1282,6 +1295,7 @@
                             <option value="trakt_list_sync">Trakt List Sync</option>
                             <option value="trakt_history_sync">Trakt History Sync</option>
                             <option value="simkl_history_sync">Simkl History Sync</option>
+                            <option value="simkl_watchlist_sync">Simkl Watchlist Sync</option>
                             <option value="scrob_history_sync">Scrob History Sync</option>
                             <option value="mdblist_watchlist_sync">MDBList Watchlist Sync</option>
                             <option value="mdblist_history_sync">MDBList History Sync</option>
@@ -1464,6 +1478,25 @@
                             <option value="scrob_to_local">Scrob → Local (Import from Scrob)</option><option value="local_to_scrob">Local → Scrob (Export to Scrob)</option><option value="bidirectional">Bidirectional (Sync both ways)</option>
                         </select></div>
                         <div class="form-group"><label class="form-label">Sync to Profile</label><select id="editTaskScrobHistoryProfile" class="form-select">{{range .Users}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></div>
+                    </div>
+
+                    <!-- Simkl Watchlist Sync specific config (edit) -->
+                    <div id="editSimklWatchlistSyncConfig" style="display: none;">
+                        <div class="form-group">
+                            <label class="form-label">Simkl Account</label>
+                            <select id="editTaskSimklWatchlistAccount" class="form-select">
+                                <!-- Populated by JavaScript -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Sync to Profile</label>
+                            <select id="editTaskSimklWatchlistProfile" class="form-select">
+                                {{range .Users}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
                     </div>
 
                     <!-- MDBList Watchlist Sync specific config (edit) -->
@@ -4027,13 +4060,11 @@
         document.getElementById('addSimklAccountBtn').style.display = 'inline-flex';
         document.getElementById('newSimklAccountName').value = '';
         document.getElementById('newSimklClientId').value = '';
-        document.getElementById('newSimklClientSecret').value = '';
     }
 
     async function createSimklAccount() {
         const name = document.getElementById('newSimklAccountName').value.trim();
         const clientId = document.getElementById('newSimklClientId').value.trim();
-        const clientSecret = document.getElementById('newSimklClientSecret').value.trim();
 
         if (!clientId) {
             showToast('Client ID is required', 'error');
@@ -4044,7 +4075,7 @@
             const response = await fetch(basePath + '/api/simkl/accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name || 'Simkl Account', clientId, clientSecret })
+                body: JSON.stringify({ name: name || 'Simkl Account', clientId })
             });
 
             if (!response.ok) {
@@ -4340,8 +4371,8 @@
         const clientId = document.getElementById('newTraktClientId').value.trim();
         const clientSecret = document.getElementById('newTraktClientSecret').value.trim();
 
-        if (!clientId || !clientSecret) {
-            showToast('Client ID and Client Secret are required', 'error');
+        if (!clientId) {
+            showToast('Client ID is required', 'error');
             return;
         }
 
@@ -6098,6 +6129,11 @@
                     accountSource = 'Simkl';
                     const simklDirLabels = { simkl_to_local: 'Import', local_to_simkl: 'Export', bidirectional: 'Bidirectional' };
                     listTypeLabel = simklDirLabels[task.config.syncDirection] || 'Import';
+                } else if (task.type === 'simkl_watchlist_sync') {
+                    const simklAccount = simklAccounts.find(a => a.id === task.config.simklAccountId);
+                    if (simklAccount) accountName = simklAccount.name || simklAccount.username || 'Simkl Account';
+                    accountSource = 'Simkl';
+                    listTypeLabel = 'Plan to Watch';
                 } else if (task.type === 'scrob_history_sync') {
                     const scrobAccount = scrobAccounts.find(a => a.id === task.config.scrobAccountId);
                     if (scrobAccount) accountName = scrobAccount.name || 'Scrob Account';
@@ -6302,6 +6338,7 @@
             case 'trakt_list_sync': return 'Trakt List';
             case 'trakt_history_sync': return 'Trakt History';
             case 'simkl_history_sync': return 'Simkl History';
+            case 'simkl_watchlist_sync': return 'Simkl Watchlist';
             case 'scrob_history_sync': return 'Scrob History';
             case 'mdblist_watchlist_sync': return 'MDBList Watchlist';
             case 'mdblist_history_sync': return 'MDBList History';
@@ -6547,7 +6584,7 @@
         if (preferredProfileId && preferredProfileId !== '__server__') {
             [
                 'newTaskProfile', 'newTaskTraktProfile', 'newTaskHistoryProfile',
-                'newTaskSimklHistoryProfile', 'newTaskMdblistWatchlistProfile',
+                'newTaskSimklHistoryProfile', 'newTaskSimklWatchlistProfile', 'newTaskMdblistWatchlistProfile',
                 'newTaskMdblistProfile', 'newTaskPlexHistoryProfile',
                 'newTaskJellyfinFavProfile', 'newTaskJellyfinHistProfile'
             ].forEach(id => {
@@ -6642,6 +6679,7 @@
         traktHistoryConfig.style.display = taskType === 'trakt_history_sync' ? 'block' : 'none';
         simklHistoryConfig.style.display = taskType === 'simkl_history_sync' ? 'block' : 'none';
         scrobHistoryConfig.style.display = taskType === 'scrob_history_sync' ? 'block' : 'none';
+        document.getElementById('simklWatchlistSyncConfig').style.display = taskType === 'simkl_watchlist_sync' ? 'block' : 'none';
         const mdblistWatchlistConfig = document.getElementById('mdblistWatchlistSyncConfig');
         mdblistWatchlistConfig.style.display = taskType === 'mdblist_watchlist_sync' ? 'block' : 'none';
         const mdblistHistoryConfig = document.getElementById('mdblistHistorySyncConfig');
@@ -6666,6 +6704,12 @@
             const historySimklSelect = document.getElementById('newTaskHistorySimklAccount');
             const connectedSimklAccounts = simklAccounts.filter(a => a.connected);
             historySimklSelect.innerHTML = connectedSimklAccounts.map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Simkl Account')}</option>`
+            ).join('');
+        }
+
+        if (taskType === 'simkl_watchlist_sync') {
+            document.getElementById('newTaskSimklWatchlistAccount').innerHTML = simklAccounts.filter(a => a.connected).map(account =>
                 `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Simkl Account')}</option>`
             ).join('');
         }
@@ -6721,6 +6765,12 @@
             syncDirection.innerHTML = `
                 <option value="source_to_target" selected>Trakt → mediastorm (Import from Trakt)</option>
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
+        } else if (taskType === 'simkl_watchlist_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target" selected>Simkl → mediastorm (Import from Simkl)</option>
+                <option value="target_to_source">mediastorm → Simkl (Export to Simkl)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         } else if (taskType === 'mdblist_watchlist_sync') {
@@ -6891,6 +6941,14 @@
             config.profileId = document.getElementById('newTaskScrobHistoryProfile').value;
             config.syncDirection = document.getElementById('newTaskScrobSyncDirection').value;
             if (!config.scrobAccountId || !config.profileId) { showToast('Please select a Scrob account and profile', 'error'); return; }
+        } else if (taskType === 'simkl_watchlist_sync') {
+            config.simklAccountId = document.getElementById('newTaskSimklWatchlistAccount').value;
+            config.profileId = document.getElementById('newTaskSimklWatchlistProfile').value;
+
+            if (!config.simklAccountId || !config.profileId) {
+                showToast('Please select a Simkl account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'mdblist_watchlist_sync') {
             config.mdblistAccountId = document.getElementById('newTaskMdblistWatchlistAccount').value;
             config.profileId = document.getElementById('newTaskMdblistWatchlistProfile').value;
@@ -7109,6 +7167,7 @@
         document.getElementById('editTraktHistorySyncConfig').style.display = 'none';
         document.getElementById('editSimklHistorySyncConfig').style.display = 'none';
         document.getElementById('editScrobHistorySyncConfig').style.display = 'none';
+        document.getElementById('editSimklWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editMdblistWatchlistSyncConfig').style.display = 'none';
         document.getElementById('editMdblistHistorySyncConfig').style.display = 'none';
         document.getElementById('editPlexHistorySyncConfig').style.display = 'none';
@@ -7179,6 +7238,17 @@
             select.value = task.config.scrobAccountId || '';
             document.getElementById('editTaskScrobSyncDirection').value = task.config.syncDirection || 'scrob_to_local';
             document.getElementById('editTaskScrobHistoryProfile').value = task.config.profileId || '';
+        }
+
+        // Set config values for Simkl watchlist sync
+        if (task.type === 'simkl_watchlist_sync' && task.config) {
+            document.getElementById('editSimklWatchlistSyncConfig').style.display = 'block';
+            const simklWLSelect = document.getElementById('editTaskSimklWatchlistAccount');
+            simklWLSelect.innerHTML = simklAccounts.filter(a => a.connected).map(account =>
+                `<option value="${account.id}">${escapeHtml(account.name || account.username || 'Simkl Account')}</option>`
+            ).join('');
+            simklWLSelect.value = task.config.simklAccountId || '';
+            document.getElementById('editTaskSimklWatchlistProfile').value = task.config.profileId || '';
         }
 
         // Set config values for MDBList watchlist sync
@@ -7265,6 +7335,12 @@
             syncDirection.innerHTML = `
                 <option value="source_to_target">Trakt → mediastorm (Import from Trakt)</option>
                 <option value="target_to_source">mediastorm → Trakt (Export to Trakt)</option>
+                <option value="bidirectional">Bidirectional (Sync both ways)</option>
+            `;
+        } else if (task.type === 'simkl_watchlist_sync') {
+            syncDirection.innerHTML = `
+                <option value="source_to_target">Simkl → mediastorm (Import from Simkl)</option>
+                <option value="target_to_source">mediastorm → Simkl (Export to Simkl)</option>
                 <option value="bidirectional">Bidirectional (Sync both ways)</option>
             `;
         } else if (task.type === 'mdblist_watchlist_sync') {
@@ -7423,6 +7499,14 @@
             config.profileId = document.getElementById('editTaskScrobHistoryProfile').value;
             config.syncDirection = document.getElementById('editTaskScrobSyncDirection').value;
             if (!config.scrobAccountId || !config.profileId) { showToast('Please select a Scrob account and profile', 'error'); return; }
+        } else if (taskType === 'simkl_watchlist_sync') {
+            config.simklAccountId = document.getElementById('editTaskSimklWatchlistAccount').value;
+            config.profileId = document.getElementById('editTaskSimklWatchlistProfile').value;
+
+            if (!config.simklAccountId || !config.profileId) {
+                showToast('Please select a Simkl account and profile', 'error');
+                return;
+            }
         } else if (taskType === 'mdblist_watchlist_sync') {
             config.mdblistAccountId = document.getElementById('editTaskMdblistWatchlistAccount').value;
             config.profileId = document.getElementById('editTaskMdblistWatchlistProfile').value;

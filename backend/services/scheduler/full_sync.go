@@ -51,6 +51,7 @@ func prepareFullSync(task config.ScheduledTask) (config.ScheduledTask, error) {
 		config.ScheduledTaskTypeTraktListSync,
 		config.ScheduledTaskTypeTraktHistorySync,
 		config.ScheduledTaskTypeSimklHistorySync,
+		config.ScheduledTaskTypeSimklWatchlistSync,
 		config.ScheduledTaskTypeScrobHistorySync,
 		config.ScheduledTaskTypePlexHistorySync,
 		config.ScheduledTaskTypeJellyfinFavoritesSync,
