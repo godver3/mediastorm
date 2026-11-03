@@ -626,3 +626,20 @@ func TestStremioRaceMatchingPreservesSeriesMetadata(t *testing.T) {
 		t.Fatalf("expected only F1 practice candidate, got %+v", got)
 	}
 }
+
+func TestIsUnplayableStremioStreamURL(t *testing.T) {
+	cases := map[string]bool{
+		"https://stremverse.invalid/subscribe":            true,
+		"https://sports.highfly.to/configure":             true,
+		"https://addon.test/eyJjb25maWciOjF9/configure/":  true,
+		"ftp://cdn.test/live.m3u8":                        true,
+		"http://cdn.test/f1-source-1.m3u8":                false,
+		"https://cdn.test/configure/live/playlist.m3u8":   false,
+		"https://addon.test/proxy/hls/manifest.m3u8?d=xy": false,
+	}
+	for raw, want := range cases {
+		if got := isUnplayableStremioStreamURL(raw); got != want {
+			t.Errorf("isUnplayableStremioStreamURL(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}

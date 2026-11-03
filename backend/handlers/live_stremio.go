@@ -159,7 +159,12 @@ func isUnplayableStremioStreamURL(raw string) bool {
 	}
 	host := strings.ToLower(u.Hostname())
 	path := strings.ToLower(strings.TrimSuffix(u.EscapedPath(), "/"))
-	return strings.HasSuffix(host, ".invalid") || host == "stremverse.invalid" || path == "/subscribe"
+	// Addons that need action from the user answer with a placeholder stream pointing at a
+	// web page instead of media: /subscribe, or the addon's own /configure page (highfly's
+	// "Please reinstall the addon"). Treating those as playable makes a tune spend ~30 s
+	// transcoding an HTML page before it fails.
+	return strings.HasSuffix(host, ".invalid") || host == "stremverse.invalid" ||
+		path == "/subscribe" || path == "/configure" || strings.HasSuffix(path, "/configure")
 }
 
 func firstPlayableStremioStreamURL(streams []stremioStream) (string, bool) {
