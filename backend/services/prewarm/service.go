@@ -491,6 +491,13 @@ func (s *Service) warmContinueWatchingScope(
 	(*resolveCount)++
 
 	prequeueID, err := s.runWorker(ctx, state.SeriesID, state.SeriesTitle, imdbID, mediaType, state.Year, user.ID, clientID, settingsScopeKey, targetEpisode)
+	if errors.Is(err, playback.ErrPrequeueInProgress) {
+		// A client-initiated prequeue for this title is mid-resolve. Leave it
+		// running and record nothing, so the next cycle adopts it once ready.
+		log.Printf("[prewarm] Skipping %q for user %s scope=%s: %v", state.SeriesTitle, user.Name, settingsScopeKey, err)
+		result.Skipped++
+		return nil
+	}
 	lastResolve := time.Now()
 
 	warmEntry := &WarmEntry{

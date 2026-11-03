@@ -1634,3 +1634,50 @@ func TestRunOnce_DeduplicatesSameTitleUser(t *testing.T) {
 		t.Errorf("expected 1 skipped (deduped), got %d", result.Skipped)
 	}
 }
+
+func TestRunOnce_LeavesInFlightClientPrequeueAlone(t *testing.T) {
+	store := playback.NewPrequeueStore(30 * time.Minute)
+	episode := &models.EpisodeReference{SeasonNumber: 4, EpisodeNumber: 1}
+	users := []models.User{{ID: "user1", Name: "Alice"}}
+	continueWatching := map[string][]models.SeriesWatchState{
+		"user1": {{
+			SeriesID:    "title1",
+			SeriesTitle: "The Gilded Age",
+			UpdatedAt:   time.Now().UTC(),
+			NextEpisode: episode,
+		}},
+	}
+
+	// The user opened the details page: a client prequeue is mid-search.
+	details, _ := store.CreateScoped("title1", "The Gilded Age", "user1", "series", 0, episode, "details", playback.DefaultPrequeueSettingsScopeKey)
+	store.Update(details.ID, func(e *playback.PrequeueEntry) { e.Status = playback.PrequeueStatusSearching })
+
+	svc := NewService(nil, "")
+	svc.SetHistoryService(&mockHistoryProvider{continueWatching: continueWatching})
+	svc.SetUsersService(&mockUsersProvider{users: users})
+	svc.SetPrequeueStore(store)
+	svc.jitterFn = func() time.Duration { return 0 }
+	// Mirrors PrequeueHandler.RunWorkerSyncScoped's create step.
+	svc.SetScopedWorkerFunc(func(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error) {
+		entry, err := store.CreateScopedUnlessInProgress(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm", settingsScopeKey)
+		if err != nil {
+			return entry.ID, fmt.Errorf("%w: %s", err, entry.ID)
+		}
+		t.Fatal("prewarm created a replacement entry for an in-flight prequeue")
+		return entry.ID, nil
+	})
+
+	result, err := svc.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+	if result.Failed != 0 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want skipped=1 failed=0", result)
+	}
+	if _, ok := store.Get(details.ID); !ok {
+		t.Fatal("details prequeue was replaced while the client was polling it")
+	}
+	if entry := svc.entries[entryKey("title1", "user1")]; entry != nil && entry.Error != "" {
+		t.Fatalf("recorded failure %q; next cycle would skip instead of adopting", entry.Error)
+	}
+}

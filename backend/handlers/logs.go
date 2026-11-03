@@ -608,7 +608,7 @@ func (h *LogsHandler) buildCombinedLogPackage(frontendLogs string, snapshot *fro
 	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
 	combined.WriteString("                         STRMR LOG SUBMISSION\n")
 	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().In(logDisplayLocation()).Format(time.RFC3339)))
 	combined.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
 	if snapshot != nil {
 		combined.WriteString(fmt.Sprintf("Frontend Client: %s\n", snapshot.ClientID))
@@ -618,7 +618,7 @@ func (h *LogsHandler) buildCombinedLogPackage(frontendLogs string, snapshot *fro
 		if snapshot.AppVersion != "" {
 			combined.WriteString(fmt.Sprintf("Frontend App Version: %s\n", snapshot.AppVersion))
 		}
-		combined.WriteString(fmt.Sprintf("Frontend Uploaded: %s\n", snapshot.UploadedAt.Format(time.RFC3339)))
+		combined.WriteString(fmt.Sprintf("Frontend Uploaded: %s\n", snapshot.UploadedAt.In(logDisplayLocation()).Format(time.RFC3339)))
 	}
 	combined.WriteString("\n")
 
@@ -662,7 +662,7 @@ func (h *LogsHandler) buildCombinedStoredLogsPackage(frontendLogs string, summar
 	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
 	combined.WriteString("                         STRMR LOG SUBMISSION\n")
 	combined.WriteString("═══════════════════════════════════════════════════════════════════════\n")
-	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	combined.WriteString(fmt.Sprintf("Submitted: %s\n", time.Now().In(logDisplayLocation()).Format(time.RFC3339)))
 	combined.WriteString(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH))
 	if len(summaries) > 0 {
 		combined.WriteString(fmt.Sprintf("Frontend Clients Included: %d\n", len(summaries)))
@@ -703,7 +703,7 @@ func (h *LogsHandler) buildCombinedStoredLogsPackage(frontendLogs string, summar
 				summary.ClientID,
 				strings.TrimSpace(summary.DeviceType),
 				strings.TrimSpace(summary.OS),
-				summary.UploadedAt.Format(time.RFC3339),
+				summary.UploadedAt.In(logDisplayLocation()).Format(time.RFC3339),
 			))
 		}
 		combined.WriteString("\n")
@@ -971,13 +971,16 @@ func (h *LogsHandler) readFrontendLogEntries(limit int, clientID string) ([]logE
 			lineTimestamp := parseLogTimestamp(rawLine, time.Time{})
 			hasOwnTimestamp := !lineTimestamp.IsZero()
 			if hasOwnTimestamp {
+				// Clients stamp lines in UTC; show them in the server's
+				// configured zone (TZ) so they line up with backend lines.
+				rawLine = localizeLeadingLogTimestamp(rawLine)
 				currentTimestamp = lineTimestamp
 				currentTimestampLabel = visibleLogTimestamp(rawLine, lineTimestamp)
 			} else if !currentTimestamp.IsZero() {
 				lineTimestamp = currentTimestamp
 			} else {
 				lineTimestamp = snapshot.UploadedAt
-				currentTimestampLabel = snapshot.UploadedAt.UTC().Format(time.RFC3339Nano)
+				currentTimestampLabel = snapshot.UploadedAt.In(logDisplayLocation()).Format(time.RFC3339Nano)
 			}
 			entries = append(entries, logEntry{
 				Origin:    "frontend",
@@ -1090,7 +1093,7 @@ func decorateFrontendLogLine(snapshot *frontendLogSnapshot, rawLine, timestampLa
 func visibleLogTimestamp(line string, parsed time.Time) string {
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return parsed.UTC().Format(time.RFC3339Nano)
+		return parsed.In(logDisplayLocation()).Format(time.RFC3339Nano)
 	}
 	if strings.HasPrefix(line, "[") {
 		if end := strings.Index(line, "]"); end > 1 {
@@ -1114,7 +1117,37 @@ func visibleLogTimestamp(line string, parsed time.Time) string {
 			}
 		}
 	}
-	return parsed.UTC().Format(time.RFC3339Nano)
+	return parsed.In(logDisplayLocation()).Format(time.RFC3339Nano)
+}
+
+// logDisplayLocation is the zone log timestamps are rendered in: the server's
+// local zone, which honours the container's TZ setting. Tests may override it.
+var logDisplayLocation = func() *time.Location { return time.Local }
+
+// localizeLeadingLogTimestamp rewrites a line's leading RFC 3339 timestamp
+// (bare or bracketed) into logDisplayLocation, keeping the rest verbatim.
+// Lines without a zoned leading timestamp are returned unchanged.
+func localizeLeadingLogTimestamp(line string) string {
+	trimmed := strings.TrimLeft(line, " \t")
+	indent := line[:len(line)-len(trimmed)]
+	start, end := 0, strings.IndexAny(trimmed, " \t")
+	if end < 0 {
+		end = len(trimmed)
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		closeIdx := strings.Index(trimmed, "]")
+		if closeIdx < 0 {
+			return line
+		}
+		start, end = 1, closeIdx
+	}
+	token := strings.TrimSpace(trimmed[start:end])
+	ts, err := time.Parse(time.RFC3339Nano, token)
+	if err != nil {
+		return line
+	}
+	localized := ts.In(logDisplayLocation()).Format(time.RFC3339Nano)
+	return indent + trimmed[:start] + localized + trimmed[end:]
 }
 
 func parseLogTimestamp(line string, fallback time.Time) time.Time {
@@ -1146,7 +1179,10 @@ func parseLogTimestamp(line string, fallback time.Time) time.Time {
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		for _, layout := range layouts {
-			if ts, err := time.Parse(layout, candidate); err == nil {
+			// Zone-less backend lines (Go's log package) are written in the
+			// server's local zone, not UTC; parse them there so they sort
+			// correctly against zoned frontend lines.
+			if ts, err := time.ParseInLocation(layout, candidate, logDisplayLocation()); err == nil {
 				return ts
 			}
 		}

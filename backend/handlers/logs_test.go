@@ -595,6 +595,7 @@ func TestLogsHandler_SubmitStoredLogsPackage_RedactsSecretsBeforeUpload(t *testi
 }
 
 func TestLogsHandler_ReadCombinedLogEntries_AllOrigins(t *testing.T) {
+	pinLogDisplayZone(t, time.UTC)
 	tempDir := t.TempDir()
 	logFile := filepath.Join(tempDir, "backend.log")
 	if err := os.WriteFile(logFile, []byte("2026/03/22 10:00:00 [backend] backend line 1\n"), 0644); err != nil {
@@ -670,6 +671,7 @@ func TestLogsHandler_ReadCombinedLogEntries_FilterByClient(t *testing.T) {
 }
 
 func TestLogsHandler_ReadFrontendLogEntries_PreservesMultilineTimestampAndOrder(t *testing.T) {
+	pinLogDisplayZone(t, time.UTC)
 	tempDir := t.TempDir()
 	h := NewLogsHandler(log.New(os.Stdout, "", 0), filepath.Join(tempDir, "backend.log"))
 
@@ -1026,5 +1028,61 @@ func TestPasteServicesConfiguration(t *testing.T) {
 		if svc.jsonKeyField != "" && svc.urlPrefix == "" {
 			t.Errorf("service %s has jsonKeyField but no urlPrefix", svc.name)
 		}
+	}
+}
+
+func TestLocalizeLeadingLogTimestamp_RendersInDisplayZone(t *testing.T) {
+	pinLogDisplayZone(t, time.FixedZone("EST", -5*3600))
+
+	cases := map[string]string{
+		`2026-11-02T23:09:06.815Z I [Player] play`:   `2026-11-02T18:09:06.815-05:00 I [Player] play`,
+		`[2026-03-22T10:00:01Z] [INFO ] frontend`:    `[2026-03-22T05:00:01-05:00] [INFO ] frontend`,
+		`2026/11/02 21:15:04 filter.go:428: backend`: `2026/11/02 21:15:04 filter.go:428: backend`,
+		`  "pathname": "/"`:                          `  "pathname": "/"`,
+	}
+	for in, want := range cases {
+		if got := localizeLeadingLogTimestamp(in); got != want {
+			t.Errorf("localize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// pinLogDisplayZone fixes the server zone log timestamps are parsed and shown
+// in, so assertions don't depend on the machine running the tests.
+func pinLogDisplayZone(t *testing.T, loc *time.Location) {
+	t.Helper()
+	prev := logDisplayLocation
+	logDisplayLocation = func() *time.Location { return loc }
+	t.Cleanup(func() { logDisplayLocation = prev })
+}
+
+func TestReadCombinedLogEntries_OrdersLocalBackendAgainstUTCFrontend(t *testing.T) {
+	// Server TZ is EST: the backend line at 18:00 local is 23:00Z, so it is
+	// newer than a frontend line stamped 22:30Z.
+	pinLogDisplayZone(t, time.FixedZone("EST", -5*3600))
+	tempDir := t.TempDir()
+	logFile := filepath.Join(tempDir, "backend.log")
+	if err := os.WriteFile(logFile, []byte("2026/11/02 18:00:00 [backend] local line\n"), 0644); err != nil {
+		t.Fatalf("failed to create temp log file: %v", err)
+	}
+	h := NewLogsHandler(log.New(os.Stdout, "", 0), logFile)
+	req := httptest.NewRequest(http.MethodPost, "/api/logs/frontend", strings.NewReader(`{"frontendLogs":"2026-11-02T22:30:00.000Z I [Home] earlier"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Client-ID", "client-tz")
+	rec := httptest.NewRecorder()
+	h.UploadFrontendLogs(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload status %d", rec.Code)
+	}
+
+	entries, err := h.ReadCombinedLogEntries(1000, "all", "")
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries=%d err=%v", len(entries), err)
+	}
+	if entries[0].Origin != "frontend" || entries[1].Origin != "backend" {
+		t.Fatalf("order = [%s %s], want [frontend backend]", entries[0].Origin, entries[1].Origin)
+	}
+	if !strings.Contains(entries[0].Line, "2026-11-02T17:30:00-05:00 I [Home] earlier") {
+		t.Fatalf("frontend line not shown in server zone: %q", entries[0].Line)
 	}
 }

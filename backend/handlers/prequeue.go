@@ -153,15 +153,7 @@ func canonicalPrequeueTitleID(mediaType, titleID, imdbID, tmdbID, tvdbID string)
 }
 
 func isPrequeueInProgress(status playback.PrequeueStatus) bool {
-	switch status {
-	case playback.PrequeueStatusQueued,
-		playback.PrequeueStatusSearching,
-		playback.PrequeueStatusResolving,
-		playback.PrequeueStatusProbing:
-		return true
-	default:
-		return false
-	}
+	return playback.IsPrequeueInProgress(status)
 }
 
 func isExternalStreamPath(path string) bool {
@@ -860,7 +852,13 @@ func (h *PrequeueHandler) RunWorkerSync(ctx context.Context, titleID, titleName,
 // RunWorkerSyncScoped runs the prequeue worker synchronously for an explicit settings scope.
 func (h *PrequeueHandler) RunWorkerSyncScoped(ctx context.Context, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, settingsScopeKey string, targetEpisode *models.EpisodeReference) (string, error) {
 	// Create prequeue entry with a long TTL (inherits store TTL, prewarm service will extend)
-	entry, _ := h.store.CreateScoped(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm", settingsScopeKey)
+	// Never replace an entry that is still resolving: that is usually the
+	// details-page prequeue a client is polling, and replacing it cancels its
+	// search and leaves the client polling a deleted ID.
+	entry, err := h.store.CreateScopedUnlessInProgress(titleID, titleName, userID, mediaType, year, targetEpisode, "prewarm", settingsScopeKey)
+	if err != nil {
+		return entry.ID, fmt.Errorf("%w: %s (status=%s)", err, entry.ID, entry.Status)
+	}
 
 	// Run worker synchronously (blocking)
 	h.runPrequeueWorker(entry.ID, titleID, titleName, imdbID, mediaType, year, userID, clientID, nil, targetEpisode, 0, true, prequeueWorkerScheduledPrewarm)

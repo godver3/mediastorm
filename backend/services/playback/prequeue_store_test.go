@@ -513,3 +513,44 @@ func TestPrequeueEntryToResponseIncludesProgress(t *testing.T) {
 		t.Fatalf("progress response = %#v, want progress fields from entry", resp)
 	}
 }
+
+func TestCreateScopedUnlessInProgress_KeepsResolvingEntry(t *testing.T) {
+	store := NewPrequeueStore(30 * time.Minute)
+	episode := &models.EpisodeReference{SeasonNumber: 4, EpisodeNumber: 1}
+	details, _ := store.CreateScoped("tmdb:tv:1", "Show", "user1", "series", 2022, episode, "details", "scope-a")
+	store.Update(details.ID, func(e *PrequeueEntry) { e.Status = PrequeueStatusSearching })
+
+	got, err := store.CreateScopedUnlessInProgress("tmdb:tv:1", "Show", "user1", "series", 2022, episode, "prewarm", "scope-a")
+	if !errors.Is(err, ErrPrequeueInProgress) {
+		t.Fatalf("err = %v, want ErrPrequeueInProgress", err)
+	}
+	if got == nil || got.ID != details.ID {
+		t.Fatalf("returned entry = %#v, want in-flight %s", got, details.ID)
+	}
+	if _, ok := store.Get(details.ID); !ok {
+		t.Fatal("in-flight details prequeue was removed")
+	}
+
+	// A different scope is a different key and still gets its own entry.
+	other, err := store.CreateScopedUnlessInProgress("tmdb:tv:1", "Show", "user1", "series", 2022, episode, "prewarm", "scope-b")
+	if err != nil || other.ID == details.ID {
+		t.Fatalf("other scope: entry=%#v err=%v, want a new entry", other, err)
+	}
+}
+
+func TestCreateScopedUnlessInProgress_ReplacesTerminalEntry(t *testing.T) {
+	store := NewPrequeueStore(30 * time.Minute)
+	failed, _ := store.CreateScoped("tmdb:tv:1", "Show", "user1", "series", 2022, nil, "details", "")
+	store.Update(failed.ID, func(e *PrequeueEntry) { e.Status = PrequeueStatusFailed })
+
+	fresh, err := store.CreateScopedUnlessInProgress("tmdb:tv:1", "Show", "user1", "series", 2022, nil, "prewarm", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fresh.ID == failed.ID {
+		t.Fatal("failed entry was not replaced")
+	}
+	if _, ok := store.Get(failed.ID); ok {
+		t.Fatal("replaced failed entry still present")
+	}
+}

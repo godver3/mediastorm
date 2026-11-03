@@ -736,11 +736,47 @@ func (s *PrequeueStore) Create(titleID, titleName, userID, mediaType string, yea
 	return s.CreateScoped(titleID, titleName, userID, mediaType, year, targetEpisode, reason, DefaultPrequeueSettingsScopeKey)
 }
 
+// ErrPrequeueInProgress is returned by CreateScopedUnlessInProgress when an
+// entry for the same title, user and settings scope is still being resolved.
+var ErrPrequeueInProgress = errors.New("prequeue already in progress")
+
+// IsPrequeueInProgress reports whether status is a non-terminal resolve state.
+func IsPrequeueInProgress(status PrequeueStatus) bool {
+	switch status {
+	case PrequeueStatusQueued, PrequeueStatusSearching, PrequeueStatusResolving, PrequeueStatusProbing:
+		return true
+	default:
+		return false
+	}
+}
+
 // CreateScoped creates a prequeue entry for a specific effective settings scope.
 func (s *PrequeueStore) CreateScoped(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason, settingsScopeKey string) (*PrequeueEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createScopedLocked(titleID, titleName, userID, mediaType, year, targetEpisode, reason, settingsScopeKey)
+}
 
+// CreateScopedUnlessInProgress is CreateScoped for background callers
+// (prewarm): instead of cancelling and replacing an entry for the same key that
+// is still resolving — typically a details-page prequeue the client is polling
+// — it leaves that entry alone and returns it with ErrPrequeueInProgress.
+func (s *PrequeueStore) CreateScopedUnlessInProgress(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason, settingsScopeKey string) (*PrequeueEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := titleUserKey(titleID, userID, normalizeSettingsScopeKey(settingsScopeKey))
+	if existingID, ok := s.byTitleUser[key]; ok {
+		if existing, ok := s.entries[existingID]; ok &&
+			IsPrequeueInProgress(existing.Status) && time.Now().Before(existing.ExpiresAt) {
+			return copyPrequeueEntryForRead(existing), ErrPrequeueInProgress
+		}
+	}
+	entry, _ := s.createScopedLocked(titleID, titleName, userID, mediaType, year, targetEpisode, reason, settingsScopeKey)
+	return entry, nil
+}
+
+func (s *PrequeueStore) createScopedLocked(titleID, titleName, userID, mediaType string, year int, targetEpisode *models.EpisodeReference, reason, settingsScopeKey string) (*PrequeueEntry, bool) {
 	settingsScopeKey = normalizeSettingsScopeKey(settingsScopeKey)
 	key := titleUserKey(titleID, userID, settingsScopeKey)
 	preservePersistent := false
