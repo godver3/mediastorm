@@ -150,7 +150,7 @@ func (s *Server) seriesPlayState(u *userState, series seriesRef, data *dto.UserI
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), seriesPlayStateWait)
 		defer cancel()
-		details, err := s.seriesDetails(ctx, series.Info)
+		details, err := s.seriesDetails(ctx, series.Info, series.Ordering)
 		if err != nil || details == nil {
 			s.seriesCounts.Delete(key)
 			return

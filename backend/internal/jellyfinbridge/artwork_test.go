@@ -237,3 +237,48 @@ func (orderingArtworkMetadata) SeriesDetails(_ context.Context, query models.Ser
 		Seasons:        []models.SeriesSeason{{Number: 1}},
 	}, nil
 }
+
+// The bridge requests the default ordering. An auto-detected primary ordering
+// (absolute for some anime) or "official" must not re-key season IDs or make
+// later lookups request a differently keyed metadata entry.
+func TestDefaultOrderingKeepsSeasonIDsAndQuery(t *testing.T) {
+	s := artworkServer(t)
+	meta := &autoOrderingMetadata{active: "absolute"}
+	s.deps.Metadata = meta
+	series := s.seriesRefFrom(titleInfo{MediaType: "series", ID: "tmdb:tv:2004", Name: "Show", Poster: "https://img.example/series.jpg"})
+	want := deriveID(refSeason, seasonSource(series.Src, 1))
+	for _, active := range []string{"absolute", "official"} {
+		meta.active = active
+		seasons := s.seriesSeasons(t.Context(), nil, series)
+		if len(seasons) != 1 || seasons[0].ID != want {
+			t.Fatalf("active=%s: season ID changed: %+v", active, seasons)
+		}
+		if _, ok := s.itemByID(t.Context(), &principal{}, nil, want, true); !ok {
+			t.Fatalf("active=%s: detailed season lookup failed", active)
+		}
+		eps := s.childrenOf(t.Context(), &principal{}, nil, itemQuery{ParentID: want})
+		if len(eps) != 1 || eps[0].SeasonID != want {
+			t.Fatalf("active=%s: episodes point at another season: %+v", active, eps)
+		}
+	}
+	for _, q := range meta.requested {
+		if q != "" {
+			t.Fatalf("bridge requested ordering %q, want default", q)
+		}
+	}
+}
+
+type autoOrderingMetadata struct {
+	fakeMetadata
+	active    string
+	requested []string
+}
+
+func (m *autoOrderingMetadata) SeriesDetails(_ context.Context, query models.SeriesDetailsQuery) (*models.SeriesDetails, error) {
+	m.requested = append(m.requested, query.SeasonType)
+	return &models.SeriesDetails{
+		Title:          models.Title{ID: query.TitleID, MediaType: "series", Name: query.Name},
+		ActiveOrdering: m.active,
+		Seasons:        []models.SeriesSeason{{Number: 1, Episodes: []models.SeriesEpisode{{SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2000-01-01"}}}},
+	}, nil
+}

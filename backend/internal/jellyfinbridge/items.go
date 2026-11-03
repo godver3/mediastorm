@@ -310,7 +310,7 @@ func (s *Server) childrenOf(ctx context.Context, p *principal, u *userState, q i
 		return s.seriesSeasons(ctx, u, series)
 	case refSeason:
 		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
-		series.Ordering = ref.Ctx.SeasonOrdering
+		series.Ordering = seasonOrdering(ref.Ctx.SeasonOrdering)
 		return s.seriesEpisodes(ctx, u, series, ref.Ctx.Season)
 	case refLocalSeries:
 		g, ok := s.findLocalGroup(ctx, p, ref.Ctx.Extra, ref.Ctx.ViewKey)
@@ -408,7 +408,6 @@ func (s *Server) seriesSeasons(ctx context.Context, u *userState, series seriesR
 		return nil
 	}
 	series = s.refreshSeries(series, details.Title)
-	series.Ordering = details.ActiveOrdering
 	var out []dto.BaseItemDto
 	for _, season := range details.Seasons {
 		if len(airedEpisodes(season.Episodes)) == 0 {
@@ -458,7 +457,6 @@ func (s *Server) seriesEpisodes(ctx context.Context, u *userState, series series
 		return nil
 	}
 	series = s.refreshSeries(series, details.Title)
-	series.Ordering = details.ActiveOrdering
 	var out []dto.BaseItemDto
 	for _, sn := range details.Seasons {
 		if season >= 0 && sn.Number != season {
@@ -700,11 +698,10 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		return item, true
 	case refSeason:
 		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
-		series.Ordering = ref.Ctx.SeasonOrdering
+		series.Ordering = seasonOrdering(ref.Ctx.SeasonOrdering)
 		if detailed {
 			if details, err := s.seriesDetails(ctx, series.Info, series.Ordering); err == nil && details != nil {
 				series = s.refreshSeries(series, details.Title)
-				series.Ordering = details.ActiveOrdering
 				for _, season := range details.Seasons {
 					if season.Number == ref.Ctx.Season {
 						return s.seasonItem(u, series, season), true
@@ -715,11 +712,10 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		return s.seasonItem(u, series, models.SeriesSeason{Number: ref.Ctx.Season}), true
 	case refEpisode:
 		series := s.seriesRefFrom(s.seriesWithArtwork(seriesInfoFromSeasonRef(ref)))
-		series.Ordering = ref.Ctx.SeasonOrdering
+		series.Ordering = seasonOrdering(ref.Ctx.SeasonOrdering)
 		if detailed {
 			if details, err := s.seriesDetails(ctx, series.Info, series.Ordering); err == nil && details != nil {
 				series = s.refreshSeries(series, details.Title)
-				series.Ordering = details.ActiveOrdering
 				for _, season := range details.Seasons {
 					if season.Number != ref.Ctx.Season {
 						continue

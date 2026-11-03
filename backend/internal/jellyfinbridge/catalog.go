@@ -519,10 +519,20 @@ func seasonSource(seriesSrc string, number int) string {
 	return seriesSrc + "/s" + strconv.Itoa(number)
 }
 
+// seasonOrdering is the explicitly requested alternate ordering, or "" for the
+// default request. "official"/"default" collapse to "" so default season IDs
+// and the metadata cache key stay the same as an unqualified request.
+func seasonOrdering(ordering string) string {
+	ordering = strings.ToLower(strings.TrimSpace(ordering))
+	if ordering == "official" || ordering == "default" {
+		return ""
+	}
+	return ordering
+}
+
 func seasonRefSource(series seriesRef, number int) string {
 	source := seasonSource(series.Src, number)
-	ordering := strings.ToLower(strings.TrimSpace(series.Ordering))
-	if ordering != "" && ordering != "official" && ordering != "default" {
+	if ordering := seasonOrdering(series.Ordering); ordering != "" {
 		source += "/ordering/" + url.PathEscape(ordering)
 	}
 	return source
@@ -555,7 +565,7 @@ func (s *Server) seasonItem(u *userState, series seriesRef, season models.Series
 	ctx.Season = season.Number
 	ctx.SeriesName = series.Info.Name
 	ctx.SeriesPoster = series.Info.Poster
-	ctx.SeasonOrdering = series.Ordering
+	ctx.SeasonOrdering = seasonOrdering(series.Ordering)
 	ctx.Poster = poster
 	id := s.ids.put(refSeason, seasonRefSource(series, season.Number), ctx)
 	if season.Image != nil && season.Image.URL != "" {
@@ -658,7 +668,7 @@ func (s *Server) episodeItem(u *userState, series seriesRef, ep episodeInfo) dto
 	ctx.SeriesName = series.Info.Name
 	ctx.SeriesPoster = series.Info.Poster
 	ctx.Season = ep.Season
-	ctx.SeasonOrdering = series.Ordering
+	ctx.SeasonOrdering = seasonOrdering(series.Ordering)
 	ctx.Episode = ep.Episode
 	ctx.Name = ep.Name
 	ctx.Thumb = ep.Still
@@ -669,7 +679,7 @@ func (s *Server) episodeItem(u *userState, series seriesRef, ep episodeInfo) dto
 	}
 	seasonID := s.ids.put(refSeason, seasonRefSource(series, ep.Season), refContext{
 		Name: seasonName(ep.Season, ""), TitleID: series.Info.ID, ExternalIDs: series.Info.ExternalIDs,
-		SeriesName: series.Info.Name, Season: ep.Season, Poster: series.Info.Poster, SeriesPoster: series.Info.Poster, Backdrop: series.Info.Backdrop, SeasonOrdering: series.Ordering,
+		SeriesName: series.Info.Name, Season: ep.Season, Poster: series.Info.Poster, SeriesPoster: series.Info.Poster, Backdrop: series.Info.Backdrop, SeasonOrdering: seasonOrdering(series.Ordering),
 	})
 	// Progress and history rows carry neither the still nor a current title
 	// ("TBA" when written before the episode aired); what an earlier
@@ -802,14 +812,14 @@ func (s *Server) enrich(ctx context.Context, t titleInfo) titleInfo {
 	return rich
 }
 
-func (s *Server) seriesDetails(ctx context.Context, t titleInfo, ordering ...string) (*models.SeriesDetails, error) {
+// seriesDetails requests the given ordering; "" (the bridge's normal case)
+// lets the metadata service pick its primary ordering.
+func (s *Server) seriesDetails(ctx context.Context, t titleInfo, ordering string) (*models.SeriesDetails, error) {
 	if s.deps.Metadata == nil {
 		return nil, fmt.Errorf("metadata unavailable")
 	}
 	query := t.seriesQuery()
-	if len(ordering) > 0 {
-		query.SeasonType = ordering[0]
-	}
+	query.SeasonType = seasonOrdering(ordering)
 	return s.deps.Metadata.SeriesDetails(ctx, query)
 }
 

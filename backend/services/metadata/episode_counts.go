@@ -156,14 +156,7 @@ func (s *Service) releasedEpisodeCountFromCachedDetails(req models.SeriesDetails
 		return countReleasedSeriesDetails(&details, time.Now()), true
 	}
 
-	seasonType := strings.ToLower(strings.TrimSpace(req.SeasonType))
-	if seasonType == "" {
-		seasonType = "default"
-	}
-	liteCacheID := cacheKey(
-		"tvdb", "series", "details", "v15-lite", s.client.language,
-		strconv.FormatInt(req.TVDBID, 10), seasonType,
-	)
+	liteCacheID := seriesDetailsLiteCacheKey(s.client.language, req.TVDBID, req.SeasonType)
 	if ok, _ := s.cache.get(liteCacheID, &details); ok && len(details.Seasons) > 0 {
 		return countReleasedSeriesDetails(&details, time.Now()), true
 	}
