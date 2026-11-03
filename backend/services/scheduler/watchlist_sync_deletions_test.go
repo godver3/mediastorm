@@ -202,17 +202,15 @@ func TestSyncLocalToPlex_DeleteRemovesOnlyLocalRemovals(t *testing.T) {
 	}
 }
 
-func TestExecuteMDBListWatchlistSync_RejectsExport(t *testing.T) {
+func TestExecuteMDBListWatchlistSync_RejectsUnknownDirection(t *testing.T) {
 	svc := &Service{}
-	for _, direction := range []string{"target_to_source", "bidirectional"} {
-		_, err := svc.executeMDBListWatchlistSync(config.ScheduledTask{Config: map[string]string{
-			"mdblistAccountId": "acc",
-			"profileId":        "profile-1",
-			"syncDirection":    direction,
-		}})
-		if err == nil || !strings.Contains(err.Error(), "only supports importing") {
-			t.Fatalf("%s: err = %v, want import-only error", direction, err)
-		}
+	_, err := svc.executeMDBListWatchlistSync(config.ScheduledTask{Config: map[string]string{
+		"mdblistAccountId": "acc",
+		"profileId":        "profile-1",
+		"syncDirection":    "sideways",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "unknown sync direction") {
+		t.Fatalf("err = %v, want unknown direction error", err)
 	}
 }
 

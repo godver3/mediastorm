@@ -4697,10 +4697,8 @@ func (s *Service) executeMDBListWatchlistSync(task config.ScheduledTask) (SyncRe
 		deleteBehavior = "additive"
 	}
 
-	// The MDBList watchlist is import-only; fail loudly rather than silently
-	// importing for a task configured to export.
-	if syncDirection != "source_to_target" {
-		return SyncResult{}, errors.New("MDBList watchlist sync only supports importing; set the sync direction to MDBList → mediastorm")
+	if syncDirection != "source_to_target" && syncDirection != "target_to_source" && syncDirection != "bidirectional" {
+		return SyncResult{}, fmt.Errorf("unknown sync direction: %s", syncDirection)
 	}
 
 	dryRun := task.Config["dryRun"] == "true"
@@ -4721,61 +4719,26 @@ func (s *Service) executeMDBListWatchlistSync(task config.ScheduledTask) (SyncRe
 
 	syncSource := fmt.Sprintf("mdblist:%s:%s", mdblistAccountID, task.ID)
 
-	return s.syncMDBListWatchlistToLocal(mdblistAccount, profileID, syncSource, deleteBehavior, dryRun)
+	if syncDirection == "source_to_target" {
+		return s.syncMDBListWatchlistToLocal(mdblistAccount, profileID, syncSource, deleteBehavior, dryRun)
+	}
+	var tracker *watchlistRemovalTracker
+	if syncDirection == "bidirectional" {
+		if tracker, err = s.newWatchlistRemovalTracker(task.ID, "mdblist", mdblistAccountID, profileID); err != nil {
+			return SyncResult{}, err
+		}
+	}
+	return s.syncMDBListWatchlist(mdblistAccount, profileID, syncDirection, syncSource, deleteBehavior, watchlistSyncSince(task), dryRun, tracker)
 }
 
 func (s *Service) syncMDBListWatchlistToLocal(account *config.MDBListAccount, profileID, syncSource, deleteBehavior string, dryRun bool) (SyncResult, error) {
 	now := time.Now().UTC()
 	result := SyncResult{DryRun: dryRun}
 
-	// Fetch watchlist from MDBList API (/watchlist/items)
-	url := fmt.Sprintf("https://api.mdblist.com/watchlist/items?apikey=%s", account.APIKey)
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("User-Agent", "mediastorm/1.0")
-	resp, err := httpClient.Do(req)
+	items, err := fetchMDBListWatchlist(account.APIKey)
 	if err != nil {
-		return result, fmt.Errorf("fetch MDBList watchlist: %w", err)
+		return result, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return result, fmt.Errorf("MDBList /watchlist/items returned %d", resp.StatusCode)
-	}
-
-	type mdblistWatchlistItem struct {
-		Title       string `json:"title"`
-		ReleaseYear int    `json:"release_year"`
-		MediaType   string `json:"mediatype"` // "movie" or "show"
-		IMDBID      string `json:"imdb_id"`
-		IDs         struct {
-			IMDB string `json:"imdb"`
-			TMDB int    `json:"tmdb"`
-			TVDB *int   `json:"tvdb"` // nullable
-		} `json:"ids"`
-	}
-
-	var watchlistResp struct {
-		Movies []mdblistWatchlistItem `json:"movies"`
-		Shows  []mdblistWatchlistItem `json:"shows"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&watchlistResp); err != nil {
-		return result, fmt.Errorf("decode MDBList watchlist: %w", err)
-	}
-
-	// Combine movies and shows into a single list
-	var items []mdblistWatchlistItem
-	for i := range watchlistResp.Movies {
-		watchlistResp.Movies[i].MediaType = "movie"
-		items = append(items, watchlistResp.Movies[i])
-	}
-	for i := range watchlistResp.Shows {
-		watchlistResp.Shows[i].MediaType = "show"
-		items = append(items, watchlistResp.Shows[i])
-	}
-
-	log.Printf("[scheduler] Fetched %d items from MDBList watchlist (%d movies, %d shows)",
-		len(items), len(watchlistResp.Movies), len(watchlistResp.Shows))
 
 	// Build set of MDBList item keys for deletion checking
 	mdblistItemKeys := make(map[string]bool)

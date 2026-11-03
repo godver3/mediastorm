@@ -259,8 +259,10 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 		if err := requireProfile("mdblistAccountId", "MDBList watchlist sync requires mdblistAccountId and profileId in config"); err != nil {
 			return err
 		}
-		if direction := taskConfig["syncDirection"]; direction != "" && direction != "source_to_target" {
-			return errors.New("MDBList watchlist sync only supports importing (MDBList → mediastorm)")
+		switch taskConfig["syncDirection"] {
+		case "", "source_to_target", "target_to_source", "bidirectional":
+		default:
+			return fmt.Errorf("Invalid sync direction. Must be source_to_target, target_to_source, or bidirectional")
 		}
 	case config.ScheduledTaskTypeMDBListHistorySync:
 		if err := requireProfile("mdblistAccountId", "MDBList history sync requires mdblistAccountId and profileId in config"); err != nil {
