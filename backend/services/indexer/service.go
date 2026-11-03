@@ -4318,16 +4318,17 @@ type rssFeed struct {
 }
 
 type rssItem struct {
-	Title       string        `xml:"title"`
-	Link        string        `xml:"link"`
-	GUID        string        `xml:"guid"`
-	Comments    string        `xml:"comments"`
-	PubDate     string        `xml:"pubDate"`
-	Categories  []string      `xml:"category"`
-	Description string        `xml:"description"`
-	Enclosure   enclosure     `xml:"enclosure"`
-	Attrs       []torznabAttr `xml:"torznab:attr"`
-	NewznabAttr []torznabAttr `xml:"newznab:attr"`
+	Title       string    `xml:"title"`
+	Link        string    `xml:"link"`
+	GUID        string    `xml:"guid"`
+	Comments    string    `xml:"comments"`
+	PubDate     string    `xml:"pubDate"`
+	Categories  []string  `xml:"category"`
+	Description string    `xml:"description"`
+	Enclosure   enclosure `xml:"enclosure"`
+	// encoding/xml matches the local element name, so "attr" collects both
+	// <torznab:attr> and <newznab:attr>. A "prefix:attr" tag never matches.
+	Attrs []torznabAttr `xml:"attr"`
 }
 
 type enclosure struct {
@@ -4339,6 +4340,39 @@ type enclosure struct {
 type torznabAttr struct {
 	Name  string `xml:"name,attr"`
 	Value string `xml:"value,attr"`
+}
+
+// feedAttrNames are the newznab/torznab attributes kept under their own
+// name. Every other attribute gets an "indexer" prefix ("category" becomes
+// "indexerCategory"), because mediastorm uses keys such as "category",
+// "resolution" or "audio" for its own values: newznab's numeric category
+// must not become the download client category.
+var feedAttrNames = map[string]bool{
+	"size": true, "magneturl": true, "infohash": true, "seeders": true,
+	"peers": true, "leechers": true, "language": true, "grabs": true,
+	"files": true, "downloadvolumefactor": true, "uploadvolumefactor": true,
+}
+
+func feedAttributes(item rssItem) map[string]string {
+	attrs := make(map[string]string, len(item.Attrs))
+	for _, a := range item.Attrs {
+		name := strings.ToLower(strings.TrimSpace(a.Name))
+		switch {
+		case name == "":
+			continue
+		case name == "infohash":
+			// Debrid consumers read this internal key with a capital H.
+			name = "infoHash"
+		case feedAttrNames[name]:
+		case name == "group":
+			// The newsgroup, not the release group.
+			name = "newsgroup"
+		default:
+			name = "indexer" + strings.ToUpper(name[:1]) + name[1:]
+		}
+		attrs[name] = a.Value
+	}
+	return attrs
 }
 
 func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
@@ -4467,13 +4501,7 @@ func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, o
 
 	results := make([]models.NZBResult, 0, len(feed.Channel.Items))
 	for _, item := range feed.Channel.Items {
-		attrs := make(map[string]string)
-		for _, a := range item.Attrs {
-			attrs[strings.ToLower(a.Name)] = a.Value
-		}
-		for _, a := range item.NewznabAttr {
-			attrs[strings.ToLower(a.Name)] = a.Value
-		}
+		attrs := feedAttributes(item)
 
 		size := parseSize(attrs["size"], item.Enclosure.Length)
 		published := parsePubDate(item.PubDate)
