@@ -20,6 +20,7 @@ from subliminal.video import Episode, Movie
 region.configure('dogpile.cache.memory')
 
 SUBSOURCE_API_URL = "https://api.subsource.net/api/v1"
+OPENSUBTITLES_PROVIDER = "opensubtitlescom"
 
 
 def decode_external_id(value):
@@ -340,17 +341,21 @@ def main():
     # Build provider config
     provider_configs = {}
 
-    # Validate provider - opensubtitles requires credentials
-    supported_providers = ['podnapisi', 'opensubtitles', 'subdl', 'subsource']
+    # Results cached by clients before the OpenSubtitles.com switch still say
+    # "opensubtitles"; the deprecated .org API can no longer serve them.
+    if provider == 'opensubtitles':
+        provider = OPENSUBTITLES_PROVIDER
+
+    supported_providers = ['podnapisi', OPENSUBTITLES_PROVIDER, 'subdl', 'subsource']
     if provider not in supported_providers:
         print(json.dumps({"error": f"Provider '{provider}' not supported. Supported: {', '.join(supported_providers)}"}), file=sys.stderr)
         sys.exit(1)
 
-    if provider == 'opensubtitles':
+    if provider == OPENSUBTITLES_PROVIDER:
         if not os_username or not os_password:
-            print(json.dumps({"error": "OpenSubtitles requires username and password"}), file=sys.stderr)
+            print(json.dumps({"error": "OpenSubtitles requires an OpenSubtitles.com username and password"}), file=sys.stderr)
             sys.exit(1)
-        provider_configs['opensubtitles'] = {
+        provider_configs[OPENSUBTITLES_PROVIDER] = {
             'username': os_username,
             'password': os_password,
         }
@@ -385,7 +390,11 @@ def main():
         content = target_sub.text or (target_sub.content.decode('utf-8', errors='replace') if target_sub.content else '')
 
         if not content:
-            print(json.dumps({"error": "Failed to download subtitle content. The provider may require authentication."}), file=sys.stderr)
+            message = "Failed to download subtitle content. The provider may require authentication."
+            if provider == OPENSUBTITLES_PROVIDER:
+                message = ("OpenSubtitles download failed. Check the OpenSubtitles.com username and password "
+                           "in settings, or the account's daily download limit may be used up.")
+            print(json.dumps({"error": message}), file=sys.stderr)
             sys.exit(1)
 
         # Convert to VTT

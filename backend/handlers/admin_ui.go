@@ -1374,8 +1374,8 @@ var SettingsSchema = map[string]interface{}{
 		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
-			"openSubtitlesUsername": map[string]interface{}{"type": "text", "label": "OpenSubtitles Username", "description": "OpenSubtitles.org username (optional, enables more results)", "order": 0},
-			"openSubtitlesPassword": map[string]interface{}{"type": "password", "label": "OpenSubtitles Password", "description": "OpenSubtitles.org password", "order": 1},
+			"openSubtitlesUsername": map[string]interface{}{"type": "text", "label": "OpenSubtitles Username", "description": "OpenSubtitles.com username (optional, enables OpenSubtitles results)", "order": 0},
+			"openSubtitlesPassword": map[string]interface{}{"type": "password", "label": "OpenSubtitles Password", "description": "OpenSubtitles.com password", "order": 1},
 			"subdlApiKey":           map[string]interface{}{"type": "password", "label": "SubDL API Key", "description": "SubDL API key (enables SubDL subtitle search and downloads)", "order": 2},
 			"subsourceApiKey":       map[string]interface{}{"type": "password", "label": "SubSource API Key", "description": "SubSource API key (enables SubSource subtitle search and downloads)", "order": 3},
 			"enableTranslatedSubs":  map[string]interface{}{"type": "boolean", "label": "Enable Translated Subtitles", "description": "Allow automatic translation of embedded English subtitles into the preferred subtitle language", "order": 4},
@@ -10403,23 +10403,20 @@ func testLiveGetWithUserAgents(ctx context.Context, client *http.Client, request
 }
 
 func testOpenSubtitlesCredentials(username, password string) (bool, string) {
-	// Try XML-RPC first, fall back to subliminal library if that fails.
-	success, xmlErr := testOpenSubtitlesXMLRPC(username, password)
+	// OpenSubtitles.org's XML-RPC API is deprecated and no longer accepts
+	// accounts created on OpenSubtitles.com, so log in through the same
+	// subliminal OpenSubtitles.com REST provider that searches and downloads use.
+	success, msg := testOpenSubtitlesSubliminal(username, password)
 	if success {
-		return true, "OpenSubtitles login successful"
+		if msg == "" {
+			msg = "OpenSubtitles.com login successful"
+		}
+		return true, msg
 	}
-
-	// XML-RPC failed, try using subliminal library as fallback. This matches
-	// exactly what the actual subtitle search uses.
-	success, subliminalErr := testOpenSubtitlesSubliminal(username, password)
-	if success {
-		return true, "OpenSubtitles login successful (via subliminal)"
+	if msg == "" || msg == "unknown error" {
+		msg = "Login failed - check your OpenSubtitles.com credentials"
 	}
-
-	if subliminalErr != "" && subliminalErr != "unknown error" {
-		return false, subliminalErr
-	}
-	return false, xmlErr
+	return false, msg
 }
 
 func testSubDLAPIKey(apiKey string) (bool, string) {
@@ -10505,62 +10502,6 @@ func testSubtitleJSONEndpoint(endpoint string, headers map[string]string, provid
 	return true, provider + " API key valid"
 }
 
-// testOpenSubtitlesXMLRPC tests credentials using direct XML-RPC call
-func testOpenSubtitlesXMLRPC(username, password string) (bool, string) {
-	client := &http.Client{Timeout: 15 * time.Second}
-
-	// Escape special XML characters in credentials
-	escapedUsername := template.HTMLEscapeString(username)
-	escapedPassword := template.HTMLEscapeString(password)
-
-	// Build XML-RPC request for LogIn
-	// Use VLSub user agent to match subliminal library (registered with OpenSubtitles)
-	xmlPayload := fmt.Sprintf(`<?xml version="1.0"?>
-<methodCall>
-  <methodName>LogIn</methodName>
-  <params>
-    <param><value><string>%s</string></value></param>
-    <param><value><string>%s</string></value></param>
-    <param><value><string>en</string></value></param>
-    <param><value><string>VLSub 0.11.1</string></value></param>
-  </params>
-</methodCall>`, escapedUsername, escapedPassword)
-
-	apiReq, err := http.NewRequest(http.MethodPost, "https://api.opensubtitles.org/xml-rpc", strings.NewReader(xmlPayload))
-	if err != nil {
-		return false, fmt.Sprintf("Failed to create request: %v", err)
-	}
-	apiReq.Header.Set("Content-Type", "text/xml")
-
-	resp, err := apiusage.Do(client, "OpenSubtitles", "XML-RPC login", apiReq)
-	if err != nil {
-		return false, fmt.Sprintf("Connection failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, fmt.Sprintf("Failed to read response: %v", err)
-	}
-
-	bodyStr := string(body)
-
-	// Check for successful login (status 200 OK in the XML response)
-	if strings.Contains(bodyStr, "<name>status</name>") && strings.Contains(bodyStr, "200 OK") {
-		return true, ""
-	}
-
-	// Check for common error statuses
-	if strings.Contains(bodyStr, "401") {
-		return false, "Invalid username or password"
-	}
-	if strings.Contains(bodyStr, "411") {
-		return false, "Invalid user agent (API blocked)"
-	}
-
-	return false, "Login failed - check credentials"
-}
-
 // testOpenSubtitlesSubliminal tests credentials using the subliminal Python library
 // This is the same library used for actual subtitle searches
 func testOpenSubtitlesSubliminal(username, password string) (bool, string) {
@@ -10574,20 +10515,30 @@ func testOpenSubtitlesSubliminal(username, password string) (bool, string) {
 	script := `
 import sys
 import json
-from subliminal.providers.opensubtitles import OpenSubtitlesProvider
+from subliminal import region
+from subliminal.providers.opensubtitlescom import OpenSubtitlesComProvider
+
+region.configure('dogpile.cache.memory')
 
 try:
     params = json.loads(sys.stdin.read())
-    provider = OpenSubtitlesProvider(username=params['username'], password=params['password'])
-    provider.initialize()  # This performs the login
-    provider.terminate()   # Logout
-    print(json.dumps({"success": True}))
+    provider = OpenSubtitlesComProvider(username=params['username'], password=params['password'])
+    provider.initialize()
+    try:
+        # user_infos requires auth, so this performs the REST login.
+        infos = provider.user_infos() or {}
+    finally:
+        provider.terminate()
+    data = infos.get('data') or {}
+    remaining = data.get('remaining_downloads')
+    message = "OpenSubtitles.com login successful"
+    if remaining is not None:
+        message += " (%s downloads remaining today)" % remaining
+    print(json.dumps({"success": True, "message": message}))
 except Exception as e:
     error_msg = str(e)
-    if "Unauthorized" in error_msg or "401" in error_msg:
-        error_msg = "Invalid username or password"
-    elif "UnknownUserAgent" in error_msg or "414" in error_msg:
-        error_msg = "Invalid user agent"
+    if "Unauthorized" in error_msg or "401" in error_msg or "authenticate" in error_msg:
+        error_msg = "Invalid OpenSubtitles.com username or password"
     print(json.dumps({"success": False, "error": error_msg}))
 `
 
@@ -10608,6 +10559,7 @@ except Exception as e:
 
 	var result struct {
 		Success bool   `json:"success"`
+		Message string `json:"message"`
 		Error   string `json:"error"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
@@ -10615,7 +10567,7 @@ except Exception as e:
 	}
 
 	if result.Success {
-		return true, ""
+		return true, result.Message
 	}
 	return false, result.Error
 }

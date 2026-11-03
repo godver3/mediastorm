@@ -20,6 +20,7 @@ SUBDL_API_URL = "https://api.subdl.com/api/v1/subtitles"
 SUBDL_DOWNLOAD_BASE = "https://dl.subdl.com"
 SUBSOURCE_API_URL = "https://api.subsource.net/api/v1"
 SUBSOURCE_BASE_URL = "https://subsource.net"
+OPENSUBTITLES_PROVIDER = "opensubtitlescom"
 
 
 def normalise_words(value):
@@ -282,6 +283,20 @@ def search_subsource(params):
     return results
 
 
+def matches_requested_title(sub, imdb_id, is_episode):
+    """Drop OpenSubtitles.com results that belong to a different title.
+
+    subliminal's opensubtitlescom provider adds a plain-text title query to
+    every search (and ignores the series IMDb ID for episodes), so a search
+    for "Breaking Bad" S01E02 also returns "The Bad Guys: Breaking In" S01E02.
+    Each result carries its own IMDb IDs, so keep only the requested title.
+    """
+    if sub.provider_name != OPENSUBTITLES_PROVIDER or not (imdb_id or '').startswith('tt'):
+        return True
+    found = getattr(sub, 'series_imdb_id' if is_episode else 'movie_imdb_id', None)
+    return not found or str(found) == imdb_id
+
+
 def build_release_info(params):
     title = (params.get("title") or "").strip()
     if not title:
@@ -352,15 +367,17 @@ def main():
 
     languages = {lang}
 
-    # Build provider list and config
-    # podnapisi works without auth, opensubtitles (.org) requires auth
+    # Build provider list and config.
+    # podnapisi works without auth. OpenSubtitles uses the OpenSubtitles.com
+    # REST API (the .org XML-RPC API is deprecated and rejects .com accounts).
+    # Searching it is anonymous, but downloads need a login, so only offer its
+    # results when credentials are configured.
     providers = ['podnapisi']
     provider_configs = {}
 
-    # Add OpenSubtitles.org if credentials are provided
     if os_username and os_password:
-        providers.insert(0, 'opensubtitles')  # Prefer OpenSubtitles when available
-        provider_configs['opensubtitles'] = {
+        providers.insert(0, OPENSUBTITLES_PROVIDER)  # Prefer OpenSubtitles when available
+        provider_configs[OPENSUBTITLES_PROVIDER] = {
             'username': os_username,
             'password': os_password,
         }
@@ -376,11 +393,15 @@ def main():
     try:
         subtitles = list_subtitles([video], languages, providers=providers, provider_configs=provider_configs)
         for sub in subtitles.get(video, []):
+            if not matches_requested_title(sub, imdb_id, is_episode=isinstance(video, Episode)):
+                continue
             # Get release info from various possible attributes
             release = (
                 getattr(sub, 'release_info', '') or
                 getattr(sub, 'movie_release_name', '') or
                 getattr(sub, 'filename', '') or
+                (getattr(sub, 'release', '') if isinstance(getattr(sub, 'release', ''), str) else '') or
+                getattr(sub, 'file_name', '') or
                 (getattr(sub, 'releases', [''])[0] if hasattr(sub, 'releases') and sub.releases else '')
             )
             result = {
@@ -390,7 +411,7 @@ def main():
                 "release": release,
                 "downloads": getattr(sub, 'download_count', 0) or 0,
                 "hearing_impaired": getattr(sub, 'hearing_impaired', False),
-                "page_link": getattr(sub, 'page_link', ''),
+                "page_link": getattr(sub, 'page_link', '') or '',
             }
             results.append(result)
     except Exception as e:
