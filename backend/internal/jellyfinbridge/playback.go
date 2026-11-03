@@ -257,6 +257,12 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *principal, itemID string, ref itemRef, req playbackInfoRequest) {
+	// Playing is the only request that shows a user wants this item (clients
+	// fetch items in bulk while browsing), so the release list for the
+	// version picker is searched here and shown on later details requests.
+	if s.releaseVersionCount() > 0 {
+		s.releasesFor(p, itemID, ref)
+	}
 	// Reuse a resolved stream for the same item (clients call PlaybackInfo again
 	// when switching audio/subtitle tracks or after a seek).
 	// A version picked in the client: a specific release instead of the
@@ -421,8 +427,8 @@ func (s *Server) prequeueRequest(ctx context.Context, p *principal, ref itemRef)
 	return req, nil
 }
 
-// prewarm starts resolving a stream in the background when a client opens a
-// details page, so pressing play is fast.
+// prewarm starts resolving a stream in the background (the next episode
+// while one plays), so pressing play is fast.
 func (s *Server) prewarm(p *principal, itemID string) {
 	ref, ok := s.ids.get(itemID)
 	if !ok || (ref.Kind != refMovie && ref.Kind != refEpisode) || s.deps.Handlers.Prequeue == nil {
@@ -431,12 +437,10 @@ func (s *Server) prewarm(p *principal, itemID string) {
 	if _, exists := s.plays.latestForItem(p.Profile.ID, itemID, p.Client.DeviceID, ""); exists {
 		return
 	}
-	probed := s.chaptersPending(p.Profile.ID, itemID)
 	if caps := s.autoCaps(p, itemID, nil); caps != nil {
 		// The device's caps are known from its last playback: pick the
 		// release for it now.
 		go func() {
-			defer probed()
 			ctx, cancel := context.WithTimeout(context.Background(), autoPrequeueWait+autoPickBudget)
 			defer cancel()
 			s.pickAuto(ctx, p, itemID, ref, caps)
@@ -444,7 +448,6 @@ func (s *Server) prewarm(p *principal, itemID string) {
 		return
 	}
 	go func() {
-		defer probed()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		prequeueID, err := s.startPrequeue(ctx, p, ref)

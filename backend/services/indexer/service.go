@@ -168,6 +168,8 @@ type Service struct {
 
 	searchCacheMu sync.RWMutex
 	searchCache   map[string]searchCacheEntry
+	// indexerCalls shares identical indexer API calls (see search_dedup.go).
+	indexerCalls indexerCallDedup
 
 	dailyUsenetMu          sync.RWMutex
 	dailyUsenetPreferences map[string]dailyUsenetPreference
@@ -4375,7 +4377,9 @@ func feedAttributes(item rssItem) map[string]string {
 	return attrs
 }
 
-func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
+// fetchTorznab makes one Newznab/Torznab API search; callers go through
+// searchTorznab, which shares identical calls.
+func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
 	breaker := s.providerBreaker
 	if breaker == nil {
 		breaker = providerbreaker.Shared()

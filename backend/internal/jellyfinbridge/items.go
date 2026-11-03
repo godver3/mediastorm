@@ -619,25 +619,16 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	u := s.newUserState(p.Profile.ID)
 	id := pathVar(r, "id")
-	start := time.Now()
 	item, ok := s.itemByID(r.Context(), p, u, id, true)
 	if !ok {
 		writeError(w, http.StatusNotFound, "Item not found")
 		return
 	}
-	if s.settings().PrequeueOnDetails && (item.Type == dto.KindMovie || item.Type == dto.KindEpisode) {
-		s.prewarm(p, item.ID)
-	}
+	// No search or prequeue starts here: some clients fetch every item of a
+	// library this way, which would hit the indexers once per title. Versions
+	// list releases already found; playback starts the search.
 	if ref, ok := s.ids.get(item.ID); ok {
 		s.itemVersions(p, &item, ref)
-	}
-	if item.Type == dto.KindSeries {
-		go s.prefetchNextUp(p, item.ID)
-	}
-	if item.Type == dto.KindMovie {
-		// Movies keep the chapters of this response for playback; give a
-		// stream resolving for them the rest of the details wait.
-		s.awaitChapters(r.Context(), p.Profile.ID, item.ID, releaseDetailsWait-time.Since(start))
 	}
 	items := []dto.BaseItemDto{item}
 	s.withTrickplay(p, items)

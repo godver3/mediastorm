@@ -13,8 +13,8 @@ import (
 // PlaybackInfo) and draw them on the seek bar and as next/previous chapter
 // buttons. They belong to the stream, which the item does not know until it
 // is resolved, so the bridge remembers the chapters of the stream last probed
-// for each profile and item, and probes the prequeued stream as soon as a
-// details page has started it.
+// for each profile and item, and probes the stream prewarmed for the next
+// episode so its chapters are there when the client moves on.
 
 const chapterPrewarmWait = time.Minute
 
@@ -108,35 +108,5 @@ func (s *Server) probePrequeued(p *principal, itemID, prequeueID string) {
 	scratch := &playSession{ItemID: itemID, ProfileID: p.Profile.ID, prequeueID: prequeueID}
 	if status := s.awaitPrequeue(ctx, p, scratch, chapterPrewarmWait); status != nil && status.Status == playback.PrequeueStatusReady {
 		s.probeMedia(ctx, p, scratch, status)
-	}
-}
-
-// chaptersPending marks a stream for the item as being resolved and probed;
-// the returned func marks it done.
-func (s *Server) chaptersPending(profileID, itemID string) func() {
-	key := chaptersKey(profileID, itemID)
-	done := make(chan struct{})
-	s.chapterWaits.Store(key, done)
-	return func() {
-		s.chapterWaits.CompareAndDelete(key, done)
-		close(done)
-	}
-}
-
-// awaitChapters waits up to wait for a pending probe of the item, unless its
-// chapters are known already.
-func (s *Server) awaitChapters(ctx context.Context, profileID, itemID string, wait time.Duration) {
-	key := chaptersKey(profileID, itemID)
-	if _, known := s.chapters.Load(key); known || wait <= 0 {
-		return
-	}
-	v, pending := s.chapterWaits.Load(key)
-	if !pending {
-		return
-	}
-	select {
-	case <-v.(chan struct{}):
-	case <-time.After(wait):
-	case <-ctx.Done():
 	}
 }

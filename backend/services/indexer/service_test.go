@@ -1835,6 +1835,9 @@ func TestDailyUsenetSearchFindsAndRemembersHumanDateFormats(t *testing.T) {
 		"Coronation Street 24 Aug 2026",
 	} {
 		t.Run(successfulQuery, func(t *testing.T) {
+			// The learned format is checked on the next day's episode: the same
+			// day's query would be answered by the shared indexer call.
+			nextDayQuery := strings.Replace(successfulQuery, "24", "25", 1)
 			var mu sync.Mutex
 			var queries []string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1843,7 +1846,7 @@ func TestDailyUsenetSearchFindsAndRemembersHumanDateFormats(t *testing.T) {
 				queries = append(queries, query)
 				mu.Unlock()
 				w.Header().Set("Content-Type", "application/xml")
-				if query == successfulQuery {
+				if query == successfulQuery || query == nextDayQuery {
 					_, _ = fmt.Fprintf(w, `<rss><channel><item><title>%s.1080p.WEB-DL</title><guid>human-date</guid></item></channel></rss>`, strings.ReplaceAll(successfulQuery, " ", "."))
 					return
 				}
@@ -1870,15 +1873,15 @@ func TestDailyUsenetSearchFindsAndRemembersHumanDateFormats(t *testing.T) {
 			queries = nil
 			mu.Unlock()
 			opts.Query = "Coronation Street S67E155"
-			opts.TargetAirDate = "2026-08-24"
+			opts.TargetAirDate = "2026-08-25"
 			_, err = svc.searchUsenetWithFilter(t.Context(), settings, opts, debrid.ParseQuery(opts.Query), nil, nil, nil, models.FilterSettings{})
 			if err != nil {
 				t.Fatalf("learned daily search: %v", err)
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if len(queries) == 0 || queries[0] != successfulQuery {
-				t.Fatalf("learned first query = %v, want %q", queries, successfulQuery)
+			if len(queries) == 0 || queries[0] != nextDayQuery {
+				t.Fatalf("learned first query = %v, want %q", queries, nextDayQuery)
 			}
 		})
 	}

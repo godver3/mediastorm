@@ -524,7 +524,7 @@ type StreamingSettings struct {
 	ResolutionEndRaceEarly    bool    `json:"resolutionEndRaceEarly"`
 	IndexerTimeoutSec         float64 `json:"indexerTimeoutSec"`         // Timeout for indexer/scraper searches in seconds (default: 5)
 	HealthCheckTimeoutSec     int     `json:"healthCheckTimeoutSec"`     // Timeout for manual debrid/usenet health checks in seconds (default: 15)
-	MaxAlternateTitleSearches int     `json:"maxAlternateTitleSearches"` // Max alternate/international titles to search per item (0 = unlimited)
+	MaxAlternateTitleSearches int     `json:"maxAlternateTitleSearches"` // Max alternate/international titles to search per item (capped at 3; 0 means the cap)
 	MaxDailyUsenetQueries     int     `json:"maxDailyUsenetQueries"`     // Max query attempts per indexer for daily episodes (default: 5)
 }
 
@@ -1917,9 +1917,6 @@ type JellyfinBridgeSettings struct {
 	// X-Forwarded-For header identifies the real client (loopback is always
 	// trusted). Needed for per-client login limits behind a Docker proxy.
 	TrustedProxies []string `json:"trustedProxies,omitempty"`
-	// PrequeueOnDetails starts resolving a stream as soon as a client opens a
-	// movie/episode details page, hiding search latency at play time.
-	PrequeueOnDetails bool `json:"prequeueOnDetails"`
 	// PlaybackInfoWaitSeconds bounds how long PlaybackInfo blocks on stream resolution.
 	PlaybackInfoWaitSeconds int  `json:"playbackInfoWaitSeconds,omitempty"`
 	UDPDiscovery            bool `json:"udpDiscovery"`
@@ -2189,7 +2186,6 @@ func DefaultSettings() Settings {
 		JellyfinBridge: JellyfinBridgeSettings{
 			Port:                      8096,
 			ServerName:                "mediastorm",
-			PrequeueOnDetails:         true,
 			PlaybackInfoWaitSeconds:   20,
 			UDPDiscovery:              true,
 			QuickConnect:              true,
@@ -2538,7 +2534,6 @@ func (m *Manager) Load() (Settings, error) {
 	bridgeDefaults := map[string]interface{}{
 		"port":                      8096,
 		"serverName":                "mediastorm",
-		"prequeueOnDetails":         true,
 		"playbackInfoWaitSeconds":   20,
 		"udpDiscovery":              true,
 		"quickConnect":              true,

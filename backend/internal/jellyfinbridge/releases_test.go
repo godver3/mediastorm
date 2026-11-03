@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,15 +57,9 @@ func TestReleaseVersionsFollowRankingAndPlay(t *testing.T) {
 	tok := h.login("Living Room", "alice-pass")
 	item := movieID(t, h, tok)
 
-	// The first details request starts the search; the versions appear once it is done.
-	var got dto.BaseItemDto
-	for deadline := time.Now().Add(5 * time.Second); ; {
-		got = decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+item, tok, nil))
-		if len(got.MediaSources) > 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	got := versionsAfterPlay(t, item, func(method, path string, body any) *httptest.ResponseRecorder {
+		return h.do(method, path, tok, body)
+	}, func() int { return searches })
 	if len(got.MediaSources) != 1+15 {
 		t.Fatalf("versions = %d, want auto + 15", len(got.MediaSources))
 	}
@@ -120,8 +116,60 @@ func TestReleaseVersionsFollowRankingAndPlay(t *testing.T) {
 	}
 }
 
-// Release Versions sets how many releases are offered; 0 offers none and
-// does not search for them.
+// Release Versions sets how many releases are offered once the item has
+// been played; 0 offers none and does not search for them.
+// versionsAfterPlay checks that a details request lists no versions and
+// searches nothing, plays the item (which starts the release search) and
+// returns the item once its versions are listed.
+func versionsAfterPlay(t *testing.T, item string, do func(method, path string, body any) *httptest.ResponseRecorder, searches func() int) dto.BaseItemDto {
+	t.Helper()
+	before := decode[dto.BaseItemDto](t, do(http.MethodGet, "/Items/"+item, nil))
+	time.Sleep(50 * time.Millisecond)
+	if len(before.MediaSources) > 1 || searches() != 0 {
+		t.Fatalf("details before playing: %d versions, %d searches; want none", len(before.MediaSources), searches())
+	}
+	do(http.MethodPost, "/Items/"+item+"/PlaybackInfo", map[string]any{"MediaSourceId": item})
+	var got dto.BaseItemDto
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		got = decode[dto.BaseItemDto](t, do(http.MethodGet, "/Items/"+item, nil))
+		if len(got.MediaSources) > 1 || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Browsing never searches: details requests for movies, episodes and series
+// start no indexer search and no prequeue, however many items a client loads.
+func TestDetailsRequestsDoNotSearch(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{ReleaseVersions: 15})
+	installFakePlayback(t, h)
+	var searches, prequeues atomic.Int32
+	h.srv.deps.Handlers.IndexerSearch = func(w http.ResponseWriter, r *http.Request) {
+		searches.Add(1)
+		writeJSON(w, http.StatusOK, []map[string]any{})
+	}
+	prequeue := h.srv.deps.Handlers.Prequeue
+	h.srv.deps.Handlers.Prequeue = func(w http.ResponseWriter, r *http.Request) {
+		prequeues.Add(1)
+		prequeue(w, r)
+	}
+	tok := h.login("Living Room", "alice-pass")
+	next := decode[dto.QueryResult[dto.BaseItemDto]](t, h.do(http.MethodGet, "/Shows/NextUp", tok, nil))
+	if len(next.Items) == 0 {
+		t.Fatal("no next-up episode")
+	}
+	for _, id := range []string{movieID(t, h, tok), next.Items[0].ID, next.Items[0].SeriesID} {
+		for range 3 {
+			h.do(http.MethodGet, "/Items/"+id, tok, nil)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if searches.Load() != 0 || prequeues.Load() != 0 {
+		t.Fatalf("details requests started %d searches and %d prequeues, want none", searches.Load(), prequeues.Load())
+	}
+}
+
 func TestReleaseVersionsSetting(t *testing.T) {
 	for _, tc := range []struct{ count, want int }{{0, 1}, {3, 4}} { // 1: the item's own source
 		h := newHarness(t, config.JellyfinBridgeSettings{ReleaseVersions: tc.count})
@@ -137,7 +185,15 @@ func TestReleaseVersionsSetting(t *testing.T) {
 		}
 		tok := h.login("Living Room", "alice-pass")
 		item := movieID(t, h, tok)
-		got := decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+item, tok, nil))
+		h.do(http.MethodPost, "/Items/"+item+"/PlaybackInfo", tok, map[string]any{"MediaSourceId": item})
+		var got dto.BaseItemDto
+		for deadline := time.Now().Add(5 * time.Second); ; {
+			got = decode[dto.BaseItemDto](t, h.do(http.MethodGet, "/Items/"+item, tok, nil))
+			if len(got.MediaSources) >= tc.want || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		if len(got.MediaSources) != tc.want {
 			t.Fatalf("count %d: versions = %d, want %d", tc.count, len(got.MediaSources), tc.want)
 		}

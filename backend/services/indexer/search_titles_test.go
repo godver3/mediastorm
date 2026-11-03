@@ -179,10 +179,10 @@ func TestSearchPathsFilterWithAliasesOutsideQueryBudget(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			wantRequests := 2 // canonical plus one alternate; second search is cached
-			if mode == "split" {
-				wantRequests = 4
-			} // unscored split has no result cache
+			// Canonical plus one alternate. The second search is answered by
+			// the result cache, or (unscored split, which has none) by the
+			// shared indexer calls.
+			wantRequests := 2
 			if len(queries) != wantRequests {
 				t.Fatalf("indexer requests = %d, want %d", len(queries), wantRequests)
 			}
@@ -210,6 +210,23 @@ func TestResolveSearchTitlesHydratedAliases(t *testing.T) {
 		}
 		if !reflect.DeepEqual(search, wantSearch) {
 			t.Fatalf("search = %v, want %v", search, wantSearch)
+		}
+	}
+}
+
+// Each alternate title is a query to every indexer, so the setting is capped:
+// 0 (formerly unlimited) and values above the cap search at most 3 titles.
+func TestAlternateTitleSearchesAreCapped(t *testing.T) {
+	aliases := []string{"Alias One", "Alias Two", "Alias Three", "Alias Four", "Alias Five", "Alias Six"}
+	opts := SearchOptions{Query: "Some Movie", MediaType: "movie", Year: 2024, AlternateTitles: aliases}
+	for _, tc := range []struct{ configured, want int }{{0, 3}, {-1, 3}, {1, 1}, {2, 2}, {3, 3}, {10, 3}} {
+		search, filterTitles, _ := (&Service{}).resolveSearchTitles(t.Context(), opts, "", tc.configured)
+		if len(search) != tc.want {
+			t.Errorf("configured %d: searched %d titles %v, want %d", tc.configured, len(search), search, tc.want)
+		}
+		// Results are still matched against every known alias.
+		if len(filterTitles) != len(aliases) {
+			t.Errorf("configured %d: filter titles = %v, want all aliases", tc.configured, filterTitles)
 		}
 	}
 }

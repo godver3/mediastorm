@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"novastream/config"
 	"novastream/internal/jellyfinbridge/dto"
@@ -48,14 +47,9 @@ func TestAndroidTVPlaysPickedVersion(t *testing.T) {
 
 	next := decode[dto.QueryResult[dto.BaseItemDto]](t, atv(http.MethodGet, "/Shows/NextUp", tok, nil))
 	seriesID, episode := next.Items[0].SeriesID, next.Items[0].ID
-	var details dto.BaseItemDto
-	for deadline := time.Now().Add(5 * time.Second); ; {
-		details = decode[dto.BaseItemDto](t, atv(http.MethodGet, "/Items/"+episode, tok, nil))
-		if len(details.MediaSources) > 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	details := versionsAfterPlay(t, episode, func(method, path string, body any) *httptest.ResponseRecorder {
+		return atv(method, path, tok, body)
+	}, func() int { return 0 })
 	if len(details.MediaSources) != 4 {
 		t.Fatalf("versions = %d, want auto + 3", len(details.MediaSources))
 	}

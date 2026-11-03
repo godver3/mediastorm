@@ -62,8 +62,7 @@ type Server struct {
 	copyFailures sync.Map
 	// chapters holds the chapters of the stream last probed per profile
 	// and item (chapterSet).
-	chapters     sync.Map
-	chapterWaits sync.Map // profile|item -> chan closed when a pending probe finished
+	chapters sync.Map
 	// durations holds the length of the stream last played per profile and
 	// item (knownDuration), for progress reports without a live session.
 	durations sync.Map

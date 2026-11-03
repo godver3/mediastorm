@@ -359,7 +359,10 @@ var SettingsSchema = map[string]interface{}{
 			"maxAlternateTitleSearches": map[string]interface{}{
 				"type":        "number",
 				"label":       "Max Alternate Title Searches",
-				"description": "Maximum additional title names to search per item (0 = unlimited). English and the profile's metadata-language title are always included when available, even if that requires extra slots. Other aliases use the remaining slots.",
+				"min":         1,
+				"max":         3,
+				"step":        1,
+				"description": "Maximum additional title names to search per item (1-3; values above 3, or 0, are capped at 3). Each title is searched on every indexer. English and the profile's metadata-language title are always included when available, even if that requires extra slots. Other aliases use the remaining slots.",
 			},
 			"maxDailyUsenetQueries": map[string]interface{}{
 				"type":        "number",

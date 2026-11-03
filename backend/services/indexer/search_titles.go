@@ -13,7 +13,23 @@ import (
 // resolveSearchTitles resolves release titles, keeping the query budget separate
 // from title identity. An alias outside the search budget can still identify a
 // release returned by the canonical query or an IMDb-based scraper.
+// maxAlternateTitleSearchesCap bounds the alternate titles searched per item
+// whatever the setting says (0 used to mean unlimited). Each title is a
+// separate query to every indexer, so 18 aliases across 9 indexers turned
+// one item into ~160 indexer hits.
+const maxAlternateTitleSearchesCap = 3
+
+// effectiveMaxAlternateTitles applies maxAlternateTitleSearchesCap to the
+// configured limit; 0 (unlimited) and larger values become the cap.
+func effectiveMaxAlternateTitles(configured int) int {
+	if configured <= 0 || configured > maxAlternateTitleSearchesCap {
+		return maxAlternateTitleSearchesCap
+	}
+	return configured
+}
+
 func (s *Service) resolveSearchTitles(ctx context.Context, opts SearchOptions, metadataLanguage string, maxAlternates int) (searchTitles, filterTitles, requiredTitles []string) {
+	maxAlternates = effectiveMaxAlternateTitles(maxAlternates)
 	aliases := s.resolveAlternateTitles(ctx, opts, metadataLanguage, 0)
 	// Hydrated aliases are plain names in provider order. Resolve the localized
 	// main title through the language-scoped metadata cache instead of guessing

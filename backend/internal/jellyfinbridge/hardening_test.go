@@ -122,7 +122,7 @@ func TestServerIDSurvivesSettingsClobber(t *testing.T) {
 		t.Fatalf("id file = %q", raw)
 	}
 	// Defaults are backfilled for installs that predate the section.
-	if !settings.JellyfinBridge.UDPDiscovery || !settings.JellyfinBridge.PrequeueOnDetails || settings.JellyfinBridge.Port != 8096 {
+	if !settings.JellyfinBridge.UDPDiscovery || settings.JellyfinBridge.Port != 8096 {
 		t.Fatalf("defaults not applied: %+v", settings.JellyfinBridge)
 	}
 }
@@ -138,7 +138,7 @@ func TestBridgeDefaultsBackfilledForOldConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := settings.JellyfinBridge
-	if b.Enabled || !b.UDPDiscovery || !b.PrequeueOnDetails || b.Port != 8096 || b.PlaybackInfoWaitSeconds != 20 {
+	if b.Enabled || !b.UDPDiscovery || b.Port != 8096 || b.PlaybackInfoWaitSeconds != 20 {
 		t.Fatalf("old config bridge settings = %+v", b)
 	}
 }

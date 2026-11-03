@@ -36,9 +36,6 @@ const (
 	releaseRetryTTL   = time.Minute
 	releaseSearchWait = 45 * time.Second
 	releaseQueueWait  = 2 * time.Minute
-	// releaseDetailsWait is how long the first details request waits for the
-	// search, so the version picker is there when the page first renders.
-	releaseDetailsWait = 3 * time.Second
 )
 
 // release is one offered search result.
@@ -311,13 +308,26 @@ func (s *Server) releaseByMediaSource(p *principal, itemID string, ref itemRef, 
 	return release{}, false
 }
 
+// releasesCached returns a fresh release list found earlier for the item,
+// without starting a search.
+func (s *Server) releasesCached(p *principal, itemID string) []release {
+	s.releases.mu.Lock()
+	defer s.releases.mu.Unlock()
+	list, ok := s.releases.lists[p.Profile.ID+"|"+itemID]
+	if !ok || !list.ready || time.Since(list.fetched) > list.ttl() || list.gen != s.rankingGeneration() {
+		return nil
+	}
+	return list.items
+}
+
 // itemVersions lists an item's versions for clients: the automatic pick
-// first, then the releases found so far.
+// first, then the releases found so far. It never searches: clients fetch
+// items in bulk while browsing, so the list comes from playback's search.
 func (s *Server) itemVersions(p *principal, item *dto.BaseItemDto, ref itemRef) {
 	if (ref.Kind != refMovie && ref.Kind != refEpisode) || s.releaseVersionCount() == 0 {
 		return
 	}
-	releases := s.shownReleases(s.releasesWait(p, item.ID, ref, releaseDetailsWait))
+	releases := s.shownReleases(s.releasesCached(p, item.ID))
 	if len(releases) == 0 {
 		return
 	}
@@ -433,29 +443,6 @@ func (s *Server) prefetchNextEpisode(p *principal, itemID string) {
 			// Resolve and probe it too: it starts sooner, and its measured
 			// length is the runtime clients see when they move on to it.
 			s.prewarm(p, episodes[i+1].ID)
-			return
-		}
-	}
-}
-
-// prefetchNextUp searches the releases of a series' next episode when its
-// page opens.
-func (s *Server) prefetchNextUp(p *principal, seriesID string) {
-	if s.deps.History == nil {
-		return
-	}
-	rows, err := s.deps.History.ListContinueWatching(p.Profile.ID)
-	if err != nil {
-		return
-	}
-	u := s.newUserState(p.Profile.ID)
-	for _, cw := range rows {
-		if cw.NextEpisode == nil || cw.NextEpisode.SeasonNumber <= 0 {
-			continue
-		}
-		series := s.seriesRefFrom(titleFromWatchState(cw))
-		if series.GUID == seriesID {
-			s.prefetchReleases(p, s.episodeItem(u, series, episodeFromReference(*cw.NextEpisode)).ID)
 			return
 		}
 	}
