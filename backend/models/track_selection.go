@@ -57,8 +57,13 @@ type TrackSelection struct {
 	// Effective preferences the choice was made from.
 	AudioLanguage    string `json:"audioLanguage,omitempty"`
 	SubtitleLanguage string `json:"subtitleLanguage,omitempty"`
-	// SubtitleMode is the canonical mode: "off", "forced-only" or "on".
+	// SubtitleMode is the canonical mode: "off", "forced-only" or "on". A
+	// "foreign-audio" preference is reported as the mode it resolved to.
 	SubtitleMode string `json:"subtitleMode"`
+	// SubtitleModePreference is set to "foreign-audio" when SubtitleMode was
+	// resolved from it, so a client that picks a different audio track can
+	// resolve it again.
+	SubtitleModePreference string `json:"subtitleModePreference,omitempty"`
 }
 
 // AudioStreamIndex returns the selected audio container stream index or -1.

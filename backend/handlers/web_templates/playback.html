@@ -1639,7 +1639,20 @@
       const mode = String(value || '').trim().toLowerCase();
       if (mode === 'always') return 'on';
       if (mode === 'auto') return 'forced-only';
-      return ['on','off','forced-only'].includes(mode) ? mode : 'off';
+      if (mode === 'smart' || mode === 'foreign') return 'foreign-audio';
+      return ['on','off','forced-only','foreign-audio'].includes(mode) ? mode : 'off';
+    }
+
+    // "foreign-audio" resolves, as the server's trackselect does, to forced
+    // subtitles for audio in the viewer's language and full ones otherwise.
+    function webEffectiveSubtitleMode() {
+      const mode = webPlayerPreferences.subtitleMode;
+      if (mode !== 'foreign-audio') return mode;
+      const audio = webPlayerAudioStreams.find((stream) => Number(stream?.index) === Number(webPlayerSelectedAudioTrack)) || webPlayerAudioStreams[0];
+      const mine = webPlayerPreferences.subtitleLanguage || webPlayerPreferences.audioLanguage;
+      const language = String(audio?.language || '').trim().toLowerCase();
+      if (!mine || !language || language === 'und' || webLanguageMatches(audio, mine)) return 'forced-only';
+      return 'on';
     }
 
     function webContentPreferenceId() {
@@ -1850,8 +1863,9 @@
           webPlayerSelectedAudioTrack = Number(preferredAudio?.index ?? webPlayerAudioStreams[0]?.index ?? -1);
         }
         if (!webPlayerManualSubtitleSelection) {
-          const preferredSubtitle = webPlayerSubtitleStreams.find((stream) => webLanguageMatches(stream, webPlayerPreferences.subtitleLanguage) && (webPlayerPreferences.subtitleMode !== 'forced-only' || isWebForcedSubtitle(stream)));
-          webPlayerSelectedSubtitleTrack = webPlayerPreferences.subtitleMode === 'off' ? -1 : Number(preferredSubtitle?.index ?? -1);
+          const subtitleMode = webEffectiveSubtitleMode();
+          const preferredSubtitle = webPlayerSubtitleStreams.find((stream) => webLanguageMatches(stream, webPlayerPreferences.subtitleLanguage) && (subtitleMode !== 'forced-only' || isWebForcedSubtitle(stream)));
+          webPlayerSelectedSubtitleTrack = subtitleMode === 'off' ? -1 : Number(preferredSubtitle?.index ?? -1);
         } else if (Number(webPlayerSelectedSubtitleTrack) >= 0 && !webPlayerSubtitleStreams.some((stream) => Number(stream?.index) === Number(webPlayerSelectedSubtitleTrack))) {
           // A native client may hand the web player a bitmap (usually PGS)
           // preselection. Map it to a playable text track in the same language
@@ -3338,7 +3352,7 @@
 
     async function maybeSearchWebSubtitles() {
       if (!webPlayerMetadataResolved || webPlayerManualSubtitleSelection || SHARE_MODE) return;
-      if (webPlayerPreferences.subtitleMode !== 'on' || !webPlayerPreferences.subtitleLanguage) return;
+      if (webEffectiveSubtitleMode() !== 'on' || !webPlayerPreferences.subtitleLanguage) return;
       if (webPlayerSubtitleStreams.some((stream) => webLanguageMatches(stream, webPlayerPreferences.subtitleLanguage))) return;
       if (webPlayerSubtitleSearchStarted) return;
       const generation = ++webPlayerSubtitleSearchGeneration;

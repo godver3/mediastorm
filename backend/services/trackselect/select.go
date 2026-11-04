@@ -13,8 +13,8 @@ type Preferences struct {
 	AudioLanguage    string
 	AllowedLanguages []string
 	SubtitleLanguage string
-	// SubtitleMode accepts canonical ("off", "forced-only", "on") or legacy
-	// ("auto", "always") values.
+	// SubtitleMode accepts canonical ("off", "forced-only", "on",
+	// "foreign-audio") or legacy ("auto", "always") values.
 	SubtitleMode string
 }
 
@@ -60,6 +60,16 @@ func Select(audioStreams []models.AudioStreamInfo, subtitleStreams []models.Subt
 	}
 	selection.Audio = DescribeAudioTrack(audioStreams, audioIndex)
 
+	// "foreign-audio" becomes "on" or "forced-only" from the audio that will
+	// play, and the selection reports that resolved mode so clients that only
+	// know the three base modes keep working.
+	if prefs.SubtitleMode == SubtitleModeForeignAudio {
+		prefs.SubtitleMode = ResolveForeignAudioMode(playingAudioLanguage(audioStreams, selection.Audio),
+			prefs.SubtitleLanguage, prefs.AudioLanguage)
+		selection.SubtitleMode = prefs.SubtitleMode
+		selection.SubtitleModePreference = SubtitleModeForeignAudio
+	}
+
 	if prefs.SubtitleMode == "off" {
 		return selection
 	}
@@ -86,6 +96,39 @@ func Select(audioStreams []models.AudioStreamInfo, subtitleStreams []models.Subt
 		selection.TextSubtitle = DescribeSubtitleTrack(subtitleStreams, textIndex)
 	}
 	return selection
+}
+
+// SubtitleModeForeignAudio shows forced subtitles when the audio is in the
+// viewer's language and full subtitles when it is not.
+const SubtitleModeForeignAudio = "foreign-audio"
+
+// ResolveForeignAudioMode returns "on" when audioLanguage is known and not the
+// viewer's language (the subtitle language, else the preferred audio
+// language), otherwise "forced-only". Untagged audio counts as the viewer's
+// language, so an unlabelled track never forces full subtitles on.
+func ResolveForeignAudioMode(audioLanguage, subtitleLanguage, preferredAudioLanguage string) string {
+	mine := SanitizeLanguageCode(subtitleLanguage)
+	if mine == "" {
+		mine = SanitizeLanguageCode(preferredAudioLanguage)
+	}
+	audio := strings.ToLower(strings.TrimSpace(audioLanguage))
+	if mine == "" || audio == "" || audio == "und" || MatchesLanguage(audio, "", mine) {
+		return "forced-only"
+	}
+	return "on"
+}
+
+// playingAudioLanguage is the language of the audio the player will start:
+// the selected track, else the container's first audio track (the player's
+// default when no track matched the preferences).
+func playingAudioLanguage(streams []models.AudioStreamInfo, selected *models.SelectedTrack) string {
+	if selected != nil {
+		return selected.Language
+	}
+	if len(streams) > 0 {
+		return streams[0].Language
+	}
+	return ""
 }
 
 // languageKey groups tracks by language: the normalized ISO 639-2 code when

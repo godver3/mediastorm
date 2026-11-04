@@ -10,7 +10,7 @@ type ContentPreference struct {
 	ContentType      string    `json:"contentType"`                // "series" or "movie"
 	AudioLanguage    string    `json:"audioLanguage,omitempty"`    // ISO 639-2 code (eng, jpn, spa, etc.)
 	SubtitleLanguage string    `json:"subtitleLanguage,omitempty"` // ISO 639-2 code or empty
-	SubtitleMode     string    `json:"subtitleMode,omitempty"`     // "off", "on", "forced-only"
+	SubtitleMode     string    `json:"subtitleMode,omitempty"`     // "off", "on", "forced-only", "foreign-audio"
 	UpdatedAt        time.Time `json:"updatedAt"`
 }
 

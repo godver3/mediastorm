@@ -184,3 +184,80 @@ func TestResolverFallsBackOnErrors(t *testing.T) {
 		t.Fatalf("nil resolver prefs = %#v", got)
 	}
 }
+
+func TestSelectForeignAudioModeUsesForcedForOwnLanguageAudio(t *testing.T) {
+	audio, subs := sampleStreams()
+	sel := Select(audio, subs, Preferences{AudioLanguage: "eng", SubtitleLanguage: "eng", SubtitleMode: "foreign-audio"})
+
+	if sel.SubtitleMode != "forced-only" {
+		t.Fatalf("SubtitleMode = %q, want forced-only for English audio", sel.SubtitleMode)
+	}
+	if sel.Subtitle == nil || sel.Subtitle.StreamIndex != 6 {
+		t.Fatalf("subtitle = %#v, want forced stream 6", sel.Subtitle)
+	}
+}
+
+func TestSelectForeignAudioModeUsesFullSubtitlesForForeignAudio(t *testing.T) {
+	audio, subs := sampleStreams()
+	sel := Select(audio, subs, Preferences{AudioLanguage: "jpn", SubtitleLanguage: "eng", SubtitleMode: "foreign-audio"})
+
+	if sel.Audio == nil || sel.Audio.StreamIndex != 3 {
+		t.Fatalf("audio = %#v, want jpn stream 3", sel.Audio)
+	}
+	if sel.SubtitleMode != "on" {
+		t.Fatalf("SubtitleMode = %q, want on for Japanese audio", sel.SubtitleMode)
+	}
+	if sel.SubtitleModePreference != "foreign-audio" {
+		t.Fatalf("SubtitleModePreference = %q, want foreign-audio", sel.SubtitleModePreference)
+	}
+	if sel.Subtitle == nil || sel.Subtitle.Forced {
+		t.Fatalf("subtitle = %#v, want a full English track", sel.Subtitle)
+	}
+}
+
+func TestSelectForeignAudioModeFallsBackToDefaultAudioTrack(t *testing.T) {
+	// No English audio: the player starts the first (Japanese) track, so
+	// English subtitles come on even though the preference is English.
+	audio := []models.AudioStreamInfo{{Index: 1, Codec: "aac", Language: "jpn"}}
+	subs := []models.SubtitleStreamInfo{
+		{Index: 2, Codec: "subrip", Language: "eng", Title: "Signs", IsForced: true},
+		{Index: 3, Codec: "subrip", Language: "eng"},
+	}
+	sel := Select(audio, subs, Preferences{AudioLanguage: "eng", SubtitleLanguage: "eng", SubtitleMode: "foreign-audio"})
+
+	if sel.Audio != nil {
+		t.Fatalf("audio = %#v, want no preference match", sel.Audio)
+	}
+	if sel.SubtitleMode != "on" || sel.Subtitle == nil || sel.Subtitle.StreamIndex != 3 {
+		t.Fatalf("mode %q subtitle %#v, want on with stream 3", sel.SubtitleMode, sel.Subtitle)
+	}
+}
+
+func TestResolveForeignAudioMode(t *testing.T) {
+	cases := []struct {
+		audio, subtitle, preferredAudio, want string
+	}{
+		{"eng", "eng", "", "forced-only"},
+		{"en", "eng", "", "forced-only"},
+		{"English", "en", "", "forced-only"},
+		{"jpn", "eng", "eng", "on"},
+		{"fre", "en", "", "on"},
+		{"", "eng", "", "forced-only"},
+		{"und", "eng", "", "forced-only"},
+		{"jpn", "", "eng", "on"},
+		{"jpn", "", "", "forced-only"},
+	}
+	for _, c := range cases {
+		if got := ResolveForeignAudioMode(c.audio, c.subtitle, c.preferredAudio); got != c.want {
+			t.Errorf("ResolveForeignAudioMode(%q, %q, %q) = %q, want %q", c.audio, c.subtitle, c.preferredAudio, got, c.want)
+		}
+	}
+}
+
+func TestNormalizeSubtitleModeKeepsForeignAudio(t *testing.T) {
+	for _, mode := range []string{"foreign-audio", "smart", "foreign"} {
+		if got := NormalizeSubtitleMode(mode); got != "foreign-audio" {
+			t.Errorf("NormalizeSubtitleMode(%q) = %q, want foreign-audio", mode, got)
+		}
+	}
+}

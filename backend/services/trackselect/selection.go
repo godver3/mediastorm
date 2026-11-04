@@ -283,12 +283,16 @@ func isFullSubsTrack(title string) bool {
 }
 
 // FindSubtitleTrack finds a subtitle track matching the preferences.
-// mode can be "off", "forced-only", or "on".
+// mode can be "off", "forced-only", "on", or "foreign-audio" (resolved from
+// audioLanguage by ResolveForeignAudioMode).
 // audioLanguage is the language of the selected audio track (used for same-language vs foreign-language priority).
 // When mode is "on" with same-language audio, prefers SDH > dubtitles > full/plain > non-signs > signs.
 // When mode is "on" with foreign-language audio, prefers SDH > full/plain > dubtitles > non-signs > signs.
 // Returns -1 if no matching track is found or mode is "off".
 func FindSubtitleTrack(streams []models.SubtitleStreamInfo, preferredLanguage, mode, audioLanguage string) int {
+	if mode == SubtitleModeForeignAudio {
+		mode = ResolveForeignAudioMode(audioLanguage, preferredLanguage, "")
+	}
 	if len(streams) == 0 || mode == "off" {
 		return -1
 	}
@@ -418,7 +422,7 @@ func SanitizeLanguageCode(code string) string {
 }
 
 // NormalizeSubtitleMode maps legacy subtitle mode values to canonical ones
-// ("off", "forced-only", "on").
+// ("off", "forced-only", "on", "foreign-audio").
 func NormalizeSubtitleMode(mode string) string {
 	mode = strings.TrimSpace(strings.Trim(strings.TrimSpace(mode), "'\""))
 	switch mode {
@@ -426,6 +430,8 @@ func NormalizeSubtitleMode(mode string) string {
 		return "forced-only"
 	case "always":
 		return "on"
+	case "smart", "foreign":
+		return SubtitleModeForeignAudio
 	case "":
 		return "off"
 	default:

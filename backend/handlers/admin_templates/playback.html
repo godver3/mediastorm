@@ -1801,7 +1801,7 @@
             ? 'on'
             : rawSubtitleMode === 'auto'
                 ? 'forced-only'
-                : ['on', 'off', 'forced-only'].includes(rawSubtitleMode)
+                : ['on', 'off', 'forced-only', 'foreign-audio'].includes(rawSubtitleMode)
                     ? rawSubtitleMode
                     : 'off';
         return { audioLanguage, subtitleLanguage, subtitleMode };
@@ -5108,10 +5108,19 @@
             const audioTrack = findAudioTrackByLanguage(audioStreams, preferences.audioLanguage);
             const selectedAudio = audioStreams.find((stream) => Number(stream.index) === Number(audioTrack));
             const actualAudioLanguage = normalizeLanguagePreference(selectedAudio?.language) || preferences.audioLanguage;
+            // "foreign-audio": forced subtitles for audio in my language, full ones otherwise.
+            const playingAudio = selectedAudio || audioStreams[0];
+            const playingLanguage = normalizeLanguagePreference(playingAudio?.language);
+            const subtitleMode = preferences.subtitleMode !== 'foreign-audio'
+                ? preferences.subtitleMode
+                : (!playingLanguage || playingLanguage === 'und'
+                    || languageMatches(playingAudio.language, '', preferences.subtitleLanguage))
+                    ? 'forced-only'
+                    : 'on';
             const subtitleTrack = findSubtitleTrackByPreference(
                 subtitleStreams,
                 preferences.subtitleLanguage,
-                preferences.subtitleMode,
+                subtitleMode,
                 actualAudioLanguage,
             );
             return { audioTrack, subtitleTrack, audioStreams, subtitleStreams };
