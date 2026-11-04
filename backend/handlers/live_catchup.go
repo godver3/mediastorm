@@ -428,7 +428,9 @@ func (h *LiveHandler) buildCatchupURL(ctx context.Context, channel LiveChannel, 
 
 // GetCatchup answers GET /api/live/catchup?channelId=&sourceId=&start=&stop=&offset=
 // with the provider URL that replays a past guide programme. start/stop are the guide's
-// times (with the profile's EPG offset applied, as /api/live/epg returns them).
+// times as /api/live/epg returns them, the profile's EPG offset applied, and are used as they
+// are: the offset corrects the guide to when programmes really air, which is also how the
+// provider files its archive (on its own clock; see xtreamPanelLocation).
 func (h *LiveHandler) GetCatchup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fail := func(status int, err error) {
@@ -447,13 +449,6 @@ func (h *LiveHandler) GetCatchup(w http.ResponseWriter, r *http.Request) {
 	if !requireLiveStreamProfile(w, r, h.usersSvc) {
 		return
 	}
-	settings, err := h.cfgManager.Load()
-	if err != nil {
-		fail(http.StatusInternalServerError, err)
-		return
-	}
-	epgOffset := time.Duration(h.resolveProfileLiveSource(r, settings).EPGTimeOffsetMinutes) * time.Minute
-
 	channels, err := h.FetchFilteredChannelsForRequest(r)
 	if err != nil {
 		fail(http.StatusBadGateway, err)
@@ -470,7 +465,7 @@ func (h *LiveHandler) GetCatchup(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusNotFound, errors.New("channel not found"))
 		return
 	}
-	response, err := h.buildCatchupURL(r.Context(), *channel, start.Add(-epgOffset), stop.Add(-epgOffset), time.Duration(offsetSeconds)*time.Second, time.Now())
+	response, err := h.buildCatchupURL(r.Context(), *channel, start, stop, time.Duration(offsetSeconds)*time.Second, time.Now())
 	if err != nil {
 		status := http.StatusUnprocessableEntity
 		if errors.Is(err, errCatchupUnavailable) {
