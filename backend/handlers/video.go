@@ -5315,7 +5315,14 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	forceHLS := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls") ||
+	// A client asking for timeshift gets an HLS session that keeps the admin's window
+	// (hls_live_timeshift.go); with timeshift off it is an ordinary tune.
+	timeshiftWindow := time.Duration(0)
+	if parseOptionalBool(r.URL.Query().Get("timeshift")) {
+		timeshiftWindow = h.liveTimeshiftWindow()
+	}
+	forceHLS := timeshiftWindow > 0 ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "web") ||
 		(hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "cast"))
 
@@ -5429,6 +5436,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		RequestHeaders:     stremioRequestHeaders,
 		ForceHLSInput:      stremioHLSInput,
 		HDHomeRunInput:     hdHomeRunInput,
+		TimeshiftWindow:    timeshiftWindow,
 	}
 	playbackTarget := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	clientID := requestClientID(r)
@@ -5451,6 +5459,8 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		// CC detection runs async — frontend polls /video/hls/{id}/cc-status
 		// Include initial state (always false at creation time since detection is background)
 		"hasClosedCaptions": false,
+		// Nonzero when this session keeps a timeshift window (asked for with timeshift=1).
+		"timeshiftWindowSeconds": int(timeshiftWindow.Seconds()),
 	}
 	if resolvedStremioIndex >= 0 {
 		response["stremioStreamIndex"] = resolvedStremioIndex
@@ -5462,6 +5472,18 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	log.Printf("[video] created live HLS session %s", session.ID)
+}
+
+// liveTimeshiftWindow is the admin's live pause / rewind window, 0 when off.
+func (h *VideoHandler) liveTimeshiftWindow() time.Duration {
+	if h == nil || h.configManager == nil {
+		return 0
+	}
+	settings, err := h.configManager.Load()
+	if err != nil {
+		return 0
+	}
+	return settings.Live.TimeshiftWindow()
 }
 
 // encodePlayerQuery uses percent encoding for spaces because the player preserves

@@ -583,6 +583,9 @@ type LiveTuningSettings struct {
 	// SOCKS5 proxies (which ffmpeg cannot use natively) are honored by fetching
 	// the stream with the Go HTTP client and piping it into ffmpeg's stdin.
 	ProxyURL string
+	// TimeshiftWindow, when set, keeps that much of the channel listed and on disk so the
+	// player can pause and seek back (hls_live_timeshift.go). Zero for an ordinary live session.
+	TimeshiftWindow time.Duration
 }
 
 // LiveProviderUsageEntry summarizes active usage for a single live provider.
@@ -2880,7 +2883,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		log.Printf("[hls] live session %s: using compatibility transcode mode (video=libx264 audio=aac target=%q)", session.ID, session.PlaybackTarget)
 	}
 	session.mu.Unlock()
-	args = append(args, liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom)...)
+	args = append(args, applyTimeshiftListSize(liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom), session.LiveTuning.TimeshiftWindow)...)
 
 	log.Printf("[hls] live session %s: starting FFmpeg with args: %v", session.ID, args)
 
@@ -2973,6 +2976,8 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 			case <-processDone:
 				return
 			case <-ticker.C:
+				// A paused timeshift player fetches nothing, so its window is pruned here too.
+				m.pruneTimeshiftSegments(session)
 				session.mu.RLock()
 				lastRequest := session.LastSegmentRequest
 				segmentCount := session.SegmentRequestCount
@@ -6746,7 +6751,9 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	// live target — native and compatibility alike — is pruned here, consumption-paced
 	// off the served/requested high-water mark with a fixed keep-behind window.
 	// VOD uses buffer-aware deleteOldSegments.
-	if session.IsLive {
+	if session.isTimeshiftSession() {
+		go m.pruneTimeshiftSegments(session)
+	} else if session.IsLive {
 		go m.deleteOldLiveTransmuxSegments(session, servedSegmentNum)
 	} else {
 		go m.deleteOldSegments(session, segmentName)
@@ -7632,17 +7639,9 @@ func (m *HLSManager) buildSeamlessLivePlaylist(session *HLSSession, onDiskConten
 			return session.livePlaylistWindow[i].MediaSequence < session.livePlaylistWindow[j].MediaSequence
 		})
 	}
-	// One window for every live target, matching what FFmpeg retains on disk.
-	maxEntries := liveNativeHLSListSize
-	if len(session.livePlaylistWindow) > maxEntries {
-		trimCount := len(session.livePlaylistWindow) - maxEntries
-		for _, removed := range session.livePlaylistWindow[:trimCount] {
-			if removed.Discontinuity {
-				session.liveDiscontinuitySequence++
-			}
-		}
-		session.livePlaylistWindow = append([]livePlaylistEntry(nil), session.livePlaylistWindow[trimCount:]...)
-	}
+	// One window for every live target, matching what FFmpeg retains on disk; a timeshift
+	// session's is its duration instead (hls_live_timeshift.go).
+	trimLivePlaylistWindow(session)
 
 	var sb strings.Builder
 	sb.WriteString("#EXTM3U\n")

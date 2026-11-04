@@ -813,8 +813,22 @@ type LiveSettings struct {
 	AnalyzeDurationSec      int                  `json:"analyzeDurationSec"` // FFmpeg analyzeduration in seconds (0 = default ~5s)
 	LowLatency              bool                 `json:"lowLatency"`         // Enable low-latency mode (nobuffer + low_delay flags)
 	StreamFormat            string               `json:"streamFormat"`       // "hls" (default) or "direct" - how to deliver live streams to clients
-	Filtering               LiveTVFilterSettings `json:"filtering"`          // Backend-side channel filtering
-	EPG                     EPGSettings          `json:"epg"`                // Electronic Program Guide settings
+	// TimeshiftMinutes is how far back an Android TV client can pause or rewind a live channel,
+	// kept as HLS segments on this server (0 = off, the default). See LiveSettings.TimeshiftWindow.
+	TimeshiftMinutes int                  `json:"timeshiftMinutes"`
+	Filtering        LiveTVFilterSettings `json:"filtering"` // Backend-side channel filtering
+	EPG              EPGSettings          `json:"epg"`       // Electronic Program Guide settings
+}
+
+// MaxLiveTimeshiftMinutes bounds the window: the server keeps every segment inside it on disk.
+const MaxLiveTimeshiftMinutes = 240
+
+// TimeshiftWindow is the server-side live pause / rewind window, 0 when timeshift is off.
+func (ls *LiveSettings) TimeshiftWindow() time.Duration {
+	if ls.TimeshiftMinutes <= 0 {
+		return 0
+	}
+	return time.Duration(min(ls.TimeshiftMinutes, MaxLiveTimeshiftMinutes)) * time.Minute
 }
 
 // GetEffectivePlaylistURL returns the playlist URL based on the configured mode.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestPlaybackSettingsNormalizeAllowedTrackLanguages(t *testing.T) {
@@ -1344,5 +1345,24 @@ func TestLoadPreservesExplicitSecurityAndLANDiscoverySettings(t *testing.T) {
 	}
 	if settings.Security.ProfileUnlockTTL() != 0 {
 		t.Fatal("0 hours means session lifetime")
+	}
+}
+
+func TestLiveTimeshiftWindow(t *testing.T) {
+	cases := []struct {
+		name    string
+		minutes int
+		want    time.Duration
+	}{
+		{"unset is off", 0, 0},
+		{"negative is off", -5, 0},
+		{"configured", 45, 45 * time.Minute},
+		{"capped", 10000, MaxLiveTimeshiftMinutes * time.Minute},
+	}
+	for _, tc := range cases {
+		settings := LiveSettings{TimeshiftMinutes: tc.minutes}
+		if got := settings.TimeshiftWindow(); got != tc.want {
+			t.Errorf("%s: TimeshiftWindow() = %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
