@@ -674,9 +674,12 @@ var SettingsSchema = map[string]interface{}{
 		},
 		"fields": map[string]interface{}{},
 	},
+	// Server-wide Live TV playback. Providers are configured in live.sources; the rest of this
+	// section's fields are the old single-source settings, hidden (see hideLegacyLiveFields).
 	"live": map[string]interface{}{
-		"label":    "Live TV",
+		"label":    "Live TV Playback",
 		"icon":     "tv",
+		"group":    "providers",
 		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
