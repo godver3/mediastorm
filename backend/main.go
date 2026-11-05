@@ -1423,7 +1423,7 @@ func main() {
 
 	// Live TV endpoints for admin panel
 	r.HandleFunc("/admin/api/live/categories", adminUIHandler.RequireAuth(liveHandler.AdminGetCategories)).Methods(http.MethodGet)
-	r.HandleFunc("/admin/api/live/channels", adminUIHandler.RequireAuth(liveHandler.GetChannels)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/live/channels", adminUIHandler.RequireAuth(liveHandler.AdminGetChannels)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/stremio/streams", adminUIHandler.RequireAuth(liveHandler.GetStremioStreamOptions)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/live/stream", adminUIHandler.RequireAuth(liveHandler.StreamChannel)).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc("/admin/api/live/hls/start", adminUIHandler.RequireAuth(videoHandler.StartLiveHLSSession)).Methods(http.MethodGet, http.MethodOptions)

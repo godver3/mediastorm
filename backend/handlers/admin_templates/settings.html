@@ -4463,7 +4463,7 @@
 
             if (sec.key === 'liveTV' && profileSection.sourcesOverride === true) {
                 const profileSources = Array.isArray(profileSection.sources) ? profileSection.sources : [];
-                const globalSources = getGlobalValue('liveTV.sources') || [];
+                const globalSources = profileInheritedLiveSources();
                 if (!deepEqual(profileSources, globalSources)) {
                     if (!details[groupKey]) details[groupKey] = [];
                     details[groupKey].push('Live TV Sources');
@@ -5938,8 +5938,13 @@
         const keys = path.split('.');
         const topKey = keys[0];
 
-        if (path === 'liveTV.sources' && selectedUserId && userSettings?.liveTV?.sourcesOverride === true) {
-            return Array.isArray(userSettings.liveTV.sources) ? userSettings.liveTV.sources : [];
+        if (selectedUserId && userSettings && (path === 'liveTV.sources' || path.startsWith('liveTV.sources.'))) {
+            let val = profileLiveSourceList();
+            for (const key of keys.slice(2)) {
+                if (val === undefined || val === null) return undefined;
+                val = val[key];
+            }
+            return val;
         }
 
         // If client selected and this is a client-supported filtering field
@@ -5988,7 +5993,17 @@
         }
 
         if (selectedUserId && userSettings && path.startsWith('liveTV.sources.')) {
-            ensureProfileLiveSourceOverride();
+            // The profile list is the profile-visible subset of the global list,
+            // so its indexes do not line up with live.sources; skip the
+            // compare-with-global inheritance step and edit the copy directly.
+            let obj = ensureProfileLiveSourceOverride();
+            const rest = keys.slice(2);
+            for (let i = 0; i < rest.length - 1; i++) {
+                if (obj[rest[i]] === undefined || obj[rest[i]] === null) obj[rest[i]] = {};
+                obj = obj[rest[i]];
+            }
+            obj[rest[rest.length - 1]] = value;
+            return;
         }
 
         // If user selected and this is a per-user section, update userSettings
@@ -6064,11 +6079,33 @@
         if (!selectedUserId || !userSettings) return [];
         if (!userSettings.liveTV) userSettings.liveTV = {};
         if (!Array.isArray(userSettings.liveTV.sources)) {
-            const inheritedSources = getGlobalValue('liveTV.sources') || [];
-            userSettings.liveTV.sources = JSON.parse(JSON.stringify(inheritedSources));
+            userSettings.liveTV.sources = JSON.parse(JSON.stringify(profileInheritedLiveSources()));
         }
         userSettings.liveTV.sourcesOverride = true;
         return userSettings.liveTV.sources;
+    }
+
+    function isLiveSourceAllowedForProfile(source, profileId) {
+        const allowed = Array.isArray(source?.allowedProfiles) ? source.allowedProfiles : [];
+        const id = String(profileId || '').trim().toLowerCase();
+        return allowed.length === 0 || allowed.some(value => String(value).trim().toLowerCase() === id);
+    }
+
+    // Global Live TV sources this profile may use (Allowed Profiles applied),
+    // matching what the backend serves a profile that inherits the global list.
+    function profileInheritedLiveSources(profileId = selectedUserId) {
+        const sources = getGlobalValue('liveTV.sources') || [];
+        return sources.filter(source => isLiveSourceAllowedForProfile(source, profileId));
+    }
+
+    // The source list shown and edited for the selected profile: its own list
+    // when it has one, otherwise the inherited, profile-allowed global sources.
+    function profileLiveSourceList() {
+        const liveTV = userSettings?.liveTV;
+        if (liveTV && Array.isArray(liveTV.sources) && (liveTV.sourcesOverride === true || liveTV.sources.length > 0)) {
+            return liveTV.sources;
+        }
+        return profileInheritedLiveSources();
     }
 
     function hasProfileLiveSourceOverride() {
@@ -6948,17 +6985,9 @@
         const match = /^(live|liveTV)\.sources\.(\d+)$/.exec(sectionPath);
         if (!match) return null;
         const index = Number(match[2]);
-        if (match[1] !== 'liveTV' || !selectedUserId || hasProfileLiveSourceOverride()) return index;
-
-        // The backend removes global sources unavailable to this profile before
-        // assigning source indexes. Match that filtered list when inheriting it.
-        const sources = getValue('liveTV.sources') || [];
-        const allowedForProfile = source => {
-            const allowed = source?.allowedProfiles || [];
-            return allowed.length === 0 || allowed.some(id => String(id).trim().toLowerCase() === selectedUserId.trim().toLowerCase());
-        };
-        if (!allowedForProfile(sources[index])) return -1;
-        return sources.slice(0, index).filter(allowedForProfile).length;
+        // Profile views list only the sources the backend serves that profile,
+        // in the same order, so the list index is the backend source index.
+        return index;
     }
 
     async function openMultiselectModal(sectionPath, fieldKey, endpoint, label, optionsFrom, ordered) {
@@ -8180,6 +8209,9 @@
 
         const sourceId = String(source.id || '').trim();
         const sourceName = source.name || sourceId || 'Live TV source';
+        // Sources saved without an id get a generated one the page cannot
+        // know, so scope those by their position in the settings list.
+        const sourceIndex = sourceId ? null : index;
 
         if (selectedUserId && userSettings && sectionKey === 'liveTV.sources') {
             const liveTV = getLiveTVSettings(userSettings);
@@ -8190,6 +8222,8 @@
                 settings: userSettings,
                 channels: [],
                 sourceId,
+                sourceIndex,
+                sourceScoped: true,
                 sourceName,
                 loading: true,
                 error: '',
@@ -8209,6 +8243,8 @@
                 settings: null,
                 channels: [],
                 sourceId,
+                sourceIndex,
+                sourceScoped: true,
                 sourceName,
                 loading: true,
                 error: '',
@@ -8234,7 +8270,7 @@
     }
 
     function filterHiddenDraftToLoadedSource() {
-        if (!hiddenChannelsManager.sourceId) return;
+        if (!hiddenChannelsManager.sourceScoped) return;
         const channelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
         hiddenChannelsManager.hiddenDraft = uniqueStrings(hiddenChannelsManager.hiddenDraft).filter(id => channelIds.has(id));
         renderHiddenChannelsManager();
@@ -8256,7 +8292,7 @@
             const channelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
             const hiddenByProfile = loadedProfiles.map(profile => {
                 const hidden = uniqueStrings(profile.settings?.liveTV?.hiddenChannels || []);
-                return hiddenChannelsManager.sourceId ? hidden.filter(id => channelIds.has(id)) : hidden;
+                return hiddenChannelsManager.sourceScoped ? hidden.filter(id => channelIds.has(id)) : hidden;
             });
             const globalHidden = intersectStringArrays(hiddenByProfile);
             hiddenChannelsManager.globalHiddenOriginal = globalHidden;
@@ -8400,6 +8436,7 @@
             const params = new URLSearchParams();
             if (hiddenChannelsManager.userId) params.set('profileId', hiddenChannelsManager.userId);
             if (hiddenChannelsManager.sourceId) params.set('sourceId', hiddenChannelsManager.sourceId);
+            else if (Number.isInteger(hiddenChannelsManager.sourceIndex)) params.set('sourceIndex', String(hiddenChannelsManager.sourceIndex));
             const query = params.toString();
             const response = await fetch(basePath + '/api/live/channels' + (query ? '?' + query : ''), {
                 credentials: 'same-origin'
@@ -8555,7 +8592,7 @@
             const sourceChannelIds = new Set((hiddenChannelsManager.channels || []).map(channel => channel.id).filter(Boolean));
             const mergeHiddenChannels = (settings) => {
                 const liveTV = getLiveTVSettings(settings);
-                if (hiddenChannelsManager.sourceId && sourceChannelIds.size > 0) {
+                if (hiddenChannelsManager.sourceScoped && sourceChannelIds.size > 0) {
                     const originalGlobal = new Set(uniqueStrings(hiddenChannelsManager.globalHiddenOriginal || []));
                     const preserved = uniqueStrings(liveTV.hiddenChannels || []).filter(id => {
                         if (!sourceChannelIds.has(id)) return true;
@@ -8791,9 +8828,12 @@
             // For each field in the user's section, only keep if different from global
             const sectionStripped = {};
             let keepLiveSourceOverride = false;
-            if (section === 'liveTV' && userSettings.liveTV?.sourcesOverride === true) {
-                const profileSources = Array.isArray(userSettings.liveTV.sources) ? userSettings.liveTV.sources : [];
-                const globalSources = Array.isArray(globalSettings.live?.sources) ? globalSettings.live.sources : [];
+            const hasProfileSourceList = Array.isArray(userSettings.liveTV?.sources) &&
+                (userSettings.liveTV.sourcesOverride === true || userSettings.liveTV.sources.length > 0);
+            if (section === 'liveTV' && hasProfileSourceList) {
+                const profileSources = userSettings.liveTV.sources;
+                const globalSources = (Array.isArray(globalSettings.live?.sources) ? globalSettings.live.sources : [])
+                    .filter(source => isLiveSourceAllowedForProfile(source, selectedUserId));
                 keepLiveSourceOverride = !deepEqual(
                     normalizeForComparisonForField(section, 'sources', profileSources),
                     normalizeForComparisonForField(section, 'sources', globalSources)
@@ -8802,6 +8842,13 @@
             for (const [key, value] of Object.entries(userSettings[section])) {
                 if (section === 'liveTV' && key === 'sourcesOverride') {
                     if (keepLiveSourceOverride) sectionStripped[key] = true;
+                    continue;
+                }
+                if (section === 'liveTV' && key === 'sources') {
+                    if (keepLiveSourceOverride) {
+                        sectionStripped.sources = value;
+                        sectionStripped.sourcesOverride = true;
+                    }
                     continue;
                 }
                 const globalValue = getGlobalValue(section + '.' + key);

@@ -112,6 +112,7 @@ const (
 type liveChannelsRequest struct {
 	ProfileID     string   `json:"profileId"`
 	SourceID      string   `json:"sourceId"`
+	SourceIndex   *int     `json:"sourceIndex,omitempty"`
 	Offset        *int     `json:"offset,omitempty"`
 	Limit         *int     `json:"limit,omitempty"`
 	Filter        string   `json:"filter,omitempty"`
@@ -159,6 +160,13 @@ func parseLiveChannelsRequest(w http.ResponseWriter, r *http.Request) (liveChann
 			Categories:    query["category"],
 			FavoriteIDs:   query["favoriteId"],
 			FavoritesOnly: parseOptionalBool(query.Get("favoritesOnly")),
+		}
+		if raw, ok := query["sourceIndex"]; ok {
+			index, err := strconv.Atoi(strings.TrimSpace(raw[len(raw)-1]))
+			if err != nil || index < 0 {
+				return liveChannelsRequest{}, false, errors.New("sourceIndex must be a non-negative integer")
+			}
+			request.SourceIndex = &index
 		}
 		if paginated {
 			request.Offset = &offset
@@ -2319,7 +2327,74 @@ func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSett
 		return global
 	}
 
-	return models.ResolveLiveSource(&userSettings.LiveTV, &global)
+	resolved := models.ResolveLiveSource(&userSettings.LiveTV, &global)
+	if profileHasOwnLiveSources(&userSettings.LiveTV) {
+		// A profile source list is a copy of the global list taken when the
+		// admin first edited it, so it can still hold sources the global
+		// Allowed Profiles setting has since withheld from this profile.
+		withheld := append(append([]config.LivePlaylistSource(nil), globalSettings.Live.Sources...), globalSettings.Live.PlaylistSources...)
+		resolved.Sources = dropWithheldLiveSources(resolved.Sources, withheld, profileID)
+		resolved.PlaylistSources = dropWithheldLiveSources(resolved.PlaylistSources, withheld, profileID)
+	}
+	return resolved
+}
+
+func profileHasOwnLiveSources(profile *models.LiveTVSettings) bool {
+	return (profile.SourcesOverride != nil && *profile.SourcesOverride) ||
+		len(profile.Sources) > 0 || len(profile.PlaylistSources) > 0
+}
+
+// dropWithheldLiveSources removes profile sources that match (by id or by
+// provider identity) a global source not allowed for profileID, unless they
+// also match a global source the profile is allowed to use. Sources the
+// admin added only to this profile match no global source and are kept.
+func dropWithheldLiveSources(sources []models.LivePlaylistSource, global []config.LivePlaylistSource, profileID string) []models.LivePlaylistSource {
+	if len(sources) == 0 {
+		return sources
+	}
+	withheld := make(map[string]bool)
+	allowed := make(map[string]bool)
+	for _, src := range global {
+		target := allowed
+		if !config.IsProfileAllowed(src.AllowedProfiles, profileID) {
+			target = withheld
+		}
+		for _, key := range liveSourceMatchKeys(configPlaylistSourcesToModel([]config.LivePlaylistSource{src})[0]) {
+			target[key] = true
+		}
+	}
+	if len(withheld) == 0 {
+		return sources
+	}
+	kept := make([]models.LivePlaylistSource, 0, len(sources))
+	for _, src := range sources {
+		keys := liveSourceMatchKeys(src)
+		isWithheld, isAllowed := false, false
+		for _, key := range keys {
+			isWithheld = isWithheld || withheld[key]
+			isAllowed = isAllowed || allowed[key]
+		}
+		if isWithheld && !isAllowed {
+			continue
+		}
+		kept = append(kept, src)
+	}
+	return kept
+}
+
+func liveSourceMatchKeys(src models.LivePlaylistSource) []string {
+	var keys []string
+	if id := strings.ToLower(strings.TrimSpace(src.ID)); id != "" {
+		keys = append(keys, "id:"+id)
+	}
+	if identity := strings.TrimSpace(liveSourceIdentity(src)); identity != "" && identity != "|" {
+		mode := strings.ToLower(strings.TrimSpace(src.Mode))
+		if mode == "" {
+			mode = "m3u"
+		}
+		keys = append(keys, "src:"+mode+":"+identity)
+	}
+	return keys
 }
 
 // globalResolvedLiveSource converts global Live settings without applying any
@@ -2468,6 +2543,17 @@ func (h *LiveHandler) RecordingChannels(ctx context.Context, profileID string) (
 
 // GetChannels returns parsed and filtered channels from the configured playlist.
 func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
+	h.getChannels(w, r, false)
+}
+
+// AdminGetChannels serves the admin hidden-channel manager. Without a
+// profileId it reads the global source list, so profile-restricted sources
+// stay visible and keep their settings-list indexes.
+func (h *LiveHandler) AdminGetChannels(w http.ResponseWriter, r *http.Request) {
+	h.getChannels(w, r, true)
+}
+
+func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin bool) {
 	requestStartedAt := time.Now()
 	var allChannels []LiveChannel
 	var categorySourceChannels []LiveChannel
@@ -2511,7 +2597,12 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src := h.resolveProfileLiveSourceForID(profileID, settings)
+	var src models.ResolvedLiveSource
+	if admin && profileID == "" {
+		src = globalResolvedLiveSource(settings)
+	} else {
+		src = h.resolveProfileLiveSourceForID(profileID, settings)
+	}
 	filter := config.LiveTVFilterSettings{
 		EnabledCategories: src.EnabledCategories,
 		MaxChannels:       src.MaxChannels,
@@ -2529,6 +2620,11 @@ func (h *LiveHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selectedSources := selectM3USources(sources, requestedSourceID)
+	if request.SourceIndex != nil {
+		// Settings-list position: sources saved without an explicit id get a
+		// generated one the admin UI cannot know, so it selects by index.
+		selectedSources = selectLiveSourceByConfigIndex(sources, strconv.Itoa(*request.SourceIndex))
+	}
 	if len(selectedSources) == 0 {
 		log.Printf(
 			"[live] GetChannels error: unknown source profileId=%q sourceId=%q resolvedSourceCount=%d",

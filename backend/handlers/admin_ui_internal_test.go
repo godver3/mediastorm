@@ -286,7 +286,13 @@ func TestAdminSettingsLiveCategoryPickerScopesSourceAndProfile(t *testing.T) {
 		"params.set('sourceIndex', String(sourceIndex))",
 		"params.set('profileId', selectedUserId)",
 		"hasProfileLiveSourceOverride()",
-		"sources.slice(0, index).filter(allowedForProfile).length",
+		// Profile views list only profile-allowed sources, so list indexes
+		// already match the backend's per-profile source indexes.
+		"function profileInheritedLiveSources(",
+		"return sources.filter(source => isLiveSourceAllowedForProfile(source, profileId));",
+		"userSettings.liveTV.sources = JSON.parse(JSON.stringify(profileInheritedLiveSources()));",
+		// Per-source hidden channel manager scopes id-less sources by index.
+		"params.set('sourceIndex', String(hiddenChannelsManager.sourceIndex))",
 	} {
 		if !strings.Contains(source, marker) {
 			t.Fatalf("settings template missing scoped category picker marker %q", marker)
