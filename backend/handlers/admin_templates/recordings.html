@@ -52,6 +52,9 @@
                 <label class="form-label" for="recordingRegexPattern">Title expression</label>
                 <input id="recordingRegexPattern" class="form-input" placeholder="(News|Weather).*" autocomplete="off" spellcheck="false">
             </div>
+            <label style="display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.6rem;" title="Skip airings the guide marks as reruns. Needs a guide with new or previously-shown tags.">
+                <input id="recordingRegexNewOnly" type="checkbox"> New episodes only
+            </label>
             <button class="btn btn-primary" onclick="createRegexRecordingRule()">Create rule</button>
         </div>
         <p id="recordingRuleMessage" class="text-muted" style="margin-top: 0.75rem;"></p>
@@ -253,7 +256,7 @@ async function createRegexRecordingRule() {
         const response = await fetch(recordingRulesApiBase(), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profileId, matchType: 'regex', pattern, allChannels: true }),
+            body: JSON.stringify({ profileId, matchType: 'regex', pattern, allChannels: true, newOnly: document.getElementById('recordingRegexNewOnly').checked }),
         });
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.error || 'Failed to create recording rule');
@@ -291,6 +294,9 @@ function renderRecordingRules(rules) {
             <label style="display: flex; gap: 0.4rem; align-items: center;">
                 <input data-rule-enabled type="checkbox" ${rule.enabled ? 'checked' : ''}> Enabled
             </label>
+            <label style="display: flex; gap: 0.4rem; align-items: center;" title="Skip airings the guide marks as reruns. Needs a guide with new or previously-shown tags.">
+                <input data-rule-new-only type="checkbox" ${rule.newOnly ? 'checked' : ''}> New episodes only
+            </label>
             <label class="text-muted">Before <input data-rule-before type="number" min="0" max="60" step="1" value="${Math.round(Number(rule.paddingBeforeSeconds || 0) / 60)}" style="width: 4.5rem;" aria-label="Buffer before in minutes"> min</label>
             <label class="text-muted">After <input data-rule-after type="number" min="0" max="60" step="1" value="${Math.round(Number(rule.paddingAfterSeconds || 0) / 60)}" style="width: 4.5rem;" aria-label="Buffer after in minutes"> min</label>
             <button data-rule-save class="btn btn-secondary btn-sm">Save</button>
@@ -300,6 +306,7 @@ function renderRecordingRules(rules) {
     container.querySelectorAll('[data-rule-id]').forEach((row) => {
         const id = row.getAttribute('data-rule-id');
         row.querySelector('[data-rule-enabled]').addEventListener('change', (event) => updateRecordingRule(id, { enabled: event.target.checked }).catch((err) => setRecordingRuleMessage(err.message || 'Failed to update recording rule.', true)));
+        row.querySelector('[data-rule-new-only]').addEventListener('change', (event) => updateRecordingRule(id, { newOnly: event.target.checked }).catch((err) => setRecordingRuleMessage(err.message || 'Failed to update recording rule.', true)));
         row.querySelector('[data-rule-save]').addEventListener('click', () => saveRecordingRule(row));
         row.querySelector('[data-rule-delete]').addEventListener('click', () => deleteRecordingRule(id));
     });

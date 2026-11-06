@@ -767,6 +767,11 @@ type xmltvProgramme struct {
 	EpNum    []xmltvEpisode `xml:"episode-num"`
 	Icon     []xmltvIcon    `xml:"icon"`
 	Rating   []xmltvRating  `xml:"rating"`
+	// Presence-only airing flags (<new/>, <premiere>, <live/>, <previously-shown>).
+	New             *struct{} `xml:"new"`
+	Premiere        *struct{} `xml:"premiere"`
+	Live            *struct{} `xml:"live"`
+	PreviouslyShown *struct{} `xml:"previously-shown"`
 }
 
 type xmltvLang struct {
@@ -891,6 +896,9 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 				if len(prog.Rating) > 0 {
 					epgProgram.Rating = prog.Rating[0].Value.Value
 				}
+
+				epgProgram.New = prog.New != nil || prog.Premiere != nil || prog.Live != nil
+				epgProgram.PreviouslyShown = prog.PreviouslyShown != nil
 
 				schedule.Programs[normalizedChannelID] = append(schedule.Programs[normalizedChannelID], epgProgram)
 				programCount++

@@ -15,6 +15,10 @@ type EPGProgram struct {
 	Categories  []string  `json:"categories,omitempty"`
 	Episode     string    `json:"episode,omitempty"` // Episode number in standard format (e.g., "S01E05")
 	Rating      string    `json:"rating,omitempty"`
+	// Airing flags from XMLTV. New covers <new/>, <premiere> and <live/>;
+	// PreviouslyShown is <previously-shown>. Most guides set neither.
+	New             bool `json:"new,omitempty"`
+	PreviouslyShown bool `json:"previouslyShown,omitempty"`
 }
 
 // EPGChannel represents a channel's metadata from EPG data.

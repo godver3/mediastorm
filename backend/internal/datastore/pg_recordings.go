@@ -203,7 +203,7 @@ func scanRecording(row interface {
 
 func (r *pgRecordingRepo) GetRule(ctx context.Context, id string) (*models.RecordingRule, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled,
+		SELECT id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled, new_only,
 		       padding_before_seconds, padding_after_seconds, created_at, updated_at
 		FROM recording_rules WHERE id = $1`, id)
 	return scanRecordingRule(row)
@@ -220,7 +220,7 @@ func (r *pgRecordingRepo) ListRules(ctx context.Context, userID string, includeA
 		clauses = append(clauses, "enabled = TRUE")
 	}
 	query := `
-		SELECT id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled,
+		SELECT id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled, new_only,
 		       padding_before_seconds, padding_after_seconds, created_at, updated_at
 		FROM recording_rules`
 	if len(clauses) > 0 {
@@ -247,11 +247,11 @@ func (r *pgRecordingRepo) ListRules(ctx context.Context, userID string, includeA
 func (r *pgRecordingRepo) CreateRule(ctx context.Context, rule *models.RecordingRule) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO recording_rules (
-			id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled,
+			id, user_id, match_type, pattern, channel_id, tvg_id, channel_name, all_channels, enabled, new_only,
 			padding_before_seconds, padding_after_seconds, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		rule.ID, rule.UserID, string(rule.MatchType), rule.Pattern, rule.ChannelID, rule.TvgID, rule.ChannelName,
-		rule.AllChannels, rule.Enabled, rule.PaddingBeforeSeconds, rule.PaddingAfterSeconds, rule.CreatedAt, rule.UpdatedAt)
+		rule.AllChannels, rule.Enabled, rule.NewOnly, rule.PaddingBeforeSeconds, rule.PaddingAfterSeconds, rule.CreatedAt, rule.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create recording rule: %w", err)
 	}
@@ -263,11 +263,12 @@ func (r *pgRecordingRepo) UpdateRule(ctx context.Context, rule *models.Recording
 		UPDATE recording_rules
 		SET pattern = $2,
 		    enabled = $3,
-	    padding_before_seconds = $4,
-	    padding_after_seconds = $5,
-	    updated_at = $6
+		    new_only = $4,
+		    padding_before_seconds = $5,
+		    padding_after_seconds = $6,
+		    updated_at = $7
 		WHERE id = $1`,
-		rule.ID, rule.Pattern, rule.Enabled, rule.PaddingBeforeSeconds, rule.PaddingAfterSeconds, rule.UpdatedAt)
+		rule.ID, rule.Pattern, rule.Enabled, rule.NewOnly, rule.PaddingBeforeSeconds, rule.PaddingAfterSeconds, rule.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update recording rule: %w", err)
 	}
@@ -372,6 +373,7 @@ func scanRecordingRule(row interface {
 		&rule.ChannelName,
 		&rule.AllChannels,
 		&rule.Enabled,
+		&rule.NewOnly,
 		&rule.PaddingBeforeSeconds,
 		&rule.PaddingAfterSeconds,
 		&rule.CreatedAt,

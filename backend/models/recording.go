@@ -53,6 +53,8 @@ const (
 	RecordingRuleMatchRegex RecordingRuleMatchType = "regex"
 )
 
+// RecordingRule records every matching EPG airing. NewOnly skips airings the
+// guide marks as reruns (see EPGProgram.New).
 type RecordingRule struct {
 	ID                   string                 `json:"id"`
 	UserID               string                 `json:"userId"`
@@ -63,6 +65,7 @@ type RecordingRule struct {
 	ChannelName          string                 `json:"channelName,omitempty"`
 	AllChannels          bool                   `json:"allChannels"`
 	Enabled              bool                   `json:"enabled"`
+	NewOnly              bool                   `json:"newOnly"`
 	PaddingBeforeSeconds int                    `json:"paddingBeforeSeconds"`
 	PaddingAfterSeconds  int                    `json:"paddingAfterSeconds"`
 	CreatedAt            time.Time              `json:"createdAt"`
@@ -77,6 +80,7 @@ type CreateRecordingRuleRequest struct {
 	TvgID                string                 `json:"tvgId,omitempty"`
 	ChannelName          string                 `json:"channelName,omitempty"`
 	AllChannels          bool                   `json:"allChannels"`
+	NewOnly              bool                   `json:"newOnly,omitempty"`
 	PaddingBeforeSeconds *int                   `json:"paddingBeforeSeconds,omitempty"`
 	PaddingAfterSeconds  *int                   `json:"paddingAfterSeconds,omitempty"`
 }
@@ -84,6 +88,7 @@ type CreateRecordingRuleRequest struct {
 type UpdateRecordingRuleRequest struct {
 	ProfileID            string `json:"profileId"`
 	Enabled              *bool  `json:"enabled,omitempty"`
+	NewOnly              *bool  `json:"newOnly,omitempty"`
 	PaddingBeforeSeconds *int   `json:"paddingBeforeSeconds,omitempty"`
 	PaddingAfterSeconds  *int   `json:"paddingAfterSeconds,omitempty"`
 }

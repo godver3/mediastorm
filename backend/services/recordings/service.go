@@ -417,6 +417,12 @@ func (s *Service) CreateRule(rule models.RecordingRule) (models.RecordingRule, e
 			(existing.ChannelID != "" && strings.EqualFold(existing.ChannelID, rule.ChannelID)) ||
 			(existing.TvgID != "" && strings.EqualFold(existing.TvgID, rule.TvgID)))
 		if samePattern && sameScope {
+			// Re-creating a rule with the other "new episodes only" choice
+			// switches the existing rule rather than failing.
+			if existing.NewOnly != rule.NewOnly {
+				newOnly := rule.NewOnly
+				return s.UpdateRule(existing.ID, models.UpdateRecordingRuleRequest{NewOnly: &newOnly})
+			}
 			return models.RecordingRule{}, errors.New("an equivalent recording rule already exists")
 		}
 	}
@@ -445,8 +451,12 @@ func (s *Service) UpdateRule(id string, update models.UpdateRecordingRuleRequest
 		return models.RecordingRule{}, ErrRecordingNotFound
 	}
 	wasEnabled := rule.Enabled
+	wasNewOnly := rule.NewOnly
 	if update.Enabled != nil {
 		rule.Enabled = *update.Enabled
+	}
+	if update.NewOnly != nil {
+		rule.NewOnly = *update.NewOnly
 	}
 	if update.PaddingBeforeSeconds != nil {
 		rule.PaddingBeforeSeconds = *update.PaddingBeforeSeconds
@@ -461,7 +471,9 @@ func (s *Service) UpdateRule(id string, update models.UpdateRecordingRuleRequest
 	if err := s.rules.UpdateRule(context.Background(), rule); err != nil {
 		return models.RecordingRule{}, err
 	}
-	if wasEnabled && !rule.Enabled {
+	// Changing the filter (or pausing) parks the pending airings as "paused";
+	// the next expansion pass revives the ones the rule still matches.
+	if (wasEnabled && !rule.Enabled) || (rule.Enabled && wasNewOnly != rule.NewOnly) {
 		if err := s.rules.PausePendingRuleRecordings(context.Background(), rule.ID, time.Now().UTC()); err != nil {
 			return models.RecordingRule{}, err
 		}
@@ -579,7 +591,11 @@ func (s *Service) expandEnabledRules() {
 				if !ok || channel.SourceURL == "" || !ruleMatchesChannel(rule, channel) {
 					continue
 				}
+				guideFlagsNew := rule.NewOnly && guideMarksNewAirings(programs)
 				for _, program := range programs {
+					if rule.NewOnly && !isNewAiring(program, guideFlagsNew) {
+						continue
+					}
 					program.Start = program.Start.Add(offset)
 					program.Stop = program.Stop.Add(offset)
 					if !program.Stop.After(now) || !program.Start.Before(horizonEnd) || !matchesRecordingRule(rule, compiled, program.Title) {
@@ -613,6 +629,31 @@ func (s *Service) expandEnabledRules() {
 			}
 		}
 	}
+}
+
+// guideMarksNewAirings reports whether a channel's guide flags new airings
+// explicitly. When it does, an unflagged airing is treated as a rerun.
+func guideMarksNewAirings(programs []models.EPGProgram) bool {
+	for _, program := range programs {
+		if program.New {
+			return true
+		}
+	}
+	return false
+}
+
+// isNewAiring decides whether a "new episodes only" rule records an airing.
+// Guides flag either new airings (<new/>, <premiere>, <live/>) or reruns
+// (<previously-shown>), sometimes both. A guide with no flags at all gives no
+// way to tell, so its airings are all recorded, as before the option existed.
+func isNewAiring(program models.EPGProgram, guideFlagsNew bool) bool {
+	if program.New {
+		return true
+	}
+	if program.PreviouslyShown {
+		return false
+	}
+	return !guideFlagsNew
 }
 
 func ruleMatchesChannel(rule models.RecordingRule, channel Channel) bool {

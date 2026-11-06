@@ -581,7 +581,7 @@ func (h *RecordingsHandler) CreateRule(w http.ResponseWriter, r *http.Request) {
 	rule, err := h.rules.CreateRule(models.RecordingRule{
 		UserID: profileID, MatchType: payload.MatchType, Pattern: payload.Pattern,
 		ChannelID: payload.ChannelID, TvgID: payload.TvgID, ChannelName: payload.ChannelName,
-		AllChannels: payload.AllChannels, PaddingBeforeSeconds: before, PaddingAfterSeconds: after,
+		AllChannels: payload.AllChannels, NewOnly: payload.NewOnly, PaddingBeforeSeconds: before, PaddingAfterSeconds: after,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
