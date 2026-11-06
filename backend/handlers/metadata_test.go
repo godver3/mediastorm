@@ -2502,3 +2502,24 @@ func TestMetadataHandler_TopTenCarriesWatchState(t *testing.T) {
 		}
 	}
 }
+
+func TestMetadataHandler_TopTenWarmsEpisodeCountsWhenAsked(t *testing.T) {
+	fake := &fakeMetadataService{
+		trendingResp: []models.TrendingItem{
+			{Rank: 1, Title: models.Title{ID: "tvdb:series:200", Name: "Missing", MediaType: "series", TVDBID: 200, Poster: &models.Image{URL: "https://image.tmdb.org/t/p/w500/2.jpg"}}},
+		},
+	}
+	provider := &fakeReleasedEpisodeCountProvider{counts: map[string]int{}}
+	handler := NewMetadataHandler(episodeCountMetadataService{fake, provider}, testConfigManager(t))
+	handler.HistoryService = &fakeMetadataHistoryService{}
+
+	rec := httptest.NewRecorder()
+	handler.TopTen(rec, httptest.NewRequest(http.MethodGet, "/api/discover/top-ten?type=series&userId=user1&includeUnwatchedCounts=true", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if len(provider.warmed) != 1 || provider.warmed[0].TitleID != "tvdb:200" {
+		t.Fatalf("warmed = %#v, want the missing series", provider.warmed)
+	}
+}

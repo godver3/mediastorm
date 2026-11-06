@@ -353,3 +353,41 @@ func TestCompute_UnknownMediaType(t *testing.T) {
 		t.Errorf("expected nil unwatched for unknown media type, got %v", unwatched)
 	}
 }
+
+// episodeCountMetadataService is a metadata service that also serves cached
+// released-episode totals, as the real metadata service does.
+type episodeCountMetadataService struct {
+	*fakeMetadataService
+	*fakeReleasedEpisodeCountProvider
+}
+
+func TestQueryTrendingList_WarmsEpisodeCountsOnlyWhenAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		include   bool
+		wantWarms int
+	}{
+		{"count off", false, 0},
+		{"count on", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := NewMetadataHandler(&fakeMetadataService{}, testConfigManager(t))
+			handler.HistoryService = &fakeMetadataHistoryService{}
+			provider := &fakeReleasedEpisodeCountProvider{counts: map[string]int{"tvdb:100": 8}}
+			service := episodeCountMetadataService{&fakeMetadataService{}, provider}
+			items := []models.TrendingItem{
+				{Title: models.Title{ID: "tvdb:series:100", Name: "Cached", MediaType: "series", TVDBID: 100}},
+				{Title: models.Title{ID: "tvdb:series:200", Name: "Missing", MediaType: "series", TVDBID: 200}},
+			}
+
+			items, _, _ = handler.queryTrendingList("user1", service, items, displayListQueryOptions{IncludeUnwatchedCounts: tc.include})
+
+			if items[0].Title.UnwatchedCount == nil || *items[0].Title.UnwatchedCount != 8 {
+				t.Fatalf("cached series unwatched = %v, want 8", items[0].Title.UnwatchedCount)
+			}
+			if len(provider.warmed) != tc.wantWarms {
+				t.Fatalf("warmed = %#v, want %d", provider.warmed, tc.wantWarms)
+			}
+		})
+	}
+}

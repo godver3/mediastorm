@@ -366,13 +366,14 @@ func (h *MetadataHandler) queryTrendingList(
 	query displayListQueryOptions,
 ) ([]models.TrendingItem, []string, []string) {
 	// Every page carries watch state, not only sorted or filtered ones: clients
-	// draw watched / in-progress badges from it.
+	// draw watched / in-progress badges from it. Clients showing the unwatched
+	// count ask for it, which warms series totals the cache is missing.
 	if userID != "" && h.HistoryService != nil {
 		wh, whErr := h.HistoryService.ListWatchHistory(userID)
 		if whErr == nil {
 			cw, _ := h.HistoryService.ListSeriesStates(userID)
 			pp, _ := h.HistoryService.ListPlaybackProgress(userID)
-			enrichTrendingItems(items, buildWatchStateIndex(wh, cw, pp), service, false)
+			enrichTrendingItems(items, buildWatchStateIndex(wh, cw, pp), service, query.IncludeUnwatchedCounts)
 		}
 	}
 	enrichTrendingRatings(items, service)

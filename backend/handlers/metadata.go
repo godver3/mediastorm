@@ -2660,7 +2660,8 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 		if whErr == nil {
 			cw, _ := h.HistoryService.ListSeriesStates(userID)
 			pp, _ := h.HistoryService.ListPlaybackProgress(userID)
-			enrichTrendingItems(items, buildWatchStateIndex(wh, cw, pp), service, false)
+			warmEpisodeCounts := strings.EqualFold(r.URL.Query().Get("includeUnwatchedCounts"), "true")
+			enrichTrendingItems(items, buildWatchStateIndex(wh, cw, pp), service, warmEpisodeCounts)
 		}
 	}
 	enrichTrendingRatings(items, service)
