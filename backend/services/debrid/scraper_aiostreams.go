@@ -308,9 +308,16 @@ func (a *AIOStreamsScraper) fetchStreams(ctx context.Context, mediaType, id stri
 	}
 
 	streams := make([]aiostreamsStream, 0, len(payload.Streams))
+	var aioErrors []string
 	for _, stream := range payload.Streams {
 		if strings.EqualFold(strings.TrimSpace(stream.StreamData.Type), "statistic") {
 			log.Printf("[aiostreams] skipping statistic stream entry: %s", strings.TrimSpace(stream.Name))
+			continue
+		}
+
+		if msg, isErr := AddonStreamErrorMessage(stream.Name, stream.Description, stream.URL, "", stream.StreamData.Type); isErr {
+			log.Printf("[aiostreams] %s returned an error entry %q: %s", id, strings.TrimSpace(stream.Name), msg)
+			aioErrors = append(aioErrors, msg)
 			continue
 		}
 
@@ -357,6 +364,12 @@ func (a *AIOStreamsScraper) fetchStreams(ctx context.Context, mediaType, id stri
 			rawName:    stream.Name,
 			rawDesc:    stream.Description,
 		})
+	}
+
+	// Only AIO's error notice came back: surface it as a scraper failure so the
+	// search logs say why instead of reporting a silent "0 streams".
+	if len(streams) == 0 && len(aioErrors) > 0 {
+		return nil, fmt.Errorf("AIOStreams reported an error (check the URL is the full configured manifest URL): %s", aioErrors[0])
 	}
 
 	return streams, nil

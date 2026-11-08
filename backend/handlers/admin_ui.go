@@ -48,6 +48,7 @@ import (
 	"novastream/services/calendar"
 	"novastream/services/debrid"
 	"novastream/services/history"
+	"novastream/services/indexer"
 	"novastream/services/invitations"
 	"novastream/services/libraryaccess"
 	"novastream/services/localmedia"
@@ -4984,42 +4985,10 @@ func parseNewznabFeed(body []byte) (diagnosticsRSSFeed, error) {
 	return feed, nil
 }
 
-// newznabErrorResponse models the error element that newznab/torznab indexers
-// return — with an HTTP 200 status — when a request cannot be served (bad API
-// key, daily request limit reached, missing parameter, etc). XMLName captures
-// the root element name so we can tell an error document apart from a normal
-// <rss> feed without xml.Unmarshal failing on the root mismatch.
-type newznabErrorResponse struct {
-	XMLName     xml.Name
-	Code        string `xml:"code,attr"`
-	Description string `xml:"description,attr"`
-}
-
-// parseNewznabError inspects an indexer response body for a newznab/torznab
-// <error> element. These come back with HTTP 200, so without this check a bad
-// API key or an exhausted daily request limit silently looks like an empty
-// result set. Returns a human-readable message and true when the body is an
-// error document.
+// parseNewznabError detects the <error> document newznab/torznab indexers
+// return with HTTP 200 (bad API key, exhausted limits, ...).
 func parseNewznabError(body []byte) (string, bool) {
-	var e newznabErrorResponse
-	if err := xml.Unmarshal(body, &e); err != nil {
-		return "", false
-	}
-	if !strings.EqualFold(e.XMLName.Local, "error") {
-		return "", false
-	}
-	desc := strings.TrimSpace(e.Description)
-	code := strings.TrimSpace(e.Code)
-	switch {
-	case desc != "" && code != "":
-		return fmt.Sprintf("API error %s: %s", code, desc), true
-	case desc != "":
-		return desc, true
-	case code != "":
-		return fmt.Sprintf("API error %s", code), true
-	default:
-		return "indexer returned an API error", true
-	}
+	return indexer.ParseNewznabError(body)
 }
 
 func (h *AdminUIHandler) RunSearchDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -5354,6 +5323,10 @@ func (h *AdminUIHandler) testDirectStremioScraper(w http.ResponseWriter, req Tes
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": fmt.Sprintf("Direct Stremio test failed: %v", err)})
 		return
 	}
+	if len(results) == 0 {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Direct Stremio addon returned no playable streams for the test title (The Matrix). Check the addon's manifest URL and configuration."})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":                true,
 		"message":                fmt.Sprintf("Direct Stremio source is working (%d playable streams)", len(results)),
@@ -5480,17 +5453,13 @@ func (h *AdminUIHandler) testTorrentioScraper(w http.ResponseWriter, options, cu
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Torrentio is reachable (couldn't parse stream count)",
+			"success": false,
+			"error":   fmt.Sprintf("Torrentio did not return a Stremio stream response (%v). Check the Torrentio URL/options.", err),
 		})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":                true,
-		"message":                fmt.Sprintf("Torrentio is working (%d streams found)", len(result.Streams)),
-		"nameMatchingSuggestion": sourceTestNameMatchingSuggestion(sourceTestStreamResults(result.Streams, "torrentio"), skipNameFiltering),
-	})
+	json.NewEncoder(w).Encode(addonStreamTestResponse("Torrentio", "torrentio", "", result.Streams, skipNameFiltering))
 }
 
 // testJackettScraper tests Jackett by fetching capabilities
@@ -5541,6 +5510,15 @@ func (h *AdminUIHandler) testJackettScraper(w http.ResponseWriter, req TestScrap
 			"error":   fmt.Sprintf("Jackett returned HTTP %d", resp.StatusCode),
 		})
 		return
+	}
+	if capsBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)); err == nil {
+		if msg, isErr := parseNewznabError(capsBody); isErr {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Jackett returned an error: " + msg,
+			})
+			return
+		}
 	}
 
 	json.NewEncoder(w).Encode(sourceTestSearchResponse("Jackett is working", req,
@@ -5704,60 +5682,50 @@ func (h *AdminUIHandler) testAIOStreamsScraper(w http.ResponseWriter, req TestSc
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "AIOStreams is reachable",
+			"success": false,
+			"error":   "AIOStreams responded, but not with a Stremio manifest. " + aioManifestURLHint,
 		})
 		return
 	}
+	aioLabel := fmt.Sprintf("AIOStreams (%s v%s)", manifest.Name, manifest.Version)
 
-	// Test a stream query (The Matrix - a known IMDB ID)
+	// Test a stream query (The Matrix - a known IMDB ID). A misconfigured
+	// AIOStreams URL still serves a manifest, so only the stream response
+	// proves the source works.
 	streamURL := fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL)
 	streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but couldn't test streams", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(aioLabel, aioManifestURLHint, err.Error()))
 		return
 	}
 	addBrowserHeaders(streamReq)
 
 	streamResp, err := apiusage.Do(client, "AIOStreams", "Stream search", streamReq)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but stream test failed: %v", manifest.Name, manifest.Version, err),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(aioLabel, aioManifestURLHint, err.Error()))
 		return
 	}
 	defer streamResp.Body.Close()
 
 	if streamResp.StatusCode >= 400 {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("AIOStreams manifest OK (%s v%s), but stream test returned HTTP %d", manifest.Name, manifest.Version, streamResp.StatusCode),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(aioLabel, aioManifestURLHint, fmt.Sprintf("HTTP %d", streamResp.StatusCode)))
 		return
 	}
 
-	// Parse stream response to count results
 	var streamResult struct {
 		Streams []sourceTestStream `json:"streams"`
 	}
 	if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("AIOStreams is working (%s v%s)", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(aioLabel, aioManifestURLHint, "response was not a Stremio stream list"))
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":                true,
-		"message":                fmt.Sprintf("AIOStreams is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
-		"nameMatchingSuggestion": sourceTestNameMatchingSuggestion(sourceTestStreamResults(streamResult.Streams, "aiostreams"), req.SkipNameFiltering),
-	})
+	json.NewEncoder(w).Encode(addonStreamTestResponse(aioLabel, "aiostreams", aioManifestURLHint, streamResult.Streams, req.SkipNameFiltering))
 }
+
+// aioManifestURLHint points at the most common AIOStreams misconfiguration:
+// entering the server address instead of the configured manifest URL.
+const aioManifestURLHint = "Use the full configured manifest URL from AIOStreams (…/stremio/<uuid>/<config>/manifest.json), not just the server address."
 
 // testNyaaScraper tests Nyaa by querying its RSS feed
 func (h *AdminUIHandler) testNyaaScraper(w http.ResponseWriter, req TestScraperRequest) {
@@ -5874,32 +5842,24 @@ func (h *AdminUIHandler) testCometScraper(w http.ResponseWriter, req TestScraper
 		streamURL = fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL)
 	}
 
+	cometLabel := fmt.Sprintf("Comet (%s v%s)", manifest.Name, manifest.Version)
+	const cometHint = "Check the Comet configuration string (options) and its debrid settings."
 	streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
 	if err != nil {
-		// Manifest worked, just report that
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(cometLabel, cometHint, err.Error()))
 		return
 	}
 	addBrowserHeaders(streamReq)
 
 	streamResp, err := apiusage.Do(client, "Comet", "Stream search", streamReq)
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(cometLabel, cometHint, err.Error()))
 		return
 	}
 	defer streamResp.Body.Close()
 
 	if streamResp.StatusCode >= 400 {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(cometLabel, cometHint, fmt.Sprintf("HTTP %d", streamResp.StatusCode)))
 		return
 	}
 
@@ -5907,18 +5867,11 @@ func (h *AdminUIHandler) testCometScraper(w http.ResponseWriter, req TestScraper
 		Streams []sourceTestStream `json:"streams"`
 	}
 	if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": fmt.Sprintf("Comet is working (%s v%s)", manifest.Name, manifest.Version),
-		})
+		json.NewEncoder(w).Encode(addonStreamRequestFailure(cometLabel, cometHint, "response was not a Stremio stream list"))
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":                true,
-		"message":                fmt.Sprintf("Comet is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
-		"nameMatchingSuggestion": sourceTestNameMatchingSuggestion(sourceTestStreamResults(streamResult.Streams, "comet"), req.SkipNameFiltering),
-	})
+	json.NewEncoder(w).Encode(addonStreamTestResponse(cometLabel, "comet", cometHint, streamResult.Streams, req.SkipNameFiltering))
 }
 
 // testMediaFusionScraper tests a MediaFusion instance by fetching its manifest and a test playback/stream endpoint.
@@ -5979,47 +5932,43 @@ func (h *AdminUIHandler) testMediaFusionScraper(w http.ResponseWriter, req TestS
 		fmt.Sprintf("%s/stream/movie/tt0133093.json", baseURL),
 	}
 
+	mfLabel := fmt.Sprintf("MediaFusion (%s v%s)", manifest.Name, manifest.Version)
+	const mfHint = "Check that the URL is your configured MediaFusion manifest URL and its debrid settings."
+	lastFailure := "no test endpoint responded"
 	for _, streamURL := range testEndpoints {
 		streamReq, err := http.NewRequest(http.MethodGet, streamURL, nil)
 		if err != nil {
+			lastFailure = err.Error()
 			continue
 		}
 		addBrowserHeaders(streamReq)
 
 		streamResp, err := apiusage.Do(client, "MediaFusion", "Stream search", streamReq)
 		if err != nil {
+			lastFailure = err.Error()
 			continue
 		}
 		if streamResp.StatusCode >= 400 {
 			streamResp.Body.Close()
+			lastFailure = fmt.Sprintf("HTTP %d", streamResp.StatusCode)
 			continue
 		}
 
 		var streamResult struct {
 			Streams []sourceTestStream `json:"streams"`
 		}
-		if err := json.NewDecoder(streamResp.Body).Decode(&streamResult); err != nil {
-			streamResp.Body.Close()
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": fmt.Sprintf("MediaFusion is working (%s v%s)", manifest.Name, manifest.Version),
-			})
-			return
-		}
+		err = json.NewDecoder(streamResp.Body).Decode(&streamResult)
 		streamResp.Body.Close()
+		if err != nil {
+			lastFailure = "response was not a Stremio stream list"
+			continue
+		}
 
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":                true,
-			"message":                fmt.Sprintf("MediaFusion is working (%s v%s, %d streams found)", manifest.Name, manifest.Version, len(streamResult.Streams)),
-			"nameMatchingSuggestion": sourceTestNameMatchingSuggestion(sourceTestStreamResults(streamResult.Streams, "mediafusion"), req.SkipNameFiltering),
-		})
+		json.NewEncoder(w).Encode(addonStreamTestResponse(mfLabel, "mediafusion", mfHint, streamResult.Streams, req.SkipNameFiltering))
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("MediaFusion is reachable (%s v%s), but no test playback endpoint responded successfully", manifest.Name, manifest.Version),
-	})
+	json.NewEncoder(w).Encode(addonStreamRequestFailure(mfLabel, mfHint, lastFailure))
 }
 
 // TestUsenetProviderRequest represents a request to test a usenet provider

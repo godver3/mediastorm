@@ -4494,6 +4494,14 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 		log.Printf("[indexer/torznab] sanitized %d unescaped ampersand(s) in XML response from %s", fixCount, idx.Name)
 	}
 
+	// Newznab/torznab report bad API keys, exhausted limits, etc. as an
+	// HTTP 200 <error> document; surface its message instead of a generic
+	// "not an RSS feed" error.
+	if msg, isErr := ParseNewznabError(sanitized); isErr {
+		log.Printf("[indexer/newznab] %s returned an API error: %s", idx.Name, msg)
+		return nil, fmt.Errorf("indexer %s returned an error: %s", idx.Name, msg)
+	}
+
 	var feed rssFeed
 	if err := xml.Unmarshal(sanitized, &feed); err != nil {
 		log.Printf("[indexer/newznab] invalid RSS feed from %s: %v", idx.Name, err)

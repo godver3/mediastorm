@@ -172,7 +172,22 @@ func (s *DirectStremioScraper) fetchStreams(ctx context.Context, mediaType, id s
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode stream response: %w", err)
 	}
-	return payload.Streams, nil
+	// An addon that answers only with an in-band error notice (e.g. a bad
+	// config or debrid key) must surface that message, not look empty.
+	streams := make([]directStremioEntry, 0, len(payload.Streams))
+	var addonErrors []string
+	for _, entry := range payload.Streams {
+		if msg, isErr := AddonStreamErrorMessage(entry.Name, entry.Description+" "+entry.Title, entry.URL, "", ""); isErr {
+			log.Printf("[%s] %s returned an error entry %q: %s", directStremioType, id, strings.TrimSpace(entry.Name), msg)
+			addonErrors = append(addonErrors, msg)
+			continue
+		}
+		streams = append(streams, entry)
+	}
+	if len(streams) == 0 && len(addonErrors) > 0 {
+		return nil, fmt.Errorf("addon reported an error: %s", addonErrors[0])
+	}
+	return streams, nil
 }
 
 var (

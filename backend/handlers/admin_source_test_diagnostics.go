@@ -19,9 +19,13 @@ func sourceTestSearchResponse(message string, req TestScraperRequest, scrapers .
 	defer cancel()
 	var results []debrid.ScrapeResult
 	failed := false
+	var firstErr error
 	for _, scraper := range scrapers {
 		if ctx.Err() != nil {
 			failed = true
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
 			break
 		}
 		sample, err := scraper.Search(ctx, debrid.SearchRequest{
@@ -30,6 +34,9 @@ func sourceTestSearchResponse(message string, req TestScraperRequest, scrapers .
 		})
 		if err != nil {
 			failed = true
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		results = append(results, sample...)
@@ -40,7 +47,14 @@ func sourceTestSearchResponse(message string, req TestScraperRequest, scrapers .
 	}
 	response["nameMatchingSuggestion"] = sourceTestNameMatchingSuggestion(results, req.SkipNameFiltering)
 	if failed && len(results) == 0 {
+		// The connection itself passed, so keep success, but show why the
+		// sample search failed instead of hiding it.
 		response["message"] = message + ". Filename checks could not be completed."
+		if firstErr != nil {
+			reason := strings.Join(strings.Fields(firstErr.Error()), " ")
+			response["message"] = fmt.Sprintf("%s. Filename checks could not be completed: test search failed: %s", message, reason)
+			response["warning"] = reason
+		}
 	}
 	return response
 }
@@ -91,6 +105,9 @@ type sourceTestStream struct {
 	BehaviorHints struct {
 		Filename string `json:"filename"`
 	} `json:"behaviorHints"`
+	StreamData struct {
+		Type string `json:"type"`
+	} `json:"streamData"`
 }
 
 // Mirror filename precedence in the addon adapters. Display titles do not
@@ -123,4 +140,75 @@ func sourceTestStreamResults(streams []sourceTestStream, sourceType string) []de
 		results = append(results, debrid.ScrapeResult{Title: filename})
 	}
 	return results
+}
+
+// addonStreamTestResponse builds the admin test result for a Stremio addon from
+// the streams it returned for the test title (The Matrix). Only playable
+// entries count: addons answer misconfiguration with HTTP 200 and an in-band
+// error "stream" (AIOStreams "[❌]", Comet "[⚠️]"), and a working addon always
+// has streams for The Matrix, so an error entry or an empty list fails the
+// test with the addon's own message instead of reporting "working". hint is
+// appended to error messages to point at the likely fix.
+func addonStreamTestResponse(label, sourceType, hint string, streams []sourceTestStream, skipNameFiltering bool) map[string]interface{} {
+	var playable []sourceTestStream
+	var addonErrors []string
+	placeholders := 0
+	for _, s := range streams {
+		if strings.EqualFold(strings.TrimSpace(s.StreamData.Type), "statistic") {
+			continue
+		}
+		if msg, isErr := debrid.AddonStreamErrorMessage(s.Name, s.Description, s.URL, s.InfoHash, s.StreamData.Type); isErr {
+			addonErrors = append(addonErrors, msg)
+			continue
+		}
+		if debrid.IsKnownPlaceholderURL(s.URL) {
+			placeholders++
+			continue
+		}
+		if strings.TrimSpace(s.URL) == "" && strings.TrimSpace(s.InfoHash) == "" {
+			continue
+		}
+		playable = append(playable, s)
+	}
+
+	withHint := func(msg string) string {
+		if hint == "" {
+			return msg
+		}
+		return msg + " " + hint
+	}
+	switch {
+	case len(playable) > 0:
+		return map[string]interface{}{
+			"success":                true,
+			"message":                fmt.Sprintf("%s is working (%d streams found)", label, len(playable)),
+			"nameMatchingSuggestion": sourceTestNameMatchingSuggestion(sourceTestStreamResults(playable, sourceType), skipNameFiltering),
+		}
+	case len(addonErrors) > 0:
+		return map[string]interface{}{
+			"success": false,
+			"error":   withHint(fmt.Sprintf("%s returned an error instead of streams: %s.", label, addonErrors[0])),
+		}
+	case placeholders > 0:
+		return map[string]interface{}{
+			"success": false,
+			"error":   withHint(fmt.Sprintf("%s only returned placeholder videos (download failed/unavailable) for the test title. Check the debrid service configured in the addon.", label)),
+		}
+	default:
+		return map[string]interface{}{
+			"success": false,
+			"error":   withHint(fmt.Sprintf("%s returned no playable streams for the test title (The Matrix). Check the addon's configuration and debrid service.", label)),
+		}
+	}
+}
+
+// addonStreamRequestFailure reports a failed test-stream request. The manifest
+// loading only proves the server is up; without a stream response the source
+// cannot be called working.
+func addonStreamRequestFailure(label, hint, detail string) map[string]interface{} {
+	msg := fmt.Sprintf("%s manifest loaded, but the test stream request failed: %s.", label, detail)
+	if hint != "" {
+		msg += " " + hint
+	}
+	return map[string]interface{}{"success": false, "error": msg}
 }
