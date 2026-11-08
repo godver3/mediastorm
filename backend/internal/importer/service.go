@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1053,6 +1054,26 @@ func (s *Service) ListResolvedNZBs(ctx context.Context, filter string, page, per
 
 func (s *Service) DeleteResolvedNZB(ctx context.Context, key string) error {
 	return s.resolvedCache.delete(ctx, key)
+}
+
+// HasResolvedNZB reports whether these NZB bytes already have a cached import
+// that ProcessNZBImmediately would reuse instead of importing.
+func (s *Service) HasResolvedNZB(ctx context.Context, nzbBytes []byte) bool {
+	_, ok, err := s.resolvedCache.findByNZBHash(ctx, resolvedNZBHash(nzbBytes))
+	return err == nil && ok
+}
+
+// ForgetResolvedNZB drops the cached import for these NZB bytes, including its
+// materialized metadata, so the next ProcessNZBImmediately call re-imports.
+// Used when a cached import turns out to hold no playable media: without it a
+// broken import (for example from an importer bug since fixed) is reused on
+// every playback attempt. A missing entry is not an error.
+func (s *Service) ForgetResolvedNZB(ctx context.Context, nzbBytes []byte) error {
+	err := s.resolvedCache.delete(ctx, resolvedNZBHash(nzbBytes))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // sanitizeFileName removes unsafe characters from a filename

@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -281,7 +282,14 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 				sourceNZBPath = strings.TrimSpace(candidate.Title)
 			}
 			log.Printf("[playback] resolved NZB cache hit before fetch downloadURLHash=%q nzbHash=%q storagePath=%q title=%q hits=%d", downloadURLHash, shortHash(entry.NZBHash), entry.StoragePath, entry.Title, entry.Hits)
-			return s.buildInternalPlaybackResolution(cfg, candidate, entry.StoragePath, sourceNZBPath, entry.FileSize, "healthy")
+			res, resErr := s.buildInternalPlaybackResolution(cfg, candidate, entry.StoragePath, sourceNZBPath, entry.FileSize, "healthy")
+			if !errors.Is(resErr, errNoPlayableMediaFiles) {
+				return res, resErr
+			}
+			log.Printf("[playback] cached import has no playable media; dropping it and re-importing downloadURLHash=%q nzbHash=%q storagePath=%q", downloadURLHash, shortHash(entry.NZBHash), entry.StoragePath)
+			if delErr := s.nzbSystem.ImporterService().DeleteResolvedNZB(ctx, entry.Key); delErr != nil && !errors.Is(delErr, os.ErrNotExist) {
+				log.Printf("[playback] failed to drop broken resolved NZB entry nzbHash=%q: %v", shortHash(entry.NZBHash), delErr)
+			}
 		} else {
 			log.Printf("[playback] resolved NZB cache miss before fetch downloadURLHash=%q title=%q", downloadURLHash, strings.TrimSpace(candidate.Title))
 		}
@@ -309,6 +317,7 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 
 	// Process NZB immediately without queuing
 	service := s.nzbSystem.ImporterService()
+	reusedCachedImport := service.HasResolvedNZB(ctx, nzbBytes)
 	processNum := s.nzbProcessCount.Add(1)
 	log.Printf("[search-stats] NZB process #%d started (fileName=%q, totals: fetches=%d, processes=%d)",
 		processNum, fileName, s.nzbFetchCount.Load(), s.nzbProcessCount.Load())
@@ -375,18 +384,37 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 	log.Printf("[playback] NZB processed successfully, storagePath=%q", storagePath)
 
 	// If storagePath is a directory (multi-file NZB), find the best playable file within it
-	finalPath := storagePath
-	if s.metadataSvc != nil && s.isLikelyDirectory(storagePath) {
-		log.Printf("[playback] storagePath appears to be a directory, scanning for media files: %q", storagePath)
-		hints := buildSelectionHintsFromCandidate(candidate, storagePath)
-		mediaFile, findErr := s.findBestMediaFile(storagePath, hints)
-		if findErr != nil {
-			return nil, fmt.Errorf("directory contains no playable media files: %w", findErr)
+	finalPath, scanErr := s.selectMediaFromStoragePath(candidate, storagePath)
+	if errors.Is(scanErr, errNoPlayableMediaFiles) {
+		// Never keep an import without playable media in the resolved cache:
+		// it would be reused, and fail the same way, on every later attempt.
+		if forgetErr := service.ForgetResolvedNZB(ctx, nzbBytes); forgetErr != nil {
+			log.Printf("[playback] failed to drop resolved import with no playable media storagePath=%q: %v", storagePath, forgetErr)
+		} else {
+			log.Printf("[playback] dropped resolved import with no playable media storagePath=%q reusedCachedImport=%t", storagePath, reusedCachedImport)
 		}
-		if mediaFile != "" {
-			finalPath = mediaFile
-			log.Printf("[playback] selected media file from directory: %q", finalPath)
+		if reusedCachedImport && processCtx.Err() == nil {
+			// The broken import came from the cache; import the NZB again once.
+			log.Printf("[playback] re-importing NZB after broken cached import fileName=%q", fileName)
+			storagePath, err = service.ProcessNZBImmediatelyWithSource(processCtx, fileName, nzbBytes, importer.ResolvedNZBSource{
+				DownloadURL: downloadURL,
+				Title:       candidate.Title,
+				Indexer:     candidate.Indexer,
+				FileSize:    estimateNZBFileSize(nzbBytes),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("process NZB immediately: %w", err)
+			}
+			finalPath, scanErr = s.selectMediaFromStoragePath(candidate, storagePath)
+			if errors.Is(scanErr, errNoPlayableMediaFiles) {
+				if forgetErr := service.ForgetResolvedNZB(ctx, nzbBytes); forgetErr != nil {
+					log.Printf("[playback] failed to drop re-imported NZB with no playable media storagePath=%q: %v", storagePath, forgetErr)
+				}
+			}
 		}
+	}
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	if isNonContentMediaPath(finalPath) {
 		return nil, fmt.Errorf("resolved media path appears to be a sample/extras file: %s", path.Base(finalPath))
@@ -397,6 +425,31 @@ func (s *Service) Resolve(ctx context.Context, candidate models.NZBResult) (*mod
 
 	sourceNZBPath := strings.TrimSpace(fileName)
 	return s.buildInternalPlaybackResolution(cfg, candidate, finalPath, sourceNZBPath, estimateNZBFileSize(nzbBytes), "healthy")
+}
+
+// errNoPlayableMediaFiles marks an import whose directory holds no playable
+// video. For a resolved-cache import this means the cached import is broken
+// (for example materialized by an importer bug since fixed) and must be
+// dropped instead of reused on every attempt.
+var errNoPlayableMediaFiles = errors.New("no playable media files found")
+
+// selectMediaFromStoragePath returns storagePath itself for a single-file
+// import, or the best playable file inside it when it is a directory.
+func (s *Service) selectMediaFromStoragePath(candidate models.NZBResult, storagePath string) (string, error) {
+	if s.metadataSvc == nil || !s.isLikelyDirectory(storagePath) {
+		return storagePath, nil
+	}
+	log.Printf("[playback] storagePath appears to be a directory, scanning for media files: %q", storagePath)
+	hints := buildSelectionHintsFromCandidate(candidate, storagePath)
+	mediaFile, findErr := s.findBestMediaFile(storagePath, hints)
+	if findErr != nil {
+		return "", fmt.Errorf("directory contains no playable media files: %w", findErr)
+	}
+	if mediaFile == "" {
+		return storagePath, nil
+	}
+	log.Printf("[playback] selected media file from directory: %q", mediaFile)
+	return mediaFile, nil
 }
 
 type nzbProcessOutcome struct {
@@ -2535,6 +2588,10 @@ func (s *Service) findBestMediaFile(dirPath string, hints mediaresolve.Selection
 	var candidates []mediaFileCandidate
 	var resolverCandidates []mediaresolve.Candidate
 	bestIdx := -1
+	// Non-playable names seen, so a "no playable media" failure says what the
+	// import actually holds (e.g. unextracted .r00 volumes) in remote logs.
+	var skippedSample []string
+	skippedTotal := 0
 
 	var scan func(currentPath string, depth int) error
 	scan = func(currentPath string, depth int) error {
@@ -2555,6 +2612,12 @@ func (s *Service) findBestMediaFile(dirPath string, hints mediaresolve.Selection
 		for _, filename := range files {
 			ext := strings.ToLower(path.Ext(filename))
 			priority, isPlayable := playableExtensionPriority[ext]
+			if !isPlayable {
+				skippedTotal++
+				if len(skippedSample) < 20 {
+					skippedSample = append(skippedSample, path.Join(currentPath, filename))
+				}
+			}
 
 			if isPlayable {
 				// Skip sample/extras files early - these should never be selected
@@ -2613,7 +2676,10 @@ func (s *Service) findBestMediaFile(dirPath string, hints mediaresolve.Selection
 	}
 
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("no playable media files found")
+		if skippedTotal > 0 {
+			log.Printf("[playback] no playable media under %q; %d non-playable file(s), first %d: %q", dirPath, skippedTotal, len(skippedSample), skippedSample)
+		}
+		return "", errNoPlayableMediaFiles
 	}
 
 	hasExplicitEpisodeTarget := hasExplicitEpisodeTarget(hints)

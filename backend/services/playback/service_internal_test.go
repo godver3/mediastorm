@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -263,5 +264,30 @@ func TestBuildInternalPlaybackResolutionReselectsCachedSeasonPackEpisode(t *test
 	}
 	if !strings.HasSuffix(resolution.WebDAVPath, "/Jackie.Chan.Adventures.S01E01.mkv") {
 		t.Fatalf("selected %q, want S01E01", resolution.WebDAVPath)
+	}
+}
+
+// An import holding only unextracted archive volumes (a nested scene set the
+// importer missed) must report errNoPlayableMediaFiles, which both resolve
+// paths use to drop the broken cached import and re-import.
+func TestNoPlayableMediaIsDetectableForCachedImports(t *testing.T) {
+	dir := "/123_Show.S13E28.1080p.WEB.H264-CAKES"
+	service := &Service{metadataSvc: validationMetadataService{files: map[string][]string{
+		dir: {"cakes-show.s13e28.nfo", "cakes-show.s13e28.sfv", "cakes-show.s13e28.r00", "cakes-show.s13e28.r01"},
+	}}}
+
+	_, err := service.findBestMediaFile(dir, mediaresolve.SelectionHints{})
+	if !errors.Is(err, errNoPlayableMediaFiles) {
+		t.Fatalf("findBestMediaFile() error = %v, want errNoPlayableMediaFiles", err)
+	}
+
+	_, err = service.selectMediaFromStoragePath(models.NZBResult{Title: "Show.S13E28.1080p.WEB.H264-CAKES"}, dir)
+	if !errors.Is(err, errNoPlayableMediaFiles) || !strings.Contains(err.Error(), "directory contains no playable media files") {
+		t.Fatalf("selectMediaFromStoragePath() error = %v", err)
+	}
+
+	_, err = service.buildInternalPlaybackResolution(config.Settings{}, models.NZBResult{Title: "Show.S13E28.1080p.WEB.H264-CAKES"}, dir, "show.nzb", 0, "healthy")
+	if !errors.Is(err, errNoPlayableMediaFiles) {
+		t.Fatalf("buildInternalPlaybackResolution() error = %v, want errNoPlayableMediaFiles", err)
 	}
 }

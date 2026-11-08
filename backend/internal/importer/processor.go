@@ -856,21 +856,18 @@ func isNonContentArchivePath(internalPath string) bool {
 	return false
 }
 
-// isRarFile checks if a filename is a RAR archive file
+// nestedRarVolumePattern matches every RAR volume naming scheme: .rar,
+// .partNN.rar, and old-style .r00-.r999 / .s00-.s99 continuation volumes
+// (scene releases packed inside an obfuscated outer archive use these).
+var nestedRarVolumePattern = regexp.MustCompile(`(?i)\.(?:rar|r\d{1,3}|s\d{2})$`)
+
+// isRarFile checks if a filename is a RAR archive volume. The previous
+// hand-rolled check only matched single-digit ".r0"-".r9", so a nested scene
+// set (.rar + .r00...) was half-detected: the .rar went to nested processing
+// alone while its .r00+ volumes were materialized as plain files, leaving an
+// import with no playable video.
 func (proc *Processor) isRarFile(filename string) bool {
-	lower := strings.ToLower(filename)
-	// Check common RAR patterns: .rar, .r00, .r01, .part01.rar, etc.
-	if strings.HasSuffix(lower, ".rar") {
-		return true
-	}
-	// Check .r## pattern (e.g., .r00, .r01)
-	if len(lower) > 3 && lower[len(lower)-3] == '.' && lower[len(lower)-2] == 'r' {
-		lastChar := lower[len(lower)-1]
-		if lastChar >= '0' && lastChar <= '9' {
-			return true
-		}
-	}
-	return false
+	return nestedRarVolumePattern.MatchString(strings.TrimSpace(filename))
 }
 
 // processNestedRarArchives handles RAR files found inside another RAR archive
