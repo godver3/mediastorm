@@ -391,3 +391,54 @@ func TestQueryTrendingList_WarmsEpisodeCountsOnlyWhenAsked(t *testing.T) {
 		})
 	}
 }
+
+func TestCompute_SeriesUnionsEpisodesAcrossIDForms(t *testing.T) {
+	// Season 1 recorded under tvdb-only rows, season 2 under tmdb-only rows:
+	// the title carries both IDs, so it must count both seasons, not the larger.
+	var history []models.WatchHistoryItem
+	for ep := 1; ep <= 3; ep++ {
+		history = append(history, models.WatchHistoryItem{
+			MediaType: "episode", SeriesID: "tvdb:series:428163", SeasonNumber: 1, EpisodeNumber: ep,
+			Watched: true, ExternalIDs: map[string]string{"tvdb": "428163"},
+		})
+	}
+	for ep := 1; ep <= 2; ep++ {
+		history = append(history, models.WatchHistoryItem{
+			MediaType: "episode", SeriesID: "tmdb:tv:215943", SeasonNumber: 2, EpisodeNumber: ep,
+			Watched: true, ExternalIDs: map[string]string{"tmdb": "215943"},
+		})
+	}
+	idx := buildWatchStateIndex(history, nil, nil)
+	ext := map[string]string{"tmdb": "215943", "tvdb": "428163"}
+	idx.setSeriesEpisodeTotal("tmdb:tv:215943", ext, 6)
+	state, unwatched := idx.computeWithExternalIDs("series", "tmdb:tv:215943", ext)
+	if state != "partial" || unwatched == nil || *unwatched != 1 {
+		t.Fatalf("got state=%q unwatched=%v, want partial/1", state, derefInt(unwatched))
+	}
+}
+
+func TestCompute_SeriesCountsLegacyBareNumericHistory(t *testing.T) {
+	history := []models.WatchHistoryItem{
+		{MediaType: "episode", ItemID: "95396:s01e01", SeriesID: "95396", SeasonNumber: 1, EpisodeNumber: 1, Watched: true},
+		{MediaType: "episode", ItemID: "95396:s01e02", SeriesID: "95396", SeasonNumber: 1, EpisodeNumber: 2, Watched: true},
+	}
+	idx := buildWatchStateIndex(history, nil, nil)
+	ext := map[string]string{"tmdb": "95396", "tvdb": "371980"}
+	idx.setSeriesEpisodeTotal("tmdb:tv:95396", ext, 3)
+	_, unwatched := idx.computeWithExternalIDs("series", "tmdb:tv:95396", ext)
+	if unwatched == nil || *unwatched != 1 {
+		t.Fatalf("unwatched = %v, want 1", derefInt(unwatched))
+	}
+	// An unrelated title must not pick up the legacy rows.
+	idx.setSeriesEpisodeTotal("tmdb:tv:1399", map[string]string{"tmdb": "1399"}, 3)
+	if _, other := idx.computeWithExternalIDs("series", "tmdb:tv:1399", map[string]string{"tmdb": "1399"}); other == nil || *other != 3 {
+		t.Fatalf("unrelated unwatched = %v, want 3", derefInt(other))
+	}
+}
+
+func derefInt(v *int) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}

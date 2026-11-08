@@ -1324,6 +1324,12 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 	// Filter to watched episodes from the past 365 days
 	cutoffDate := time.Now().UTC().AddDate(-1, 0, 0) // 365 days ago
 	seriesEpisodes := make(map[string][]models.WatchHistoryItem)
+	// Every watched episode regardless of age. The 365-day window above only
+	// decides which series surface on continue watching; episode counts must
+	// span the whole history or a show watched over several years reports its
+	// older seasons as unwatched.
+	seriesLifetimeEpisodes := make(map[string][]models.WatchHistoryItem)
+	seriesLifetimeUnwatched := make(map[string][]models.WatchHistoryItem)
 	seriesHistory := make(map[string][]models.WatchHistoryItem)
 	seriesActivityAt := make(map[string]time.Time)
 	seriesInfo := make(map[string]models.WatchHistoryItem) // Track series metadata
@@ -1354,6 +1360,11 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 			if hasContradictorySeriesExternalIDs(item.SeriesID, item.ItemID, item.ExternalIDs) && !item.Watched {
 				corruptedUnwatchedBySeries[resolvedID] = append(corruptedUnwatchedBySeries[resolvedID], item)
 				continue
+			}
+			if item.Watched {
+				seriesLifetimeEpisodes[resolvedID] = append(seriesLifetimeEpisodes[resolvedID], item)
+			} else {
+				seriesLifetimeUnwatched[resolvedID] = append(seriesLifetimeUnwatched[resolvedID], item)
 			}
 			if item.Watched && item.WatchedAt.After(cutoffDate) {
 				seriesEpisodes[resolvedID] = append(seriesEpisodes[resolvedID], item)
@@ -1473,6 +1484,8 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 		seriesID   string
 		info       models.WatchHistoryItem
 		episodes   []models.WatchHistoryItem
+		lifetime   []models.WatchHistoryItem
+		unwatched  []models.WatchHistoryItem
 		history    []models.WatchHistoryItem
 		activityAt time.Time
 		inProgress *models.PlaybackProgress
@@ -1485,6 +1498,8 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 			seriesID:   seriesID,
 			info:       seriesInfo[seriesID],
 			episodes:   seriesEpisodes[seriesID],
+			lifetime:   seriesLifetimeEpisodes[seriesID],
+			unwatched:  seriesLifetimeUnwatched[seriesID],
 			history:    seriesHistory[seriesID],
 			activityAt: seriesActivityAt[seriesID],
 			inProgress: inProgressBySeriesCache[seriesID],
@@ -1529,6 +1544,8 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 			}
 			numbering := newEpisodeNumberingIndex(seriesDetails)
 			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
+			lifetimeWatchedCount := countLifetimeWatchedEpisodes(
+				watchedEpisodesAfterManualUnwatch(t.lifetime, t.unwatched, numbering), t.episodes, t.promoted, numbering)
 
 			// Priority 1: In-progress episode (resume watching)
 			// Skip if the in-progress episode is already marked as watched in history
@@ -1744,17 +1761,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
 					state.Status = seriesDetails.Title.Status
 					state.LifecycleStatus = seriesDetails.Title.LifecycleStatus
-					// For in-progress, count watched episodes from history (dedup by season/episode)
-					watchedSet := make(map[string]bool)
-					for _, ep := range t.episodes {
-						if ep.SeasonNumber > 0 {
-							key := episodeKey(ep.SeasonNumber, ep.EpisodeNumber)
-							if _, promoted := t.promoted[key]; !promoted {
-								watchedSet[key] = true
-							}
-						}
-					}
-					state.WatchedEpisodeCount = len(watchedSet)
+					state.WatchedEpisodeCount = lifetimeWatchedCount
 				}
 			} else if len(t.episodes) > 0 {
 				// Priority 2: Next unwatched episode after most recently completed
@@ -1844,7 +1851,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
 					state.Status = seriesDetails.Title.Status
 					state.LifecycleStatus = seriesDetails.Title.LifecycleStatus
-					state.WatchedEpisodeCount = countWatchedEpisodesExcluding(state.WatchedEpisodes, t.promoted)
+					state.WatchedEpisodeCount = lifetimeWatchedCount
 				}
 			} else {
 				// No episodes and no in-progress (shouldn't happen)
@@ -3125,6 +3132,34 @@ func countWatchedEpisodes(watchedEpisodes map[string]models.EpisodeReference) in
 		}
 	}
 	return count
+}
+
+// countLifetimeWatchedEpisodes counts distinct regular-season episodes watched
+// across the series' whole history plus the windowed episode list (which
+// already carries canonical numbering), skipping corrupted gaps that were
+// promoted to watched only for next-episode selection.
+func countLifetimeWatchedEpisodes(lifetime, windowed []models.WatchHistoryItem, promoted map[string]struct{}, numbering *episodeNumberingIndex) int {
+	seen := make(map[string]struct{}, len(lifetime))
+	add := func(ep models.WatchHistoryItem) {
+		season, episode := numbering.canonical(ep.SeasonNumber, ep.EpisodeNumber)
+		if season <= 0 || episode <= 0 {
+			return
+		}
+		key := episodeKey(season, episode)
+		if _, skip := promoted[key]; skip {
+			return
+		}
+		seen[key] = struct{}{}
+	}
+	for _, ep := range lifetime {
+		add(ep)
+	}
+	for _, ep := range windowed {
+		if ep.Watched {
+			add(ep)
+		}
+	}
+	return len(seen)
 }
 
 func countWatchedEpisodesExcluding(watchedEpisodes map[string]models.EpisodeReference, excluded map[string]struct{}) int {

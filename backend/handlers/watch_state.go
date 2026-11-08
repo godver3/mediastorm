@@ -23,6 +23,14 @@ func stringSliceContainsFold(values []string, target string) bool {
 type watchStateIndex struct {
 	movies map[string]movieState
 	series map[string]seriesState
+	// Watched regular-season episode keys ("season:episode") per series index
+	// key. A title's count is the union across all of its keys, so history
+	// split across tmdb-/tvdb-/imdb-form rows is not undercounted.
+	episodes map[string]map[string]struct{}
+	// Rows whose only series ID is a bare number (legacy imports) have no
+	// unambiguous index key; they are matched only against a title's own bare
+	// candidate keys, the same fallback the details page uses.
+	legacyEpisodes map[string]map[string]struct{}
 }
 
 type releasedEpisodeCountProvider interface {
@@ -52,10 +60,17 @@ func buildWatchStateIndex(
 	playbackProgress []models.PlaybackProgress,
 ) *watchStateIndex {
 	idx := &watchStateIndex{
-		movies: make(map[string]movieState),
-		series: make(map[string]seriesState),
+		movies:         make(map[string]movieState),
+		series:         make(map[string]seriesState),
+		episodes:       make(map[string]map[string]struct{}),
+		legacyEpisodes: make(map[string]map[string]struct{}),
 	}
-	watchedEpisodeKeys := make(map[string]map[string]struct{})
+	addEpisode := func(sets map[string]map[string]struct{}, key, episodeKey string) {
+		if sets[key] == nil {
+			sets[key] = make(map[string]struct{})
+		}
+		sets[key][episodeKey] = struct{}{}
+	}
 
 	// Pass 1: Watch history — determine watched flags
 	for _, wh := range watchHistory {
@@ -95,27 +110,23 @@ func buildWatchStateIndex(
 						ID:          wh.SeriesID,
 						ExternalIDs: wh.ExternalIDs,
 					})
-					for _, key := range identity.IndexKeys() {
+					episodeKey := strconv.Itoa(wh.SeasonNumber) + ":" + strconv.Itoa(wh.EpisodeNumber)
+					indexKeys := identity.IndexKeys()
+					for _, key := range indexKeys {
 						s := idx.series[key]
 						s.hasWatchedEps = true
 						idx.series[key] = s
-						if watchedEpisodeKeys[key] == nil {
-							watchedEpisodeKeys[key] = make(map[string]struct{})
+						addEpisode(idx.episodes, key, episodeKey)
+					}
+					if len(indexKeys) == 0 {
+						for _, key := range identity.CandidateKeys {
+							addEpisode(idx.legacyEpisodes, key, episodeKey)
 						}
-						watchedEpisodeKeys[key][strconv.Itoa(wh.SeasonNumber)+":"+strconv.Itoa(wh.EpisodeNumber)] = struct{}{}
 					}
 				}
 			}
 		}
 	}
-	for key, episodes := range watchedEpisodeKeys {
-		s := idx.series[key]
-		if len(episodes) > s.watchedEpisodes {
-			s.watchedEpisodes = len(episodes)
-		}
-		idx.series[key] = s
-	}
-
 	// Pass 2: Continue watching — episode counts and progress
 	for _, cw := range continueWatching {
 		identity := mediaidentity.Resolve(mediaidentity.Input{
@@ -201,7 +212,17 @@ func (idx *watchStateIndex) computeWithExternalIDs(mediaType, itemID string, ext
 	}
 	if mediaType == "series" {
 		var s seriesState
+		watched := make(map[string]struct{})
+		union := func(set map[string]struct{}) {
+			for episodeKey := range set {
+				watched[episodeKey] = struct{}{}
+			}
+		}
+		for _, key := range identity.CandidateKeys {
+			union(idx.legacyEpisodes[key])
+		}
 		for _, key := range identity.IndexKeys() {
+			union(idx.episodes[key])
 			candidate := idx.series[key]
 			s.markedWatched = s.markedWatched || candidate.markedWatched
 			s.hasWatchedEps = s.hasWatchedEps || candidate.hasWatchedEps
@@ -212,6 +233,12 @@ func (idx *watchStateIndex) computeWithExternalIDs(mediaType, itemID string, ext
 			if candidate.watchedEpisodes > s.watchedEpisodes {
 				s.watchedEpisodes = candidate.watchedEpisodes
 			}
+		}
+		if len(watched) > 0 {
+			s.hasWatchedEps = true
+		}
+		if len(watched) > s.watchedEpisodes {
+			s.watchedEpisodes = len(watched)
 		}
 		allEpsWatched := s.totalEpisodes > 0 && s.watchedEpisodes >= s.totalEpisodes
 		unwatched := s.totalEpisodes - s.watchedEpisodes
