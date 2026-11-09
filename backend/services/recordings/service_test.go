@@ -303,9 +303,11 @@ func TestRetriedRecordingHasContinuousTimeline(t *testing.T) {
 
 	svc := NewService(nil, ffmpegPath, dir)
 	recording := models.Recording{SourceURL: server.URL + "/source.ts", OutputPath: output}
-	for attempt := 0; attempt < 2; attempt++ {
-		if err, detail := svc.runRecordingAttempt(context.Background(), recording, 3*time.Second, attempt == 0); err != nil {
-			t.Fatalf("recording attempt %d: %v: %s", attempt+1, err, detail)
+	stopAt := time.Now().Add(30 * time.Second)
+	for attempt := 1; attempt <= 2; attempt++ {
+		// The file source hits EOF long before stopAt, like a dropped live stream.
+		if result := svc.runRecordingAttempt(context.Background(), recording, stopAt, attempt); result.err != nil || result.stoppedAtSchedule {
+			t.Fatalf("recording attempt %d: %+v", attempt, result)
 		}
 	}
 	duration := func() float64 {
@@ -329,6 +331,92 @@ func TestRetriedRecordingHasContinuousTimeline(t *testing.T) {
 	}
 	if got := duration(); got < 5.5 || got > 6.5 {
 		t.Fatalf("repaired duration = %.2fs, want about 6s", got)
+	}
+}
+
+func TestStartRecordingStopsAtWallClockStopTime(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	t.Setenv("ARGS_FILE", argsFile)
+	// Runs until interrupted, like a live source; ignores any -t argument.
+	script := writeFakeFFmpeg(t, `#!/bin/sh
+printf '%s\n' "$@" > "$ARGS_FILE"
+trap 'printf tail; exit 255' INT
+printf 'live-media'
+while :; do sleep 0.05; done
+`)
+	endAt := time.Now().UTC().Add(time.Second)
+	recording := newTestRecording(endAt)
+	repo := newFakeRecordingRepo(recording)
+	svc := newTestService(repo, script, t.TempDir())
+	svc.ctx = context.Background()
+
+	svc.startRecording(recording)
+
+	latest, err := svc.Get(recording.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if latest.Status != models.RecordingStatusCompleted {
+		t.Fatalf("Status = %q, want %q (error=%q)", latest.Status, models.RecordingStatusCompleted, latest.Error)
+	}
+	if latest.ActualEndAt == nil || latest.ActualEndAt.Before(endAt) || latest.ActualEndAt.After(endAt.Add(3*time.Second)) {
+		t.Fatalf("ActualEndAt = %v, want shortly after stop time %v", latest.ActualEndAt, endAt)
+	}
+	content, err := os.ReadFile(latest.OutputPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(content) != "live-mediatail" {
+		t.Fatalf("output = %q, want media flushed after graceful stop", content)
+	}
+	rawArgs, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile(args) error = %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
+	for _, arg := range args {
+		if arg == "-t" {
+			t.Fatalf("ffmpeg args %q use -t; stop time must be wall-clock", args)
+		}
+	}
+	if !strings.Contains(string(rawArgs), "-rw_timeout\n") {
+		t.Fatalf("ffmpeg args %q missing -rw_timeout", args)
+	}
+}
+
+func TestStartRecordingFailsWhenSourceKeepsEnding(t *testing.T) {
+	script := writeFakeFFmpeg(t, `#!/bin/sh
+printf 'partial'
+exit 0
+`)
+	originalDelay := recordingRetryDelay
+	recordingRetryDelay = 10 * time.Millisecond
+	defer func() { recordingRetryDelay = originalDelay }()
+
+	recording := newTestRecording(time.Now().UTC().Add(500 * time.Millisecond))
+	repo := newFakeRecordingRepo(recording)
+	svc := newTestService(repo, script, t.TempDir())
+	svc.remuxRecording = func(string) error { return nil }
+	svc.ctx = context.Background()
+
+	svc.startRecording(recording)
+
+	latest, err := svc.Get(recording.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if latest.Status != models.RecordingStatusFailed {
+		t.Fatalf("Status = %q, want %q", latest.Status, models.RecordingStatusFailed)
+	}
+	if latest.Error != "source stream ended before scheduled stop time" {
+		t.Fatalf("Error = %q, want source-ended message", latest.Error)
+	}
+}
+
+func TestRedactSourceURL(t *testing.T) {
+	got := redactSourceURL("http://user:pass@iptv.example:8080/live/user/pass/123.ts?token=x")
+	if got != "http://iptv.example:8080" {
+		t.Fatalf("redactSourceURL() = %q", got)
 	}
 }
 

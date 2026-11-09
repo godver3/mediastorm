@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +40,13 @@ const pollInterval = 15 * time.Second
 
 var (
 	recordingRetryDelay = 2 * time.Second
-	execCommandContext  = exec.CommandContext
+	// recordingReadTimeout fails a stalled source read so the retry loop can
+	// reconnect instead of ffmpeg hanging until the stop time.
+	recordingReadTimeout = 15 * time.Second
+	// recordingStopGrace is how long ffmpeg gets to exit after SIGINT before
+	// it is killed.
+	recordingStopGrace = 10 * time.Second
+	execCommandContext = exec.CommandContext
 )
 
 type Service struct {
@@ -772,35 +779,39 @@ func (s *Service) startRecording(recording models.Recording) {
 		cancel()
 	}()
 
+	log.Printf("[recordings] recording start id=%s title=%q channel=%q source=%s window=%s..%s stopAt=%s",
+		recording.ID, recording.Title, recording.ChannelName, redactSourceURL(recording.SourceURL),
+		recording.StartAt.Format(time.RFC3339), recording.EndAt.Format(time.RFC3339), stopAt.Format(time.RFC3339))
+
 	attempt := 0
 	lastErrMsg := ""
 	for {
-		remaining := time.Until(stopAt)
-		if remaining <= 0 {
+		if time.Until(stopAt) <= 0 {
 			break
 		}
 		attempt++
 
-		waitErr, errMsg := s.runRecordingAttempt(ctx, recording, remaining, attempt == 1)
+		result := s.runRecordingAttempt(ctx, recording, stopAt, attempt)
 		finishedAt := time.Now().UTC()
 		if ctx.Err() != nil {
 			s.handleInterruptedRecording(recording.ID, finishedAt)
 			return
 		}
-		if errMsg != "" {
-			lastErrMsg = errMsg
-		}
-
-		remaining = time.Until(stopAt)
-		if remaining <= 0 {
-			if waitErr == nil {
+		if result.stoppedAtSchedule {
+			// Wall-clock stop reached: this attempt finished the recording,
+			// unless it was a last-second retry that captured nothing.
+			if result.written > 0 {
 				lastErrMsg = ""
 			}
 			break
 		}
-
-		if waitErr == nil {
+		if result.errMsg != "" {
+			lastErrMsg = result.errMsg
+		} else {
 			lastErrMsg = "source stream ended before scheduled stop time"
+		}
+		if time.Until(stopAt) <= 0 {
+			break
 		}
 
 		timer := time.NewTimer(recordingRetryDelay)
@@ -843,6 +854,8 @@ func (s *Service) startRecording(recording models.Recording) {
 		latest.Status = models.RecordingStatusFailed
 		latest.Error = truncateRecordingError(lastErrMsg)
 	}
+	log.Printf("[recordings] recording finished id=%s status=%s attempts=%d bytes=%d error=%q",
+		latest.ID, latest.Status, attempt, latest.OutputSizeBytes, latest.Error)
 	if err := s.repo.Update(context.Background(), latest); err != nil {
 		log.Printf("[recordings] finalize recording update failed: %v", err)
 	}
@@ -879,53 +892,106 @@ func remuxRecordingTimestamps(ffmpegPath, path string) error {
 	return os.Rename(tmpPath, path)
 }
 
-func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, remaining time.Duration, truncate bool) (error, string) {
-	durationSec := int(remaining.Seconds())
-	if durationSec < 1 {
-		durationSec = 1
-	}
+// recordingAttemptResult describes how one ffmpeg capture attempt ended.
+type recordingAttemptResult struct {
+	// stoppedAtSchedule is true when the recorder itself stopped ffmpeg at the
+	// scheduled wall-clock stop time, i.e. the attempt ran to completion.
+	stoppedAtSchedule bool
+	written           int64
+	err               error
+	errMsg            string
+}
 
+// runRecordingAttempt captures the source until stopAt (wall clock) or until
+// ffmpeg exits on its own. The stop time is enforced by the recorder rather
+// than ffmpeg's -t, which counts stream timestamps: live sources with forward
+// timestamp jumps made -t end captures minutes early.
+func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Recording, stopAt time.Time, attempt int) recordingAttemptResult {
+	startedAt := time.Now()
 	flags := os.O_CREATE | os.O_WRONLY
-	if truncate {
+	if attempt == 1 {
 		flags |= os.O_TRUNC
 	} else {
 		flags |= os.O_APPEND
 	}
 	outputFile, err := os.OpenFile(recording.OutputPath, flags, 0o644)
 	if err != nil {
-		return err, fmt.Sprintf("open output file: %v", err)
+		msg := fmt.Sprintf("open output file: %v", err)
+		log.Printf("[recordings] attempt failed id=%s attempt=%d error=%q", recording.ID, attempt, msg)
+		return recordingAttemptResult{err: err, errMsg: msg}
 	}
 	defer outputFile.Close()
+	var startSize int64
+	if info, err := outputFile.Stat(); err == nil {
+		startSize = info.Size()
+	}
 
 	args := []string{
 		"-nostdin",
 		"-loglevel", "warning",
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto,udp,rtp,rtmp",
+		"-rw_timeout", fmt.Sprintf("%d", recordingReadTimeout.Microseconds()),
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "3",
 		"-i", recording.SourceURL,
 		"-map", "0",
 		"-c", "copy",
-		"-t", fmt.Sprintf("%d", durationSec),
 		"-mpegts_flags", "+resend_headers",
 		"-f", "mpegts",
 		"pipe:1",
 	}
-	cmd := execCommandContext(ctx, s.ffmpegPath, args...)
+	attemptCtx, cancelAttempt := context.WithDeadline(ctx, stopAt)
+	defer cancelAttempt()
+	cmd := execCommandContext(attemptCtx, s.ffmpegPath, args...)
+	// Stop gracefully so ffmpeg flushes buffered packets, then kill if it hangs.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = recordingStopGrace
 	cmd.Stdout = outputFile
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	log.Printf("[recordings] attempt start id=%s attempt=%d remaining=%s",
+		recording.ID, attempt, time.Until(stopAt).Round(time.Second))
 	if err := cmd.Start(); err != nil {
-		return err, fmt.Sprintf("start ffmpeg: %v", err)
+		msg := fmt.Sprintf("start ffmpeg: %v", err)
+		log.Printf("[recordings] attempt failed id=%s attempt=%d error=%q", recording.ID, attempt, msg)
+		return recordingAttemptResult{err: err, errMsg: msg}
 	}
 	waitErr := cmd.Wait()
-	errMsg := strings.TrimSpace(stderr.String())
+
+	written := int64(0)
+	if info, err := outputFile.Stat(); err == nil {
+		written = info.Size() - startSize
+	}
+	elapsed := time.Since(startedAt).Round(time.Second)
+	errMsg := truncateRecordingError(stderr.String())
+
+	if ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+		log.Printf("[recordings] attempt reached stop time id=%s attempt=%d elapsed=%s bytes=%d",
+			recording.ID, attempt, elapsed, written)
+		return recordingAttemptResult{stoppedAtSchedule: true, written: written}
+	}
 	if waitErr != nil && errMsg == "" {
 		errMsg = waitErr.Error()
 	}
-	return waitErr, truncateRecordingError(errMsg)
+	exitCode := -1
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	log.Printf("[recordings] attempt ended early id=%s attempt=%d exit=%d elapsed=%s bytes=%d remaining=%s stderr=%q",
+		recording.ID, attempt, exitCode, elapsed, written, time.Until(stopAt).Round(time.Second), errMsg)
+	return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written}
+}
+
+// redactSourceURL keeps only scheme and host: IPTV source URLs often carry
+// credentials in the path or query.
+func redactSourceURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "<unparsed>"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 func (s *Service) handleInterruptedRecording(id string, ts time.Time) {
