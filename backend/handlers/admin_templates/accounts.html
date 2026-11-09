@@ -431,10 +431,10 @@ function renderProfiles() {
                     <a class="btn btn-secondary btn-sm" href="${basePath}/settings?profileId=${p.id}">Settings</a>
                     <a class="btn btn-secondary btn-sm" href="${basePath}/notifications?profileId=${p.id}">Notifications</a>
                     ${isAdmin ? `<a class="btn btn-secondary btn-sm" href="${basePath}/tasks?profileId=${encodeURIComponent(p.id)}">Automations</a>` : ''}
-                    ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showProfileStreamsModal('${p.id}', '${escapeHtml(p.name)}', '${p.accountId}')">Streams</button>` : ''}
-                    ${isAdmin ? `<button class="btn ${p.allowShareLinks ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="toggleProfileShareLinks('${p.id}', '${escapeHtml(p.name)}', ${p.allowShareLinks ? 'true' : 'false'})">Share Links: ${p.allowShareLinks ? '✓ On' : 'Off'}</button>` : ''}
+                    ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showProfileStreamsModal('${p.id}', ${jsArg(p.name)}, '${p.accountId}')">Streams</button>` : ''}
+                    ${isAdmin ? `<button class="btn ${p.allowShareLinks ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="toggleProfileShareLinks('${p.id}', ${jsArg(p.name)}, ${p.allowShareLinks ? 'true' : 'false'})">Share Links: ${p.allowShareLinks ? '✓ On' : 'Off'}</button>` : ''}
                     ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showReassignModal('${p.id}')">Reassign</button>` : ''}
-                    <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.id}', '${escapeHtml(p.name)}')">Delete</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteProfile('${p.id}', ${jsArg(p.name)})">Delete</button>
                 </div>
             </div>
         `;
@@ -499,7 +499,7 @@ function renderHouseholds() {
         const isExpanded = Boolean(search) || expandedHouseholds.has(a.id);
         return `
             <div class="card household-card${isExpanded ? '' : ' collapsed'}" data-household-id="${escapeHtml(a.id)}">
-                <div class="household-header" onclick="toggleHousehold(event, '${escapeHtml(a.id)}')">
+                <div class="household-header" onclick="toggleHousehold(event, ${jsArg(a.id)})">
                     <svg class="household-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                     <div class="household-icon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px;height:22px;"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>
@@ -518,11 +518,11 @@ function renderHouseholds() {
                     </div>
                     <div class="household-actions" onclick="event.stopPropagation()">
                         <button class="btn btn-primary btn-sm" onclick="showCreateProfileModal('${a.id}')">Add Person</button>
-                        <button class="btn btn-secondary btn-sm" onclick="showRenameAccountModal('${a.id}', '${escapeHtml(a.username)}')">Rename</button>
-                        ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showMaxStreamsModal('${a.id}', '${escapeHtml(a.username)}', ${a.maxStreams || 0})">Limits</button>` : ''}
-                        <button class="btn btn-secondary btn-sm" onclick="showChangePasswordModal('${a.id}', '${escapeHtml(a.username)}')">Password</button>
-                        ${isAdmin && !a.isMaster ? `<button class="btn btn-secondary btn-sm" onclick="showTransferAdminModal('${encodeURIComponent(a.id)}', '${encodeURIComponent(a.username)}')">Make Admin</button>` : ''}
-                        ${isAdmin && !a.isMaster ? `<button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}', '${escapeHtml(a.username)}')">Delete</button>` : ''}
+                        <button class="btn btn-secondary btn-sm" onclick="showRenameAccountModal('${a.id}', ${jsArg(a.username)})">Rename</button>
+                        ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showMaxStreamsModal('${a.id}', ${jsArg(a.username)}, ${a.maxStreams || 0})">Limits</button>` : ''}
+                        <button class="btn btn-secondary btn-sm" onclick="showChangePasswordModal('${a.id}', ${jsArg(a.username)})">Password</button>
+                        ${isAdmin && !a.isMaster ? `<button class="btn btn-secondary btn-sm" onclick="showTransferAdminModal(${jsArg(a.id)}, ${jsArg(a.username)})">Make Admin</button>` : ''}
+                        ${isAdmin && !a.isMaster ? `<button class="btn btn-danger btn-sm" onclick="deleteAccount('${a.id}', ${jsArg(a.username)})">Delete</button>` : ''}
                     </div>
                 </div>
                 <div class="household-contents">
@@ -569,10 +569,10 @@ function renderPersonRow(profile, forceShowStale = false) {
                 <a class="btn btn-secondary btn-sm" href="${basePath}/settings?profileId=${encodeURIComponent(profile.id)}">Settings</a>
                 <a class="btn btn-secondary btn-sm" href="${basePath}/notifications?profileId=${encodeURIComponent(profile.id)}">Notifications</a>
                 <a class="btn btn-secondary btn-sm" href="${basePath}/tasks?profileId=${encodeURIComponent(profile.id)}">Automations</a>
-                <button class="btn btn-secondary btn-sm" onclick="showProfileStreamsModal('${profile.id}', '${escapeHtml(profile.name)}', '${profile.accountId}')">Limits</button>
-                ${isAdmin ? `<button class="btn ${profile.allowShareLinks ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="toggleProfileShareLinks('${profile.id}', '${escapeHtml(profile.name)}', ${profile.allowShareLinks ? 'true' : 'false'})">Sharing: ${profile.allowShareLinks ? 'On' : 'Off'}</button>` : ''}
+                <button class="btn btn-secondary btn-sm" onclick="showProfileStreamsModal('${profile.id}', ${jsArg(profile.name)}, '${profile.accountId}')">Limits</button>
+                ${isAdmin ? `<button class="btn ${profile.allowShareLinks ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="toggleProfileShareLinks('${profile.id}', ${jsArg(profile.name)}, ${profile.allowShareLinks ? 'true' : 'false'})">Sharing: ${profile.allowShareLinks ? 'On' : 'Off'}</button>` : ''}
                 ${isAdmin ? `<button class="btn btn-secondary btn-sm" onclick="showReassignModal('${profile.id}')">Move</button>` : ''}
-                <button class="btn btn-danger btn-sm" onclick="deleteProfile('${profile.id}', '${escapeHtml(profile.name)}')">Delete</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteProfile('${profile.id}', ${jsArg(profile.name)})">Delete</button>
             </div>
         </div>
         <div class="person-contents">
@@ -626,7 +626,7 @@ function renderDeviceRow(client, orphaned) {
                 ${orphaned ? '<option value="" selected disabled>Move to person…</option>' : ''}
                 ${renderPersonOptions(client.userId)}
             </select>
-            <button class="btn btn-danger btn-sm" onclick="deleteClient('${client.id}', '${escapeHtml(client.nickname || client.name || 'this device')}', '${escapeHtml(client.userId || '')}')">Remove</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteClient('${client.id}', ${jsArg(client.nickname || client.name || 'this device')}, ${jsArg(client.userId || '')})">Remove</button>
         </div>
     </div>`;
 }
@@ -1388,9 +1388,7 @@ async function deleteAccount(accountId, username) {
     }
 }
 
-function showTransferAdminModal(encodedAccountId, encodedUsername) {
-    const targetAccountId = decodeURIComponent(encodedAccountId);
-    const username = decodeURIComponent(encodedUsername);
+function showTransferAdminModal(targetAccountId, username) {
     showModal(`
         <div class="card-header"><h2>Transfer Admin Status</h2></div>
         <div class="card-body">
@@ -1999,6 +1997,11 @@ async function revokeConnectionInvite(inviteId) {
 function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// JS string literal safe to embed inside a double-quoted HTML attribute (e.g. onclick="fn(${jsArg(name)})").
+function jsArg(value) {
+    return escapeHtml(JSON.stringify(value == null ? '' : String(value)));
 }
 
 const requestedTab = window.location.hash.replace(/^#/, '');

@@ -42,7 +42,7 @@ func TestAdminUsersPageExplainsAndRendersAccessHierarchy(t *testing.T) {
 		`onclick="showRenameClientModal('${client.id}')"`,
 		`${orphaned ? '<option value="" selected disabled>Move to person…</option>' : ''}`,
 		`onchange="if (this.value) reassignClient(`,
-		`onclick="showTransferAdminModal('${encodeURIComponent(a.id)}', '${encodeURIComponent(a.username)}')"`,
+		`onclick="showTransferAdminModal(${jsArg(a.id)}, ${jsArg(a.username)})"`,
 		`function transferAdmin(event, targetAccountId)`,
 		`/api/accounts/transfer-admin`,
 		`Your account will lose admin access immediately`,
