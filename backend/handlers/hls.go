@@ -363,6 +363,7 @@ type HLSSession struct {
 	LastAccess          time.Time
 	FFmpegCmd           *exec.Cmd
 	liveDamage          *liveUpstreamDamage // live sessions only; FFmpeg-reported upstream losses
+	liveLayout          liveLayoutRestarts  // live sessions only; restarts for a changed input stream layout
 	Cancel              context.CancelFunc
 	mu                  sync.RWMutex
 	Completed           bool
@@ -2739,6 +2740,8 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	inputArg := session.Path
 	inputHeaders := session.LiveTuning.RequestHeaders
 	sharedInput := false
+	// The source answered with a playlist rather than a transport stream.
+	hlsUpstream := false
 	// Share the provider connection with any other session on this channel; see
 	// live_upstream_share.go. HLS inputs are left to FFmpeg below.
 	if key := liveUpstreamShareKey(session.Path, session.LiveTuning); key != "" {
@@ -2757,6 +2760,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 				log.Printf("[hls] live session %s: opened shared upstream connection", session.ID)
 			}
 		case errors.Is(err, errLiveUpstreamNotTS):
+			hlsUpstream = true
 			log.Printf("[hls] live session %s: upstream is an HLS playlist, letting FFmpeg read it directly", session.ID)
 		case session.LiveTuning.HDHomeRunInput:
 			return fmt.Errorf("open HDHomeRun stream: %w", err)
@@ -2782,6 +2786,16 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		inputArg = relay.URL
 		inputHeaders = nil
 		log.Printf("[hls] live session %s: using segment-normalizing HLS input relay", session.ID)
+	}
+	hlsInput := hlsUpstream || session.LiveTuning.ForceHLSInput || inputLooksLikeHLS(session.Path)
+	// One muxed variant instead of FFmpeg's pick across a master's renditions (hls_live_variant.go).
+	if hlsInput && inputArg == session.Path && proxyBody == nil && !session.LiveTuning.HDHomeRunInput &&
+		strings.TrimSpace(session.LiveTuning.ProxyURL) == "" {
+		if variant := resolveLiveHLSVariant(ctx, session.Path, inputHeaders); variant != "" {
+			inputArg = variant
+			log.Printf("[hls] live session %s: reading one muxed variant of the master playlist: %s",
+				session.ID, requestsecurity.URLForLog(variant))
+		}
 	}
 	if proxyURL := strings.TrimSpace(session.LiveTuning.ProxyURL); proxyURL != "" && inputArg == session.Path && proxyBody == nil {
 		client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{ResponseHeaderTimeout: 15 * time.Second}, proxyURL)
@@ -2859,7 +2873,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		// HLS demuxer rejects by default. Only apply them for actual .m3u8 inputs —
 		// for a direct MPEG-TS (.ts) input the mpegts demuxer is selected and these
 		// options abort the command ("Option ... not found").
-		if session.LiveTuning.ForceHLSInput || inputLooksLikeHLS(session.Path) {
+		if hlsInput {
 			args = append(args,
 				"-allowed_extensions", "ALL",
 				"-allowed_segment_extensions", "ALL",
@@ -2943,12 +2957,27 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	// Log stderr in background
 	go func() {
 		buf := make([]byte, 4096)
+		var layout liveLayoutWatch
 		for {
 			n, err := stderr.Read(buf)
 			if n > 0 {
 				text := string(buf[:n])
 				log.Printf("[hls] live session %s: FFmpeg: %s", session.ID, text)
 				damage.observe(session.ID, text, time.Now())
+				// See hls_live_layout.go: a late audio/video stream is one FFmpeg will never map.
+				// Only stitched HLS sources splice in differently muxed segments; a plain MPEG-TS
+				// channel that adds a track late is left alone rather than cycled.
+				if hlsInput && layout.observe(text) {
+					if session.liveLayout.claim(time.Now()) {
+						log.Printf("[hls] live session %s: input stream layout changed; restarting FFmpeg to map the new streams", session.ID)
+						if cmd.Process != nil {
+							_ = cmd.Process.Kill()
+						}
+					} else {
+						log.Printf("[hls] live session %s: input stream layout changed again; restart cap (%d in %v) reached, continuing",
+							session.ID, liveLayoutRestartLimit, liveRestartWindow)
+					}
+				}
 			}
 			if err != nil {
 				break
@@ -3095,9 +3124,10 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSSession) error {
 	var restarts int
 	windowStart := time.Now()
+	rebuilding := false
 	for {
 		resumeFrom := 0
-		if restarts > 0 {
+		if rebuilding {
 			session.mu.Lock()
 			session.Completed = false
 			session.FatalError = ""
@@ -3109,13 +3139,22 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 		if ctx.Err() != nil {
 			return nil
 		}
+		rebuilding = true
 		session.mu.RLock()
 		idleStopped := session.IdleTimeoutTriggered
 		consumed := session.SegmentRequestCount > 0
+		stopped := session.Stopped
 		session.mu.RUnlock()
+		layoutChanged := session.liveLayout.take()
 		if idleStopped && consumed {
 			// The idle timeout stopped it deliberately after playback started; viewer stopped watching.
 			return err
+		}
+		if layoutChanged && !idleStopped && !stopped {
+			// Stopped on purpose for a new stream layout (hls_live_layout.go): not a failure, so
+			// rebuild at once without spending the failure budget.
+			log.Printf("[hls] live session %s: rebuilding for the new input stream layout", session.ID)
+			continue
 		}
 		if !consumed && restarts >= 3 {
 			// Failed 3 startup attempts without any segment being consumed.
