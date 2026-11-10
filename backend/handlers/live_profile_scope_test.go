@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"novastream/config"
@@ -89,5 +90,42 @@ func TestGetChannelsSelectsSourceBySettingsIndex(t *testing.T) {
 	// The app endpoint still withholds the restricted source.
 	if code, names := channelNames(h.GetChannels, "/api/live/channels?profileId=other"); code != http.StatusOK || len(names) != 1 || names[0] != "Bravo One" {
 		t.Fatalf("profile channels -> %d %v, want only [Bravo One]", code, names)
+	}
+}
+
+// A profile with its own (now empty) source list must be told why new global
+// sources don't reach it, instead of the generic "add a provider" hint.
+func TestGetChannelsNoSourceMessageNamesProfileOverride(t *testing.T) {
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	if err := mgr.Save(config.Settings{Live: config.LiveSettings{Sources: []config.LivePlaylistSource{
+		{Name: "Old", Mode: "m3u", PlaylistURL: "http://old.example/list.m3u", AllowedProfiles: []string{"other"}},
+		{Name: "New", Mode: "m3u", PlaylistURL: "http://new.example/list.m3u", AllowedProfiles: []string{"other"}},
+	}}}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	override := true
+	h := NewLiveHandler(http.DefaultClient, false, "", 24, 0, 0, false, mgr, nil)
+	h.userSettingsSvc = &mockUserSettingsProvider{settings: map[string]*models.UserSettings{
+		"copied": {LiveTV: models.LiveTVSettings{SourcesOverride: &override, Sources: []models.LivePlaylistSource{
+			{Name: "Old", Mode: "m3u", PlaylistURL: "http://old.example/list.m3u"},
+		}}},
+		"inherits": {},
+	}}
+
+	for _, tc := range []struct{ profile, want string }{
+		{"copied", "has its own Live TV source list"},
+		{"inherits", "Allowed Profiles"},
+	} {
+		rec := httptest.NewRecorder()
+		h.GetChannels(rec, httptest.NewRequest(http.MethodGet, "/api/live/channels?profileId="+tc.profile, nil))
+		var resp struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s: decode %q: %v", tc.profile, rec.Body.String(), err)
+		}
+		if rec.Code != http.StatusConflict || !strings.HasPrefix(resp.Error, "No Live TV source is configured for this profile.") || !strings.Contains(resp.Error, tc.want) {
+			t.Fatalf("%s: got %d %q, want 409 mentioning %q", tc.profile, rec.Code, resp.Error, tc.want)
+		}
 	}
 }

@@ -6108,6 +6108,33 @@
         return profileInheritedLiveSources();
     }
 
+    // Mirrors liveSourceMatchKeys in handlers/live.go: a source matches by id,
+    // or by mode plus provider identity when either side has no id.
+    function liveSourceMatchKeys(source) {
+        const keys = [];
+        const id = String(source?.id || '').trim().toLowerCase();
+        if (id) keys.push('id:' + id);
+        const mode = String(source?.mode || '').trim().toLowerCase() || 'm3u';
+        const trim = value => String(value || '').trim();
+        let identity;
+        if (mode === 'xtream') identity = trim(source.xtreamHost) + '|' + trim(source.xtreamUsername);
+        else if (mode === 'stalker') identity = trim(source.stalkerPortalUrl) + '|' + trim(source.stalkerMac);
+        else if (mode === 'stremio') identity = trim(source.manifestUrl);
+        else if (mode === 'hdhomerun') identity = trim(source.hdhomerunHost);
+        else identity = trim(source.playlistUrl);
+        if (identity && identity !== '|') keys.push('src:' + mode + ':' + identity);
+        return keys;
+    }
+
+    // Global sources this profile may use that its own source list lacks, so
+    // the admin can see why a newly added source never reaches the profile.
+    function globalLiveSourcesMissingFromProfile() {
+        const own = new Set();
+        (profileLiveSourceList() || []).forEach(source => liveSourceMatchKeys(source).forEach(key => own.add(key)));
+        return profileInheritedLiveSources().filter(source =>
+            source.enabled !== false && !liveSourceMatchKeys(source).some(key => own.has(key)));
+    }
+
     function hasProfileLiveSourceOverride() {
         return Boolean(
             selectedUserId &&
@@ -9573,11 +9600,17 @@
         let profileInheritanceControls = '';
         if (sectionKey === 'liveTV.sources' && selectedUserId && userSettings) {
             const hasOverride = hasProfileLiveSourceOverride();
+            const missing = hasOverride ? globalLiveSourcesMissingFromProfile() : [];
+            const missingNames = missing.map((source, i) => escapeHtml(String(source.name || '').trim() || ('Source ' + (i + 1)))).join(', ');
+            const missingHint = missing.length
+                ? '<div style="color:var(--warning, #f59e0b);font-size:0.8rem;margin-top:0.35rem;">Not in this profile\'s list, so the apps don\'t show ' + (missing.length === 1 ? 'it' : 'them') + ': ' + missingNames + '.</div>'
+                : '';
             profileInheritanceControls =
                 '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;padding:0.75rem 0.875rem;margin-bottom:0.875rem;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,0.03);">' +
                     '<div style="min-width:220px;flex:1;">' +
                         '<div style="font-weight:600;color:var(--text-primary);font-size:0.9rem;">' + (hasOverride ? 'Profile source override' : 'Inheriting global sources') + '</div>' +
-                        '<div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.2rem;">' + (hasOverride ? 'This profile has its own Live TV source list. Re-inherit to pick up global source changes again.' : 'Editing or deleting a source here creates a profile-specific source list.') + '</div>' +
+                        '<div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.2rem;">' + (hasOverride ? 'This profile has its own Live TV source list. Sources added in global settings don\'t reach it; re-inherit to pick up global source changes again.' : 'Editing or deleting a source here creates a profile-specific source list.') + '</div>' +
+                        missingHint +
                     '</div>' +
                     (hasOverride
                         ? '<button type="button" class="btn btn-sm btn-secondary" onclick="resetLiveSourcesToGlobal(event)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> Re-inherit from Global</button>'

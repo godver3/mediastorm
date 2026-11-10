@@ -2339,6 +2339,24 @@ func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSett
 	return resolved
 }
 
+// noLiveSourceMessage explains why a profile resolved no Live TV sources. A
+// profile with its own source list is a common trap: the list is a copy taken
+// when an admin edited sources with that profile selected, so sources added to
+// global settings afterwards never reach it. The web player matches the
+// leading sentence, so keep it unchanged.
+func (h *LiveHandler) noLiveSourceMessage(profileID string) string {
+	const lead = "No Live TV source is configured for this profile."
+	if profileID != "" && h.userSettingsSvc != nil {
+		if userSettings, err := h.userSettingsSvc.Get(profileID); err == nil && userSettings != nil &&
+			profileHasOwnLiveSources(&userSettings.LiveTV) {
+			log.Printf("[live] profile %q has its own Live TV source list with no usable sources", profileID)
+			return lead + " This profile has its own Live TV source list, so sources added in global settings don't reach it." +
+				" In admin Settings, select this profile, open Live TV, and choose Re-inherit from Global or add a source to its list."
+		}
+	}
+	return lead + " Add a provider in settings, or add this profile to a source's Allowed Profiles."
+}
+
 func profileHasOwnLiveSources(profile *models.LiveTVSettings) bool {
 	return (profile.SourcesOverride != nil && *profile.SourcesOverride) ||
 		len(profile.Sources) > 0 || len(profile.PlaylistSources) > 0
@@ -2616,7 +2634,7 @@ func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin 
 			requestedSourceID,
 			time.Since(requestStartedAt).Round(time.Millisecond),
 		)
-		http.Error(w, `{"error":"No Live TV source is configured for this profile. Add a provider in settings or switch to a configured profile."}`, http.StatusConflict)
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, h.noLiveSourceMessage(profileID)), http.StatusConflict)
 		return
 	}
 	selectedSources := selectM3USources(sources, requestedSourceID)
