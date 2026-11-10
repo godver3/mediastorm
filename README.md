@@ -8,13 +8,14 @@ mediastorm is a self-hosted streaming platform for movies, television, and live 
 
 Features include multi-profile watch history and recommendations, kids profiles, offline downloads, Live TV and DVR, subtitles, casting, Watch Together rooms, and encrypted Iroh connection invites for remote access.
 
-[Releases](https://github.com/godver3/mediastorm/releases) · [Android Mobile](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-mobile.apk) · [Android TV](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-tv.apk) · [iOS TestFlight](https://testflight.apple.com/join/8vCQ5gmH) · [tvOS TestFlight](https://testflight.apple.com/join/X9bE3dq6) · [Native tvOS TestFlight](https://testflight.apple.com/join/6uMySrhk) · [Native Android TV](https://github.com/godver3/mediastorm/releases/download/androidtv-native-latest/mediastorm-androidtv.apk) · [Discord](https://discord.gg/kT74mwf4bu)
+[iOS & tvOS TestFlight](https://testflight.apple.com/join/6uMySrhk) · [Android APK](https://github.com/godver3/mediastorm/releases/download/android-native-latest/mediastorm-android.apk) · [Android TV APK](https://github.com/godver3/mediastorm/releases/download/androidtv-native-latest/mediastorm-androidtv.apk) · [Releases](https://github.com/godver3/mediastorm/releases) · [Discord](https://discord.gg/kT74mwf4bu)
 
 ## Source layout
 
 - `backend/`: Go server and supporting production services.
 - `backend/iroh-host/`: Rust host for encrypted Iroh remote access.
-- Native clients live in the separate [frontend repository](https://github.com/godver3-org/mediastorm-frontend); its `modules/iroh-bridge/` owns the production Rust/native client bridge.
+- Native clients live in separate repositories: [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) (SwiftUI, iOS and tvOS) and [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) (Compose, Android and Android TV).
+- The legacy Expo apps live in the [frontend repository](https://github.com/godver3-org/mediastorm-frontend); its `modules/iroh-bridge/` owns the Rust/native client bridge used by those apps.
 - `archive/iroh-ios-bridge/`: historical iOS linking scaffold, retained for reference.
 
 ## Features
@@ -122,31 +123,17 @@ The server provides three browser entry points:
 - `http://localhost:7777/account` — account management
 - `http://localhost:7777/watch` — consumer web app and browser playback
 
-### iOS and tvOS
+### Native Apps
 
-Available on TestFlight:
+The native apps are the supported mediastorm clients going forward: SwiftUI on iOS and tvOS, and Compose on Android and Android TV.
 
-- iOS: [Join TestFlight](https://testflight.apple.com/join/8vCQ5gmH)
-- tvOS: [Join TestFlight](https://testflight.apple.com/join/X9bE3dq6)
-
-Incremental updates are delivered automatically through OTA updates. Native changes require updating through TestFlight.
-
-### Android and Android TV
-
-- Android Mobile: [Download APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-mobile.apk) — Downloader code [`3364803`](https://aftv.news/3364803)
-- Android TV: [Download APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-tv.apk) — Downloader code [`7856845`](https://aftv.news/7856845)
-- [Versioned release history](https://github.com/godver3/mediastorm/releases)
-
-Incremental updates are delivered automatically through OTA updates. Native changes require downloading the latest APK or entering the permanent Downloader code for the device.
-
-### Native tvOS and Android TV (preview)
-
-Fully native TV clients, built separately from the apps above: SwiftUI on tvOS and Compose for TV on Android TV. They install alongside the existing apps rather than replacing them.
-
-- tvOS: [Join TestFlight](https://testflight.apple.com/join/6uMySrhk)
+- iOS and tvOS: [Join TestFlight](https://testflight.apple.com/join/6uMySrhk) (one invite covers both)
+- Android phone and tablet: [Download APK](https://github.com/godver3/mediastorm/releases/download/android-native-latest/mediastorm-android.apk) — Downloader code [`8853271`](https://aftv.news/8853271)
 - Android TV: [Download APK](https://github.com/godver3/mediastorm/releases/download/androidtv-native-latest/mediastorm-androidtv.apk) — Downloader code [`6740631`](https://aftv.news/6740631)
 
-The tvOS app updates through TestFlight. The Android TV app checks for new builds itself and offers to install them; the APK link and Downloader code always point at the latest build.
+The iOS and tvOS apps update through TestFlight. The Android apps check for new builds themselves and offer to install them; the APK links and Downloader code always point at the latest build.
+
+The older Expo-based apps are no longer supported; see [Legacy Expo Apps](#legacy-expo-apps) at the end of this document.
 
 ### Jellyfin Apps (Jellyfin Bridge)
 
@@ -233,7 +220,7 @@ For source development, runtime logs are written to `.logs/backend.log` and `.lo
 
 ## Development
 
-The root repository contains the Go backend, documentation, and deployment tooling. `frontend/` is a separate Git repository containing the Expo React Native application, so run and commit frontend work from that directory.
+The root repository contains the Go backend, documentation, and deployment tooling. The native clients are separate repositories with their own build instructions.
 
 ```bash
 # Backend
@@ -243,29 +230,24 @@ make test
 make check
 make build
 
-# Frontend
-cd frontend
-npm ci
-npm run start
-npm run start:tv
-npm run test
-npm run lint
-
 # Full local stack, from the repository root
 ./dev.sh start
 ./dev.sh restart backend
 ./dev.sh stop
 ```
 
-The main source layout is:
+The main backend layout is:
 
 - `backend/handlers/` — HTTP and web handlers
 - `backend/services/` — business logic and integrations
 - `backend/internal/` — core infrastructure and datastore packages
-- `frontend/app/` — Expo routes
-- `frontend/components/` — shared React Native UI
-- `frontend/services/` and `frontend/hooks/` — reusable client logic
-- `frontend/modules/` — native platform modules
+
+Native clients:
+
+- [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) — iOS and tvOS (SwiftUI). Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen): `xcodegen generate`, then open `StrmrTV.xcodeproj`.
+- [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) — Android and Android TV (Jetpack Compose). Requires JDK 17 and the Android SDK: `./gradlew :mobile:assembleDebug` (phone and tablet) or `./gradlew :app:assembleDebug` (Android TV).
+
+The legacy Expo app lives in the [frontend repository](https://github.com/godver3-org/mediastorm-frontend) and is no longer under active development.
 
 ## Acknowledgments
 
@@ -277,7 +259,16 @@ Special thanks to [Parsett (PTT)](https://github.com/dreulavelle/PTT) for media 
 
 Powered by [FFmpeg](https://ffmpeg.org/) for media processing and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for trailer fetching.
 
-Native playback is powered by [KSPlayer](https://github.com/kingslay/KSPlayer) on iOS/tvOS, and [ExoPlayer](https://github.com/google/ExoPlayer) and [MPV](https://mpv.io/) on Android/Android TV.
+Native playback is powered by [AetherEngine](https://github.com/superuser404notfound/AetherEngine) on iOS/tvOS and [ExoPlayer (Media3)](https://github.com/androidx/media) on Android/Android TV.
+
+## Legacy Expo Apps
+
+The original Expo (React Native) apps are listed here for reference only. They are no longer supported and will not receive new features; use the [native apps](#native-apps) instead. They install alongside the native apps.
+
+- iOS: [TestFlight](https://testflight.apple.com/join/8vCQ5gmH)
+- tvOS: [TestFlight](https://testflight.apple.com/join/X9bE3dq6)
+- Android Mobile: [APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-mobile.apk) — Downloader code [`3364803`](https://aftv.news/3364803)
+- Android TV: [APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-tv.apk) — Downloader code [`7856845`](https://aftv.news/7856845)
 
 ## License
 
