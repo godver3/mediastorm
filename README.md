@@ -6,7 +6,7 @@
 
 mediastorm is a self-hosted streaming platform for movies, television, and live TV. It combines Usenet, debrid services, personal media libraries, and IPTV sources behind native iOS, tvOS, Android, and Android TV apps, plus a browser-based web app.
 
-Features include multi-profile watch history and recommendations, kids profiles, offline downloads, Live TV and DVR, subtitles, casting, Watch Together rooms, and encrypted Iroh connection invites for remote access.
+Features include multi-profile watch history and recommendations, kids profiles, offline downloads, Live TV and DVR, subtitles, casting, and encrypted Iroh connection invites for remote access.
 
 [iOS & tvOS TestFlight](https://testflight.apple.com/join/6uMySrhk) · [Android APK](https://github.com/godver3/mediastorm/releases/download/android-native-latest/mediastorm-android.apk) · [Android TV APK](https://github.com/godver3/mediastorm/releases/download/androidtv-native-latest/mediastorm-androidtv.apk) · [Releases](https://github.com/godver3/mediastorm/releases) · [Discord](https://discord.gg/kT74mwf4bu)
 
@@ -26,7 +26,6 @@ Features include multi-profile watch history and recommendations, kids profiles,
 - **Profiles and activity:** Maintain per-profile watchlists, playback progress, history, calendars, custom lists, content preferences, and recommendations. Profiles can use PINs, kids restrictions, and source-level access controls.
 - **Playback:** Native playback on mobile and TV, browser playback at `/watch`, offline downloads in the mobile apps, external subtitle search, and Google Cast or DLNA playback on supported clients.
 - **Connected services:** Import lists and synchronize activity with services including Trakt, Simkl, MDBList, and Letterboxd.
-- **Shared viewing:** Create Watch Together rooms for other profiles or invite external browser guests.
 - **Remote access:** Connect apps through encrypted Iroh invitations without opening an inbound port. VPN access remains supported and is recommended when practical.
 
 ## Supported Integrations
