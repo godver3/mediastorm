@@ -15,7 +15,6 @@ Features include multi-profile watch history and recommendations, kids profiles,
 - `backend/`: Go server and supporting production services.
 - `backend/iroh-host/`: Rust host for encrypted Iroh remote access.
 - Native clients live in separate repositories: [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) (SwiftUI, iOS and tvOS) and [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) (Compose, Android and Android TV).
-- The legacy Expo apps live in the [frontend repository](https://github.com/godver3-org/mediastorm-frontend); its `modules/iroh-bridge/` owns the Rust/native client bridge used by those apps.
 - `archive/iroh-ios-bridge/`: historical iOS linking scaffold, retained for reference.
 
 ## Features
@@ -245,8 +244,6 @@ Native clients:
 
 - [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) — iOS and tvOS (SwiftUI). Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen): `xcodegen generate`, then open `StrmrTV.xcodeproj`.
 - [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) — Android and Android TV (Jetpack Compose). Requires JDK 17 and the Android SDK: `./gradlew :mobile:assembleDebug` (phone and tablet) or `./gradlew :app:assembleDebug` (Android TV).
-
-The legacy Expo app lives in the [frontend repository](https://github.com/godver3-org/mediastorm-frontend) and is no longer under active development.
 
 ## Acknowledgments
 
