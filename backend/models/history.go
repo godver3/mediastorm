@@ -96,16 +96,20 @@ type EpisodeWatchPayload struct {
 
 // WatchHistoryItem represents a unified watch history entry for any media (movie, episode, series, or live).
 type WatchHistoryItem struct {
-	ID             string            `json:"id"`        // mediaType:itemId (e.g., "movie:tmdb:12345" or "series:tvdb:67890:s01e02")
-	MediaType      string            `json:"mediaType"` // "movie" | "series" | "episode" | "live"
-	ItemID         string            `json:"itemId"`    // The actual ID (e.g., "tmdb:12345")
-	Name           string            `json:"name"`
-	Year           int               `json:"year,omitempty"`
-	Watched        bool              `json:"watched"` // Manual watch flag
-	WatchedAt      time.Time         `json:"watchedAt,omitempty"`
-	UpdatedAt      time.Time         `json:"updatedAt,omitempty"`
-	WatchedSeconds float64           `json:"watchedSeconds,omitempty"` // Accumulated actual playback time in seconds
-	ExternalIDs    map[string]string `json:"externalIds,omitempty"`
+	ID             string    `json:"id"`        // mediaType:itemId (e.g., "movie:tmdb:12345" or "series:tvdb:67890:s01e02")
+	MediaType      string    `json:"mediaType"` // "movie" | "series" | "episode" | "live"
+	ItemID         string    `json:"itemId"`    // The actual ID (e.g., "tmdb:12345")
+	Name           string    `json:"name"`
+	Year           int       `json:"year,omitempty"`
+	Watched        bool      `json:"watched"` // Manual watch flag
+	WatchedAt      time.Time `json:"watchedAt,omitempty"`
+	UpdatedAt      time.Time `json:"updatedAt,omitempty"`
+	WatchedSeconds float64   `json:"watchedSeconds,omitempty"` // Accumulated actual playback time in seconds
+	// Source records how the item became watched (WatchSourcePlayed,
+	// WatchSourceMarked or WatchSourceImported). Empty for rows written before
+	// sources were tracked that the backfill could not classify.
+	Source      string            `json:"source,omitempty"`
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific fields
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
@@ -125,9 +129,12 @@ type WatchHistoryUpdate struct {
 	// WatchedAtUnknown marks an import whose source has no play date. Such an
 	// update only adds items missing locally; it never overrides local state,
 	// because "now" would always look newer than a local unwatch.
-	WatchedAtUnknown bool              `json:"-"`
-	WatchedSeconds   float64           `json:"watchedSeconds,omitempty"`
-	ExternalIDs      map[string]string `json:"externalIds,omitempty"`
+	WatchedAtUnknown bool    `json:"-"`
+	WatchedSeconds   float64 `json:"watchedSeconds,omitempty"`
+	// Source is set by the server, never by clients: how a watched=true
+	// update came about. Empty means a manual mark.
+	Source      string            `json:"-"`
+	ExternalIDs map[string]string `json:"externalIds,omitempty"`
 
 	// Episode-specific
 	SeasonNumber  int    `json:"seasonNumber,omitempty"`
@@ -238,4 +245,50 @@ type RecentWatch struct {
 	EpisodeNumber int               `json:"episodeNumber,omitempty"`
 	WatchedAt     time.Time         `json:"watchedAt"`
 	ExternalIDs   map[string]string `json:"externalIds,omitempty"`
+}
+
+// Watch sources: how a watch history item became watched.
+const (
+	// WatchSourcePlayed: playback crossed the watched threshold.
+	WatchSourcePlayed = "played"
+	// WatchSourceImported: synced from Trakt, Simkl, Plex or another service,
+	// where it was watched.
+	WatchSourceImported = "imported"
+	// WatchSourceMarked: marked watched by hand, without playing it.
+	WatchSourceMarked = "marked"
+)
+
+func watchSourceRank(source string) int {
+	switch source {
+	case WatchSourcePlayed:
+		return 3
+	case WatchSourceImported:
+		return 2
+	case WatchSourceMarked:
+		return 1
+	}
+	return 0
+}
+
+// MergeWatchSource returns the source an item has after a watched=true update
+// with source incoming. An item that was not watched takes incoming. One that
+// already was keeps the stronger of the two, so marking an episode you played
+// leaves it played, while playing a marked one upgrades it.
+func MergeWatchSource(wasWatched bool, current, incoming string) string {
+	if incoming == "" {
+		return current
+	}
+	if !wasWatched || watchSourceRank(incoming) > watchSourceRank(current) {
+		return incoming
+	}
+	return current
+}
+
+// IsRealWatch reports whether a watched item reflects a real viewing rather
+// than a bare manual mark: played here, imported from a service where it was
+// watched, or marked after some playback here (e.g. stopped at the credits).
+// Rows from before sources were tracked count unless their backfill found
+// them marked.
+func (item WatchHistoryItem) IsRealWatch() bool {
+	return item.Source != WatchSourceMarked || item.WatchedSeconds > 0
 }

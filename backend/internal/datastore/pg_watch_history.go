@@ -16,12 +16,12 @@ type pgWatchHistoryRepo struct {
 }
 
 const whCols = `user_id, item_key, media_type, item_id, name, year, watched, watched_at,
-	updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name`
+	updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name, source`
 
 func (r *pgWatchHistoryRepo) Get(ctx context.Context, userID, itemKey string) (*models.WatchHistoryItem, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT item_key, media_type, item_id, name, year, watched, watched_at,
-		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name
+		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name, source
 		FROM watch_history WHERE user_id = $1 AND item_key = $2`, userID, itemKey)
 	return scanWatchHistoryItem(row)
 }
@@ -29,7 +29,7 @@ func (r *pgWatchHistoryRepo) Get(ctx context.Context, userID, itemKey string) (*
 func (r *pgWatchHistoryRepo) ListByUser(ctx context.Context, userID string) ([]models.WatchHistoryItem, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT item_key, media_type, item_id, name, year, watched, watched_at,
-		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name
+		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name, source
 		FROM watch_history WHERE user_id = $1 ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list watch history: %w", err)
@@ -41,7 +41,7 @@ func (r *pgWatchHistoryRepo) ListByUser(ctx context.Context, userID string) ([]m
 func (r *pgWatchHistoryRepo) ListAll(ctx context.Context) (map[string][]models.WatchHistoryItem, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT user_id, item_key, media_type, item_id, name, year, watched, watched_at,
-		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name
+		updated_at, watched_seconds, external_ids, season_number, episode_number, series_id, series_name, source
 		FROM watch_history ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list all watch history: %w", err)
@@ -55,7 +55,7 @@ func (r *pgWatchHistoryRepo) ListAll(ctx context.Context) (map[string][]models.W
 		var idsJSON []byte
 		if err := rows.Scan(&userID, &item.ID, &item.MediaType, &item.ItemID, &item.Name, &item.Year,
 			&item.Watched, &item.WatchedAt, &item.UpdatedAt, &item.WatchedSeconds, &idsJSON,
-			&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName); err != nil {
+			&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName, &item.Source); err != nil {
 			return nil, fmt.Errorf("scan watch history: %w", err)
 		}
 		_ = json.Unmarshal(idsJSON, &item.ExternalIDs)
@@ -68,13 +68,13 @@ func (r *pgWatchHistoryRepo) Upsert(ctx context.Context, userID string, item *mo
 	idsJSON, _ := json.Marshal(item.ExternalIDs)
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO watch_history (`+whCols+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (user_id, item_key) DO UPDATE SET
 		name=$5, year=$6, watched=$7, watched_at=$8, updated_at=$9, watched_seconds=$10, external_ids=$11,
-		season_number=$12, episode_number=$13, series_id=$14, series_name=$15`,
+		season_number=$12, episode_number=$13, series_id=$14, series_name=$15, source=$16`,
 		userID, item.ID, item.MediaType, item.ItemID, item.Name, item.Year,
 		item.Watched, item.WatchedAt, item.UpdatedAt, item.WatchedSeconds, idsJSON,
-		item.SeasonNumber, item.EpisodeNumber, item.SeriesID, item.SeriesName)
+		item.SeasonNumber, item.EpisodeNumber, item.SeriesID, item.SeriesName, item.Source)
 	if err != nil {
 		return fmt.Errorf("upsert watch history: %w", err)
 	}
@@ -111,7 +111,7 @@ func scanWatchHistoryItem(row pgx.Row) (*models.WatchHistoryItem, error) {
 	var idsJSON []byte
 	err := row.Scan(&item.ID, &item.MediaType, &item.ItemID, &item.Name, &item.Year,
 		&item.Watched, &item.WatchedAt, &item.UpdatedAt, &item.WatchedSeconds, &idsJSON,
-		&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName)
+		&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName, &item.Source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -129,7 +129,7 @@ func collectWatchHistory(rows pgx.Rows) ([]models.WatchHistoryItem, error) {
 		var idsJSON []byte
 		if err := rows.Scan(&item.ID, &item.MediaType, &item.ItemID, &item.Name, &item.Year,
 			&item.Watched, &item.WatchedAt, &item.UpdatedAt, &item.WatchedSeconds, &idsJSON,
-			&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName); err != nil {
+			&item.SeasonNumber, &item.EpisodeNumber, &item.SeriesID, &item.SeriesName, &item.Source); err != nil {
 			return nil, fmt.Errorf("scan watch history: %w", err)
 		}
 		_ = json.Unmarshal(idsJSON, &item.ExternalIDs)

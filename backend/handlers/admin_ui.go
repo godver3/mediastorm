@@ -3172,6 +3172,14 @@ type dashboardRecentWatchItem struct {
 	ProfileColor   string    `json:"profileColor,omitempty"`
 	WatchedAt      time.Time `json:"watchedAt"`
 	WatchedSeconds float64   `json:"watchedSeconds,omitempty"`
+	Source         string    `json:"source,omitempty"`
+}
+
+// includeMarkedWatches reports whether a history listing should include items
+// only marked watched by hand (source=all). By default listings show real
+// viewings: played here or synced from a service where they were watched.
+func includeMarkedWatches(r *http.Request) bool {
+	return r.URL.Query().Get("source") == "all"
 }
 
 type dashboardWatchTimeStats struct {
@@ -3270,6 +3278,7 @@ func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Reques
 
 	recentSources := make([]dashboardRecentWatchSource, 0, 16)
 	watchTime := dashboardWatchTimeStats{}
+	includeMarked := includeMarkedWatches(r)
 
 	for _, user := range usersList {
 		profileName := user.Name
@@ -3289,7 +3298,11 @@ func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Reques
 			// Collapse the same watch recorded under multiple identifier forms
 			// (absolute vs seasonal episode numbering, tmdb- vs tvdb-form IDs) so a
 			// single watch yields one card with the seasonal episode form.
-			for _, item := range history.DedupeWatchHistory(watched) {
+			recentItems := history.DedupeWatchHistory(watched)
+			if !includeMarked {
+				recentItems = history.FilterRealWatches(recentItems)
+			}
+			for _, item := range recentItems {
 				recentSources = append(recentSources, dashboardRecentWatchSource{
 					item:         item,
 					profileID:    user.ID,
@@ -3356,6 +3369,7 @@ func (h *AdminUIHandler) GetDashboardStats(w http.ResponseWriter, r *http.Reques
 			ProfileColor:   source.profileColor,
 			WatchedAt:      source.item.WatchedAt,
 			WatchedSeconds: source.item.WatchedSeconds,
+			Source:         source.item.Source,
 		})
 	}
 
@@ -9099,13 +9113,14 @@ func (h *AdminUIHandler) GetWatchHistory(w http.ResponseWriter, r *http.Request)
 	}
 
 	mediaTypeFilter := r.URL.Query().Get("mediaType")
+	realOnly := !includeMarkedWatches(r)
 
 	if userID == "all" {
-		h.getAllScopedWatchHistory(w, r, page, pageSize, mediaTypeFilter)
+		h.getAllScopedWatchHistory(w, r, page, pageSize, mediaTypeFilter, realOnly)
 		return
 	}
 
-	result, err := h.historyService.ListWatchHistoryPaginated(userID, page, pageSize, mediaTypeFilter)
+	result, err := h.historyService.ListWatchHistoryPaginated(userID, page, pageSize, mediaTypeFilter, realOnly)
 	if err != nil {
 		log.Printf("[admin] GetWatchHistory error for user %s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -9132,7 +9147,7 @@ type adminWatchHistoryPage struct {
 	TotalPages int                     `json:"totalPages"`
 }
 
-func (h *AdminUIHandler) getAllScopedWatchHistory(w http.ResponseWriter, r *http.Request, page, pageSize int, mediaTypeFilter string) {
+func (h *AdminUIHandler) getAllScopedWatchHistory(w http.ResponseWriter, r *http.Request, page, pageSize int, mediaTypeFilter string, realOnly bool) {
 	isAdmin, accountID, _, _ := h.getPageRoleInfo(r)
 	scopedUsers := h.getScopedUsers(isAdmin, accountID)
 
@@ -9150,6 +9165,9 @@ func (h *AdminUIHandler) getAllScopedWatchHistory(w http.ResponseWriter, r *http
 		// vs seasonal episode numbering, tmdb- vs tvdb-form IDs), per profile, so it
 		// shows once with the seasonal episode form.
 		userItems = history.DedupeWatchHistory(userItems)
+		if realOnly {
+			userItems = history.FilterRealWatches(userItems)
+		}
 		for _, item := range userItems {
 			if mediaTypeFilter != "" && item.MediaType != mediaTypeFilter {
 				continue

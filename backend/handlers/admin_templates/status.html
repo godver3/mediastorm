@@ -1389,6 +1389,10 @@ body.numbers-station-open {
                 </svg>
                 Recently Watched
             </h2>
+            <select id="recentWatchSourceSelect" class="form-select" style="max-width: 200px; min-width: 150px;" aria-label="Which watches to list" onchange="saveRecentWatchSource(); loadDashboardStats()">
+                <option value="real">Played &amp; synced</option>
+                <option value="all">Include marked</option>
+            </select>
         </div>
         <div class="card-body">
             <div id="recentWatchList" class="recent-watch-list">
@@ -3266,6 +3270,28 @@ body.numbers-station-open {
         return `${hours}h ${mins}m`;
     }
 
+    // Remembered per browser: whether Recently Watched also lists items only
+    // marked watched by hand.
+    const RECENT_WATCH_SOURCE_KEY = 'strmr.dashboard.recentWatchSource';
+    function saveRecentWatchSource() {
+        const select = document.getElementById('recentWatchSourceSelect');
+        try { localStorage.setItem(RECENT_WATCH_SOURCE_KEY, select ? select.value : 'real'); } catch (_) {}
+    }
+    (function restoreRecentWatchSource() {
+        const select = document.getElementById('recentWatchSourceSelect');
+        try {
+            if (select && localStorage.getItem(RECENT_WATCH_SOURCE_KEY) === 'all') select.value = 'all';
+        } catch (_) {}
+    })();
+
+    // Short label for how a history item became watched; '' for a playback or
+    // an older entry recorded before sources were tracked.
+    function watchSourceLabel(item) {
+        if (item.source === 'imported') return 'Synced';
+        if (item.source === 'marked') return item.watchedSeconds > 0 ? 'Played, then marked' : 'Marked watched';
+        return '';
+    }
+
     async function loadDashboardStats(options = {}) {
         if (dashboardStatsInFlight) return;
         dashboardStatsInFlight = true;
@@ -3279,6 +3305,10 @@ body.numbers-station-open {
             const mediaTypeSelect = document.getElementById('watchTimeMediaTypeSelect');
             if (mediaTypeSelect && mediaTypeSelect.value && mediaTypeSelect.value !== 'all') {
                 params.set('mediaType', mediaTypeSelect.value);
+            }
+            const recentSourceSelect = document.getElementById('recentWatchSourceSelect');
+            if (recentSourceSelect && recentSourceSelect.value === 'all') {
+                params.set('source', 'all');
             }
             const url = basePath + '/api/dashboard/stats' + (params.toString() ? '?' + params.toString() : '');
             const response = await fetch(url, { credentials: 'same-origin' });
@@ -3336,6 +3366,8 @@ body.numbers-station-open {
             if (item.subtitle) subtitleParts.push(escapeHtml(item.subtitle));
             if (item.watchedAt) subtitleParts.push(escapeHtml(getTimeSince(item.watchedAt)));
             if (item.watchedSeconds > 0) subtitleParts.push(escapeHtml(formatWatchTime(item.watchedSeconds)));
+            const sourceLabel = watchSourceLabel(item);
+            if (sourceLabel) subtitleParts.push(escapeHtml(sourceLabel));
             const artwork = item.artworkUrl
                 ? `<div class="recent-watch-artwork"><img src="${escapeHtml(item.artworkUrl)}" alt="${escapeHtml(item.title || 'Artwork')}" loading="lazy" onerror="this.closest('.recent-watch-artwork').innerHTML=recentWatchPlaceholderSvg()"></div>`
                 : `<div class="recent-watch-artwork">${recentWatchPlaceholderSvg()}</div>`;

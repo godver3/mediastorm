@@ -70,6 +70,10 @@
     <button class="btn btn-primary filter-btn active" data-filter="all" onclick="filterHistory('all', this)">All</button>
     <button class="btn btn-secondary filter-btn" data-filter="movie" onclick="filterHistory('movie', this)">Movies</button>
     <button class="btn btn-secondary filter-btn" data-filter="episode" onclick="filterHistory('episode', this)">Episodes</button>
+    <select id="historySourceSelect" class="form-select" style="margin-left: auto; max-width: 220px;" aria-label="Which watches to list" onchange="changeHistorySource()">
+        <option value="real">Played &amp; synced</option>
+        <option value="all">Include marked watched</option>
+    </select>
 </div>
 
 <!-- Watch History Table -->
@@ -144,6 +148,38 @@
         const diffDays = Math.floor(diffHours / 24);
         if (diffDays < 7) return diffDays + 'd ago';
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+    }
+
+    // Whether listings include items only marked watched by hand. Remembered
+    // per browser; by default history shows real viewings only.
+    const HISTORY_SOURCE_KEY = 'strmr.history.source';
+    (function restoreHistorySource() {
+        const select = document.getElementById('historySourceSelect');
+        try {
+            if (select && localStorage.getItem(HISTORY_SOURCE_KEY) === 'all') select.value = 'all';
+        } catch (_) {}
+    })();
+
+    function historySourceParam() {
+        const select = document.getElementById('historySourceSelect');
+        return '&source=' + (select && select.value === 'all' ? 'all' : 'real');
+    }
+
+    function changeHistorySource() {
+        const select = document.getElementById('historySourceSelect');
+        try { localStorage.setItem(HISTORY_SOURCE_KEY, select ? select.value : 'real'); } catch (_) {}
+        currentPage = 1;
+        loadHistoryPage();
+        loadStats();
+    }
+
+    // How an item became watched, as a table cell.
+    function watchSourceCell(item) {
+        let label = 'Played';
+        if (item.source === 'imported') label = 'Synced';
+        else if (item.source === 'marked') label = item.watchedSeconds > 0 ? 'Played, then marked' : 'Marked';
+        else if (!item.source && !(item.watchedSeconds > 0)) label = 'Not recorded';
+        return '<td style="color: var(--text-muted); white-space: nowrap;">' + label + '</td>';
     }
 
     function filterHistory(filter, btn) {
@@ -234,7 +270,7 @@
         const showProfile = getSelectedProfile() === 'all';
         const profileHeader = showProfile ? '<th>Profile</th>' : '';
 
-        container.innerHTML = '<div class="table-container"><table><thead><tr><th>Title</th><th>Type</th><th>Details</th>' + profileHeader + '<th>Watched At</th></tr></thead><tbody>' +
+        container.innerHTML = '<div class="table-container"><table><thead><tr><th>Title</th><th>Type</th><th>Details</th>' + profileHeader + '<th>How</th><th>Watched At</th></tr></thead><tbody>' +
             items.map(item => {
                 let title = item.name || item.movieName || item.seriesName || '-';
                 let details = '';
@@ -258,7 +294,7 @@
                     typeBadge = '<span class="status-badge">' + (item.mediaType || 'Unknown') + '</span>';
                 }
 
-                return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + title + '">' + title + '</div></td><td>' + typeBadge + '</td><td style="color: var(--text-muted);">' + details + '</td>' + profileCell + '<td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.watchedAt) + '</td></tr>';
+                return '<tr><td><div style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + title + '">' + title + '</div></td><td>' + typeBadge + '</td><td style="color: var(--text-muted);">' + details + '</td>' + profileCell + watchSourceCell(item) + '<td style="font-size: 0.8125rem; color: var(--text-muted);">' + formatDate(item.watchedAt) + '</td></tr>';
             }).join('') +
             '</tbody></table></div>';
     }
@@ -272,7 +308,7 @@
 
         try {
             // Build URL with pagination and filter
-            let url = basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=' + currentPage + '&pageSize=' + pageSize;
+            let url = basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + historySourceParam() + '&page=' + currentPage + '&pageSize=' + pageSize;
             if (currentFilter !== 'all') {
                 url += '&mediaType=' + encodeURIComponent(currentFilter);
             }
@@ -305,7 +341,7 @@
 
         try {
             // Fetch stats for movies count
-            const moviesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=movie');
+            const moviesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + historySourceParam() + '&page=1&pageSize=1&mediaType=movie');
             if (moviesResponse.ok) {
                 const moviesData = await moviesResponse.json();
                 cachedStats.movies = moviesData.total || 0;
@@ -313,7 +349,7 @@
             }
 
             // Fetch stats for episodes count
-            const episodesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1&mediaType=episode');
+            const episodesResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + historySourceParam() + '&page=1&pageSize=1&mediaType=episode');
             if (episodesResponse.ok) {
                 const episodesData = await episodesResponse.json();
                 cachedStats.episodes = episodesData.total || 0;
@@ -321,7 +357,7 @@
             }
 
             // Fetch last activity (first item from all history)
-            const lastResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + '&page=1&pageSize=1');
+            const lastResponse = await fetch(basePath + '/api/history/watched?userId=' + encodeURIComponent(profileId) + historySourceParam() + '&page=1&pageSize=1');
             if (lastResponse.ok) {
                 const lastData = await lastResponse.json();
                 if (lastData.items && lastData.items.length > 0 && lastData.items[0].watchedAt) {

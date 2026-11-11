@@ -3274,7 +3274,9 @@ type WatchHistoryPage struct {
 
 // ListWatchHistoryPaginated returns paginated watched items for a user.
 // Supports optional filtering by media type ("movie", "episode", or "" for all).
-func (s *Service) ListWatchHistoryPaginated(userID string, page, pageSize int, mediaTypeFilter string) (*WatchHistoryPage, error) {
+// ListWatchHistoryPaginated pages a user's watch history. With realOnly it
+// leaves out items that were only marked watched (see IsRealWatch).
+func (s *Service) ListWatchHistoryPaginated(userID string, page, pageSize int, mediaTypeFilter string, realOnly bool) (*WatchHistoryPage, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, ErrUserIDRequired
@@ -3309,6 +3311,9 @@ func (s *Service) ListWatchHistoryPaginated(userID string, page, pageSize int, m
 	// Collapse the same watch recorded under multiple identifier forms (absolute
 	// vs seasonal episode numbering, tmdb- vs tvdb-form IDs) so it appears once.
 	items = DedupeWatchHistory(items)
+	if realOnly {
+		items = FilterRealWatches(items)
+	}
 
 	// Sort by most recently watched
 	sort.Slice(items, func(i, j int) bool {
@@ -3389,6 +3394,53 @@ func watchHistoryPreferred(candidate, current models.WatchHistoryItem) bool {
 	return candidate.WatchedAt.After(current.WatchedAt)
 }
 
+// FilterRealWatches keeps the items that reflect a real viewing, dropping
+// ones only marked watched by hand. Run it after DedupeWatchHistory, which
+// carries a played source across duplicate rows.
+func FilterRealWatches(items []models.WatchHistoryItem) []models.WatchHistoryItem {
+	out := items[:0:0]
+	for _, item := range items {
+		if item.IsRealWatch() {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// playbackWatchedSecondsLocked returns the playback time accumulated in the
+// progress entries for update's item, which marking it watched is about to
+// clear. Watch history keeps that time so a mark made after real viewing
+// (stopping at the credits, say) still counts as watched.
+func (s *Service) playbackWatchedSecondsLocked(userID string, update models.WatchHistoryUpdate) float64 {
+	perUser := s.playbackProgress[userID]
+	if len(perUser) == 0 {
+		return 0
+	}
+	identity := watchHistoryUpdateIdentity(update)
+	seconds := 0.0
+	for _, entry := range perUser {
+		if entry.WatchedSeconds > seconds && playbackProgressMatchesIdentity(entry, identity) {
+			seconds = entry.WatchedSeconds
+		}
+	}
+	return seconds
+}
+
+func keepPlayedSeconds(item *models.WatchHistoryItem, seconds float64) {
+	if seconds > item.WatchedSeconds {
+		item.WatchedSeconds = seconds
+	}
+}
+
+// watchSourceOrMarked defaults an update's source: callers that do not say
+// otherwise are clients marking an item by hand.
+func watchSourceOrMarked(source string) string {
+	if source == "" {
+		return models.WatchSourceMarked
+	}
+	return source
+}
+
 // DedupeWatchHistory collapses entries that represent the same watch recorded
 // under multiple identifier forms (absolute vs seasonal episode numbering,
 // tmdb- vs tvdb-form IDs) into one, keeping the seasonal episode form as the
@@ -3403,8 +3455,20 @@ func DedupeWatchHistory(items []models.WatchHistoryItem) []models.WatchHistoryIt
 	for _, item := range items {
 		key := watchHistoryDedupKey(item)
 		if i, ok := index[key]; ok {
+			// One viewing recorded under several ID forms: if any form was
+			// really played, so was the survivor.
+			source := ""
+			if out[i].Watched {
+				source = out[i].Source
+			}
+			if item.Watched {
+				source = models.MergeWatchSource(true, source, item.Source)
+			}
 			if watchHistoryPreferred(item, out[i]) {
 				out[i] = item
+			}
+			if out[i].Watched {
+				out[i].Source = source
 			}
 			continue
 		}
@@ -3506,12 +3570,15 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 			Watched:   true,
 			WatchedAt: now,
 			UpdatedAt: now,
+			Source:    models.WatchSourceMarked,
 		}
 	} else {
 		// Toggle existing item
 		item.Watched = !item.Watched
 		if item.Watched {
 			item.WatchedAt = now
+			item.Source = models.WatchSourceMarked
+			keepPlayedSeconds(&item, s.playbackWatchedSecondsLocked(userID, update))
 		}
 		item.UpdatedAt = now
 	}
@@ -3660,8 +3727,12 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 			} else if !wasAlreadyWatched {
 				item.WatchedAt = now
 			}
+			item.Source = models.MergeWatchSource(wasAlreadyWatched, item.Source, watchSourceOrMarked(update.Source))
 		}
 		item.UpdatedAt = stateUpdatedAt
+		if *update.Watched {
+			keepPlayedSeconds(&item, s.playbackWatchedSecondsLocked(userID, update))
+		}
 		// Clear playback progress when watched status changes (both marking as watched and unwatched)
 		progressCleared = s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID)
 		// For episodes/movies, also clear any matching progress stored under a different ID format.
@@ -3877,6 +3948,7 @@ func (s *Service) BulkUpdateScopedWatchHistory(userID string, updates []models.W
 			if !update.WatchedAt.IsZero() {
 				stateUpdatedAt = update.WatchedAt.UTC()
 			}
+			wasWatched := item.Watched
 			item.Watched = *update.Watched
 			if *update.Watched {
 				// Use provided timestamp if set, otherwise use now
@@ -3885,8 +3957,12 @@ func (s *Service) BulkUpdateScopedWatchHistory(userID string, updates []models.W
 				} else {
 					item.WatchedAt = now
 				}
+				item.Source = models.MergeWatchSource(wasWatched, item.Source, watchSourceOrMarked(update.Source))
 			}
 			item.UpdatedAt = stateUpdatedAt
+			if *update.Watched {
+				keepPlayedSeconds(&item, s.playbackWatchedSecondsLocked(userID, update))
+			}
 			// Clear playback progress when watched status changes (both marking as watched and unwatched)
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
 				progressCleared = true
@@ -4332,6 +4408,7 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 			if !update.WatchedAt.IsZero() {
 				stateUpdatedAt = update.WatchedAt.UTC()
 			}
+			wasWatched := item.Watched
 			item.Watched = *update.Watched
 			if *update.Watched {
 				if !update.WatchedAt.IsZero() {
@@ -4339,6 +4416,11 @@ func (s *Service) ImportWatchHistory(userID string, updates []models.WatchHistor
 				} else {
 					item.WatchedAt = now
 				}
+				source := update.Source
+				if source == "" {
+					source = models.WatchSourceImported
+				}
+				item.Source = models.MergeWatchSource(wasWatched, item.Source, source)
 			}
 			item.UpdatedAt = stateUpdatedAt
 			if s.clearPlaybackProgressEntryLocked(userID, update.MediaType, update.ItemID) {
@@ -4570,6 +4652,7 @@ func reconcileEquivalentEpisodeWatchHistoryLocked(perUser map[string]models.Watc
 
 func watchHistoryItemsDiffer(a, b models.WatchHistoryItem) bool {
 	if a.Watched != b.Watched ||
+		a.Source != b.Source ||
 		a.WatchedSeconds != b.WatchedSeconds ||
 		!a.WatchedAt.Equal(b.WatchedAt) ||
 		!a.UpdatedAt.Equal(b.UpdatedAt) ||
@@ -4618,6 +4701,7 @@ func mergeEquivalentEpisodeWatchHistoryItem(source, target models.WatchHistoryIt
 	updated.UpdatedAt = source.UpdatedAt
 	if source.Watched {
 		updated.WatchedAt = source.WatchedAt
+		updated.Source = source.Source
 	}
 	updated.ExternalIDs = make(map[string]string, len(target.ExternalIDs)+len(source.ExternalIDs))
 	for k, v := range target.ExternalIDs {
@@ -5826,6 +5910,7 @@ func (s *Service) markAsWatchedFromProgress(userID string, update models.Playbac
 		ItemID:         update.ItemID,
 		Watched:        &watched,
 		WatchedSeconds: watchedSeconds,
+		Source:         models.WatchSourcePlayed,
 		ExternalIDs:    update.ExternalIDs,
 		SeasonNumber:   update.SeasonNumber,
 		EpisodeNumber:  update.EpisodeNumber,
