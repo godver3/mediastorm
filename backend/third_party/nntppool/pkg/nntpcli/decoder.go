@@ -2,6 +2,8 @@ package nntpcli
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"io"
 	"strings"
 
@@ -17,15 +19,16 @@ const (
 // This decoder handles yenc headers (=ybegin, =ypart) by skipping them, then uses
 // DecodeIncremental for the actual encoded body data.
 type incrementalDecoder struct {
-	r            *bufio.Reader
-	state        rapidyenc.State
-	buf          []byte // read buffer for body data
-	bufStart     int    // start of unconsumed data in buf
-	bufEnd       int    // end of data in buf
-	decoded      []byte // decoded data not yet consumed by caller
-	headersRead  bool   // true after headers have been parsed/skipped
-	eof          bool   // true when end of yenc data reached
-	readErr      error  // stored read error
+	r           *bufio.Reader
+	state       rapidyenc.State
+	buf         []byte // read buffer for body data
+	bufStart    int    // start of unconsumed data in buf
+	bufEnd      int    // end of data in buf
+	decoded     []byte // decoded data not yet consumed by caller
+	headersRead bool   // true after headers have been parsed/skipped
+	eof         bool   // true when end of yenc data reached
+	readErr     error  // stored read error
+	drainErr    error  // failure consuming the article trailer; connection is unusable
 }
 
 // newIncrementalDecoder creates a new incremental yenc decoder.
@@ -87,7 +90,7 @@ func (d *incrementalDecoder) Read(p []byte) (int, error) {
 
 	// If we've reached EOF, return EOF
 	if d.eof {
-		return 0, io.EOF
+		return 0, d.endErr()
 	}
 
 	// Try to fill the buffer if we have space
@@ -136,6 +139,15 @@ func (d *incrementalDecoder) Read(p []byte) (int, error) {
 	// Check if we reached the end
 	if end != rapidyenc.EndNone {
 		d.eof = true
+		// EndControl stops right after "\r\n=y": the rest of the =yend line
+		// and the ".\r\n" terminator are still unread (possibly not yet even
+		// received). Consume them now, or the next command on this reused
+		// connection reads "end size=..." as its status line.
+		if end == rapidyenc.EndControl {
+			if err := d.drainToTerminator(); err != nil {
+				d.drainErr = err
+			}
+		}
 	}
 
 	// Return decoded data
@@ -155,8 +167,55 @@ func (d *incrementalDecoder) Read(p []byte) (int, error) {
 	}
 
 	if d.eof {
-		return 0, io.EOF
+		return 0, d.endErr()
 	}
 
 	return 0, d.readErr
+}
+
+// drainToTerminator consumes the remainder of the article, through the
+// "\r\n.\r\n" terminator, after the decoder stopped at a yEnc control line.
+// Unconsumed bytes still in d.buf are scanned first, then the underlying reader.
+func (d *incrementalDecoder) drainToTerminator() error {
+	pending := append([]byte(nil), d.buf[d.bufStart:d.bufEnd]...)
+	d.bufStart, d.bufEnd = 0, 0
+
+	// The decoder stopped mid-line (after "=y"), so the first line is never the
+	// terminator.
+	atLineStart := false
+	for {
+		var line []byte
+		complete := false
+		if i := bytes.IndexByte(pending, '\n'); i >= 0 {
+			line = pending[:i+1]
+			pending = pending[i+1:]
+			complete = true
+		} else {
+			chunk, err := d.r.ReadSlice('\n')
+			line = append(pending, chunk...)
+			pending = nil
+			switch {
+			case err == nil:
+				complete = true
+			case errors.Is(err, bufio.ErrBufferFull):
+				// Overlong line: keep scanning; it cannot be the terminator.
+			default:
+				return err
+			}
+		}
+
+		if atLineStart && complete && (bytes.Equal(line, []byte(".\r\n")) || bytes.Equal(line, []byte(".\n"))) {
+			return nil
+		}
+		atLineStart = complete
+	}
+}
+
+// endErr is io.EOF unless the article trailer could not be consumed, in which
+// case the error is surfaced so the caller discards the connection.
+func (d *incrementalDecoder) endErr() error {
+	if d.drainErr != nil {
+		return d.drainErr
+	}
+	return io.EOF
 }
