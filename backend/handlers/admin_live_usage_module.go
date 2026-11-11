@@ -38,7 +38,6 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 			settings = loaded
 		}
 	}
-	global := buildGlobalLiveSource(settings)
 
 	targetByProfile := map[string][]liveStreamTarget{}
 	userNameByProfile := map[string]string{}
@@ -50,7 +49,7 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 				userSettings = us
 			}
 		}
-		targets := resolveLiveStreamTargets(global, userSettings)
+		targets := resolveProfileLiveStreamTargets(settings, user.ID, userSettings)
 		targetByProfile[user.ID] = targets
 		userNameByProfile[user.ID] = user.Name
 		for _, target := range targets {
@@ -138,11 +137,8 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 
 	byUser := make([]liveUsageByUserRow, 0, len(scopedUsers))
 	for _, user := range scopedUsers {
-		targets, ok := targetByProfile[user.ID]
-		if !ok || len(targets) == 0 {
-			targets = resolveLiveStreamTargets(global, nil)
-		}
-		for _, target := range targets {
+		// A profile with no allowed source has no Live TV, so it gets no rows.
+		for _, target := range targetByProfile[user.ID] {
 			current := bucketCurrent[target.BucketKey]
 			available := 0
 			if target.MaxStreams > 0 {

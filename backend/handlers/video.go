@@ -5919,16 +5919,14 @@ func (h *VideoHandler) resolveLiveStreamTargetForSource(profileID, sourceID stri
 	if err != nil {
 		return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
 	}
-	settings = config.FilterSettingsForProfile(settings, profileID)
-
-	global := buildGlobalLiveSource(settings)
 	var userSettings *models.UserSettings
 	if profileID != "" && h.userSettingsSvc != nil {
 		if us, userErr := h.userSettingsSvc.Get(profileID); userErr == nil && us != nil {
 			userSettings = us
 		}
 	}
-	return resolveLiveStreamTargetForSource(global, userSettings, sourceID)
+	targets := resolveProfileLiveStreamTargets(settings, profileID, userSettings)
+	return pickLiveStreamTarget(targets, sourceID)
 }
 
 func (h *VideoHandler) buildLiveUsageSummary(target liveStreamTarget) LiveUsageSummary {

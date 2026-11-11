@@ -112,3 +112,74 @@ func TestDashboardVODUsagePrefersTrackedAccountID(t *testing.T) {
 		t.Fatalf("account-a VOD streams = %d, want 1", got)
 	}
 }
+
+func TestBuildDashboardLiveUsageHonorsAllowedProfiles(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	manager := config.NewManager(settingsPath)
+	if err := manager.Save(config.Settings{
+		Live: config.LiveSettings{
+			Sources: []config.LivePlaylistSource{
+				{ID: "news", Name: "News", Mode: "m3u", PlaylistURL: "http://example.com/news.m3u"},
+				{
+					ID: "sports", Name: "Sports", Mode: "m3u", PlaylistURL: "http://example.com/sports.m3u",
+					AllowedProfiles: []string{"profile-allowed"},
+				},
+				{
+					ID: "adult", Name: "Adult", Mode: "m3u", PlaylistURL: "http://example.com/adult.m3u",
+					AllowedProfiles: []string{"profile-nobody"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := &AdminUIHandler{configManager: manager}
+	_, byUser, buckets := handler.buildDashboardLiveUsage(true, []models.User{
+		{ID: "profile-allowed", Name: "Allowed"},
+		{ID: "profile-kid", Name: "Kid"},
+	}, nil)
+
+	got := map[string][]string{}
+	for _, row := range byUser {
+		got[row.User] = append(got[row.User], row.Bucket)
+	}
+	if len(got["Allowed"]) != 2 {
+		t.Fatalf("Allowed rows = %v, want News and Sports", got["Allowed"])
+	}
+	if len(got["Kid"]) != 1 || got["Kid"][0] != "News" {
+		t.Fatalf("Kid rows = %v, want only News", got["Kid"])
+	}
+
+	usersByBucket := map[string][]string{}
+	for _, bucket := range buckets {
+		usersByBucket[bucket.Label] = bucket.Users
+	}
+	if users := usersByBucket["Sports"]; len(users) != 1 || users[0] != "Allowed" {
+		t.Fatalf("Sports users = %v, want [Allowed]", users)
+	}
+	if _, ok := usersByBucket["Adult"]; ok {
+		t.Fatalf("Adult bucket shown although no listed profile may use it")
+	}
+}
+
+func TestBuildDashboardLiveUsageOmitsProfilesWithoutLiveTV(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	manager := config.NewManager(settingsPath)
+	if err := manager.Save(config.Settings{
+		Live: config.LiveSettings{
+			Sources: []config.LivePlaylistSource{{
+				ID: "only", Name: "Only", Mode: "m3u", PlaylistURL: "http://example.com/only.m3u",
+				AllowedProfiles: []string{"profile-allowed"},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	handler := &AdminUIHandler{configManager: manager}
+	_, byUser, _ := handler.buildDashboardLiveUsage(true, []models.User{{ID: "profile-kid", Name: "Kid"}}, nil)
+	if len(byUser) != 0 {
+		t.Fatalf("byUser = %+v, want no rows for a profile without Live TV", byUser)
+	}
+}

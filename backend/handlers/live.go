@@ -2327,6 +2327,17 @@ func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSett
 		return global
 	}
 
+	return applyProfileLiveSources(global, globalSettings, profileID, userSettings)
+}
+
+// applyProfileLiveSources merges a profile's Live TV settings onto global,
+// which must already be filtered by config.FilterSettingsForProfile. Every
+// caller that decides or reports which Live TV sources a profile can use goes
+// through here so access checks, stream limits and the admin dashboard agree.
+func applyProfileLiveSources(global models.ResolvedLiveSource, globalSettings config.Settings, profileID string, userSettings *models.UserSettings) models.ResolvedLiveSource {
+	if userSettings == nil {
+		return global
+	}
 	resolved := models.ResolveLiveSource(&userSettings.LiveTV, &global)
 	if profileHasOwnLiveSources(&userSettings.LiveTV) {
 		// A profile source list is a copy of the global list taken when the

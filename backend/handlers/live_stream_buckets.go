@@ -113,9 +113,8 @@ func resolveLiveStreamTarget(global models.ResolvedLiveSource, profile *models.U
 	return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
 }
 
-func resolveLiveStreamTargetForSource(global models.ResolvedLiveSource, profile *models.UserSettings, sourceID string) liveStreamTarget {
+func pickLiveStreamTarget(targets []liveStreamTarget, sourceID string) liveStreamTarget {
 	sourceID = strings.TrimSpace(sourceID)
-	targets := resolveLiveStreamTargets(global, profile)
 	if sourceID != "" && sourceID != "all" {
 		for _, target := range targets {
 			if target.SourceID == sourceID {
@@ -127,6 +126,19 @@ func resolveLiveStreamTargetForSource(global models.ResolvedLiveSource, profile 
 		return targets[0]
 	}
 	return liveStreamTarget{Provider: "m3u", MaxStreams: 0, BucketKey: "m3u:default", BucketName: "M3U shared"}
+}
+
+// resolveProfileLiveStreamTargets returns the Live TV targets profileID may
+// use, honoring each global source's Allowed Profiles. It returns nil when
+// the profile has no usable source, the same case where the Live TV channel
+// endpoint refuses the profile.
+func resolveProfileLiveStreamTargets(settings config.Settings, profileID string, profile *models.UserSettings) []liveStreamTarget {
+	global := buildGlobalLiveSource(config.FilterSettingsForProfile(settings, profileID))
+	resolved := applyProfileLiveSources(global, settings, profileID, profile)
+	if len(resolvedLiveSources(resolved)) == 0 {
+		return nil
+	}
+	return resolveLiveStreamTargets(resolved, nil)
 }
 
 func resolveLiveStreamTargets(global models.ResolvedLiveSource, profile *models.UserSettings) []liveStreamTarget {
