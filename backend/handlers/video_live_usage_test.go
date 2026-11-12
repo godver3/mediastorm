@@ -214,6 +214,55 @@ func TestStartLiveHLSSessionDirectIncludesProfileParams(t *testing.T) {
 	if got := values.Get("title"); got != "Evening News" {
 		t.Fatalf("title = %q, want Evening News", got)
 	}
+	if values.Has("container") {
+		t.Fatalf("container forwarded without being asked for: %q", body.StreamURL)
+	}
+}
+
+func TestStartLiveHLSSessionDirectForwardsTSContainer(t *testing.T) {
+	handler := NewVideoHandlerWithProvider(true, stubBinary(t, "echo"), stubBinary(t, "echo"), t.TempDir(), nil)
+	handler.SetConfigManager(fakeLiveUsageConfigProvider{
+		settings: config.Settings{
+			Live: config.LiveSettings{
+				Mode:         "m3u",
+				PlaylistURL:  "http://example.com/live.m3u",
+				StreamFormat: "direct",
+			},
+		},
+	})
+	handler.SetUserSettingsService(fakeLiveUsageUserSettingsProvider{
+		settings: map[string]*models.UserSettings{},
+	})
+	handler.SetUsersService(fakeLiveUsageUsersProvider{
+		users: map[string]models.User{
+			"profile-1": {ID: "profile-1", Name: "Living Room", AccountID: "account-1"},
+		},
+	})
+
+	for container, want := range map[string]string{"ts": "ts", "TS": "ts", "mkv": ""} {
+		req := httptest.NewRequest(http.MethodGet, "/live/hls/start?url=http%3A%2F%2Fexample.com%2Fchannel.ts&profileId=profile-1&target=native&container="+container, nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ContextKeyAccountID, "account-1"))
+		rec := httptest.NewRecorder()
+
+		handler.StartLiveHLSSession(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("container=%s: status = %d, body=%s", container, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			StreamURL string `json:"streamUrl"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		parsed, err := url.Parse(body.StreamURL)
+		if err != nil {
+			t.Fatalf("parse streamUrl: %v", err)
+		}
+		if got := parsed.Query().Get("container"); got != want {
+			t.Fatalf("container=%s: forwarded container = %q, want %q (%s)", container, got, want, body.StreamURL)
+		}
+	}
 }
 
 func TestResolveLiveStreamTargetUsesPerSourceStreamFormat(t *testing.T) {

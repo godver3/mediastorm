@@ -681,18 +681,9 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 	if hdHomeRunInput {
 		args = append(args, "-f", "mpegts")
 	}
-	args = append(args,
-		"-i", inputArg,
-		"-c:v", "copy",
-		"-c:a", "aac",
-		"-ac", "2",
-		"-b:a", "128k",
-		"-ar", "48000",
-		"-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
-		"-f", "mp4",
-		"-reset_timestamps", "1",
-		"pipe:1",
-	)
+	outputArgs, outputContentType := liveTransmuxOutput(r)
+	args = append(args, "-i", inputArg)
+	args = append(args, outputArgs...)
 
 	cmd := exec.CommandContext(ctx, h.ffmpegPath, args...)
 	if proxyBody != nil {
@@ -751,7 +742,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Type", outputContentType)
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
@@ -930,6 +921,34 @@ func (h *LiveHandler) proxyStreamWithHTTPClient(w http.ResponseWriter, r *http.R
 			return
 		}
 	}
+}
+
+// liveTransmuxOutput is the ffmpeg output half of the live transmux and its Content-Type.
+// Fragmented MP4 is the default. A client may ask for MPEG-TS with container=ts: the tvOS
+// engine keeps a live source's AVIO context seekable, and on a seekable fragmented MP4 the
+// mov demuxer walks every fragment looking for an index before avformat_open_input returns,
+// which on an endless live stream it never does (a Stremio HLS sports channel sat 21 s in
+// open_input, missed the client's 25 s first-frame deadline and fell back to HLS). MPEG-TS
+// has no index to look for.
+func liveTransmuxOutput(r *http.Request) ([]string, string) {
+	args := []string{
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-ac", "2",
+		"-b:a", "128k",
+		"-ar", "48000",
+	}
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("container")), "ts") {
+		args = append(args, "-f", "mpegts", "pipe:1")
+		return args, "video/mp2t"
+	}
+	args = append(args,
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
+		"-f", "mp4",
+		"-reset_timestamps", "1",
+		"pipe:1",
+	)
+	return args, "video/mp4"
 }
 
 func isNativeLiveStreamRequest(r *http.Request) bool {

@@ -5364,6 +5364,10 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		if targetParam := strings.TrimSpace(r.URL.Query().Get("target")); targetParam != "" {
 			proxyParams.Set("target", targetParam)
 		}
+		// The output container of a transmuxed live stream (see liveTransmuxOutput).
+		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("container")), "ts") {
+			proxyParams.Set("container", "ts")
+		}
 		if streamIndex := strings.TrimSpace(r.URL.Query().Get("stremioStreamIndex")); streamIndex != "" {
 			proxyParams.Set("stremioStreamIndex", streamIndex)
 		}
