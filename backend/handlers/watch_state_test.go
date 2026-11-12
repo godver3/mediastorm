@@ -3,6 +3,7 @@ package handlers
 import (
 	"testing"
 
+	"novastream/internal/mediaidentity"
 	"novastream/models"
 )
 
@@ -14,6 +15,37 @@ type fakeReleasedEpisodeCountProvider struct {
 func (f *fakeReleasedEpisodeCountProvider) GetCachedReleasedEpisodeCount(query models.SeriesDetailsQuery) (int, bool) {
 	count, ok := f.counts[query.TitleID]
 	return count, ok
+}
+
+// GetCachedReleasedEpisodes fakes a catalog of S1E1..S1E<count>.
+func (f *fakeReleasedEpisodeCountProvider) GetCachedReleasedEpisodes(query models.SeriesDetailsQuery) ([]models.ReleasedEpisode, bool) {
+	count, ok := f.counts[query.TitleID]
+	if !ok {
+		return nil, false
+	}
+	return seasonOneEpisodes(count), true
+}
+
+func seasonOneEpisodes(count int) []models.ReleasedEpisode {
+	episodes := make([]models.ReleasedEpisode, 0, count)
+	for ep := 1; ep <= count; ep++ {
+		episodes = append(episodes, models.ReleasedEpisode{Season: 1, Episode: ep})
+	}
+	return episodes
+}
+
+// setSeriesEpisodeTotal records a total with no known catalog, so every
+// watched history row counts against it.
+func (idx *watchStateIndex) setSeriesEpisodeTotal(itemID string, externalIDs map[string]string, total int) {
+	for _, key := range mediaidentity.Resolve(mediaidentity.Input{
+		MediaType: "series", ID: itemID, ExternalIDs: externalIDs,
+	}).IndexKeys() {
+		s := idx.series[key]
+		if total > s.totalEpisodes {
+			s.totalEpisodes = total
+		}
+		idx.series[key] = s
+	}
 }
 
 func (f *fakeReleasedEpisodeCountProvider) WarmReleasedEpisodeCount(query models.SeriesDetailsQuery) {
@@ -441,4 +473,55 @@ func derefInt(v *int) any {
 		return nil
 	}
 	return *v
+}
+
+// A watched row for an episode the catalog does not list (Love Is Blind's
+// S10E13 reunion, numbered differently by the provider) must not reduce the
+// unwatched count: 148 released, 145 of them watched, plus the phantom.
+func TestCompute_SeriesIgnoresWatchedEpisodesOutsideReleasedCatalog(t *testing.T) {
+	ext := map[string]string{"tmdb": "99353"}
+	var history []models.WatchHistoryItem
+	watch := func(season, episode int) {
+		history = append(history, models.WatchHistoryItem{
+			MediaType: "episode", SeriesID: "tmdb:tv:99353", ExternalIDs: ext, Watched: true,
+			SeasonNumber: season, EpisodeNumber: episode,
+		})
+	}
+	for ep := 1; ep <= 10; ep++ {
+		watch(1, ep)
+	}
+	watch(1, 13) // not in the catalog
+	idx := buildWatchStateIndex(history, nil, nil)
+	idx.setSeriesReleasedEpisodes("tmdb:tv:99353", ext, seasonOneEpisodes(12))
+
+	state, unwatched := idx.computeWithExternalIDs("series", "tmdb:tv:99353", ext)
+	if state != "partial" || unwatched == nil || *unwatched != 2 {
+		t.Fatalf("got state=%q unwatched=%v, want partial/2", state, derefInt(unwatched))
+	}
+
+	// Watching S1E11 leaves one: the phantom never stands in for S1E12.
+	watch(1, 11)
+	idx = buildWatchStateIndex(history, nil, nil)
+	idx.setSeriesReleasedEpisodes("tmdb:tv:99353", ext, seasonOneEpisodes(12))
+	if state, unwatched := idx.computeWithExternalIDs("series", "tmdb:tv:99353", ext); state != "partial" || unwatched == nil || *unwatched != 1 {
+		t.Fatalf("got state=%q unwatched=%v, want partial/1", state, derefInt(unwatched))
+	}
+}
+
+func TestCompute_SeriesCountsAbsoluteNumberedHistoryInReleasedCatalog(t *testing.T) {
+	ext := map[string]string{"tmdb": "37854"}
+	history := []models.WatchHistoryItem{
+		// Legacy absolute-numbered row for S23E08 (absolute 1163).
+		{MediaType: "episode", SeriesID: "tmdb:tv:37854", ExternalIDs: ext, Watched: true, SeasonNumber: 23, EpisodeNumber: 1163},
+		{MediaType: "episode", SeriesID: "tmdb:tv:37854", ExternalIDs: ext, Watched: true, SeasonNumber: 23, EpisodeNumber: 7},
+	}
+	idx := buildWatchStateIndex(history, nil, nil)
+	idx.setSeriesReleasedEpisodes("tmdb:tv:37854", ext, []models.ReleasedEpisode{
+		{Season: 23, Episode: 7, Absolute: 1162},
+		{Season: 23, Episode: 8, Absolute: 1163},
+		{Season: 23, Episode: 9, Absolute: 1164},
+	})
+	if _, unwatched := idx.computeWithExternalIDs("series", "tmdb:tv:37854", ext); unwatched == nil || *unwatched != 1 {
+		t.Fatalf("unwatched = %v, want 1", derefInt(unwatched))
+	}
 }

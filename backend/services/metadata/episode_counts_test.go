@@ -26,6 +26,34 @@ func TestCountReleasedTVDBEpisodes(t *testing.T) {
 	}
 }
 
+func TestReleasedEpisodesCachedWithCount(t *testing.T) {
+	svc := &Service{
+		cache:  newFileCache(t.TempDir(), 24),
+		client: &tvdbClient{language: "eng"},
+	}
+	details := models.SeriesDetails{Seasons: []models.SeriesSeason{
+		{Number: 1, Episodes: []models.SeriesEpisode{
+			{SeasonNumber: 1, EpisodeNumber: 2, AiredDate: "2020-01-08", AbsoluteEpisodeNumber: 2},
+			{SeasonNumber: 1, EpisodeNumber: 1, AiredDate: "2020-01-01", AbsoluteEpisodeNumber: 1},
+			{SeasonNumber: 1, EpisodeNumber: 3, AiredDate: "2999-01-01"},
+		}},
+	}}
+	if err := svc.cache.set(seriesDetailsCacheKey("eng", 20, ""), details); err != nil {
+		t.Fatalf("seed details cache: %v", err)
+	}
+
+	want := []models.ReleasedEpisode{{Season: 1, Episode: 1, Absolute: 1}, {Season: 1, Episode: 2, Absolute: 2}}
+	for i := 0; i < 2; i++ { // first call derives from details, second hits the count cache
+		episodes, ok := svc.GetCachedReleasedEpisodes(models.SeriesDetailsQuery{TVDBID: 20})
+		if !ok || len(episodes) != len(want) || episodes[0] != want[0] || episodes[1] != want[1] {
+			t.Fatalf("call %d: released episodes = %+v, %v; want %+v", i, episodes, ok, want)
+		}
+	}
+	if count, ok := svc.GetCachedReleasedEpisodeCount(models.SeriesDetailsQuery{TVDBID: 20}); !ok || count != 2 {
+		t.Fatalf("count = %d, %v; want 2, true", count, ok)
+	}
+}
+
 func TestReleasedEpisodeCountCacheUsesProviderAliases(t *testing.T) {
 	svc := &Service{cache: newFileCache(t.TempDir(), 24)}
 	seed := models.SeriesDetailsQuery{TitleID: "tmdb:tv:10", TMDBID: 10, TVDBID: 20, IMDBID: "tt123"}

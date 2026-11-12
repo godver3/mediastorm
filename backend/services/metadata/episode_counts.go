@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,7 +13,7 @@ import (
 	"novastream/models"
 )
 
-const releasedEpisodeCountCacheVersion = "v2"
+const releasedEpisodeCountCacheVersion = "v3"
 
 var (
 	releasedEpisodeCountWarmInFlight sync.Map
@@ -20,37 +21,52 @@ var (
 )
 
 type releasedEpisodeCountCacheEntry struct {
-	Count       int       `json:"count"`
-	Unavailable bool      `json:"unavailable,omitempty"`
-	RetryAfter  time.Time `json:"retryAfter,omitempty"`
+	Count int `json:"count"`
+	// Episodes lists the released episodes behind Count so badge counts can
+	// ignore watched rows for episodes the catalog does not have.
+	Episodes    []models.ReleasedEpisode `json:"episodes,omitempty"`
+	Unavailable bool                     `json:"unavailable,omitempty"`
+	RetryAfter  time.Time                `json:"retryAfter,omitempty"`
 }
 
 // GetCachedReleasedEpisodeCount returns a locally cached count without making
 // any provider requests. A true result with count zero represents a cached
 // upcoming/empty series and prevents repeated background warming.
 func (s *Service) GetCachedReleasedEpisodeCount(req models.SeriesDetailsQuery) (int, bool) {
+	entry, ok := s.cachedReleasedEpisodes(req)
+	return entry.Count, ok
+}
+
+// GetCachedReleasedEpisodes returns the locally cached released episodes (the
+// ones GetCachedReleasedEpisodeCount counts) without provider requests.
+func (s *Service) GetCachedReleasedEpisodes(req models.SeriesDetailsQuery) ([]models.ReleasedEpisode, bool) {
+	entry, ok := s.cachedReleasedEpisodes(req)
+	return entry.Episodes, ok
+}
+
+func (s *Service) cachedReleasedEpisodes(req models.SeriesDetailsQuery) (releasedEpisodeCountCacheEntry, bool) {
 	if s == nil || s.cache == nil {
-		return 0, false
+		return releasedEpisodeCountCacheEntry{}, false
 	}
 	for _, key := range releasedEpisodeCountCacheKeys(req) {
 		var entry releasedEpisodeCountCacheEntry
 		if ok, _ := s.cache.get(key, &entry); ok {
 			if entry.Unavailable {
 				if entry.RetryAfter.IsZero() || time.Now().Before(entry.RetryAfter) {
-					return 0, true
+					return releasedEpisodeCountCacheEntry{}, true
 				}
 				continue
 			}
 			if entry.Count >= 0 {
-				return entry.Count, true
+				return entry, true
 			}
 		}
 	}
-	if count, ok := s.releasedEpisodeCountFromCachedDetails(req); ok {
-		s.cacheReleasedEpisodeCount(req, count)
-		return count, true
+	if episodes, ok := s.releasedEpisodesFromCachedDetails(req); ok {
+		s.cacheReleasedEpisodes(req, episodes)
+		return releasedEpisodeCountCacheEntry{Count: len(episodes), Episodes: episodes}, true
 	}
-	return 0, false
+	return releasedEpisodeCountCacheEntry{}, false
 }
 
 // WarmReleasedEpisodeCount schedules a bounded, deduplicated background lookup.
@@ -109,7 +125,7 @@ func (s *Service) warmReleasedEpisodeCount(ctx context.Context, req models.Serie
 		if strings.TrimSpace(details.Title.IMDBID) != "" {
 			req.IMDBID = details.Title.IMDBID
 		}
-		return s.cacheReleasedEpisodeCount(req, countReleasedSeriesDetails(details, time.Now()))
+		return s.cacheReleasedEpisodes(req, releasedSeriesDetailsEpisodes(details, time.Now()))
 	}
 
 	tvdbID, err := s.resolveSeriesTVDBID(ctx, req)
@@ -126,15 +142,14 @@ func (s *Service) warmReleasedEpisodeCount(ctx context.Context, req models.Serie
 	if err != nil {
 		return err
 	}
-	count := countReleasedTVDBEpisodes(extended.Episodes, time.Now())
 	req.TVDBID = tvdbID
-	return s.cacheReleasedEpisodeCount(req, count)
+	return s.cacheReleasedEpisodes(req, releasedTVDBEpisodes(extended.Episodes, time.Now()))
 }
 
-func (s *Service) releasedEpisodeCountFromCachedDetails(req models.SeriesDetailsQuery) (int, bool) {
+func (s *Service) releasedEpisodesFromCachedDetails(req models.SeriesDetailsQuery) ([]models.ReleasedEpisode, bool) {
 	req = normalizeSeriesDetailsQueryIDs(req)
 	if s.client == nil {
-		return 0, false
+		return nil, false
 	}
 	if req.TMDBID > 0 {
 		var details models.SeriesDetails
@@ -143,28 +158,28 @@ func (s *Service) releasedEpisodeCountFromCachedDetails(req models.SeriesDetails
 			strconv.FormatInt(req.TMDBID, 10),
 		)
 		if ok, _ := s.cache.get(tmdbCacheID, &details); ok && len(details.Seasons) > 0 {
-			return countReleasedSeriesDetails(&details, time.Now()), true
+			return releasedSeriesDetailsEpisodes(&details, time.Now()), true
 		}
 	}
 	if req.TVDBID <= 0 {
-		return 0, false
+		return nil, false
 	}
 
 	var details models.SeriesDetails
 	fullCacheID := seriesDetailsCacheKey(s.client.language, req.TVDBID, req.SeasonType)
 	if ok, _ := s.cache.get(fullCacheID, &details); ok && len(details.Seasons) > 0 {
-		return countReleasedSeriesDetails(&details, time.Now()), true
+		return releasedSeriesDetailsEpisodes(&details, time.Now()), true
 	}
 
 	liteCacheID := seriesDetailsLiteCacheKey(s.client.language, req.TVDBID, req.SeasonType)
 	if ok, _ := s.cache.get(liteCacheID, &details); ok && len(details.Seasons) > 0 {
-		return countReleasedSeriesDetails(&details, time.Now()), true
+		return releasedSeriesDetailsEpisodes(&details, time.Now()), true
 	}
-	return 0, false
+	return nil, false
 }
 
-func (s *Service) cacheReleasedEpisodeCount(req models.SeriesDetailsQuery, count int) error {
-	entry := releasedEpisodeCountCacheEntry{Count: count}
+func (s *Service) cacheReleasedEpisodes(req models.SeriesDetailsQuery, episodes []models.ReleasedEpisode) error {
+	entry := releasedEpisodeCountCacheEntry{Count: len(episodes), Episodes: episodes}
 	for _, key := range releasedEpisodeCountCacheKeys(req) {
 		if err := s.cache.set(key, entry); err != nil {
 			return err
@@ -217,6 +232,12 @@ func releasedEpisodeCountCacheKeys(req models.SeriesDetailsQuery) []string {
 }
 
 func countReleasedTVDBEpisodes(episodes []tvdbEpisode, now time.Time) int {
+	return len(releasedTVDBEpisodes(episodes, now))
+}
+
+// releasedTVDBEpisodes returns the distinct released regular-season episodes,
+// in season/episode order.
+func releasedTVDBEpisodes(episodes []tvdbEpisode, now time.Time) []models.ReleasedEpisode {
 	today := now.UTC().Truncate(24 * time.Hour)
 	latestSeason, latestEpisode := 0, 0
 	for _, episode := range episodes {
@@ -236,40 +257,53 @@ func countReleasedTVDBEpisodes(episodes []tvdbEpisode, now time.Time) int {
 		}
 	}
 
-	seen := make(map[string]struct{}, len(episodes))
+	seen := make(map[[2]int]struct{}, len(episodes))
+	released := make([]models.ReleasedEpisode, 0, len(episodes))
 	for _, episode := range episodes {
 		if episode.SeasonNumber <= 0 || episode.Number <= 0 {
 			continue
 		}
-		released := false
+		isReleased := false
 		if aired := strings.TrimSpace(episode.Aired); aired != "" {
 			if airDate, err := time.Parse("2006-01-02", aired); err != nil || !airDate.After(today) {
-				released = true
+				isReleased = true
 			}
 		} else if latestSeason == 0 || episode.SeasonNumber < latestSeason ||
 			(episode.SeasonNumber == latestSeason && episode.Number <= latestEpisode) {
-			released = true
+			isReleased = true
 		}
-		if released {
-			seen[fmt.Sprintf("%d:%d", episode.SeasonNumber, episode.Number)] = struct{}{}
+		key := [2]int{episode.SeasonNumber, episode.Number}
+		if _, dup := seen[key]; !isReleased || dup {
+			continue
 		}
+		seen[key] = struct{}{}
+		released = append(released, models.ReleasedEpisode{
+			Season: episode.SeasonNumber, Episode: episode.Number, Absolute: episode.AbsoluteNumber,
+		})
 	}
-	return len(seen)
+	sort.Slice(released, func(i, j int) bool {
+		if released[i].Season != released[j].Season {
+			return released[i].Season < released[j].Season
+		}
+		return released[i].Episode < released[j].Episode
+	})
+	return released
 }
 
-func countReleasedSeriesDetails(details *models.SeriesDetails, now time.Time) int {
+func releasedSeriesDetailsEpisodes(details *models.SeriesDetails, now time.Time) []models.ReleasedEpisode {
 	if details == nil {
-		return 0
+		return nil
 	}
 	episodes := make([]tvdbEpisode, 0)
 	for _, season := range details.Seasons {
 		for _, episode := range season.Episodes {
 			episodes = append(episodes, tvdbEpisode{
-				SeasonNumber: episode.SeasonNumber,
-				Number:       episode.EpisodeNumber,
-				Aired:        episode.AiredDate,
+				SeasonNumber:   episode.SeasonNumber,
+				Number:         episode.EpisodeNumber,
+				Aired:          episode.AiredDate,
+				AbsoluteNumber: episode.AbsoluteEpisodeNumber,
 			})
 		}
 	}
-	return countReleasedTVDBEpisodes(episodes, now)
+	return releasedTVDBEpisodes(episodes, now)
 }

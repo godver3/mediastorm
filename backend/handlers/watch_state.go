@@ -23,18 +23,19 @@ func stringSliceContainsFold(values []string, target string) bool {
 type watchStateIndex struct {
 	movies map[string]movieState
 	series map[string]seriesState
-	// Watched regular-season episode keys ("season:episode") per series index
+	// Watched regular-season episodes ({season, episode}) per series index
 	// key. A title's count is the union across all of its keys, so history
 	// split across tmdb-/tvdb-/imdb-form rows is not undercounted.
-	episodes map[string]map[string]struct{}
+	episodes map[string]map[[2]int]struct{}
 	// Rows whose only series ID is a bare number (legacy imports) have no
 	// unambiguous index key; they are matched only against a title's own bare
 	// candidate keys, the same fallback the details page uses.
-	legacyEpisodes map[string]map[string]struct{}
+	legacyEpisodes map[string]map[[2]int]struct{}
 }
 
 type releasedEpisodeCountProvider interface {
 	GetCachedReleasedEpisodeCount(models.SeriesDetailsQuery) (int, bool)
+	GetCachedReleasedEpisodes(models.SeriesDetailsQuery) ([]models.ReleasedEpisode, bool)
 	WarmReleasedEpisodeCount(models.SeriesDetailsQuery)
 }
 
@@ -50,6 +51,9 @@ type seriesState struct {
 	totalEpisodes   int
 	watchedEpisodes int
 	hasProgress     bool
+	// released, when known, is the catalog behind totalEpisodes; watched
+	// history rows outside it are not counted against the total.
+	released *models.ReleasedEpisodeSet
 }
 
 // buildWatchStateIndex creates a watchStateIndex from the three data sources
@@ -62,12 +66,12 @@ func buildWatchStateIndex(
 	idx := &watchStateIndex{
 		movies:         make(map[string]movieState),
 		series:         make(map[string]seriesState),
-		episodes:       make(map[string]map[string]struct{}),
-		legacyEpisodes: make(map[string]map[string]struct{}),
+		episodes:       make(map[string]map[[2]int]struct{}),
+		legacyEpisodes: make(map[string]map[[2]int]struct{}),
 	}
-	addEpisode := func(sets map[string]map[string]struct{}, key, episodeKey string) {
+	addEpisode := func(sets map[string]map[[2]int]struct{}, key string, episodeKey [2]int) {
 		if sets[key] == nil {
-			sets[key] = make(map[string]struct{})
+			sets[key] = make(map[[2]int]struct{})
 		}
 		sets[key][episodeKey] = struct{}{}
 	}
@@ -110,7 +114,7 @@ func buildWatchStateIndex(
 						ID:          wh.SeriesID,
 						ExternalIDs: wh.ExternalIDs,
 					})
-					episodeKey := strconv.Itoa(wh.SeasonNumber) + ":" + strconv.Itoa(wh.EpisodeNumber)
+					episodeKey := [2]int{wh.SeasonNumber, wh.EpisodeNumber}
 					indexKeys := identity.IndexKeys()
 					for _, key := range indexKeys {
 						s := idx.series[key]
@@ -212,8 +216,8 @@ func (idx *watchStateIndex) computeWithExternalIDs(mediaType, itemID string, ext
 	}
 	if mediaType == "series" {
 		var s seriesState
-		watched := make(map[string]struct{})
-		union := func(set map[string]struct{}) {
+		watched := make(map[[2]int]struct{})
+		union := func(set map[[2]int]struct{}) {
 			for episodeKey := range set {
 				watched[episodeKey] = struct{}{}
 			}
@@ -233,12 +237,24 @@ func (idx *watchStateIndex) computeWithExternalIDs(mediaType, itemID string, ext
 			if candidate.watchedEpisodes > s.watchedEpisodes {
 				s.watchedEpisodes = candidate.watchedEpisodes
 			}
+			if candidate.released.Len() > s.released.Len() {
+				s.released = candidate.released
+			}
 		}
 		if len(watched) > 0 {
 			s.hasWatchedEps = true
 		}
-		if len(watched) > s.watchedEpisodes {
-			s.watchedEpisodes = len(watched)
+		watchedReleased := len(watched)
+		if s.released.Len() > 0 {
+			watchedReleased = 0
+			for ep := range watched {
+				if s.released.Contains(ep[0], ep[1]) {
+					watchedReleased++
+				}
+			}
+		}
+		if watchedReleased > s.watchedEpisodes {
+			s.watchedEpisodes = watchedReleased
 		}
 		allEpsWatched := s.totalEpisodes > 0 && s.watchedEpisodes >= s.totalEpisodes
 		unwatched := s.totalEpisodes - s.watchedEpisodes
@@ -260,10 +276,14 @@ func (idx *watchStateIndex) computeWithExternalIDs(mediaType, itemID string, ext
 	return "none", nil
 }
 
-func (idx *watchStateIndex) setSeriesEpisodeTotal(itemID string, externalIDs map[string]string, total int) {
-	if idx == nil || total <= 0 {
+// setSeriesReleasedEpisodes records a series' released catalog: its size is
+// the total, and its episodes decide which watched rows count against it.
+func (idx *watchStateIndex) setSeriesReleasedEpisodes(itemID string, externalIDs map[string]string, episodes []models.ReleasedEpisode) {
+	if idx == nil || len(episodes) == 0 {
 		return
 	}
+	released := models.NewReleasedEpisodeSet(episodes)
+	total := released.Len()
 	identity := mediaidentity.Resolve(mediaidentity.Input{
 		MediaType:   "series",
 		ID:          itemID,
@@ -273,6 +293,9 @@ func (idx *watchStateIndex) setSeriesEpisodeTotal(itemID string, externalIDs map
 		s := idx.series[key]
 		if total > s.totalEpisodes {
 			s.totalEpisodes = total
+		}
+		if total > s.released.Len() {
+			s.released = released
 		}
 		idx.series[key] = s
 	}
@@ -308,8 +331,8 @@ func addCachedWatchlistEpisodeTotals(
 			continue
 		}
 		query := seriesEpisodeCountQuery(item)
-		if total, cached := provider.GetCachedReleasedEpisodeCount(query); cached {
-			idx.setSeriesEpisodeTotal(item.ID, item.ExternalIDs, total)
+		if episodes, cached := provider.GetCachedReleasedEpisodes(query); cached {
+			idx.setSeriesReleasedEpisodes(item.ID, item.ExternalIDs, episodes)
 			continue
 		}
 		if warmMisses {
@@ -350,8 +373,8 @@ func addCachedTrendingEpisodeTotals(
 			IMDBID:  title.IMDBID,
 		}
 		externalIDs := titleWatchStateExternalIDs(title)
-		if total, cached := provider.GetCachedReleasedEpisodeCount(query); cached {
-			idx.setSeriesEpisodeTotal(itemID, externalIDs, total)
+		if episodes, cached := provider.GetCachedReleasedEpisodes(query); cached {
+			idx.setSeriesReleasedEpisodes(itemID, externalIDs, episodes)
 			continue
 		}
 		if warmMisses {

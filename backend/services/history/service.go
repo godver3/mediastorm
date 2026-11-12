@@ -1545,7 +1545,8 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 			numbering := newEpisodeNumberingIndex(seriesDetails)
 			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
 			lifetimeWatchedCount := countLifetimeWatchedEpisodes(
-				watchedEpisodesAfterManualUnwatch(t.lifetime, t.unwatched, numbering), t.episodes, t.promoted, numbering)
+				watchedEpisodesAfterManualUnwatch(t.lifetime, t.unwatched, numbering), t.episodes, t.promoted, numbering,
+				releasedEpisodeSet(seriesDetails))
 
 			// Priority 1: In-progress episode (resume watching)
 			// Skip if the in-progress episode is already marked as watched in history
@@ -1758,7 +1759,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 					}
 
 					// Calculate episode counts for series completion tracking
-					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
+					state.TotalEpisodeCount = releasedEpisodeSet(seriesDetails).Len()
 					state.Status = seriesDetails.Title.Status
 					state.LifecycleStatus = seriesDetails.Title.LifecycleStatus
 					state.WatchedEpisodeCount = lifetimeWatchedCount
@@ -1848,7 +1849,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 					}
 
 					// Calculate episode counts for series completion tracking
-					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
+					state.TotalEpisodeCount = releasedEpisodeSet(seriesDetails).Len()
 					state.Status = seriesDetails.Title.Status
 					state.LifecycleStatus = seriesDetails.Title.LifecycleStatus
 					state.WatchedEpisodeCount = lifetimeWatchedCount
@@ -3055,11 +3056,18 @@ func applyEpisodeMetadata(ref *models.EpisodeReference, ep models.SeriesEpisode)
 	}
 }
 
-func countTotalEpisodes(seriesDetails *models.SeriesDetails) int {
+// releasedEpisodeSet is the set of aired regular-season episodes that make up
+// a series' total episode count.
+func releasedEpisodeSet(seriesDetails *models.SeriesDetails) *models.ReleasedEpisodeSet {
 	if seriesDetails == nil {
-		return 0
+		return models.NewReleasedEpisodeSet(nil)
 	}
-	total := 0
+	var released []models.ReleasedEpisode
+	add := func(ep models.SeriesEpisode) {
+		released = append(released, models.ReleasedEpisode{
+			Season: ep.SeasonNumber, Episode: ep.EpisodeNumber, Absolute: ep.AbsoluteEpisodeNumber,
+		})
+	}
 	now := time.Now()
 	latestReleasedSeason, latestReleasedEpisode := latestReleasedEpisodeOrder(seriesDetails)
 	for _, season := range seriesDetails.Seasons {
@@ -3072,22 +3080,22 @@ func countTotalEpisodes(seriesDetails *models.SeriesDetails) int {
 			if ep.AiredDate != "" {
 				if airDate, err := time.Parse("2006-01-02", ep.AiredDate); err == nil {
 					if airDate.Before(now) || airDate.Equal(now) {
-						total++
+						add(ep)
 					}
 				} else {
 					// If we can't parse the date, assume it's released
-					total++
+					add(ep)
 				}
 			} else if latestReleasedSeason == 0 && latestReleasedEpisode == 0 ||
 				compareEpisodeOrder(ep.SeasonNumber, ep.EpisodeNumber, latestReleasedSeason, latestReleasedEpisode) <= 0 {
 				// Older catalog entries occasionally lack dates; keep counting those.
 				// But do not count undated placeholder episodes that appear after the
 				// latest known released episode.
-				total++
+				add(ep)
 			}
 		}
 	}
-	return total
+	return models.NewReleasedEpisodeSet(released)
 }
 
 func latestReleasedEpisodeOrder(seriesDetails *models.SeriesDetails) (int, int) {
@@ -3138,11 +3146,18 @@ func countWatchedEpisodes(watchedEpisodes map[string]models.EpisodeReference) in
 // across the series' whole history plus the windowed episode list (which
 // already carries canonical numbering), skipping corrupted gaps that were
 // promoted to watched only for next-episode selection.
-func countLifetimeWatchedEpisodes(lifetime, windowed []models.WatchHistoryItem, promoted map[string]struct{}, numbering *episodeNumberingIndex) int {
+//
+// When released is non-empty, only watched episodes in it count: the result is
+// subtracted from released.Len() for the unwatched badge, so a history row for
+// an episode the catalog does not list must not reduce it.
+func countLifetimeWatchedEpisodes(lifetime, windowed []models.WatchHistoryItem, promoted map[string]struct{}, numbering *episodeNumberingIndex, released *models.ReleasedEpisodeSet) int {
 	seen := make(map[string]struct{}, len(lifetime))
 	add := func(ep models.WatchHistoryItem) {
 		season, episode := numbering.canonical(ep.SeasonNumber, ep.EpisodeNumber)
 		if season <= 0 || episode <= 0 {
+			return
+		}
+		if released.Len() > 0 && !released.Contains(season, episode) {
 			return
 		}
 		key := episodeKey(season, episode)
