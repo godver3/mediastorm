@@ -157,9 +157,27 @@ func ValidProviderRange(source string, segment *ProviderSegment, duration float6
 	return startMS, endMS, true
 }
 
+// maxOutroTailSeconds is how far before the end of the file a provider's end
+// credits may finish (a post-credits tag or "next time" preview) before the range
+// is taken to belong to a different cut of the episode.
+const maxOutroTailSeconds = 180
+
+// OutroFitsDuration reports whether a provider outro ending at endMS can be this
+// file's end credits. IntroDB keys ranges by episode, not by cut, so an outro
+// submitted for a broadcast cut lands mid-scene in a longer extended cut and,
+// with credits auto-skip on, plays the next episode with minutes left. An unknown
+// duration (0) accepts the range.
+func OutroFitsDuration(endMS, duration float64) bool {
+	duration = SanitizeDuration(duration)
+	return duration <= 0 || duration-endMS/1000 <= maxOutroTailSeconds
+}
+
 func providerSegment(segmentType, source string, segment *ProviderSegment, duration float64) *Segment {
 	startMS, endMS, ok := ValidProviderRange(source, segment, duration)
 	if !ok {
+		return nil
+	}
+	if segmentType == TypeOutro && !OutroFitsDuration(endMS, duration) {
 		return nil
 	}
 	return &Segment{Type: segmentType, Start: startMS / 1000, End: endMS / 1000, Source: source}

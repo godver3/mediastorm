@@ -194,3 +194,36 @@ func TestChapterEndFallsBackToNextStartThenDuration(t *testing.T) {
 		t.Errorf("segments = %+v, want %+v", got, want)
 	}
 }
+
+// The Office S01E06: IntroDB's outro (1296–1339 s) is for the ~22 min broadcast
+// cut; in the 1909 s extended cut it lands mid-scene. SkipDB, asked with the
+// file's duration, marks it out-of-range, so no outro should survive.
+func TestProviderOutroFromShorterCutIsRejected(t *testing.T) {
+	introDB := &IntroDBResponse{Intro: providerRange(0, 31_000), Outro: providerRange(1_296_000, 1_339_000)}
+	skipDB := &SkipDBResponse{}
+	skipDB.Segments.Outro = skipRange(1_296_000, 1_339_000, "out-of-range")
+	got := byType(Resolve(introDB, skipDB, nil, 1909))
+	if outro, ok := got[TypeOutro]; ok {
+		t.Errorf("outro = %+v, want none", outro)
+	}
+	if want := (Segment{TypeIntro, 0, 31, SourceIntroDB}); got[TypeIntro] != want {
+		t.Errorf("intro = %+v, want %+v", got[TypeIntro], want)
+	}
+	// The file's own credits chapter still applies.
+	chapters := []Chapter{{Title: "Main", Start: 0}, {Title: "End Credits", Start: 1860}}
+	if want := (Segment{TypeOutro, 1860, 1909, SourceChapterExplicit}); byType(Resolve(introDB, skipDB, chapters, 1909))[TypeOutro] != want {
+		t.Errorf("chapter outro not used")
+	}
+}
+
+func TestProviderOutroWithShortTagIsKept(t *testing.T) {
+	// Credits ending two minutes before the end (a post-credits tag) still count.
+	got := byType(Resolve(&IntroDBResponse{Outro: providerRange(1_200_000, 1_260_000)}, nil, nil, 1380))
+	if want := (Segment{TypeOutro, 1200, 1260, SourceIntroDB}); got[TypeOutro] != want {
+		t.Errorf("outro = %+v, want %+v", got[TypeOutro], want)
+	}
+	// Unknown duration: nothing to compare against, keep it.
+	if _, ok := byType(Resolve(&IntroDBResponse{Outro: providerRange(1_200_000, 1_260_000)}, nil, nil, 0))[TypeOutro]; !ok {
+		t.Errorf("outro dropped with unknown duration")
+	}
+}

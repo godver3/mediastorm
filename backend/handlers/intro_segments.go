@@ -100,7 +100,7 @@ func (h *VideoHandler) getLegacyIntroSegments(w http.ResponseWriter, r *http.Req
 	if lookup.IntroDB != nil {
 		result.Intro = legacyProviderSegment(lookup.IntroDB.Intro, "", duration)
 		result.Recap = legacyProviderSegment(lookup.IntroDB.Recap, "", duration)
-		result.Outro = legacyProviderSegment(lookup.IntroDB.Outro, "", duration)
+		result.Outro = legacyOutroSegment(lookup.IntroDB.Outro, "", duration)
 	}
 	if lookup.SkipDB != nil {
 		if result.Intro == nil {
@@ -110,7 +110,7 @@ func (h *VideoHandler) getLegacyIntroSegments(w http.ResponseWriter, r *http.Req
 			result.Recap = legacyProviderSegment(lookup.SkipDB.Segments.Recap, skipsegments.SourceSkipDB, duration)
 		}
 		if result.Outro == nil {
-			result.Outro = legacyProviderSegment(lookup.SkipDB.Segments.Outro, skipsegments.SourceSkipDB, duration)
+			result.Outro = legacyOutroSegment(lookup.SkipDB.Segments.Outro, skipsegments.SourceSkipDB, duration)
 		}
 	}
 	result.Segments = skipsegments.Resolve(lookup.IntroDB, lookup.SkipDB, nil, duration)
@@ -132,6 +132,16 @@ func legacyProviderSegment(segment *skipsegments.ProviderSegment, source string,
 	if source == "" {
 		legacy.Confidence = segment.Confidence
 		legacy.SubmissionCount = segment.SubmissionCount
+	}
+	return legacy
+}
+
+// legacyOutroSegment is legacyProviderSegment plus the resolver's check that the
+// credits finish near the end of this file (not a different cut's).
+func legacyOutroSegment(segment *skipsegments.ProviderSegment, source string, duration float64) *legacySegment {
+	legacy := legacyProviderSegment(segment, source, duration)
+	if legacy == nil || !skipsegments.OutroFitsDuration(*legacy.EndMS, duration) {
+		return nil
 	}
 	return legacy
 }

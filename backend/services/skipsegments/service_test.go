@@ -39,7 +39,7 @@ func TestLookupSkipsSkipDBWhenIntroDBComplete(t *testing.T) {
 		switch r.URL.Path {
 		case "/intro":
 			introCalls.Add(1)
-			_, _ = w.Write([]byte(`{"intro":{"start_ms":1,"end_ms":2},"recap":{"start_ms":3,"end_ms":4},"outro":{"start_ms":5,"end_ms":6}}`))
+			_, _ = w.Write([]byte(`{"intro":{"start_ms":1,"end_ms":2},"recap":{"start_ms":3,"end_ms":4},"outro":{"start_ms":1150000,"end_ms":1190000}}`))
 		case "/skip":
 			skipCalls.Add(1)
 		}
@@ -114,7 +114,7 @@ func TestLookupSharesConcurrentFetchesAndHonoursCallerCancel(t *testing.T) {
 		if r.URL.Path == "/intro" {
 			calls.Add(1)
 			<-release
-			_, _ = w.Write([]byte(`{"intro":{"start_ms":1,"end_ms":2},"recap":{"start_ms":3,"end_ms":4},"outro":{"start_ms":5,"end_ms":6}}`))
+			_, _ = w.Write([]byte(`{"intro":{"start_ms":1,"end_ms":2},"recap":{"start_ms":3,"end_ms":4},"outro":{"start_ms":1150000,"end_ms":1190000}}`))
 		}
 	}, 5*time.Second)
 	key, _ := NormalizeEpisodeKey("tt1", 1, 1)
