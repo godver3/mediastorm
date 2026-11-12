@@ -1412,6 +1412,17 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 		}
 	}
 
+	// Series last watched outside the 365-day window still belong on continue
+	// watching when a new season has aired since; the per-series pass checks that.
+	returningSeries := make(map[string]bool)
+	if onlyInProgress {
+		for seriesID, item := range returningSeriesCandidates(seriesLifetimeEpisodes, seriesInfo, cutoffDate) {
+			seriesInfo[seriesID] = item
+			seriesEpisodes[seriesID] = seriesLifetimeEpisodes[seriesID]
+			returningSeries[seriesID] = true
+		}
+	}
+
 	// Also consider series with only in-progress items (no completed episodes).
 	// Without other watch history, a below-floor episode is a sample rather than
 	// a started show, so it doesn't put the series on continue watching.
@@ -1490,6 +1501,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 		activityAt time.Time
 		inProgress *models.PlaybackProgress
 		promoted   map[string]struct{}
+		returning  bool
 	}
 
 	var seriesTasks []seriesTask
@@ -1504,6 +1516,7 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 			activityAt: seriesActivityAt[seriesID],
 			inProgress: inProgressBySeriesCache[seriesID],
 			promoted:   promotedCorruptedGapsBySeries[seriesID],
+			returning:  returningSeries[seriesID],
 		})
 	}
 
@@ -1541,6 +1554,9 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 						mu.Unlock()
 					}
 				}
+			}
+			if t.returning && (seriesErr != nil || !seriesMayReturn(seriesDetails)) {
+				return
 			}
 			numbering := newEpisodeNumberingIndex(seriesDetails)
 			t.episodes = watchedEpisodesAfterManualUnwatch(t.episodes, t.history, numbering)
@@ -1789,6 +1805,11 @@ func (s *Service) buildSeriesStatesWithIdentityRepair(ctx context.Context, userI
 				}
 				if nextEpisode == nil && onlyInProgress {
 					// No next episode available and only in-progress requested, skip this series
+					return
+				}
+				if t.returning && !episodeAiredAfter(nextEpisode, mostRecentEpisode.WatchedAt) {
+					// Outside the recency window only a new season brings a series back,
+					// not older episodes the user left unwatched.
 					return
 				}
 
