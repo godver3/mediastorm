@@ -1808,6 +1808,82 @@ func TestSeriesDetailsLiteFallsBackToTMDBAndKeepsLogoOnCachedProviderMismatch(t 
 	}
 }
 
+// TVDB keeps The Great British Bake Off as one series (184871) that links
+// back to TMDB 87012, while TMDB splits it and its BBC-era entry 34549 links to
+// TVDB 184871. A request for TMDB 34549 must keep the full TVDB series rather
+// than fall back to TMDB's seven BBC seasons, or history recorded in TVDB
+// numbering (S17) cannot be found.
+func TestSeriesDetailsLiteKeepsTVDBWhenRequestedTMDBLinksToIt(t *testing.T) {
+	cache := newFileCache(t.TempDir(), 24)
+	if err := cache.set(seriesTVDBResolutionCacheKey(34549), int64(184871)); err != nil {
+		t.Fatalf("seed resolution cache: %v", err)
+	}
+	liteCacheID := seriesDetailsLiteCacheKey("eng", 184871, "")
+	if err := cache.set(liteCacheID, models.SeriesDetails{
+		Title: models.Title{
+			ID:        "tvdb:series:184871",
+			Name:      "The Great British Bake Off",
+			MediaType: "series",
+			TVDBID:    184871,
+			TMDBID:    87012,
+			IMDBID:    "tt1877368",
+		},
+		EpisodeTMDBEnriched: true,
+		Seasons: []models.SeriesSeason{
+			{Number: 7, EpisodeCount: 10},
+			{Number: 17, EpisodeCount: 10},
+		},
+	}); err != nil {
+		t.Fatalf("seed lite cache: %v", err)
+	}
+
+	tmdbRequests := 0
+	httpc := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{}`
+			status := http.StatusNotFound
+			if req.URL.Path == "/3/tv/34549" {
+				tmdbRequests++
+				status = http.StatusOK
+				body = `{
+					"id":34549,
+					"name":"The Great British Bake Off",
+					"first_air_date":"2010-08-17",
+					"external_ids":{"imdb_id":"tt1877368","tvdb_id":184871},
+					"seasons":[]
+				}`
+			}
+			return &http.Response{
+				StatusCode: status,
+				Status:     http.StatusText(status),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	service := &Service{
+		client:           &tvdbClient{language: "eng"},
+		tmdb:             newTMDBClient("test-tmdb-key", "eng", httpc, cache),
+		cache:            cache,
+		inflightRequests: make(map[string]*inflightRequest),
+	}
+
+	details, err := service.SeriesDetailsLite(context.Background(), models.SeriesDetailsQuery{
+		TitleID: "tmdb:tv:34549",
+		Name:    "The Great British Bake Off",
+		TMDBID:  34549,
+	})
+	if err != nil {
+		t.Fatalf("SeriesDetailsLite: %v", err)
+	}
+	if details.Title.TVDBID != 184871 || len(details.Seasons) != 2 || details.Seasons[1].Number != 17 {
+		t.Fatalf("details = %+v seasons=%d, want TVDB 184871 with season 17", details.Title, len(details.Seasons))
+	}
+	if tmdbRequests == 0 {
+		t.Fatal("expected the requested TMDB entry's external IDs to be checked")
+	}
+}
+
 func TestMergeSearchResultsPrefersTVDBWhenTMDBIDMatches(t *testing.T) {
 	results := mergeSearchResults([]models.SearchResult{
 		{

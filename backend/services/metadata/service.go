@@ -4010,6 +4010,27 @@ func seriesTMDBIDMismatch(title models.Title, requestedTMDBID int64) bool {
 	return requestedTMDBID > 0 && title.TMDBID > 0 && title.TMDBID != requestedTMDBID
 }
 
+// seriesProviderMismatch reports whether TVDB series details describe a
+// different show than the requested TMDB entry. TVDB sometimes keeps as one
+// series what TMDB splits in two: The Great British Bake Off is TVDB 184871
+// (all seasons), but TMDB 34549 (BBC years) and 87012 (Channel 4 years), and
+// TVDB links back only to 87012. When the requested TMDB entry itself names
+// this TVDB series, the TVDB data is the right show (and the numbering stored
+// in watch history), so a differing TMDB back-link is not a mismatch.
+func (s *Service) seriesProviderMismatch(ctx context.Context, title models.Title, tvdbID, requestedTMDBID int64) bool {
+	if !seriesTMDBIDMismatch(title, requestedTMDBID) {
+		return false
+	}
+	if tvdbID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if tmdbTitle, err := s.tmdb.seriesDetails(ctx, requestedTMDBID); err == nil && tmdbTitle != nil && tmdbTitle.TVDBID == tvdbID {
+			log.Printf("[metadata] tmdb %d links to tvdb %d, which links back to tmdb %d; keeping TVDB details",
+				requestedTMDBID, tvdbID, title.TMDBID)
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeSeriesDetailsQueryIDs(req models.SeriesDetailsQuery) models.SeriesDetailsQuery {
 	if req.TMDBID == 0 {
 		req.TMDBID = parseTMDBIDFromTitleID(req.TitleID)
@@ -5582,7 +5603,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			cacheChanged = true
 		}
 		log.Printf("[metadata] series details lite full-cache hit tvdbId=%d seasons=%d", tvdbID, len(fullCached.Seasons))
-		if seriesTMDBIDMismatch(fullCached.Title, req.TMDBID) {
+		if s.seriesProviderMismatch(ctx, fullCached.Title, tvdbID, req.TMDBID) {
 			log.Printf("[metadata] lite full-cache tmdb mismatch tvdbId=%d cachedTmdbId=%d requestedTmdbId=%d; using TMDB fallback",
 				tvdbID, fullCached.Title.TMDBID, req.TMDBID)
 			return s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("tvdb tmdb mismatch"))
@@ -5619,7 +5640,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			cacheChanged = true
 		}
 		log.Printf("[metadata] series details lite cache hit tvdbId=%d seasons=%d", tvdbID, len(cached.Seasons))
-		if seriesTMDBIDMismatch(cached.Title, req.TMDBID) {
+		if s.seriesProviderMismatch(ctx, cached.Title, tvdbID, req.TMDBID) {
 			log.Printf("[metadata] lite cache tmdb mismatch tvdbId=%d cachedTmdbId=%d requestedTmdbId=%d; using TMDB fallback",
 				tvdbID, cached.Title.TMDBID, req.TMDBID)
 			return s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("tvdb tmdb mismatch"))
@@ -5775,7 +5796,7 @@ func (s *Service) SeriesDetailsLite(ctx context.Context, req models.SeriesDetail
 			}
 		}
 	}
-	if seriesTMDBIDMismatch(seriesTitle, req.TMDBID) {
+	if s.seriesProviderMismatch(ctx, seriesTitle, tvdbID, req.TMDBID) {
 		log.Printf("[metadata] lite TVDB series tmdb mismatch tvdbId=%d resolvedTmdbId=%d requestedTmdbId=%d; using TMDB fallback",
 			tvdbID, seriesTitle.TMDBID, req.TMDBID)
 		return s.tmdbSeriesDetailsFallback(ctx, req, fmt.Errorf("tvdb tmdb mismatch"))
