@@ -3477,6 +3477,9 @@
         {{end}}
     </script>
 
+    {{if not .IsAdmin}}
+    <script src="{{.ServerBasePath}}/api/static/account-parent-auth-v1.js?v={{staticAssetVersion "account-parent-auth-v1.js"}}"></script>
+    {{end}}
     {{block "scripts" .}}{{end}}
 </body>
 </html>

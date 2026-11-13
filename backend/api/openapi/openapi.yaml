@@ -42,6 +42,17 @@ info:
       is accepted and ignored. Unlocks survive `POST /api/auth/refresh`, end
       at logout, when the profile's PIN changes or is removed, and at
       `expiresAt`.
+    - **Parental changes.** Normal accounts must confirm their current account
+      password for changes to kids flags, restrictions and allowlists, profile
+      PINs, and profile deletion. Send it as `X-Account-Password` on the mutation.
+      Browser account pages prompt when required and send `base64:` followed by
+      the Base64-encoded UTF-8 password so Unicode and whitespace are preserved.
+      Raw ASCII values are also accepted. The header is not a session
+      token and must never be stored, logged or placed in a URL. Missing or wrong
+      proof returns 403 with `code: parent_authorization_required`; the normal
+      session remains valid. Administrators retain their existing management
+      access. Password attempts are rate-limited per account. Creating a profile
+      through `POST /api/users` still uses its existing `password` body field.
     - **Client identity.** Send `X-Client-ID` (a stable per-device ID) on
       every request. Device settings, stream limits, adaptive playback and
       track preferences key off it.

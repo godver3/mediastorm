@@ -23,3 +23,13 @@ func TestRedactingWriterRemovesCredentialForms(t *testing.T) {
 		t.Fatalf("redacted marker missing: %s", got)
 	}
 }
+
+func TestRedactingWriterRemovesParentPasswords(t *testing.T) {
+	for _, input := range []string{`X-Account-Password: fixture secret with spaces`, `{"X-Account-Password":"fixture secret with spaces"}`, `{"X-Account-Password":["fixture secret with spaces"]}`, `{"X-Account-Password":"fixture \"quoted\" secret with spaces"}`} {
+		var output bytes.Buffer
+		_, _ = NewRedactingWriter(&output).Write([]byte(input))
+		if strings.Contains(output.String(), "fixture") || strings.Contains(output.String(), "spaces") {
+			t.Fatal("parent password remained in log")
+		}
+	}
+}

@@ -352,9 +352,10 @@ func TestUsersHandler_Rename_NotFound(t *testing.T) {
 
 func TestUsersHandler_Delete_Success(t *testing.T) {
 	svc := &fakeUsersService{belongsTo: true}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	r := usersRequest(http.MethodDelete, "/", nil, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.Delete(w, r)
 
@@ -378,9 +379,10 @@ func TestUsersHandler_Delete_NotOwned(t *testing.T) {
 
 func TestUsersHandler_Delete_NotFound(t *testing.T) {
 	svc := &fakeUsersService{belongsTo: true, deleteErr: users.ErrUserNotFound}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	r := usersRequest(http.MethodDelete, "/", nil, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.Delete(w, r)
 
@@ -448,10 +450,11 @@ func TestUsersHandler_SetColor_NotOwned(t *testing.T) {
 func TestUsersHandler_SetPin_Success(t *testing.T) {
 	expected := models.User{ID: "u1"}
 	svc := &fakeUsersService{belongsTo: true, setPinUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	body := map[string]string{"pin": "1234"}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetPin(w, r)
 
@@ -462,10 +465,11 @@ func TestUsersHandler_SetPin_Success(t *testing.T) {
 
 func TestUsersHandler_SetPin_TooShort(t *testing.T) {
 	svc := &fakeUsersService{belongsTo: true, setPinErr: users.ErrPinTooShort}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	body := map[string]string{"pin": "12"}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetPin(w, r)
 
@@ -477,9 +481,10 @@ func TestUsersHandler_SetPin_TooShort(t *testing.T) {
 func TestUsersHandler_ClearPin_Success(t *testing.T) {
 	expected := models.User{ID: "u1"}
 	svc := &fakeUsersService{belongsTo: true, clearPinUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	r := usersRequest(http.MethodDelete, "/", nil, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.ClearPin(w, r)
 
@@ -638,10 +643,11 @@ func TestUsersHandler_ClearPlexAccount_Success(t *testing.T) {
 func TestUsersHandler_SetKidsProfile_Success(t *testing.T) {
 	expected := models.User{ID: "u1", IsKidsProfile: true}
 	svc := &fakeUsersService{belongsTo: true, setKidsUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	body := map[string]bool{"isKidsProfile": true}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetKidsProfile(w, r)
 
@@ -670,10 +676,11 @@ func TestUsersHandler_SetKidsProfile_MasterBypass(t *testing.T) {
 func TestUsersHandler_SetKidsMode_Success(t *testing.T) {
 	expected := models.User{ID: "u1", KidsMode: "rating"}
 	svc := &fakeUsersService{getOK: true, getUser: models.User{ID: "u1"}, belongsTo: true, setKidsModeUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, verifiedAccount())
 
 	body := map[string]string{"mode": "rating"}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "acct-1", false)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetKidsMode(w, r)
 

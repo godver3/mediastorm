@@ -10,6 +10,14 @@ var sensitiveLogPatterns = []struct {
 	replacement []byte
 }{
 	{
+		pattern:     regexp.MustCompile(`(?i)("x-account-password"\s*:\s*)(?:"(?:[^"\\]|\\.)*"|\[\s*(?:"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)?\])`),
+		replacement: []byte(`${1}"[redacted]"`),
+	},
+	{
+		pattern:     regexp.MustCompile(`(?im)(^[^\r\n]*?\bx-account-password\s*[:=]\s*)[^\r\n]*`),
+		replacement: []byte(`${1}[redacted]`),
+	},
+	{
 		pattern:     regexp.MustCompile(`(?i)([?&](?:token|api[_-]?key|key|auth|authorization|x-pin)=)[^&\s"'<>]*`),
 		replacement: []byte(`${1}[redacted]`),
 	},
@@ -18,7 +26,7 @@ var sensitiveLogPatterns = []struct {
 		replacement: []byte(`${1}[redacted]`),
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)("(?:token|api[_-]?key|key|auth|authorization|x-pin|xtreamUsername|homeWifiSSID|currentSSID|ssid)"\s*:\s*")[^"]*`),
+		pattern:     regexp.MustCompile(`(?i)("(?:token|api[_-]?key|key|auth|authorization|x-pin|x-account-password|xtreamUsername|homeWifiSSID|currentSSID|ssid)"\s*:\s*")[^"]*`),
 		replacement: []byte(`${1}[redacted]`),
 	},
 	{

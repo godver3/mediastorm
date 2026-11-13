@@ -1078,12 +1078,15 @@ async function updateProfile(e, profileId) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ color: getSelectedProfileColor(form, fallbackColor) })
         });
-        // Update kids mode
-        await fetch(basePath + '/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ isKidsProfile: form.isKids.checked })
-        });
+        // Cosmetic profile edits do not need a parental confirmation.
+        if (Boolean(profile?.isKidsProfile) !== form.isKids.checked) {
+            const kidsResponse = await fetch(basePath + '/api/profiles/kids?profileId=' + encodeURIComponent(profileId), {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ isKidsProfile: form.isKids.checked })
+            });
+            if (!kidsResponse.ok) throw new Error(await kidsResponse.text());
+        }
         const privacyResponse = await fetch(basePath + '/api/profiles/activity-privacy?profileId=' + encodeURIComponent(profileId), {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
