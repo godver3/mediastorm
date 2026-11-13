@@ -60,3 +60,32 @@ func TestHLSStatusAllowsOwnerAndBoundShareOnly(t *testing.T) {
 		})
 	}
 }
+
+// Stalker and Stremio channels resolve the shared URL to a different provider
+// URL before the session starts; a share link stays bound to the URL it named.
+func TestHLSShareAccessUsesRequestedLiveSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, shared string
+		want         int
+	}{
+		{"shared channel", "http://portal.example/channel/7", 200},
+		{"other channel", "http://portal.example/channel/8", 404},
+		{"resolved url", "http://cdn.example/live/7.m3u8?token=x", 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &HLSSession{ID: "live", ProfileID: "foreign-profile", IsLive: true,
+				Path: "http://cdn.example/live/7.m3u8?token=x", OriginalPath: "http://cdn.example/live/7.m3u8?token=x",
+				RequestedSource: "http://portal.example/channel/7"}
+			h := &VideoHandler{hlsManager: &HLSManager{sessions: map[string]*HLSSession{"live": session}}}
+			r := httptest.NewRequest("GET", "/api/video/hls/live/status", nil)
+			r = mux.SetURLVars(r, map[string]string{"sessionID": "live"})
+			ctx := context.WithValue(r.Context(), auth.ContextKeyAccountID, "account-a")
+			ctx = context.WithValue(ctx, auth.ContextKeySession, models.Session{Scope: models.SessionScopeStream, ScopeResource: tc.shared})
+			w := httptest.NewRecorder()
+			profileaccess.Middleware(func(profile, account string) bool { return profile == "own-profile" && account == "account-a" })(http.HandlerFunc(h.GetHLSSessionStatus)).ServeHTTP(w, r.WithContext(ctx))
+			if w.Code != tc.want {
+				t.Fatalf("HTTP %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}

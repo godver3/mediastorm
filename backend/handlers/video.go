@@ -5256,6 +5256,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Provider resolution below may replace liveURL; share links are bound to this one.
+	requestedURL := liveURL
+
 	// Validate URL scheme
 	if !strings.HasPrefix(liveURL, "http://") && !strings.HasPrefix(liveURL, "https://") {
 		http.Error(w, "invalid url scheme", http.StatusBadRequest)
@@ -5454,6 +5457,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	session.mu.Lock()
 	session.MediaMetadata = mediaMetadata
 	session.ClientID = clientID
+	if requestedURL != liveURL {
+		session.RequestedSource = requestedURL
+	}
 	session.mu.Unlock()
 
 	response := map[string]interface{}{

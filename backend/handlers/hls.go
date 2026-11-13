@@ -355,9 +355,14 @@ func (t *throttledReader) Read(p []byte) (n int, err error) {
 
 // HLSSession represents an active HLS transcoding session
 type HLSSession struct {
-	ID                  string
-	Path                string
-	OriginalPath        string
+	ID           string
+	Path         string
+	OriginalPath string
+	// RequestedSource is the source the client asked for when provider
+	// resolution (Stalker portals, Stremio streams) rewrote Path and
+	// OriginalPath. Share-link access is checked against it; empty means
+	// OriginalPath is the requested source.
+	RequestedSource     string
 	OutputDir           string
 	CreatedAt           time.Time
 	LastAccess          time.Time

@@ -17,7 +17,10 @@ func (h *VideoHandler) requireHLSSessionAccess(w http.ResponseWriter, r *http.Re
 		return false
 	}
 	session.mu.RLock()
-	profileID, resource := session.ProfileID, session.OriginalPath
+	profileID, resource := session.ProfileID, session.RequestedSource
+	if resource == "" {
+		resource = session.OriginalPath
+	}
 	if resource == "" {
 		resource = session.Path
 	}
