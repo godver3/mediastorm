@@ -35,6 +35,14 @@ var logRedactionPatterns = []struct {
 	replacement string
 }{
 	{
+		pattern: regexp.MustCompile(`(?i)("x-account-password"\s*:\s*)(?:"(?:[^"\\]|\\.)*"|\[\s*(?:"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)?\])`),
+		replacement: `${1}"` + logRedacted + `"`,
+	},
+	{
+		pattern:     regexp.MustCompile(`(?im)(^[^\r\n]*?\bx-account-password\s*[:=]\s*)[^\r\n]*`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
 		pattern:     regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)[^\s"',;]+`),
 		replacement: `${1}` + logRedacted,
 	},
@@ -47,11 +55,11 @@ var logRedactionPatterns = []struct {
 		replacement: `${1}` + logRedacted,
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername|homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*["'])([^"']+)(["'])`),
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|x-account-password|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername|homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*["'])([^"']+)(["'])`),
 		replacement: `${1}` + logRedacted + `${3}`,
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername|homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*)[^\s"',;}]+`),
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|x-account-password|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername|homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*)[^\s"',;}]+`),
 		replacement: `${1}` + logRedacted,
 	},
 	{

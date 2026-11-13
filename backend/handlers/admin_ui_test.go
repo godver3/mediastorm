@@ -380,14 +380,15 @@ func TestAdminUIHandler_CreateProfile(t *testing.T) {
 	}
 
 	reqBody := map[string]string{
-		"name": "New Profile",
+		"name":      "New Profile",
+		"accountId": masterAccount.ID,
 	}
 	body, _ := json.Marshal(reqBody)
 
 	req := createAuthenticatedRequest(t, http.MethodPost, "/api/admin/profiles", body, sessionsService, masterAccount.ID, true)
 	rec := httptest.NewRecorder()
 
-	handler.CreateProfile(rec, req)
+	handler.RequireAuth(handler.CreateProfile)(rec, req)
 
 	// Should succeed (200/201) or require auth (401)
 	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated && rec.Code != http.StatusUnauthorized {

@@ -92,7 +92,7 @@ func newPinTestEnv(t *testing.T) *pinTestEnv {
 
 	authHandler := handlers.NewAuthHandler(accountsSvc, env.sessions)
 	authHandler.SetProfileUnlocks(env.unlocks)
-	usersHandler := handlers.NewUsersHandler(env.users)
+	usersHandler := handlers.NewUsersHandler(env.users, accountsSvc)
 	usersHandler.SetProfileUnlocks(env.unlocks, func() time.Duration { return policy().ProfileUnlockTTL() })
 
 	echo := func(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +158,7 @@ func (env *pinTestEnv) login(accountID string) string {
 type pinRequest struct {
 	method, target, token, unlock string
 	body                          any
+	parentPassword                string
 }
 
 func (env *pinTestEnv) do(req pinRequest) *httptest.ResponseRecorder {
@@ -173,6 +174,9 @@ func (env *pinTestEnv) do(req pinRequest) *httptest.ResponseRecorder {
 	}
 	if req.token != "" {
 		r.Header.Set("Authorization", "Bearer "+req.token)
+	}
+	if req.parentPassword != "" {
+		r.Header.Set("X-Account-Password", req.parentPassword)
 	}
 	if req.unlock != "" {
 		r.Header.Set(ProfileUnlockHeader, req.unlock)
@@ -360,7 +364,7 @@ func TestProfilePinChangeRevokesUnlocks(t *testing.T) {
 
 	// Through the API (with a fresh unlock) the grants are deleted outright.
 	unlock = env.verify(token, env.locked, "5678").UnlockToken
-	if rec := env.do(pinRequest{method: http.MethodPut, target: "/api/users/" + env.locked + "/pin", token: token, unlock: unlock, body: map[string]string{"pin": "2468"}}); rec.Code != http.StatusOK {
+	if rec := env.do(pinRequest{method: http.MethodPut, target: "/api/users/" + env.locked + "/pin", token: token, unlock: unlock, parentPassword: "pin-test-password-1", body: map[string]string{"pin": "2468"}}); rec.Code != http.StatusOK {
 		t.Fatalf("set pin status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if env.unlocks.Count() != 0 {

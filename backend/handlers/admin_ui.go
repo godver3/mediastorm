@@ -36,6 +36,7 @@ import (
 	"novastream/internal/httpheaders"
 	"novastream/internal/importer"
 	"novastream/internal/netproxy"
+	"novastream/internal/parentauth"
 	internalpool "novastream/internal/pool"
 	"novastream/internal/profileaccess"
 	"novastream/internal/requestsecurity"
@@ -1657,6 +1658,7 @@ type AdminUIHandler struct {
 	watchlistService      *watchlist.Service
 	hiddenItemsService    hiddenItemsService
 	accountsService       *accounts.Service
+	parentAuthorization   *parentauth.Guard
 	invitationsService    *invitations.Service
 	remoteAccessService   *remoteaccess.Service
 	sessionsService       *sessions.Service
@@ -1769,6 +1771,11 @@ func (h *AdminUIHandler) SetLibraryAccessService(service *libraryaccess.Service)
 // SetAccountsService sets the accounts service for account management
 func (h *AdminUIHandler) SetAccountsService(as *accounts.Service) {
 	h.accountsService = as
+	if as != nil {
+		h.parentAuthorization = parentauth.New(as)
+	} else {
+		h.parentAuthorization = nil
+	}
 }
 
 // SetInvitationsService sets the invitations service for invitation link management
@@ -7470,6 +7477,10 @@ func (h *AdminUIHandler) SetProfilePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireParentAuthorization(w, r) {
+		return
+	}
+
 	user, err := h.usersService.SetPin(profileID, req.Pin)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -7516,6 +7527,10 @@ func (h *AdminUIHandler) ClearProfilePin(w http.ResponseWriter, r *http.Request)
 	}
 
 	if ok, _ := h.requireProfileScope(w, r, profileID); !ok {
+		return
+	}
+
+	if !h.requireParentAuthorization(w, r) {
 		return
 	}
 
@@ -7583,6 +7598,10 @@ func (h *AdminUIHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		targetAccountID = accountID
+	}
+
+	if !h.requireParentAuthorization(w, r) {
+		return
 	}
 
 	user, err := h.usersService.CreateForAccount(targetAccountID, req.Name)
@@ -7715,6 +7734,10 @@ func (h *AdminUIHandler) DeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireParentAuthorization(w, r) {
+		return
+	}
+
 	err := h.usersService.Delete(profileID)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -7813,6 +7836,10 @@ func (h *AdminUIHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) 
 	var req SetKidsProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if !h.requireParentAuthorization(w, r) {
 		return
 	}
 
@@ -8328,6 +8355,9 @@ func (h *AdminUIHandler) ResetUserAccountPassword(w http.ResponseWriter, r *http
 		return
 	}
 
+	if !h.requireParentAuthorization(w, r) {
+		return
+	}
 	if err := h.accountsService.UpdatePassword(accountID, req.NewPassword); err != nil {
 		status := http.StatusInternalServerError
 		if err == accounts.ErrAccountNotFound {

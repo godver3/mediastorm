@@ -12,6 +12,7 @@ import (
 	"novastream/config"
 	"novastream/internal/apierror"
 	"novastream/internal/auth"
+	"novastream/internal/parentauth"
 	"novastream/models"
 	"novastream/services/profileunlock"
 	"novastream/services/users"
@@ -61,11 +62,12 @@ type usersService interface {
 var _ usersService = (*users.Service)(nil)
 
 type UsersHandler struct {
-	Service       usersService
-	accounts      accountPasswordVerifier
-	configManager *config.Manager
-	unlocks       profileUnlockIssuer
-	unlockTTL     func() time.Duration
+	Service             usersService
+	accounts            accountPasswordVerifier
+	parentAuthorization *parentauth.Guard
+	configManager       *config.Manager
+	unlocks             profileUnlockIssuer
+	unlockTTL           func() time.Duration
 }
 
 // profileUnlockIssuer issues and revokes server-side profile unlock tokens.
@@ -104,6 +106,7 @@ func NewUsersHandler(service usersService, accountServices ...accountPasswordVer
 	handler := &UsersHandler{Service: service}
 	if len(accountServices) > 0 {
 		handler.accounts = accountServices[0]
+		handler.parentAuthorization = parentauth.New(accountServices[0])
 	}
 	return handler
 }
@@ -295,6 +298,10 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rejectScheduledTaskProfileDeletion(w, h.configManager, id) {
+		return
+	}
+
+	if !h.parentAuthorization.Require(w, r) {
 		return
 	}
 
@@ -553,6 +560,10 @@ func (h *UsersHandler) SetPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.SetPin(id, body.Pin)
 	if err == nil && h.unlocks != nil {
 		h.unlocks.RevokeProfile(id)
@@ -586,6 +597,10 @@ func (h *UsersHandler) ClearPin(w http.ResponseWriter, r *http.Request) {
 	accountID := auth.GetAccountID(r)
 	if !h.Service.BelongsToAccount(id, accountID) {
 		http.Error(w, "profile not found", http.StatusNotFound)
+		return
+	}
+
+	if !h.parentAuthorization.Require(w, r) {
 		return
 	}
 
@@ -1113,6 +1128,10 @@ func (h *UsersHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.SetKidsProfile(id, body.IsKidsProfile)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1130,8 +1149,7 @@ func (h *UsersHandler) SetKidsProfile(w http.ResponseWriter, r *http.Request) {
 // canConfigureKidsProfile checks if the caller can configure a kids profile's settings.
 // Master accounts can configure any profile. Regular accounts can only configure profiles
 // that belong to their own account.
-// Note: The frontend handles the UI restrictions to prevent kids profiles from accessing
-// the configuration interface. The backend just verifies account ownership.
+// Each mutation also requires fresh parental authorization before writing.
 func (h *UsersHandler) canConfigureKidsProfile(r *http.Request, profileID string) bool {
 	// Master accounts can configure any profile's kids settings
 	if auth.IsMaster(r) {
@@ -1182,6 +1200,10 @@ func (h *UsersHandler) SetKidsMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.SetKidsMode(id, body.Mode)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1218,6 +1240,10 @@ func (h *UsersHandler) SetKidsMaxRating(w http.ResponseWriter, r *http.Request) 
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if !h.parentAuthorization.Require(w, r) {
 		return
 	}
 
@@ -1260,6 +1286,10 @@ func (h *UsersHandler) SetKidsMaxMovieRating(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.SetKidsMaxMovieRating(id, body.Rating)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1299,6 +1329,10 @@ func (h *UsersHandler) SetKidsMaxTVRating(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.SetKidsMaxTVRating(id, body.Rating)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1335,6 +1369,10 @@ func (h *UsersHandler) SetKidsAllowedLists(w http.ResponseWriter, r *http.Reques
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if !h.parentAuthorization.Require(w, r) {
 		return
 	}
 
@@ -1382,6 +1420,10 @@ func (h *UsersHandler) AddKidsAllowedList(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !h.parentAuthorization.Require(w, r) {
+		return
+	}
+
 	user, err := h.Service.AddKidsAllowedList(id, body.URL)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -1415,6 +1457,10 @@ func (h *UsersHandler) RemoveKidsAllowedList(w http.ResponseWriter, r *http.Requ
 	listURL := strings.TrimSpace(r.URL.Query().Get("url"))
 	if listURL == "" {
 		http.Error(w, "url query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	if !h.parentAuthorization.Require(w, r) {
 		return
 	}
 
