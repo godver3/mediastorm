@@ -1920,15 +1920,7 @@ func main() {
 
 	// One-time share link consumption (public, no auth — opening mints a scoped session).
 	r.HandleFunc("/share/{token}", shareHandler.Open).Methods(http.MethodGet)
-	if watchPartyHandler != nil {
-		r.HandleFunc("/watch-party", watchPartyHandler.Landing).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/code", watchPartyHandler.ResolveCode).Methods(http.MethodPost)
-		r.HandleFunc("/watch-party/code/{code}", watchPartyHandler.OpenCode).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/code/{code}", watchPartyHandler.JoinCode).Methods(http.MethodPost)
-		r.HandleFunc("/watch-party/room/{roomID}", watchPartyHandler.RoomPage).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/{token}", watchPartyHandler.OpenToken).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/{token}", watchPartyHandler.JoinToken).Methods(http.MethodPost)
-	}
+	api.RegisterWatchPartyPageRoutes(r, watchPartyHandler)
 
 	// Dedicated consumer web app served from the frontend Expo web export.
 	webAppHandler := handlers.NewWebAppHandler(handlers.ResolveWebAppDir(), "/watch")
