@@ -261,3 +261,47 @@ func TestNormalizeSubtitleModeKeepsForeignAudio(t *testing.T) {
 		}
 	}
 }
+
+func TestFindSubtitleTrackFallsBackToUntaggedTrack(t *testing.T) {
+	for _, language := range []string{"", "und", "unknown", "UNK"} {
+		subs := []models.SubtitleStreamInfo{
+			{Index: 3, Codec: "subrip", Language: language, Title: "Signs & Songs"},
+			{Index: 4, Codec: "subrip", Language: language},
+			{Index: 5, Codec: "subrip", Language: "spa"},
+		}
+		if got := FindSubtitleTrack(subs, "eng", "on", "eng"); got != 4 {
+			t.Fatalf("language %q: got %d, want untagged non-signs stream 4", language, got)
+		}
+	}
+}
+
+func TestFindSubtitleTrackPrefersTaggedMatchOverUntagged(t *testing.T) {
+	subs := []models.SubtitleStreamInfo{
+		{Index: 3, Codec: "subrip", Language: "und"},
+		{Index: 4, Codec: "subrip", Language: "eng"},
+	}
+	if got := FindSubtitleTrack(subs, "eng", "on", "eng"); got != 4 {
+		t.Fatalf("got %d, want tagged eng stream 4", got)
+	}
+	// A tagged forced match still beats an untagged full track.
+	subs = []models.SubtitleStreamInfo{
+		{Index: 3, Codec: "subrip", Language: "und"},
+		{Index: 4, Codec: "subrip", Language: "eng", IsForced: true},
+	}
+	if got := FindSubtitleTrack(subs, "eng", "on", "eng"); got != 4 {
+		t.Fatalf("got %d, want forced eng stream 4", got)
+	}
+}
+
+func TestFindSubtitleTrackForcedOnlyUsesUntaggedForcedTrack(t *testing.T) {
+	subs := []models.SubtitleStreamInfo{
+		{Index: 3, Codec: "subrip", Language: "und"},
+		{Index: 4, Codec: "subrip", Language: "und", IsForced: true},
+	}
+	if got := FindSubtitleTrack(subs, "eng", "forced-only", "eng"); got != 4 {
+		t.Fatalf("got %d, want untagged forced stream 4", got)
+	}
+	if got := FindSubtitleTrack(subs[:1], "eng", "forced-only", "eng"); got != -1 {
+		t.Fatalf("got %d, want -1: forced-only never picks a full track", got)
+	}
+}

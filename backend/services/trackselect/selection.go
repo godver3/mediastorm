@@ -327,7 +327,7 @@ func FindSubtitleTrack(streams []models.SubtitleStreamInfo, preferredLanguage, m
 				return stream.Index
 			}
 		}
-		return -1
+		return findUntaggedSubtitleTrack(forcedStreams, true)
 	}
 
 	// Mode is "on" - audio-aware priority ordering
@@ -407,9 +407,37 @@ func FindSubtitleTrack(streams []models.SubtitleStreamInfo, preferredLanguage, m
 				return stream.Index
 			}
 		}
+
+		// Fallback: a track with no language tag, which is most often the
+		// file's only subtitle in the viewer's language.
+		if index := findUntaggedSubtitleTrack(selectableStreams, false); index >= 0 {
+			return index
+		}
 	}
 
 	// No match found - return -1 to trigger auto-search
+	return -1
+}
+
+// IsUntaggedLanguage reports whether a stream's language tag names no
+// language: blank, "und" (undetermined), "unk"/"unknown" or "mis".
+func IsUntaggedLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "", "und", "unk", "unknown", "mis":
+		return true
+	}
+	return false
+}
+
+// findUntaggedSubtitleTrack returns the first untagged track that is forced
+// (or not forced) as asked, skipping signs/songs tracks, or -1.
+func findUntaggedSubtitleTrack(streams []models.SubtitleStreamInfo, forced bool) int {
+	for _, stream := range streams {
+		if IsUntaggedLanguage(stream.Language) && isForcedTrack(stream) == forced && !isSignsTrack(stream.Title) {
+			log.Printf("[track] Selected untagged subtitle track %d (no language match, forced=%v)", stream.Index, forced)
+			return stream.Index
+		}
+	}
 	return -1
 }
 
