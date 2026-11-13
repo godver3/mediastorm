@@ -1011,7 +1011,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	// Check for pre-warmed entry before creating a new one
 	if h.prewarmSvc != nil {
 		if warm := h.prewarmSvc.GetWarmScoped(req.TitleID, req.UserID, settingsScopeKey); warm != nil && warm.PrequeueID != "" {
-			if warmEntry, ok := h.store.Get(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady && hasReusablePreparation(warmEntry) {
+			if warmEntry, ok := h.store.GetForPlayback(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady && hasReusablePreparation(warmEntry) {
 				if !readyEntryFitsAdaptiveCaps(warmEntry, adaptiveCaps) {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: file size %d exceeds current adaptive throughput cap, resolving fresh",
 						warm.PrequeueID, warmEntry.FileSize)
@@ -1058,7 +1058,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing entry in the store (covers both prewarm and regular prequeues).
-	if existing, ok := h.store.GetByTitleUserScope(req.TitleID, req.UserID, settingsScopeKey); ok {
+	if existing, ok := h.store.GetByTitleUserScopeForPlayback(req.TitleID, req.UserID, settingsScopeKey); ok {
 		episodeMatch := prequeueEpisodeMatches(targetEpisode, existing.TargetEpisode)
 		if !episodeMatch {
 			log.Printf("[prequeue] Existing entry %s episode mismatch (cached=%v, requested=%v), resolving fresh",
