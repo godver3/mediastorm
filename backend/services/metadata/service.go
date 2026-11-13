@@ -4325,7 +4325,7 @@ func (s *Service) tmdbSeriesDetailsFallback(ctx context.Context, req models.Seri
 	var cached models.SeriesDetails
 	if ok, _ := s.cache.get(cacheID, &cached); ok && strings.TrimSpace(cached.Title.Name) != "" {
 		normalizeSeriesDetailsReleaseStatus(&cached)
-		cacheUpdated := false
+		cacheUpdated, _ := applyDateBasedSeriesClassification(&cached.Title)
 		for index := range cached.Seasons {
 			if normalizeTMDBGlobalSeasonEpisodeNumbers(&cached.Seasons[index]) {
 				cacheUpdated = true
@@ -4418,6 +4418,7 @@ func (s *Service) tmdbSeriesDetailsFallback(ctx context.Context, req models.Seri
 		details.Seasons = []models.SeriesSeason{}
 	}
 	details.ActiveOrdering = "official"
+	applyDateBasedSeriesClassification(&details.Title)
 	models.NormalizeReleaseAbsoluteEpisodeNumbers(details)
 	metadataTracef("[metadata] using TMDB series details fallback tmdbId=%d name=%q seasons=%d cause=%v", req.TMDBID, details.Title.Name, len(details.Seasons), cause)
 	s.hydrateTMDBRatings(ctx, &details.Title, req.IMDBID, "show")
