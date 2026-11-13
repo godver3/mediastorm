@@ -37,6 +37,7 @@ import (
 	"novastream/internal/importer"
 	"novastream/internal/netproxy"
 	internalpool "novastream/internal/pool"
+	"novastream/internal/profileaccess"
 	"novastream/internal/requestsecurity"
 	"novastream/internal/runtimepaths"
 	internalusenet "novastream/internal/usenet"
@@ -4605,10 +4606,15 @@ func (h *AdminUIHandler) requireProfileScope(w http.ResponseWriter, r *http.Requ
 
 // RequireAuth is middleware that allows any authenticated account and passes session to context
 func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
+	owned := profileaccess.Middleware(h.profileBelongsToAccount)(http.HandlerFunc(next))
 	return func(w http.ResponseWriter, r *http.Request) {
 		session := h.getSession(r)
 		if session == nil {
 			http.Redirect(w, r, h.serverBasePath+"/admin/login", http.StatusSeeOther)
+			return
+		}
+		if session.Scope != "" {
+			http.Error(w, "session not permitted for this endpoint", http.StatusForbidden)
 			return
 		}
 		if h.shouldGateOnboarding(r, session) {
@@ -4620,7 +4626,8 @@ func (h *AdminUIHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// Also set auth context keys so shared handlers (e.g., usersHandler) can access account info
 		ctx = context.WithValue(ctx, auth.ContextKeyAccountID, session.AccountID)
 		ctx = context.WithValue(ctx, auth.ContextKeyIsMaster, session.IsMaster)
-		next(w, r.WithContext(ctx))
+		ctx = context.WithValue(ctx, auth.ContextKeySession, *session)
+		owned.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 

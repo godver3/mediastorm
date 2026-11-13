@@ -5569,6 +5569,9 @@ func (h *VideoHandler) ServeHLSPlaylist(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing session ID", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	h.hlsManager.ServePlaylist(w, r, sessionID)
 }
@@ -5585,6 +5588,9 @@ func (h *VideoHandler) ServeHLSMasterPlaylist(w http.ResponseWriter, r *http.Req
 
 	if sessionID == "" {
 		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
@@ -5606,6 +5612,9 @@ func (h *VideoHandler) ServeHLSSegment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing session ID or segment name", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	h.hlsManager.ServeSegment(w, r, sessionID, segmentName)
 }
@@ -5622,6 +5631,9 @@ func (h *VideoHandler) ServeHLSSubtitles(w http.ResponseWriter, r *http.Request)
 
 	if sessionID == "" {
 		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
@@ -5641,6 +5653,9 @@ func (h *VideoHandler) ServeHLSSubtitlePlaylist(w http.ResponseWriter, r *http.R
 
 	if sessionID == "" || trackStr == "" {
 		http.Error(w, "missing session ID or subtitle track", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
@@ -5668,6 +5683,9 @@ func (h *VideoHandler) ServeHLSSubtitleTrack(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "missing session ID or subtitle track", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	track, err := strconv.Atoi(trackStr)
 	if err != nil || track < 0 {
@@ -5692,6 +5710,9 @@ func (h *VideoHandler) ServeHLSLiveCaptions(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "missing session ID", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	h.hlsManager.ServeLiveCaptions(w, r, sessionID)
 }
@@ -5708,6 +5729,9 @@ func (h *VideoHandler) GetHLSLiveCCStatus(w http.ResponseWriter, r *http.Request
 
 	if sessionID == "" {
 		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
@@ -5728,6 +5752,9 @@ func (h *VideoHandler) KeepAliveHLSSession(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "missing session ID", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	h.hlsManager.KeepAlive(w, r, sessionID)
 }
@@ -5745,6 +5772,9 @@ func (h *VideoHandler) StopHLSSession(w http.ResponseWriter, r *http.Request) {
 
 	if sessionID == "" {
 		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
@@ -5771,6 +5801,9 @@ func (h *VideoHandler) GetHLSSessionStatus(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "missing session ID", http.StatusBadRequest)
 		return
 	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
 
 	h.hlsManager.GetSessionStatus(w, r, sessionID)
 }
@@ -5788,6 +5821,9 @@ func (h *VideoHandler) SeekHLSSession(w http.ResponseWriter, r *http.Request) {
 
 	if sessionID == "" {
 		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
 		return
 	}
 
