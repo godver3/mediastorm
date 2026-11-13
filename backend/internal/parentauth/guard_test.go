@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"novastream/internal/auth"
@@ -104,13 +105,41 @@ func TestParentAuthorizationRateLimitAndNoRememberedProof(t *testing.T) {
 	if guard.Require(httptest.NewRecorder(), r) {
 		t.Fatal("prior proof reused without password")
 	}
+	// Correct passwords never spend the attempt budget.
+	r.Header.Set(PasswordHeader, "fixture parent password")
+	for range 20 {
+		if !guard.Require(httptest.NewRecorder(), r) {
+			t.Fatal("repeated parent proof throttled")
+		}
+	}
+	calls := accounts.calls
 	r.Header.Set(PasswordHeader, "wrong")
-	for range 9 {
+	for range 10 {
 		guard.Require(httptest.NewRecorder(), r)
 	}
 	w := httptest.NewRecorder()
 	guard.Require(w, r)
-	if w.Code != 429 || w.Header().Get("Retry-After") == "" || accounts.calls != 10 {
-		t.Fatalf("rate limit HTTP %d calls=%d", w.Code, accounts.calls)
+	if w.Code != 429 || w.Header().Get("Retry-After") == "" || accounts.calls != calls+10 {
+		t.Fatalf("rate limit HTTP %d calls=%d", w.Code, accounts.calls-calls)
+	}
+}
+
+func TestParentAuthorizationConcurrentGuessesShareOneBudget(t *testing.T) {
+	accounts := &testAccounts{}
+	guard := New(accounts)
+	var wg sync.WaitGroup
+	for range 30 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest("PUT", "/", nil)
+			r = r.WithContext(context.WithValue(r.Context(), auth.ContextKeyAccountID, "account-a"))
+			r.Header.Set(PasswordHeader, "wrong")
+			guard.Require(httptest.NewRecorder(), r)
+		}()
+	}
+	wg.Wait()
+	if accounts.calls != 10 {
+		t.Fatalf("checked %d concurrent guesses, want 10", accounts.calls)
 	}
 }

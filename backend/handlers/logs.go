@@ -35,7 +35,7 @@ var logRedactionPatterns = []struct {
 	replacement string
 }{
 	{
-		pattern: regexp.MustCompile(`(?i)("x-account-password"\s*:\s*)(?:"(?:[^"\\]|\\.)*"|\[\s*(?:"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)?\])`),
+		pattern:     regexp.MustCompile(`(?i)("x-account-password"\s*:\s*)(?:"(?:[^"\\]|\\.)*"|\[\s*(?:"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)?\])`),
 		replacement: `${1}"` + logRedacted + `"`,
 	},
 	{

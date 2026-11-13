@@ -59,8 +59,11 @@ info:
       token and must never be stored, logged or placed in a URL. Missing or wrong
       proof returns 403 with `code: parent_authorization_required`; the normal
       session remains valid. Administrators retain their existing management
-      access. Password attempts are rate-limited per account. Creating a profile
-      through `POST /api/users` still uses its existing `password` body field.
+      access. Wrong password attempts are rate-limited per account. Creating a
+      profile through `POST /api/users` still uses its existing `password` body
+      field. A non-kids profile's own PIN needs no password when adding its
+      first PIN, or when changing or removing a PIN proven by a valid
+      `X-Profile-Unlock` token for that profile.
     - **Client identity.** Send `X-Client-ID` (a stable per-device ID) on
       every request. Device settings, stream limits, adaptive playback and
       track preferences key off it.

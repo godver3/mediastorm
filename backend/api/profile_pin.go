@@ -16,15 +16,15 @@ import (
 	"novastream/internal/apierror"
 	"novastream/internal/auth"
 	"novastream/models"
+	"novastream/services/profileunlock"
 )
 
-// ProfileUnlockHeader carries profile unlock tokens issued by
-// POST /api/users/{id}/pin/verify. Several tokens may be comma-separated.
-const ProfileUnlockHeader = "X-Profile-Unlock"
-
-// ProfileUnlockQueryParam is the query-string form for media/stream URLs whose
-// consumers cannot attach headers (mirrors ?token=).
-const ProfileUnlockQueryParam = "profileUnlock"
+// ProfileUnlockHeader and ProfileUnlockQueryParam carry profile unlock tokens;
+// see profileunlock.Header and profileunlock.QueryParam.
+const (
+	ProfileUnlockHeader     = profileunlock.Header
+	ProfileUnlockQueryParam = profileunlock.QueryParam
+)
 
 // profileIDQueryParams are the query parameters through which a profile id
 // enters a request. "userId" is the legacy name for the same thing.
@@ -132,7 +132,7 @@ func ProfilePinMiddleware(usersSvc profilePinUsers, unlocks profileUnlockValidat
 				return
 			}
 
-			tokens := profileUnlockTokens(r)
+			tokens := profileunlock.RequestTokens(r)
 			for _, id := range locked {
 				if !unlocks.Validate(tokens, session.Token, id, usersSvc.PinFingerprint(id)) {
 					apierror.Write(w, http.StatusForbidden, apierror.CodeProfileLocked, "profile is locked",
@@ -162,27 +162,6 @@ func isProfilePinExemptPath(r *http.Request) bool {
 		return true
 	}
 	return false
-}
-
-// profileUnlockTokens collects unlock tokens from the header (comma-separated,
-// repeatable) and the profileUnlock query parameter.
-func profileUnlockTokens(r *http.Request) []string {
-	var tokens []string
-	for _, value := range r.Header.Values(ProfileUnlockHeader) {
-		for _, part := range strings.Split(value, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				tokens = append(tokens, part)
-			}
-		}
-	}
-	for _, value := range r.URL.Query()[ProfileUnlockQueryParam] {
-		for _, part := range strings.Split(value, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				tokens = append(tokens, part)
-			}
-		}
-	}
-	return tokens
 }
 
 // requestProfileIDs returns the distinct profile ids a request refers to.

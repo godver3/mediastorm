@@ -73,6 +73,7 @@ type UsersHandler struct {
 // profileUnlockIssuer issues and revokes server-side profile unlock tokens.
 type profileUnlockIssuer interface {
 	Issue(req profileunlock.IssueRequest) (string, time.Time, error)
+	Validate(unlockTokens []string, sessionToken, profileID, pinFingerprint string) bool
 	RevokeProfile(profileID string)
 }
 
@@ -560,7 +561,7 @@ func (h *UsersHandler) SetPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.parentAuthorization.Require(w, r) {
+	if !h.requirePinChangeAuthorization(w, r, id, false) {
 		return
 	}
 
@@ -584,6 +585,35 @@ func (h *UsersHandler) SetPin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
+// requirePinChangeAuthorization lets an ordinary (non-kids) profile manage its
+// own PIN without the account password when that cannot weaken a restriction:
+// a first PIN only adds protection, and a valid unlock token for the profile
+// proves its current PIN. A child knows a kids profile's own PIN, so kids
+// profiles always need parental authorization, as do scoped sessions.
+func (h *UsersHandler) requirePinChangeAuthorization(w http.ResponseWriter, r *http.Request, id string, clearing bool) bool {
+	if user, ok := h.Service.Get(id); ok && !user.IsKidsProfile && auth.GetSessionScope(r) == "" {
+		hasPin := h.Service.HasPin(id)
+		if !hasPin && !clearing {
+			return true
+		}
+		if hasPin && h.currentPinProven(r, id) {
+			return true
+		}
+	}
+	return h.parentAuthorization.Require(w, r)
+}
+
+// currentPinProven reports whether the request carries a valid unlock token,
+// issued by PIN verification in this session, for the profile's current PIN.
+func (h *UsersHandler) currentPinProven(r *http.Request, id string) bool {
+	fingerprinter, ok := h.Service.(pinFingerprinter)
+	session, hasSession := auth.GetSession(r)
+	if h.unlocks == nil || !ok || !hasSession {
+		return false
+	}
+	return h.unlocks.Validate(profileunlock.RequestTokens(r), session.Token, id, fingerprinter.PinFingerprint(id))
+}
+
 // ClearPin removes a user's PIN.
 func (h *UsersHandler) ClearPin(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -600,7 +630,7 @@ func (h *UsersHandler) ClearPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.parentAuthorization.Require(w, r) {
+	if !h.requirePinChangeAuthorization(w, r, id, true) {
 		return
 	}
 
