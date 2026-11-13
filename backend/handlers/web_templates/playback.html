@@ -1236,6 +1236,8 @@
     let webPlayerAutoSkipCreditsPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY);
     let webPlayerAutoSkipInProgress = false;
     let nextEpisodeLookupComplete = false;
+    let webPlayerAudioPreferenceSave = Promise.resolve();
+    let webPlayerAudioPreferenceGeneration = 0;
     let webPlayerPreferences = {
       audioLanguage: '',
       subtitleLanguage: '',
@@ -1662,8 +1664,38 @@
       return String(playbackMeta.itemId || '');
     }
 
+    function persistWebAudioPreference(stream) {
+      const language = normalizeWebLanguage(stream?.language);
+      const contentId = webContentPreferenceId();
+      if (SHARE_MODE || WATCH_PARTY_MODE || playbackMeta.isLive || !activeProfileId || !contentId ||
+          !/^[a-z]{3}$/.test(language) || ['und', 'mul', 'zxx'].includes(language)) return;
+      const profileId = activeProfileId;
+      const contentType = playbackMeta.mediaType === 'episode' ? 'series' : 'movie';
+      webPlayerPreferences.audioLanguage = language;
+      webPlayerAudioPreferenceGeneration += 1;
+      // A prepared next episode belongs to the previous language preference.
+      nextEpisodePrequeue = null;
+      nextEpisodePrequeuePolling = false;
+      nextEpisodePrequeuePollPromise = null;
+      // Serialize rapid changes, and retain subtitle overrides: the API replaces
+      // the entire content preference rather than patching individual fields.
+      webPlayerAudioPreferenceSave = webPlayerAudioPreferenceSave.then(async () => {
+        const path = '/users/' + encodeURIComponent(profileId) + '/preferences/content';
+        const existing = await apiCall(path + '/' + encodeURIComponent(contentId));
+        await apiCall(path, {
+          method: 'PUT',
+          keepalive: true,
+          body: JSON.stringify({ ...existing, contentId, contentType, audioLanguage: language }),
+        });
+      }).catch((error) => {
+        console.warn('[web-player] audio preference save failed', error);
+        setTransientStatus('Audio changed, but its language could not be saved.');
+      });
+    }
+
     async function loadEffectiveWebPlaybackSettings() {
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
+      await webPlayerAudioPreferenceSave;
       const contentId = webContentPreferenceId();
       // These three are independent of each other — only their merged result
       // (below) depends on all three — so fetch them concurrently instead of
@@ -3142,9 +3174,11 @@
 
     function changeAudioTrack(value) {
       const parsed = Number(value);
+      const stream = webPlayerAudioStreams.find((item) => Number(item.index) === parsed);
+      if (!stream || parsed === Number(webPlayerSelectedAudioTrack)) return;
       webPlayerManualAudioSelection = true;
-      if (!Number.isFinite(parsed) || parsed === Number(webPlayerSelectedAudioTrack)) return;
       webPlayerSelectedAudioTrack = parsed;
+      persistWebAudioPreference(stream);
       startWebPlayerFromSource({ startOffset: currentAbsoluteTime() });
     }
 
@@ -3821,6 +3855,7 @@
     }
 
     async function triggerNextEpisodePrequeue() {
+      await webPlayerAudioPreferenceSave;
       if (!nextEpisodeInfo || !activeProfileId) return null;
       if (nextEpisodePrequeuePolling) return nextEpisodePrequeue;
       const titleId = seriesTitleIdForPrequeue();
@@ -3830,6 +3865,7 @@
         return null;
       }
 
+      const preferenceGeneration = webPlayerAudioPreferenceGeneration;
       nextEpisodePrequeuePolling = true;
       try {
         const body = {
@@ -3852,6 +3888,7 @@
           method: 'POST',
           body: JSON.stringify(body),
         });
+        if (preferenceGeneration !== webPlayerAudioPreferenceGeneration) return null;
         nextEpisodePrequeue = {
           prequeueId: response?.prequeueId || '',
           targetEpisode: {
@@ -3875,6 +3912,7 @@
         syncUpNextUi();
         return nextEpisodePrequeue;
       } catch (error) {
+        if (preferenceGeneration !== webPlayerAudioPreferenceGeneration) return null;
         nextEpisodePrequeuePolling = false;
         throw error;
       }
@@ -3886,11 +3924,11 @@
         await new Promise((resolve) => setTimeout(resolve, WEB_PREQUEUE_POLL_MS));
         polls += 1;
         if (nextEpisodePrequeue?.prequeueId !== prequeueId) {
-          nextEpisodePrequeuePolling = false;
           return null;
         }
         try {
           const status = await apiCall(`/playback/prequeue/${encodeURIComponent(prequeueId)}`);
+          if (nextEpisodePrequeue?.prequeueId !== prequeueId) return null;
           nextEpisodePrequeue = {
             ...nextEpisodePrequeue,
             status: status?.status || nextEpisodePrequeue.status,
@@ -3912,6 +3950,7 @@
             return status;
           }
         } catch (error) {
+          if (nextEpisodePrequeue?.prequeueId !== prequeueId) return null;
           console.warn('[web-player] next episode prequeue poll failed', error);
           nextEpisodePrequeuePolling = false;
           return null;
@@ -3922,7 +3961,9 @@
     }
 
     async function ensureNextEpisodePrequeueReady() {
+      await webPlayerAudioPreferenceSave;
       if (!nextEpisodeInfo) return null;
+      const preferenceGeneration = webPlayerAudioPreferenceGeneration;
       const matchesTarget =
         nextEpisodePrequeue?.targetEpisode?.seasonNumber === nextEpisodeInfo.seasonNumber &&
         nextEpisodePrequeue?.targetEpisode?.episodeNumber === nextEpisodeInfo.episodeNumber;
@@ -3933,16 +3974,19 @@
 
       if (!matchesTarget || !nextEpisodePrequeue?.prequeueId) {
         await triggerNextEpisodePrequeue();
+        if (preferenceGeneration !== webPlayerAudioPreferenceGeneration) return ensureNextEpisodePrequeueReady();
       }
 
       if (nextEpisodePrequeue?.prequeueId && !isPrequeueReady(nextEpisodePrequeue?.status)) {
         const polled = await (nextEpisodePrequeuePollPromise || pollNextEpisodePrequeue(nextEpisodePrequeue.prequeueId));
+        if (preferenceGeneration !== webPlayerAudioPreferenceGeneration) return ensureNextEpisodePrequeueReady();
         if (polled) return polled;
       }
 
       if (nextEpisodePrequeue?.prequeueId) {
         try {
           const status = await apiCall(`/playback/prequeue/${encodeURIComponent(nextEpisodePrequeue.prequeueId)}`);
+          if (preferenceGeneration !== webPlayerAudioPreferenceGeneration) return ensureNextEpisodePrequeueReady();
           nextEpisodePrequeue = {
             ...nextEpisodePrequeue,
             status: status?.status || nextEpisodePrequeue.status,
