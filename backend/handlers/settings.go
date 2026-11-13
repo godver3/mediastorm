@@ -21,6 +21,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/apiusage"
+	"novastream/internal/auth"
 	"novastream/internal/pool"
 	"novastream/services/debrid"
 	"novastream/services/epg"
@@ -220,6 +221,9 @@ func (h *SettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if accountID := auth.GetAccountID(r); accountID != "" && !auth.IsMaster(r) {
+		s = config.FilterLiveSettingsForAccount(s, accountID)
+	}
 	effectivePlaylistURL := redactedEffectivePlaylistURL(s.Live)
 
 	// Always redact credentials — secrets are write-only, never sent back to any client

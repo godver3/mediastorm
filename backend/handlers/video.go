@@ -5971,7 +5971,7 @@ func (h *VideoHandler) resolveLiveStreamTargetForSource(profileID, sourceID stri
 			userSettings = us
 		}
 	}
-	targets := resolveProfileLiveStreamTargets(settings, profileID, userSettings)
+	targets := resolveProfileLiveStreamTargets(settings, profileID, userSettings, liveAccountForProfile(h.usersSvc, profileID))
 	return pickLiveStreamTarget(targets, sourceID)
 }
 

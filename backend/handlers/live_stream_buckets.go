@@ -132,9 +132,14 @@ func pickLiveStreamTarget(targets []liveStreamTarget, sourceID string) liveStrea
 // use, honoring each global source's Allowed Profiles. It returns nil when
 // the profile has no usable source, the same case where the Live TV channel
 // endpoint refuses the profile.
-func resolveProfileLiveStreamTargets(settings config.Settings, profileID string, profile *models.UserSettings) []liveStreamTarget {
-	global := buildGlobalLiveSource(config.FilterSettingsForProfile(settings, profileID))
-	resolved := applyProfileLiveSources(global, settings, profileID, profile)
+func resolveProfileLiveStreamTargets(settings config.Settings, profileID string, profile *models.UserSettings, accountIDs ...string) []liveStreamTarget {
+	accountID := ""
+	if len(accountIDs) > 0 {
+		accountID = accountIDs[0]
+	}
+	scoped := config.FilterLiveSettingsForAccount(settings, accountID)
+	global := buildGlobalLiveSource(config.FilterSettingsForProfile(scoped, profileID))
+	resolved := applyProfileLiveSources(global, settings, profileID, profile, accountID)
 	if len(resolvedLiveSources(resolved)) == 0 {
 		return nil
 	}

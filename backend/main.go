@@ -1009,6 +1009,7 @@ func main() {
 	userSettingsHandler.GuideChanged = reconcileProfileLiveGuide
 
 	epgHandler := handlers.NewEPGHandler(epgService, cfgManager, userSettingsService)
+	epgHandler.SetLiveChannelProvider(liveHandler)
 	liveHandler.SetEPGService(epgService)
 	if recordingsService != nil {
 		recordingsService.SetRuleProviders(epgService, liveHandler, func(profileID string) time.Duration {
@@ -1072,6 +1073,7 @@ func main() {
 		recordingsHandler = handlers.NewRecordingsHandler(nil, userService)
 	}
 	recordingsHandler.SetUserSettingsService(userSettingsService)
+	recordingsHandler.SetLiveAccessProvider(cfgManager, liveHandler)
 
 	// Shareable playback links: capture current stream + tracks, mint a
 	// short-lived stream-scoped session on open. Persisted to Postgres so links
