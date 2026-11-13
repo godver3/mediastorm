@@ -298,6 +298,8 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			StreamMigrationEnabled:     models.BoolPtr(globalSettings.Playback.StreamMigrationEnabled),
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
+			IntroAutoSkip:              models.BoolPtr(false),
+			RecapAutoSkip:              models.BoolPtr(false),
 			CreditsAutoSkip:            models.BoolPtr(globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection),
 			ScrobbleStartDelaySeconds:  models.IntPtr(globalSettings.Playback.ScrobbleStartDelaySeconds),
 			MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),

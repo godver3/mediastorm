@@ -840,6 +840,8 @@ func Register(
 
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.GetSettings).Methods(http.MethodGet)
 	registerSportsPreferenceRoutes(profileProtected, userSettingsHandler)
+	profileProtected.HandleFunc("/{userID}/settings/skipping", userSettingsHandler.PatchSkipping).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/settings/skipping", userSettingsHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/settings/frontend", userSettingsHandler.PatchFrontendSetting).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/settings/frontend", userSettingsHandler.GetFrontendSettingState).Methods(http.MethodGet)
