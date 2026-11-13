@@ -435,6 +435,24 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 }
 
 func (h *LiveHandler) FetchPlaylist(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		http.Error(w, "live access unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if config.LiveAccountsManaged(settings.Live) {
+		allowed := false
+		for _, source := range resolvedLiveSources(h.resolveProfileLiveSource(r, settings)) {
+			if source.PlaylistURL != "" && strings.TrimSpace(source.PlaylistURL) == strings.TrimSpace(r.URL.Query().Get("url")) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			http.NotFound(w, r)
+			return
+		}
+	}
 	targetURL, err := h.parseRemoteURL(r.Context(), r.URL.Query().Get("url"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

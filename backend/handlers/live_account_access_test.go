@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -120,6 +121,24 @@ func TestAccountCatalogRevocationAppliesBeforeWarmPlaylistCache(t *testing.T) {
 	}
 	if len(get("adult")) != 0 || fetched.Load() != before {
 		t.Fatal("warm catalog bypassed revoked assignment")
+	}
+}
+
+func TestAccountRawPlaylistRejectsOtherAccountBeforeCache(t *testing.T) {
+	manager := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	accounts := []string{"household"}
+	const source = "https://8.8.8.8/family.m3u"
+	if err := manager.Save(config.Settings{Live: config.LiveSettings{RequireAccountAssignment: true, Sources: []config.LivePlaylistSource{{ID: "family", Mode: "m3u", PlaylistURL: source, AllowedAccounts: &accounts}}}}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewLiveHandler(nil, false, "", 24, 0, 0, false, manager, nil)
+	h.SetUsersService(liveAccountUsers{"child": {ID: "child", AccountID: "household"}, "bernd": {ID: "bernd", AccountID: "other"}})
+	for _, profile := range []string{"bernd", ""} {
+		w := httptest.NewRecorder()
+		h.FetchPlaylist(w, httptest.NewRequest(http.MethodGet, "/api/live/playlist?profileId="+profile+"&url="+url.QueryEscape(source), nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("profile=%q status=%d", profile, w.Code)
+		}
 	}
 }
 
