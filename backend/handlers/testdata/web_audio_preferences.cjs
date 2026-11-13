@@ -192,3 +192,34 @@ test('a language change during the final ready check discards the old source', a
   assert.equal((await ready)?.streamPath, '/new-language.mkv');
   await p.run('nextEpisodePrequeuePollPromise');
 });
+
+const titleKey = (profile, titleId) => `/users/${profile}/preferences/content/${encodeURIComponent(titleId)}`;
+
+test('audio choices are saved under the title ID that other clients and the server read', async () => {
+  // The series was opened by its TVDB title ID; an earlier web build saved a subtitle
+  // override under the TMDB form, which must move along with the new audio choice.
+  const preferences = new Map([[preferenceKey('profile-a'), { contentId: 'tmdb:tv:90669', contentType: 'series', subtitleLanguage: 'fra', subtitleMode: 'on' }]]);
+  const p = player({ preferences, query: '?titleId=tvdb:series:366581' });
+  p.run('changeAudioTrack("2")');
+  await p.settle();
+  const write = p.calls.find(x => x.method === 'PUT');
+  assert.equal(write?.body.contentId, 'tvdb:series:366581');
+  assert.equal(write?.body.audioLanguage, 'eng');
+  assert.equal(write?.body.subtitleLanguage, 'fra');
+  assert.equal(write?.body.subtitleMode, 'on');
+
+  const reopened = player({ preferences, query: '?titleId=tvdb:series:366581', media: { episodeNumber: 3 } });
+  await reopened.run('loadEffectiveWebPlaybackSettings()');
+  assert.equal(reopened.run('webPlayerPreferences.audioLanguage'), 'eng');
+  assert.equal(reopened.run('webPlayerPreferences.subtitleLanguage'), 'fra');
+});
+
+test('an override saved by the app under the title ID applies in the web player', async () => {
+  const preferences = new Map([
+    [titleKey('profile-a', 'tvdb:series:366581'), { contentId: 'tvdb:series:366581', contentType: 'series', audioLanguage: 'jpn' }],
+    [preferenceKey('profile-a'), { contentId: 'tmdb:tv:90669', contentType: 'series', audioLanguage: 'eng' }],
+  ]);
+  const p = player({ preferences, query: '?titleId=TVDB:series:366581' });
+  await p.run('loadEffectiveWebPlaybackSettings()');
+  assert.equal(p.run('webPlayerPreferences.audioLanguage'), 'jpn');
+});

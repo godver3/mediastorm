@@ -1657,11 +1657,34 @@
       return 'on';
     }
 
-    function webContentPreferenceId() {
+    // Content preferences are keyed by the title ID: the key the Expo app writes and
+    // the backend's prequeue and track selection read. Provider-ID forms are fallbacks
+    // for a player opened without a title ID, and for overrides saved under them by
+    // earlier web player builds. The first ID is where new preferences are written.
+    function webContentPreferenceIds() {
       const type = playbackMeta.mediaType === 'episode' ? 'tv' : 'movie';
-      if (playbackMeta.tmdbId) return 'tmdb:' + type + ':' + playbackMeta.tmdbId;
-      if (playbackMeta.imdbId) return 'imdb:' + type + ':' + playbackMeta.imdbId;
-      return String(playbackMeta.itemId || '');
+      const ids = [
+        routeParam('titleId'),
+        playbackMeta.tmdbId ? 'tmdb:' + type + ':' + playbackMeta.tmdbId : '',
+        playbackMeta.imdbId ? 'imdb:' + type + ':' + playbackMeta.imdbId : '',
+      ];
+      // The service lower-cases IDs, so compare them the same way.
+      return [...new Set(ids.map((id) => String(id || '').trim().toLowerCase()).filter(Boolean))];
+    }
+
+    function webContentPreferenceId() {
+      return webContentPreferenceIds()[0] || '';
+    }
+
+    // The first stored override across the title's IDs; {} when none is stored.
+    // Read failures propagate so a caller never mistakes them for "no override".
+    async function fetchWebContentPreference(profileId) {
+      const path = '/users/' + encodeURIComponent(profileId) + '/preferences/content/';
+      for (const id of webContentPreferenceIds()) {
+        const preference = await apiCall(path + encodeURIComponent(id));
+        if (preference && Object.keys(preference).length) return preference;
+      }
+      return {};
     }
 
     function persistWebAudioPreference(stream) {
@@ -1681,7 +1704,8 @@
       // the entire content preference rather than patching individual fields.
       webPlayerAudioPreferenceSave = webPlayerAudioPreferenceSave.then(async () => {
         const path = '/users/' + encodeURIComponent(profileId) + '/preferences/content';
-        const existing = await apiCall(path + '/' + encodeURIComponent(contentId));
+        // An override found under a fallback ID moves to the title ID with this write.
+        const existing = await fetchWebContentPreference(profileId);
         await apiCall(path, {
           method: 'PUT',
           keepalive: true,
@@ -1696,7 +1720,6 @@
     async function loadEffectiveWebPlaybackSettings() {
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
       await webPlayerAudioPreferenceSave;
-      const contentId = webContentPreferenceId();
       // These three are independent of each other — only their merged result
       // (below) depends on all three — so fetch them concurrently instead of
       // one after another to cut startup latency.
@@ -1705,9 +1728,7 @@
         CLIENT_ID
           ? apiCall('/clients/' + encodeURIComponent(CLIENT_ID) + '/settings?userId=' + encodeURIComponent(activeProfileId)).catch(() => ({}))
           : Promise.resolve({}),
-        contentId
-          ? apiCall('/users/' + encodeURIComponent(activeProfileId) + '/preferences/content/' + encodeURIComponent(contentId)).catch(() => ({}))
-          : Promise.resolve({}),
+        fetchWebContentPreference(activeProfileId).catch(() => ({})),
       ]);
       const base = profile?.playback || {};
       const pick = (contentValue, clientValue, baseValue, fallback) => contentValue !== undefined && contentValue !== '' ? contentValue : clientValue !== undefined && clientValue !== null ? clientValue : baseValue !== undefined && baseValue !== null ? baseValue : fallback;
