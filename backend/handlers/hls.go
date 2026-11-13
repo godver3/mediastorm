@@ -3282,7 +3282,10 @@ func liveHLSOutputArgs(playbackTarget, segmentPattern, playlistPath string, resu
 	if len(resume) > 0 {
 		resumeFrom = resume[0]
 	}
-	args := make([]string, 0, 44)
+	// Live subtitles are handled separately. Automatic stream selection also picks
+	// DVB teletext, which the HLS muxer's default WebVTT encoder cannot encode and
+	// aborts playback before any audio/video segments are written.
+	args := []string{"-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn"}
 	// Compatibility (cast/web) retention is the default; the native branch overrides.
 	hlsFlags := "independent_segments+temp_file"
 	listSize := strconv.Itoa(liveNativeHLSListSize)
