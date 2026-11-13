@@ -9,6 +9,7 @@ import (
 
 	"novastream/config"
 	"novastream/handlers"
+	"novastream/internal/profileaccess"
 	"novastream/internal/requestsecurity"
 	"novastream/services/accounts"
 	"novastream/services/profileunlock"
@@ -243,6 +244,9 @@ func Register(
 	// Protected routes - require authentication
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
+	if usersSvc != nil {
+		protected.Use(profileaccess.Middleware(usersSvc.BelongsToAccount))
+	}
 	if options.unlocks != nil && usersSvc != nil && options.security != nil {
 		protected.Use(ProfilePinMiddleware(usersSvc, options.unlocks, options.security))
 	}

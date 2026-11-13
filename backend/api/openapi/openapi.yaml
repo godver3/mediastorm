@@ -29,6 +29,14 @@ info:
       cannot carry headers (`/api/video/stream`) may instead pass `?token=`.
       Tokens rotate on `POST /api/auth/refresh`; the old token stops working
       immediately.
+    - **Profile ownership.** A normal account may select only its own profiles
+      in path, query or top-level JSON fields, including on global live/video
+      routes and cookie-authenticated account routes. Foreign selectors return
+      404 even when PIN enforcement is disabled. Existing HLS resources use
+      their stored profile, and stream invitations remain source-bound. Global
+      JSON object bodies are inspected up to 1 MiB independently of Content-Type;
+      oversized objects return 413. Profile-path bulk imports and diagnostic
+      uploads retain their existing limits.
     - **Profile PINs.** `POST /api/users/{userId}/pin/verify` returns an
       `unlockToken` for PIN-protected profiles. Send it on every request that
       names that profile (path `{userId}`, `profileId`/`userId` query

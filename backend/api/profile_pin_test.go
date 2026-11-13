@@ -15,6 +15,7 @@ import (
 
 	"novastream/config"
 	"novastream/handlers"
+	"novastream/internal/profileaccess"
 	"novastream/services/accounts"
 	"novastream/services/profileunlock"
 	"novastream/services/sessions"
@@ -106,10 +107,12 @@ func newPinTestEnv(t *testing.T) *pinTestEnv {
 	api := router.PathPrefix("/api").Subrouter()
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(AccountAuthMiddleware(env.sessions, accountsSvc))
+	protected.Use(profileaccess.Middleware(env.users.BelongsToAccount))
 	protected.Use(ProfilePinMiddleware(env.users, env.unlocks, policy))
 	protected.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
 	protected.HandleFunc("/playback/resolve", echo).Methods(http.MethodPost)
 	protected.HandleFunc("/video/stream", echo).Methods(http.MethodGet)
+	protected.HandleFunc("/live/channels", echo).Methods(http.MethodGet, http.MethodPost)
 	protected.HandleFunc("/clients/register", echo).Methods(http.MethodPost)
 	protected.HandleFunc("/search", echo).Methods(http.MethodGet)
 	profiles := protected.PathPrefix("/users").Subrouter()
@@ -120,6 +123,27 @@ func newPinTestEnv(t *testing.T) *pinTestEnv {
 	api.HandleFunc("/auth/refresh", authHandler.Refresh).Methods(http.MethodPost)
 	env.router = router
 	return env
+}
+
+func TestGlobalProfileSelectorsRequireOwnership(t *testing.T) {
+	for _, enforce := range []bool{false, true} {
+		env := newPinTestEnv(t)
+		env.enforce.Store(enforce)
+		token := env.login(env.account1)
+		for _, req := range []pinRequest{
+			{method: http.MethodGet, target: "/api/live/channels?profileId=" + env.foreign, token: token},
+			{method: http.MethodGet, target: "/api/video/stream?profileId=" + env.foreign, token: token},
+			{method: http.MethodPost, target: "/api/live/channels", token: token, body: map[string]string{"profileId": env.foreign}},
+			{method: http.MethodPost, target: "/api/playback/resolve", token: token, body: map[string]string{"userId": env.foreign}},
+		} {
+			if rec := env.do(req); rec.Code != http.StatusNotFound {
+				t.Fatalf("enforce=%v %s %s: HTTP %d, want 404", enforce, req.method, req.target, rec.Code)
+			}
+		}
+		if rec := env.do(pinRequest{method: http.MethodGet, target: "/api/live/channels?profileId=" + env.open, token: token}); rec.Code != http.StatusOK {
+			t.Fatalf("own profile: HTTP %d", rec.Code)
+		}
+	}
 }
 
 func (env *pinTestEnv) login(accountID string) string {
