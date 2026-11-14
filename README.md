@@ -54,6 +54,23 @@ Not every integration is required. A typical installation needs TMDB plus at lea
 
 All clients require a running mediastorm backend.
 
+## Local library playback fallback
+
+Normal Play first tries the configured search sources. If a confirmed matching file already exists in an accessible, scanned local library, playback can use it when search returns no usable source or source preparation fails. A known local candidate gives metadata/search preparation a 20-second budget, followed by up to 10 seconds for local validation; cancellation and resolver cleanup can add a short delay. No library scan or new download starts when Play is pressed.
+
+Automatic selection requires a confirmed provider identity and, for series, the exact season and episode. Low-confidence matches and similar filenames are excluded. Known date-based shows require an explicit manual catalog match until local air-date matching is available. The media folder must already be mounted and readable by the backend.
+
+Library permissions and profile restrictions are checked again before using a file and when returning a saved local prequeue. Kids profiles in rating mode require an allowed, known certification. Local substitution is disabled for content-list kids profiles because the catalog does not establish list membership. Profile and device size, resolution and HDR limits remain in effect; the normal player selects tracks and retains the original title/episode identity for progress.
+
+Persistent local-first preferences per title or season, local availability badges, Plex/Jellyfin substitution and starting new downloads are separate follow-up work. Physical client and network-share acceptance still require testing on the intended installation.
+
+The backend suite includes synthetic fallback, authorization, cancellation and exact-episode tests. When `ffmpeg` and `ffprobe` are installed, it also generates a two-language video and verifies German track selection through the normal playback worker:
+
+```sh
+cd backend
+go test ./handlers ./services/localmedia -run 'TestLocalFallback|TestPlaybackCandidates|TestFallbackItem' -count=1
+```
+
 ## Quick Start
 
 The repository's [`docker-compose.yml`](docker-compose.yml) is the canonical deployment example.
