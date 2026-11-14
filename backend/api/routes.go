@@ -241,6 +241,10 @@ func Register(
 	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
 	if usersSvc != nil {
 		protected.Use(profileaccess.Middleware(usersSvc.BelongsToAccount))
+		protected.Use(profileaccess.BlockKidsFromLiveTV(func(profileID string) bool {
+			profile, ok := usersSvc.Get(profileID)
+			return ok && profile.IsKidsProfile
+		}))
 	}
 	if options.unlocks != nil && usersSvc != nil && options.security != nil {
 		protected.Use(ProfilePinMiddleware(usersSvc, options.unlocks, options.security))
