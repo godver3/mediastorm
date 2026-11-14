@@ -1262,6 +1262,7 @@
     let watchPartyReadySent = false;
     let watchPartyReadyInFlight = false;
     let watchPartyPlaybackAllowed = false;
+    let watchPartyEndMessage = '';
     let watchPartyEstimatedSeekStartupSeconds = 3;
     let watchPartyHardSyncCooldownUntil = 0;
 
@@ -1839,6 +1840,7 @@
     }
 
     async function startWebPlayerFromSource(options = {}) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       if (!sourcePath) {
         renderLoading('No playback source was provided.', true);
         document.getElementById('manualStart')?.classList.add('is-visible');
@@ -1854,6 +1856,7 @@
 
       try {
         await loadTrackMetadata(options.metadata);
+        if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
         const session = await createHlsSession(options);
         hlsSessionId = session.sessionId || '';
         const requestedOffset = Number(session.startOffset ?? options.startOffset ?? 0);
@@ -2154,6 +2157,10 @@
     }
 
     function attachWebPlayer(video, playlistUrl) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) {
+        finishWatchPartyPlayback(watchPartyEndMessage);
+        return;
+      }
       if (!video || !playlistUrl) return;
       stopSubtitleRenderLoop();
       webPlayerDebugLog('info', 'attach player', {
@@ -2389,6 +2396,7 @@
       const result = video.play();
       if (!result || typeof result.catch !== 'function') return;
       result.catch(() => {
+        if (WATCH_PARTY_MODE && !watchPartyPlaybackAllowed) return;
         // Unmuted autoplay is blocked by mobile browsers after a page
         // navigation (the originating tap's activation doesn't carry over).
         // Fall back to muted autoplay so playback starts immediately, and
@@ -2541,6 +2549,7 @@
     }
 
     async function seekWebPlayer(target) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return false;
       const video = document.getElementById('webPlayer');
       if (!video) return false;
       const absoluteTarget = clampSeekTarget(target);
@@ -2599,6 +2608,7 @@
         const seekSubtitleTrack = Number(webPlayerSelectedSubtitleTrack);
         seekParams.set('subtitleTrack', String(seekSubtitleTrack >= 0 ? seekSubtitleTrack : -1));
         const response = await apiCall(`/video/hls/${encodeURIComponent(hlsSessionId)}/seek?${seekParams.toString()}`, { method: 'POST' });
+        if (WATCH_PARTY_MODE && watchPartyEndMessage) return false;
         if (!response?.playlistUrl) throw new Error('seek response missing playlist URL');
         const requestedOffset = Number(response.startOffset ?? absoluteTarget);
         const actualOffset = Number(response.actualStartOffset ?? requestedOffset);
@@ -2609,7 +2619,7 @@
         renderSubtitles();
         let seekFinished = false;
         const finishSeek = () => {
-          if (seekFinished) return;
+          if (seekFinished || (WATCH_PARTY_MODE && watchPartyEndMessage)) return;
           seekFinished = true;
           setStatus('');
           const continuingQueuedSeek = releaseSeekState();
@@ -2876,8 +2886,24 @@
       showControls();
     }
 
+    function finishWatchPartyPlayback(message) {
+      watchPartyEndMessage = message;
+      watchPartyPlaybackAllowed = false;
+      webPlayerSeekGeneration += 1;
+      webPlayerSeekInProgress = false;
+      webPlayerSeekStatusPending = false;
+      webPlayerDisplayedSeekTarget = null;
+      webPlayerQueuedSeekTarget = null;
+      if (watchPartySyncTimer) window.clearInterval(watchPartySyncTimer);
+      watchPartySyncTimer = null;
+      // Drop this viewer's media and timers without stopping a server pipeline
+      // that may still be shared by another guest, room, or ordinary viewer.
+      stopHlsSession({ skipProgress: true, localOnly: true });
+      setStatus(message);
+    }
+
     async function syncWatchPartyState() {
-      if (!WATCH_PARTY_MODE || watchPartySyncInFlight) return;
+      if (!WATCH_PARTY_MODE || watchPartyEndMessage || watchPartySyncInFlight) return;
       watchPartySyncInFlight = true;
       try {
         const video = document.getElementById('webPlayer');
@@ -2885,16 +2911,15 @@
         if (!watchPartyReadySent && video.readyState >= 2) await reportWatchPartyReady();
 
         const response = await fetch(watchPartyApiPath(`?buffering=${encodeURIComponent(String(Boolean(webPlayerBuffering)))}`), { credentials: 'same-origin', cache: 'no-store' });
+        if ([401, 403, 404, 410].includes(response.status)) {
+          finishWatchPartyPlayback('This Watch Together session is no longer available.');
+          return;
+        }
         if (!response.ok) throw new Error(`room sync failed (${response.status})`);
         const room = await response.json();
         renderWatchPartyMembers(room);
         if (room.status === 'ended') {
-          watchPartyPlaybackAllowed = false;
-          setWatchPartyPlaybackRate(video, 0);
-          video.pause();
-          setTransientStatus('The Watch Together room has ended.', 10000);
-          if (watchPartySyncTimer) window.clearInterval(watchPartySyncTimer);
-          watchPartySyncTimer = null;
+          finishWatchPartyPlayback('The Watch Together room has ended.');
           return;
         }
         if (room.status !== 'playing' || room.waitingForReady) {
@@ -2927,7 +2952,7 @@
     }
 
     function startWatchPartySync() {
-      if (!WATCH_PARTY_MODE || watchPartySyncTimer) return;
+      if (!WATCH_PARTY_MODE || watchPartyEndMessage || watchPartySyncTimer) return;
       syncWatchPartyState();
       watchPartySyncTimer = window.setInterval(syncWatchPartyState, 1000);
     }
@@ -4541,6 +4566,7 @@
     }
 
     function startKeepalive() {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       if (keepaliveTimer) clearInterval(keepaliveTimer);
       keepaliveTimer = setInterval(() => {
         if (!hlsSessionId) return;
@@ -4573,6 +4599,7 @@
     }
 
     function startProgressTracking() {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       stopProgressTracking();
       lastProgressSentAt = 0;
       lastProgressPosition = 0;
@@ -4781,6 +4808,7 @@
       if (hlsSessionId) {
         const id = hlsSessionId;
         hlsSessionId = '';
+        if (options.localOnly) return;
         fetch(apiUrl(`/video/hls/${encodeURIComponent(id)}/stop`), {
           method: 'POST',
           credentials: 'same-origin',
@@ -4955,6 +4983,7 @@
     let webPlayerStatusClearTimer = null;
 
     function setStatus(message, error) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) { message = watchPartyEndMessage; error = false; }
       const status = document.getElementById('status');
       if (!status) return;
       if (webPlayerStatusClearTimer) {
