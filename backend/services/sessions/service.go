@@ -38,12 +38,13 @@ const (
 
 // Service manages session tokens for authenticated accounts.
 type Service struct {
-	mu              sync.RWMutex
-	path            string
-	store           *datastore.DataStore
-	sessionReader   sessionReader
-	sessions        map[string]models.Session
-	sessionDuration time.Duration
+	mu                          sync.RWMutex
+	path                        string
+	store                       *datastore.DataStore
+	sessionReader               sessionReader
+	sessions                    map[string]models.Session
+	sessionDuration             time.Duration
+	watchPartyPlaybackValidator WatchPartyPlaybackValidator
 }
 
 type sessionReader interface {
@@ -143,6 +144,9 @@ func (s *Service) CreateScoped(accountID string, isMaster bool, userAgent, ipAdd
 // source resource. Stream-scoped share sessions use this to prevent a shared
 // token from being reused against unrelated media/live URLs.
 func (s *Service) CreateScopedWithResource(accountID string, isMaster bool, userAgent, ipAddress string, duration time.Duration, scope string, scopeResource string) (models.Session, error) {
+	if scope == models.SessionScopeStream && strings.HasPrefix(scopeResource, watchPartyPlaybackResourcePrefix) {
+		return models.Session{}, ErrInvalidToken
+	}
 	return s.createScopedWithResource(accountID, isMaster, userAgent, ipAddress, duration, scope, scopeResource, "")
 }
 
@@ -312,7 +316,7 @@ func (s *Service) validate(token string) (models.Session, error) {
 		return models.Session{}, ErrSessionExpired
 	}
 
-	return session, nil
+	return s.validateWatchPartyPlayback(session)
 }
 
 // sessionForValidation treats PostgreSQL as authoritative when configured.

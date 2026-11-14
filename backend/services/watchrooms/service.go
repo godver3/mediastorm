@@ -445,6 +445,26 @@ func (s *Service) ExternalSourceForGuest(ctx context.Context, roomID, guestID st
 	return source, nil
 }
 
+// ValidateExternalPlayback rechecks persisted room authority for every media
+// request, including already-issued playlist URLs and new HLS session creation.
+func (s *Service) ValidateExternalPlayback(ctx context.Context, roomID, guestID, resource string) error {
+	room, err := s.GetForExternalGuest(ctx, roomID, guestID)
+	if err != nil {
+		return err
+	}
+	if !room.ExpiresAt.After(s.now()) || (room.Status != models.WatchRoomStatusPlaying && room.Status != models.WatchRoomStatusPaused) {
+		return ErrRoomEnded
+	}
+	source, err := s.repo.GetExternalSource(ctx, roomID)
+	if err != nil {
+		return err
+	}
+	if source == nil || source.Resource == "" || source.Resource != resource {
+		return ErrSourceUnavailable
+	}
+	return nil
+}
+
 func (s *Service) Invitations(ctx context.Context, profileID string) ([]models.WatchRoom, error) {
 	rooms, err := s.repo.ListInvitations(ctx, profileID, s.now().UTC())
 	if err != nil {
