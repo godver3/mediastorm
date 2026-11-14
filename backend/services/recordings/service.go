@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"novastream/internal/datastore"
+	"novastream/internal/livecapacity"
 	"novastream/internal/liveusage"
 	"novastream/models"
 )
@@ -65,6 +66,7 @@ type Service struct {
 	running  bool
 	wg       sync.WaitGroup
 	active   map[string]context.CancelFunc
+	starting map[string]bool
 	ruleWake chan struct{}
 	ruleMu   sync.Mutex
 }
@@ -732,6 +734,19 @@ func (s *Service) runDueRecordings() {
 }
 
 func (s *Service) startRecording(recording models.Recording) {
+	// Immediate creation and a scheduler pass can arrive together. One job
+	// must never reserve two inputs or have two writers truncating its file.
+	s.mu.Lock()
+	if s.starting[recording.ID] {
+		s.mu.Unlock()
+		return
+	}
+	if s.starting == nil {
+		s.starting = make(map[string]bool)
+	}
+	s.starting[recording.ID] = true
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.starting, recording.ID); s.mu.Unlock() }()
 	now := time.Now().UTC()
 	stopAt := recording.EndAt.Add(time.Duration(recording.PaddingAfterSeconds) * time.Second)
 	if !stopAt.After(now) {
@@ -748,6 +763,27 @@ func (s *Service) startRecording(recording models.Recording) {
 		s.finalizeFailure(recording, now, err.Error())
 		return
 	}
+	if reserver, ok := s.channels.(CapacityReserver); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		release, err := reserver.ReserveRecording(ctx, recording)
+		cancel()
+		if err != nil {
+			if errors.Is(err, livecapacity.ErrLimit) {
+				// Retain the pending job for the scheduler's next pass. Never
+				// open or truncate an output, nor evict a viewer, on a conflict.
+				recording.Error = "Provider connection limit reached; waiting for a free IPTV connection"
+				recording.UpdatedAt = now
+				if updateErr := s.repo.Update(context.Background(), &recording); updateErr != nil {
+					log.Printf("[recordings] update capacity conflict failed: %v", updateErr)
+				}
+				return
+			}
+			s.finalizeFailure(recording, now, "recording provider capacity unavailable")
+			return
+		}
+		defer release()
+	}
+	recording.Error = ""
 	recording.Status = models.RecordingStatusStarting
 	recording.OutputPath = s.buildOutputPath(recording)
 	recording.UpdatedAt = now

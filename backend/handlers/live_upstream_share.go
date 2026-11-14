@@ -353,10 +353,13 @@ func (u *liveUpstream) subscriberCount() int {
 // finish ends the upstream for every subscriber and removes it from the hub.
 func (u *liveUpstream) finish(err error) {
 	u.hub.mu.Lock()
+	// Keep the entry unavailable to a replacement opener until the old
+	// connection has actually closed. Removing it before Close allowed a
+	// reconnect to overlap the provider's last occupied slot.
+	defer u.hub.mu.Unlock()
 	if u.hub.streams[u.key] == u {
 		delete(u.hub.streams, u.key)
 	}
-	u.hub.mu.Unlock()
 
 	u.mu.Lock()
 	u.ended = true
@@ -463,11 +466,28 @@ func openLiveUpstream(session *HLSSession) liveUpstreamSource {
 		}}
 	}
 	return liveUpstreamSource{reconnect: true, open: func(ctx context.Context) (io.ReadCloser, error) {
+		requestCtx, cancelInput := context.WithCancel(ctx)
+		// A failover-enabled tune has one startup budget across dial, headers
+		// and the initial body. Stop this timer after sniffing data so a healthy
+		// long-running provider connection keeps its normal lifetime.
+		var startup *time.Timer
+		if tuning.StationFailover != nil {
+			startup = time.AfterFunc(liveStationStartupTimeout, cancelInput)
+		}
+		opened := false
+		defer func() {
+			if startup != nil {
+				startup.Stop()
+			}
+			if !opened {
+				cancelInput()
+			}
+		}()
 		client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{ResponseHeaderTimeout: 15 * time.Second}, tuning.ProxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("create live client: %w", err)
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, fmt.Errorf("prepare live request: %w", err)
 		}
@@ -485,13 +505,24 @@ func openLiveUpstream(session *HLSSession) liveUpstreamSource {
 		}
 		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 		reader := bufio.NewReaderSize(resp.Body, liveUpstreamReadChunk)
-		head, _ := reader.Peek(7)
+		// Header timeouts do not cover a provider that sends headers but no
+		// body. Bound the initial sniff too, so a stopped startup cannot hold
+		// its capacity reservation indefinitely.
+		sniffTimeout := time.AfterFunc(liveUpstreamReadTimeout, func() { _ = resp.Body.Close() })
+		head, sniffErr := reader.Peek(7)
+		sniffTimeout.Stop()
+		if sniffErr != nil && len(head) == 0 {
+			resp.Body.Close()
+			client.CloseIdleConnections()
+			return nil, fmt.Errorf("read live stream header: %w", sniffErr)
+		}
 		if strings.Contains(contentType, "mpegurl") || bytes.HasPrefix(head, []byte("#EXTM3U")) {
 			resp.Body.Close()
 			client.CloseIdleConnections()
 			return nil, errLiveUpstreamNotTS
 		}
-		return liveUpstreamBody{Reader: reader, body: resp.Body, client: client}, nil
+		opened = true
+		return liveUpstreamBody{Reader: reader, body: resp.Body, client: client, cancel: cancelInput}, nil
 	}}
 }
 
@@ -499,9 +530,13 @@ type liveUpstreamBody struct {
 	io.Reader
 	body   io.Closer
 	client *http.Client
+	cancel context.CancelFunc
 }
 
 func (b liveUpstreamBody) Close() error {
+	if b.cancel != nil {
+		b.cancel()
+	}
 	err := b.body.Close()
 	b.client.CloseIdleConnections()
 	return err

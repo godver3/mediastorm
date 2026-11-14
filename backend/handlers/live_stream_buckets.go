@@ -245,7 +245,7 @@ func deriveLiveBucket(provider string, src models.ResolvedLiveSource) (string, s
 
 	if normalizedProvider == "xtream" {
 		host := normalizeHost(src.XtreamHost)
-		user := strings.TrimSpace(strings.ToLower(src.XtreamUsername))
+		user := strings.TrimSpace(src.XtreamUsername)
 		identity = "xtream|" + host + "|" + user
 		if host == "" {
 			label = "XTREAM shared"
@@ -281,7 +281,20 @@ func deriveLiveBucket(provider string, src models.ResolvedLiveSource) (string, s
 			playlist = strings.TrimSpace(src.PlaylistSources[0].PlaylistURL)
 		}
 		host := normalizeHost(playlist)
-		identity = "m3u|" + strings.ToLower(playlist)
+		// Xtream's M3U export is another configuration of the same provider
+		// account. Output/type options must not manufacture extra capacity.
+		if parsed, err := url.Parse(playlist); err == nil && strings.HasSuffix(strings.ToLower(parsed.Path), "/get.php") && parsed.Query().Get("username") != "" {
+			normalizedProvider = "xtream"
+			identity = "xtream|" + host + "|" + parsed.Query().Get("username")
+		} else {
+			if parsed, err := url.Parse(playlist); err == nil {
+				parsed.Scheme = strings.ToLower(parsed.Scheme)
+				parsed.Host = strings.ToLower(parsed.Host)
+				parsed.RawQuery = parsed.Query().Encode()
+				playlist = parsed.String()
+			}
+			identity = "m3u|" + playlist
+		}
 		if host == "" {
 			label = "M3U shared"
 		} else {
