@@ -1,8 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +78,25 @@ func TestApplyTimeshiftListSize(t *testing.T) {
 	}
 }
 
+func TestApplyTimeshiftAudio(t *testing.T) {
+	args := liveHLSOutputArgs("native", "/out/segment%d.ts", "/out/stream.m3u8")
+	unchanged := strings.Join(applyTimeshiftAudio(append([]string(nil), args...), 0), " ")
+	if !strings.Contains(unchanged, "-c:a copy") {
+		t.Fatalf("no window must keep copied audio: %s", unchanged)
+	}
+	shifted := strings.Join(applyTimeshiftAudio(args, 30*time.Minute), " ")
+	if !strings.Contains(shifted, "-c:a aac -ac 2 -b:a 128k -ar 48000") || strings.Contains(shifted, "-c:a copy") {
+		t.Fatalf("timeshift must re-encode audio to stereo AAC: %s", shifted)
+	}
+	if !strings.Contains(shifted, "-c:v copy") {
+		t.Fatalf("timeshift must keep copied video: %s", shifted)
+	}
+	web := strings.Join(applyTimeshiftAudio(liveHLSOutputArgs("web", "/out/segment%d.ts", "/out/stream.m3u8"), 30*time.Minute), " ")
+	if strings.Count(web, "-c:a") != 1 {
+		t.Fatalf("web args already encode audio and must not change: %s", web)
+	}
+}
+
 func TestPruneTimeshiftSegmentFiles(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
@@ -104,5 +128,61 @@ func TestPruneTimeshiftSegmentFiles(t *testing.T) {
 	write("segment0.ts", now)
 	if deleted := pruneTimeshiftSegmentFiles(dir, -1, now.Add(-time.Hour)); deleted != 0 {
 		t.Fatalf("negative cutoff deleted %d fresh files", deleted)
+	}
+}
+
+// A native timeshift session over an AC3 5.1 channel must publish stereo AAC with the video copied.
+func TestTimeshiftLiveSessionReencodesAC3ToAAC(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("FFmpeg is not installed")
+	}
+	ffprobe, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe is not installed")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	fixture := filepath.Join(t.TempDir(), "live.ts")
+	generate := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-t", "3", "-c:v", "libx264", "-g", "10", "-c:a", "ac3", "-ac", "6", "-f", "mpegts", fixture)
+	if output, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("generate fixture: %v: %s", err, output)
+	}
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/live.m3u8" {
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = io.WriteString(w, "#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:3,\nsegment.ts\n#EXT-X-ENDLIST\n")
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp2t")
+		_, _ = w.Write(data)
+	}))
+	defer upstream.Close()
+	session := &HLSSession{ID: "timeshift-ac3", Path: upstream.URL + "/live.m3u8", OutputDir: t.TempDir(),
+		PlaybackTarget: "native", IsLive: true, LastSegmentRequest: time.Now(),
+		LiveTuning: LiveTuningSettings{TimeshiftWindow: 30 * time.Minute}}
+	manager := &HLSManager{ffmpegPath: ffmpeg}
+	if err := manager.startLiveTranscoding(ctx, session, 0); err != nil {
+		t.Fatalf("transcode: %v", err)
+	}
+	probe := exec.CommandContext(ctx, ffprobe, "-v", "error", "-show_entries", "stream=codec_type,codec_name,channels",
+		"-of", "csv=p=0", filepath.Join(session.OutputDir, "segment0.ts"))
+	output, err := probe.CombinedOutput()
+	if err != nil {
+		t.Fatalf("probe: %v: %s", err, output)
+	}
+	got := string(output)
+	if !strings.Contains(got, "aac,audio,2") || !strings.Contains(got, "h264,video") || strings.Contains(got, "ac3") {
+		t.Fatalf("timeshift output streams = %q, want copied h264 video and stereo aac audio", got)
+	}
+	if plan := session.outputPlan; plan == nil || plan.AudioCopied || plan.AudioCodec != "aac" || !plan.VideoCopied {
+		t.Fatalf("output plan = %+v, want copied video and aac audio", plan)
 	}
 }

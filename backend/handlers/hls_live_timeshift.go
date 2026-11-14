@@ -55,6 +55,29 @@ func applyTimeshiftListSize(args []string, window time.Duration) []string {
 	return args
 }
 
+// applyTimeshiftAudio re-encodes a native timeshift session's audio to stereo AAC; video stays
+// copied. Timeshift is the Android TV tune path: before it, those clients tuned direct and the
+// /live/stream transmux always delivered stereo AAC. Copying the channel's own AC3/E-AC3/MP2
+// instead left older Fire TVs silent (passthrough to a TV that can't take it, under the
+// player's sub-1x timeshift speed). Args are returned unchanged with no window.
+func applyTimeshiftAudio(args []string, window time.Duration) []string {
+	if window <= 0 {
+		return args
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-c:a" && args[i+1] == "copy" {
+			out := make([]string, 0, len(args)+6)
+			out = append(out, args[:i]...)
+			out = append(out, timeshiftAudioArgs...)
+			return append(out, args[i+2:]...)
+		}
+	}
+	return args
+}
+
+// timeshiftAudioArgs match the /live/stream transmux's audio (liveTransmuxOutput).
+var timeshiftAudioArgs = []string{"-c:a", "aac", "-ac", "2", "-b:a", "128k", "-ar", "48000"}
+
 // trimLivePlaylistWindow drops the oldest stitched entries beyond the session's window: a count
 // (liveNativeHLSListSize) for an ordinary live session, a duration for a timeshift one. A
 // timeshift session never trims below liveNativeHLSListSize entries. Caller holds session.mu.

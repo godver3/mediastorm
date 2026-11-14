@@ -2914,14 +2914,22 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	if isNativeLivePlaybackTarget(session.PlaybackTarget) {
 		session.VideoEncoder = "copy"
 		recordLiveOutputPlan(session, true)
-		log.Printf("[hls] live session %s: using native transmux mode (video=copy audio=copy target=%q)", session.ID, session.PlaybackTarget)
+		audioMode := "copy"
+		if session.LiveTuning.TimeshiftWindow > 0 {
+			audioMode = "aac"
+			session.outputPlan.AudioCopied = false
+			session.outputPlan.AudioCodec = "aac"
+		}
+		log.Printf("[hls] live session %s: using native transmux mode (video=copy audio=%s target=%q)", session.ID, audioMode, session.PlaybackTarget)
 	} else {
 		session.VideoEncoder = "libx264"
 		recordLiveOutputPlan(session, false)
 		log.Printf("[hls] live session %s: using compatibility transcode mode (video=libx264 audio=aac target=%q)", session.ID, session.PlaybackTarget)
 	}
 	session.mu.Unlock()
-	args = append(args, applyTimeshiftListSize(liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom), session.LiveTuning.TimeshiftWindow)...)
+	outputArgs := liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom)
+	outputArgs = applyTimeshiftAudio(applyTimeshiftListSize(outputArgs, session.LiveTuning.TimeshiftWindow), session.LiveTuning.TimeshiftWindow)
+	args = append(args, outputArgs...)
 
 	log.Printf("[hls] live session %s: starting FFmpeg with args: %v", session.ID, args)
 
