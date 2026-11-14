@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -840,6 +841,11 @@ func (s *Service) startRecording(recording models.Recording) {
 			s.handleInterruptedRecording(recording.ID, finishedAt)
 			return
 		}
+		// A retry whose process cannot start before the deadline has no new
+		// source evidence. Preserve the preceding early-end error.
+		if errors.Is(result.err, context.DeadlineExceeded) && !time.Now().Before(stopAt) && result.written == 0 {
+			break
+		}
 		if result.stoppedAtSchedule {
 			// Wall-clock stop reached: this attempt finished the recording,
 			// unless it was a last-second retry that captured nothing.
@@ -987,8 +993,18 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	attemptCtx, cancelAttempt := context.WithDeadline(ctx, stopAt)
 	defer cancelAttempt()
 	cmd := execCommandContext(attemptCtx, s.ffmpegPath, args...)
+	// Wait can finish after the deadline even when the recorder exited earlier
+	// (for example, a child still holds stderr). Only an actual schedule stop
+	// may establish that the attempt lasted to the requested boundary.
+	var stoppedBySchedule atomic.Bool
 	// Stop gracefully so ffmpeg flushes buffered packets, then kill if it hangs.
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.Cancel = func() error {
+		err := cmd.Process.Signal(os.Interrupt)
+		if err == nil && ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+			stoppedBySchedule.Store(true)
+		}
+		return err
+	}
 	cmd.WaitDelay = recordingStopGrace
 	cmd.Stdout = outputFile
 	var stderr bytes.Buffer
@@ -1010,7 +1026,7 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	elapsed := time.Since(startedAt).Round(time.Second)
 	errMsg := truncateRecordingError(stderr.String())
 
-	if ctx.Err() == nil && errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+	if stoppedBySchedule.Load() {
 		log.Printf("[recordings] attempt reached stop time id=%s attempt=%d elapsed=%s bytes=%d",
 			recording.ID, attempt, elapsed, written)
 		return recordingAttemptResult{stoppedAtSchedule: true, written: written}

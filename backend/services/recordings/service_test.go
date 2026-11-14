@@ -385,8 +385,15 @@ while :; do sleep 0.05; done
 }
 
 func TestStartRecordingFailsWhenSourceKeepsEnding(t *testing.T) {
+	// Keep a partial first result, but make every reconnect empty. Otherwise
+	// an unlucky last-millisecond retry can really be interrupted at the
+	// schedule after writing bytes, which simulates a completed final capture.
+	t.Setenv("TEST_RECORDING_MARKER", filepath.Join(t.TempDir(), "first-attempt"))
 	script := writeFakeFFmpeg(t, `#!/bin/sh
-printf 'partial'
+if [ ! -e "$TEST_RECORDING_MARKER" ]; then
+  : > "$TEST_RECORDING_MARKER"
+  printf 'partial'
+fi
 exit 0
 `)
 	originalDelay := recordingRetryDelay
