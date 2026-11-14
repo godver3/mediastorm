@@ -157,6 +157,12 @@ type (
 )
 
 type Service struct {
+	availabilityPriorityMu sync.Mutex
+	availabilityCancel     context.CancelFunc
+	availabilityGeneration uint64
+	foregroundSearches     int
+	lastForegroundSearch   time.Time
+
 	demo           *demomedia.Catalog // demo mode: the only source of results
 	cfg            *config.Manager
 	httpc          *http.Client
@@ -1263,36 +1269,38 @@ func (s *Service) sortResultsByScore(results []models.NZBResult, scoringCtx Scor
 }
 
 type SearchOptions struct {
-	Numbering             *models.EpisodeNumbering      `json:"numbering,omitempty"`
-	TitleID               string                        // Canonical selected title identity; independent of provider stream identity.
-	AdaptiveSummary       *models.AdaptiveSearchSummary // Optional request-owned output, populated before presentation limits.
-	Query                 string
-	Categories            []string
-	MaxResults            int
-	IMDBID                string
-	TVDBID                int64
-	AlternateTitles       []string                          // Titles already obtained while hydrating the selected item
-	MediaType             string                            // "movie" or "series"
-	Year                  int                               // Release year (for movies)
-	CountryCode           string                            // Original production country from metadata
-	OriginalLanguage      string                            // Original spoken language from metadata
-	UserID                string                            // Optional: user ID for per-user filtering settings
-	ClientID              string                            // Optional: client ID for per-client filtering settings
-	AdaptiveThroughput    *models.AdaptiveThroughputContext // Volatile route estimate supplied with this request
-	TotalSeriesEpisodes   int                               // Deprecated: use EpisodeResolver instead
-	EpisodeResolver       filter.EpisodeCountResolver       // Optional: resolver for accurate episode counts from metadata
-	AbsoluteEpisodeNumber int                               // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
-	IsAnime               bool                              // True for anime content - requires waiting for Nyaa scraper
-	IsDaily               bool                              // True for daily shows (talk shows, news) that use date-based naming
-	TargetAirDate         string                            // For daily shows: air date in YYYY-MM-DD format
-	EpisodeAirYear        int                               // Year the target episode aired (for year filter tolerance)
-	SeasonPremiereYear    int                               // Premiere year of the requested season only.
-	EpisodeReleased       bool                              // True only when metadata confirms the target episode has aired
-	IncludeFiltered       bool                              // When true, return filtered results alongside passed results
-	IncludeScoreBreakdown bool                              // When true, attach per-criterion scoring details (admin search tester)
-	SkipFilter            bool                              // When true, skip filtering entirely (used by SearchTest)
-	UseDownloadRanking    bool                              // When true, apply download-only preferred terms as a final ranking boost
-	SeasonPacksOnly       bool                              // When true, keep only releases that cover the whole target season ("Download Season")
+	AvailabilityCheck        bool                          `json:"-"` // Search-only, explicit provider subset; never used by normal playback
+	AvailabilityIndexerNames []string                      `json:"-"`
+	Numbering                *models.EpisodeNumbering      `json:"numbering,omitempty"`
+	TitleID                  string                        // Canonical selected title identity; independent of provider stream identity.
+	AdaptiveSummary          *models.AdaptiveSearchSummary // Optional request-owned output, populated before presentation limits.
+	Query                    string
+	Categories               []string
+	MaxResults               int
+	IMDBID                   string
+	TVDBID                   int64
+	AlternateTitles          []string                          // Titles already obtained while hydrating the selected item
+	MediaType                string                            // "movie" or "series"
+	Year                     int                               // Release year (for movies)
+	CountryCode              string                            // Original production country from metadata
+	OriginalLanguage         string                            // Original spoken language from metadata
+	UserID                   string                            // Optional: user ID for per-user filtering settings
+	ClientID                 string                            // Optional: client ID for per-client filtering settings
+	AdaptiveThroughput       *models.AdaptiveThroughputContext // Volatile route estimate supplied with this request
+	TotalSeriesEpisodes      int                               // Deprecated: use EpisodeResolver instead
+	EpisodeResolver          filter.EpisodeCountResolver       // Optional: resolver for accurate episode counts from metadata
+	AbsoluteEpisodeNumber    int                               // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
+	IsAnime                  bool                              // True for anime content - requires waiting for Nyaa scraper
+	IsDaily                  bool                              // True for daily shows (talk shows, news) that use date-based naming
+	TargetAirDate            string                            // For daily shows: air date in YYYY-MM-DD format
+	EpisodeAirYear           int                               // Year the target episode aired (for year filter tolerance)
+	SeasonPremiereYear       int                               // Premiere year of the requested season only.
+	EpisodeReleased          bool                              // True only when metadata confirms the target episode has aired
+	IncludeFiltered          bool                              // When true, return filtered results alongside passed results
+	IncludeScoreBreakdown    bool                              // When true, attach per-criterion scoring details (admin search tester)
+	SkipFilter               bool                              // When true, skip filtering entirely (used by SearchTest)
+	UseDownloadRanking       bool                              // When true, apply download-only preferred terms as a final ranking boost
+	SeasonPacksOnly          bool                              // When true, keep only releases that cover the whole target season ("Download Season")
 
 	// Internal Newznab request controls used by the daily-show tiered search.
 	usenetSearchType      string
@@ -1435,6 +1443,9 @@ func buildSearchRankingSettings(settings config.Settings) searchRankingSettings 
 }
 
 func (s *Service) searchCacheKey(mode string, opts SearchOptions, settings config.Settings, alternateTitles []string, filterSettings models.FilterSettings, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingCriteria []config.RankingCriterion, rankingBundle effectiveRankingBundle) string {
+	if opts.AvailabilityCheck {
+		mode += ":availability"
+	}
 	parsedMappingQuery := debrid.ParseQuery(opts.Query)
 	payload := searchCacheKeyPayload{
 		AudioLanguage:         s.getEffectiveAudioLanguage(opts.UserID, opts.ClientID, settings),
@@ -1580,6 +1591,8 @@ func (s *Service) demoScored(opts SearchOptions) []models.ScoredNZBResult {
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
+	finishPriority := s.beginForegroundSearch(opts)
+	defer finishPriority()
 	if s.demo != nil {
 		return s.demo.Results(opts.IMDBID, opts.Query, opts.MediaType), nil
 	}
@@ -1598,6 +1611,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+	settings = availabilitySearchSettings(settings, opts)
 	s.discoverCrossMapping(ctx, settings, opts)
 
 	// Get effective filtering settings (cascade: global -> profile -> client)
@@ -1635,6 +1649,9 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
+	if opts.AvailabilityCheck && len(searchQueries) > 1 {
+		searchQueries = searchQueries[:1]
+	}
 	rankingBundle := s.getEffectiveRankingBundle(opts.UserID, opts.ClientID, settings)
 	rankingCriteria := rankingBundle.Default
 	cacheTitles := combineFilterTitles(filterTitles)
@@ -1832,6 +1849,8 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 // SearchWithScoring runs Search and wraps results as ScoredNZBResult with filter status.
 // When opts.IncludeFiltered is true, filtered results are appended after passed results.
 func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]models.ScoredNZBResult, error) {
+	finishPriority := s.beginForegroundSearch(opts)
+	defer finishPriority()
 	if s.demo != nil {
 		return s.demoScored(opts), nil
 	}
@@ -1874,6 +1893,7 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+	settings = availabilitySearchSettings(settings, opts)
 	s.discoverCrossMapping(ctx, settings, opts)
 
 	filterBundle, animeSettings, filterOverrides := s.getEffectiveFilterBundle(opts.UserID, opts.ClientID, opts.AdaptiveThroughput, settings)
@@ -2049,6 +2069,7 @@ func capPerService[T any](results []T, max int, service func(T) models.ContentSe
 // source — so a caller can start resolving them while other sources are still
 // in flight. RawCount/FilteredCount are diagnostics (raw fetched/rejected).
 type ScoredSplitSearchResult struct {
+	Incomplete    bool
 	Source        string
 	Scored        []models.ScoredNZBResult
 	RawCount      int
@@ -2082,7 +2103,7 @@ type searchSplitOutcome struct {
 // search-cache write behavior match the non-split paths: per-source filters,
 // per-source scoring/ranking, and a single aggregate "raw" cache write once
 // both sources settle (only when neither failed and no source was incomplete).
-func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions) (usenetCh, debridCh <-chan ScoredSplitSearchResult) {
+func (s *Service) searchWithScoringSplit(ctx context.Context, opts SearchOptions) (usenetCh, debridCh <-chan ScoredSplitSearchResult) {
 	callNum := s.searchSplitCount.Add(1)
 	searchStart := time.Now()
 	log.Printf("[search-stats] SearchSplit #%d started (query=%q, mediaType=%q, user=%q, client=%q)",
@@ -2117,6 +2138,7 @@ func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions
 		return usenetOut, debridOut
 	}
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+	settings = availabilitySearchSettings(settings, opts)
 	s.discoverCrossMapping(ctx, settings, opts)
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
@@ -2157,6 +2179,9 @@ func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions
 
 	parsedQuery := debrid.ParseQuery(opts.Query)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
+	if opts.AvailabilityCheck && len(searchQueries) > 1 {
+		searchQueries = searchQueries[:1]
+	}
 	rankingBundle := s.getEffectiveRankingBundle(opts.UserID, opts.ClientID, settings)
 	rankingCriteria := rankingBundle.Default
 
@@ -2309,6 +2334,7 @@ func (s *Service) emitSplitSourceBatch(usenetOut, debridOut chan ScoredSplitSear
 	}
 	sr := ScoredSplitSearchResult{
 		Source:        out.source,
+		Incomplete:    out.incomplete,
 		Scored:        out.scored,
 		RawCount:      len(out.raw),
 		FilteredCount: out.filtered,
@@ -2602,6 +2628,7 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+	settings = availabilitySearchSettings(settings, opts)
 	s.discoverCrossMapping(ctx, settings, opts)
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
@@ -2840,6 +2867,9 @@ func (s *Service) fetchUsenetResultsAllQueries(ctx context.Context, settings con
 	if len(allResults) == 0 && lastErr != nil && successes == 0 {
 		return nil, lastErr
 	}
+	if opts.AvailabilityCheck && lastErr != nil {
+		return nil, fmt.Errorf("availability search incomplete: %w", lastErr)
+	}
 
 	// Deduplicate results that appear across multiple alternate-title queries
 	seen := make(map[string]struct{}, len(allResults))
@@ -2944,6 +2974,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 		return debridOut, usenetOut
 	}
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
+	settings = availabilitySearchSettings(settings, opts)
 	s.discoverCrossMapping(ctx, settings, opts)
 
 	filterBundle, animeSettings2, filterOverrides := s.getEffectiveFilterBundle(opts.UserID, opts.ClientID, opts.AdaptiveThroughput, settings)
@@ -4174,6 +4205,9 @@ func (s *Service) fetchUsenetResults(ctx context.Context, settings config.Settin
 	}
 
 	if len(enabled) == 0 {
+		if opts.AvailabilityCheck {
+			return nil, fmt.Errorf("no supported availability indexer")
+		}
 		return nil, nil
 	}
 
@@ -4209,6 +4243,9 @@ func (s *Service) fetchUsenetResults(ctx context.Context, settings config.Settin
 	}
 	if len(allResults) == 0 && lastErr != nil && successes == 0 {
 		return nil, lastErr
+	}
+	if opts.AvailabilityCheck && lastErr != nil {
+		return nil, fmt.Errorf("availability search incomplete: %w", lastErr)
 	}
 	return allResults, nil
 }

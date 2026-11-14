@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"hash/fnv"
 	"log"
 	"net/http"
@@ -121,13 +120,13 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 	if userID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "userId is required"})
+		_ = h.encodeMetadata(w, r, map[string]string{"error": "userId is required"})
 		return
 	}
 	if h.HistoryService == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "history service not configured"})
+		_ = h.encodeMetadata(w, r, map[string]string{"error": "history service not configured"})
 		return
 	}
 
@@ -139,7 +138,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		log.Printf("[metadata] personalized recommendations history error user=%s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	progress, err := h.HistoryService.ListPlaybackProgress(userID)
@@ -147,7 +146,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		log.Printf("[metadata] personalized recommendations progress error user=%s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -251,7 +250,7 @@ func (h *MetadataHandler) writePersonalizedRecommendations(
 	}
 	response = filterPersonalizedRecommendationsByUnreleasedVisibility(response, policy)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(response)
+	_ = h.encodeMetadata(w, r, response)
 }
 
 func filterPersonalizedRecommendationsByUnreleasedVisibility(response PersonalizedRecommendationsResponse, policy unreleasedVisibilityPolicy) PersonalizedRecommendationsResponse {

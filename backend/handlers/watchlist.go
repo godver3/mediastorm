@@ -30,13 +30,14 @@ type userService interface {
 }
 
 type WatchlistHandler struct {
-	Service         watchlistService
-	Users           userService
-	DemoMode        bool
-	HistoryService  historyService
-	MetadataService metadataService
-	CfgManager      *config.Manager
-	UserSettings    userSettingsProvider
+	SourceAvailability sourceAvailabilityService
+	Service            watchlistService
+	Users              userService
+	DemoMode           bool
+	HistoryService     historyService
+	MetadataService    metadataService
+	CfgManager         *config.Manager
+	UserSettings       userSettingsProvider
 }
 
 func NewWatchlistHandler(service watchlistService, users userService, demoMode bool) *WatchlistHandler {
@@ -92,6 +93,7 @@ func (h *WatchlistHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich with artwork URLs from metadata cache
 	enrichWatchlistArtwork(items, metadataSvc)
+	items = availabilityWatchlist(h.SourceAvailability, userID, requestClientID(r), items)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
