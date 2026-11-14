@@ -37,6 +37,12 @@ info:
       JSON object bodies are inspected up to 1 MiB independently of Content-Type;
       oversized objects return 413. Profile-path bulk imports and diagnostic
       uploads retain their existing limits.
+    - **Account-managed Live TV.** Provider account assignments are intersected
+      with profile restrictions. Explicit empty account assignments deny access;
+      requireAccountAssignment also denies unassigned legacy providers. When
+      account rules are active, guide queries must include an owned profile and
+      may name only its visible channels. Recording jobs use the authorized
+      catalog URL rather than a caller-supplied source URL.
     - **Profile PINs.** `POST /api/users/{userId}/pin/verify` returns an
       `unlockToken` for PIN-protected profiles. Send it on every request that
       names that profile (path `{userId}`, `profileId`/`userId` query
@@ -44,7 +50,9 @@ info:
       `X-Profile-Unlock` header (comma-separate several tokens), or as the
       `profileUnlock` query parameter on media URLs that cannot carry
       headers. When the server setting `security.enforceProfilePins` is on,
-      requests for a PIN-protected profile without a valid unlock get 403
+      existing HLS resources also check their stored profile even when the
+      client omits or substitutes a selector. Requests for a PIN-protected
+      profile without a valid unlock get 403
       with `code: profile_locked` (the session is still valid; prompt for the
       PIN, verify, retry). When the setting is off (the default) the header
       is accepted and ignored. Unlocks survive `POST /api/auth/refresh`, end
@@ -129,6 +137,52 @@ paths:
           description: Storage error
         '503':
           description: Search-interest storage unavailable
+  /api/users/{userId}/settings/skipping:
+    patch:
+      operationId: patchProfileSkipping
+      summary: Patch profile auto-skip preferences
+      description: |
+        Updates only supplied segment types and preserves unrelated settings.
+        Values are stored per profile and returned by GET /api/users/{userId}/settings
+        as playback.introAutoSkip, playback.recapAutoSkip and playback.creditsAutoSkip.
+        Requires ownership of the profile and its unlock token when PIN enforcement is on.
+        Clients must not import unscoped browser preferences into an arbitrary profile.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                intro: {type: boolean}
+                recap: {type: boolean}
+                credits: {type: boolean}
+      responses:
+        '200':
+          description: Supplied preferences saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  intro: {type: boolean}
+                  recap: {type: boolean}
+                  credits: {type: boolean}
+        '400':
+          description: Empty, unknown or malformed preferences
+        '403':
+          description: Profile PIN required
+        '404':
+          description: Profile not owned by this account
+
   /api/auth/login:
     post:
       tags: [auth]

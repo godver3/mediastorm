@@ -4309,7 +4309,7 @@ func parseTMDBDiscoverQuery(raw string) (url.Values, error) {
 	for _, controlled := range []string{"api_key", "language", "page", "sort_by"} {
 		values.Del(controlled)
 	}
-	return values, nil
+	return resolveRelativeDiscoveryDates(values, time.Now())
 }
 
 func tmdbDiscoverFilters(apiMediaType string, filters url.Values) url.Values {
@@ -4684,7 +4684,7 @@ func (c *tmdbClient) cachedDiscoverShelfPage(apiMediaType string, filters url.Va
 		strings.ToLower(strings.TrimSpace(sortKey)), filters.Encode(), strconv.Itoa(page),
 	)
 	var cached tmdbShelfPage
-	ok, _ := c.cache.get(cacheID, &cached)
+	ok, _ := c.cache.getWithMaxAge(cacheID, &cached, regionalDiscoveryMaxAge(filters))
 	return cached, ok
 }
 

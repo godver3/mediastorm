@@ -263,15 +263,50 @@ func watchPartyGuestID(token string) string {
 }
 
 func (h *WatchPartyHandler) guestSession(r *http.Request, roomID string) (models.Session, string, bool) {
+	session, guestID, err := h.lookupGuestSession(r, roomID)
+	return session, guestID, err == nil
+}
+
+// errGuestSessionMissing means the request carries no usable guest session for
+// the room. Any other lookupGuestSession error is a failure to load the session
+// (for example a brief database outage) and must not be reported as 401: the
+// web player treats 401 as the end of the room and stops playback for good.
+var errGuestSessionMissing = errors.New("watch party session required")
+
+func (h *WatchPartyHandler) lookupGuestSession(r *http.Request, roomID string) (models.Session, string, error) {
+	if session, guestID, ok := verifiedGuestFromContext(r, roomID); ok {
+		return session, guestID, nil
+	}
 	cookie, err := r.Cookie(watchPartyCookieName)
 	if err != nil || h.sessions == nil {
-		return models.Session{}, "", false
+		return models.Session{}, "", errGuestSessionMissing
 	}
 	session, err := h.sessions.Validate(cookie.Value)
-	if err != nil || session.Scope != models.SessionScopeWatchParty || session.ScopeResource != roomID {
-		return models.Session{}, "", false
+	if err != nil {
+		if errors.Is(err, sessions.ErrSessionNotFound) || errors.Is(err, sessions.ErrSessionExpired) || errors.Is(err, sessions.ErrInvalidToken) {
+			return models.Session{}, "", errGuestSessionMissing
+		}
+		return models.Session{}, "", err
 	}
-	return session, watchPartyGuestID(session.Token), true
+	if session.Scope != models.SessionScopeWatchParty || session.ScopeResource != roomID {
+		return models.Session{}, "", errGuestSessionMissing
+	}
+	return session, watchPartyGuestID(session.Token), nil
+}
+
+// requireGuestSession resolves the guest session for a JSON endpoint, writing
+// 401 when there is none and 503 when it could not be loaded.
+func (h *WatchPartyHandler) requireGuestSession(w http.ResponseWriter, r *http.Request, roomID string) (models.Session, string, bool) {
+	session, guestID, err := h.lookupGuestSession(r, roomID)
+	switch {
+	case err == nil:
+		return session, guestID, true
+	case errors.Is(err, errGuestSessionMissing):
+		writeJSONError(w, "watch party session required", http.StatusUnauthorized)
+	default:
+		writeJSONError(w, "watch party session temporarily unavailable", http.StatusServiceUnavailable)
+	}
+	return models.Session{}, "", false
 }
 
 type watchPartyRoomView struct {
@@ -383,9 +418,8 @@ func mustJSON(value string) []byte {
 
 func (h *WatchPartyHandler) RoomSnapshot(w http.ResponseWriter, r *http.Request) {
 	roomID := mux.Vars(r)["roomID"]
-	_, guestID, ok := h.guestSession(r, roomID)
+	_, guestID, ok := h.requireGuestSession(w, r, roomID)
 	if !ok {
-		writeJSONError(w, "watch party session required", http.StatusUnauthorized)
 		return
 	}
 	buffering, _ := strconv.ParseBool(r.URL.Query().Get("buffering"))
@@ -407,9 +441,8 @@ func (h *WatchPartyHandler) RoomSnapshot(w http.ResponseWriter, r *http.Request)
 
 func (h *WatchPartyHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	roomID := mux.Vars(r)["roomID"]
-	_, guestID, ok := h.guestSession(r, roomID)
+	_, guestID, ok := h.requireGuestSession(w, r, roomID)
 	if !ok {
-		writeJSONError(w, "watch party session required", http.StatusUnauthorized)
 		return
 	}
 	var body struct {
@@ -428,9 +461,8 @@ func (h *WatchPartyHandler) Ready(w http.ResponseWriter, r *http.Request) {
 
 func (h *WatchPartyHandler) PlaybackGrant(w http.ResponseWriter, r *http.Request) {
 	roomID := mux.Vars(r)["roomID"]
-	guestSession, guestID, ok := h.guestSession(r, roomID)
+	guestSession, guestID, ok := h.requireGuestSession(w, r, roomID)
 	if !ok {
-		writeJSONError(w, "watch party session required", http.StatusUnauthorized)
 		return
 	}
 	room, err := h.service.GetForExternalGuest(r.Context(), roomID, guestID)
@@ -472,9 +504,8 @@ func (h *WatchPartyHandler) PlaybackGrant(w http.ResponseWriter, r *http.Request
 
 func (h *WatchPartyHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	roomID := mux.Vars(r)["roomID"]
-	_, guestID, ok := h.guestSession(r, roomID)
+	_, guestID, ok := h.requireGuestSession(w, r, roomID)
 	if !ok {
-		writeJSONError(w, "watch party session required", http.StatusUnauthorized)
 		return
 	}
 	if err := h.service.HeartbeatExternalGuest(r.Context(), roomID, guestID, r.UserAgent(), false); err != nil {

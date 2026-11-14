@@ -23,6 +23,7 @@ import (
 	"novastream/services/profileunlock"
 	"novastream/services/sessions"
 	"novastream/services/sourcehealth"
+	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
 	"novastream/services/watchlist"
 )
@@ -861,6 +862,27 @@ func TestOpenAPIContract(t *testing.T) {
 		h := &MetadataHandler{Interests: service, UsersService: &fakeUsersServiceForSearch{users: map[string]models.User{"own": {ID: "own", AccountID: contractAccountID}, "foreign": {ID: "foreign", AccountID: "other-account"}}}}
 		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/own/recommendation-interests", vars: map[string]string{"userID": "own"}}, h.ClearSearchInterests, http.StatusNoContent)
 		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/foreign/recommendation-interests", vars: map[string]string{"userID": "foreign"}}, h.ClearSearchInterests, http.StatusNotFound)
+	})
+
+	t.Run("profile-skipping", func(t *testing.T) {
+		dir := t.TempDir()
+		usersSvc, err := users.NewService(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile, err := usersSvc.CreateForAccount(contractAccountID, "Fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		settingsSvc, err := user_settings.NewService(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := NewUserSettingsHandler(settingsSvc, usersSvc, nil)
+		exercise(t, v, contractCall{method: http.MethodPatch,
+			target: "/api/users/" + profile.ID + "/settings/skipping",
+			vars:   map[string]string{"userID": profile.ID}, body: map[string]bool{"intro": true, "recap": false},
+		}, h.PatchSkipping, http.StatusOK)
 	})
 
 	t.Run("coverage", func(t *testing.T) {

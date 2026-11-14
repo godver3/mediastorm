@@ -665,3 +665,25 @@ func (s *Service) syncToDB() error {
 		return nil
 	})
 }
+
+// SessionLookupFunc loads a session by token; it returns (nil, nil) when the
+// session does not exist.
+type SessionLookupFunc func(ctx context.Context, token string) (*models.Session, error)
+
+func (f SessionLookupFunc) Get(ctx context.Context, token string) (*models.Session, error) {
+	return f(ctx, token)
+}
+
+// NewServiceWithLookup creates an in-memory service whose validation reads
+// through lookup, as the PostgreSQL-backed service does. It lets callers test
+// how they handle session store failures.
+func NewServiceWithLookup(lookup SessionLookupFunc, sessionDuration time.Duration) *Service {
+	if sessionDuration <= 0 {
+		sessionDuration = DefaultSessionDuration
+	}
+	return &Service{
+		sessionReader:   lookup,
+		sessions:        make(map[string]models.Session),
+		sessionDuration: sessionDuration,
+	}
+}

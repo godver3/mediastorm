@@ -1198,9 +1198,6 @@
     let webPlayerControlsHideTimer = null;
     let webPlayerMediaRecoverAttempts = 0;
     const WEB_PLAYER_VOLUME_STORAGE_KEY = 'strmr.webPlayerVolume';
-    const WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY = 'strmr.webPlayerAutoSkipRecap.v1';
-    const WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY = 'strmr.webPlayerAutoSkipIntro.v1';
-    const WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY = 'strmr.webPlayerAutoSkipCredits.v1';
     const savedWebPlayerVolume = loadWebPlayerVolumePrefs();
     let webPlayerVolume = savedWebPlayerVolume.volume;
     let webPlayerMuted = savedWebPlayerVolume.muted;
@@ -1231,10 +1228,14 @@
     let webPlayerWatchNextDeadline = 0;
     let webPlayerWatchNextTimer = null;
     let webPlayerPromptConfirmed = false;
-    let webPlayerAutoSkipRecapPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY);
-    let webPlayerAutoSkipIntroPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY);
-    let webPlayerAutoSkipCreditsPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY);
+    let webPlayerAutoSkipRecapPreference = false;
+    let webPlayerAutoSkipIntroPreference = false;
+    let webPlayerAutoSkipCreditsPreference = false;
     let webPlayerAutoSkipInProgress = false;
+    let webPlayerSkipPreferenceSave = Promise.resolve();
+    // One counter per segment type, so toggling one type while settings load
+    // only discards the loaded value for that type.
+    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0 };
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
     let webPlayerAudioPreferenceGeneration = 0;
@@ -1262,6 +1263,7 @@
     let watchPartyReadySent = false;
     let watchPartyReadyInFlight = false;
     let watchPartyPlaybackAllowed = false;
+    let watchPartyEndMessage = '';
     let watchPartyEstimatedSeekStartupSeconds = 3;
     let watchPartyHardSyncCooldownUntil = 0;
 
@@ -1720,11 +1722,17 @@
     async function loadEffectiveWebPlaybackSettings() {
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
       await webPlayerAudioPreferenceSave;
+      await webPlayerSkipPreferenceSave;
+      const skipGeneration = { ...webPlayerSkipPreferenceGeneration };
+      let profileLoaded = true;
       // These three are independent of each other — only their merged result
       // (below) depends on all three — so fetch them concurrently instead of
       // one after another to cut startup latency.
       const [profile, client, content] = await Promise.all([
-        apiCall('/users/' + encodeURIComponent(activeProfileId) + '/settings').catch(() => ({})),
+        apiCall('/users/' + encodeURIComponent(activeProfileId) + '/settings').catch(() => {
+          profileLoaded = false;
+          return {};
+        }),
         CLIENT_ID
           ? apiCall('/clients/' + encodeURIComponent(CLIENT_ID) + '/settings?userId=' + encodeURIComponent(activeProfileId)).catch(() => ({}))
           : Promise.resolve({}),
@@ -1742,30 +1750,32 @@
         creditsDetectionEnabled: Boolean(pick(undefined, client.creditsDetectionEnabled, base.creditsDetectionEnabled, legacyCredits)),
         creditsAutoSkip: Boolean(pick(undefined, client.creditsAutoSkip, base.creditsAutoSkip, legacyCredits)),
       };
-      if (webPlayerAutoSkipCreditsPreference === null) {
-        webPlayerAutoSkipCreditsPreference = Boolean(webPlayerPreferences.creditsAutoSkip);
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY, webPlayerAutoSkipCreditsPreference);
-      }
-      if (webPlayerAutoSkipRecapPreference === null) {
-        webPlayerAutoSkipRecapPreference = false;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY, webPlayerAutoSkipRecapPreference);
-      }
-      if (webPlayerAutoSkipIntroPreference === null) {
-        webPlayerAutoSkipIntroPreference = false;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY, webPlayerAutoSkipIntroPreference);
+      // The profile is authoritative, including explicit false. Browser storage
+      // and per-device defaults must not leak preferences between profiles.
+      // A failed load (network blip, PIN-locked profile) keeps the current
+      // choices instead of switching Auto off; a toggle made while loading
+      // wins over the loaded value for that type.
+      if (profileLoaded) {
+        const unchanged = (type) => skipGeneration[type] === webPlayerSkipPreferenceGeneration[type];
+        if (unchanged('intro')) webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
+        if (unchanged('recap')) webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
+        if (unchanged('credits')) webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
       }
       return webPlayerPreferences;
     }
 
-    function loadWebAutoSkipPreference(key) {
-      try {
-        const value = window.localStorage?.getItem(key);
-        return value === null ? null : value === 'true';
-      } catch { return null; }
-    }
-
-    function persistWebAutoSkipPreference(key, value) {
-      try { window.localStorage?.setItem(key, String(Boolean(value))); } catch {}
+    function saveWebSkipPreference(type, value) {
+      if (!activeProfileId || SHARE_MODE || WATCH_PARTY_MODE) return;
+      const profileId = activeProfileId;
+      const field = { intro: 'intro', recap: 'recap', credits: 'credits' }[type];
+      if (!field) return;
+      webPlayerSkipPreferenceSave = webPlayerSkipPreferenceSave.then(() => apiCall(
+        '/users/' + encodeURIComponent(profileId) + '/settings/skipping', {
+          method: 'PATCH', keepalive: true, body: JSON.stringify({ [field]: value }),
+        }
+      )).catch(() => {
+        setTransientStatus('Auto-skip changed for this playback, but could not be saved to your profile.');
+      });
     }
 
     // Each segment kind has its own independent auto-skip toggle. 'credits'
@@ -1795,18 +1805,18 @@
 
     function setWebAutoSkipPreference(enabled, type) {
       const value = Boolean(enabled);
+      const skipType = type === 'recap' || type === 'credits' ? type : 'intro';
+      webPlayerSkipPreferenceGeneration[skipType] += 1;
       if (type === 'recap') {
         webPlayerAutoSkipRecapPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY, value);
       } else if (type === 'credits') {
         webPlayerAutoSkipCreditsPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY, value);
         if (value) webPlayerWatchNextAutoAdvanceBlocked = false;
         else clearWatchNextCountdown();
       } else {
         webPlayerAutoSkipIntroPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY, value);
       }
+      saveWebSkipPreference(type || 'intro', value);
       syncWebAutoSkipControls();
       updateWebSegmentPrompts();
       updateUpNextVisibility();
@@ -1839,6 +1849,7 @@
     }
 
     async function startWebPlayerFromSource(options = {}) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       if (!sourcePath) {
         renderLoading('No playback source was provided.', true);
         document.getElementById('manualStart')?.classList.add('is-visible');
@@ -1854,6 +1865,7 @@
 
       try {
         await loadTrackMetadata(options.metadata);
+        if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
         const session = await createHlsSession(options);
         hlsSessionId = session.sessionId || '';
         const requestedOffset = Number(session.startOffset ?? options.startOffset ?? 0);
@@ -2002,7 +2014,7 @@
           ${WATCH_PARTY_MODE ? `<aside id="watchPartyPanel" class="watch-party-panel desktop-only" aria-label="Watching Together"><div class="watch-party-panel-title"><span>Watching Together</span><button id="watchPartyPanelToggle" class="watch-party-panel-toggle" type="button" aria-label="Collapse Watching Together" aria-expanded="true" onclick="toggleWatchPartyPanel()">−</button></div><div id="watchPartyMembers"></div></aside>` : ''}
           <div id="skipSegmentPrompt" class="skip-segment-prompt">
             <button id="skipSegmentButton" class="skip-segment-button" type="button" onclick="skipActiveWebSegment()" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true" title="The host controls playback"' : ''}></button>
-            <label class="web-auto-skip-control" title="Remember on this browser">
+            <label class="web-auto-skip-control" title="Save to this profile on all devices">
               <input class="web-auto-skip-toggle" type="checkbox" data-skip-type="intro" onchange="setWebAutoSkipPreference(this.checked, this.dataset.skipType)">
               <span>Auto</span>
             </label>
@@ -2014,7 +2026,7 @@
                 <div class="up-next-label">Up Next</div>
                 <div id="upNextTitle" class="up-next-title"></div>
                 <div id="upNextCountdown" class="up-next-countdown"></div>
-                <label class="web-auto-skip-control up-next-auto-skip" title="Remember on this browser">
+                <label class="web-auto-skip-control up-next-auto-skip" title="Save to this profile on all devices">
                   <input class="web-auto-skip-toggle" type="checkbox" onchange="setWebAutoSkipPreference(this.checked, 'credits')">
                   <span>Auto-skip credits</span>
                 </label>
@@ -2154,6 +2166,10 @@
     }
 
     function attachWebPlayer(video, playlistUrl) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) {
+        finishWatchPartyPlayback(watchPartyEndMessage);
+        return;
+      }
       if (!video || !playlistUrl) return;
       stopSubtitleRenderLoop();
       webPlayerDebugLog('info', 'attach player', {
@@ -2389,6 +2405,7 @@
       const result = video.play();
       if (!result || typeof result.catch !== 'function') return;
       result.catch(() => {
+        if (WATCH_PARTY_MODE && !watchPartyPlaybackAllowed) return;
         // Unmuted autoplay is blocked by mobile browsers after a page
         // navigation (the originating tap's activation doesn't carry over).
         // Fall back to muted autoplay so playback starts immediately, and
@@ -2541,6 +2558,7 @@
     }
 
     async function seekWebPlayer(target) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return false;
       const video = document.getElementById('webPlayer');
       if (!video) return false;
       const absoluteTarget = clampSeekTarget(target);
@@ -2599,6 +2617,7 @@
         const seekSubtitleTrack = Number(webPlayerSelectedSubtitleTrack);
         seekParams.set('subtitleTrack', String(seekSubtitleTrack >= 0 ? seekSubtitleTrack : -1));
         const response = await apiCall(`/video/hls/${encodeURIComponent(hlsSessionId)}/seek?${seekParams.toString()}`, { method: 'POST' });
+        if (WATCH_PARTY_MODE && watchPartyEndMessage) return false;
         if (!response?.playlistUrl) throw new Error('seek response missing playlist URL');
         const requestedOffset = Number(response.startOffset ?? absoluteTarget);
         const actualOffset = Number(response.actualStartOffset ?? requestedOffset);
@@ -2609,7 +2628,7 @@
         renderSubtitles();
         let seekFinished = false;
         const finishSeek = () => {
-          if (seekFinished) return;
+          if (seekFinished || (WATCH_PARTY_MODE && watchPartyEndMessage)) return;
           seekFinished = true;
           setStatus('');
           const continuingQueuedSeek = releaseSeekState();
@@ -2876,8 +2895,24 @@
       showControls();
     }
 
+    function finishWatchPartyPlayback(message) {
+      watchPartyEndMessage = message;
+      watchPartyPlaybackAllowed = false;
+      webPlayerSeekGeneration += 1;
+      webPlayerSeekInProgress = false;
+      webPlayerSeekStatusPending = false;
+      webPlayerDisplayedSeekTarget = null;
+      webPlayerQueuedSeekTarget = null;
+      if (watchPartySyncTimer) window.clearInterval(watchPartySyncTimer);
+      watchPartySyncTimer = null;
+      // Drop this viewer's media and timers without stopping a server pipeline
+      // that may still be shared by another guest, room, or ordinary viewer.
+      stopHlsSession({ skipProgress: true, localOnly: true });
+      setStatus(message);
+    }
+
     async function syncWatchPartyState() {
-      if (!WATCH_PARTY_MODE || watchPartySyncInFlight) return;
+      if (!WATCH_PARTY_MODE || watchPartyEndMessage || watchPartySyncInFlight) return;
       watchPartySyncInFlight = true;
       try {
         const video = document.getElementById('webPlayer');
@@ -2885,16 +2920,15 @@
         if (!watchPartyReadySent && video.readyState >= 2) await reportWatchPartyReady();
 
         const response = await fetch(watchPartyApiPath(`?buffering=${encodeURIComponent(String(Boolean(webPlayerBuffering)))}`), { credentials: 'same-origin', cache: 'no-store' });
+        if ([401, 403, 404, 410].includes(response.status)) {
+          finishWatchPartyPlayback('This Watch Together session is no longer available.');
+          return;
+        }
         if (!response.ok) throw new Error(`room sync failed (${response.status})`);
         const room = await response.json();
         renderWatchPartyMembers(room);
         if (room.status === 'ended') {
-          watchPartyPlaybackAllowed = false;
-          setWatchPartyPlaybackRate(video, 0);
-          video.pause();
-          setTransientStatus('The Watch Together room has ended.', 10000);
-          if (watchPartySyncTimer) window.clearInterval(watchPartySyncTimer);
-          watchPartySyncTimer = null;
+          finishWatchPartyPlayback('The Watch Together room has ended.');
           return;
         }
         if (room.status !== 'playing' || room.waitingForReady) {
@@ -2927,7 +2961,7 @@
     }
 
     function startWatchPartySync() {
-      if (!WATCH_PARTY_MODE || watchPartySyncTimer) return;
+      if (!WATCH_PARTY_MODE || watchPartyEndMessage || watchPartySyncTimer) return;
       syncWatchPartyState();
       watchPartySyncTimer = window.setInterval(syncWatchPartyState, 1000);
     }
@@ -4541,6 +4575,7 @@
     }
 
     function startKeepalive() {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       if (keepaliveTimer) clearInterval(keepaliveTimer);
       keepaliveTimer = setInterval(() => {
         if (!hlsSessionId) return;
@@ -4573,6 +4608,7 @@
     }
 
     function startProgressTracking() {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) return;
       stopProgressTracking();
       lastProgressSentAt = 0;
       lastProgressPosition = 0;
@@ -4781,6 +4817,7 @@
       if (hlsSessionId) {
         const id = hlsSessionId;
         hlsSessionId = '';
+        if (options.localOnly) return;
         fetch(apiUrl(`/video/hls/${encodeURIComponent(id)}/stop`), {
           method: 'POST',
           credentials: 'same-origin',
@@ -4955,6 +4992,7 @@
     let webPlayerStatusClearTimer = null;
 
     function setStatus(message, error) {
+      if (WATCH_PARTY_MODE && watchPartyEndMessage) { message = watchPartyEndMessage; error = false; }
       const status = document.getElementById('status');
       if (!status) return;
       if (webPlayerStatusClearTimer) {

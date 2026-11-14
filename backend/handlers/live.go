@@ -358,6 +358,7 @@ type xtreamChannelsFetch struct {
 // LiveHandler proxies remote M3U playlists through the backend and can transmux
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
+	catchupGrants      catchupGrants
 	discoveryOnce      sync.Once
 	discovery          *liveDiscovery
 	client             *http.Client
@@ -435,6 +436,24 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 }
 
 func (h *LiveHandler) FetchPlaylist(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.cfgManager.Load()
+	if err != nil {
+		http.Error(w, "live access unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if config.LiveAccountsManaged(settings.Live) {
+		allowed := false
+		for _, source := range resolvedLiveSources(h.resolveProfileLiveSource(r, settings)) {
+			if source.PlaylistURL != "" && strings.TrimSpace(source.PlaylistURL) == strings.TrimSpace(r.URL.Query().Get("url")) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			http.NotFound(w, r)
+			return
+		}
+	}
 	targetURL, err := h.parseRemoteURL(r.Context(), r.URL.Query().Get("url"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2330,12 +2349,21 @@ func (h *LiveHandler) isXtreamMode() bool {
 // resolveProfileLiveSource resolves the IPTV source for a legacy query-based
 // request. If the profile has per-profile IPTV overrides, those are merged
 // with the global settings.
+//
+// A caller may only resolve its own household's profiles (master and internal
+// callers excepted); any other profileId resolves to no sources at all.
 func (h *LiveHandler) resolveProfileLiveSource(r *http.Request, globalSettings config.Settings) models.ResolvedLiveSource {
-	return h.resolveProfileLiveSourceForID(r.URL.Query().Get("profileId"), globalSettings)
+	profileID := r.URL.Query().Get("profileId")
+	if !liveProfileAccessible(r, h.usersSvc, profileID) {
+		return models.ResolvedLiveSource{}
+	}
+	return h.resolveProfileLiveSourceForID(profileID, globalSettings)
 }
 
 func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSettings config.Settings) models.ResolvedLiveSource {
-	global := globalResolvedLiveSource(config.FilterSettingsForProfile(globalSettings, profileID))
+	accountID := liveAccountForProfile(h.usersSvc, profileID)
+	accountSettings := config.FilterLiveSettingsForAccount(globalSettings, accountID)
+	global := globalResolvedLiveSource(config.FilterSettingsForProfile(accountSettings, profileID))
 
 	if profileID == "" || h.userSettingsSvc == nil {
 		return global
@@ -2346,14 +2374,17 @@ func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSett
 		return global
 	}
 
-	return applyProfileLiveSources(global, globalSettings, profileID, userSettings)
+	return applyProfileLiveSources(global, globalSettings, profileID, userSettings, accountID)
 }
 
 // applyProfileLiveSources merges a profile's Live TV settings onto global,
 // which must already be filtered by config.FilterSettingsForProfile. Every
 // caller that decides or reports which Live TV sources a profile can use goes
 // through here so access checks, stream limits and the admin dashboard agree.
-func applyProfileLiveSources(global models.ResolvedLiveSource, globalSettings config.Settings, profileID string, userSettings *models.UserSettings) models.ResolvedLiveSource {
+func applyProfileLiveSources(global models.ResolvedLiveSource, globalSettings config.Settings, profileID string, userSettings *models.UserSettings, accountID string) models.ResolvedLiveSource {
+	if config.LiveAccountsManaged(globalSettings.Live) {
+		userSettings = accountManagedLivePreferences(userSettings)
+	}
 	if userSettings == nil {
 		return global
 	}
@@ -2363,8 +2394,8 @@ func applyProfileLiveSources(global models.ResolvedLiveSource, globalSettings co
 		// admin first edited it, so it can still hold sources the global
 		// Allowed Profiles setting has since withheld from this profile.
 		withheld := append(append([]config.LivePlaylistSource(nil), globalSettings.Live.Sources...), globalSettings.Live.PlaylistSources...)
-		resolved.Sources = dropWithheldLiveSources(resolved.Sources, withheld, profileID)
-		resolved.PlaylistSources = dropWithheldLiveSources(resolved.PlaylistSources, withheld, profileID)
+		resolved.Sources = dropWithheldLiveSources(resolved.Sources, withheld, profileID, accountID, globalSettings.Live.RequireAccountAssignment)
+		resolved.PlaylistSources = dropWithheldLiveSources(resolved.PlaylistSources, withheld, profileID, accountID, globalSettings.Live.RequireAccountAssignment)
 	}
 	return resolved
 }
@@ -2396,7 +2427,7 @@ func profileHasOwnLiveSources(profile *models.LiveTVSettings) bool {
 // provider identity) a global source not allowed for profileID, unless they
 // also match a global source the profile is allowed to use. Sources the
 // admin added only to this profile match no global source and are kept.
-func dropWithheldLiveSources(sources []models.LivePlaylistSource, global []config.LivePlaylistSource, profileID string) []models.LivePlaylistSource {
+func dropWithheldLiveSources(sources []models.LivePlaylistSource, global []config.LivePlaylistSource, profileID, accountID string, required bool) []models.LivePlaylistSource {
 	if len(sources) == 0 {
 		return sources
 	}
@@ -2404,7 +2435,7 @@ func dropWithheldLiveSources(sources []models.LivePlaylistSource, global []confi
 	allowed := make(map[string]bool)
 	for _, src := range global {
 		target := allowed
-		if !config.IsProfileAllowed(src.AllowedProfiles, profileID) {
+		if !config.IsProfileAllowed(src.AllowedProfiles, profileID) || !config.IsLiveAccountAllowed(src.AllowedAccounts, accountID, required) {
 			target = withheld
 		}
 		for _, key := range liveSourceMatchKeys(configPlaylistSourcesToModel([]config.LivePlaylistSource{src})[0]) {
@@ -2527,6 +2558,8 @@ func (h *LiveHandler) FetchFilteredChannelsForRequest(r *http.Request) ([]LiveCh
 					} else {
 						channels, err = h.fetchStremioChannels(r.Context(), source.ManifestURL, source.ProxyURL)
 					}
+				case "stalker":
+					channels, err = fetchStalkerChannels(r.Context(), stalkerConfigFromResolvedSource(source))
 				default:
 					var contents string
 					contents, err = h.fetchPlaylistContents(r.Context(), source.PlaylistURL, source.ProxyURL)
@@ -2625,6 +2658,10 @@ func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin 
 	}
 	profileID := request.ProfileID
 	requestedSourceID := request.SourceID
+	if !liveProfileAccessible(r, h.usersSvc, profileID) {
+		http.Error(w, `{"error":"profile not found"}`, http.StatusNotFound)
+		return
+	}
 	log.Printf(
 		"[live] GetChannels request start profileId=%q sourceId=%q paginated=%t offset=%d limit=%d categoryCount=%d favoriteCount=%d favoritesOnly=%q filterLength=%d",
 		profileID,

@@ -311,7 +311,7 @@ func (m *HLSManager) serveStableCopyMaster(w http.ResponseWriter, r *http.Reques
 		version = 7
 	}
 	content := fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:%d\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:%s\nstream.m3u8\n", version, strings.Join(attrs, ","))
-	content = appendAuthTokenToPlaylist(content, r.URL.Query().Get("token"))
+	content = appendAuthTokenToPlaylist(content, hlsChildAuthQuery(r, r.URL.Query().Get("token")))
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")

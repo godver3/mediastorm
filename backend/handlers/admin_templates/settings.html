@@ -3898,6 +3898,8 @@
         if (!fieldDef) return undefined;
         if (fieldDef.type === 'boolean') return false;
         if (fieldDef.type === 'number') return 0;
+        // Unset account assignment is "Legacy visibility", not an empty list.
+        if (fieldDef.optionsFrom === 'accounts') return undefined;
         if (['tags', 'weighted-tags', 'multiselect', 'ordered-multiselect'].includes(fieldDef.type)) return [];
         if (['text', 'password', 'select'].includes(fieldDef.type)) return '';
         return undefined;
@@ -6087,6 +6089,10 @@
     }
 
     function isLiveSourceAllowedForProfile(source, profileId) {
+        const profile = profilesData.find(p => p.id === profileId);
+        const accounts = source?.allowedAccounts;
+        if (Array.isArray(accounts) && !accounts.includes(profile?.accountId)) return false;
+        if (currentSettings.live?.requireAccountAssignment && !Array.isArray(accounts)) return false;
         const allowed = Array.isArray(source?.allowedProfiles) ? source.allowedProfiles : [];
         const id = String(profileId || '').trim().toLowerCase();
         return allowed.length === 0 || allowed.some(value => String(value).trim().toLowerCase() === id);
@@ -6101,7 +6107,14 @@
 
     // The source list shown and edited for the selected profile: its own list
     // when it has one, otherwise the inherited, profile-allowed global sources.
+    function liveSourcesManagedByAccount() {
+        const live = currentSettings.live || {};
+        return Boolean(live.requireAccountAssignment) || live.allowedAccounts != null ||
+            [...(live.sources || []), ...(live.playlistSources || [])].some(source => source.allowedAccounts != null);
+    }
+
     function profileLiveSourceList() {
+        if (liveSourcesManagedByAccount()) return profileInheritedLiveSources();
         const liveTV = userSettings?.liveTV;
         if (liveTV && Array.isArray(liveTV.sources) && (liveTV.sourcesOverride === true || liveTV.sources.length > 0)) {
             return liveTV.sources;
@@ -6561,7 +6574,9 @@
             case 'ordered-multiselect':
                 const msSelected = Array.isArray(value) ? value : [];
                 const msOrdered = fieldDef.type === 'ordered-multiselect';
-                const msTagsHtml = msSelected.length === 0 && fieldDef.optionsFrom === 'profiles'
+                const msTagsHtml = msSelected.length === 0 && fieldDef.optionsFrom === 'accounts'
+                    ? '<span class="tag"><span class="tag-text">'+(value == null ? 'Legacy visibility' : 'No accounts')+'</span></span>'
+                    : msSelected.length === 0 && fieldDef.optionsFrom === 'profiles'
                     ? '<span class="tag"><span class="tag-text">All profiles</span></span>'
                     : msSelected.map(v => '<span class="tag" title="'+escapeHtml(v).replace(/"/g, '&quot;')+'"><span class="tag-text">'+escapeHtml(resolveMultiselectValueLabel(fieldDef, v))+'</span></span>').join('');
                 const endpoint = fieldDef.optionsEndpoint || '';
@@ -6995,6 +7010,10 @@
         if (fieldDef?.optionsFrom === 'navigationTabs') {
             return homePageNavigationOptions(fieldDef.options).find(option => option.value === value)?.label || value;
         }
+        if (fieldDef?.optionsFrom === 'accounts') {
+            const account = accountsData.find(a => a.id === value);
+            return account?.username || value;
+        }
         if (fieldDef?.optionsFrom === 'profiles') {
             const profile = profilesData.find(p => p.id === value);
             return profile?.name || value;
@@ -7060,7 +7079,11 @@
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
         // Fetch options from endpoint (use admin API with global basePath for session-based auth)
-        if (optionsFrom === 'profiles') {
+        if (optionsFrom === 'accounts') {
+            if (!Array.isArray(accountsData) || accountsData.length === 0) await loadAccounts();
+            multiselectState.options = (accountsData || []).map(account => ({ value: account.id, label: account.username || account.id }));
+            renderMultiselectOptions();
+        } else if (optionsFrom === 'profiles') {
             if (!Array.isArray(profilesData) || profilesData.length === 0) {
                 await loadProfiles();
             }
@@ -7659,6 +7682,11 @@
                 case 'boolean': defaultValue = (sectionKey.endsWith('sources') || sectionKey.endsWith('playlistSources')) && fieldKey === 'enabled'; break;
                 case 'number': defaultValue = 0; break;
                 case 'multiselect':
+                    // Account assignment starts unset ("Legacy visibility"). An
+                    // empty list means "no accounts" and switches Live TV into
+                    // account-managed mode, so a new provider must not get one.
+                    defaultValue = fieldDef.optionsFrom === 'accounts' ? null : [];
+                    break;
                 case 'checkboxes':
                 case 'tags':
                 case 'weighted-tags':
@@ -9476,11 +9504,19 @@
     }
 
     function renderLiveSourceSection(sectionKey, sectionDef, items, basePath, profileInheritanceControls) {
+        if (selectedUserId && liveSourcesManagedByAccount()) {
+            const names = profileInheritedLiveSources().map(source => '<li>'+escapeHtml(source.name || source.id || 'Provider')+'</li>').join('');
+            return '<p class="form-hint">Provider access is managed for the household. Change assignments in global Live TV settings.</p>' +
+                (names ? '<ul>'+names+'</ul>' : '<p>No providers are assigned to this household.</p>') +
+                '<p class="form-hint">Favorites and hidden channels remain personal to this profile.</p>';
+        }
+
         const isTestable = testableSections.includes(sectionKey);
         const cards = items.map((item, index) => {
             const fieldEntries = Object.entries(sectionDef.fields)
                 .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
                 .map(([fieldKey, fieldDef]) => {
+                    if (fieldDef.globalOnly && (selectedUserId || selectedClientId)) return null;
                     if ((settingsLevel === 'basic' || settingsLevel === 'essentials') && !searchTerm && advancedArrayFields.has(sectionKey + '.' + fieldKey)) return null;
                     if (!providerTableFieldVisible(item, fieldDef)) return null;
                     if (item.mode === 'hdhomerun') {
@@ -9994,7 +10030,12 @@
             '}'+
             '</style>';
 
-        const addCustomListForm = '<div class="add-custom-list-form">'+
+        const regionalDiscoveryForm = '<div class="add-custom-list-form" id="regionalDiscoveryForm">'+
+            '<h4>Regional discovery</h4><p class="form-hint">Netflix weekly country charts use official viewing ranks. Provider rows use TMDB popularity within the selected country catalogue. Neither proves an available playback source.</p>'+
+            '<div class="form-row"><label>Country<input class="form-input" id="regionalDiscoveryCountry" value="" placeholder="US" maxlength="2" aria-label="Discovery country"></label>'+
+            '<label>Rows<select id="regionalDiscoveryPreset"><option value="netflix-chart">Netflix weekly country Top 10</option><option value="cinema">Recent cinema releases</option><option value="upcoming-cinema">Upcoming cinema releases</option><option value="netflix">Popular on Netflix</option><option value="prime">Popular on Prime Video</option><option value="disney">Popular on Disney+</option><option value="appletv">Popular on Apple TV</option><option value="paramount">Popular on Paramount+</option><option value="wow">Popular on WOW (DE/AT only)</option><option value="acclaimed">Highly rated streaming titles</option></select></label>'+
+            '<button type="button" class="btn btn-secondary" onclick="addRegionalDiscoveryShelves()">Add regional rows</button></div></div>';
+        const addCustomListForm = regionalDiscoveryForm + '<div class="add-custom-list-form">'+
             '<h4 style="margin:0 0 12px 0;font-size:14px;font-weight:500;">Add Home Shelf</h4>'+
             '<div class="form-row">'+
                 '<div class="form-group" style="flex:0 0 200px;">'+
@@ -10731,6 +10772,15 @@
         ['Companies', 'companies', '420'],
         ['Networks', 'networks', '213'],
         ['Year', 'year', '2024'],
+        ['Release country', 'region', 'DE'],
+        ['Watch country', 'watch_region', 'DE'],
+        ['Watch providers', 'with_watch_providers', '8|1796'],
+        ['Offer types', 'with_watch_monetization_types', 'flatrate|ads'],
+        ['Release types', 'with_release_type', '2|3'],
+        ['Local release from', 'release_date.gte', 'today-45d'],
+        ['Local release to', 'release_date.lte', 'today'],
+        ['Date timezone', 'date_timezone', 'Europe/Berlin'],
+        ['Country chart', 'country_chart', 'netflix'],
     ];
 
     function tmdbFilterInputId(prefix, key) {
@@ -11287,6 +11337,25 @@
         const listSelect = document.getElementById('newShelfTraktList');
         const listName = listSelect?.selectedOptions?.[0]?.textContent || 'Trakt List';
         nameInput.value = listName;
+    }
+
+    async function addRegionalDiscoveryShelves() {
+        const country = document.getElementById('regionalDiscoveryCountry')?.value?.trim().toUpperCase();
+        const preset = document.getElementById('regionalDiscoveryPreset')?.value;
+        const scopeProfile = selectedUserId, scopeClient = selectedClientId;
+        const targetView = editingHomeView;
+        try {
+            const response = await fetch(basePath + '/api/discovery/presets?' + new URLSearchParams({region: country, preset}));
+            if (!response.ok) throw new Error((await response.json()).error || 'Unable to load discovery presets');
+            const data = await response.json();
+            if (scopeProfile !== selectedUserId || scopeClient !== selectedClientId || targetView !== editingHomeView) { showToast('Select the intended profile and try again', 'error'); return; }
+            const shelves = getEditableHomeShelves();
+            const ids = new Set(shelves.map(shelf => shelf.id));
+            let order = Math.max(...shelves.map(shelf => shelf.order || 0), -1);
+            for (const shelf of data.shelves || []) if (!ids.has(shelf.id)) { shelves.push({...shelf, order: ++order}); ids.add(shelf.id); }
+            renderSettings();
+            showToast('Regional rows added. Save changes to keep them.');
+        } catch (error) { showToast(error.message, 'error'); }
     }
 
     // Add custom shelf

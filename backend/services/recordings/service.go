@@ -277,6 +277,9 @@ func (s *Service) createRecording(kind models.RecordingType, userID, channelID, 
 	if recording.Title == "" {
 		recording.Title = recording.ChannelName
 	}
+	if err := s.authorizeSource(&recording); err != nil {
+		return models.Recording{}, err
+	}
 	if err := s.repo.Create(context.Background(), &recording); err != nil {
 		return models.Recording{}, err
 	}
@@ -739,6 +742,10 @@ func (s *Service) startRecording(recording models.Recording) {
 		if err := s.repo.Update(context.Background(), &recording); err != nil {
 			log.Printf("[recordings] mark expired recording failed: %v", err)
 		}
+		return
+	}
+	if err := s.authorizeSource(&recording); err != nil {
+		s.finalizeFailure(recording, now, err.Error())
 		return
 	}
 	recording.Status = models.RecordingStatusStarting

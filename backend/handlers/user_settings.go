@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/models"
 	user_settings "novastream/services/user_settings"
 
@@ -79,6 +80,7 @@ func (h *UserSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	scopeUserLiveSettings(&settings, h.ConfigManager, userID, auth.GetAccountID(r), auth.IsMaster(r))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }
@@ -132,10 +134,17 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	restoreScopedLiveSettings(&settings, oldSettings, h.ConfigManager, userID, auth.GetAccountID(r), auth.IsMaster(r))
 
 	if err := h.Service.Update(userID, settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Update keeps the stored intro/recap auto-skip values regardless of the
+	// body; report those rather than whatever the client sent.
+	if saved, err := h.Service.Get(userID); err == nil && saved != nil {
+		settings.Playback.IntroAutoSkip = saved.Playback.IntroAutoSkip
+		settings.Playback.RecapAutoSkip = saved.Playback.RecapAutoSkip
 	}
 
 	var previous models.UserSettings
@@ -299,6 +308,8 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			StreamMigrationEnabled:     models.BoolPtr(globalSettings.Playback.StreamMigrationEnabled),
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
+			IntroAutoSkip:              models.BoolPtr(false),
+			RecapAutoSkip:              models.BoolPtr(false),
 			CreditsAutoSkip:            models.BoolPtr(globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection),
 			ScrobbleStartDelaySeconds:  models.IntPtr(globalSettings.Playback.ScrobbleStartDelaySeconds),
 			MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),

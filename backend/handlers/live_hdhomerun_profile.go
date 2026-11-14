@@ -33,6 +33,9 @@ func configuredProfileLiveHostPolicy(manager *config.Manager, preferences LiveUs
 	if err != nil {
 		return base
 	}
+	if config.LiveAccountsManaged(settings.Live) {
+		return base
+	}
 	allowed := map[string]bool{}
 	add := func(address string) {
 		raw, err := config.HDHomeRunURL(address, "/lineup.m3u")

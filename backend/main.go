@@ -1021,6 +1021,7 @@ func main() {
 	userSettingsHandler.GuideChanged = reconcileProfileLiveGuide
 
 	epgHandler := handlers.NewEPGHandler(epgService, cfgManager, userSettingsService)
+	epgHandler.SetLiveChannelProvider(liveHandler)
 	liveHandler.SetEPGService(epgService)
 	if recordingsService != nil {
 		recordingsService.SetRuleProviders(epgService, liveHandler, func(profileID string) time.Duration {
@@ -1084,6 +1085,7 @@ func main() {
 		recordingsHandler = handlers.NewRecordingsHandler(nil, userService)
 	}
 	recordingsHandler.SetUserSettingsService(userSettingsService)
+	recordingsHandler.SetLiveAccessProvider(cfgManager, liveHandler)
 
 	// Shareable playback links: capture current stream + tracks, mint a
 	// short-lived stream-scoped session on open. Persisted to Postgres so links
@@ -1328,6 +1330,7 @@ func main() {
 	}
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/recommendation-interests", adminUIHandler.RequireAuth(metadataHandler.ClearSearchInterests)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
@@ -1887,6 +1890,7 @@ func main() {
 
 	// Protected account routes - User Settings API
 	r.HandleFunc("/account/api/recommendation-interests", adminUIHandler.RequireAuth(metadataHandler.ClearSearchInterests)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
@@ -1934,15 +1938,7 @@ func main() {
 
 	// One-time share link consumption (public, no auth — opening mints a scoped session).
 	r.HandleFunc("/share/{token}", shareHandler.Open).Methods(http.MethodGet)
-	if watchPartyHandler != nil {
-		r.HandleFunc("/watch-party", watchPartyHandler.Landing).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/code", watchPartyHandler.ResolveCode).Methods(http.MethodPost)
-		r.HandleFunc("/watch-party/code/{code}", watchPartyHandler.OpenCode).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/code/{code}", watchPartyHandler.JoinCode).Methods(http.MethodPost)
-		r.HandleFunc("/watch-party/room/{roomID}", watchPartyHandler.RoomPage).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/{token}", watchPartyHandler.OpenToken).Methods(http.MethodGet)
-		r.HandleFunc("/watch-party/{token}", watchPartyHandler.JoinToken).Methods(http.MethodPost)
-	}
+	api.RegisterWatchPartyPageRoutes(r, watchPartyHandler)
 
 	// Dedicated consumer web app served from the frontend Expo web export.
 	webAppHandler := handlers.NewWebAppHandler(handlers.ResolveWebAppDir(), "/watch")
@@ -2156,6 +2152,55 @@ func main() {
 		}
 
 		return infos
+	})
+	metadataService.SetRegionalDiscoveryProvider(func() []metadata.RegionalDiscoveryWarmShelf {
+		var result []metadata.RegionalDiscoveryWarmShelf
+		global, err := cfgManager.Load()
+		if err != nil {
+			return nil
+		}
+		add := func(id string, enabled bool, sourceType, sourceID, mediaType, query, sort, language string) {
+			if !enabled || (!strings.HasPrefix(id, "regional-") && !metadata.IsCountryChartQuery(query)) {
+				return
+			}
+			result = append(result, metadata.RegionalDiscoveryWarmShelf{Language: language, Options: metadata.TMDBListOptions{SourceType: sourceType, SourceID: sourceID, MediaType: mediaType, DiscoverQuery: query, Sort: sort}})
+		}
+		addViews := func(views map[string]config.HomeViewSettings, language string) {
+			for _, view := range views {
+				if view.Deleted || view.Shelves == nil {
+					continue
+				}
+				for _, shelf := range *view.Shelves {
+					if shelf.Type == "tmdb" {
+						add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, language)
+					}
+				}
+			}
+		}
+		language := global.Metadata.EffectivePrimaryLanguage()
+		for _, shelf := range global.HomeShelves.Shelves {
+			if shelf.Type == "tmdb" {
+				add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, language)
+			}
+		}
+		addViews(global.HomeShelves.Views, language)
+		for id := range userSettingsService.GetUsersWithOverrides() {
+			preferences, err := userSettingsService.Get(id)
+			if err != nil || preferences == nil {
+				continue
+			}
+			profileLanguage := preferences.Metadata.PrimaryLanguage
+			if profileLanguage == "" {
+				profileLanguage = language
+			}
+			addViews(preferences.HomeShelves.Views, profileLanguage)
+			for _, shelf := range preferences.HomeShelves.Shelves {
+				if shelf.Type == "tmdb" {
+					add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, profileLanguage)
+				}
+			}
+		}
+		return result
 	})
 	metadataService.SetRatingItemsProvider(func() []metadata.RatingItem {
 		seen := make(map[string]bool)

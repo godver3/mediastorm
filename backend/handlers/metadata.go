@@ -2179,7 +2179,7 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 		Offset:        offset,
 		ArtworkLimit:  loadOpts.ArtworkLimit,
 	}
-	if _, ok := service.(shelfCardsService); ok && progressiveShelfRequest(r) {
+	if _, ok := service.(shelfCardsService); ok && progressiveShelfRequest(r) && !metadatapkg.IsCountryChartQuery(opts.DiscoverQuery) {
 		response, err := h.progressiveTMDBShelf(r, service, svc, opts, userID, hideUnreleased, hideWatched, limit, offset)
 		if err != nil {
 			writeJSONError(w, err.Error(), http.StatusBadGateway)
@@ -2237,7 +2237,7 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 	}
 	enrichTrendingRatings(items, service)
 
-	response := DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards", Items: items, Total: total}
+	response := DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards" && !metadatapkg.IsCountryChartQuery(opts.DiscoverQuery), Items: items, Total: total}
 	if hideUnreleased || hideWatched || total != unfilteredTotal {
 		response.UnfilteredTotal = unfilteredTotal
 	}

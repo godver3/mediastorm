@@ -33,6 +33,24 @@ func requireLiveStreamProfile(w http.ResponseWriter, r *http.Request, users User
 // media requests retain the ordinary configured-origin policy.
 func authorizeLiveStreamURL(r *http.Request, raw string, manager ConfigProvider, catalog LiveChannelProvider) (bool, error) {
 	raw = strings.TrimSpace(raw)
+	if manager != nil {
+		settings, err := manager.Load()
+		if err != nil {
+			return false, errors.New("live access unavailable")
+		}
+		profileID := strings.TrimSpace(r.URL.Query().Get("profileId"))
+		// The master account without a profile keeps its global access, as in
+		// the guide (filterEPGChannelIDs).
+		if config.LiveAccountsManaged(settings.Live) && (profileID != "" || !auth.IsMaster(r)) {
+			channels, err := visibleLiveChannels(r, catalog, profileID)
+			if err != nil {
+				return false, errors.New("live channel not available")
+			}
+			if !liveStreamURLInCatalog(r, raw, profileID, channels, catalog) {
+				return false, errors.New("live channel not available")
+			}
+		}
+	}
 	basePolicy := configuredProviderHostPolicy(manager)
 	if err := requestsecurity.ValidateOutboundURL(r.Context(), raw, basePolicy); err == nil {
 		return false, nil
@@ -98,4 +116,24 @@ func authorizeLiveStreamURL(r *http.Request, raw string, manager ConfigProvider,
 func isHDHomeRunStreamURL(parsed *url.URL) bool {
 	return parsed != nil && parsed.Scheme == "http" && parsed.Hostname() != "" && parsed.Port() == "5004" &&
 		parsed.User == nil && parsed.Fragment == "" && parsed.RawPath == "" && hdHomeRunChannelPath.MatchString(parsed.Path)
+}
+
+// catchupURLIssuer is implemented by the Live TV handler, which remembers the
+// catch-up URLs it handed to each profile.
+type catchupURLIssuer interface {
+	catchupURLIssued(profileID, raw string) bool
+}
+
+// liveStreamURLInCatalog reports whether raw is a visible channel's stream URL
+// or a catch-up (archive) URL that GetCatchup issued to this profile for one
+// of its visible channels. Catch-up URLs carry a different path and time
+// parameters, so they never match a channel URL exactly.
+func liveStreamURLInCatalog(r *http.Request, raw, profileID string, channels []LiveChannel, catalog LiveChannelProvider) bool {
+	for _, channel := range channels {
+		if strings.TrimSpace(channel.URL) == raw {
+			return true
+		}
+	}
+	issuer, ok := catalog.(catchupURLIssuer)
+	return ok && issuer.catchupURLIssued(profileID, raw)
 }

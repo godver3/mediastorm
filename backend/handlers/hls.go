@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"novastream/services/castcaps"
+	"novastream/services/profileunlock"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1269,8 +1270,26 @@ func (m *HLSManager) buildSessionPlaylistURL(session *HLSSession) string {
 	return fmt.Sprintf("/video/hls/%s/stream.m3u8", session.ID)
 }
 
-func appendAuthTokenToPlaylist(content string, authToken string) string {
-	if authToken == "" {
+// hlsChildAuthQuery is the query string carried from a playlist request to
+// the segment, init, subtitle and variant URLs it lists: the auth token and
+// any profile unlock tokens. Players such as hls.js on the web player and
+// Chromecast receivers fetch those URLs without the original headers, and
+// PIN-protected HLS resources check the unlock on every one of them.
+func hlsChildAuthQuery(r *http.Request, authToken string) string {
+	values := url.Values{}
+	if authToken != "" {
+		values.Set("token", authToken)
+	}
+	for _, unlock := range profileunlock.RequestTokens(r) {
+		values.Add(profileunlock.QueryParam, unlock)
+	}
+	return values.Encode()
+}
+
+// appendAuthTokenToPlaylist appends authQuery (an encoded query string such
+// as hlsChildAuthQuery returns) to every URL the playlist lists.
+func appendAuthTokenToPlaylist(content string, authQuery string) string {
+	if authQuery == "" {
 		return content
 	}
 
@@ -1278,12 +1297,12 @@ func appendAuthTokenToPlaylist(content string, authToken string) string {
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if isHLSMediaURI(trimmed) {
-			lines[i] = line + tokenSeparator(line) + "token=" + authToken
+			lines[i] = line + tokenSeparator(line) + authQuery
 		} else if strings.Contains(line, "#EXT-X-MAP:URI=") {
-			lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?token=`+authToken+`"`, 1)
+			lines[i] = strings.Replace(line, `"init.mp4"`, `"init.mp4?`+authQuery+`"`, 1)
 		} else if strings.Contains(line, "URI=") &&
 			(strings.Contains(line, ".vtt") || strings.Contains(line, ".webvtt") || strings.Contains(line, ".m3u8")) {
-			lines[i] = appendAuthTokenToQuotedURIs(line, authToken)
+			lines[i] = appendAuthTokenToQuotedURIs(line, authQuery)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -1341,7 +1360,7 @@ func tokenSeparator(uri string) string {
 	return "?"
 }
 
-func appendAuthTokenToQuotedURIs(line string, authToken string) string {
+func appendAuthTokenToQuotedURIs(line string, authQuery string) string {
 	for _, ext := range []string{".vtt", ".webvtt", ".m3u8"} {
 		searchStart := 0
 		for {
@@ -1358,13 +1377,13 @@ func appendAuthTokenToQuotedURIs(line string, authToken string) string {
 				break
 			}
 			uriEnd += idx
-			if strings.Contains(line[idx:uriEnd], "token=") {
+			if strings.Contains(line[idx:uriEnd], "token=") || strings.Contains(line[idx:uriEnd], profileunlock.QueryParam+"=") {
 				searchStart = uriEnd + 1
 				continue
 			}
 			separator := tokenSeparator(line[idx:uriEnd])
-			line = line[:uriEnd] + separator + "token=" + authToken + line[uriEnd:]
-			searchStart = uriEnd + len(separator) + len("token=") + len(authToken) + 1
+			line = line[:uriEnd] + separator + authQuery + line[uriEnd:]
+			searchStart = uriEnd + len(separator) + len(authQuery) + 1
 		}
 	}
 	return line
@@ -6169,7 +6188,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 		playlistContent = strings.TrimRight(playlistContent, "\n") + "\n#EXT-X-ENDLIST\n"
 	}
 
-	playlistContent = appendAuthTokenToPlaylist(playlistContent, authToken)
+	playlistContent = appendAuthTokenToPlaylist(playlistContent, hlsChildAuthQuery(r, authToken))
 	playlistContent = appendSegmentCacheBusterToPlaylist(playlistContent, seekGeneration)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
@@ -6321,7 +6340,7 @@ func (m *HLSManager) ServeMasterPlaylist(w http.ResponseWriter, r *http.Request,
 	log.Printf("[hls] session %s: master playlist subtitle selection requested=%d defaultIndex=%d defaultName=%q defaultLanguage=%q totalTextTracks=%d",
 		sessionID, session.SubtitleTrackIndex, defaultTrackIndex, defaultTrackName, defaultTrackLanguage, len(subtitleStreams))
 
-	playlistContent := appendAuthTokenToPlaylist(builder.String(), authToken)
+	playlistContent := appendAuthTokenToPlaylist(builder.String(), hlsChildAuthQuery(r, authToken))
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -6383,7 +6402,7 @@ func (m *HLSManager) ServeSubtitlePlaylist(w http.ResponseWriter, r *http.Reques
 		subtitleTrack,
 		time.Now().UnixNano(),
 	)
-	playlistContent = appendAuthTokenToPlaylist(playlistContent, authToken)
+	playlistContent = appendAuthTokenToPlaylist(playlistContent, hlsChildAuthQuery(r, authToken))
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")

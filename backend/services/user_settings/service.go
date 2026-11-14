@@ -322,6 +322,12 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.RewindOnPlaybackStart == nil {
 			settings.Playback.RewindOnPlaybackStart = defaults.Playback.RewindOnPlaybackStart
 		}
+		if settings.Playback.IntroAutoSkip == nil {
+			settings.Playback.IntroAutoSkip = defaults.Playback.IntroAutoSkip
+		}
+		if settings.Playback.RecapAutoSkip == nil {
+			settings.Playback.RecapAutoSkip = defaults.Playback.RecapAutoSkip
+		}
 		if settings.Playback.CreditsAutoSkip == nil {
 			settings.Playback.CreditsAutoSkip = defaults.Playback.CreditsAutoSkip
 		}
@@ -705,6 +711,12 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	if settings.Recommendations == nil {
 		settings.Recommendations = s.settings[userID].Recommendations
 	}
+	// Intro and recap auto-skip change only through UpdateSkipping (PATCH
+	// /settings/skipping). Clients send back the whole document they last
+	// read, often from a cache older than the latest toggle, so a full PUT
+	// must not overwrite these two values, whether it omits them or not.
+	settings.Playback.IntroAutoSkip = s.settings[userID].Playback.IntroAutoSkip
+	settings.Playback.RecapAutoSkip = s.settings[userID].Playback.RecapAutoSkip
 	if isSettingsEmpty(settings) {
 		log.Printf("[user-settings] Update(%q): settings empty, deleting entry", userID)
 		delete(s.settings, userID)

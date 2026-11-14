@@ -686,6 +686,9 @@ var SettingsSchema = map[string]interface{}{
 		"order":    2,
 		"testable": true,
 		"fields": map[string]interface{}{
+			"requireAccountAssignment": map[string]interface{}{"type": "boolean", "label": "Require Account Assignment", "description": "Deny unassigned providers and prevent profile settings from defining additional providers. Assign accounts before enabling this for an existing server.", "order": 0, "globalOnly": true},
+			"allowedAccounts":          map[string]interface{}{"type": "multiselect", "label": "Legacy Provider Accounts", "optionsFrom": "accounts", "description": "Access to the older single-provider connection. Named providers have their own account assignments.", "order": 0.1, "globalOnly": true},
+
 			"mode":                        map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "hdhomerun", "label": "HDHomeRun"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}, {"value": "stalker", "label": "Stalker Portal"}}, "description": "How to source the IPTV playlist", "order": 0},
 			"hdhomerunHost":               map[string]interface{}{"type": "text", "label": "HDHomeRun Tuner Address", "description": "Tuner IP or hostname reachable from the backend (for example 192.168.1.100 or hdhomerun.local). Channels are loaded automatically from the tuner.", "placeholder": "192.168.1.100", "required": true, "showWhen": map[string]interface{}{"field": "mode", "value": "hdhomerun"}, "order": 5, "group": "connection", "groupLabel": "Connection"},
 			"hdhomerunGuideEmail":         map[string]interface{}{"type": "text", "label": "HDHomeRun Guide Email", "description": "Email associated with your HDHomeRun account. Required, together with the guide device IDs, to download the full guide. Without both, only the limited guide from automatic tuner authentication is available.", "placeholder": "you@example.com", "showWhen": map[string]interface{}{"field": "mode", "value": "hdhomerun"}, "order": 6, "group": "connection", "groupLabel": "Connection"},
@@ -733,6 +736,11 @@ var SettingsSchema = map[string]interface{}{
 			"name":    map[string]interface{}{"type": "text", "label": "Name", "description": "Display name shown in the apps.", "order": 1, "group": "source", "groupLabel": "Source", "groupDescription": "Identity and how this provider is sourced."},
 			"mode":    map[string]interface{}{"type": "select", "label": "Source Type", "options": []map[string]string{{"value": "m3u", "label": "M3U Playlist URL"}, {"value": "hdhomerun", "label": "HDHomeRun"}, {"value": "xtream", "label": "Xtream Codes"}, {"value": "stremio", "label": "Stremio Addon"}, {"value": "stalker", "label": "Stalker Portal"}}, "description": "How to source this IPTV provider.", "order": 2, "group": "source", "groupLabel": "Source", "groupDescription": "Identity and how this provider is sourced."},
 			"enabled": map[string]interface{}{"type": "boolean", "label": "Enabled", "description": "Include this source in Live TV.", "order": 3, "group": "source", "groupLabel": "Source", "groupDescription": "Identity and how this provider is sourced."},
+			"allowedAccounts": map[string]interface{}{
+				"type": "multiselect", "label": "Allowed Accounts", "optionsFrom": "accounts", "order": 3.5, "globalOnly": true,
+				"description": "Select the households that may use this provider. An explicit empty selection grants access to nobody. Existing profile restrictions apply in addition.",
+				"group":       "source", "groupLabel": "Source",
+			},
 			"allowedProfiles": map[string]interface{}{
 				"type":             "multiselect",
 				"label":            "Allowed Profiles",
@@ -4074,6 +4082,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			json.NewEncoder(w).Encode(map[string]any{})
 			return
 		}
+		if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
+			scopeUserLiveSettings(userSettings, h.configManager, userID, accountID, false)
+		}
 		json.NewEncoder(w).Encode(userSettings)
 		return
 	}
@@ -4211,6 +4222,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
+		scopeUserLiveSettings(&userSettings, h.configManager, userID, accountID, false)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userSettings)
 }
@@ -4239,6 +4253,9 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 	}
 
 	previous, _ := h.userSettingsService.Get(userID)
+	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
+		restoreScopedLiveSettings(&settings, previous, h.configManager, userID, accountID, false)
+	}
 	if err := h.userSettingsService.Update(userID, settings); err != nil {
 		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return

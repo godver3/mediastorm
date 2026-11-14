@@ -736,6 +736,7 @@ func (f *LiveTVFilterSettings) UnmarshalJSON(data []byte) error {
 
 // LivePlaylistSource represents a named M3U playlist source.
 type LivePlaylistSource struct {
+	AllowedAccounts         *[]string            `json:"allowedAccounts,omitempty"` // Nil retains legacy visibility unless account assignment is required
 	ID                      string               `json:"id"`
 	Name                    string               `json:"name"`
 	Mode                    string               `json:"mode,omitempty"`
@@ -789,31 +790,33 @@ type EPGSettings struct {
 
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
-	Mode                    string               `json:"mode"`        // "m3u", "hdhomerun", "xtream", "stremio", or "stalker"
-	PlaylistURL             string               `json:"playlistUrl"` // M3U playlist URL (used when mode is "m3u")
-	HDHomeRunHost           string               `json:"hdhomerunHost,omitempty"`
-	HDHomeRunGuideEmail     string               `json:"hdhomerunGuideEmail,omitempty"`
-	HDHomeRunGuideDeviceIDs string               `json:"hdhomerunGuideDeviceIds,omitempty"`
-	ManifestURL             string               `json:"manifestUrl,omitempty"`
-	ProxyURL                string               `json:"proxyUrl,omitempty"`
-	Sources                 []LivePlaylistSource `json:"sources,omitempty"`
-	PlaylistSources         []LivePlaylistSource `json:"playlistSources,omitempty"`
-	XtreamHost              string               `json:"xtreamHost"`     // Xtream Codes server URL (e.g., "http://example.com:8080")
-	XtreamUsername          string               `json:"xtreamUsername"` // Xtream Codes username
-	XtreamPassword          string               `json:"xtreamPassword"` // Xtream Codes password
-	StalkerPortalURL        string               `json:"stalkerPortalUrl,omitempty"`
-	StalkerMAC              string               `json:"stalkerMac,omitempty"`
-	StalkerSerialNumber     string               `json:"stalkerSerialNumber,omitempty"`
-	StalkerDeviceID         string               `json:"stalkerDeviceId,omitempty"`
-	StalkerDeviceID2        string               `json:"stalkerDeviceId2,omitempty"`
-	StalkerSignature        string               `json:"stalkerSignature,omitempty"`
-	StalkerModel            string               `json:"stalkerModel,omitempty"`
-	MaxStreams              int                  `json:"maxStreams"` // Maximum concurrent Live TV streams per provider (0 = unlimited)
-	PlaylistCacheTTLHours   int                  `json:"playlistCacheTtlHours"`
-	ProbeSizeMB             int                  `json:"probeSizeMb"`        // FFmpeg probesize in MB (0 = default ~5MB)
-	AnalyzeDurationSec      int                  `json:"analyzeDurationSec"` // FFmpeg analyzeduration in seconds (0 = default ~5s)
-	LowLatency              bool                 `json:"lowLatency"`         // Enable low-latency mode (nobuffer + low_delay flags)
-	StreamFormat            string               `json:"streamFormat"`       // "hls" (default) or "direct" - how to deliver live streams to clients
+	RequireAccountAssignment bool                 `json:"requireAccountAssignment"`
+	AllowedAccounts          *[]string            `json:"allowedAccounts,omitempty"` // Access to a legacy single-source connection
+	Mode                     string               `json:"mode"`                      // "m3u", "hdhomerun", "xtream", "stremio", or "stalker"
+	PlaylistURL              string               `json:"playlistUrl"`               // M3U playlist URL (used when mode is "m3u")
+	HDHomeRunHost            string               `json:"hdhomerunHost,omitempty"`
+	HDHomeRunGuideEmail      string               `json:"hdhomerunGuideEmail,omitempty"`
+	HDHomeRunGuideDeviceIDs  string               `json:"hdhomerunGuideDeviceIds,omitempty"`
+	ManifestURL              string               `json:"manifestUrl,omitempty"`
+	ProxyURL                 string               `json:"proxyUrl,omitempty"`
+	Sources                  []LivePlaylistSource `json:"sources,omitempty"`
+	PlaylistSources          []LivePlaylistSource `json:"playlistSources,omitempty"`
+	XtreamHost               string               `json:"xtreamHost"`     // Xtream Codes server URL (e.g., "http://example.com:8080")
+	XtreamUsername           string               `json:"xtreamUsername"` // Xtream Codes username
+	XtreamPassword           string               `json:"xtreamPassword"` // Xtream Codes password
+	StalkerPortalURL         string               `json:"stalkerPortalUrl,omitempty"`
+	StalkerMAC               string               `json:"stalkerMac,omitempty"`
+	StalkerSerialNumber      string               `json:"stalkerSerialNumber,omitempty"`
+	StalkerDeviceID          string               `json:"stalkerDeviceId,omitempty"`
+	StalkerDeviceID2         string               `json:"stalkerDeviceId2,omitempty"`
+	StalkerSignature         string               `json:"stalkerSignature,omitempty"`
+	StalkerModel             string               `json:"stalkerModel,omitempty"`
+	MaxStreams               int                  `json:"maxStreams"` // Maximum concurrent Live TV streams per provider (0 = unlimited)
+	PlaylistCacheTTLHours    int                  `json:"playlistCacheTtlHours"`
+	ProbeSizeMB              int                  `json:"probeSizeMb"`        // FFmpeg probesize in MB (0 = default ~5MB)
+	AnalyzeDurationSec       int                  `json:"analyzeDurationSec"` // FFmpeg analyzeduration in seconds (0 = default ~5s)
+	LowLatency               bool                 `json:"lowLatency"`         // Enable low-latency mode (nobuffer + low_delay flags)
+	StreamFormat             string               `json:"streamFormat"`       // "hls" (default) or "direct" - how to deliver live streams to clients
 	// TimeshiftMinutes is how far back an Android TV client can pause or rewind a live channel,
 	// kept as HLS segments on this server (0 = off, the default). See LiveSettings.TimeshiftWindow.
 	TimeshiftMinutes int                  `json:"timeshiftMinutes"`

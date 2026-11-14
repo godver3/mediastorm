@@ -10,6 +10,9 @@ import (
 // ProfileHDHomeRunSources returns explicit tuner overrides; inherited global
 // tuners are already collected from settings. Pointer fields preserve opt-outs.
 func ProfileHDHomeRunSources(profile models.LiveTVSettings, global config.LiveSettings) []config.LivePlaylistSource {
+	if config.LiveAccountsManaged(global) {
+		return nil
+	}
 	enabled := global.EPG.Enabled
 	if profile.EPG != nil && profile.EPG.Enabled != nil {
 		enabled = *profile.EPG.Enabled

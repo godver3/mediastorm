@@ -511,6 +511,8 @@ type PlaybackSettings struct {
 	StreamMigrationEnabled        *bool     `json:"streamMigrationEnabled,omitempty"`              // Switch to the next ranked stream when native playback cannot sustain the current stream
 	IgnoreDVCompatibilityCheck    *bool     `json:"ignoreDolbyVisionCompatibilityCheck,omitempty"` // Skip Android display DV capability check before playback
 	CreditsDetectionEnabled       *bool     `json:"creditsDetectionEnabled,omitempty"`             // Enable on-device credits detection/OCR during playback
+	IntroAutoSkip                 *bool     `json:"introAutoSkip,omitempty"`                       // Automatically skip known intro segments
+	RecapAutoSkip                 *bool     `json:"recapAutoSkip,omitempty"`                       // Automatically skip known recap segments
 	CreditsAutoSkip               *bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	ScrobbleStartDelaySeconds     *int      `json:"scrobbleStartDelaySeconds,omitempty"`           // Active playback time before real-time scrobble events begin
 	CreditsDetection              bool      `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
@@ -1160,6 +1162,8 @@ func DefaultUserSettings() UserSettings {
 			DisablePrequeue:               BoolPtr(false),
 			PrerollMode:                   "artwork",
 			PrerollMediaScope:             "all",
+			IntroAutoSkip:                 BoolPtr(false),
+			RecapAutoSkip:                 BoolPtr(false),
 			CreditsAutoSkip:               BoolPtr(false),
 			StreamMigrationEnabled:        BoolPtr(true),
 			IgnoreDVCompatibilityCheck:    BoolPtr(false),

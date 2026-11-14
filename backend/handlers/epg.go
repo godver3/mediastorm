@@ -27,6 +27,7 @@ type EPGHandler struct {
 	epgService      *epg.Service
 	cfgManager      *config.Manager
 	userSettingsSvc LiveUserSettingsProvider
+	liveChannels    LiveChannelProvider
 }
 
 // NewEPGHandler creates a new EPG handler.
@@ -37,6 +38,9 @@ func NewEPGHandler(epgService *epg.Service, cfgManager *config.Manager, userSett
 		userSettingsSvc: userSettingsSvc,
 	}
 }
+
+// SetLiveChannelProvider binds guide queries to the account-visible catalog.
+func (h *EPGHandler) SetLiveChannelProvider(provider LiveChannelProvider) { h.liveChannels = provider }
 
 // getEPGTimeOffset resolves the EPG time offset for the current request,
 // merging global settings with any per-profile override.
@@ -160,6 +164,11 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 
 	// Query with the negative offset so we find the correct programs in stored data,
 	// then shift response times by the positive offset.
+	channelIDs, err = filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, channelIDs)
+	if err != nil {
+		http.Error(w, "channel not available", http.StatusNotFound)
+		return
+	}
 	result := h.epgService.GetNowPlaying(channelIDs, -offset)
 	h.epgService.RefreshIfExhausted("now query")
 	currentCount := 0
@@ -240,6 +249,10 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	start := time.Now().UTC().Add(-offset)
 	end := start.Add(time.Duration(days) * 24 * time.Hour)
 
+	if allowed, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil || len(allowed) == 0 {
+		http.Error(w, "channel not available", http.StatusNotFound)
+		return
+	}
 	programs := h.epgService.GetSchedule(channelID, start, end)
 	log.Printf("[epg] schedule query profileId=%q channelConfigured=%v programs=%d offsetMinutes=%d",
 		r.URL.Query().Get("profileId"),
@@ -319,6 +332,12 @@ func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request)
 	start := time.Now().UTC().Add(time.Duration(startOffset)*time.Minute - offset)
 	end := start.Add(time.Duration(hours) * time.Hour)
 
+	allowedIDs, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, channelIDs)
+	if accessErr != nil {
+		http.Error(w, "channel not available", http.StatusNotFound)
+		return
+	}
+	channelIDs = allowedIDs
 	schedules := h.epgService.GetScheduleMultiple(channelIDs, start, end)
 	h.epgService.RefreshIfExhausted("schedule batch")
 	matchedChannels := 0
@@ -399,6 +418,10 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 	year, month, day := date.Date()
 	queryStart := time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Add(-offset)
 	queryEnd := queryStart.Add(24 * time.Hour)
+	if allowed, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil || len(allowed) == 0 {
+		http.Error(w, "channel not available", http.StatusNotFound)
+		return
+	}
 	programs := h.epgService.GetSchedule(channelID, queryStart, queryEnd)
 
 	if offset != 0 {

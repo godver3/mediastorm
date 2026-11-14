@@ -112,6 +112,11 @@ func newPinTestEnv(t *testing.T) *pinTestEnv {
 	protected.HandleFunc("/auth/logout", authHandler.Logout).Methods(http.MethodPost)
 	protected.HandleFunc("/playback/resolve", echo).Methods(http.MethodPost)
 	protected.HandleFunc("/video/stream", echo).Methods(http.MethodGet)
+	protected.HandleFunc("/stored-profile-resource", func(w http.ResponseWriter, r *http.Request) {
+		if profileaccess.CheckResource(w, r, env.locked, "https://example.test/stored-source") {
+			w.WriteHeader(http.StatusOK)
+		}
+	}).Methods(http.MethodGet)
 	protected.HandleFunc("/live/channels", echo).Methods(http.MethodGet, http.MethodPost)
 	protected.HandleFunc("/clients/register", echo).Methods(http.MethodPost)
 	protected.HandleFunc("/search", echo).Methods(http.MethodGet)
@@ -419,5 +424,26 @@ func TestAuthMiddlewareErrorCodes(t *testing.T) {
 		if body := decodeError(t, rec); body["code"] != tc.code {
 			t.Fatalf("%s: body = %v", name, body)
 		}
+	}
+}
+
+func TestStoredResourceCannotOmitOrSubstituteLockedProfile(t *testing.T) {
+	env := newPinTestEnv(t)
+	env.enforce.Store(true)
+	token := env.login(env.account1)
+	for _, target := range []string{"/api/stored-profile-resource", "/api/stored-profile-resource?profileId=" + env.open} {
+		expectLocked(t, env.do(pinRequest{method: http.MethodGet, target: target, token: token}), env.locked)
+	}
+	unlock := env.verify(token, env.locked, "1234").UnlockToken
+	if rec := env.do(pinRequest{method: http.MethodGet, target: "/api/stored-profile-resource", token: token, unlock: unlock}); rec.Code != http.StatusOK {
+		t.Fatalf("valid stored-profile unlock denied: %d", rec.Code)
+	}
+	if _, err := env.users.SetPin(env.locked, "5678"); err != nil {
+		t.Fatal(err)
+	}
+	expectLocked(t, env.do(pinRequest{method: http.MethodGet, target: "/api/stored-profile-resource", token: token, unlock: unlock}), env.locked)
+	env.enforce.Store(false)
+	if rec := env.do(pinRequest{method: http.MethodGet, target: "/api/stored-profile-resource", token: token}); rec.Code != http.StatusOK {
+		t.Fatal("disabled PIN policy changed legacy behavior")
 	}
 }

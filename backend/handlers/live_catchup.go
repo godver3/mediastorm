@@ -478,6 +478,7 @@ func (h *LiveHandler) GetCatchup(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusBadGateway, fmt.Errorf("catch-up URL is not allowed: %w", err))
 		return
 	}
+	h.catchupGrants.issue(r.URL.Query().Get("profileId"), response.URL, time.Now())
 	log.Printf("[live-catchup] channel=%q mode=%s offset=%ds duration=%ds upstream=%s", channel.ID, channel.Catchup.Mode, response.OffsetSeconds, response.DurationSeconds, requestsecurity.URLForLog(response.URL))
 	_ = json.NewEncoder(w).Encode(response)
 }

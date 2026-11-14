@@ -172,6 +172,7 @@ type HomeShelfManifest struct {
 
 type HomeManifestResponse struct {
 	RecommendationsRevision  string              `json:"recommendationsRevision,omitempty"`
+	DiscoveryRevision        string              `json:"discoveryRevision,omitempty"`
 	Revision                 string              `json:"revision"`
 	SettingsHash             string              `json:"settingsHash"`
 	ShelvesHash              string              `json:"shelvesHash"`
@@ -212,6 +213,7 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 		resp.SettingsHash = hashForManifest(settings.HomeShelves, settings.Display, settings.Recommendations)
 		resp.Shelves = buildHomeShelfManifest(settings.HomeShelves.Shelves)
 		resp.ShelvesHash = hashForManifest(resp.Shelves)
+		resp.DiscoveryRevision = regionalHomeRevision(settings.HomeShelves.Shelves, resp.GeneratedAt)
 	}
 
 	if h.history != nil {
@@ -255,6 +257,7 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 		resp.HiddenItemsHash,
 		resp.CustomListsHash,
 		resp.RecommendationsRevision,
+		resp.DiscoveryRevision,
 	)
 
 	w.Header().Set("Content-Type", "application/json")

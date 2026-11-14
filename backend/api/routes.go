@@ -188,7 +188,6 @@ func Register(
 	probeLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)    // 10/min per IP
 	hlsStartLimiter := NewIPRateLimiter(rate.Every(12*time.Second), 5) // 5/min per IP
 	watchRoomInviteLimiter := NewIPRateLimiter(rate.Every(6*time.Second), 10)
-	watchPartyJoinLimiter := NewIPRateLimiter(rate.Every(time.Second), 20)
 
 	// Auth routes (no authentication required)
 	authHandler := handlers.NewAuthHandler(accountsSvc, sessionsSvc)
@@ -226,12 +225,8 @@ func Register(
 	api.HandleFunc("/branding", handleOptions).Methods(http.MethodOptions)
 	api.HandleFunc("/debug/speed-test", handlers.ServeSpeedTest).Methods(http.MethodGet, http.MethodHead)
 	api.HandleFunc("/debug/speed-test", handleOptions).Methods(http.MethodOptions)
-	if watchPartyHandler != nil {
-		api.HandleFunc("/watch-party/room/{roomID}", RateLimitHandlerFunc(watchPartyJoinLimiter, watchPartyHandler.RoomSnapshot)).Methods(http.MethodGet)
-		api.HandleFunc("/watch-party/room/{roomID}/heartbeat", RateLimitHandlerFunc(watchPartyJoinLimiter, watchPartyHandler.Heartbeat)).Methods(http.MethodPost)
-		api.HandleFunc("/watch-party/room/{roomID}/ready", RateLimitHandlerFunc(watchPartyJoinLimiter, watchPartyHandler.Ready)).Methods(http.MethodPost)
-		api.HandleFunc("/watch-party/room/{roomID}/playback-grant", RateLimitHandlerFunc(watchPartyJoinLimiter, watchPartyHandler.PlaybackGrant)).Methods(http.MethodPost)
-	}
+	registerWatchPartyGuestRoutes(api, watchPartyHandler)
+
 	if videoHandler != nil {
 		api.Handle("/video/internal-stream", localhostOnlyMiddleware(http.HandlerFunc(videoHandler.StreamVideo))).Methods(http.MethodGet, http.MethodHead, http.MethodOptions)
 	}
@@ -246,6 +241,10 @@ func Register(
 	protected.Use(AccountAuthMiddleware(sessionsSvc, accountsSvc))
 	if usersSvc != nil {
 		protected.Use(profileaccess.Middleware(usersSvc.BelongsToAccount))
+		protected.Use(profileaccess.BlockKidsFromLiveTV(func(profileID string) bool {
+			profile, ok := usersSvc.Get(profileID)
+			return ok && profile.IsKidsProfile
+		}))
 	}
 	if options.unlocks != nil && usersSvc != nil && options.security != nil {
 		protected.Use(ProfilePinMiddleware(usersSvc, options.unlocks, options.security))
@@ -482,6 +481,8 @@ func Register(
 	protected.HandleFunc("/debrid/cached/bulk", debridHandler.CheckCachedBulk).Methods(http.MethodPost)
 	protected.HandleFunc("/debrid/cached/bulk", debridHandler.Options).Methods(http.MethodOptions)
 
+	protected.HandleFunc("/discovery/presets", settingsHandler.RegionalDiscoveryPresets).Methods(http.MethodGet)
+	protected.HandleFunc("/discovery/presets", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
 	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/channels", liveHandler.GetChannels).Methods(http.MethodGet, http.MethodPost)
@@ -842,6 +843,8 @@ func Register(
 	registerSportsPreferenceRoutes(profileProtected, userSettingsHandler)
 	profileProtected.HandleFunc("/{userID}/recommendation-interests", metadataHandler.ClearSearchInterests).Methods(http.MethodDelete)
 	profileProtected.HandleFunc("/{userID}/recommendation-interests", handleOptions).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/settings/skipping", userSettingsHandler.PatchSkipping).Methods(http.MethodPatch)
+	profileProtected.HandleFunc("/{userID}/settings/skipping", userSettingsHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/settings", userSettingsHandler.PutSettings).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/settings/frontend", userSettingsHandler.PatchFrontendSetting).Methods(http.MethodPatch)
 	profileProtected.HandleFunc("/{userID}/settings/frontend", userSettingsHandler.GetFrontendSettingState).Methods(http.MethodGet)

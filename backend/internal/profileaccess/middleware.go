@@ -19,6 +19,14 @@ import (
 const maxProfileBodyBytes = 1 << 20
 
 type ownershipKey struct{}
+type resourceGuardKey struct{}
+
+// WithResourceGuard adds entrypoint-specific checks for a resource's stored
+// profile, including requests that omit client-supplied profile selectors.
+func WithResourceGuard(r *http.Request, guard func(http.ResponseWriter, *http.Request, string) bool) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), resourceGuardKey{}, guard))
+}
+
 type ownerCheck func(profileID, accountID string) bool
 
 // Middleware checks profile selectors on both API and cookie-authenticated
@@ -94,6 +102,11 @@ func CheckResource(w http.ResponseWriter, r *http.Request, profileID, resource s
 	}
 	if !allowed {
 		apierror.Write(w, http.StatusNotFound, "resource_not_found", "resource not found")
+	}
+	if allowed {
+		if guard, ok := r.Context().Value(resourceGuardKey{}).(func(http.ResponseWriter, *http.Request, string) bool); ok {
+			return guard(w, r, profileID)
+		}
 	}
 	return allowed
 }
