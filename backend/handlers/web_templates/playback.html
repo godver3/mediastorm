@@ -1233,7 +1233,9 @@
     let webPlayerAutoSkipCreditsPreference = false;
     let webPlayerAutoSkipInProgress = false;
     let webPlayerSkipPreferenceSave = Promise.resolve();
-    let webPlayerSkipPreferenceGeneration = 0;
+    // One counter per segment type, so toggling one type while settings load
+    // only discards the loaded value for that type.
+    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0 };
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
     let webPlayerAudioPreferenceGeneration = 0;
@@ -1721,12 +1723,16 @@
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
       await webPlayerAudioPreferenceSave;
       await webPlayerSkipPreferenceSave;
-      const skipGeneration = webPlayerSkipPreferenceGeneration;
+      const skipGeneration = { ...webPlayerSkipPreferenceGeneration };
+      let profileLoaded = true;
       // These three are independent of each other — only their merged result
       // (below) depends on all three — so fetch them concurrently instead of
       // one after another to cut startup latency.
       const [profile, client, content] = await Promise.all([
-        apiCall('/users/' + encodeURIComponent(activeProfileId) + '/settings').catch(() => ({})),
+        apiCall('/users/' + encodeURIComponent(activeProfileId) + '/settings').catch(() => {
+          profileLoaded = false;
+          return {};
+        }),
         CLIENT_ID
           ? apiCall('/clients/' + encodeURIComponent(CLIENT_ID) + '/settings?userId=' + encodeURIComponent(activeProfileId)).catch(() => ({}))
           : Promise.resolve({}),
@@ -1746,10 +1752,14 @@
       };
       // The profile is authoritative, including explicit false. Browser storage
       // and per-device defaults must not leak preferences between profiles.
-      if (skipGeneration === webPlayerSkipPreferenceGeneration) {
-        webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
-        webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
-        webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
+      // A failed load (network blip, PIN-locked profile) keeps the current
+      // choices instead of switching Auto off; a toggle made while loading
+      // wins over the loaded value for that type.
+      if (profileLoaded) {
+        const unchanged = (type) => skipGeneration[type] === webPlayerSkipPreferenceGeneration[type];
+        if (unchanged('intro')) webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
+        if (unchanged('recap')) webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
+        if (unchanged('credits')) webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
       }
       return webPlayerPreferences;
     }
@@ -1795,7 +1805,8 @@
 
     function setWebAutoSkipPreference(enabled, type) {
       const value = Boolean(enabled);
-      webPlayerSkipPreferenceGeneration += 1;
+      const skipType = type === 'recap' || type === 'credits' ? type : 'intro';
+      webPlayerSkipPreferenceGeneration[skipType] += 1;
       if (type === 'recap') {
         webPlayerAutoSkipRecapPreference = value;
       } else if (type === 'credits') {

@@ -75,3 +75,27 @@ test('a late settings response cannot replace a newer toggle',async()=>{
   release({playback:{introAutoSkip:false}});await loading;
   assert.equal(p.run('webAutoSkipEnabled("intro")'),true);
 });
+
+test('toggling one segment while settings load keeps the loaded values for the others',async()=>{
+  let release,requested;const issued=new Promise(resolve=>requested=resolve);
+  const p=player(new Map(),'adult','',async(path)=>{
+    if(path.endsWith('/settings')){requested();return new Promise(resolve=>release=resolve);}
+  });
+  const loading=p.run('loadEffectiveWebPlaybackSettings()');await issued;
+  p.run('setWebAutoSkipPreference(false,"intro")');await p.settle();
+  release({playback:{introAutoSkip:true,recapAutoSkip:true,creditsAutoSkip:true}});await loading;
+  assert.equal(p.run('webAutoSkipEnabled("intro")'),false);
+  assert.equal(p.run('webAutoSkipEnabled("recap")'),true);
+  assert.equal(p.run('webAutoSkipEnabled("credits")'),true);
+});
+
+test('a failed settings load keeps the current auto-skip choices',async()=>{
+  const store=new Map([['adult',{introAutoSkip:true,recapAutoSkip:true}]]);
+  let offline=false;
+  const p=player(store,'adult','',async(path)=>{if(offline&&path.endsWith('/settings'))throw Error('offline');});
+  await p.run('loadEffectiveWebPlaybackSettings()');
+  assert.equal(p.run('webAutoSkipEnabled("intro")'),true);
+  offline=true;await p.run('loadEffectiveWebPlaybackSettings()');
+  assert.equal(p.run('webAutoSkipEnabled("intro")'),true);
+  assert.equal(p.run('webAutoSkipEnabled("recap")'),true);
+});

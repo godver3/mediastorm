@@ -71,3 +71,34 @@ func TestSkipPreferencesRollbackOnStorageFailure(t *testing.T) {
 		t.Fatal("failed save changed in-memory preference")
 	}
 }
+
+// A client that saves the full settings document it read earlier (for
+// example the Expo app's cached settings) must not switch intro or recap
+// auto-skip back to the value it last saw.
+func TestStaleFullSettingsSaveKeepsSkipChoices(t *testing.T) {
+	s, err := NewService(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateSkipping("adult", SkipPreferences{Intro: models.BoolPtr(true), Recap: models.BoolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	stale := models.UserSettings{Playback: models.PlaybackSettings{
+		PreferredAudioLanguage: "eng",
+		IntroAutoSkip:          models.BoolPtr(false),
+		RecapAutoSkip:          models.BoolPtr(false),
+	}}
+	if err := s.Update("adult", stale); err != nil {
+		t.Fatal(err)
+	}
+	adult, err := s.Get("adult")
+	if err != nil || adult == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !*adult.Playback.IntroAutoSkip || !*adult.Playback.RecapAutoSkip {
+		t.Fatal("full settings save overwrote intro/recap auto-skip")
+	}
+	if adult.Playback.PreferredAudioLanguage != "eng" {
+		t.Fatal("full settings save did not apply its other fields")
+	}
+}

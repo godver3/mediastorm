@@ -137,6 +137,12 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Update keeps the stored intro/recap auto-skip values regardless of the
+	// body; report those rather than whatever the client sent.
+	if saved, err := h.Service.Get(userID); err == nil && saved != nil {
+		settings.Playback.IntroAutoSkip = saved.Playback.IntroAutoSkip
+		settings.Playback.RecapAutoSkip = saved.Playback.RecapAutoSkip
+	}
 
 	var previous models.UserSettings
 	if oldSettings != nil {

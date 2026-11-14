@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 
-	"novastream/internal/auth"
 	user_settings "novastream/services/user_settings"
 )
 
@@ -15,11 +14,8 @@ func (h *UserSettingsHandler) PatchSkipping(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	owners, ok := h.Users.(interface{ BelongsToAccount(string, string) bool })
-	if !ok || !owners.BelongsToAccount(id, auth.GetAccountID(r)) {
-		http.Error(w, "profile not found", http.StatusNotFound)
-		return
-	}
+	// ProfileOwnershipMiddleware on this route already rejects other
+	// households' profiles while letting the master account through.
 	var patch user_settings.SkipPreferences
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
