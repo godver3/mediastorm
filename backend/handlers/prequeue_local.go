@@ -26,10 +26,11 @@ type prequeueLibraryAccess interface {
 }
 
 type prequeueLocalScope struct {
-	accountID string
-	master    bool
-	tmdbID    string
-	tvdbID    string
+	excludedResult *models.NZBResult
+	accountID      string
+	master         bool
+	tmdbID         string
+	tvdbID         string
 }
 
 func (h *PrequeueHandler) SetLocalFallback(service prequeueLocalMedia, access prequeueLibraryAccess) {
@@ -178,7 +179,7 @@ func (h *PrequeueHandler) resolveLocalFallback(ctx context.Context, prequeueID s
 	for _, item := range items {
 		path := localmedia.BuildStreamPath(item)
 		opts.localItems[path] = item
-		results = append(results, models.NZBResult{Title: item.FileName, Link: path, SizeBytes: item.SizeBytes, ServiceType: models.ContentServiceType("local")})
+		results = append(results, models.NZBResult{Title: item.FileName, Link: path, SizeBytes: item.SizeBytes, ServiceType: models.ContentServiceType("local"), Attributes: map[string]string{"localLibraryId": item.LibraryID, "profileId": opts.userID}})
 	}
 	choice, err := h.resolveCandidates(localCtx, prequeueID, newSliceCandidateSource(results), opts)
 	// Local catalog entries cannot be handed to the Usenet/debrid migration API.
@@ -228,6 +229,13 @@ func (h *PrequeueHandler) localEntryAllowed(r *http.Request, entry *playback.Pre
 }
 
 func (h *PrequeueHandler) validateReadyEntryForRequest(r *http.Request, entry *playback.PrequeueEntry, requests ...playback.PrequeueRequest) error {
+	if entry != nil && entry.SelectedResult != nil {
+		ctx := h.reportContextForPrequeue(entry.ID, entry.UserID, normalizeClientID(r.Header.Get("X-Client-ID")), entry.TargetEpisode)
+		ctx.AudioTrackIndex = &entry.SelectedAudioTrack
+		if h.badStreamsSvc.MatchFor(*entry.SelectedResult, ctx) != nil {
+			return errors.New("release excluded for this playback request")
+		}
+	}
 	if !h.localEntryAllowed(r, entry) {
 		return errors.New("local library file unavailable")
 	}

@@ -24,6 +24,7 @@ import (
 	"novastream/internal/importer"
 	"novastream/internal/mediaidentity"
 	"novastream/internal/mediaresolve"
+	"novastream/internal/profileaccess"
 	"novastream/internal/requestsecurity"
 	"novastream/models"
 	"novastream/services/badstreams"
@@ -113,11 +114,18 @@ func (h *PrequeueHandler) canAccessUser(r *http.Request, userID string) bool {
 }
 
 func (h *PrequeueHandler) authorizeEntry(w http.ResponseWriter, r *http.Request, entry *playback.PrequeueEntry) bool {
-	if entry != nil && h.canAccessUser(r, entry.UserID) && h.localEntryAllowed(r, entry) {
-		return true
+	if entry == nil || !h.canAccessUser(r, entry.UserID) {
+		http.Error(w, "prequeue not found or expired", http.StatusNotFound)
+		return false
 	}
-	http.Error(w, "prequeue not found or expired", http.StatusNotFound)
-	return false
+	if !profileaccess.CheckResource(w, r, entry.UserID, entry.StreamPath) {
+		return false
+	}
+	if !h.localEntryAllowed(r, entry) {
+		http.Error(w, "prequeue not found or expired", http.StatusNotFound)
+		return false
+	}
+	return true
 }
 
 func hasReusablePreparation(entry *playback.PrequeueEntry) bool {
@@ -1340,6 +1348,10 @@ func (h *PrequeueHandler) AdoptMigration(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	if h.badStreamsSvc.MatchFor(req.Result, h.reportContextForPrequeue(prequeueID, current.UserID, normalizeClientID(r.Header.Get("X-Client-ID")), current.TargetEpisode)) != nil {
+		http.Error(w, "release excluded for this playback request", http.StatusConflict)
+		return
+	}
 	h.store.CancelWork(prequeueID)
 
 	updated := h.store.Update(prequeueID, func(e *playback.PrequeueEntry) {
@@ -1651,6 +1663,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	// Store cancel func for potential cancellation
 	h.store.SetCancelFunc(prequeueID, cancel)
 
+	var excludedResult *models.NZBResult
+	if len(localScopes) == 1 {
+		excludedResult = localScopes[0].excludedResult
+	}
 	workerStart := time.Now()
 	log.Printf("[prequeue] TIMING: worker started for %s (title=%q)", prequeueID, titleName)
 
@@ -1900,7 +1916,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		_, localAdaptiveCaps, localFilter := h.prequeueSettingsScopeDetails(userID, clientID, titleID, throughput)
 		h.updatePrequeueProgress(prequeueID, "local_fallback", "Checking an existing library file", 0, len(localCandidates))
 		return h.resolveLocalFallback(playbackCtx, prequeueID, localCandidates, prequeueResolutionOptions{
-			mediaType: mediaType, targetEpisode: targetEpisode, userID: userID, hdrDVPolicy: hdrDVPolicy,
+			excludedResult: excludedResult, mediaType: mediaType, targetEpisode: targetEpisode, userID: userID, clientID: clientID, hdrDVPolicy: hdrDVPolicy,
 			unknownTrackPolicy: unknownTrackPolicy, needsDVCheck: needsDVCheck, needsUnknownTrackCheck: needsUnknownTrackCheck,
 			workerStart: workerStart, localScope: &localScopes[0], adaptiveCaps: localAdaptiveCaps, localFilter: localFilter,
 		})
@@ -1991,8 +2007,10 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 
 			choice, resolveErr := h.resolveCandidates(ctx, prequeueID, candidates, prequeueResolutionOptions{
 				mediaType:              mediaType,
+				excludedResult:         excludedResult,
 				targetEpisode:          targetEpisode,
 				userID:                 userID,
+				clientID:               clientID,
 				hdrDVPolicy:            hdrDVPolicy,
 				unknownTrackPolicy:     unknownTrackPolicy,
 				needsDVCheck:           needsDVCheck,
@@ -2189,7 +2207,25 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			for i, stream := range audioStreams {
 				log.Printf("[prequeue] Audio stream[%d]: index=%d codec=%q lang=%q title=%q", i, stream.Index, stream.Codec, stream.Language, stream.Title)
 			}
+			originalAudio := audioStreams
+			if selectedResult != nil {
+				ctx := h.reportContextForPrequeue(prequeueID, userID, clientID, targetEpisode)
+				var unusable bool
+				audioStreams, unusable = filterReportedAudio(h.badStreamsSvc, *selectedResult, ctx, audioStreams)
+				if unusable {
+					h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
+						e.Status = playback.PrequeueStatusFailed
+						e.Error = "No healthy audio track in the requested language"
+					})
+					return
+				}
+			}
 			trackSelection = trackselect.Select(audioStreams, subtitleStreams, trackPrefs)
+			if trackSelection.Audio == nil && len(audioStreams) > 0 && len(audioStreams) < len(originalAudio) && trackPrefs.AudioLanguage == "" && len(trackPrefs.AllowedLanguages) == 0 {
+				trackSelection.Audio = trackselect.DescribeAudioTrack(audioStreams, audioStreams[0].Index)
+			}
+			// Keep native player descriptors in the original container order.
+			trackSelection.Audio = trackselect.DescribeAudioTrack(originalAudio, trackSelection.AudioStreamIndex())
 			selectedAudioTrack = trackSelection.AudioStreamIndex()
 			selectedSubtitleTrack = trackSelection.SubtitleStreamIndex()
 			log.Printf("[prequeue] Selected tracks: audio=%d subtitle=%d (audioLang=%q subLang=%q subMode=%s)",
@@ -2370,6 +2406,7 @@ type prequeueResolutionChoice struct {
 
 // prequeueResolutionOptions configures the resolution phase.
 type prequeueResolutionOptions struct {
+	excludedResult         *models.NZBResult
 	mediaType              string
 	targetEpisode          *models.EpisodeReference
 	userID                 string
@@ -2378,6 +2415,7 @@ type prequeueResolutionOptions struct {
 	needsDVCheck           bool
 	needsUnknownTrackCheck bool
 	concurrent             bool
+	clientID               string
 	workerStart            time.Time
 	localItems             map[string]models.LocalMediaItem
 	localScope             *prequeueLocalScope
@@ -3049,6 +3087,13 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 		annotateResultProfile(&annotated, opts.userID)
 		result = annotated
 
+		if opts.excludedResult != nil && badstreams.SameRelease(result, *opts.excludedResult) {
+			return nil, nil, errors.New("release already tried in this source switch")
+		}
+		reportCtx := h.reportContextForPrequeue(prequeueID, opts.userID, opts.clientID, opts.targetEpisode)
+		if h.badStreamsSvc.MatchFor(result, reportCtx) != nil {
+			return nil, nil, errors.New("release excluded for this playback request")
+		}
 		var resolution *models.PlaybackResolution
 		var resolveErr error
 		if item, ok := opts.localItems[result.Link]; ok {
@@ -3156,6 +3201,12 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 			}
 		}
 
+		if probeResult != nil {
+			_, unusable := filterReportedAudio(h.badStreamsSvc, result, reportCtx, probeResult.AudioStreams)
+			if unusable {
+				return nil, nil, errors.New("reported audio tracks leave no usable requested language")
+			}
+		}
 		if opts.needsUnknownTrackCheck && probeResult == nil && h.metadataProber != nil {
 			metadata, probeErr := h.metadataProber.ProbeVideoMetadata(raceCtx, resolution.WebDAVPath)
 			if err := raceCtx.Err(); err != nil {
@@ -3382,7 +3433,7 @@ func (h *PrequeueHandler) searchCombinedPrequeueCandidates(ctx context.Context, 
 	badStreamCount := 0
 	if h.badStreamsSvc != nil {
 		for i := range scoredResults {
-			if !h.badStreamsSvc.IsBad(scoredResults[i].NZBResult) {
+			if h.badStreamsSvc.MatchFor(scoredResults[i].NZBResult, reportContextForSearch(h.trackPreferenceResolver(), opts)) == nil {
 				continue
 			}
 			badStreamCount++
@@ -3637,7 +3688,7 @@ func (h *PrequeueHandler) prepareSourceResults(ctx context.Context, state *prequ
 	if h.badStreamsSvc != nil {
 		for i := range res.Scored {
 			scored := &res.Scored[i]
-			if !h.badStreamsSvc.IsBad(scored.NZBResult) {
+			if h.badStreamsSvc.MatchFor(scored.NZBResult, h.reportContextForPrequeue(cfg.prequeueID, "", "", cfg.targetEpisode)) == nil {
 				continue
 			}
 			state.mu.Lock()

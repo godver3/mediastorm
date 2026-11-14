@@ -129,7 +129,7 @@
                             <th class="bad-release-cell">Release</th>
                             <th class="bad-provider-cell">Provider</th>
                             <th class="bad-service-cell">Service</th>
-                            <th class="bad-path-cell">Source Path</th>
+                            <th class="bad-path-cell">Scope / Source Path</th>
                             <th class="bad-reason-cell">Reason</th>
                             <th class="bad-time-cell">Last Seen</th>
                             <th class="bad-hits-cell">Hits</th>
@@ -173,7 +173,7 @@ async function loadBadStreams(page) {
     badStreamsPage = page || badStreamsPage || 1;
     const q = document.getElementById('badStreamsFilter').value.trim();
     const perPage = document.getElementById('badStreamsPerPage').value;
-    const params = new URLSearchParams({ page: String(badStreamsPage), perPage });
+    const params = new URLSearchParams({ page: String(badStreamsPage), perPage, includeScoped: 'true' });
     if (q) params.set('q', q);
     document.getElementById('badStreamsStatus').textContent = 'Loading...';
     const response = await fetch(badStreamsApiPath('/bad-streams?' + params.toString()));
@@ -201,17 +201,25 @@ function renderBadStreamsRows(items) {
         const release = item.releaseName || item.normalizedReleaseName || 'Unknown release';
         const provider = item.provider || 'Any';
         const service = item.serviceType || 'Any';
+        const scope = item.scope;
+        const scopeText = scope ? [scope.profileId ? 'Profile ' + scope.profileId : 'All profiles', scope.titleId,
+            scope.episodeNumber != null ? 'S' + scope.seasonNumber + 'E' + scope.episodeNumber : '',
+            scope.audioLanguage ? 'Audio ' + scope.audioLanguage : '',
+            scope.audioTrackIndex != null ? 'Track ' + scope.audioTrackIndex : '',
+            scope.clientId ? 'Device ' + scope.clientId : '',
+            item.expiresAt ? 'Until ' + formatTime(item.expiresAt) : ''].filter(Boolean).join(' / ') : (item.sourcePath || 'Legacy release rule');
         return `
             <tr style="border-bottom:1px solid var(--border);">
                 <td class="bad-release-cell" title="${escapeHtml(release)}">${escapeHtml(release)}</td>
                 <td class="bad-provider-cell">${escapeHtml(provider)}</td>
                 <td class="bad-service-cell">${escapeHtml(service)}</td>
-                <td class="bad-path-cell" title="${escapeHtml(item.sourcePath || '')}">${escapeHtml(item.sourcePath || '')}</td>
+                <td class="bad-path-cell" title="${escapeHtml(scopeText)}">${escapeHtml(scopeText)}</td>
                 <td class="bad-reason-cell" title="${escapeHtml(item.reason || '')}">${escapeHtml(item.reason || '')}</td>
                 <td class="bad-time-cell">${escapeHtml(formatTime(item.lastSeenAt || item.markedAt))}</td>
                 <td class="bad-hits-cell">${Number(item.hitCount || 0)}</td>
                 <td class="bad-actions-cell">
-                    <button class="btn btn-danger bad-delete-button" onclick="deleteBadStream('${escapeHtml(item.id)}')">Delete</button>
+                    <button class="btn btn-danger bad-delete-button" onclick="deleteBadStream('${escapeHtml(item.id)}')">Remove</button>
+                    ${scope?.profileId && ['title', 'language', 'track'].includes(scope.kind) ? `<button class="btn btn-secondary" onclick="shareReleaseReport('${escapeHtml(item.id)}')">Apply to all profiles</button>` : ''}
                 </td>
             </tr>
         `;
@@ -258,5 +266,10 @@ document.getElementById('badStreamsFilter').addEventListener('keydown', event =>
 });
 document.getElementById('badStreamsPerPage').addEventListener('change', () => loadBadStreams(1));
 loadBadStreams(1);
+async function shareReleaseReport(id) {
+    const response = await fetch(badStreamsApiPath('/bad-streams/' + encodeURIComponent(id) + '/share'), { method: 'POST' });
+    if (!response.ok) { document.getElementById('badStreamsStatus').textContent = 'Could not share this report.'; return; }
+    await loadBadStreams(badStreamsPage);
+}
 </script>
 {{end}}
