@@ -154,13 +154,13 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 	if h.GuideChanged != nil && liveGuideSourcesChanged(previous.LiveTV, settings.LiveTV) {
 		h.GuideChanged()
 	}
-	if !reflect.DeepEqual(previous.Filtering, settings.Filtering) || !reflect.DeepEqual(previous.Ranking, settings.Ranking) {
+	if !reflect.DeepEqual(previous.Filtering, settings.Filtering) || !reflect.DeepEqual(previous.Ranking, settings.Ranking) || !reflect.DeepEqual(previous.Playback.PreferLocalFiles, settings.Playback.PreferLocalFiles) {
 		if h.PrequeueStore != nil {
-			log.Printf("[user-settings] ranking/filtering changed for user=%s, clearing prequeue cache", userID)
+			log.Printf("[user-settings] source selection settings changed for user=%s, clearing prequeue cache", userID)
 			h.PrequeueStore.DeleteByUser(userID)
 		}
 		if h.SearchCache != nil {
-			log.Printf("[user-settings] ranking/filtering changed for user=%s, clearing search results cache", userID)
+			log.Printf("[user-settings] source selection settings changed for user=%s, clearing search results cache", userID)
 			h.SearchCache.ClearSearchCache()
 		}
 	}
@@ -219,7 +219,7 @@ func (h *UserSettingsHandler) PatchFrontendSetting(w http.ResponseWriter, r *htt
 	if h.GuideChanged != nil && liveGuideSourcesChanged(previous.LiveTV, next.LiveTV) {
 		h.GuideChanged()
 	}
-	if !reflect.DeepEqual(previous.Filtering, next.Filtering) || !reflect.DeepEqual(previous.Ranking, next.Ranking) {
+	if !reflect.DeepEqual(previous.Filtering, next.Filtering) || !reflect.DeepEqual(previous.Ranking, next.Ranking) || !reflect.DeepEqual(previous.Playback.PreferLocalFiles, next.Playback.PreferLocalFiles) {
 		if h.PrequeueStore != nil {
 			h.PrequeueStore.DeleteByUser(userID)
 		}
@@ -275,6 +275,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			PrimaryLanguage: globalSettings.Metadata.EffectivePrimaryLanguage(),
 		},
 		Playback: models.PlaybackSettings{
+			PreferLocalFiles:           models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 			PreferredPlayer:            globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:     globalSettings.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage:  globalSettings.Playback.PreferredSubtitleLanguage,

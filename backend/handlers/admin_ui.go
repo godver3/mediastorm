@@ -864,6 +864,7 @@ var SettingsSchema = map[string]interface{}{
 			"autoPlayTrailersTV":          map[string]interface{}{"type": "boolean", "label": "Auto-Play Trailers (TV)", "description": "Replace backdrop artwork with playing trailer on TV details pages once loaded", "order": 100},
 			"rewindOnResumeFromPause":     map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
 			"rewindOnPlaybackStart":       map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
+			"preferLocalFiles":            map[string]interface{}{"type": "boolean", "label": "Prefer Local Files", "description": "Play a matching, accessible local library file first. If it cannot play, use the configured search sources. When off, search sources come first and local files remain the fallback.", "order": 100.5},
 			"disablePrequeue":             map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
 			"prerollMode":                 map[string]interface{}{"type": "select", "label": "Pre-roll", "options": []map[string]string{{"value": "disabled", "label": "Disabled"}, {"value": "artwork", "label": "Artwork Rotation"}, {"value": "default", "label": "Server Default"}, {"value": "custom", "label": "Custom Upload"}}, "description": "Show rotating textless artwork until playback starts, or play a video pre-roll while native playback is prepared.", "order": 101.1},
 			"prerollAssetId":              map[string]interface{}{"type": "text", "label": "Pre-roll Asset ID", "description": "Content hash returned by the pre-roll upload endpoint. Used only for Custom Upload.", "order": 101.2},
@@ -4095,6 +4096,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 
 	defaults := models.UserSettings{
 		Playback: models.PlaybackSettings{
+			PreferLocalFiles:            models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 			PreferredPlayer:             globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:      globalSettings.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage:   globalSettings.Playback.PreferredSubtitleLanguage,
@@ -4339,6 +4341,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 				propagateShelves := convertShelves(globalSettings.HomeShelves.Shelves)
 				newSettings = models.UserSettings{
 					Playback: models.PlaybackSettings{
+						PreferLocalFiles:            models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 						PreferredPlayer:             globalSettings.Playback.PreferredPlayer,
 						PreferredAudioLanguage:      globalSettings.Playback.PreferredAudioLanguage,
 						PreferredSubtitleLanguage:   globalSettings.Playback.PreferredSubtitleLanguage,

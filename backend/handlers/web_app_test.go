@@ -405,7 +405,7 @@ func TestWebPlaybackTemplateForwardsClientIdentity(t *testing.T) {
 
 	rendered := string(body)
 	for _, want := range []string{
-		"const CLIENT_ID = routeParam('clientId');",
+		"const CLIENT_ID = routeParam('clientId') ||",
 		"...(CLIENT_ID ? { 'X-Client-ID': CLIENT_ID } : {}),",
 	} {
 		if !strings.Contains(rendered, want) {

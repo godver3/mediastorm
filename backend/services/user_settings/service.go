@@ -298,6 +298,9 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.SeekBackwardSeconds == 0 {
 			settings.Playback.SeekBackwardSeconds = defaults.Playback.SeekBackwardSeconds
 		}
+		if settings.Playback.PreferLocalFiles == nil {
+			settings.Playback.PreferLocalFiles = defaults.Playback.PreferLocalFiles
+		}
 		if settings.Playback.ForceAACTranscoding == nil {
 			settings.Playback.ForceAACTranscoding = defaults.Playback.ForceAACTranscoding
 		}
