@@ -64,20 +64,21 @@ type startupHistorySnapshot struct {
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
 type StartupHandler struct {
-	userSettings   userSettingsService
-	watchlist      watchlistService
-	history        historyService
-	metadata       metadataService
-	cfgManager     *config.Manager
-	users          userService
-	usersProvider  usersServiceInterface // for kids profile filtering
-	calendar       startupCalendarService
-	localMedia     localLibraryLister
-	prequeueStore  startupPrequeueStore
-	hiddenItems    hiddenItemsService
-	customLists    startupCustomListsService
-	displayList    *DisplayListHandler
-	clientSettings clientSettingsService
+	sourceAvailability sourceAvailabilityService
+	userSettings       userSettingsService
+	watchlist          watchlistService
+	history            historyService
+	metadata           metadataService
+	cfgManager         *config.Manager
+	users              userService
+	usersProvider      usersServiceInterface // for kids profile filtering
+	calendar           startupCalendarService
+	localMedia         localLibraryLister
+	prequeueStore      startupPrequeueStore
+	hiddenItems        hiddenItemsService
+	customLists        startupCustomListsService
+	displayList        *DisplayListHandler
+	clientSettings     clientSettingsService
 }
 
 // NewStartupHandler constructs a StartupHandler.
@@ -170,18 +171,19 @@ type HomeShelfManifest struct {
 }
 
 type HomeManifestResponse struct {
-	DiscoveryRevision        string              `json:"discoveryRevision,omitempty"`
-	Revision                 string              `json:"revision"`
-	SettingsHash             string              `json:"settingsHash"`
-	ShelvesHash              string              `json:"shelvesHash"`
-	ContinueWatchingRevision string              `json:"continueWatchingRevision,omitempty"`
-	WatchlistHash            string              `json:"watchlistHash"`
-	EpisodeCountsHash        string              `json:"episodeCountsHash,omitempty"`
-	HiddenItemsHash          string              `json:"hiddenItemsHash,omitempty"`
-	CustomListsHash          string              `json:"customListsHash,omitempty"`
-	WatchlistTotal           int                 `json:"watchlistTotal"`
-	Shelves                  []HomeShelfManifest `json:"shelves"`
-	GeneratedAt              time.Time           `json:"generatedAt"`
+	SourceAvailabilityRevision string              `json:"sourceAvailabilityRevision,omitempty"`
+	DiscoveryRevision          string              `json:"discoveryRevision,omitempty"`
+	Revision                   string              `json:"revision"`
+	SettingsHash               string              `json:"settingsHash"`
+	ShelvesHash                string              `json:"shelvesHash"`
+	ContinueWatchingRevision   string              `json:"continueWatchingRevision,omitempty"`
+	WatchlistHash              string              `json:"watchlistHash"`
+	EpisodeCountsHash          string              `json:"episodeCountsHash,omitempty"`
+	HiddenItemsHash            string              `json:"hiddenItemsHash,omitempty"`
+	CustomListsHash            string              `json:"customListsHash,omitempty"`
+	WatchlistTotal             int                 `json:"watchlistTotal"`
+	Shelves                    []HomeShelfManifest `json:"shelves"`
+	GeneratedAt                time.Time           `json:"generatedAt"`
 }
 
 // GetHomeManifest returns a cheap fingerprint for the home page data/config.
@@ -237,6 +239,9 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 	}
 	resp.HiddenItemsHash = h.hiddenItemsManifestHash(userID)
 	resp.CustomListsHash = h.customListsManifestHash(userID)
+	if h.sourceAvailability != nil {
+		resp.SourceAvailabilityRevision = h.sourceAvailability.Revision(userID, requestClientID(r))
+	}
 
 	resp.Revision = hashForManifest(
 		resp.SettingsHash,
@@ -248,6 +253,7 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 		resp.HiddenItemsHash,
 		resp.CustomListsHash,
 		resp.DiscoveryRevision,
+		resp.SourceAvailabilityRevision,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -567,6 +573,17 @@ func (h *StartupHandler) GetStartup(w http.ResponseWriter, r *http.Request) {
 	if resp.UserSettings != nil && !watchSupportsNativeTMDBShelves(r) {
 		compatibleSettings := startupSettingsForWatch(*resp.UserSettings)
 		resp.UserSettings = &compatibleSettings
+	}
+	resp.Watchlist = availabilityWatchlist(h.sourceAvailability, userID, clientID, resp.Watchlist)
+	if resp.TrendingMovies != nil {
+		resp.TrendingMovies.Items = availabilityTrending(h.sourceAvailability, userID, clientID, resp.TrendingMovies.Items)
+	}
+	if resp.TrendingSeries != nil {
+		resp.TrendingSeries.Items = availabilityTrending(h.sourceAvailability, userID, clientID, resp.TrendingSeries.Items)
+	}
+	for id, shelf := range resp.HomeShelves {
+		shelf.Items = availabilityTrending(h.sourceAvailability, userID, clientID, shelf.Items)
+		resp.HomeShelves[id] = shelf
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1453,6 +1470,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 
 	return models.UserSettings{
 		Playback: models.PlaybackSettings{
+			PreferLocalFiles:              models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 			PreferredPlayer:               globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:        globalSettings.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage:     globalSettings.Playback.PreferredSubtitleLanguage,

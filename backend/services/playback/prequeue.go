@@ -249,7 +249,43 @@ type PrequeueEntry struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 
 	// For cancellation
-	cancelFunc context.CancelFunc `json:"-"`
+	reportReplacementID string
+	cancelFunc          context.CancelFunc `json:"-"`
+}
+
+// CreateReportReplacement keeps the source still playing in memory while a
+// replacement is prepared. Repeated submissions reuse the same preparation.
+func (s *PrequeueStore) CreateReportReplacement(previousID, clientScope string) (*PrequeueEntry, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous, ok := s.entries[previousID]
+	if !ok {
+		return nil, false, errors.New("prequeue not found")
+	}
+	if previous.reportReplacementID != "" {
+		if existing, ok := s.entries[previous.reportReplacementID]; ok && (existing.Status == PrequeueStatusReady || IsPrequeueInProgress(existing.Status)) {
+			return copyPrequeueEntryForRead(existing), false, nil
+		}
+	}
+	if s.useDB() {
+		if err := s.repo.Delete(context.Background(), previousID); err != nil {
+			return nil, false, err
+		}
+	}
+	key := titleUserKey(previous.TitleID, previous.UserID, normalizeSettingsScopeKey(clientScope))
+	if s.byTitleUser[key] == previousID {
+		delete(s.byTitleUser, key)
+	}
+	previous.Persistent = false
+	previous.Reason = "reported_source"
+	previous.ExpiresAt = time.Now().Add(4 * time.Hour)
+	if previous.cancelFunc != nil {
+		previous.cancelFunc()
+		previous.cancelFunc = nil
+	}
+	next, _ := s.createScopedLocked(previous.TitleID, previous.TitleName, previous.UserID, previous.MediaType, previous.Year, previous.TargetEpisode, ManualPrequeueReason, clientScope)
+	previous.reportReplacementID = next.ID
+	return copyPrequeueEntryForRead(next), true, nil
 }
 
 // StreamPathValidator checks whether a ready prequeue stream path is still usable.

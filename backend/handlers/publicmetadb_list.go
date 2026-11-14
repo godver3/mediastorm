@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,7 +94,7 @@ func (h *MetadataHandler) PublicMetaDBList(w http.ResponseWriter, r *http.Reques
 		limit, offset := parseLimitOffset(r)
 		resp := h.buildShelfFromCurated(w, r, curated, label, userID, strings.EqualFold(r.URL.Query().Get("hideUnreleased"), "true"), strings.EqualFold(r.URL.Query().Get("hideWatched"), "true"), limit, offset)
 		if resp != nil {
-			json.NewEncoder(w).Encode(resp)
+			h.encodeMetadata(w, r, resp)
 		}
 		return
 	}
@@ -129,5 +128,5 @@ func (h *MetadataHandler) PublicMetaDBList(w http.ResponseWriter, r *http.Reques
 		items = items[:limit]
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(TraktShelfResponse{Items: items, Total: total, Genres: genres, AlphabetBuckets: alphabet})
+	_ = h.encodeMetadata(w, r, TraktShelfResponse{Items: items, Total: total, Genres: genres, AlphabetBuckets: alphabet})
 }

@@ -21,16 +21,20 @@ import (
 const defaultStorePath = "cache/bad_streams.json"
 
 type Entry struct {
-	ID                    string    `json:"id"`
-	ReleaseName           string    `json:"releaseName"`
-	NormalizedReleaseName string    `json:"normalizedReleaseName"`
-	ServiceType           string    `json:"serviceType,omitempty"`
-	Provider              string    `json:"provider,omitempty"`
-	SourcePath            string    `json:"sourcePath,omitempty"`
-	Reason                string    `json:"reason,omitempty"`
-	MarkedAt              time.Time `json:"markedAt"`
-	LastSeenAt            time.Time `json:"lastSeenAt"`
-	HitCount              int       `json:"hitCount"`
+	ID                    string       `json:"id"`
+	ReleaseName           string       `json:"releaseName"`
+	NormalizedReleaseName string       `json:"normalizedReleaseName"`
+	ServiceType           string       `json:"serviceType,omitempty"`
+	Provider              string       `json:"provider,omitempty"`
+	SourcePath            string       `json:"sourcePath,omitempty"`
+	Reason                string       `json:"reason,omitempty"`
+	MarkedAt              time.Time    `json:"markedAt"`
+	LastSeenAt            time.Time    `json:"lastSeenAt"`
+	HitCount              int          `json:"hitCount"`
+	Scope                 *ReportScope `json:"scope,omitempty"`
+	ReportedBy            string       `json:"reportedBy,omitempty"`
+	ExpiresAt             *time.Time   `json:"expiresAt,omitempty"`
+	ContentIdentity       string       `json:"contentIdentity,omitempty"`
 }
 
 type MarkRequest struct {
@@ -134,11 +138,14 @@ func (s *Service) Delete(id string) bool {
 		return false
 	}
 	s.mu.Lock()
-	_, exists := s.entries[id]
+	previous, exists := s.entries[id]
 	if exists {
 		delete(s.entries, id)
 		if err := s.saveLocked(); err != nil {
 			log.Printf("[bad-streams] failed to save after delete: %v", err)
+			s.entries[id] = previous
+			s.mu.Unlock()
+			return false
 		}
 	}
 	s.mu.Unlock()
@@ -177,6 +184,11 @@ func (s *Service) Match(result models.NZBResult) *Entry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, entry := range s.entries {
+		// Legacy callers have no language/title context and must never interpret
+		// a conditional report as a global blacklist entry.
+		if entry.Scope != nil {
+			continue
+		}
 		if entry.NormalizedReleaseName != normalizedRelease {
 			continue
 		}
@@ -261,7 +273,24 @@ func (s *Service) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	file, err := os.CreateTemp(filepath.Dir(s.path), ".bad-streams-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	defer os.Remove(name)
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, s.path)
 }
 
 func NormalizeReleaseName(value string) string {
