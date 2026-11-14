@@ -501,6 +501,9 @@ type HLSSession struct {
 	LiveTuning                      LiveTuningSettings // FFmpeg tuning settings for live sessions
 	LiveUpstreamKey                 string             // Provider connection shared with same-channel sessions ("" = private)
 	liveCapacityLease               *livecapacity.Lease
+	LiveSourceID                    string
+	LiveSourceName                  string
+	LiveFailoverAttempts            int
 	livePlaylistWindow              []livePlaylistEntry
 	livePlaylistTargetDuration      int
 	liveDiscontinuitySequence       int
@@ -577,6 +580,7 @@ type HLSSession struct {
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
 type LiveTuningSettings struct {
+	StationFailover    *liveStationFailover
 	MaxStreams         int // Provider-account capacity; zero keeps the existing unconfigured policy.
 	ProbeSizeMB        int
 	AnalyzeDurationSec int
@@ -2641,6 +2645,10 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 		LiveCCExtractionEnabled: liveCCExtractionEnabled,
 		subtitleExtractOffsets:  make(map[int]float64),
 	}
+	if plan := tuning.StationFailover; plan != nil {
+		session.LiveSourceID = plan.candidates[0].SourceID
+		session.LiveSourceName = plan.candidates[0].SourceName
+	}
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session
@@ -2649,11 +2657,19 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 	// Start live transcoding in background
 	go func() {
 		// The supervisor joins FFmpeg and closes its upstream before releasing.
-		defer lease.Release()
+		defer func() { session.mu.RLock(); last := session.liveCapacityLease; session.mu.RUnlock(); last.Release() }()
 		if err := m.superviseLiveTranscoding(bgCtx, session); err != nil {
 			log.Printf("[hls] live session %s transcoding failed: %v", sessionID, err)
 			session.mu.Lock()
 			session.Completed = true
+			if errors.Is(err, livecapacity.ErrLimit) {
+				session.FatalError = "All IPTV connections are in use. Try again after another stream stops."
+				session.FatalErrorTime = time.Now()
+			}
+			if errors.Is(err, errLiveStationExhausted) {
+				session.FatalError = "No permitted channel source could be played. Choose another source or try again later."
+				session.FatalErrorTime = time.Now()
+			}
 			if session.SegmentsCreated == 0 && session.FatalError == "" {
 				session.FatalError = "Live stream failed before playback started"
 				session.FatalErrorTime = time.Now()
@@ -3179,6 +3195,7 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 	var restarts int
 	windowStart := time.Now()
 	rebuilding := false
+	plan := session.LiveTuning.StationFailover
 	for {
 		resumeFrom := 0
 		if rebuilding {
@@ -3189,7 +3206,24 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 			session.mu.Unlock()
 			resumeFrom = nextLiveSegmentNumber(session.OutputDir)
 		}
-		err := m.startLiveTranscoding(ctx, session, resumeFrom)
+		attemptCtx := ctx
+		cancelAttempt := func() {}
+		stopStartup := func() bool { return false }
+		if plan != nil {
+			attemptCtx, cancelAttempt = context.WithCancel(ctx)
+			candidate := plan.candidates[plan.index]
+			timer := time.AfterFunc(liveStationStartupTimeout, func() {
+				if nextLiveSegmentNumber(session.OutputDir) > resumeFrom {
+					plan.recordSuccess(candidate)
+				} else {
+					cancelAttempt()
+				}
+			})
+			stopStartup = timer.Stop
+		}
+		err := m.startLiveTranscoding(attemptCtx, session, resumeFrom)
+		stopStartup()
+		cancelAttempt()
 		if errors.Is(err, livecapacity.ErrLimit) {
 			return err
 		}
@@ -3211,6 +3245,15 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 			// Stopped on purpose for a new stream layout (hls_live_layout.go): not a failure, so
 			// rebuild at once without spending the failure budget.
 			log.Printf("[hls] live session %s: rebuilding for the new input stream layout", session.ID)
+			continue
+		}
+		if plan != nil {
+			if stopped || idleStopped {
+				return err
+			}
+			if nextErr := plan.next(ctx, session); nextErr != nil {
+				return nextErr
+			}
 			continue
 		}
 		if !consumed && restarts >= 3 {
@@ -5917,6 +5960,9 @@ func (m *HLSManager) clearSessionSegments(session *HLSSession) error {
 
 // HLSSessionStatus represents the status of an HLS session for frontend polling
 type HLSSessionStatus struct {
+	LiveSourceID              string  `json:"liveSourceId,omitempty"`
+	LiveSourceName            string  `json:"liveSourceName,omitempty"`
+	LiveFailoverAttempts      int     `json:"liveFailoverAttempts,omitempty"`
 	SessionID                 string  `json:"sessionId"`
 	Status                    string  `json:"status"` // "active", "completed", "error"
 	FatalError                string  `json:"fatalError,omitempty"`
@@ -5945,6 +5991,9 @@ func (m *HLSManager) GetSessionStatus(w http.ResponseWriter, r *http.Request, se
 
 	session.mu.RLock()
 	status := HLSSessionStatus{
+		LiveSourceID:              session.LiveSourceID,
+		LiveSourceName:            session.LiveSourceName,
+		LiveFailoverAttempts:      session.LiveFailoverAttempts,
 		SessionID:                 session.ID,
 		Duration:                  session.Duration,
 		SegmentsCreated:           session.SegmentsCreated,

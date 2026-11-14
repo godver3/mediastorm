@@ -2810,7 +2810,7 @@
         debridProviders: 'Real-Debrid, TorBox, AllDebrid, Debrid-Link, Premiumize, Torrin',
         torrentScrapers: 'Torrent indexers and streaming providers',
         'live.sources': 'IPTV and live television sources',
-        live: 'Server-side live pause and rewind for the native Android TV app',
+        live: 'Channel variants, automatic source recovery, and live pause',
         'liveTV.sources': 'IPTV and live television sources',
         usenet: 'Manage and benchmark parallel provider slots',
         usenetEngines: 'SABnzbd, NZBGet configuration',
@@ -2855,7 +2855,7 @@
         'homeShelves', 'display',
         'server', 'network', 'security'
     ].map((key, index) => [key, index]));
-    const advancedSections = new Set(['ranking', 'server', 'transmux']);
+    const advancedSections = new Set(['ranking', 'server', 'transmux', 'live.stationMappings']);
     const advancedFieldPaths = new Set([
         'streaming.multiProviderMode',
         'streaming.usenetResolutionTimeoutSec',

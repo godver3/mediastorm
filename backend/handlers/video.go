@@ -139,8 +139,11 @@ type VideoHandler struct {
 	// Stalker tune-in URLs contain short-lived portal credentials and must never
 	// be returned to a player. Native clients receive an opaque relay ticket;
 	// the resolved URL and MAG request headers stay here on the backend.
-	liveDirectMu      sync.Mutex
-	liveDirectTargets map[string]*liveDirectTarget
+	liveDirectMu        sync.Mutex
+	liveDirectTargets   map[string]*liveDirectTarget
+	liveStationHealthMu sync.Mutex
+	liveStationFailures map[string]time.Time
+	liveStationLastGood map[string]string
 
 	// Subtitle extraction for non-HLS streams
 	subtitleExtractManager *SubtitleExtractManager
@@ -5285,6 +5288,10 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "live provider unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	stationPlan := h.liveStationPlan(r, liveURL)
+	if target.Provider != "m3u" && target.Provider != "xtream" {
+		stationPlan = nil
+	}
 
 	var providerRequestHeaders map[string]string
 	if normalizeLiveProvider(target.Provider) == "stalker" {
@@ -5309,7 +5316,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	if parseOptionalBool(r.URL.Query().Get("timeshift")) {
 		timeshiftWindow = h.liveTimeshiftWindow()
 	}
-	forceHLS := timeshiftWindow > 0 ||
+	forceHLS := stationPlan != nil || timeshiftWindow > 0 ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "web") ||
 		(hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "cast"))
@@ -5422,6 +5429,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	log.Printf("[video] creating live HLS session for URL: %s (provider=%s bucket=%s profile=%s)", requestsecurity.URLForLog(liveURL), target.Provider, target.BucketKey, profileID)
 
 	tuning := LiveTuningSettings{
+		StationFailover:    stationPlan,
 		MaxStreams:         target.MaxStreams,
 		ProbeSizeMB:        target.ProbeSizeMB,
 		AnalyzeDurationSec: target.AnalyzeDurationSec,

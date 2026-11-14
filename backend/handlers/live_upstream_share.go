@@ -466,11 +466,28 @@ func openLiveUpstream(session *HLSSession) liveUpstreamSource {
 		}}
 	}
 	return liveUpstreamSource{reconnect: true, open: func(ctx context.Context) (io.ReadCloser, error) {
+		requestCtx, cancelInput := context.WithCancel(ctx)
+		// A failover-enabled tune has one startup budget across dial, headers
+		// and the initial body. Stop this timer after sniffing data so a healthy
+		// long-running provider connection keeps its normal lifetime.
+		var startup *time.Timer
+		if tuning.StationFailover != nil {
+			startup = time.AfterFunc(liveStationStartupTimeout, cancelInput)
+		}
+		opened := false
+		defer func() {
+			if startup != nil {
+				startup.Stop()
+			}
+			if !opened {
+				cancelInput()
+			}
+		}()
 		client, err := netproxy.NewHTTPClientWithOptions(netproxy.HTTPClientOptions{ResponseHeaderTimeout: 15 * time.Second}, tuning.ProxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("create live client: %w", err)
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, fmt.Errorf("prepare live request: %w", err)
 		}
@@ -504,7 +521,8 @@ func openLiveUpstream(session *HLSSession) liveUpstreamSource {
 			client.CloseIdleConnections()
 			return nil, errLiveUpstreamNotTS
 		}
-		return liveUpstreamBody{Reader: reader, body: resp.Body, client: client}, nil
+		opened = true
+		return liveUpstreamBody{Reader: reader, body: resp.Body, client: client, cancel: cancelInput}, nil
 	}}
 }
 
@@ -512,9 +530,13 @@ type liveUpstreamBody struct {
 	io.Reader
 	body   io.Closer
 	client *http.Client
+	cancel context.CancelFunc
 }
 
 func (b liveUpstreamBody) Close() error {
+	if b.cancel != nil {
+		b.cancel()
+	}
 	err := b.body.Close()
 	b.client.CloseIdleConnections()
 	return err

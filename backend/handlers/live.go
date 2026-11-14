@@ -65,19 +65,23 @@ var liveStreamRequestSequence uint64
 
 // LiveChannel represents a parsed channel from an M3U playlist.
 type LiveChannel struct {
-	SportsMetadata string `json:"-"` // Provider description used to reject contradictory sports series.
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	Logo           string `json:"logo,omitempty"`
-	Group          string `json:"group,omitempty"`
-	TvgID          string `json:"tvgId,omitempty"`
-	TvgName        string `json:"tvgName,omitempty"`
-	TvgLanguage    string `json:"tvgLanguage,omitempty"`
-	SourceID       string `json:"sourceId,omitempty"`
-	SourceName     string `json:"sourceName,omitempty"`
-	StreamURL      string `json:"streamUrl,omitempty"`  // Backend-proxied stream URL
-	PlaybackID     string `json:"playbackId,omitempty"` // Provider-local ID used for tune-time resolution
+	SportsMetadata  string `json:"-"` // Provider description used to reject contradictory sports series.
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	Logo            string `json:"logo,omitempty"`
+	Group           string `json:"group,omitempty"`
+	TvgID           string `json:"tvgId,omitempty"`
+	TvgName         string `json:"tvgName,omitempty"`
+	TvgLanguage     string `json:"tvgLanguage,omitempty"`
+	TvgCountry      string `json:"tvgCountry,omitempty"`
+	StationID       string `json:"stationId,omitempty"`
+	StationName     string `json:"stationName,omitempty"`
+	StationVariants int    `json:"stationVariants,omitempty"`
+	SourceID        string `json:"sourceId,omitempty"`
+	SourceName      string `json:"sourceName,omitempty"`
+	StreamURL       string `json:"streamUrl,omitempty"`  // Backend-proxied stream URL
+	PlaybackID      string `json:"playbackId,omitempty"` // Provider-local ID used for tune-time resolution
 	// Catchup is set when the provider can replay this channel's past programmes.
 	Catchup       *LiveCatchup       `json:"catchup,omitempty"`
 	catchupSource *liveCatchupSource // server-side only: how to build the archive URL
@@ -111,15 +115,16 @@ const (
 )
 
 type liveChannelsRequest struct {
-	ProfileID     string   `json:"profileId"`
-	SourceID      string   `json:"sourceId"`
-	SourceIndex   *int     `json:"sourceIndex,omitempty"`
-	Offset        *int     `json:"offset,omitempty"`
-	Limit         *int     `json:"limit,omitempty"`
-	Filter        string   `json:"filter,omitempty"`
-	Categories    []string `json:"categories,omitempty"`
-	FavoriteIDs   []string `json:"favoriteIds,omitempty"`
-	FavoritesOnly bool     `json:"favoritesOnly,omitempty"`
+	GroupByStation *bool    `json:"groupByStation,omitempty"`
+	ProfileID      string   `json:"profileId"`
+	SourceID       string   `json:"sourceId"`
+	SourceIndex    *int     `json:"sourceIndex,omitempty"`
+	Offset         *int     `json:"offset,omitempty"`
+	Limit          *int     `json:"limit,omitempty"`
+	Filter         string   `json:"filter,omitempty"`
+	Categories     []string `json:"categories,omitempty"`
+	FavoriteIDs    []string `json:"favoriteIds,omitempty"`
+	FavoritesOnly  bool     `json:"favoritesOnly,omitempty"`
 }
 
 func parseLiveChannelPagination(r *http.Request) (offset, limit int, paginated bool, err error) {
@@ -161,6 +166,10 @@ func parseLiveChannelsRequest(w http.ResponseWriter, r *http.Request) (liveChann
 			Categories:    query["category"],
 			FavoriteIDs:   query["favoriteId"],
 			FavoritesOnly: parseOptionalBool(query.Get("favoritesOnly")),
+		}
+		if query.Has("groupByStation") {
+			group := parseOptionalBool(query.Get("groupByStation"))
+			request.GroupByStation = &group
 		}
 		if raw, ok := query["sourceIndex"]; ok {
 			index, err := strconv.Atoi(strings.TrimSpace(raw[len(raw)-1]))
@@ -1273,6 +1282,7 @@ func parseM3UPlaylist(contents string) []LiveChannel {
 				TvgID:       strings.TrimSpace(attributes["tvg-id"]),
 				TvgName:     strings.TrimSpace(attributes["tvg-name"]),
 				TvgLanguage: strings.TrimSpace(attributes["tvg-language"]),
+				TvgCountry:  strings.TrimSpace(attributes["tvg-country"]),
 			}
 			pendingAttributes = attributes
 			continue
@@ -2625,7 +2635,7 @@ func (h *LiveHandler) FetchFilteredChannelsForRequest(r *http.Request) ([]LiveCh
 	for _, channels := range results {
 		all = append(all, channels...)
 	}
-	return all, nil
+	return annotateLiveStations(all, settings.Live.StationMappings), nil
 }
 
 // RecordingChannels resolves the complete visible channel list for a profile.
@@ -2895,6 +2905,14 @@ func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin 
 		time.Duration(src.EPGTimeOffsetMinutes)*time.Minute,
 	)
 	filteredChannels = orderFavoriteChannelsFirst(filteredChannels, requestedFavoriteIDs)
+	filteredChannels = annotateLiveStations(filteredChannels, settings.Live.StationMappings)
+	groupByStation := settings.Live.GroupChannelsByStation
+	if request.GroupByStation != nil {
+		groupByStation = *request.GroupByStation
+	}
+	if groupByStation {
+		filteredChannels = orderLiveStations(filteredChannels, requestedFavoriteIDs)
+	}
 
 	total := len(filteredChannels)
 	responseTotal := total
