@@ -299,7 +299,7 @@ func (h *MetadataHandler) StremioManifest(w http.ResponseWriter, r *http.Request
 		name = strings.TrimSpace(manifest.ID)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(stremioManifestIngestionResponse{
+	_ = h.encodeMetadata(w, r, stremioManifestIngestionResponse{
 		ID:          strings.TrimSpace(manifest.ID),
 		Name:        name,
 		Version:     strings.TrimSpace(manifest.Version),
@@ -334,7 +334,7 @@ func (h *MetadataHandler) StremioList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
+		_ = h.encodeMetadata(w, r, response)
 		return
 	}
 
@@ -353,7 +353,7 @@ func (h *MetadataHandler) StremioList(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(curated) == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(CustomListResponse{Items: []models.TrendingItem{}, Total: 0})
+		_ = h.encodeMetadata(w, r, CustomListResponse{Items: []models.TrendingItem{}, Total: 0})
 		return
 	}
 
@@ -369,7 +369,7 @@ func (h *MetadataHandler) StremioList(w http.ResponseWriter, r *http.Request) {
 	if response == nil {
 		return
 	}
-	_ = json.NewEncoder(w).Encode(response)
+	_ = h.encodeMetadata(w, r, response)
 }
 
 func getStremioShelfJSON(ctx context.Context, client *http.Client, endpoint string, out interface{}) error {

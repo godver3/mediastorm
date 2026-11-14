@@ -76,6 +76,7 @@ type prequeuePlaybackService interface {
 
 // PrequeueHandler handles prequeue requests for pre-loading playback streams
 type PrequeueHandler struct {
+	sourceAvailability    sourceAvailabilityService
 	store                 *playback.PrequeueStore
 	indexerSvc            *indexer.Service
 	playbackSvc           prequeuePlaybackService
@@ -1606,6 +1607,13 @@ func resolveFirstReadySourceForWorker(configured bool, mode prequeueWorkerMode) 
 // honor Resolve First Ready Source; scheduled pre-warm workers always wait for
 // the complete globally ranked candidate set before resolving.
 func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, throughput *models.AdaptiveThroughputContext, targetEpisode *models.EpisodeReference, startOffset float64, skipHLS bool, workerMode prequeueWorkerMode) {
+	if h.sourceAvailability != nil {
+		observe := h.sourceAvailability.ObservePlaybackStart(userID, clientID, titleID, mediaType)
+		defer func() {
+			entry, ok := h.store.Get(prequeueID)
+			observe(ok && entry.Status == playback.PrequeueStatusReady && entry.StreamPath != "")
+		}()
+	}
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

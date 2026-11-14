@@ -266,6 +266,16 @@ var SettingsSchema = map[string]interface{}{
 			},
 		},
 	},
+	"sourceAvailability": map[string]interface{}{
+		"label": "Source Availability", "icon": "search", "group": "searchFiltering", "order": 20,
+		"description": "Optional background source searches for recently visible titles. Foreground playback has priority. Checks never download NZBs or prepare media. Candidates do not prove that a release is complete or playable. Only explicitly selected indexers are queried; errors and unconfirmed audio stay unknown.",
+		"fields": map[string]interface{}{
+			"enabled":           map[string]interface{}{"type": "boolean", "label": "Enable Background Checks", "globalOnly": true, "order": 0},
+			"indexerNames":      map[string]interface{}{"type": "multiselect", "label": "Background Indexers", "optionsFrom": "availabilityIndexers", "description": "Select search sources with sufficient API quota. Empty disables background searches. A title check can make multiple API calls per indexer. Provider download quotas are not used.", "globalOnly": true, "order": 1},
+			"refreshHours":      map[string]interface{}{"type": "select", "label": "Refresh Interval (hours)", "options": []int{6, 8, 12, 24}, "description": "6 = four times daily, 8 = three, 12 = twice, 24 = once. Default: 6.", "globalOnly": true, "order": 2},
+			"maxTitlesPerCycle": map[string]interface{}{"type": "number", "label": "Title Checks per Interval", "min": 1, "max": 50, "description": "Server-wide budget, shared by all profiles and retained across restarts. Default: 20. Queue and cache are limited to 500 titles.", "globalOnly": true, "order": 3},
+		},
+	},
 	"security": map[string]interface{}{
 		"label":       "Profile PIN Security",
 		"icon":        "lock",
