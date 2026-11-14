@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"novastream/internal/auth"
+	"novastream/internal/livecapacity"
 	"novastream/internal/netproxy"
 	"novastream/internal/requestsecurity"
 
@@ -27,6 +28,7 @@ type liveDirectTarget struct {
 	AccountID      string
 	Provider       string
 	BucketKey      string
+	MaxStreams     int
 	ExpiresAt      time.Time
 	Active         int
 }
@@ -129,6 +131,12 @@ func (h *VideoHandler) ServeLiveDirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.releaseLiveDirectTarget(ticket)
+	lease, err := livecapacity.Default.Acquire(target.BucketKey, "", target.MaxStreams)
+	if err != nil {
+		writeLiveCapacityError(w, liveStreamTarget{Provider: target.Provider, BucketKey: target.BucketKey, MaxStreams: target.MaxStreams})
+		return
+	}
+	defer lease.Release()
 
 	// No overall deadline: the request context ends the stream when the client goes.
 	ctx, cancel := context.WithCancel(r.Context())

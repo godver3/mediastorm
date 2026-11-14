@@ -353,10 +353,13 @@ func (u *liveUpstream) subscriberCount() int {
 // finish ends the upstream for every subscriber and removes it from the hub.
 func (u *liveUpstream) finish(err error) {
 	u.hub.mu.Lock()
+	// Keep the entry unavailable to a replacement opener until the old
+	// connection has actually closed. Removing it before Close allowed a
+	// reconnect to overlap the provider's last occupied slot.
+	defer u.hub.mu.Unlock()
 	if u.hub.streams[u.key] == u {
 		delete(u.hub.streams, u.key)
 	}
-	u.hub.mu.Unlock()
 
 	u.mu.Lock()
 	u.ended = true
@@ -485,7 +488,17 @@ func openLiveUpstream(session *HLSSession) liveUpstreamSource {
 		}
 		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 		reader := bufio.NewReaderSize(resp.Body, liveUpstreamReadChunk)
-		head, _ := reader.Peek(7)
+		// Header timeouts do not cover a provider that sends headers but no
+		// body. Bound the initial sniff too, so a stopped startup cannot hold
+		// its capacity reservation indefinitely.
+		sniffTimeout := time.AfterFunc(liveUpstreamReadTimeout, func() { _ = resp.Body.Close() })
+		head, sniffErr := reader.Peek(7)
+		sniffTimeout.Stop()
+		if sniffErr != nil && len(head) == 0 {
+			resp.Body.Close()
+			client.CloseIdleConnections()
+			return nil, fmt.Errorf("read live stream header: %w", sniffErr)
+		}
 		if strings.Contains(contentType, "mpegurl") || bytes.HasPrefix(head, []byte("#EXTM3U")) {
 			resp.Body.Close()
 			client.CloseIdleConnections()
