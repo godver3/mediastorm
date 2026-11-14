@@ -623,7 +623,7 @@ func main() {
 		log.Fatalf("initialize source availability: %v", availabilityErr)
 	}
 	availabilityService := sourceavailability.NewService(availabilityStore, cfgManager, indexerService,
-		sourceavailability.NewScopeFactory(cfgManager, userSettingsService, clientSettingsService, contentPreferencesService, userService.Exists))
+		sourceavailability.NewScopeFactory(cfgManager, userSettingsService, clientSettingsService, contentPreferencesService, userService.Exists), badStreamsService)
 	availabilityContext, stopAvailability := context.WithCancel(context.Background())
 	defer stopAvailability()
 	availabilityService.Start(availabilityContext)

@@ -83,8 +83,8 @@ func TestAvailabilityIncompleteSearchNeverMarksMissing(t *testing.T) {
 		{name: "quota error", state: "unknown", result: indexer.ScoredSplitSearchResult{Err: errors.New("quota reached")}},
 		{name: "disabled provider", state: "unknown", result: indexer.ScoredSplitSearchResult{Disabled: true}},
 		{name: "channel closed without result", state: "unknown", missing: true},
-		{name: "matching audio", state: "found", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Attributes: map[string]string{"languages": "German"}}}}}},
-		{name: "unconfirmed audio", state: "unknown", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Attributes: map[string]string{"languages": "English"}}}}}},
+		{name: "matching audio", state: "found", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Title: "Synthetic.Movie.1080p", Attributes: map[string]string{"languages": "German"}}}}}},
+		{name: "unconfirmed audio", state: "unknown", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Title: "Synthetic.Movie.1080p", Attributes: map[string]string{"languages": "English"}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, search, _ := availabilityFixture(t)
@@ -175,7 +175,7 @@ func TestAvailabilityDisabledOrEmptyProviderChoiceNeverSearches(t *testing.T) {
 
 func TestAvailabilityPreparedSourceOnlyRecordsSuccessfulCapturedScope(t *testing.T) {
 	svc, _, _ := availabilityFixture(t)
-	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "series")
+	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "movie")
 	observe(false)
 	if svc.Store.Get("stefan", "a", "scope-tv").State != "unknown" {
 		t.Fatal("failed playback recorded")

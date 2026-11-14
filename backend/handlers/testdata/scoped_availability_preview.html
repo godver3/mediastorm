@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synthetic availability fixture</title>
+<style>
+body{margin:0;background:#10151e;color:#eef2f8;font:16px/1.5 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:28px 20px}h1{line-height:1.2;font-size:30px}p{color:#bbc7d7}.notice{border-left:4px solid #62c7c1;padding:12px 16px;background:#19232f}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin:24px 0}article{padding:20px;border:1px solid #40526a;border-radius:12px;background:#1a2331}article h2{font-size:20px;margin:0 0 12px}.state{font-weight:700}.state[data-state=found]{color:#7ee0b1}.state[data-state=not_found]{color:#ffc07d}.state[data-state=unknown]{color:#d4dce8}.subtitle{min-height:72px}.reason{font-size:13px;color:#a6b6ca;overflow-wrap:anywhere}.actions{display:flex;flex-wrap:wrap;gap:12px}button{font:inherit;color:#eef2f8;border:1px solid #647990;border-radius:7px;background:#293d54;padding:10px 16px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}#error{color:#ffbf82}#metrics{font-variant-numeric:tabular-nums}a{color:#8bd9ff}
+</style>
+<main><p>BACKEND TEST FIXTURE</p><h1>Source hints follow the requested language</h1>
+<p class="notice">Synthetic profiles and releases only. These cards display responses from the real metadata handlers. This fixture does not represent the native app layout and does not play media.</p>
+<p>Both synthetic releases advertise French and English. Report one French release, then the other, to check how alternatives and another language remain eligible.</p>
+<div class="grid" id="cards"></div>
+<div class="actions"><button id="reportA">Report French on release A</button><button id="reportB">Report French on release B</button><button id="undo">Undo reports</button></div>
+<p id="metrics" role="status"></p><p id="error" role="alert"></p><p><a href="/api/catalogue?userId=profile&amp;clientId=fixture-device">Catalogue JSON</a> · <a href="/api/users/profile/home/manifest?clientId=fixture-device">Home manifest JSON</a></p>
+</main>
+<script>
+const profiles=[['profile','French request'],['shared-french','Another French profile'],['english','English request']];
+let info,busy=false;
+async function api(path,options={}){const response=await fetch(path,{...options,headers:{'Content-Type':'application/json','X-Client-ID':'fixture-device'}});if(!response.ok)throw new Error('Fixture request failed: '+response.status);return response.json()}
+async function refresh(){
+ const rows=await Promise.all(profiles.map(async([id,label])=>{const items=await api('/api/catalogue?userId='+id+'&clientId=fixture-device');return{id,label,title:items[0].title}}));
+ document.getElementById('cards').replaceChildren();
+ for(const row of rows){const article=document.createElement('article');article.dataset.profile=row.id;const h=document.createElement('h2');h.textContent=row.label;const state=document.createElement('div');state.className='state';state.dataset.state=row.title.sourceAvailability.state;state.textContent=state.dataset.state;const subtitle=document.createElement('p');subtitle.className='subtitle';subtitle.textContent=row.title.cardSubtitle;const reason=document.createElement('p');reason.className='reason';reason.textContent=row.title.sourceAvailability.reason;article.append(h,state,subtitle,reason);document.getElementById('cards').append(article)}
+ const [current,reports]=await Promise.all([api('/fixture/info'),api('/fixture/reports')]);document.getElementById('metrics').textContent='Synthetic searches: '+current.searches+' · Active reports: '+reports.length;
+}
+async function action(run){if(busy)return;busy=true;document.querySelectorAll('button').forEach(button=>button.disabled=true);document.getElementById('error').textContent='';try{await run();await refresh()}catch(error){document.getElementById('error').textContent=error.message}finally{busy=false;document.querySelectorAll('button').forEach(button=>button.disabled=false)}}
+async function report(index){const id=info.prequeueIds[index],options=await api('/api/playback/prequeue/'+id+'/report');await api('/api/playback/prequeue/'+id+'/report',{method:'POST',body:JSON.stringify({reason:'missing_language',audioLanguage:'fra',sourceVersion:options.sourceVersion,retry:false})})}
+document.getElementById('reportA').onclick=()=>action(()=>report(0));document.getElementById('reportB').onclick=()=>action(()=>report(1));document.getElementById('undo').onclick=()=>action(async()=>{for(const report of await api('/fixture/reports'))await api('/api/playback/bad-streams/'+report.id,{method:'DELETE'})});
+(async()=>{try{info=await api('/fixture/info');await refresh()}catch(error){document.getElementById('error').textContent=error.message}})();
+</script></html>
