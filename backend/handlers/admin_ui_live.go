@@ -4,7 +4,9 @@ package handlers
 // "Live TV Playback" section. The section's other fields are the single-source settings from
 // before live.sources: still read for older configs, but edited per source now.
 var liveVisibleFields = map[string]bool{
-	"timeshiftMinutes": true,
+	"timeshiftMinutes":       true,
+	"groupChannelsByStation": true,
+	"autoChannelFailover":    true,
 }
 
 func init() { hideLegacyLiveFields(SettingsSchema) }

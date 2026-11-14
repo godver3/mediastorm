@@ -186,6 +186,37 @@ server's authorized channel URL instead of a submitted arbitrary URL. Catch-up
 playback accepts the archive URLs the server issued to that profile. Administrator
 configuration remains available through the management interface.
 
+## Matching Live TV channel variants
+
+Under **Settings > Sources > Live TV Playback**, **Group matching channel variants**
+keeps matching broadcasts together across permitted playlists. Each original entry
+remains selectable, with its source ID, name and guide key intact. The catalog adds
+`stationId`, `stationName` and `stationVariants`; `groupByStation` in a channel-list
+request can override the default ordering for that request.
+
+**Try another channel source automatically** enables server-managed HLS recovery
+for matching M3U and Xtream variants, including sources configured for direct
+playback. It tries at most four distinct source URLs, with an eight-second startup
+budget for each input. The current input closes before another slot is reserved;
+other viewers sharing that input keep their own reservations. Existing raw direct
+stream routes, Stalker and Stremio tune flows retain their separate behavior.
+Both settings default to off.
+
+Station matching considers EPG IDs, quality suffixes, declared language and country.
+Different national feeds, time-shifted broadcasts, and channels such as RTLZWEI
+stay separate. Ambiguous entries can be associated explicitly under the Advanced
+**Channel identity corrections** section, using the source and full channel IDs.
+Entries sharing the same correction key are treated as one broadcast. Configured
+source order supplies the default priority; recently failed inputs cool down for
+up to two minutes, and a working alternative is preferred on later recovery plans
+for the same profile. This health memory resets when the server restarts.
+
+The automatic switch retains the HLS session and original guide/favorite metadata.
+It rechecks current channel access and labeled resolution limits for each candidate;
+these labels are not a probe of actual resolution or device codec support. Dedicated
+collapsible client groups, station-wide favorites, DVR input switching and physical
+client acceptance are separate follow-up work.
+
 ## Connection Invites and Iroh Remote Access
 
 mediastorm includes an Iroh-based connection invite system for remote app access without opening ports or configuring a reverse proxy. Create an invite in the admin panel, share its short code, and enter that code from the app's login screen. The person connecting still needs a valid mediastorm username and password, either for the primary account or a sub-account created for them.
@@ -238,6 +269,23 @@ See [Ollama setup](https://docs.ollama.com/faq) and [API compatibility](https://
 For source development, runtime logs are written to `.logs/backend.log` and `.logs/frontend.log`. Backend runtime diagnostics are available from localhost under `/api/debug/runtime` and `/api/debug/pprof/`.
 
 ## Development
+
+The Live TV settings browser test is part of the handler suite. It starts its own
+isolated fixture server and refuses to save against a server without that fixture
+identity. Run it with a Python environment containing Playwright and a Chromium
+binary:
+
+```bash
+cd backend
+MEDIASTORM_BROWSER_PYTHON=/path/to/python-with-playwright \
+MEDIASTORM_CHROMIUM=/path/to/chromium \
+go test ./handlers -run '^TestStationSettingsBrowserRoundTrip$' -count=1
+```
+
+Without those environment variables the optional browser test is skipped; the
+ordinary channel identity, pagination, access, capacity and real-media recovery
+tests still run with `go test ./handlers`.
+
 
 The root repository contains the Go backend, documentation, and deployment tooling. The native clients are separate repositories with their own build instructions.
 

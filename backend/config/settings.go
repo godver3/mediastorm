@@ -787,8 +787,20 @@ type EPGSettings struct {
 	TimeOffsetMinutes    int         `json:"timeOffsetMinutes"`    // Shift EPG program times by this many minutes (positive = forward, negative = backward)
 }
 
+// LiveStationMapping explicitly associates a playlist entry with a broadcast.
+// ChannelID is the source-qualified ID returned by the visible channel catalog.
+type LiveStationMapping struct {
+	SourceID  string `json:"sourceId"`
+	ChannelID string `json:"channelId"`
+	StationID string `json:"stationId"`
+	Name      string `json:"name"`
+}
+
 // LiveSettings controls Live TV playlist caching behavior.
 type LiveSettings struct {
+	GroupChannelsByStation   bool                 `json:"groupChannelsByStation"`
+	AutoChannelFailover      bool                 `json:"autoChannelFailover"`
+	StationMappings          []LiveStationMapping `json:"stationMappings,omitempty"`
 	RequireAccountAssignment bool                 `json:"requireAccountAssignment"`
 	AllowedAccounts          *[]string            `json:"allowedAccounts,omitempty"` // Access to a legacy single-source connection
 	Mode                     string               `json:"mode"`                      // "m3u", "hdhomerun", "xtream", "stremio", or "stalker"
