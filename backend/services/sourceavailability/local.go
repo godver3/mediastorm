@@ -103,7 +103,11 @@ func (s *Service) localConservative(value models.SourceAvailability) models.Sour
 func (s *Service) localHint(ctx context.Context, item request, selected Selection) models.SourceAvailability {
 	value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), selected.Key)
 	if item.Episode != nil {
-		value = s.evaluateEpisode(value, evidence, item, selected)
+		if reason := episodeEligibility(item.Title, *item.Episode, s.now()); reason != "" {
+			value = unknown(reason)
+		} else {
+			value = s.evaluateEpisode(value, evidence, item, selected)
+		}
 	} else {
 		value = s.evaluate(value, evidence, s.reportContext(item.ProfileID, item.ClientID, item.Title.ID, selected))
 	}
@@ -158,6 +162,7 @@ func (s *Service) ApplyLocalTitles(ctx context.Context, profile, client string, 
 		}
 		item := request{ProfileID: profile, ClientID: client, Title: title, Scope: selected.Key, AudioLanguage: selected.AudioLanguage}
 		value := s.localHint(bounded, item, selected)
+		value = s.recheckPresentation(value, item.ProfileID, item.cacheID(), selected.Key)
 		response.Items[i].Availability = &value
 	}
 	return response
@@ -181,6 +186,7 @@ func (s *Service) ApplyLocalEpisodes(ctx context.Context, profile, client string
 			selected = episodeSelection(selected, &ep, title)
 			item := request{ProfileID: profile, ClientID: client, Title: title, Episode: &ep, Scope: selected.Key, AudioLanguage: selected.AudioLanguage}
 			value := s.localHint(bounded, item, selected)
+			value = s.recheckPresentation(value, item.ProfileID, item.cacheID(), selected.Key)
 			response.Items[i].Availability = &value
 		}
 	}

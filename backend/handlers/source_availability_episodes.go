@@ -87,24 +87,56 @@ func (h *MetadataHandler) EpisodeSourceHints(w http.ResponseWriter, r *http.Requ
 		writeEpisodeHints(w, sourceavailability.EpisodeViewResponse{Enabled: false, Version: body.Version, Items: []sourceavailability.EpisodeHint{}})
 		return
 	}
+	title, episodes, status, err := h.resolveSourceEpisodes(r.Context(), profile, body)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if r.Context().Err() != nil {
+		return
+	}
+	response, err := service.ReplaceEpisodeView(profile, client, viewID, body.Version, title, episodes)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, sourceavailability.ErrStaleEpisodeView) {
+			status = http.StatusConflict
+		}
+		if errors.Is(err, sourceavailability.ErrEpisodeViewLimit) {
+			status = http.StatusTooManyRequests
+		}
+		http.Error(w, "visible episode demand could not be accepted", status)
+		return
+	}
+	if local, ok := service.(interface {
+		ApplyLocalEpisodes(context.Context, string, string, models.Title, []models.SeriesEpisode, sourceavailability.EpisodeViewResponse) sourceavailability.EpisodeViewResponse
+	}); ok {
+		response = local.ApplyLocalEpisodes(r.Context(), profile, client, title, episodes, response)
+	}
+	writeEpisodeHints(w, response)
+}
+func writeEpisodeHints(w http.ResponseWriter, value sourceavailability.EpisodeViewResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+// resolveSourceEpisodes accepts coordinates only and reuses server metadata.
+func (h *MetadataHandler) resolveSourceEpisodes(parent context.Context, profile string, body episodeDemandRequest) (models.Title, []models.SeriesEpisode, int, error) {
 	episodes := []models.SeriesEpisode{}
 	title := models.Title{}
 	if len(body.Episodes) > 0 {
 		if body.TitleID == "" || len(body.TitleID) > 128 || body.Numbering == nil || body.Numbering.SeriesID == "" {
-			http.Error(w, "verified series and numbering required", 400)
-			return
+			return title, episodes, 400, errors.New("verified series and numbering required")
 		}
 		metadata := h.serviceForUser(profile)
 		if metadata == nil {
-			http.Error(w, "metadata unavailable", 503)
-			return
+			return title, episodes, 503, errors.New("metadata unavailable")
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 		defer cancel()
 		details, err := metadata.SeriesDetails(ctx, models.SeriesDetailsQuery{TitleID: body.TitleID, SeasonType: body.Numbering.Ordering})
 		if err != nil || details == nil || ctx.Err() != nil {
-			http.Error(w, "series metadata unavailable", http.StatusBadGateway)
-			return
+			return title, episodes, http.StatusBadGateway, errors.New("series metadata unavailable")
 		}
 		title = details.Title
 		title.ID = body.TitleID
@@ -113,8 +145,7 @@ func (h *MetadataHandler) EpisodeSourceHints(w http.ResponseWriter, r *http.Requ
 			if user, exists := h.UsersService.Get(profile); exists && user.IsKidsProfile {
 				_, _, limited := h.kidsRatingLimits(profile)
 				if user.KidsMode != "rating" || !limited || len(h.filterTitlesByKids(ctx, profile, metadata, []models.Title{title})) == 0 {
-					http.NotFound(w, r)
-					return
+					return title, episodes, http.StatusNotFound, errors.New("series unavailable")
 				}
 			}
 		}
@@ -150,8 +181,7 @@ func (h *MetadataHandler) EpisodeSourceHints(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			if found == nil || seen[found.ID] {
-				http.Error(w, "unknown or duplicate episode in selected numbering", 400)
-				return
+				return title, episodes, 400, errors.New("unknown or duplicate episode in selected numbering")
 			}
 			seen[found.ID] = true
 			if title.IsDaily {
@@ -160,30 +190,5 @@ func (h *MetadataHandler) EpisodeSourceHints(w http.ResponseWriter, r *http.Requ
 			episodes = append(episodes, *found)
 		}
 	}
-	if r.Context().Err() != nil {
-		return
-	}
-	response, err := service.ReplaceEpisodeView(profile, client, viewID, body.Version, title, episodes)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, sourceavailability.ErrStaleEpisodeView) {
-			status = http.StatusConflict
-		}
-		if errors.Is(err, sourceavailability.ErrEpisodeViewLimit) {
-			status = http.StatusTooManyRequests
-		}
-		http.Error(w, "visible episode demand could not be accepted", status)
-		return
-	}
-	if local, ok := service.(interface {
-		ApplyLocalEpisodes(context.Context, string, string, models.Title, []models.SeriesEpisode, sourceavailability.EpisodeViewResponse) sourceavailability.EpisodeViewResponse
-	}); ok {
-		response = local.ApplyLocalEpisodes(r.Context(), profile, client, title, episodes, response)
-	}
-	writeEpisodeHints(w, response)
-}
-func writeEpisodeHints(w http.ResponseWriter, value sourceavailability.EpisodeViewResponse) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(value)
+	return title, episodes, http.StatusOK, nil
 }

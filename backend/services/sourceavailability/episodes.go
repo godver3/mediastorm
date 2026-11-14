@@ -71,6 +71,9 @@ func (s *Service) neededUntilLocked(id string) time.Time {
 			until = expiry
 		}
 	}
+	if v, ok := s.rechecks[id]; ok && v.State == "queued" && v.Expires.After(s.now()) && v.Expires.After(until) {
+		until = v.Expires
+	}
 	return until
 }
 func (s *Service) episodeNeeded(id string) bool {
@@ -171,7 +174,7 @@ func (s *Service) episodeAvailability(item request, selection Selection) models.
 		return unknown(reason)
 	}
 	value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), selection.Key)
-	return s.localConservative(s.evaluateEpisode(value, evidence, item, selection))
+	return s.recheckPresentation(s.localConservative(s.evaluateEpisode(value, evidence, item, selection)), item.ProfileID, item.cacheID(), selection.Key)
 }
 func (s *Service) evaluateEpisode(value models.SourceAvailability, evidence *observation, item request, selection Selection) models.SourceAvailability {
 	if evidence == nil {

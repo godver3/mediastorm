@@ -28,20 +28,22 @@ type request struct {
 	LastSeen                   time.Time
 }
 type Service struct {
-	localChecker    LocalChecker
-	localRecords    map[string]localObservation
-	views           map[string]episodeView
-	delivered       map[string]deliveredTitle
-	activeRequestID string
-	cancelRequest   context.CancelFunc
-	Store           *Store
-	manager         *config.Manager
-	search          searcher
-	scope           ScopeFactory
-	reports         *badstreams.Service
-	mu              sync.Mutex
-	pending         map[string]request
-	now             func() time.Time
+	rechecks          map[string]recheckJob
+	recheckGeneration uint64
+	localChecker      LocalChecker
+	localRecords      map[string]localObservation
+	views             map[string]episodeView
+	delivered         map[string]deliveredTitle
+	activeRequestID   string
+	cancelRequest     context.CancelFunc
+	Store             *Store
+	manager           *config.Manager
+	search            searcher
+	scope             ScopeFactory
+	reports           *badstreams.Service
+	mu                sync.Mutex
+	pending           map[string]request
+	now               func() time.Time
 }
 
 func NewService(store *Store, manager *config.Manager, search searcher, scope ScopeFactory, reports ...*badstreams.Service) *Service {
@@ -124,7 +126,7 @@ func (s *Service) enqueueLocked(item request) {
 		oldest := ""
 		var seen time.Time
 		for candidate, entry := range s.pending {
-			if candidate == id {
+			if candidate == id || s.recheckQueuedLocked(candidate) {
 				continue
 			}
 			if oldest == "" || entry.LastSeen.Before(seen) {
@@ -247,13 +249,20 @@ func (s *Service) checkOne(ctx context.Context) {
 		if item.Episode != nil && episodeEligibility(item.Title, *item.Episode, now) != "" {
 			remoteFresh = true
 		}
-		if !localDue && (remoteFresh || localFound || len(settings.SourceAvailability.IndexerNames) == 0) {
+		forced := s.recheckQueuedLocked(id)
+		if !forced && !localDue && (remoteFresh || localFound || len(settings.SourceAvailability.IndexerNames) == 0) {
 			continue
 		}
-		if chosenID == "" || item.LastSeen.After(chosen.LastSeen) {
+		chosenForced := s.recheckQueuedLocked(chosenID)
+		earlierManual := forced && chosenForced && s.rechecks[id].Requested.Before(s.rechecks[chosenID].Requested)
+		if chosenID == "" || forced && !chosenForced || earlierManual || !forced && !chosenForced && item.LastSeen.After(chosen.LastSeen) {
 			chosenID = id
 			chosen = item
 		}
+	}
+	manualGeneration := uint64(0)
+	if s.recheckQueuedLocked(chosenID) {
+		manualGeneration = s.rechecks[chosenID].Generation
 	}
 	s.mu.Unlock()
 	if chosenID == "" {
@@ -263,11 +272,13 @@ func (s *Service) checkOne(ctx context.Context) {
 	if err != nil {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_context_changed")
 		s.mu.Unlock()
 		return
 	}
 	current, err := scope(chosen.Title.ID)
 	if err != nil {
+		s.finishRecheck(chosenID, manualGeneration, "recheck_context_changed")
 		return
 	}
 	if chosen.Episode != nil {
@@ -276,6 +287,7 @@ func (s *Service) checkOne(ctx context.Context) {
 	if current.Key != chosen.Scope {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_context_changed")
 		s.mu.Unlock()
 		return
 	}
@@ -299,6 +311,19 @@ func (s *Service) checkOne(ctx context.Context) {
 		return
 	}
 	defer release()
+	refreshReason := ""
+	defer func() {
+		if manualGeneration == 0 {
+			return
+		}
+		if errors.Is(work.Err(), context.Canceled) && s.episodeNeeded(chosenID) {
+			return
+		}
+		if work.Err() != nil {
+			refreshReason = "recheck_timed_out"
+		}
+		s.finishRecheck(chosenID, manualGeneration, refreshReason)
+	}()
 	if s.checkedLocal(work, chosen, current) {
 		return
 	}
@@ -311,17 +336,19 @@ func (s *Service) checkOne(ctx context.Context) {
 	if len(providers) == 0 {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_no_sources")
 		s.mu.Unlock()
 		return
 	}
 	cached, existing := s.Store.getObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope)
 	fresh := cached.ExpiresAt != nil && cached.ExpiresAt.After(s.now())
 	recheck := existing != nil && existing.Kind == "prepared" && (s.hasLocalChecker() && !existing.PreparedRemote || existing.ReportRevision != s.reports.RevisionFor(s.makeEpisodeReportContext(chosen, current)))
-	if fresh && existing != nil && !recheck {
+	if manualGeneration == 0 && fresh && existing != nil && !recheck {
 		return
 	}
 	reserved, err := s.Store.reserveCheck(now, interval, settings.SourceAvailability.EffectiveMaxTitles())
 	if err != nil || !reserved {
+		refreshReason = "recheck_budget_exhausted"
 		return
 	}
 	media := chosen.Title.MediaType
@@ -332,6 +359,7 @@ func (s *Service) checkOne(ctx context.Context) {
 	result, err := receiveSearch(work, u, d)
 	latest, loadErr := s.manager.Load()
 	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.requestScopeStillMatches(chosen) {
+		refreshReason = "recheck_context_changed"
 		return
 	}
 	checked := s.now().UTC()
@@ -355,7 +383,9 @@ func (s *Service) checkOne(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.neededUntilLocked(chosenID).IsZero() && work.Err() == nil {
-		_ = s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence)
+		if err := s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence); err != nil {
+			refreshReason = "recheck_failed"
+		}
 	}
 }
 

@@ -172,5 +172,5 @@ func (s *Service) availability(profile, client, title string, selection Selectio
 	if s.hasLocalChecker() && evidence != nil && evidence.Kind == "prepared" && !evidence.PreparedRemote && value.State == "found" {
 		value.State, value.Complete, value.Reason = "unknown", false, "prepared_source_requires_recheck"
 	}
-	return s.localConservative(value)
+	return s.recheckPresentation(s.localConservative(value), profile, title, selection.Key)
 }

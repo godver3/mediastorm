@@ -878,6 +878,12 @@ func TestOpenAPIContract(t *testing.T) {
 		}, h.PatchSkipping, http.StatusOK)
 	})
 
+	t.Run("explicit source recheck", func(t *testing.T) {
+		h, service := titleEndpointFixture(t)
+		service.AnnotateTitles("profile", "fixture-client", []models.Title{{ID: "synthetic-movie", Name: "Synthetic Movie", MediaType: "movie"}})
+		exercise(t, v, contractCall{method: "POST", target: "/api/users/profile/source-availability/recheck", vars: map[string]string{"userID": "profile"}, headers: map[string]string{"X-Client-ID": "fixture-client"}, body: map[string]any{"titleId": "synthetic-movie", "mediaType": "movie"}}, h.RecheckSource, 202)
+	})
+
 	t.Run("visible title source hints", func(t *testing.T) {
 		h, _ := titleEndpointFixture(t)
 		exercise(t, v, contractCall{method: "PUT", target: "/api/users/profile/source-availability/titles/view-1", vars: map[string]string{"userID": "profile", "viewID": "view-1"}, headers: map[string]string{"X-Client-ID": "fixture-client"}, body: map[string]any{"version": 1, "titles": []any{}}}, h.TitleSourceHints, 200)

@@ -113,6 +113,65 @@ tags:
   - name: clients
 
 paths:
+  /api/users/{userId}/source-availability/recheck:
+    post:
+      operationId: recheckSourceAvailability
+      summary: Request a bounded explicit source recheck
+      description: |
+        Requires an owned unlocked profile and client identity. Title metadata
+        must have been delivered to that profile/client; exact episode coordinates
+        are resolved against current server metadata. Repeated queued requests
+        share one job and never extend its two-minute deadline. Completed actions
+        have a one-minute per-profile/title cooldown. Existing provider budget,
+        foreground priority and local file/audio checks remain in force.
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/ProfileUnlock'
+        - name: X-Client-ID
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [titleId, mediaType]
+              properties:
+                titleId: {type: string, minLength: 1, maxLength: 128}
+                mediaType: {type: string, enum: [movie, series]}
+                numbering: {$ref: '#/components/schemas/EpisodeNumbering'}
+                episode:
+                  type: object
+                  additionalProperties: false
+                  required: [episodeId, seasonNumber, episodeNumber]
+                  properties:
+                    episodeId: {type: string, minLength: 1}
+                    seasonNumber: {type: integer, minimum: 0}
+                    episodeNumber: {type: integer, minimum: 1}
+      responses:
+        '202':
+          description: Queued or already queued; completion appears in normal visible hints
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, retryAfterSeconds]
+                properties:
+                  status: {type: string, enum: [queued]}
+                  retryAfterSeconds: {type: integer, minimum: 1}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+
   /api/users/{userId}/source-availability/titles/{viewID}:
     put:
       operationId: updateVisibleTitleSourceHints
