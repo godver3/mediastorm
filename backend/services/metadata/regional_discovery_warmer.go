@@ -70,7 +70,9 @@ func (s *Service) runRegionalDiscoveryWarmer(stop <-chan struct{}) {
 		}
 	}
 	warm()
-	ticker := time.NewTicker(6 * time.Hour)
+	// Refresh before the six-hour regional cache expires; ticking at the same
+	// interval found every row still fresh and let them all expire minutes later.
+	ticker := time.NewTicker(5 * time.Hour)
 	defer ticker.Stop()
 	for {
 		select {

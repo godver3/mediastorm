@@ -40,3 +40,19 @@ func TestRegionalDiscoveryKeepsProviderAvailabilityDistinctFromCharts(t *testing
 		t.Fatal("unknown preset accepted")
 	}
 }
+
+func TestRegionalDiscoveryCountrySpecifics(t *testing.T) {
+	shelves, err := RegionalDiscoveryPresets("us", "cinema")
+	if err != nil || len(shelves) != 1 || !strings.Contains(shelves[0].TMDBDiscoverQuery, "date_timezone=America%2FNew_York") {
+		t.Fatalf("US cinema timezone: %v %+v", err, shelves)
+	}
+	if shelves, _ := RegionalDiscoveryPresets("ZZ", "cinema"); !strings.Contains(shelves[0].TMDBDiscoverQuery, "date_timezone=UTC") {
+		t.Fatal("unknown country did not fall back to UTC")
+	}
+	if _, err := RegionalDiscoveryPresets("US", "wow"); err == nil {
+		t.Fatal("WOW offered outside Germany and Austria")
+	}
+	if _, err := RegionalDiscoveryPresets("AT", "wow"); err != nil {
+		t.Fatalf("WOW in Austria: %v", err)
+	}
+}

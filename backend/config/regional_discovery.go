@@ -17,13 +17,7 @@ func RegionalDiscoveryPresets(region, preset string) ([]ShelfConfig, error) {
 	if !discoveryRegionCode.MatchString(region) {
 		return nil, fmt.Errorf("country must be a two-letter code")
 	}
-	timezone := "UTC"
-	if region == "DE" || region == "AT" || region == "CH" {
-		timezone = "Europe/Berlin"
-	}
-	if region == "GB" {
-		timezone = "Europe/London"
-	}
+	timezone := discoveryTimezone(region)
 	makeShelf := func(media, label string, filters url.Values, sort string) ShelfConfig {
 		return ShelfConfig{ID: "regional-" + preset + "-" + strings.ToLower(region) + "-" + media, Name: label + " (" + region + ")", Enabled: true, Type: "tmdb", TMDBSourceType: "custom-discover", TMDBMediaType: media, TMDBDiscoverQuery: filters.Encode(), Sort: sort, Limit: 20}
 	}
@@ -50,6 +44,9 @@ func RegionalDiscoveryPresets(region, preset string) ([]ShelfConfig, error) {
 	if !known && preset != "acclaimed" {
 		return nil, fmt.Errorf("unknown discovery preset")
 	}
+	if preset == "wow" && region != "DE" && region != "AT" {
+		return nil, fmt.Errorf("WOW is only available in Germany and Austria")
+	}
 	result := []ShelfConfig{}
 	for _, media := range []string{"movie", "tv"} {
 		kind := "movies"
@@ -70,4 +67,27 @@ func RegionalDiscoveryPresets(region, preset string) ([]ShelfConfig, error) {
 		result = append(result, makeShelf(media, label, filters, sort))
 	}
 	return result, nil
+}
+
+// discoveryTimezones maps a country to the time zone its cinema release days
+// are counted in (the most populous zone for countries with several).
+var discoveryTimezones = map[string]string{
+	"AR": "America/Argentina/Buenos_Aires", "AT": "Europe/Vienna", "AU": "Australia/Sydney", "BE": "Europe/Brussels",
+	"BR": "America/Sao_Paulo", "CA": "America/Toronto", "CH": "Europe/Zurich", "CL": "America/Santiago",
+	"CO": "America/Bogota", "CZ": "Europe/Prague", "DE": "Europe/Berlin", "DK": "Europe/Copenhagen",
+	"ES": "Europe/Madrid", "FI": "Europe/Helsinki", "FR": "Europe/Paris", "GB": "Europe/London",
+	"GR": "Europe/Athens", "HU": "Europe/Budapest", "ID": "Asia/Jakarta", "IE": "Europe/Dublin",
+	"IL": "Asia/Jerusalem", "IN": "Asia/Kolkata", "IT": "Europe/Rome", "JP": "Asia/Tokyo",
+	"KR": "Asia/Seoul", "MX": "America/Mexico_City", "MY": "Asia/Kuala_Lumpur", "NL": "Europe/Amsterdam",
+	"NO": "Europe/Oslo", "NZ": "Pacific/Auckland", "PH": "Asia/Manila", "PL": "Europe/Warsaw",
+	"PT": "Europe/Lisbon", "RO": "Europe/Bucharest", "SE": "Europe/Stockholm", "SG": "Asia/Singapore",
+	"TH": "Asia/Bangkok", "TR": "Europe/Istanbul", "TW": "Asia/Taipei", "US": "America/New_York",
+	"ZA": "Africa/Johannesburg",
+}
+
+func discoveryTimezone(region string) string {
+	if zone, ok := discoveryTimezones[region]; ok {
+		return zone
+	}
+	return "UTC"
 }

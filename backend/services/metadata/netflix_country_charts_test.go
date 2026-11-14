@@ -38,8 +38,56 @@ func TestNetflixCountryParserKeepsLatestRegionalRankAndSeason(t *testing.T) {
 		t.Fatal("changed schema silently accepted")
 	}
 	conflicting := countryChartFixture + "Germany\tDE\t2026-11-08\tFilms\t1\tConflicting title\t\t1\n"
-	if _, err = parseNetflixCountryCharts(strings.NewReader(conflicting), time.Now()); err == nil {
+	// A conflicting rank drops only that country's chart, not all countries.
+	data, err = parseNetflixCountryCharts(strings.NewReader(conflicting), time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := data["DE/movie"]; ok {
 		t.Fatal("conflicting official rank accepted")
+	}
+	if len(data["GB/movie"]) != 1 || len(data["DE/tv"]) != 2 {
+		t.Fatalf("one country's conflict dropped other charts: %+v", data)
+	}
+}
+
+// Netflix puts "N/A" in the season column of every film.
+func TestNetflixCountryParserIgnoresNASeason(t *testing.T) {
+	fixture := "country_name\tcountry_iso2\tweek\tcategory\tweekly_rank\tshow_title\tseason_title\tcumulative_weeks_in_top_10\n" +
+		"Germany\tDE\t2026-11-08\tFilms\t1\tA film\tN/A\t1\n"
+	data, err := parseNetflixCountryCharts(strings.NewReader(fixture), time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if season := data["DE/movie"][0].Season; season != "" {
+		t.Fatalf("film season = %q, want empty", season)
+	}
+}
+
+// Refreshes send If-Modified-Since and keep the cached chart on 304.
+func TestNetflixCountryRefreshUsesConditionalRequest(t *testing.T) {
+	var conditional atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-Modified-Since") != "" {
+			conditional.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Last-Modified", "Tue, 10 Nov 2026 00:00:00 GMT")
+		_, _ = w.Write([]byte(countryChartFixture))
+	}))
+	defer server.Close()
+	store := &countryChartStore{client: server.Client(), endpoint: server.URL}
+	first, err := store.load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	store.loadedAt = time.Now().Add(-7 * time.Hour)
+	store.mu.Unlock()
+	second, err := store.load(context.Background())
+	if err != nil || conditional.Load() != 1 || len(second["DE/movie"]) != len(first["DE/movie"]) {
+		t.Fatalf("conditional refresh: err=%v conditional=%d", err, conditional.Load())
 	}
 }
 

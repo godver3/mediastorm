@@ -33,9 +33,14 @@ type countryChartStore struct {
 	flight                singleflight.Group
 	client                *http.Client
 	endpoint              string
+	lastModified          string
 }
 
-var netflixCountryCharts = &countryChartStore{client: &http.Client{Timeout: 30 * time.Second}, endpoint: netflixCountryDataURL}
+// netflixCountryDataTimeout covers the whole download. The uncompressed TSV
+// is over 30 MB, so a short timeout failed on every attempt over slower links.
+const netflixCountryDataTimeout = 3 * time.Minute
+
+var netflixCountryCharts = &countryChartStore{client: &http.Client{Timeout: netflixCountryDataTimeout}, endpoint: netflixCountryDataURL}
 
 func parseNetflixCountryCharts(reader io.Reader, now time.Time) (countryChartSnapshot, error) {
 	csvReader := csv.NewReader(reader)
@@ -56,6 +61,7 @@ func parseNetflixCountryCharts(reader io.Reader, now time.Time) (countryChartSna
 	}
 	latest := map[string]string{}
 	rows := map[string]map[int]countryChartEntry{}
+	conflicting := map[string]bool{}
 	for count := 0; ; count++ {
 		if count > 2000000 {
 			return nil, errors.New("Netflix chart row limit exceeded")
@@ -103,15 +109,24 @@ func parseNetflixCountryCharts(reader io.Reader, now time.Time) (countryChartSna
 		if week > latest[key] {
 			latest[key] = week
 			rows[key] = map[int]countryChartEntry{}
+			delete(conflicting, key)
 		}
-		entry := countryChartEntry{Country: country, Week: week, MediaType: media, Title: get("show_title"), Season: get("season_title"), Rank: rank}
+		season := get("season_title")
+		if strings.EqualFold(season, "N/A") {
+			season = "" // Films carry "N/A" in the season column.
+		}
+		entry := countryChartEntry{Country: country, Week: week, MediaType: media, Title: get("show_title"), Season: season, Rank: rank}
 		if previous, exists := rows[key][rank]; exists && previous != entry {
-			return nil, errors.New("Netflix chart contains conflicting ranks")
+			// Drop only this country's chart for the week, not the whole dataset.
+			conflicting[key] = true
 		}
 		rows[key][rank] = entry
 	}
 	snapshot := countryChartSnapshot{}
 	for key, entries := range rows {
+		if conflicting[key] {
+			continue
+		}
 		for _, entry := range entries {
 			snapshot[key] = append(snapshot[key], entry)
 		}
@@ -149,14 +164,30 @@ func (s *countryChartStore) load(ctx context.Context) (countryChartSnapshot, err
 		if cached != nil && time.Since(loaded) < 6*time.Hour {
 			return cached, nil
 		}
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), netflixCountryDataTimeout)
 		defer cancel()
 		request, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, s.endpoint, nil)
 		if err != nil {
 			return nil, err
 		}
+		s.mu.Lock()
+		lastModified := s.lastModified
+		s.mu.Unlock()
+		// The dataset changes weekly; a conditional request makes most
+		// six-hourly refreshes a 304 instead of a 30 MB download.
+		if cached != nil && lastModified != "" {
+			request.Header.Set("If-Modified-Since", lastModified)
+		}
 		response, err := s.client.Do(request)
 		var snapshot countryChartSnapshot
+		if err == nil && response.StatusCode == http.StatusNotModified && cached != nil {
+			response.Body.Close()
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.loadedAt = time.Now()
+			s.timeToRetry = time.Time{}
+			return s.data, nil
+		}
 		if err == nil {
 			defer response.Body.Close()
 			if response.StatusCode != http.StatusOK {
@@ -181,6 +212,7 @@ func (s *countryChartStore) load(ctx context.Context) (countryChartSnapshot, err
 		s.data = snapshot
 		s.loadedAt = time.Now()
 		s.timeToRetry = time.Time{}
+		s.lastModified = response.Header.Get("Last-Modified")
 		return snapshot, nil
 	})
 	select {

@@ -287,18 +287,19 @@ The original Expo (React Native) apps are listed here for reference only. They a
 - Android Mobile: [APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-mobile.apk) — Downloader code [`3364803`](https://aftv.news/3364803)
 - Android TV: [APK](https://github.com/godver3/mediastorm/releases/download/android-latest/mediastorm-tv.apk) — Downloader code [`7856845`](https://aftv.news/7856845)
 
-## License
 
-MIT
+## Regional discovery rows
 
-### Regional discovery rows
-
-In **Settings > Home**, the Regional discovery builder adds ordinary editable TMDB shelves for the selected country, globally or for the selected profile/page. It offers official weekly Netflix country charts, recent/upcoming theatrical releases, popular titles in a country's Netflix/Prime Video/Disney+/Apple TV/Paramount+/WOW catalogue, and highly rated streaming titles.
+In **Settings > Home**, the Regional discovery builder adds ordinary editable TMDB shelves for the selected country, globally or for the selected profile/page. It offers official weekly Netflix country charts, recent/upcoming theatrical releases, popular titles in a country's Netflix/Prime Video/Disney+/Apple TV/Paramount+ catalogue (or WOW in Germany and Austria), and highly rated streaming titles.
 
 Netflix ranks come from the [official country dataset](https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv). Cards retain the official rank, country, data week and season context. Duplicate seasons collapse to the highest-ranked series card; uncertain or ambiguous metadata matches are omitted without renumbering the remaining ranks. A chart older than 21 days is rejected. Other provider rows use TMDB popularity and local offer availability, not that provider's viewing charts. These rows do not prove a playable Usenet or library source.
 
-Cinema rows use the country's theatrical releases in a rolling 45-day window, or the next 30 days. They describe release dates, not live cinema showtimes. Relative filters such as `today-45d`, `today` and `today+30d` resolve on the server using `date_timezone` calendar days. German presets use Europe/Berlin, including daylight saving changes. Movie filters use `region` and theatrical release types; provider rows use `watch_region` with subscription/ad-supported offers. See the [TMDB movie](https://developer.themoviedb.org/reference/discover-movie) and [TV](https://developer.themoviedb.org/reference/discover-tv) references.
+Cinema rows use the country's theatrical releases in a rolling 45-day window, or the next 30 days. They describe release dates, not live cinema showtimes. Relative filters such as `today-45d`, `today` and `today+30d` resolve on the server using `date_timezone` calendar days. Each country uses its main time zone (for example Europe/Berlin or America/New_York), including daylight saving changes; countries without a mapped zone use UTC. Movie filters use `region` and theatrical release types; provider rows use `watch_region` with subscription/ad-supported offers. See the [TMDB movie](https://developer.themoviedb.org/reference/discover-movie) and [TV](https://developer.themoviedb.org/reference/discover-tv) references.
 
-The Netflix dataset is shared across profiles, fetched once per six hours with a 64 MiB limit, and concurrent requests share the download. Failed refreshes back off; dated cached data can remain visible within the age limit. Configured regional rows are warmed in the background at server startup and every six hours, deduplicated by query/language and limited to 32 rows with 20 cards each. Both regional query-cache layers expire within six hours. The existing 250 ms Home bundle budget remains in place, so a cold discovery source cannot hold the initial page. Newly added rows may still need one cold load until they have been warmed. No indexer searches, NZB grabs or playback prequeue work are part of this refresh.
+The Netflix dataset is shared across profiles, refreshed every six hours with a 64 MiB limit (a conditional request, so an unchanged week costs no download), and concurrent requests share the download. Failed refreshes back off; dated cached data can remain visible within the age limit. Configured regional rows are warmed in the background at server startup and every five hours, ahead of the six-hour cache expiry, deduplicated by query/language and limited to 32 rows with 20 cards each. Both regional query-cache layers expire within six hours. The existing 250 ms Home bundle budget remains in place, so a cold discovery source cannot hold the initial page. Newly added rows may still need one cold load until they have been warmed. No indexer searches, NZB grabs or playback prequeue work are part of this refresh.
 
 Existing Watch clients consume these rows through the TMDB-shelf compatibility path. Clients that display `cardSubtitle` show Netflix provenance on the card; older clients may omit that context. Country/provider data availability and device rendering remain provider/client dependent.
+
+## License
+
+MIT
