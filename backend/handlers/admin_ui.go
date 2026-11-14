@@ -876,6 +876,15 @@ var SettingsSchema = map[string]interface{}{
 			"ytdlpCookies":                map[string]interface{}{"type": "file_upload", "label": "Cookies", "description": "Upload a Netscape-format cookies.txt file to help yt-dlp bypass YouTube restrictions on VPS/cloud servers. Export cookies from a browser where you are logged into YouTube using a browser extension like 'Get cookies.txt LOCALLY'.", "order": 111, "endpoint": "/admin/api/ytdlp-cookies", "accept": ".txt", "globalOnly": true, "group": "youtubeYTDLP", "groupLabel": "YouTube / yt-dlp", "groupDescription": "Server-side YouTube extraction settings used for trailers, YouTube video search, and HLS playback."},
 		},
 	},
+	"recommendations": map[string]interface{}{
+		"label": "Recommendation Inputs", "icon": "list", "group": "experience", "order": 1,
+		"description": "Recommendations use recent watching and optionally saved titles. Search interests record only unambiguous exact title matches after age/release filtering, never raw queries. Recording is off until enabled. Saved signals are profile-local, limited to 50 titles per profile and 500 server-wide, and expire after 90 days. TMDB Similar uses resolved title IDs to find related titles.",
+		"fields": map[string]interface{}{
+			"useWatchlist":       map[string]interface{}{"type": "boolean", "label": "Use Watchlist", "description": "Use saved titles as recommendation seeds, including older favorites.", "order": 0},
+			"useCustomLists":     map[string]interface{}{"type": "boolean", "label": "Use Personal Lists", "description": "Use up to ten recently edited profile-owned lists, with up to 100 titles per list.", "order": 1},
+			"useSearchInterests": map[string]interface{}{"type": "boolean", "label": "Remember Search Interests", "description": "Opt in to title-based search signals for this scope. Signals have lower weight than watching or saved titles.", "order": 2},
+		},
+	},
 	"homeShelves": map[string]interface{}{
 		"label": "Home Screen",
 		"icon":  "layout",
@@ -4083,6 +4092,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
 
 	defaults := models.UserSettings{
+		Recommendations: &globalSettings.Recommendations,
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:             globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:      globalSettings.Playback.PreferredAudioLanguage,

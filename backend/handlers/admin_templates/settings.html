@@ -2824,6 +2824,7 @@
         mdblist: 'MDBList integration and lists',
         subtitles: 'OpenSubtitles and subtitle preferences',
         homeShelves: 'Dashboard layout and widgets',
+        recommendations: 'Watching, saved titles and optional search interests',
         display: 'Interface, theme, accessibility, and custom branding',
         server: 'Base URL and port configuration',
         network: 'Local and remote access URLs'
@@ -2852,7 +2853,7 @@
         'streaming', 'filtering', 'animeFiltering', 'ranking',
         'playback', 'subtitles', 'transmux',
         'metadata', 'mdblist',
-        'homeShelves', 'display',
+        'homeShelves', 'recommendations', 'display',
         'server', 'network', 'security'
     ].map((key, index) => [key, index]));
     const advancedSections = new Set(['ranking', 'server', 'transmux']);
@@ -3155,7 +3156,7 @@
         if (['streaming', 'filtering', 'animeFiltering', 'ranking'].includes(sectionKey)) return 'search';
         if (['playback', 'transmux', 'subtitles'].includes(sectionKey)) return 'playback';
         if (['metadata', 'mdblist'].includes(sectionKey)) return 'metadata';
-        if (sectionKey === 'homeShelves') return 'interface';
+        if (sectionKey === 'homeShelves' || sectionKey === 'recommendations') return 'interface';
         if (sectionKey === 'display') return 'appearance';
         if (['server', 'network', 'security'].includes(sectionKey)) return 'server';
         return {
@@ -3849,7 +3850,7 @@
 
     // Sections that are per-user (when a user is selected, only show these)
     // Per-user sections: liveTV IPTV source overrides are configured here; channel preferences use a custom manager.
-    const perUserSections = ['playback', 'metadata', 'homeShelves', 'homeShelves.shelves', 'filtering', 'filtering.debrid', 'filtering.usenet', 'animeFiltering', 'liveTV', 'liveTV.sources', 'liveTV.playlistSources', 'display', 'network', 'ranking', 'ranking.criteria', 'ranking.debrid.criteria', 'ranking.usenet.criteria'];
+    const perUserSections = ['recommendations', 'playback', 'metadata', 'homeShelves', 'homeShelves.shelves', 'filtering', 'filtering.debrid', 'filtering.usenet', 'animeFiltering', 'liveTV', 'liveTV.sources', 'liveTV.playlistSources', 'display', 'network', 'ranking', 'ranking.criteria', 'ranking.debrid.criteria', 'ranking.usenet.criteria'];
     const clientConfigSections = ['filtering', 'animeFiltering', 'network', 'display', 'playback', 'ranking'];
 
     // Validation state - stores errors by section and field
@@ -8835,7 +8836,7 @@
         // Only process per-user sections (top-level only, skip nested like 'homeShelves.shelves')
         const topLevelPerUserSections = [
             'playback', 'metadata', 'homeShelves', 'filtering', 'animeFiltering',
-            'liveTV', 'display', 'network', 'ranking', 'calendar',
+            'liveTV', 'display', 'network', 'ranking', 'calendar', 'recommendations',
         ];
 
         for (const section of topLevelPerUserSections) {
@@ -8909,6 +8910,9 @@
             }
         }
 
+        // An explicit empty section resets recommendations to inheritance;
+        // omission is reserved for older clients that must preserve choices.
+        if (schema.recommendations) stripped.recommendations ||= {};
         return stripped;
     }
 
@@ -14127,6 +14131,10 @@
             contentHtml = renderPresetDropdown() + contentHtml;
         }
 
+		if (sectionKey === 'recommendations' && selectedUserId && !selectedClientId) {
+			contentHtml += '<button type="button" class="btn btn-secondary" onclick="clearRecommendationInterests(this)">Clear saved search interests</button>';
+		}
+
         // Add clear cache button for cache section
         if (sectionKey === 'cache') {
             contentHtml += '<div class="cache-actions" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);"><button class="btn btn-secondary" id="clear-cache-btn" onclick="clearMetadataCache()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Clear Metadata Cache</button><p class="form-hint" style="margin-top: 0.5rem;">Remove all cached metadata and posters. Fresh data will be fetched from TVDB/TMDB on next request.</p></div>';
@@ -14739,6 +14747,16 @@
             }
         }
     }
+
+	async function clearRecommendationInterests(button) {
+		if (!selectedUserId) return;
+		const profile=selectedUserId;button.disabled=true;
+		try {
+			const response=await fetch(basePath+'/api/recommendation-interests?userId='+encodeURIComponent(profile),{method:'DELETE',credentials:'same-origin'});
+			if (!response.ok) throw new Error('Could not clear search interests');
+			showToast('Saved search interests cleared','success');
+		} catch (error) {showToast(error.message,'error');} finally {button.disabled=false;}
+	}
 
     async function clearMetadataCache() {
         const btn = document.getElementById('clear-cache-btn');

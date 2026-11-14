@@ -262,6 +262,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
 
 	return models.UserSettings{
+		Recommendations: &globalSettings.Recommendations,
 		Metadata: models.MetadataSettings{
 			PrimaryLanguage: globalSettings.Metadata.EffectivePrimaryLanguage(),
 		},

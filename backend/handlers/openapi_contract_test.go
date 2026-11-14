@@ -856,6 +856,13 @@ func TestOpenAPIContract(t *testing.T) {
 			h.Register, http.StatusBadRequest)
 	})
 
+	t.Run("recommendation interests", func(t *testing.T) {
+		service := &recommendationInterestsFake{items: map[string][]models.RecommendationInterest{}}
+		h := &MetadataHandler{Interests: service, UsersService: &fakeUsersServiceForSearch{users: map[string]models.User{"own": {ID: "own", AccountID: contractAccountID}, "foreign": {ID: "foreign", AccountID: "other-account"}}}}
+		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/own/recommendation-interests", vars: map[string]string{"userID": "own"}}, h.ClearSearchInterests, http.StatusNoContent)
+		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/foreign/recommendation-interests", vars: map[string]string{"userID": "foreign"}}, h.ClearSearchInterests, http.StatusNotFound)
+	})
+
 	t.Run("coverage", func(t *testing.T) {
 		covered := v.Covered()
 		var missing []string

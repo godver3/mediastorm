@@ -193,6 +193,9 @@ type accountsServiceInterface interface {
 }
 
 type MetadataHandler struct {
+	Interests   interestService
+	CustomLists recommendationLists
+
 	Service            metadataService
 	CfgManager         *config.Manager
 	UserSettings       userSettingsProvider
@@ -549,6 +552,8 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 			enrichSearchResultsWithCachedEpisodeCounts(results, buildWatchStateIndex(wh, cw, pp), service)
 		}
 	}
+
+	h.observeSearchInterest(userID, q, results)
 
 	// Ensure we return [] instead of null for empty results
 	if results == nil {

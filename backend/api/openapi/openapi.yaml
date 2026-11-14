@@ -105,6 +105,30 @@ tags:
   - name: clients
 
 paths:
+  /api/users/{userId}/recommendation-interests:
+    delete:
+      operationId: clearRecommendationInterests
+      summary: Clear the profile's locally saved search interests
+      description: Clears saved resolved-title signals and invalidates queued observations. Raw queries are not saved. Requires the profile's owning account or master access and any enforced profile unlock.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Search interests cleared
+        '401':
+          description: Authentication required
+        '403':
+          description: Profile unlock required
+        '404':
+          description: Profile not found
+        '500':
+          description: Storage error
+        '503':
+          description: Search-interest storage unavailable
   /api/auth/login:
     post:
       tags: [auth]
