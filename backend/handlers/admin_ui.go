@@ -266,6 +266,16 @@ var SettingsSchema = map[string]interface{}{
 			},
 		},
 	},
+	"sourceAvailability": map[string]interface{}{
+		"label": "Source Availability", "icon": "search", "group": "searchFiltering", "order": 20,
+		"description": "Optional background source searches for recently visible titles. Foreground playback has priority. Checks never download NZBs or prepare media. Candidates do not prove that a release is complete or playable. Only explicitly selected indexers are queried; errors and unconfirmed audio stay unknown.",
+		"fields": map[string]interface{}{
+			"enabled":           map[string]interface{}{"type": "boolean", "label": "Enable Background Checks", "globalOnly": true, "order": 0},
+			"indexerNames":      map[string]interface{}{"type": "multiselect", "label": "Background Indexers", "optionsFrom": "availabilityIndexers", "description": "Select search sources with sufficient API quota. Empty disables background searches. A title check can make multiple API calls per indexer. Provider download quotas are not used.", "globalOnly": true, "order": 1},
+			"refreshHours":      map[string]interface{}{"type": "select", "label": "Refresh Interval (hours)", "options": []int{6, 8, 12, 24}, "description": "6 = four times daily, 8 = three, 12 = twice, 24 = once. Default: 6.", "globalOnly": true, "order": 2},
+			"maxTitlesPerCycle": map[string]interface{}{"type": "number", "label": "Title Checks per Interval", "min": 1, "max": 50, "description": "Server-wide budget, shared by all profiles and retained across restarts. Default: 20. Queue and cache are limited to 500 titles.", "globalOnly": true, "order": 3},
+		},
+	},
 	"security": map[string]interface{}{
 		"label":       "Profile PIN Security",
 		"icon":        "lock",
@@ -864,6 +874,7 @@ var SettingsSchema = map[string]interface{}{
 			"autoPlayTrailersTV":          map[string]interface{}{"type": "boolean", "label": "Auto-Play Trailers (TV)", "description": "Replace backdrop artwork with playing trailer on TV details pages once loaded", "order": 100},
 			"rewindOnResumeFromPause":     map[string]interface{}{"type": "number", "label": "Rewind on Unpause", "description": "Seconds to rewind when resuming from pause (default 0)", "step": 1, "min": 0, "max": 30},
 			"rewindOnPlaybackStart":       map[string]interface{}{"type": "number", "label": "Rewind on Resume", "description": "Seconds to rewind when resuming from saved progress (default 0)", "step": 1, "min": 0, "max": 60},
+			"preferLocalFiles":            map[string]interface{}{"type": "boolean", "label": "Prefer Local Files", "description": "Play a matching, accessible local library file first. If it cannot play, use the configured search sources. When off, search sources come first and local files remain the fallback.", "order": 100.5},
 			"disablePrequeue":             map[string]interface{}{"type": "boolean", "label": "Disable Prequeue", "description": "Disable automatic stream pre-loading when opening a details page. Streams will only be resolved when you press Play. Useful to reduce unnecessary backend load or API calls.", "order": 101},
 			"prerollMode":                 map[string]interface{}{"type": "select", "label": "Pre-roll", "options": []map[string]string{{"value": "disabled", "label": "Disabled"}, {"value": "artwork", "label": "Artwork Rotation"}, {"value": "default", "label": "Server Default"}, {"value": "custom", "label": "Custom Upload"}}, "description": "Show rotating textless artwork until playback starts, or play a video pre-roll while native playback is prepared.", "order": 101.1},
 			"prerollAssetId":              map[string]interface{}{"type": "text", "label": "Pre-roll Asset ID", "description": "Content hash returned by the pre-roll upload endpoint. Used only for Custom Upload.", "order": 101.2},
@@ -4095,6 +4106,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 
 	defaults := models.UserSettings{
 		Playback: models.PlaybackSettings{
+			PreferLocalFiles:            models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 			PreferredPlayer:             globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:      globalSettings.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage:   globalSettings.Playback.PreferredSubtitleLanguage,
@@ -4339,6 +4351,7 @@ func (h *AdminUIHandler) PropagateSettings(w http.ResponseWriter, r *http.Reques
 				propagateShelves := convertShelves(globalSettings.HomeShelves.Shelves)
 				newSettings = models.UserSettings{
 					Playback: models.PlaybackSettings{
+						PreferLocalFiles:            models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 						PreferredPlayer:             globalSettings.Playback.PreferredPlayer,
 						PreferredAudioLanguage:      globalSettings.Playback.PreferredAudioLanguage,
 						PreferredSubtitleLanguage:   globalSettings.Playback.PreferredSubtitleLanguage,

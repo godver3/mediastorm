@@ -6310,7 +6310,8 @@ func (h *VideoHandler) ProbeVideoFull(ctx context.Context, path string) (*VideoF
 	}
 
 	// Check shared cache first (via HLSManager)
-	if h.hlsManager != nil {
+	freshLocal, _ := ctx.Value(localSourceProbeContextKey{}).(bool)
+	if h.hlsManager != nil && !(freshLocal && strings.HasPrefix(cleanPath, "localmedia:")) {
 		if cached := h.hlsManager.GetCachedProbe(cleanPath); cached != nil {
 			videoTracef("[video] ProbeVideoFull: using cached probe for path=%q", cleanPath)
 			return h.unifiedProbeToVideoFull(cached), nil
