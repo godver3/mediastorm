@@ -153,8 +153,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 
 	if h.UsersService != nil {
 		if profile, ok := h.UsersService.Get(userID); ok && profile.IsKidsProfile && profile.KidsMode == "content_list" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(PersonalizedRecommendationsResponse{Items: []models.TrendingItem{}, Movies: []models.TrendingItem{}, Series: []models.TrendingItem{}})
+			h.writePersonalizedRecommendations(w, r, userID, PersonalizedRecommendationsResponse{Items: []models.TrendingItem{}, Movies: []models.TrendingItem{}, Series: []models.TrendingItem{}}, history, progress)
 			return
 		}
 	}
