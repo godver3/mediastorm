@@ -865,6 +865,17 @@ func (s *PrequeueStore) MakePersistent(id string) bool {
 
 // Get retrieves a prequeue entry by ID
 func (s *PrequeueStore) Get(id string) (*PrequeueEntry, bool) {
+	return s.get(id, false)
+}
+
+// GetForPlayback rechecks local registrations before reusing prepared media.
+// Status polling retains its cheap validation cache. External URLs are checked
+// separately by the handler, so they do not acquire a second remote probe here.
+func (s *PrequeueStore) GetForPlayback(id string) (*PrequeueEntry, bool) {
+	return s.get(id, true)
+}
+
+func (s *PrequeueStore) get(id string, forPlayback bool) (*PrequeueEntry, bool) {
 	s.mu.RLock()
 
 	entry, exists := s.entries[id]
@@ -882,12 +893,13 @@ func (s *PrequeueStore) Get(id string) (*PrequeueEntry, bool) {
 	entryCopy := copyPrequeueEntryForRead(entry)
 	validator := s.streamPathValidator
 	snapshot := readyValidationSnapshot{
-		ID:                entryCopy.ID,
-		TitleID:           entryCopy.TitleID,
-		UserID:            entryCopy.UserID,
-		Status:            entryCopy.Status,
-		StreamPath:        entryCopy.StreamPath,
-		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entryCopy.StreamPath, time.Now()),
+		ID:         entryCopy.ID,
+		TitleID:    entryCopy.TitleID,
+		UserID:     entryCopy.UserID,
+		Status:     entryCopy.Status,
+		StreamPath: entryCopy.StreamPath,
+		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entryCopy.StreamPath, time.Now()) &&
+			(!forPlayback || strings.HasPrefix(entryCopy.StreamPath, "http://") || strings.HasPrefix(entryCopy.StreamPath, "https://")),
 	}
 	s.mu.RUnlock()
 
@@ -905,6 +917,15 @@ func (s *PrequeueStore) GetByTitleUser(titleID, userID string) (*PrequeueEntry, 
 
 // GetByTitleUserScope retrieves a prequeue entry by title+user+effective settings scope.
 func (s *PrequeueStore) GetByTitleUserScope(titleID, userID, settingsScopeKey string) (*PrequeueEntry, bool) {
+	return s.getByTitleUserScope(titleID, userID, settingsScopeKey, false)
+}
+
+// GetByTitleUserScopeForPlayback validates local media at the reuse boundary.
+func (s *PrequeueStore) GetByTitleUserScopeForPlayback(titleID, userID, settingsScopeKey string) (*PrequeueEntry, bool) {
+	return s.getByTitleUserScope(titleID, userID, settingsScopeKey, true)
+}
+
+func (s *PrequeueStore) getByTitleUserScope(titleID, userID, settingsScopeKey string, forPlayback bool) (*PrequeueEntry, bool) {
 	s.mu.RLock()
 
 	key := titleUserKey(titleID, userID, settingsScopeKey)
@@ -915,7 +936,7 @@ func (s *PrequeueStore) GetByTitleUserScope(titleID, userID, settingsScopeKey st
 		return nil, false
 	}
 
-	return s.Get(id)
+	return s.get(id, forPlayback)
 }
 
 func (s *PrequeueStore) validateReadyEntry(entry readyValidationSnapshot, validator StreamPathValidator) bool {
@@ -931,7 +952,12 @@ func (s *PrequeueStore) validateReadyEntry(entry readyValidationSnapshot, valida
 	if err := validator(ctx, entry.StreamPath); err != nil {
 		log.Printf("[prequeue] Removing stale ready entry %s for title=%s user=%s path=%q: %s",
 			entry.ID, entry.TitleID, entry.UserID, requestsecurity.URLForLog(entry.StreamPath), requestsecurity.TextForLog(err.Error()))
-		s.Delete(entry.ID)
+		s.mu.Lock()
+		// A slow failed probe must not delete a newer manual selection.
+		if current, ok := s.entries[entry.ID]; ok && current.Status == entry.Status && current.StreamPath == entry.StreamPath {
+			s.deleteLocked(entry.ID)
+		}
+		s.mu.Unlock()
 		return false
 	}
 
@@ -991,7 +1017,7 @@ func (s *PrequeueStore) Update(id string, updateFn func(*PrequeueEntry)) bool {
 
 	// Extend TTL when status becomes ready (only if not already set further out)
 	if entry.Status == PrequeueStatusReady {
-		if strings.TrimSpace(entry.StreamPath) != "" {
+		if strings.TrimSpace(entry.StreamPath) != "" && (!wasReady || streamPathValidationKey(id, entry.StreamPath) != oldValidationKey) {
 			if s.streamPathValidated == nil {
 				s.streamPathValidated = make(map[string]time.Time)
 			}
@@ -1040,7 +1066,7 @@ func (s *PrequeueStore) UpdateWorker(id string, updateFn func(*PrequeueEntry)) b
 	}
 
 	if entry.Status == PrequeueStatusReady {
-		if strings.TrimSpace(entry.StreamPath) != "" {
+		if strings.TrimSpace(entry.StreamPath) != "" && (!wasReady || streamPathValidationKey(id, entry.StreamPath) != oldValidationKey) {
 			if s.streamPathValidated == nil {
 				s.streamPathValidated = make(map[string]time.Time)
 			}
@@ -1091,6 +1117,10 @@ func (s *PrequeueStore) Delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.deleteLocked(id)
+}
+
+func (s *PrequeueStore) deleteLocked(id string) {
 	entry, exists := s.entries[id]
 	if !exists {
 		return
