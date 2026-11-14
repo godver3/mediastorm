@@ -1899,10 +1899,35 @@ components:
         `unreleased`.
       enum: [released, theatrical, coming_soon, unreleased]
 
+    SourceAvailability:
+      type: object
+      required: [state, complete]
+      properties:
+        state:
+          type: string
+          enum: [unknown, found, not_found]
+          description: Filtered source candidates, not a guarantee of playable media. A series status does not prove availability of each episode.
+        checkedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        providers:
+          type: array
+          items:
+            type: string
+        complete:
+          type: boolean
+          description: All explicitly selected indexers completed this bounded search.
+        reason:
+          type: string
     Title:
       type: object
       required: [id, name, mediaType]
       properties:
+        sourceAvailability:
+          $ref: '#/components/schemas/SourceAvailability'
         id:
           type: string
         name:
@@ -2571,6 +2596,12 @@ components:
       type: object
       required: [id, mediaType, name, addedAt]
       properties:
+        sourceAvailability:
+          $ref: '#/components/schemas/SourceAvailability'
+        cardSubtitle:
+          type: string
+        forceTitleOverlay:
+          type: boolean
         id:
           type: string
         mediaType:
