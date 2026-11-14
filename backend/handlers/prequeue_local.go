@@ -36,6 +36,21 @@ func (h *PrequeueHandler) SetLocalFallback(service prequeueLocalMedia, access pr
 	h.localFallback, h.localAccess = service, access
 }
 
+func (h *PrequeueHandler) localPlaybackPreferred(userID string) bool {
+	defaults := models.UserSettings{Playback: models.PlaybackSettings{PreferLocalFiles: models.BoolPtr(false)}}
+	if h.configManager != nil {
+		if settings, err := h.configManager.Load(); err == nil {
+			defaults.Playback.PreferLocalFiles = models.BoolPtr(settings.Playback.PreferLocalFiles)
+		}
+	}
+	if h.userSettingsSvc != nil {
+		if settings, err := h.userSettingsSvc.GetWithDefaults(userID, defaults); err == nil {
+			return models.BoolVal(settings.Playback.PreferLocalFiles, false)
+		}
+	}
+	return models.BoolVal(defaults.Playback.PreferLocalFiles, false)
+}
+
 func (h *PrequeueHandler) localItemAllowed(item models.LocalMediaItem, userID string) bool {
 	profiles, ok := h.users.(interface {
 		Get(string) (models.User, bool)
@@ -212,9 +227,20 @@ func (h *PrequeueHandler) localEntryAllowed(r *http.Request, entry *playback.Pre
 	return err == nil && allowed
 }
 
-func (h *PrequeueHandler) validateReadyEntryForRequest(r *http.Request, entry *playback.PrequeueEntry) error {
+func (h *PrequeueHandler) validateReadyEntryForRequest(r *http.Request, entry *playback.PrequeueEntry, requests ...playback.PrequeueRequest) error {
 	if !h.localEntryAllowed(r, entry) {
 		return errors.New("local library file unavailable")
+	}
+	if _, local := localmedia.ParseStreamPath(entry.StreamPath); !local && h.localPlaybackPreferred(entry.UserID) {
+		query := models.LocalMediaMatchQuery{TitleID: entry.TitleID, MediaType: entry.MediaType}
+		scope := prequeueLocalScope{accountID: auth.GetAccountID(r), master: auth.IsMaster(r)}
+		if len(requests) == 1 {
+			query.IMDBID = requests[0].ImdbID
+			scope.tmdbID, scope.tvdbID = requests[0].TmdbID, requests[0].TvdbID
+		}
+		if len(h.findLocalFallbackCandidates(r.Context(), []prequeueLocalScope{scope}, entry.UserID, query, entry.TargetEpisode)) > 0 {
+			return errors.New("local preference requires a fresh source selection")
+		}
 	}
 	return h.validateReadyEntryForReuse(r.Context(), entry)
 }

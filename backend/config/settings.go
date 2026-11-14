@@ -600,6 +600,7 @@ type AltMountSettings struct {
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
+	PreferLocalFiles              bool                      `json:"preferLocalFiles"` // Profiles can override the automatic source preference.
 	PreferredPlayer               string                    `json:"preferredPlayer"`
 	PreferredAudioLanguage        string                    `json:"preferredAudioLanguage,omitempty"`
 	PreferredSubtitleLanguage     string                    `json:"preferredSubtitleLanguage,omitempty"`

@@ -386,6 +386,7 @@ type ClientSettingsProvider interface {
 }
 
 type prequeueScopePlayback struct {
+	PreferLocalFiles           bool     `json:"preferLocalFiles,omitempty"`
 	PreferredAudioLanguage     string   `json:"preferredAudioLanguage,omitempty"`
 	PreferredSubtitleLanguage  string   `json:"preferredSubtitleLanguage,omitempty"`
 	AllowedTrackLanguages      []string `json:"allowedTrackLanguages,omitempty"`
@@ -434,6 +435,7 @@ func configAnimeToUserAnime(a config.AnimeFilteringSettings) models.AnimeFilteri
 
 func configPlaybackToUserPlayback(p config.PlaybackSettings) models.PlaybackSettings {
 	return models.PlaybackSettings{
+		PreferLocalFiles:           models.BoolPtr(p.PreferLocalFiles),
 		PreferredAudioLanguage:     p.PreferredAudioLanguage,
 		PreferredSubtitleLanguage:  p.PreferredSubtitleLanguage,
 		AllowedTrackLanguages:      models.StringSlicePtr(p.AllowedTrackLanguages),
@@ -574,6 +576,7 @@ func (h *PrequeueHandler) prequeueSettingsScopeDetails(userID, clientID, titleID
 			global.AnimeFiltering = defaults.AnimeFiltering
 			global.NewestReleaseFirst = globalSettings.Ranking.NewestReleaseFirst
 			global.Playback = prequeueScopePlayback{
+				PreferLocalFiles:           models.BoolVal(defaults.Playback.PreferLocalFiles, false),
 				PreferredAudioLanguage:     defaults.Playback.PreferredAudioLanguage,
 				PreferredSubtitleLanguage:  defaults.Playback.PreferredSubtitleLanguage,
 				AllowedTrackLanguages:      append([]string(nil), globalSettings.Playback.AllowedTrackLanguages...),
@@ -589,12 +592,27 @@ func (h *PrequeueHandler) prequeueSettingsScopeDetails(userID, clientID, titleID
 	if h.userSettingsSvc != nil {
 		if userSettings, err := h.userSettingsSvc.GetWithDefaults(userID, defaults); err == nil {
 			effective.Filtering = userSettings.Filtering
+			// GetWithDefaults leaves filtering overrides sparse. Preserve inherited
+			// playback limits when a profile only changes its source preference.
+			if effective.Filtering.MaxSizeMovieGB == nil {
+				effective.Filtering.MaxSizeMovieGB = defaults.Filtering.MaxSizeMovieGB
+			}
+			if effective.Filtering.MaxSizeEpisodeGB == nil {
+				effective.Filtering.MaxSizeEpisodeGB = defaults.Filtering.MaxSizeEpisodeGB
+			}
+			if effective.Filtering.MaxResolution == nil {
+				effective.Filtering.MaxResolution = defaults.Filtering.MaxResolution
+			}
+			if effective.Filtering.HDRDVPolicy == "" {
+				effective.Filtering.HDRDVPolicy = defaults.Filtering.HDRDVPolicy
+			}
 			effective.AnimeFiltering = userSettings.AnimeFiltering
 			effective.Ranking = userSettings.Ranking
 			if userSettings.Ranking != nil && userSettings.Ranking.NewestReleaseFirst != nil {
 				effective.NewestReleaseFirst = *userSettings.Ranking.NewestReleaseFirst
 			}
 			effective.Playback = prequeueScopePlayback{
+				PreferLocalFiles:           models.BoolVal(userSettings.Playback.PreferLocalFiles, false),
 				PreferredAudioLanguage:     userSettings.Playback.PreferredAudioLanguage,
 				PreferredSubtitleLanguage:  userSettings.Playback.PreferredSubtitleLanguage,
 				AllowedTrackLanguages:      copyOptionalStringSlice(userSettings.Playback.AllowedTrackLanguages),
@@ -646,7 +664,7 @@ func (h *PrequeueHandler) prequeueSettingsScopeDetails(userID, clientID, titleID
 		}
 	}
 
-	if reflect.DeepEqual(effective, global) {
+	if reflect.DeepEqual(effective, global) && !effective.Playback.PreferLocalFiles {
 		return playback.DefaultPrequeueSettingsScopeKey, adaptiveCaps, effective.Filtering
 	}
 	return prequeueScopeHash(effective), adaptiveCaps, effective.Filtering
@@ -1035,7 +1053,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 				if !readyEntryFitsAdaptiveCaps(warmEntry, adaptiveCaps) {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: file size %d exceeds current adaptive throughput cap, resolving fresh",
 						warm.PrequeueID, warmEntry.FileSize)
-				} else if err := h.validateReadyEntryForRequest(r, warmEntry); err != nil {
+				} else if err := h.validateReadyEntryForRequest(r, warmEntry, req); err != nil {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: stale external stream (%v), resolving fresh",
 						warm.PrequeueID, err)
 					h.store.Delete(warm.PrequeueID)
@@ -1088,7 +1106,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 				if !readyEntryFitsAdaptiveCaps(existing, adaptiveCaps) {
 					log.Printf("[prequeue] Discarding ready entry %s: file size %d exceeds current adaptive throughput cap, resolving fresh",
 						existing.ID, existing.FileSize)
-				} else if err := h.validateReadyEntryForRequest(r, existing); err != nil {
+				} else if err := h.validateReadyEntryForRequest(r, existing, req); err != nil {
 					log.Printf("[prequeue] Discarding ready entry %s: stale external stream (%v), resolving fresh",
 						existing.ID, err)
 					h.store.Delete(existing.ID)
@@ -1878,126 +1896,143 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	log.Printf("[prequeue] HDR/DV policy: %s, needsDVCheck: %v, unknownTrackPolicy: %s, needsUnknownTrackCheck: %v, allowedTrackLanguages: %v", hdrDVPolicy, needsDVCheck, unknownTrackPolicy, needsUnknownTrackCheck, allowedTrackLanguages)
 
 	resolveStart := time.Now()
-	choice, resolveErr := func() (prequeueResolutionChoice, error) {
-		if h.indexerSvc == nil {
-			return prequeueResolutionChoice{}, errors.New("search service not configured")
-		}
-
-		var (
-			candidates   prequeueCandidateSource
-			feedState    *prequeueFeedState
-			finishSearch = func() {}
-		)
-		if resolveFirstReadySource {
-			// Opt-in latency mode: publish each source's locally ranked candidates as
-			// soon as that source completes. Completion order intentionally wins over
-			// combined cross-source ranking in this mode.
-			feedCtx, cancelFeed := context.WithCancel(ctx)
-			feedState = newPrequeueFeedState()
-			usenetCh, debridCh := h.indexerSvc.SearchWithScoringSplit(feedCtx, searchOpts)
-			streamCandidates := newStreamCandidateSource()
-			candidates = streamCandidates
-			go h.prequeueSearchFeeder(feedCtx, streamCandidates, usenetCh, debridCh, feedState, prequeueFeederConfig{
-				prequeueID:    prequeueID,
-				maxCandidates: searchOpts.MaxResults,
-				targetEpisode: targetEpisode,
-				workerStart:   workerStart,
-			})
-			finishSearch = func() {
-				cancelFeed()
-				streamCandidates.Stop()
-				select {
-				case <-feedState.done:
-				case <-ctx.Done():
-				}
-			}
-		} else {
-			// Default/original behavior: wait for every enabled source, combine and
-			// rank globally, then preserve that complete ordered list for migration.
-			allResults, badStreamCount, totalResults, searchErr := h.searchCombinedPrequeueCandidates(ctx, searchOpts, targetEpisode)
-			if searchErr != nil {
-				return prequeueResolutionChoice{}, searchErr
-			}
-			if len(allResults) == 0 {
-				errMsg := "no results found"
-				if badStreamCount > 0 {
-					errMsg = "all results are filtered or marked bad"
-				}
-				return prequeueResolutionChoice{}, errors.New(errMsg)
-			}
-			if h.playbackSvc != nil {
-				allResults = h.playbackSvc.PrepareTorrentCandidates(ctx, allResults)
-			}
-			candidates = newSliceCandidateSource(allResults)
-			h.updatePrequeueProgress(prequeueID, "ranking", "", len(allResults), totalResults)
-			log.Printf("[prequeue] TIMING: combined scored search complete, %d passed candidate(s) selected from %d total result(s), badStreams=%d (elapsed: %v)",
-				len(allResults), totalResults, badStreamCount, time.Since(workerStart))
-		}
-
-		// Update status to resolving. Numeric progress from here on is owned by the
-		// race (in-flight candidate window); the feeder only advances the stage.
-		h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
-			e.Status = playback.PrequeueStatusResolving
-			e.ProgressStage = "preparing_candidates"
-			e.ProgressDetail = ""
-			e.ProgressCurrent = 0
-			e.ProgressTotal = candidates.Total()
-		})
-
-		// Resolution phase. First-ready mode races the streaming candidates with a
-		// bounded worker pool. The default combined-search mode walks the globally
-		// ranked list sequentially and stops at the first fully validated candidate.
-		// Deprioritized unknown-track results are kept as a fallback and used only
-		// when nothing validates.
-		resolveStart = time.Now()
-		log.Printf("[prequeue] TIMING: starting resolution phase (first-ready-source=%t, candidates=%d, width=%d, elapsed: %v)",
-			resolveFirstReadySource, candidates.Total(), prequeueResolutionWidth(resolveFirstReadySource), time.Since(workerStart))
-
-		choice, resolveErr := h.resolveCandidates(ctx, prequeueID, candidates, prequeueResolutionOptions{
-			mediaType:              mediaType,
-			targetEpisode:          targetEpisode,
-			userID:                 userID,
-			hdrDVPolicy:            hdrDVPolicy,
-			unknownTrackPolicy:     unknownTrackPolicy,
-			needsDVCheck:           needsDVCheck,
-			needsUnknownTrackCheck: needsUnknownTrackCheck,
-			concurrent:             resolveFirstReadySource,
-			workerStart:            workerStart,
-		})
-
-		// In first-ready mode this aborts any remaining split search and joins its
-		// feeder. In combined mode every source already completed, so it is a no-op.
-		finishSearch()
-
-		if choice.resolution == nil && resolveErr == nil {
-			resolveErr = errors.New("all results failed to resolve")
-		}
-		if errors.Is(resolveErr, errNoSearchCandidates) {
-			resolveErr = errors.New("no results found")
-			if feedState != nil {
-				badStreams, _ := feedState.snapshot()
-				if feedState.allSourcesFailed() {
-					resolveErr = errors.New("all search sources failed")
-				} else if badStreams > 0 {
-					resolveErr = errors.New("all results are filtered or marked bad")
-				}
-			}
-		}
-		if choice.resolution == nil && (errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded)) {
-			resolveErr = errors.New("cancelled")
-		}
-		return choice, resolveErr
-	}()
-	ctx = playbackCtx
-	if choice.resolution == nil && len(localCandidates) > 0 && ctx.Err() == nil {
+	tryLocal := func() (prequeueResolutionChoice, error) {
 		_, localAdaptiveCaps, localFilter := h.prequeueSettingsScopeDetails(userID, clientID, titleID, throughput)
 		h.updatePrequeueProgress(prequeueID, "local_fallback", "Checking an existing library file", 0, len(localCandidates))
-		choice, resolveErr = h.resolveLocalFallback(ctx, prequeueID, localCandidates, prequeueResolutionOptions{
+		return h.resolveLocalFallback(playbackCtx, prequeueID, localCandidates, prequeueResolutionOptions{
 			mediaType: mediaType, targetEpisode: targetEpisode, userID: userID, hdrDVPolicy: hdrDVPolicy,
 			unknownTrackPolicy: unknownTrackPolicy, needsDVCheck: needsDVCheck, needsUnknownTrackCheck: needsUnknownTrackCheck,
 			workerStart: workerStart, localScope: &localScopes[0], adaptiveCaps: localAdaptiveCaps, localFilter: localFilter,
 		})
 	}
+	var choice prequeueResolutionChoice
+	var resolveErr error
+	triedLocalFirst := h.localPlaybackPreferred(userID) && len(localCandidates) > 0
+	if triedLocalFirst {
+		choice, resolveErr = tryLocal()
+		// An unavailable local preference must not consume the normal search budget.
+		ctx = playbackCtx
+	}
+	if choice.resolution == nil && playbackCtx.Err() == nil {
+		choice, resolveErr = func() (prequeueResolutionChoice, error) {
+			if h.indexerSvc == nil {
+				return prequeueResolutionChoice{}, errors.New("search service not configured")
+			}
+
+			var (
+				candidates   prequeueCandidateSource
+				feedState    *prequeueFeedState
+				finishSearch = func() {}
+			)
+			if resolveFirstReadySource {
+				// Opt-in latency mode: publish each source's locally ranked candidates as
+				// soon as that source completes. Completion order intentionally wins over
+				// combined cross-source ranking in this mode.
+				feedCtx, cancelFeed := context.WithCancel(ctx)
+				feedState = newPrequeueFeedState()
+				usenetCh, debridCh := h.indexerSvc.SearchWithScoringSplit(feedCtx, searchOpts)
+				streamCandidates := newStreamCandidateSource()
+				candidates = streamCandidates
+				go h.prequeueSearchFeeder(feedCtx, streamCandidates, usenetCh, debridCh, feedState, prequeueFeederConfig{
+					prequeueID:    prequeueID,
+					maxCandidates: searchOpts.MaxResults,
+					targetEpisode: targetEpisode,
+					workerStart:   workerStart,
+				})
+				finishSearch = func() {
+					cancelFeed()
+					streamCandidates.Stop()
+					select {
+					case <-feedState.done:
+					case <-ctx.Done():
+					}
+				}
+			} else {
+				// Default/original behavior: wait for every enabled source, combine and
+				// rank globally, then preserve that complete ordered list for migration.
+				allResults, badStreamCount, totalResults, searchErr := h.searchCombinedPrequeueCandidates(ctx, searchOpts, targetEpisode)
+				if searchErr != nil {
+					return prequeueResolutionChoice{}, searchErr
+				}
+				if len(allResults) == 0 {
+					errMsg := "no results found"
+					if badStreamCount > 0 {
+						errMsg = "all results are filtered or marked bad"
+					}
+					return prequeueResolutionChoice{}, errors.New(errMsg)
+				}
+				if h.playbackSvc != nil {
+					allResults = h.playbackSvc.PrepareTorrentCandidates(ctx, allResults)
+				}
+				candidates = newSliceCandidateSource(allResults)
+				h.updatePrequeueProgress(prequeueID, "ranking", "", len(allResults), totalResults)
+				log.Printf("[prequeue] TIMING: combined scored search complete, %d passed candidate(s) selected from %d total result(s), badStreams=%d (elapsed: %v)",
+					len(allResults), totalResults, badStreamCount, time.Since(workerStart))
+			}
+
+			// Update status to resolving. Numeric progress from here on is owned by the
+			// race (in-flight candidate window); the feeder only advances the stage.
+			h.store.UpdateWorker(prequeueID, func(e *playback.PrequeueEntry) {
+				e.Status = playback.PrequeueStatusResolving
+				e.ProgressStage = "preparing_candidates"
+				e.ProgressDetail = ""
+				e.ProgressCurrent = 0
+				e.ProgressTotal = candidates.Total()
+			})
+
+			// Resolution phase. First-ready mode races the streaming candidates with a
+			// bounded worker pool. The default combined-search mode walks the globally
+			// ranked list sequentially and stops at the first fully validated candidate.
+			// Deprioritized unknown-track results are kept as a fallback and used only
+			// when nothing validates.
+			resolveStart = time.Now()
+			log.Printf("[prequeue] TIMING: starting resolution phase (first-ready-source=%t, candidates=%d, width=%d, elapsed: %v)",
+				resolveFirstReadySource, candidates.Total(), prequeueResolutionWidth(resolveFirstReadySource), time.Since(workerStart))
+
+			choice, resolveErr := h.resolveCandidates(ctx, prequeueID, candidates, prequeueResolutionOptions{
+				mediaType:              mediaType,
+				targetEpisode:          targetEpisode,
+				userID:                 userID,
+				hdrDVPolicy:            hdrDVPolicy,
+				unknownTrackPolicy:     unknownTrackPolicy,
+				needsDVCheck:           needsDVCheck,
+				needsUnknownTrackCheck: needsUnknownTrackCheck,
+				concurrent:             resolveFirstReadySource,
+				workerStart:            workerStart,
+			})
+
+			// In first-ready mode this aborts any remaining split search and joins its
+			// feeder. In combined mode every source already completed, so it is a no-op.
+			finishSearch()
+
+			if choice.resolution == nil && resolveErr == nil {
+				resolveErr = errors.New("all results failed to resolve")
+			}
+			if errors.Is(resolveErr, errNoSearchCandidates) {
+				resolveErr = errors.New("no results found")
+				if feedState != nil {
+					badStreams, _ := feedState.snapshot()
+					if feedState.allSourcesFailed() {
+						resolveErr = errors.New("all search sources failed")
+					} else if badStreams > 0 {
+						resolveErr = errors.New("all results are filtered or marked bad")
+					}
+				}
+			}
+			if choice.resolution == nil && (errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded)) {
+				resolveErr = errors.New("cancelled")
+			}
+			return choice, resolveErr
+		}()
+	}
+	ctx = playbackCtx
+	if choice.resolution == nil && !triedLocalFirst && len(localCandidates) > 0 && ctx.Err() == nil {
+		choice, resolveErr = tryLocal()
+	}
+	if triedLocalFirst && choice.resolution == nil && ctx.Err() == nil {
+		resolveErr = errors.New("no usable search source or accessible matching local file; check the library and try again")
+	}
+
 	if choice.resolution == nil {
 		message := "all results failed to resolve"
 		if resolveErr != nil {

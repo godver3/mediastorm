@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/models"
 	"novastream/services/debrid"
 	"novastream/services/indexer"
@@ -35,13 +37,112 @@ func (a *fallbackAccess) CanAccess(context.Context, string, string, string, bool
 type fallbackCatalog struct {
 	item        models.LocalMediaItem
 	unavailable bool
+	empty       bool
 }
 
 func (c *fallbackCatalog) FindPlaybackCandidates(_ context.Context, _ models.LocalMediaMatchQuery, _ *models.EpisodeReference, allow func(string) bool) ([]models.LocalMediaItem, error) {
-	if !allow(c.item.LibraryID) {
+	if c.empty || !allow(c.item.LibraryID) {
 		return nil, nil
 	}
 	return []models.LocalMediaItem{c.item}, nil
+}
+
+func TestLocalPreferenceSelectsPlayableLocalBeforeSearch(t *testing.T) {
+	for _, mode := range []string{"local available", "local missing", "no local match", "library denied", "local unplayable", "local exceeds quality", "local incompatible HDR", "search first"} {
+		t.Run(mode, func(t *testing.T) {
+			search := &fallbackSearch{results: []models.NZBResult{{Title: "Synthetic.Movie.1080p.WEB-DL", Link: "https://example.invalid/synthetic", ServiceType: models.ServiceTypeDebrid, Indexer: "AIOStreams", Attributes: map[string]string{"resolution": "1080p"}}}}
+			h, catalog, access := newFallbackWorker(t, search)
+			settings, err := user_settings.NewService(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := settings.Update("profile", models.UserSettings{Playback: models.PlaybackSettings{PreferLocalFiles: models.BoolPtr(mode != "search first")}}); err != nil {
+				t.Fatal(err)
+			}
+			h.userSettingsSvc = settings
+			if mode == "local exceeds quality" || mode == "local incompatible HDR" {
+				cfg, err := h.configManager.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.Filtering.MaxResolution = "1080p"
+				cfg.Filtering.HDRDVPolicy = "none"
+				if err := h.configManager.Save(cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			catalog.unavailable = mode == "local missing"
+			catalog.empty = mode == "no local match"
+			access.deny.Store(mode == "library denied")
+			h.fullProber = fallbackFullProber{run: func(_ context.Context, path string) (*VideoFullResult, error) {
+				if mode == "local unplayable" && strings.HasPrefix(path, "localmedia:") {
+					return nil, errors.New("synthetic invalid video")
+				}
+				probe := &VideoFullResult{VideoCodec: "h264", VideoWidth: 1920, VideoHeight: 1080, Duration: 100}
+				if strings.HasPrefix(path, "localmedia:") && mode == "local exceeds quality" {
+					probe.VideoWidth, probe.VideoHeight = 3840, 2160
+				}
+				if strings.HasPrefix(path, "localmedia:") && mode == "local incompatible HDR" {
+					probe.HasHDR10 = true
+				}
+				return probe, nil
+			}}
+			got := runFallbackWorker(t, h)
+			wantPath, wantSearches := "/webdav/title.mkv", int32(1)
+			if mode == "local available" {
+				wantPath, wantSearches = "localmedia:local-item/Synthetic.Movie.mkv", 0
+			}
+			if got.Status != playback.PrequeueStatusReady || got.StreamPath != wantPath || search.calls.Load() != wantSearches {
+				t.Fatalf("status=%s path=%s searches=%d error=%s", got.Status, got.StreamPath, search.calls.Load(), got.Error)
+			}
+		})
+	}
+}
+
+func TestLocalPreferenceInheritanceAndPreparedSourceReuse(t *testing.T) {
+	h, _, _ := newFallbackWorker(t, &fallbackSearch{})
+	settings, err := user_settings.NewService(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.userSettingsSvc = settings
+	baseline := h.prequeueSettingsScopeKey("profile", "", "tmdb:movie:123")
+	global, err := h.configManager.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	global.Playback.PreferLocalFiles = true
+	if err := h.configManager.Save(global); err != nil {
+		t.Fatal(err)
+	}
+	if h.prequeueSettingsScopeKey("profile", "", "tmdb:movie:123") == baseline {
+		t.Fatal("global preference change reused the old prepared source scope")
+	}
+	if !h.localPlaybackPreferred("profile") || !h.localPlaybackPreferred("other-profile") {
+		t.Fatal("server preference was not inherited")
+	}
+	if err := settings.Update("profile", models.UserSettings{Playback: models.PlaybackSettings{PreferLocalFiles: models.BoolPtr(false)}}); err != nil {
+		t.Fatal(err)
+	}
+	if h.localPlaybackPreferred("profile") || !h.localPlaybackPreferred("other-profile") {
+		t.Fatal("profile choice leaked into another profile or ignored explicit false")
+	}
+	if err := settings.Update("profile", models.UserSettings{Playback: models.PlaybackSettings{PreferLocalFiles: models.BoolPtr(true)}}); err != nil {
+		t.Fatal(err)
+	}
+	if h.prequeueSettingsScopeKey("profile", "", "tmdb:movie:123") == baseline {
+		t.Fatal("preference change reused the old prepared source scope")
+	}
+	entry := &playback.PrequeueEntry{TitleID: "tmdb:movie:123", MediaType: "movie", UserID: "profile", StreamPath: "/webdav/synthetic.mkv"}
+	r := httptest.NewRequest("GET", "/", nil)
+	r = r.WithContext(context.WithValue(r.Context(), auth.ContextKeyAccountID, "account"))
+	if err := h.validateReadyEntryForRequest(r, entry); err == nil {
+		t.Fatal("a warmed remote stream bypassed local-first selection")
+	}
+	entry.StreamPath = "localmedia:local-item/Synthetic.Movie.mkv"
+	if err := h.validateReadyEntryForRequest(r, entry); err != nil {
+		t.Fatalf("valid local stream could not be reused: %v", err)
+	}
 }
 func (c *fallbackCatalog) GetFallbackItem(context.Context, string) (*models.LocalMediaItem, error) {
 	if c.unavailable {
