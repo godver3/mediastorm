@@ -40,7 +40,7 @@ var userEditableFields = map[string]map[string]struct{}{
 	"animeFiltering":   nil,
 	"ranking":          fieldSet("newestReleaseFirst", "splitByService"),
 	"playback": fieldSet(
-		"preferredPlayer", "preferredAudioLanguage", "preferredSubtitleLanguage", "allowedTrackLanguages",
+		"preferLocalFiles", "preferredPlayer", "preferredAudioLanguage", "preferredSubtitleLanguage", "allowedTrackLanguages",
 		"preferredSubtitleMode", "pauseWhenAppInactive", "useLoadingScreen", "subtitleSize", "subtitleUseCropDetectPosition",
 		"subtitleColor", "subtitleOpacity", "subtitleFont", "subtitleBold", "subtitleOutlineEnabled",
 		"subtitleOutlineColor", "subtitleOutlineWeight", "subtitleBackgroundEnabled", "subtitleBackgroundColor",

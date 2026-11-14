@@ -1051,6 +1051,8 @@
       </div>
     </header>
 
+    <button class="btn" id="releaseReportButton" type="button" onclick="openReleaseReport()" hidden>Report / change source</button>
+
     <main class="shell">
       <section class="meta">
         <div id="mediaTypeLabel" class="eyebrow">Playback</div>
@@ -1113,6 +1115,45 @@
     </div>
   </div>
 
+  <dialog id="releaseReportDialog" class="share-dialog" aria-labelledby="releaseReportTitle">
+    <h2 id="releaseReportTitle">Report or change this release</h2>
+    <p id="releaseReportName"></p>
+    <label for="releaseReportReason">Problem</label>
+    <select id="releaseReportReason" onchange="updateReleaseReportScope()">
+      <option value="">Choose a problem to report</option>
+      <option value="wrong_title">Wrong movie or series</option>
+      <option value="wrong_episode">Wrong episode</option>
+      <option value="missing_language">Wanted audio language missing or mislabeled</option>
+      <option value="audio_problem">Audio silent, distorted or out of sync</option>
+      <option value="file_problem">Entire file is broken</option>
+      <option value="quality_problem">Quality worse than announced</option>
+      <option value="device_problem">Only this device cannot play it</option>
+      <option value="source_unavailable">Source unavailable or repeatedly buffering</option>
+    </select>
+    <div id="releaseReportTrackRow" hidden>
+      <label for="releaseReportTrack">Affected audio track</label>
+      <select id="releaseReportTrack"></select>
+    </div>
+    <p id="releaseReportScope" role="status"></p>
+    <p id="releaseReportError" role="alert"></p>
+    <div class="share-actions" style="flex-wrap:wrap">
+      <button class="btn" type="button" onclick="closeReleaseReport()">Cancel</button>
+      <button class="btn" id="releaseReportOnly" type="button" onclick="submitReleaseReport(false)">Report only</button>
+      <button class="btn btn-primary" id="releaseReportRetry" type="button" onclick="submitReleaseReport(true)">Report and try an alternative</button>
+      <button class="btn" id="releaseManualRetry" type="button" onclick="retryReleaseWithoutReport()">Try an alternative without reporting</button>
+      <button class="btn" id="releaseReportUndo" type="button" onclick="undoReleaseReport()" hidden>Undo report</button>
+    </div>
+  </dialog>
+  <style>
+    #releaseReportDialog::backdrop { background:rgba(4,6,10,.8); }
+    #releaseReportDialog { color:#f1f5f9; max-height:90vh; overflow:auto; }
+    #releaseReportDialog select { width:100%; margin:8px 0 16px; padding:10px; color:#f1f5f9; background:#222936; border:1px solid #64748b; border-radius:6px; }
+    #releaseReportName { overflow-wrap:anywhere; }
+    #releaseReportError { color:#fbbf24; }
+    #releaseReportButton[hidden] { display:none; }
+    #releaseReportButton { position:fixed; right:16px; top:80px; z-index:150; }
+    @media (max-width:760px) { #releaseReportButton { top:max(16px, env(safe-area-inset-top)); font-size:12px; padding:8px; } }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
   <script>
     const SERVER_BASE_PATH = {{json .ServerBasePath}};
@@ -1120,7 +1161,18 @@
     const PROFILES = Array.isArray(RAW_PROFILES) ? RAW_PROFILES : [];
     const ROUTE_PARAMS = new URLSearchParams(window.location.search || '');
     const AUTH_TOKEN = routeParam('token');
-    const CLIENT_ID = routeParam('clientId');
+    const CLIENT_ID = routeParam('clientId') || (() => {
+      try {
+        const key = 'mediastorm-web-player-device';
+        let value = localStorage.getItem(key);
+        if (!value) {
+          const bytes = crypto.getRandomValues(new Uint8Array(16));
+          value = 'web-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+          localStorage.setItem(key, value);
+        }
+        return value;
+      } catch { return ''; }
+    })();
     // Profile unlock token from POST /api/users/{id}/pin/verify, handed over by
     // the launching app. Sent as X-Profile-Unlock on API calls and as
     // ?profileUnlock= on media URLs so PIN-protected profiles keep working when
@@ -1274,6 +1326,7 @@
     });
 
     document.addEventListener('keydown', (event) => {
+      if (document.getElementById('releaseReportDialog')?.open) return;
       if (event.key === 'Escape') {
         closeShareDialog();
         closeTrackSheet();
@@ -1823,6 +1876,7 @@
     }
 
     function renderHeader() {
+      if (typeof updateReleaseReportButton === 'function') updateReleaseReportButton();
       const title = playbackMeta.title || 'Untitled';
       const episode = playbackMeta.mediaType === 'episode'
         ? `S${String(playbackMeta.seasonNumber || 1).padStart(2, '0')}E${String(playbackMeta.episodeNumber || 1).padStart(2, '0')}`
@@ -5024,6 +5078,7 @@
         .replace(/'/g, '&#39;');
     }
   </script>
+  <script src="{{.ServerBasePath}}/api/static/release-reports-v1.js"></script>
 </body>
 </html>
 {{end}}
