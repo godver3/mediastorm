@@ -134,8 +134,11 @@ func TestPrepareTorrentCandidatesEnrichesAndGroupsWithoutReordering(t *testing.T
 	if calls := provider.bulkCalls.Load(); calls != 2 {
 		t.Fatalf("bulk cache calls = %d, want 2", calls)
 	}
-	if count := downloads.Load(); count != 2 {
-		t.Fatalf("torrent downloads = %d, want 2 raced alternate sources", count)
+	// The winner may cancel an alternate before that request reaches the
+	// server. Both candidates must still share its enriched metainfo.
+	preflightDownloads := downloads.Load()
+	if preflightDownloads < 1 || preflightDownloads > 2 {
+		t.Fatalf("torrent downloads = %d, want one winner and at most one alternate", preflightDownloads)
 	}
 
 	source, reused, err := service.torrentSourceForResolution(
@@ -153,7 +156,7 @@ func TestPrepareTorrentCandidatesEnrichesAndGroupsWithoutReordering(t *testing.T
 	if source.filename != "movie.torrent" {
 		t.Fatalf("reused filename = %q, want movie.torrent", source.filename)
 	}
-	if count := downloads.Load(); count != 2 {
-		t.Fatalf("torrent downloads after resolution lookup = %d, want 2", count)
+	if count := downloads.Load(); count != preflightDownloads {
+		t.Fatalf("torrent downloads after resolution lookup = %d, want cached preflight count %d", count, preflightDownloads)
 	}
 }
