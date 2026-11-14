@@ -72,6 +72,7 @@ type Service struct {
 	topTenRefreshMu      sync.Mutex
 	topTenInFlight       sync.Map
 	topTenSourceInFlight sync.Map
+	regionalDiscoveryFn  func() []RegionalDiscoveryWarmShelf
 	customListInfoFn     func() []CustomListInfo // returns configured custom MDBList URLs with display names
 	ratingItemsFn        func() []RatingItem     // returns all items that need ratings (watchlist, continue watching, user lists)
 
@@ -385,6 +386,7 @@ func (s *Service) StartBackgroundCacheManager(refreshInterval time.Duration) {
 		return
 	}
 	s.cacheStopCh = make(chan struct{})
+	go s.runRegionalDiscoveryWarmer(s.cacheStopCh)
 
 	s.cacheStatusMu.Lock()
 	s.cacheStatus = CacheManagerStatus{
@@ -6889,9 +6891,14 @@ func (s *Service) GetTMDBList(ctx context.Context, opts TMDBListOptions) ([]mode
 	if opts.SourceType != TMDBSourceCustomDiscover && parseTMDBSourceID(opts.SourceID) <= 0 {
 		return nil, 0, fmt.Errorf("%w: source ID required", ErrInvalidTMDBList)
 	}
-	if _, err := parseTMDBDiscoverQuery(opts.DiscoverQuery); err != nil {
+	filters, err := parseTMDBDiscoverQuery(opts.DiscoverQuery)
+	if err != nil {
 		return nil, 0, fmt.Errorf("%w: %v", ErrInvalidTMDBList, err)
 	}
+	if filters.Get("country_chart") != "" {
+		return s.getNetflixCountryChart(ctx, opts, filters)
+	}
+	opts.DiscoverQuery = filters.Encode()
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, 0, errors.New("tmdb client not configured")
 	}
@@ -6906,7 +6913,8 @@ func (s *Service) GetTMDBList(ctx context.Context, opts TMDBListOptions) ([]mode
 		s.client.language,
 	)
 	var cached tmdbListCache
-	if ok, _ := s.cache.get(cacheID, &cached); !ok {
+	maxAge := regionalDiscoveryMaxAge(filters)
+	if ok, _ := s.cache.getWithMaxAge(cacheID, &cached, maxAge); !ok {
 		titles, total, err := s.tmdb.fetchShelfTitles(ctx, opts)
 		if err != nil {
 			return nil, 0, err
