@@ -50,6 +50,7 @@ type Rating struct {
 }
 
 type Title struct {
+	PersonalRating     string              `json:"personalRating,omitempty"`
 	SourceAvailability *SourceAvailability `json:"sourceAvailability,omitempty"`
 	ID                 string              `json:"id"`
 	Name               string              `json:"name"`

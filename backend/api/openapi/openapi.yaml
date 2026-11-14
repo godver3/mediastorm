@@ -137,6 +137,67 @@ paths:
           description: Storage error
         '503':
           description: Search-interest storage unavailable
+  /api/users/{userId}/ratings/{mediaType}/{titleId}:
+    parameters:
+      - $ref: '#/components/parameters/UserID'
+      - $ref: '#/components/parameters/ProfileUnlock'
+      - name: X-Client-ID
+        in: header
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: mediaType
+        in: path
+        required: true
+        schema: {type: string, enum: [movie, series]}
+      - name: titleId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+    get:
+      operationId: getPersonalTitleRating
+      summary: Read the active profile's explicit preference for a delivered title
+      responses:
+        '200':
+          description: Current preference, or none
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalTitleRating'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+    put:
+      operationId: setPersonalTitleRating
+      summary: Set or clear an explicit profile preference
+      description: |
+        Requires an owned unlocked profile, full account session and a title
+        delivered to this profile/client during the last thirty minutes. Current
+        child-profile policy is checked again. Only the preference is accepted;
+        metadata and provider aliases come from the server. Preferences remain
+        separate from watched, hidden and watchlist state. No external sync is
+        enabled. Dislikes override implicit recommendation signals; love and like
+        remain seeds after old playback ages out. Use none to remove a preference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PersonalTitleRating'}
+      responses:
+        '200':
+          description: Preference saved or cleared
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PersonalTitleRating'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
   /api/users/{userId}/source-availability/recheck:
     post:
       operationId: recheckSourceAvailability
@@ -1783,6 +1844,12 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    PersonalTitleRating:
+      type: object
+      additionalProperties: false
+      required: [rating]
+      properties:
+        rating: {type: string, enum: [none, like, love, dislike]}
     Error:
       type: object
       required: [error]

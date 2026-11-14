@@ -1028,3 +1028,52 @@ func TestStartupHandler_HomeManifestTracksCustomLists(t *testing.T) {
 		t.Fatal("revision unchanged after a custom list item was removed")
 	}
 }
+
+type startupTitleRatings struct {
+	items map[string][]models.TitleRating
+}
+
+func (s *startupTitleRatings) Observe(string, string, []models.Title) {}
+func (s *startupTitleRatings) Resolve(string, string, string, string) (models.Title, bool) {
+	return models.Title{}, false
+}
+func (s *startupTitleRatings) List(ctx context.Context, profile string) ([]models.TitleRating, error) {
+	return s.items[profile], nil
+}
+func (s *startupTitleRatings) Put(context.Context, string, models.Title, string) error { return nil }
+func TestHomeManifestTracksProfileRatingValuesAndAliasesWithoutDependingOnTimestamps(t *testing.T) {
+	h := handlers.NewStartupHandler(&mockUserSettingsService{}, &mockWatchlistService{}, &mockHistoryService{revision: "stable"}, &mockMetadataServiceStartup{}, config.NewManager(t.TempDir()+"/settings.json"), &mockUserServiceStartup{exists: true})
+	ratings := &startupTitleRatings{items: map[string][]models.TitleRating{}}
+	h.TitleRatings = ratings
+	revision := func(profile string) string {
+		r := mux.SetURLVars(httptest.NewRequest("GET", "/api/users/"+profile+"/home/manifest", nil), map[string]string{"userID": profile})
+		w := httptest.NewRecorder()
+		h.GetHomeManifest(w, r)
+		var result struct {
+			Revision string `json:"revision"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil {
+			t.Fatal("manifest failed")
+		}
+		return result.Revision
+	}
+	before, other := revision("first"), revision("second")
+	ratings.items["first"] = []models.TitleRating{{Key: "movie:tmdb:7", Value: "like", Title: models.Title{ID: "tmdb:movie:7", MediaType: "movie", TMDBID: 7}}}
+	liked := revision("first")
+	if liked == before || revision("second") != other || revision("first") != liked {
+		t.Fatal("rating revision unstable or crossed profile")
+	}
+	ratings.items["first"][0].Value = "love"
+	loved := revision("first")
+	if loved == liked {
+		t.Fatal("same-timestamp rating change did not change manifest")
+	}
+	ratings.items["first"][0].Aliases = []string{"movie:imdb:tt0000007"}
+	if revision("first") == loved {
+		t.Fatal("new verified alias did not change manifest")
+	}
+	delete(ratings.items, "first")
+	if revision("first") != before {
+		t.Fatal("cleared preference remained in manifest")
+	}
+}

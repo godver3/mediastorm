@@ -54,13 +54,15 @@ type PersonalizedRecommendationSeed struct {
 }
 
 type personalizedSeed struct {
-	Key       string
-	MediaType string
-	TMDBID    int64
-	Title     string
-	Activity  time.Time
-	Strength  float64
-	Source    string
+	IdentityKeys []string
+	Identity     *models.Title
+	Key          string
+	MediaType    string
+	TMDBID       int64
+	Title        string
+	Activity     time.Time
+	Strength     float64
+	Source       string
 }
 
 type personalizedCandidate struct {
@@ -157,6 +159,12 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		}
 	}
 	additional := h.additionalRecommendationSeeds(userID)
+	ratingSeeds, ratingErr := h.ratingRecommendationSeeds(r.Context(), userID)
+	if ratingErr != nil {
+		http.Error(w, "personal recommendations unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	additional = append(additional, ratingSeeds...)
 	kidsRatingFilter := h.personalizedKidsRatingFilter(userID)
 	cacheKey := personalizedRecommendationsCacheKey(userID, days, limitPerType, history, progress)
 	language := ""
@@ -488,7 +496,15 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	excluded := buildPersonalizedExclusion(history, progress)
 	seeds := buildPersonalizedSeeds(userID, history, progress, cutoff, now, personalizedSeedSampleSize, additional...)
 	for _, seed := range additional {
-		for key := range titleExclusionKeys(models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}) {
+		for _, key := range seed.IdentityKeys {
+			excluded[key] = struct{}{}
+		}
+		title := models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}
+		if seed.Identity != nil {
+			title = *seed.Identity
+			title.Name = ""
+		}
+		for key := range titleExclusionKeys(title) {
 			excluded[key] = struct{}{}
 		}
 	}
@@ -762,8 +778,34 @@ func isPersonalizedRatingAllowed(title models.Title, filter personalizedKidsRati
 
 func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, progress []models.PlaybackProgress, cutoff, now time.Time, limit int, additional ...personalizedSeed) []personalizedSeed {
 	byKey := make(map[string]personalizedSeed)
+	disliked := map[string]struct{}{}
+	for _, seed := range additional {
+		if seed.Strength >= 0 {
+			continue
+		}
+		for _, key := range seed.IdentityKeys {
+			disliked[key] = struct{}{}
+		}
+		title := models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}
+		if seed.Identity != nil {
+			title = *seed.Identity
+			title.Name = ""
+		}
+		for key := range titleExclusionKeys(title) {
+			disliked[key] = struct{}{}
+		}
+	}
+
 	addSeed := func(seed personalizedSeed) {
-		if seed.TMDBID <= 0 || seed.MediaType == "" || (seed.Activity.Before(cutoff) && seed.Source != "watchlist" && seed.Source != "custom_list") {
+		if seed.Strength < 0 || seed.TMDBID <= 0 || seed.MediaType == "" || (seed.Activity.Before(cutoff) && seed.Source != "watchlist" && seed.Source != "custom_list" && !strings.HasPrefix(seed.Source, "rating_")) {
+			return
+		}
+		identity := models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}
+		if seed.Identity != nil {
+			identity = *seed.Identity
+			identity.Name = ""
+		}
+		if intersectsStringSet(titleExclusionKeys(identity), disliked) {
 			return
 		}
 		seed.Key = seed.MediaType + ":tmdb:" + strconv.FormatInt(seed.TMDBID, 10)
@@ -782,6 +824,10 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 			existing.Title = seed.Title
 		}
 		existing.Strength = minFloat(1.7, existing.Strength+seed.Strength*0.35)
+		if strings.HasPrefix(seed.Source, "rating_") {
+			existing.Source = seed.Source
+			existing.Strength = maxFloat(existing.Strength, seed.Strength)
+		}
 		byKey[seed.Key] = existing
 	}
 
@@ -792,6 +838,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 		activity := firstNonZeroTime(item.WatchedAt, item.UpdatedAt)
 		mediaType, title, id, ids := personalizedHistoryIdentity(item)
 		tmdbID := extractTMDBID(mediaType, id, ids)
+		identity := titleFromSharedShelfItem(id, "", mediaType, 0, ids)
 		addSeed(personalizedSeed{
 			MediaType: mediaType,
 			TMDBID:    tmdbID,
@@ -799,6 +846,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 			Activity:  activity,
 			Strength:  1.0,
 			Source:    "watched",
+			Identity:  &identity,
 		})
 	}
 
@@ -809,6 +857,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 		mediaType, title, id, ids := personalizedProgressIdentity(item)
 		tmdbID := extractTMDBID(mediaType, id, ids)
 		strength := 0.45 + minFloat(item.PercentWatched, 95)/190
+		identity := titleFromSharedShelfItem(id, "", mediaType, 0, ids)
 		addSeed(personalizedSeed{
 			MediaType: mediaType,
 			TMDBID:    tmdbID,
@@ -816,6 +865,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 			Activity:  item.UpdatedAt,
 			Strength:  strength,
 			Source:    "progress",
+			Identity:  &identity,
 		})
 	}
 
@@ -823,6 +873,12 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 		addSeed(seed)
 	}
 
+	// An explicit dislike overrides implicit history, progress and list signals.
+	for _, seed := range additional {
+		if seed.Strength < 0 {
+			delete(byKey, seed.MediaType+":tmdb:"+strconv.FormatInt(seed.TMDBID, 10))
+		}
+	}
 	seeds := make([]personalizedSeed, 0, len(byKey))
 	for _, seed := range byKey {
 		seeds = append(seeds, seed)

@@ -97,7 +97,8 @@ func (h *MetadataHandler) additionalRecommendationSeeds(profile string) []person
 			if id <= 0 {
 				continue
 			}
-			seeds = append(seeds, personalizedSeed{MediaType: kind, TMDBID: id, Title: item.Name, Activity: item.AddedAt, Strength: 0.85, Source: source})
+			identity := titleFromSharedShelfItem(item.ID, "", kind, item.Year, item.ExternalIDs)
+			seeds = append(seeds, personalizedSeed{MediaType: kind, TMDBID: id, Title: item.Name, Activity: item.AddedAt, Strength: 0.85, Source: source, Identity: &identity})
 		}
 	}
 	if settings.WatchlistEnabled() && h.WatchlistService != nil {

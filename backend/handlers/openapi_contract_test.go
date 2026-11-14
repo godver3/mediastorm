@@ -885,6 +885,17 @@ func TestOpenAPIContract(t *testing.T) {
 		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/foreign/recommendation-interests", vars: map[string]string{"userID": "foreign"}}, h.ClearSearchInterests, http.StatusNotFound)
 	})
 
+	t.Run("personal title ratings", func(t *testing.T) {
+		h, service, _, title := ratingFixture(t)
+		h.UsersService = &fakeUsersServiceForSearch{users: map[string]models.User{"profile": {ID: "profile", AccountID: contractAccountID}}}
+		service.Observe("profile", "fixture-client", []models.Title{title})
+		vars := map[string]string{"userID": "profile", "mediaType": "movie", "titleID": title.ID}
+		for _, value := range []string{"like", "love", "dislike", "none"} {
+			exercise(t, v, contractCall{method: "PUT", target: "/api/users/profile/ratings/movie/" + title.ID, vars: vars, headers: map[string]string{"X-Client-ID": "fixture-client"}, body: map[string]string{"rating": value}}, h.TitleRating, 200)
+			exercise(t, v, contractCall{method: "GET", target: "/api/users/profile/ratings/movie/" + title.ID, vars: vars, headers: map[string]string{"X-Client-ID": "fixture-client"}}, h.TitleRating, 200)
+		}
+	})
+
 	t.Run("explicit source recheck", func(t *testing.T) {
 		h, service := titleEndpointFixture(t)
 		service.AnnotateTitles("profile", "fixture-client", []models.Title{{ID: "synthetic-movie", Name: "Synthetic Movie", MediaType: "movie"}})

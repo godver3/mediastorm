@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"novastream/models"
+	"novastream/services/titleratings"
 )
 
 type sourceAvailabilityService interface {
@@ -57,11 +58,73 @@ func (h *MetadataHandler) encodeMetadata(w http.ResponseWriter, r *http.Request,
 		profile = mux.Vars(r)["userID"]
 	}
 	client := requestClientID(r)
-	annotate := func(items []models.TrendingItem) []models.TrendingItem {
-		return availabilityTrending(h.SourceAvailability, profile, client, items)
+	var ratings []models.TitleRating
+	if h.TitleRatings != nil && profile != "" {
+		w.Header().Set("Cache-Control", "private, no-store")
+		ratings, _ = h.TitleRatings.List(r.Context(), profile)
 	}
-	if h.SourceAvailability != nil && profile != "" {
+	annotateTitles := func(titles []models.Title) []models.Title {
+		if h.SourceAvailability != nil {
+			titles = h.SourceAvailability.AnnotateTitles(profile, client, titles)
+		}
+		if h.TitleRatings == nil {
+			return titles
+		}
+		h.TitleRatings.Observe(profile, client, titles)
+		out := append([]models.Title(nil), titles...)
+		for i := range out {
+			out[i].PersonalRating = ""
+			if h.ratingTitleAllowed(profile, out[i]) {
+				if value := titleratings.Match(ratings, out[i]); value != "none" {
+					out[i].PersonalRating = value
+				}
+			}
+		}
+		if titles != nil && out == nil {
+			out = []models.Title{}
+		}
+		return out
+	}
+	annotate := func(items []models.TrendingItem) []models.TrendingItem {
+		if items == nil {
+			return nil
+		}
+		titles := make([]models.Title, len(items))
+		for i := range items {
+			titles[i] = items[i].Title
+		}
+		titles = annotateTitles(titles)
+		out := append([]models.TrendingItem{}, items...)
+		for i := range out {
+			out[i].Title = titles[i]
+		}
+		return out
+	}
+	if (h.SourceAvailability != nil || h.TitleRatings != nil) && profile != "" {
 		switch value := payload.(type) {
+		case models.Title:
+			payload = annotateTitles([]models.Title{value})[0]
+		case *models.Title:
+			if value != nil {
+				copy := annotateTitles([]models.Title{*value})[0]
+				payload = &copy
+			}
+		case *models.SeriesDetails:
+			if value != nil {
+				copy := *value
+				copy.Title = annotateTitles([]models.Title{value.Title})[0]
+				payload = &copy
+			}
+		case models.SeriesDetails:
+			value.Title = annotateTitles([]models.Title{value.Title})[0]
+			payload = value
+		case *models.CollectionDetails:
+			if value != nil {
+				copy := *value
+				copy.Movies = annotateTitles(value.Movies)
+				payload = &copy
+			}
+
 		case []models.TrendingItem:
 			payload = annotate(value)
 		case []models.SearchResult:
@@ -70,7 +133,7 @@ func (h *MetadataHandler) encodeMetadata(w http.ResponseWriter, r *http.Request,
 			for i := range value {
 				titles[i] = value[i].Title
 			}
-			titles = h.SourceAvailability.AnnotateTitles(profile, client, titles)
+			titles = annotateTitles(titles)
 			for i := range copy {
 				copy[i].Title = titles[i]
 			}

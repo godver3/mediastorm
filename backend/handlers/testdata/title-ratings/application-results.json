@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "checks": [
+    "foreign-profile-locked-profile-and-undelivered-client-rejected",
+    "round-trip-and-profile-annotation-like",
+    "round-trip-and-profile-annotation-love",
+    "round-trip-and-profile-annotation-dislike",
+    "round-trip-and-profile-annotation-none",
+    "forged-metadata-and-unsupported-rating-rejected",
+    "watched-progress-watchlist-hidden-state-unchanged"
+  ],
+  "fixture_only": true,
+  "real_application_api_through_chromium": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false
+}

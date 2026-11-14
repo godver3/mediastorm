@@ -440,3 +440,9 @@ type SportsLinksRepository interface {
 	// ReorderBackups rewrites backup positions to match the given link ID order.
 	ReorderBackups(ctx context.Context, teamID string, orderedLinkIDs []string) error
 }
+
+// TitleRatingRepository persists explicit preferences separately from history.
+type TitleRatingRepository interface {
+	List(context.Context, string) ([]models.TitleRating, error)
+	Put(context.Context, string, models.TitleRating) error
+}

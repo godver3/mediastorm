@@ -320,6 +320,13 @@ func (h *DisplayListHandler) get(w http.ResponseWriter, r *http.Request) {
 	logDisplayListWatchlistArtworkTrace(userID, source, items)
 	if h.MetadataHandler != nil {
 		items = availabilityWatchlist(h.MetadataHandler.SourceAvailability, userID, requestClientID(r), items)
+		if h.MetadataHandler.TitleRatings != nil {
+			titles := make([]models.Title, len(items))
+			for i, item := range items {
+				titles[i] = titleFromSharedShelfItem(item.ID, item.Name, item.MediaType, item.Year, item.ExternalIDs)
+			}
+			h.MetadataHandler.TitleRatings.Observe(userID, requestClientID(r), titles)
+		}
 	}
 	responseItems := interface{}(items)
 	metadataPending := false

@@ -65,6 +65,7 @@ type startupHistorySnapshot struct {
 // fetches are performed concurrently.
 type StartupHandler struct {
 	Interests          interestService
+	TitleRatings       titleRatingService
 	sourceAvailability sourceAvailabilityService
 	userSettings       userSettingsService
 	watchlist          watchlistService
@@ -250,6 +251,23 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 			interests = h.Interests.List(userID)
 		}
 		resp.RecommendationsRevision = hashForManifest(settings.Recommendations, interests, resp.GeneratedAt.UTC().Format("2006-01-02"))
+	}
+
+	if h.TitleRatings != nil {
+		if ratings, err := h.TitleRatings.List(r.Context(), userID); err == nil {
+			// Include the value and trusted identity, not only timestamps.
+			// Explicit preferences persist when older playback ages out.
+			type ratingRevision struct {
+				Key, Value string
+				Aliases    []string
+				Title      models.Title
+			}
+			values := make([]ratingRevision, 0, len(ratings))
+			for _, item := range ratings {
+				values = append(values, ratingRevision{Key: item.Key, Value: item.Value, Aliases: item.Aliases, Title: item.Title})
+			}
+			resp.RecommendationsRevision = hashForManifest(resp.RecommendationsRevision, values)
+		}
 	}
 
 	resp.Revision = hashForManifest(

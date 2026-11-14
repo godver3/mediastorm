@@ -96,6 +96,7 @@ func (ds *DataStore) ClientSettings() ClientSettingsRepository {
 func (ds *DataStore) UserSettings() UserSettingsRepository { return &pgUserSettingsRepo{pool: ds.pool} }
 func (ds *DataStore) Watchlist() WatchlistRepository       { return &pgWatchlistRepo{pool: ds.pool} }
 func (ds *DataStore) HiddenItems() HiddenItemsRepository   { return &pgHiddenItemsRepo{pool: ds.pool} }
+func (ds *DataStore) TitleRatings() TitleRatingRepository  { return &pgTitleRatingRepo{pool: ds.pool} }
 func (ds *DataStore) CustomLists() CustomListRepository    { return &pgCustomListRepo{pool: ds.pool} }
 func (ds *DataStore) WatchHistory() WatchHistoryRepository { return &pgWatchHistoryRepo{pool: ds.pool} }
 func (ds *DataStore) PlaybackProgress() PlaybackProgressRepository {
