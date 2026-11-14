@@ -3308,8 +3308,12 @@ func liveHLSOutputArgs(playbackTarget, segmentPattern, playlistPath string, resu
 	}
 	// Live subtitles are handled separately. Automatic stream selection also picks
 	// DVB teletext, which the HLS muxer's default WebVTT encoder cannot encode and
-	// aborts playback before any audio/video segments are written.
-	args := []string{"-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn"}
+	// aborts playback before any audio/video segments are written, so -sn/-dn drop
+	// subtitle and data streams. Video and audio stay on FFmpeg's automatic selection
+	// (highest resolution, most audio channels): an explicit -map 0:a:0 takes the
+	// first audio PID, which on many IPTV channels is a silent, described-video or
+	// secondary-language track, and native targets copy it straight to the player.
+	args := []string{"-sn", "-dn"}
 	// Compatibility (cast/web) retention is the default; the native branch overrides.
 	hlsFlags := "independent_segments+temp_file"
 	listSize := strconv.Itoa(liveNativeHLSListSize)

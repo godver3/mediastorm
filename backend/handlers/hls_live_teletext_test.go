@@ -155,3 +155,56 @@ func addLiveTeletextDescriptor(t *testing.T, data []byte) {
 		t.Fatal("fixture contains no PMT")
 	}
 }
+
+// Many IPTV channels list a secondary (mono, described-video or silent) audio PID first.
+// Live HLS must keep FFmpeg's automatic pick (most channels), not the first audio stream.
+func TestLiveHLSOutputKeepsAutomaticAudioSelection(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("FFmpeg is not installed")
+	}
+	ffprobe, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe is not installed")
+	}
+	for _, target := range []string{"web", "native"} {
+		t.Run(target, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			dir := t.TempDir()
+			fixture := filepath.Join(dir, "input.ts")
+			generate := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error",
+				"-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10",
+				"-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=48000",
+				"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+				"-map", "0:v", "-map", "1:a", "-map", "2:a",
+				"-t", "2", "-c:v", "libx264", "-g", "10", "-c:a", "aac", "-ac:a:1", "2",
+				"-f", "mpegts", fixture)
+			if output, err := generate.CombinedOutput(); err != nil {
+				t.Fatalf("generate fixture: %v: %s", err, output)
+			}
+			playlist := filepath.Join(dir, "stream.m3u8")
+			args := []string{"-hide_banner", "-loglevel", "error", "-i", fixture}
+			args = append(args, liveHLSOutputArgs(target, filepath.Join(dir, "segment%d.ts"), playlist)...)
+			if output, err := exec.CommandContext(ctx, ffmpeg, args...).CombinedOutput(); err != nil {
+				t.Fatalf("create HLS: %v: %s", err, output)
+			}
+			probe := exec.CommandContext(ctx, ffprobe, "-v", "error", "-select_streams", "a",
+				"-show_entries", "stream=channels", "-of", "csv=p=0", filepath.Join(dir, "segment0.ts"))
+			output, err := probe.CombinedOutput()
+			if err != nil {
+				t.Fatalf("probe segment: %v: %s", err, output)
+			}
+			// ffprobe repeats a stream under each program; every entry must be the stereo track.
+			channels := strings.Fields(string(output))
+			if len(channels) == 0 {
+				t.Fatal("output has no audio stream")
+			}
+			for _, got := range channels {
+				if got != "2" {
+					t.Fatalf("output audio channels = %v, want the stereo track (2)", channels)
+				}
+			}
+		})
+	}
+}
