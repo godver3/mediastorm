@@ -44,7 +44,9 @@ info:
       `X-Profile-Unlock` header (comma-separate several tokens), or as the
       `profileUnlock` query parameter on media URLs that cannot carry
       headers. When the server setting `security.enforceProfilePins` is on,
-      requests for a PIN-protected profile without a valid unlock get 403
+      existing HLS resources also check their stored profile even when the
+      client omits or substitutes a selector. Requests for a PIN-protected
+      profile without a valid unlock get 403
       with `code: profile_locked` (the session is still valid; prompt for the
       PIN, verify, retry). When the setting is off (the default) the header
       is accepted and ignored. Unlocks survive `POST /api/auth/refresh`, end

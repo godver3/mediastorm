@@ -15,6 +15,7 @@ import (
 	"novastream/config"
 	"novastream/internal/apierror"
 	"novastream/internal/auth"
+	"novastream/internal/profileaccess"
 	"novastream/models"
 	"novastream/services/profileunlock"
 )
@@ -115,6 +116,16 @@ func ProfilePinMiddleware(usersSvc profilePinUsers, unlocks profileUnlockValidat
 				return
 			}
 
+			r = profileaccess.WithResourceGuard(r, func(w http.ResponseWriter, request *http.Request, id string) bool {
+				if id == "" || !usersSvc.HasPin(id) {
+					return true
+				}
+				if unlocks.Validate(profileunlock.RequestTokens(request), session.Token, id, usersSvc.PinFingerprint(id)) {
+					return true
+				}
+				apierror.Write(w, http.StatusForbidden, apierror.CodeProfileLocked, "profile is locked", map[string]string{"profileId": id})
+				return false
+			})
 			profileIDs := requestProfileIDs(r)
 			var locked []string
 			for _, id := range profileIDs {
