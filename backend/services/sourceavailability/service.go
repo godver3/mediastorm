@@ -21,20 +21,24 @@ type searcher interface {
 }
 
 type request struct {
+	Episode                    *models.SeriesEpisode
 	ProfileID, ClientID, Scope string
 	AudioLanguage              string
 	Title                      models.Title
 	LastSeen                   time.Time
 }
 type Service struct {
-	Store   *Store
-	manager *config.Manager
-	search  searcher
-	scope   ScopeFactory
-	reports *badstreams.Service
-	mu      sync.Mutex
-	pending map[string]request
-	now     func() time.Time
+	episodeViews    map[string]episodeView
+	activeEpisodeID string
+	cancelEpisode   context.CancelFunc
+	Store           *Store
+	manager         *config.Manager
+	search          searcher
+	scope           ScopeFactory
+	reports         *badstreams.Service
+	mu              sync.Mutex
+	pending         map[string]request
+	now             func() time.Time
 }
 
 func NewService(store *Store, manager *config.Manager, search searcher, scope ScopeFactory, reports ...*badstreams.Service) *Service {
@@ -107,7 +111,11 @@ func (s *Service) AnnotateTitles(profileID, clientID string, titles []models.Tit
 func (s *Service) enqueue(item request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id := key(item.ProfileID, item.Title.ID, item.Scope)
+	s.enqueueLocked(item)
+}
+
+func (s *Service) enqueueLocked(item request) {
+	id := requestID(item)
 	s.pending[id] = item
 	if len(s.pending) > MaxRecords {
 		oldest := ""
@@ -221,7 +229,11 @@ func (s *Service) checkOne(ctx context.Context) {
 			delete(s.pending, id)
 			continue
 		}
-		value, evidence := s.Store.getObservation(item.ProfileID, item.Title.ID, item.Scope)
+		if item.Episode != nil && s.neededUntilLocked(id).IsZero() {
+			delete(s.pending, id)
+			continue
+		}
+		value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), item.Scope)
 		legacy := s.reports != nil && evidence == nil && value.CheckedAt != nil
 		changedPreparation := evidence != nil && evidence.Kind == "prepared" && evidence.ReportRevision != s.reports.RevisionFor(badstreams.PlaybackContext{
 			ProfileID: item.ProfileID, ClientID: item.ClientID, TitleID: item.Title.ID, AudioLanguage: item.AudioLanguage,
@@ -249,10 +261,16 @@ func (s *Service) checkOne(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	if chosen.Episode != nil {
+		current = episodeSelection(current, chosen.Episode, chosen.Title)
+	}
 	if current.Key != chosen.Scope {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
 		s.mu.Unlock()
+		if chosen.Episode != nil {
+			return
+		}
 		chosen.Scope = current.Key
 		chosen.AudioLanguage = current.AudioLanguage
 		s.enqueue(chosen)
@@ -266,6 +284,20 @@ func (s *Service) checkOne(ctx context.Context) {
 		return
 	}
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	if chosen.Episode != nil {
+		s.mu.Lock()
+		until := s.neededUntilLocked(chosenID)
+		if until.IsZero() {
+			s.mu.Unlock()
+			cancel()
+			return
+		}
+		cancel()
+		bounded, cancel = context.WithDeadline(ctx, minTime(time.Now().Add(10*time.Second), until))
+		s.activeEpisodeID, s.cancelEpisode = chosenID, cancel
+		s.mu.Unlock()
+		defer func() { s.mu.Lock(); s.activeEpisodeID = ""; s.cancelEpisode = nil; s.mu.Unlock() }()
+	}
 	defer cancel()
 	work, release, err := s.search.BeginAvailabilitySearch(bounded)
 	if err != nil {
@@ -280,22 +312,29 @@ func (s *Service) checkOne(ctx context.Context) {
 	if media == "tv" {
 		media = "series"
 	}
-	u, d := s.search.SearchWithScoringSplit(work, indexer.SearchOptions{AvailabilityCheck: true, AvailabilityIndexerNames: providers, TitleID: chosen.Title.ID, Query: chosen.Title.Name, MediaType: media, Year: chosen.Title.Year, IMDBID: chosen.Title.IMDBID, TVDBID: chosen.Title.TVDBID, UserID: chosen.ProfileID, ClientID: chosen.ClientID, OriginalLanguage: chosen.Title.Language, AlternateTitles: []string{chosen.Title.OriginalName}, MaxResults: 0})
+	u, d := s.search.SearchWithScoringSplit(work, episodeSearchOptions(chosen, indexer.SearchOptions{AvailabilityCheck: true, AvailabilityIndexerNames: providers, TitleID: chosen.Title.ID, Query: chosen.Title.Name, MediaType: media, Year: chosen.Title.Year, IMDBID: chosen.Title.IMDBID, TVDBID: chosen.Title.TVDBID, UserID: chosen.ProfileID, ClientID: chosen.ClientID, OriginalLanguage: chosen.Title.Language, AlternateTitles: []string{chosen.Title.OriginalName}, MaxResults: 0}))
 	result, err := receiveSearch(work, u, d)
 	latest, loadErr := s.manager.Load()
-	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.scopeStillMatches(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, chosen.Scope) {
+	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.requestScopeStillMatches(chosen) {
 		return
 	}
 	checked := s.now().UTC()
 	expires := checked.Add(interval)
 	value := models.SourceAvailability{State: "unknown", CheckedAt: &checked, ExpiresAt: &expires, Providers: providers, Reason: "search_incomplete"}
 	evidence := searchObservation(result, err == nil && result.Err == nil && !result.Incomplete && !result.Disabled)
-	value = s.evaluate(value, evidence, s.reportContext(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, current))
+	if chosen.Episode != nil {
+		if !s.episodeNeeded(chosenID) || work.Err() != nil {
+			return
+		}
+		value = s.evaluateEpisode(value, evidence, chosen, current)
+	} else {
+		value = s.evaluate(value, evidence, s.reportContext(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, current))
+	}
 	if value.State == "unknown" {
 		retry := checked.Add(5 * time.Minute)
 		value.ExpiresAt = &retry
 	}
-	_ = s.Store.putObservation(chosen.ProfileID, chosen.Title.ID, chosen.Scope, value, evidence)
+	_ = s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence)
 }
 
 func cleanSubtitle(subtitle string) string {
@@ -332,4 +371,28 @@ func receiveSearch(ctx context.Context, usenet, debrid <-chan indexer.ScoredSpli
 		return result, errors.New("availability search did not complete")
 	}
 	return result, nil
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+func (s *Service) requestScopeStillMatches(item request) bool {
+	if !s.EpisodeHintsEnabled() {
+		return false
+	}
+	resolve, err := s.scope(item.ProfileID, item.ClientID)
+	if err != nil {
+		return false
+	}
+	selected, err := resolve(item.Title.ID)
+	if err != nil {
+		return false
+	}
+	if item.Episode != nil {
+		selected = episodeSelection(selected, item.Episode, item.Title)
+	}
+	return selected.Key == item.Scope
 }

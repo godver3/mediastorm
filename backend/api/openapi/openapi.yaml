@@ -113,6 +113,81 @@ tags:
   - name: clients
 
 paths:
+  /api/users/{userId}/source-availability/episodes/{viewID}:
+    put:
+      operationId: updateVisibleEpisodeSourceHints
+      summary: Replace visible episode source-check demand and read cached hints
+      description: |
+        Requires profile ownership, its unlock token and a client identity. Up to
+        12 coordinates are verified against server metadata in the selected
+        numbering. No provider query or release name is accepted. A view lease
+        expires after 30 seconds; empty episodes release it without metadata I/O.
+        Versions must increase, including cleanup. Replies are private/no-store.
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/ProfileUnlock'
+        - name: X-Client-ID
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+        - name: viewID
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[A-Za-z0-9_-]{1,64}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, episodes]
+              properties:
+                version: {type: integer, format: int64, minimum: 1}
+                titleId: {type: string, maxLength: 128}
+                numbering: {$ref: '#/components/schemas/EpisodeNumbering'}
+                episodes:
+                  type: array
+                  maxItems: 12
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [episodeId, seasonNumber, episodeNumber]
+                    properties:
+                      episodeId: {type: string}
+                      seasonNumber: {type: integer, minimum: 0}
+                      episodeNumber: {type: integer, minimum: 1}
+      responses:
+        '200':
+          description: Cached profile/episode hints; provider work remains asynchronous
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enabled, version, items]
+                properties:
+                  enabled: {type: boolean}
+                  version: {type: integer, format: int64}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [episodeId, seasonNumber, episodeNumber]
+                      properties:
+                        episodeId: {type: string}
+                        seasonNumber: {type: integer}
+                        episodeNumber: {type: integer}
+                        sourceAvailability: {$ref: '#/components/schemas/SourceAvailability'}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '502': {$ref: '#/components/responses/Error'}
+
   /api/users/{userId}/settings/skipping:
     patch:
       operationId: patchProfileSkipping

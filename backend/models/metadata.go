@@ -122,6 +122,8 @@ type YouTubeVideoSearchResult struct {
 }
 
 type SeriesEpisode struct {
+	// SourceDateUnique is established from a complete metadata episode list for search-only daily hints.
+	SourceDateUnique      bool              `json:"-"`
 	Numbering             *EpisodeNumbering `json:"numbering,omitempty"`
 	ID                    string            `json:"id"`
 	TMDBID                int64             `json:"tmdbId,omitempty"`

@@ -891,6 +891,9 @@ func Register(
 		protected.HandleFunc("/clients/{clientID}/messages", clientsHandler.Options).Methods(http.MethodOptions)
 	}
 
+	profileProtected.HandleFunc("/{userID}/source-availability/episodes/{viewID}", metadataHandler.EpisodeSourceHints).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/source-availability/episodes/{viewID}", handleOptions).Methods(http.MethodOptions)
+
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.List).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Add).Methods(http.MethodPost)
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Options).Methods(http.MethodOptions)
