@@ -481,6 +481,8 @@ func Register(
 	protected.HandleFunc("/debrid/cached/bulk", debridHandler.CheckCachedBulk).Methods(http.MethodPost)
 	protected.HandleFunc("/debrid/cached/bulk", debridHandler.Options).Methods(http.MethodOptions)
 
+	protected.HandleFunc("/discovery/presets", settingsHandler.RegionalDiscoveryPresets).Methods(http.MethodGet)
+	protected.HandleFunc("/discovery/presets", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/playlist", liveHandler.FetchPlaylist).Methods(http.MethodGet)
 	protected.HandleFunc("/live/playlist", handleOptions).Methods(http.MethodOptions)
 	protected.HandleFunc("/live/channels", liveHandler.GetChannels).Methods(http.MethodGet, http.MethodPost)

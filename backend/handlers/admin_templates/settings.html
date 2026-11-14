@@ -10026,7 +10026,12 @@
             '}'+
             '</style>';
 
-        const addCustomListForm = '<div class="add-custom-list-form">'+
+        const regionalDiscoveryForm = '<div class="add-custom-list-form" id="regionalDiscoveryForm">'+
+            '<h4>Regional discovery</h4><p class="form-hint">Netflix weekly country charts use official viewing ranks. Provider rows use TMDB popularity within the selected country catalogue. Neither proves an available playback source.</p>'+
+            '<div class="form-row"><label>Country<input class="form-input" id="regionalDiscoveryCountry" value="DE" maxlength="2" aria-label="Discovery country"></label>'+
+            '<label>Rows<select id="regionalDiscoveryPreset"><option value="netflix-chart">Netflix weekly country Top 10</option><option value="cinema">Recent cinema releases</option><option value="upcoming-cinema">Upcoming cinema releases</option><option value="netflix">Popular on Netflix</option><option value="prime">Popular on Prime Video</option><option value="disney">Popular on Disney+</option><option value="appletv">Popular on Apple TV</option><option value="paramount">Popular on Paramount+</option><option value="wow">Popular on WOW</option><option value="acclaimed">Highly rated streaming titles</option></select></label>'+
+            '<button type="button" class="btn btn-secondary" onclick="addRegionalDiscoveryShelves()">Add regional rows</button></div></div>';
+        const addCustomListForm = regionalDiscoveryForm + '<div class="add-custom-list-form">'+
             '<h4 style="margin:0 0 12px 0;font-size:14px;font-weight:500;">Add Home Shelf</h4>'+
             '<div class="form-row">'+
                 '<div class="form-group" style="flex:0 0 200px;">'+
@@ -10763,6 +10768,15 @@
         ['Companies', 'companies', '420'],
         ['Networks', 'networks', '213'],
         ['Year', 'year', '2024'],
+        ['Release country', 'region', 'DE'],
+        ['Watch country', 'watch_region', 'DE'],
+        ['Watch providers', 'with_watch_providers', '8|1796'],
+        ['Offer types', 'with_watch_monetization_types', 'flatrate|ads'],
+        ['Release types', 'with_release_type', '2|3'],
+        ['Local release from', 'release_date.gte', 'today-45d'],
+        ['Local release to', 'release_date.lte', 'today'],
+        ['Date timezone', 'date_timezone', 'Europe/Berlin'],
+        ['Country chart', 'country_chart', 'netflix'],
     ];
 
     function tmdbFilterInputId(prefix, key) {
@@ -11319,6 +11333,25 @@
         const listSelect = document.getElementById('newShelfTraktList');
         const listName = listSelect?.selectedOptions?.[0]?.textContent || 'Trakt List';
         nameInput.value = listName;
+    }
+
+    async function addRegionalDiscoveryShelves() {
+        const country = document.getElementById('regionalDiscoveryCountry')?.value?.trim().toUpperCase();
+        const preset = document.getElementById('regionalDiscoveryPreset')?.value;
+        const scopeProfile = selectedUserId, scopeClient = selectedClientId;
+        const targetView = editingHomeView;
+        try {
+            const response = await fetch(basePath + '/api/discovery/presets?' + new URLSearchParams({region: country, preset}));
+            if (!response.ok) throw new Error((await response.json()).error || 'Unable to load discovery presets');
+            const data = await response.json();
+            if (scopeProfile !== selectedUserId || scopeClient !== selectedClientId || targetView !== editingHomeView) { showToast('Select the intended profile and try again', 'error'); return; }
+            const shelves = getEditableHomeShelves();
+            const ids = new Set(shelves.map(shelf => shelf.id));
+            let order = Math.max(...shelves.map(shelf => shelf.order || 0), -1);
+            for (const shelf of data.shelves || []) if (!ids.has(shelf.id)) { shelves.push({...shelf, order: ++order}); ids.add(shelf.id); }
+            renderSettings();
+            showToast('Regional rows added. Save changes to keep them.');
+        } catch (error) { showToast(error.message, 'error'); }
     }
 
     // Add custom shelf

@@ -1317,6 +1317,7 @@ func main() {
 		r.HandleFunc("/account/api/numbers-station/answer", adminUIHandler.RequireAuth(api.RateLimitHandlerFunc(numbersStationLimiter, numbersStationHandler.Submit))).Methods(http.MethodPost)
 	}
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
@@ -1875,6 +1876,7 @@ func main() {
 	r.HandleFunc("/account/api/test/live", adminUIHandler.RequireAuth(apiusage.Track("connections.test.live", "Live TV test", "Provider Tests", adminUIHandler.TestLiveTV))).Methods(http.MethodPost)
 
 	// Protected account routes - User Settings API
+	r.HandleFunc("/account/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.ResetUserSettings)).Methods(http.MethodDelete)
@@ -2136,6 +2138,55 @@ func main() {
 		}
 
 		return infos
+	})
+	metadataService.SetRegionalDiscoveryProvider(func() []metadata.RegionalDiscoveryWarmShelf {
+		var result []metadata.RegionalDiscoveryWarmShelf
+		global, err := cfgManager.Load()
+		if err != nil {
+			return nil
+		}
+		add := func(id string, enabled bool, sourceType, sourceID, mediaType, query, sort, language string) {
+			if !enabled || (!strings.HasPrefix(id, "regional-") && !metadata.IsCountryChartQuery(query)) {
+				return
+			}
+			result = append(result, metadata.RegionalDiscoveryWarmShelf{Language: language, Options: metadata.TMDBListOptions{SourceType: sourceType, SourceID: sourceID, MediaType: mediaType, DiscoverQuery: query, Sort: sort}})
+		}
+		addViews := func(views map[string]config.HomeViewSettings, language string) {
+			for _, view := range views {
+				if view.Deleted || view.Shelves == nil {
+					continue
+				}
+				for _, shelf := range *view.Shelves {
+					if shelf.Type == "tmdb" {
+						add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, language)
+					}
+				}
+			}
+		}
+		language := global.Metadata.EffectivePrimaryLanguage()
+		for _, shelf := range global.HomeShelves.Shelves {
+			if shelf.Type == "tmdb" {
+				add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, language)
+			}
+		}
+		addViews(global.HomeShelves.Views, language)
+		for id := range userSettingsService.GetUsersWithOverrides() {
+			preferences, err := userSettingsService.Get(id)
+			if err != nil || preferences == nil {
+				continue
+			}
+			profileLanguage := preferences.Metadata.PrimaryLanguage
+			if profileLanguage == "" {
+				profileLanguage = language
+			}
+			addViews(preferences.HomeShelves.Views, profileLanguage)
+			for _, shelf := range preferences.HomeShelves.Shelves {
+				if shelf.Type == "tmdb" {
+					add(shelf.ID, shelf.Enabled, shelf.TMDBSourceType, shelf.TMDBSourceID, shelf.TMDBMediaType, shelf.TMDBDiscoverQuery, shelf.Sort, profileLanguage)
+				}
+			}
+		}
+		return result
 	})
 	metadataService.SetRatingItemsProvider(func() []metadata.RatingItem {
 		seen := make(map[string]bool)
