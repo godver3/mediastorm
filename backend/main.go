@@ -47,6 +47,7 @@ import (
 	"novastream/services/hiddenitems"
 	"novastream/services/history"
 	"novastream/services/indexer"
+	"novastream/services/interests"
 	"novastream/services/invitations"
 	"novastream/services/jellyfin"
 	"novastream/services/landiscovery"
@@ -695,6 +696,16 @@ func main() {
 	metadataHandler.SetAccountsService(accountsService)
 	// Wire up watchlist service to metadata handler for AI recommendations
 	metadataHandler.SetWatchlistService(watchlistService)
+	metadataHandler.CustomLists = customListsService
+	interestService, interestErr := interests.NewService(filepath.Join(settings.Cache.Directory, "recommendation-interests"))
+	if interestErr != nil {
+		log.Fatalf("initialize recommendation interests: %v", interestErr)
+	}
+	interestContext, stopInterests := context.WithCancel(context.Background())
+	defer stopInterests()
+	interestService.Start(interestContext)
+	metadataHandler.Interests = interestService
+
 	metadataHandler.SetTraktClient(traktClient)
 	metadataHandler.SetSimklClient(simklClient)
 	mdblistListsClient := mdblist.NewListsClient(settings.MDBList.APIKey)
@@ -773,6 +784,7 @@ func main() {
 		metadataService, cfgManager, userService,
 	)
 	startupHandler.SetUsersProvider(userService)
+	startupHandler.Interests = interestService
 	startupHandler.SetLocalMedia(localMediaService)
 	startupHandler.SetHiddenItemsService(hiddenItemsService)
 	startupHandler.SetCustomListsService(customListsService)
@@ -1317,6 +1329,7 @@ func main() {
 		r.HandleFunc("/account/api/numbers-station/answer", adminUIHandler.RequireAuth(api.RateLimitHandlerFunc(numbersStationLimiter, numbersStationHandler.Submit))).Methods(http.MethodPost)
 	}
 	r.HandleFunc("/admin/api/debrid-status", adminUIHandler.RequireAuth(adminUIHandler.GetDebridStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/admin/api/recommendation-interests", adminUIHandler.RequireAuth(metadataHandler.ClearSearchInterests)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)
@@ -1876,6 +1889,7 @@ func main() {
 	r.HandleFunc("/account/api/test/live", adminUIHandler.RequireAuth(apiusage.Track("connections.test.live", "Live TV test", "Provider Tests", adminUIHandler.TestLiveTV))).Methods(http.MethodPost)
 
 	// Protected account routes - User Settings API
+	r.HandleFunc("/account/api/recommendation-interests", adminUIHandler.RequireAuth(metadataHandler.ClearSearchInterests)).Methods(http.MethodDelete)
 	r.HandleFunc("/account/api/discovery/presets", adminUIHandler.RequireAuth(settingsHandler.RegionalDiscoveryPresets)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.GetUserSettings)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/user-settings", adminUIHandler.RequireAuth(adminUIHandler.SaveUserSettings)).Methods(http.MethodPut)

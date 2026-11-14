@@ -151,8 +151,22 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		return
 	}
 
+	if h.UsersService != nil {
+		if profile, ok := h.UsersService.Get(userID); ok && profile.IsKidsProfile && profile.KidsMode == "content_list" {
+			h.writePersonalizedRecommendations(w, r, userID, PersonalizedRecommendationsResponse{Items: []models.TrendingItem{}, Movies: []models.TrendingItem{}, Series: []models.TrendingItem{}}, history, progress)
+			return
+		}
+	}
+	additional := h.additionalRecommendationSeeds(userID)
 	kidsRatingFilter := h.personalizedKidsRatingFilter(userID)
 	cacheKey := personalizedRecommendationsCacheKey(userID, days, limitPerType, history, progress)
+	language := ""
+	if h.CfgManager != nil {
+		if cfg, err := h.CfgManager.Load(); err == nil {
+			language, _ = resolveMetadataLanguage(cfg, h.UserSettings, userID)
+		}
+	}
+	cacheKey += ":" + recommendationInputsFingerprint(additional, h.recommendationSettings(userID), kidsRatingFilter, language)
 	if response, ok := h.cachedPersonalizedRecommendations(cacheKey); ok {
 		log.Printf("[metadata] personalized recommendations cache hit user=%s seeds=%d items=%d", userID, response.SeedCount, len(response.Items))
 		h.writePersonalizedRecommendations(w, r, userID, response, history, progress)
@@ -170,7 +184,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		}
 	}
 
-	resp := h.buildPersonalizedRecommendations(r.Context(), userID, history, progress, days, limitPerType, kidsRatingFilter, parseShelfLoadOptions(r).DeferArtwork)
+	resp := h.buildPersonalizedRecommendations(r.Context(), userID, history, progress, days, limitPerType, kidsRatingFilter, additional, parseShelfLoadOptions(r).DeferArtwork)
 	service := h.serviceForUser(userID)
 	if resp.Items == nil {
 		resp.Items = []models.TrendingItem{}
@@ -465,6 +479,7 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	days int,
 	limitPerType int,
 	kidsRatingFilter personalizedKidsRatingFilter,
+	additional []personalizedSeed,
 	deferArtwork ...bool,
 ) PersonalizedRecommendationsResponse {
 	startedAt := time.Now()
@@ -472,7 +487,12 @@ func (h *MetadataHandler) buildPersonalizedRecommendations(
 	now := time.Now().UTC()
 	cutoff := now.AddDate(0, 0, -days)
 	excluded := buildPersonalizedExclusion(history, progress)
-	seeds := buildPersonalizedSeeds(userID, history, progress, cutoff, now, personalizedSeedSampleSize)
+	seeds := buildPersonalizedSeeds(userID, history, progress, cutoff, now, personalizedSeedSampleSize, additional...)
+	for _, seed := range additional {
+		for key := range titleExclusionKeys(models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}) {
+			excluded[key] = struct{}{}
+		}
+	}
 	diagnostics := summarizePersonalizedSeedEligibility(history, progress, cutoff)
 	diagnostics.SeedCount = len(seeds)
 	if len(seeds) == 0 {
@@ -741,10 +761,10 @@ func isPersonalizedRatingAllowed(title models.Title, filter personalizedKidsRati
 	return kids.IsRatingAllowed(title.Certification, maxRating, title.MediaType)
 }
 
-func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, progress []models.PlaybackProgress, cutoff, now time.Time, limit int) []personalizedSeed {
+func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, progress []models.PlaybackProgress, cutoff, now time.Time, limit int, additional ...personalizedSeed) []personalizedSeed {
 	byKey := make(map[string]personalizedSeed)
 	addSeed := func(seed personalizedSeed) {
-		if seed.TMDBID <= 0 || seed.MediaType == "" || seed.Activity.Before(cutoff) {
+		if seed.TMDBID <= 0 || seed.MediaType == "" || (seed.Activity.Before(cutoff) && seed.Source != "watchlist" && seed.Source != "custom_list") {
 			return
 		}
 		seed.Key = seed.MediaType + ":tmdb:" + strconv.FormatInt(seed.TMDBID, 10)
@@ -800,6 +820,10 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 		})
 	}
 
+	for _, seed := range additional {
+		addSeed(seed)
+	}
+
 	seeds := make([]personalizedSeed, 0, len(byKey))
 	for _, seed := range byKey {
 		seeds = append(seeds, seed)
@@ -843,6 +867,12 @@ func buildPersonalizedExplanation(seeds []personalizedSeed, days int, popularity
 	summary := "Based on your recent watch activity"
 	if len(names) > 0 {
 		summary = "Because you watched " + joinPersonalizedNames(names)
+		for _, seed := range seeds {
+			if seed.Source == "watchlist" || seed.Source == "custom_list" || seed.Source == "search" {
+				summary = "Based on your interests in " + joinPersonalizedNames(names)
+				break
+			}
+		}
 	}
 
 	details := make([]PersonalizedRecommendationSeed, 0, minInt(len(seeds), 12))
