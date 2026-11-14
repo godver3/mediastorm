@@ -12,7 +12,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/auth"
-	"novastream/internal/liveusage"
+	"novastream/internal/livecapacity"
 	"novastream/models"
 )
 
@@ -45,10 +45,6 @@ func (f fakeLiveUsageUserSettingsProvider) Get(userID string) (*models.UserSetti
 }
 
 func TestGetLiveUsageCountsActiveRecordings(t *testing.T) {
-	tracker := liveusage.GetTracker()
-	tracker.StartRecording("rec-live-usage", "profile-1")
-	defer tracker.EndRecording("rec-live-usage")
-
 	handler := NewVideoHandler(false, "", "")
 	handler.SetConfigManager(fakeLiveUsageConfigProvider{
 		settings: config.Settings{
@@ -62,6 +58,12 @@ func TestGetLiveUsageCountsActiveRecordings(t *testing.T) {
 	handler.SetUserSettingsService(fakeLiveUsageUserSettingsProvider{
 		settings: map[string]*models.UserSettings{},
 	})
+	target := handler.resolveLiveStreamTarget("profile-1")
+	lease, err := livecapacity.Default.Acquire(target.BucketKey, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
 
 	req := httptest.NewRequest(http.MethodGet, "/live/usage?profileId=profile-1", nil)
 	rec := httptest.NewRecorder()
@@ -282,6 +284,7 @@ func TestResolveLiveStreamTargetUsesPerSourceStreamFormat(t *testing.T) {
 
 func TestStartLiveHLSSessionDirectForcesHLSWhenRequested(t *testing.T) {
 	handler := NewVideoHandlerWithProvider(true, stubBinary(t, "true"), stubBinary(t, "true"), t.TempDir(), nil)
+	defer handler.hlsManager.Shutdown()
 	handler.SetConfigManager(fakeLiveUsageConfigProvider{
 		settings: config.Settings{
 			Live: config.LiveSettings{

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/livecapacity"
 	"novastream/internal/netproxy"
 	"novastream/internal/requestsecurity"
 	"novastream/models"
@@ -554,6 +555,17 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetURL, _ := url.Parse(strings.TrimSpace(r.URL.Query().Get("url")))
+	capacityTarget, err := h.liveCapacityTarget(r, targetURL.String())
+	if err != nil {
+		http.Error(w, "live provider unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	lease, err := livecapacity.Default.Acquire(capacityTarget.BucketKey, "", capacityTarget.MaxStreams)
+	if err != nil {
+		writeLiveCapacityError(w, capacityTarget)
+		return
+	}
+	defer lease.Release()
 	log.Printf("[live-request] id=%d resolved upstream=%s", requestID, requestsecurity.URLForLog(targetURL.String()))
 
 	// No overall deadline: a live stream lasts as long as the client watches, and the request
@@ -725,6 +737,16 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[live-request] id=%d ffmpeg-start pid=%d mode=transmux", requestID, cmd.Process.Pid)
+	waited := false
+	defer func() {
+		if !waited {
+			_ = cmd.Process.Kill()
+			if proxyBody != nil {
+				_ = proxyBody.Close()
+			}
+			_ = cmd.Wait()
+		}
+	}()
 
 	// Capture the first chunk of ffmpeg stderr so failures are diagnosable; at
 	// loglevel warning this stays small. Drain the rest to avoid blocking.
@@ -751,6 +773,7 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		abortTransmux()
 		<-stderrDone
 		_ = cmd.Wait()
+		waited = true
 		detail := strings.TrimSpace(string(ffmpegStderr))
 		status := http.StatusBadGateway
 		if errors.Is(firstErr, errLiveFirstByteTimeout) {
@@ -822,7 +845,13 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := cmd.Wait(); err != nil {
+	// Stop stdin's copier before joining FFmpeg and releasing its slot.
+	if proxyBody != nil {
+		_ = proxyBody.Close()
+	}
+	waitErr := cmd.Wait()
+	waited = true
+	if err := waitErr; err != nil {
 		endReason = "ffmpeg-exit-error"
 		if !errors.Is(err, context.Canceled) && !strings.Contains(strings.ToLower(err.Error()), "broken pipe") {
 			<-stderrDone

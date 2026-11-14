@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"novastream/internal/dnscache"
+	"novastream/internal/livecapacity"
 	"novastream/internal/netproxy"
 	"novastream/internal/requestsecurity"
 	"novastream/internal/streamheaders"
@@ -499,6 +500,7 @@ type HLSSession struct {
 	LiveBucket                      string             // Shared stream bucket identifier for limit accounting
 	LiveTuning                      LiveTuningSettings // FFmpeg tuning settings for live sessions
 	LiveUpstreamKey                 string             // Provider connection shared with same-channel sessions ("" = private)
+	liveCapacityLease               *livecapacity.Lease
 	livePlaylistWindow              []livePlaylistEntry
 	livePlaylistTargetDuration      int
 	liveDiscontinuitySequence       int
@@ -575,6 +577,7 @@ type HLSSession struct {
 
 // LiveTuningSettings contains FFmpeg tuning parameters for live TV sessions.
 type LiveTuningSettings struct {
+	MaxStreams         int // Provider-account capacity; zero keeps the existing unconfigured policy.
 	ProbeSizeMB        int
 	AnalyzeDurationSec int
 	LowLatency         bool
@@ -2586,10 +2589,18 @@ func youtubeTranscodingArgs(videoURL, audioURL, proxyURL, playlistPath, segmentP
 // CreateLiveSession creates an HLS session for live TV streams
 // Unlike VOD sessions, live sessions don't have a known duration and don't support seeking
 func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, bucketKey, profileID, profileName, clientIP, playbackTarget string, tuning LiveTuningSettings, liveCCExtractionEnabled bool) (*HLSSession, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	lease, err := livecapacity.Default.Acquire(bucketKey, liveUpstreamShareKey(liveURL, tuning), tuning.MaxStreams)
+	if err != nil {
+		return nil, err
+	}
 	sessionID := generateSessionID()
 	outputDir := filepath.Join(m.baseDir, sessionID)
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		lease.Release()
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
 
@@ -2626,6 +2637,7 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 		PlaybackTarget:          strings.ToLower(strings.TrimSpace(playbackTarget)),
 		LiveTuning:              tuning,
 		LiveUpstreamKey:         liveUpstreamShareKey(liveURL, tuning),
+		liveCapacityLease:       lease,
 		LiveCCExtractionEnabled: liveCCExtractionEnabled,
 		subtitleExtractOffsets:  make(map[int]float64),
 	}
@@ -2636,6 +2648,8 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 
 	// Start live transcoding in background
 	go func() {
+		// The supervisor joins FFmpeg and closes its upstream before releasing.
+		defer lease.Release()
 		if err := m.superviseLiveTranscoding(bgCtx, session); err != nil {
 			log.Printf("[hls] live session %s transcoding failed: %v", sessionID, err)
 			session.mu.Lock()
@@ -2743,16 +2757,24 @@ func (m *HLSManager) GetLiveUsage(provider, bucketKey string, maxStreams int) Li
 // and the next segment number when restarting a starved one, which appends to the existing playlist
 // instead of truncating it.
 func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSession, resumeFrom int) error {
+	// Cleanup marks Stopped under the same lock before removing the output.
+	// A delayed worker must not recreate that directory after Stop returned.
+	session.mu.Lock()
+	if session.Stopped || ctx.Err() != nil {
+		session.mu.Unlock()
+		return ctx.Err()
+	}
+	err := os.MkdirAll(session.OutputDir, 0755)
+	session.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("create output dir %s: %w", session.OutputDir, err)
+	}
 	if resumeFrom > 0 {
 		log.Printf("[hls] live session %s: restarting live transcoding for %s at segment %d",
 			session.ID, session.Path, resumeFrom)
 	} else {
 		log.Printf("[hls] live session %s: starting live transcoding for %s", session.ID, session.Path)
 	}
-	if err := os.MkdirAll(session.OutputDir, 0755); err != nil {
-		return fmt.Errorf("create output dir %s: %w", session.OutputDir, err)
-	}
-
 	playlistPath := filepath.Join(session.OutputDir, "stream.m3u8")
 	segmentPattern := filepath.Join(session.OutputDir, "segment%d.ts")
 	// When a proxy is configured we cannot let ffmpeg reach the provider
@@ -2812,6 +2834,14 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		log.Printf("[hls] live session %s: using segment-normalizing HLS input relay", session.ID)
 	}
 	hlsInput := hlsUpstream || session.LiveTuning.ForceHLSInput || inputLooksLikeHLS(session.Path)
+	if hlsInput && !sharedInput {
+		if err := session.liveCapacityLease.MakePrivate(); err != nil {
+			return err
+		}
+		session.mu.Lock()
+		session.LiveUpstreamKey = ""
+		session.mu.Unlock()
+	}
 	// One muxed variant instead of FFmpeg's pick across a master's renditions (hls_live_variant.go).
 	if hlsInput && inputArg == session.Path && proxyBody == nil && !session.LiveTuning.HDHomeRunInput &&
 		strings.TrimSpace(session.LiveTuning.ProxyURL) == "" {
@@ -3160,6 +3190,9 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 			resumeFrom = nextLiveSegmentNumber(session.OutputDir)
 		}
 		err := m.startLiveTranscoding(ctx, session, resumeFrom)
+		if errors.Is(err, livecapacity.ErrLimit) {
+			return err
+		}
 		if ctx.Err() != nil {
 			return nil
 		}
