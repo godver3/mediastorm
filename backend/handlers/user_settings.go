@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"novastream/config"
+	"novastream/internal/auth"
 	"novastream/models"
 	user_settings "novastream/services/user_settings"
 
@@ -79,6 +80,7 @@ func (h *UserSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	scopeUserLiveSettings(&settings, h.ConfigManager, userID, auth.GetAccountID(r))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }

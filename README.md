@@ -165,6 +165,22 @@ mediastorm can also act as a Jellyfin server, so stock Jellyfin clients (jellyfi
 
 Bridge tokens only work on the bridge port; the main API, admin and account pages reject them.
 
+## Account-scoped Live TV
+
+Assign households under **Admin > Live TV > Allowed Accounts** for each provider.
+An explicit empty selection grants access to nobody. Existing configurations with
+no account field keep their legacy visibility until **Require Account Assignment**
+is enabled. Enable that setting after assigning providers to households so new
+accounts cannot inherit unassigned providers. The older single-provider connection
+has a separate Legacy Provider Accounts selection.
+
+Account assignments and existing Allowed Profiles restrictions are intersected.
+Once account rules are used, profiles keep their own favorites and hidden channels,
+but cannot define additional provider connections through an older settings document.
+Guide queries require a visible channel and selected profile; recording requests use
+the server's authorized channel URL instead of a submitted arbitrary URL. Administrator
+configuration remains available through the management interface.
+
 ## Connection Invites and Iroh Remote Access
 
 mediastorm includes an Iroh-based connection invite system for remote app access without opening ports or configuring a reverse proxy. Create an invite in the admin panel, share its short code, and enter that code from the app's login screen. The person connecting still needs a valid mediastorm username and password, either for the primary account or a sub-account created for them.

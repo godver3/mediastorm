@@ -33,6 +33,28 @@ func requireLiveStreamProfile(w http.ResponseWriter, r *http.Request, users User
 // media requests retain the ordinary configured-origin policy.
 func authorizeLiveStreamURL(r *http.Request, raw string, manager ConfigProvider, catalog LiveChannelProvider) (bool, error) {
 	raw = strings.TrimSpace(raw)
+	if manager != nil {
+		settings, err := manager.Load()
+		if err != nil {
+			return false, errors.New("live access unavailable")
+		}
+		if config.LiveAccountsManaged(settings.Live) {
+			channels, err := visibleLiveChannels(r, catalog, strings.TrimSpace(r.URL.Query().Get("profileId")))
+			if err != nil {
+				return false, errors.New("live channel not available")
+			}
+			found := false
+			for _, channel := range channels {
+				if strings.TrimSpace(channel.URL) == raw {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false, errors.New("live channel not available")
+			}
+		}
+	}
 	basePolicy := configuredProviderHostPolicy(manager)
 	if err := requestsecurity.ValidateOutboundURL(r.Context(), raw, basePolicy); err == nil {
 		return false, nil

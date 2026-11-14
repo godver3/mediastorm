@@ -37,6 +37,12 @@ info:
       JSON object bodies are inspected up to 1 MiB independently of Content-Type;
       oversized objects return 413. Profile-path bulk imports and diagnostic
       uploads retain their existing limits.
+    - **Account-managed Live TV.** Provider account assignments are intersected
+      with profile restrictions. Explicit empty account assignments deny access;
+      requireAccountAssignment also denies unassigned legacy providers. When
+      account rules are active, guide queries must include an owned profile and
+      may name only its visible channels. Recording jobs use the authorized
+      catalog URL rather than a caller-supplied source URL.
     - **Profile PINs.** `POST /api/users/{userId}/pin/verify` returns an
       `unlockToken` for PIN-protected profiles. Send it on every request that
       names that profile (path `{userId}`, `profileId`/`userId` query

@@ -49,7 +49,7 @@ func (h *AdminUIHandler) buildDashboardLiveUsage(isAdmin bool, scopedUsers []mod
 				userSettings = us
 			}
 		}
-		targets := resolveProfileLiveStreamTargets(settings, user.ID, userSettings)
+		targets := resolveProfileLiveStreamTargets(settings, user.ID, userSettings, user.AccountID)
 		targetByProfile[user.ID] = targets
 		userNameByProfile[user.ID] = user.Name
 		for _, target := range targets {

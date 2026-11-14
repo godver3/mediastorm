@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/config"
 	"novastream/internal/auth"
 	"novastream/models"
 	"novastream/services/recordings"
@@ -52,6 +53,8 @@ type RecordingsHandler struct {
 	rules        recordingRuleService
 	users        recordingUsersProvider
 	userSettings recordingUserSettingsService
+	cfgManager   *config.Manager
+	liveChannels LiveChannelProvider
 }
 
 func NewRecordingsHandler(service recordingService, users recordingUsersProvider) *RecordingsHandler {
@@ -59,6 +62,12 @@ func NewRecordingsHandler(service recordingService, users recordingUsersProvider
 }
 
 func (h *RecordingsHandler) SetRuleService(service recordingRuleService) { h.rules = service }
+
+// SetLiveAccessProvider binds new recording jobs to account-visible channels.
+func (h *RecordingsHandler) SetLiveAccessProvider(manager *config.Manager, channels LiveChannelProvider) {
+	h.cfgManager = manager
+	h.liveChannels = channels
+}
 
 func (h *RecordingsHandler) SetUserSettingsService(service recordingUserSettingsService) {
 	h.userSettings = service
@@ -159,6 +168,9 @@ func (h *RecordingsHandler) CreateEPG(w http.ResponseWriter, r *http.Request) {
 	} else if !h.requireExistingProfile(w, profileID) {
 		return
 	}
+	if !h.bindRecordingChannel(w, r, profileID, &payload) {
+		return
+	}
 	before, after := h.defaultRecordingPadding(profileID)
 	if payload.PaddingBeforeSeconds != nil {
 		before = *payload.PaddingBeforeSeconds
@@ -200,6 +212,9 @@ func (h *RecordingsHandler) CreateTimeBlock(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	} else if !h.requireExistingProfile(w, profileID) {
+		return
+	}
+	if !h.bindRecordingChannel(w, r, profileID, &payload) {
 		return
 	}
 	before, after := h.defaultRecordingPadding(profileID)
