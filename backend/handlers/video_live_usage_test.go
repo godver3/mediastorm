@@ -282,6 +282,7 @@ func TestResolveLiveStreamTargetUsesPerSourceStreamFormat(t *testing.T) {
 
 func TestStartLiveHLSSessionDirectForcesHLSWhenRequested(t *testing.T) {
 	handler := NewVideoHandlerWithProvider(true, stubBinary(t, "true"), stubBinary(t, "true"), t.TempDir(), nil)
+	defer handler.hlsManager.Shutdown()
 	handler.SetConfigManager(fakeLiveUsageConfigProvider{
 		settings: config.Settings{
 			Live: config.LiveSettings{
