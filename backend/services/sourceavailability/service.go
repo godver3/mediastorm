@@ -5,8 +5,8 @@ import (
 	"errors"
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/badstreams"
 	"novastream/services/indexer"
-	"novastream/utils/language"
 	"slices"
 	"sort"
 	"strings"
@@ -21,22 +21,37 @@ type searcher interface {
 }
 
 type request struct {
+	Episode                    *models.SeriesEpisode
 	ProfileID, ClientID, Scope string
+	AudioLanguage              string
 	Title                      models.Title
 	LastSeen                   time.Time
 }
 type Service struct {
-	Store   *Store
-	manager *config.Manager
-	search  searcher
-	scope   ScopeFactory
-	mu      sync.Mutex
-	pending map[string]request
-	now     func() time.Time
+	rechecks          map[string]recheckJob
+	recheckGeneration uint64
+	localChecker      LocalChecker
+	localRecords      map[string]localObservation
+	views             map[string]episodeView
+	delivered         map[string]deliveredTitle
+	activeRequestID   string
+	cancelRequest     context.CancelFunc
+	Store             *Store
+	manager           *config.Manager
+	search            searcher
+	scope             ScopeFactory
+	reports           *badstreams.Service
+	mu                sync.Mutex
+	pending           map[string]request
+	now               func() time.Time
 }
 
-func NewService(store *Store, manager *config.Manager, search searcher, scope ScopeFactory) *Service {
-	return &Service{Store: store, manager: manager, search: search, scope: scope, pending: map[string]request{}, now: time.Now}
+func NewService(store *Store, manager *config.Manager, search searcher, scope ScopeFactory, reports ...*badstreams.Service) *Service {
+	service := &Service{Store: store, manager: manager, search: search, scope: scope, pending: map[string]request{}, now: time.Now}
+	if len(reports) > 0 {
+		service.reports = reports[0]
+	}
+	return service
 }
 
 func (s *Service) Revision(profileID, clientID string) string {
@@ -52,7 +67,7 @@ func (s *Service) Revision(profileID, clientID string) string {
 	if err != nil {
 		return "unknown"
 	}
-	return selection.Key + ":" + s.Store.Revision(profileID)
+	return selection.Key + ":" + s.Store.Revision(profileID) + ":" + s.reports.RevisionFor(badstreams.PlaybackContext{ProfileID: profileID, ClientID: clientID})
 }
 
 // AnnotateTitles performs cache lookups only. A bounded worker owns provider
@@ -80,7 +95,7 @@ func (s *Service) AnnotateTitles(profileID, clientID string, titles []models.Tit
 			continue
 		}
 		title.CardSubtitle = cleanSubtitle(title.CardSubtitle)
-		value := s.Store.Get(profileID, title.ID, identity.Key)
+		value := s.availability(profileID, clientID, title.ID, identity)
 		title.SourceAvailability = &value
 		if value.State == "found" || value.State == "not_found" {
 			label := "Source candidate found"
@@ -93,7 +108,7 @@ func (s *Service) AnnotateTitles(profileID, clientID string, titles []models.Tit
 			title.CardSubtitle = label
 			title.ForceTitleOverlay = true
 		}
-		s.enqueue(request{ProfileID: profileID, ClientID: clientID, Scope: identity.Key, Title: titles[i], LastSeen: s.now()})
+		s.rememberDelivered(profileID, clientID, titles[i])
 	}
 	return result
 }
@@ -101,13 +116,17 @@ func (s *Service) AnnotateTitles(profileID, clientID string, titles []models.Tit
 func (s *Service) enqueue(item request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id := key(item.ProfileID, item.Title.ID, item.Scope)
+	s.enqueueLocked(item)
+}
+
+func (s *Service) enqueueLocked(item request) {
+	id := requestID(item)
 	s.pending[id] = item
 	if len(s.pending) > MaxRecords {
 		oldest := ""
 		var seen time.Time
 		for candidate, entry := range s.pending {
-			if candidate == id {
+			if candidate == id || s.recheckQueuedLocked(candidate) {
 				continue
 			}
 			if oldest == "" || entry.LastSeen.Before(seen) {
@@ -123,7 +142,8 @@ func (s *Service) enqueue(item request) {
 
 func (s *Service) ObservePlaybackStart(profileID, clientID, titleID, mediaType string) func(bool) {
 	cfg, err := s.manager.Load()
-	if err != nil || !cfg.SourceAvailability.Enabled || s.scope == nil {
+	// A prepared episode says nothing about the other episodes of a series.
+	if err != nil || !cfg.SourceAvailability.Enabled || s.scope == nil || mediaType != "movie" {
 		return func(bool) {}
 	}
 	scope, err := s.scope(profileID, clientID)
@@ -134,13 +154,18 @@ func (s *Service) ObservePlaybackStart(profileID, clientID, titleID, mediaType s
 	if err != nil {
 		return func(bool) {}
 	}
+	revision := s.reports.RevisionFor(s.reportContext(profileID, clientID, titleID, identity))
 	return func(prepared bool) {
-		if !prepared || !s.scopeStillMatches(profileID, clientID, titleID, identity.Key) {
+		if !prepared || !s.scopeStillMatches(profileID, clientID, titleID, identity.Key) || revision != s.reports.RevisionFor(s.reportContext(profileID, clientID, titleID, identity)) {
+			return
+		}
+		current, evidence := s.Store.getObservation(profileID, titleID, identity.Key)
+		if evidence != nil && evidence.Kind == "search" && s.evaluate(current, evidence, s.reportContext(profileID, clientID, titleID, identity)).State == "found" {
 			return
 		}
 		checked := s.now().UTC()
 		expires := checked.Add(time.Duration(cfg.SourceAvailability.EffectiveRefreshHours()) * time.Hour)
-		_ = s.Store.Put(profileID, titleID, identity.Key, models.SourceAvailability{State: "found", CheckedAt: &checked, ExpiresAt: &expires, Reason: "prepared_source"})
+		_ = s.Store.putObservation(profileID, titleID, identity.Key, models.SourceAvailability{State: "found", CheckedAt: &checked, ExpiresAt: &expires, Reason: "prepared_source"}, &observation{Version: 1, Kind: "prepared", PreparedRemote: true, ReportRevision: revision})
 	}
 }
 
@@ -192,11 +217,11 @@ func selectedIndexers(settings config.Settings, profileID string) []string {
 // checkOne limits total title checks per six-to-24-hour window and never
 // downloads an NZB or resolves playback. Incomplete searches remain unknown.
 func (s *Service) checkOne(ctx context.Context) {
-	if s.search == nil || s.scope == nil {
+	if s.scope == nil {
 		return
 	}
 	settings, err := s.manager.Load()
-	if err != nil || !settings.SourceAvailability.Enabled || len(settings.SourceAvailability.IndexerNames) == 0 {
+	if err != nil || !settings.SourceAvailability.Enabled {
 		return
 	}
 	now := s.now()
@@ -209,14 +234,35 @@ func (s *Service) checkOne(ctx context.Context) {
 			delete(s.pending, id)
 			continue
 		}
-		value := s.Store.Get(item.ProfileID, item.Title.ID, item.Scope)
-		if value.ExpiresAt != nil && value.ExpiresAt.After(now) {
+		if s.neededUntilLocked(id).IsZero() {
+			delete(s.pending, id)
 			continue
 		}
-		if chosenID == "" || item.LastSeen.After(chosen.LastSeen) {
+		value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), item.Scope)
+		legacy := s.reports != nil && evidence == nil && value.CheckedAt != nil
+		changedPreparation := evidence != nil && evidence.Kind == "prepared" && (s.localChecker != nil && !evidence.PreparedRemote || evidence.ReportRevision != s.reports.RevisionFor(badstreams.PlaybackContext{
+			ProfileID: item.ProfileID, ClientID: item.ClientID, TitleID: item.Title.ID, AudioLanguage: item.AudioLanguage,
+		}))
+		localDue := s.localDueLocked(item)
+		localFound := !localDue && s.localChecker != nil && s.localRecords[id].State == "found"
+		remoteFresh := value.ExpiresAt != nil && value.ExpiresAt.After(now) && !legacy && !changedPreparation
+		if item.Episode != nil && episodeEligibility(item.Title, *item.Episode, now) != "" {
+			remoteFresh = true
+		}
+		forced := s.recheckQueuedLocked(id)
+		if !forced && !localDue && (remoteFresh || localFound || len(settings.SourceAvailability.IndexerNames) == 0) {
+			continue
+		}
+		chosenForced := s.recheckQueuedLocked(chosenID)
+		earlierManual := forced && chosenForced && s.rechecks[id].Requested.Before(s.rechecks[chosenID].Requested)
+		if chosenID == "" || forced && !chosenForced || earlierManual || !forced && !chosenForced && item.LastSeen.After(chosen.LastSeen) {
 			chosenID = id
 			chosen = item
 		}
+	}
+	manualGeneration := uint64(0)
+	if s.recheckQueuedLocked(chosenID) {
+		manualGeneration = s.rechecks[chosenID].Generation
 	}
 	s.mu.Unlock()
 	if chosenID == "" {
@@ -226,75 +272,121 @@ func (s *Service) checkOne(ctx context.Context) {
 	if err != nil {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_context_changed")
 		s.mu.Unlock()
 		return
 	}
 	current, err := scope(chosen.Title.ID)
 	if err != nil {
+		s.finishRecheck(chosenID, manualGeneration, "recheck_context_changed")
 		return
+	}
+	if chosen.Episode != nil {
+		current = episodeSelection(current, chosen.Episode, chosen.Title)
 	}
 	if current.Key != chosen.Scope {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_context_changed")
 		s.mu.Unlock()
-		chosen.Scope = current.Key
-		s.enqueue(chosen)
 		return
 	}
 	providers := selectedIndexers(settings, chosen.ProfileID)
-	if len(providers) == 0 {
-		s.mu.Lock()
-		delete(s.pending, chosenID)
+	s.mu.Lock()
+	until := s.neededUntilLocked(chosenID)
+	if until.IsZero() {
 		s.mu.Unlock()
 		return
 	}
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	bounded, cancel := context.WithDeadline(ctx, minTime(time.Now().Add(10*time.Second), until))
+	s.activeRequestID, s.cancelRequest = chosenID, cancel
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.activeRequestID = ""; s.cancelRequest = nil; s.mu.Unlock() }()
 	defer cancel()
+	if s.search == nil {
+		return
+	}
 	work, release, err := s.search.BeginAvailabilitySearch(bounded)
 	if err != nil {
 		return
 	}
 	defer release()
+	refreshReason := ""
+	defer func() {
+		if manualGeneration == 0 {
+			return
+		}
+		if errors.Is(work.Err(), context.Canceled) && s.episodeNeeded(chosenID) {
+			return
+		}
+		if work.Err() != nil {
+			refreshReason = "recheck_timed_out"
+		}
+		s.finishRecheck(chosenID, manualGeneration, refreshReason)
+	}()
+	if s.checkedLocal(work, chosen, current) {
+		return
+	}
+	if work.Err() != nil || !s.episodeNeeded(chosenID) {
+		return
+	}
+	if chosen.Episode != nil && episodeEligibility(chosen.Title, *chosen.Episode, s.now()) != "" {
+		return
+	}
+	if len(providers) == 0 {
+		s.mu.Lock()
+		delete(s.pending, chosenID)
+		s.finishRecheckLocked(chosenID, manualGeneration, "recheck_no_sources")
+		s.mu.Unlock()
+		return
+	}
+	cached, existing := s.Store.getObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope)
+	fresh := cached.ExpiresAt != nil && cached.ExpiresAt.After(s.now())
+	recheck := existing != nil && existing.Kind == "prepared" && (s.hasLocalChecker() && !existing.PreparedRemote || existing.ReportRevision != s.reports.RevisionFor(s.makeEpisodeReportContext(chosen, current)))
+	if manualGeneration == 0 && fresh && existing != nil && !recheck {
+		return
+	}
 	reserved, err := s.Store.reserveCheck(now, interval, settings.SourceAvailability.EffectiveMaxTitles())
 	if err != nil || !reserved {
+		refreshReason = "recheck_budget_exhausted"
 		return
 	}
 	media := chosen.Title.MediaType
 	if media == "tv" {
 		media = "series"
 	}
-	u, d := s.search.SearchWithScoringSplit(work, indexer.SearchOptions{AvailabilityCheck: true, AvailabilityIndexerNames: providers, TitleID: chosen.Title.ID, Query: chosen.Title.Name, MediaType: media, Year: chosen.Title.Year, IMDBID: chosen.Title.IMDBID, TVDBID: chosen.Title.TVDBID, UserID: chosen.ProfileID, ClientID: chosen.ClientID, OriginalLanguage: chosen.Title.Language, AlternateTitles: []string{chosen.Title.OriginalName}, MaxResults: 20})
+	u, d := s.search.SearchWithScoringSplit(work, episodeSearchOptions(chosen, indexer.SearchOptions{AvailabilityCheck: true, AvailabilityIndexerNames: providers, TitleID: chosen.Title.ID, Query: chosen.Title.Name, MediaType: media, Year: chosen.Title.Year, IMDBID: chosen.Title.IMDBID, TVDBID: chosen.Title.TVDBID, UserID: chosen.ProfileID, ClientID: chosen.ClientID, OriginalLanguage: chosen.Title.Language, AlternateTitles: []string{chosen.Title.OriginalName}, MaxResults: 0}))
 	result, err := receiveSearch(work, u, d)
 	latest, loadErr := s.manager.Load()
-	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.scopeStillMatches(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, chosen.Scope) {
+	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.requestScopeStillMatches(chosen) {
+		refreshReason = "recheck_context_changed"
 		return
 	}
 	checked := s.now().UTC()
 	expires := checked.Add(interval)
 	value := models.SourceAvailability{State: "unknown", CheckedAt: &checked, ExpiresAt: &expires, Providers: providers, Reason: "search_incomplete"}
-	hasCandidate := false
-	for _, candidate := range result.Scored {
-		if current.AudioLanguage == "" || language.HasPreferredLanguage(candidate.Attributes["languages"], current.AudioLanguage) {
-			hasCandidate = true
-			break
-		}
+	evidence := searchObservation(result, err == nil && result.Err == nil && !result.Incomplete && !result.Disabled)
+	if !s.episodeNeeded(chosenID) || work.Err() != nil {
+		return
 	}
-	if err == nil && hasCandidate {
-		value.State = "found"
-		value.Complete = !result.Incomplete && result.Err == nil
-		value.Reason = "matching_candidates"
-	} else if err == nil && len(result.Scored) == 0 && result.Err == nil && !result.Incomplete && !result.Disabled {
-		value.State = "not_found"
-		value.Complete = true
-		value.Reason = "no_matching_candidates"
-	} else if err == nil && len(result.Scored) > 0 {
-		value.Reason = "audio_not_confirmed"
+	if chosen.Episode != nil {
+		value = s.evaluateEpisode(value, evidence, chosen, current)
+	} else {
+		value = s.evaluate(value, evidence, s.reportContext(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, current))
 	}
 	if value.State == "unknown" {
 		retry := checked.Add(5 * time.Minute)
 		value.ExpiresAt = &retry
 	}
-	_ = s.Store.Put(chosen.ProfileID, chosen.Title.ID, chosen.Scope, value)
+	// Serialize the final visibility check with a departing consumer. Once its
+	// release has completed, late work cannot commit a negative observation.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.neededUntilLocked(chosenID).IsZero() && work.Err() == nil {
+		if err := s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence); err != nil {
+			refreshReason = "recheck_failed"
+		}
+	}
 }
 
 func cleanSubtitle(subtitle string) string {
@@ -331,4 +423,28 @@ func receiveSearch(ctx context.Context, usenet, debrid <-chan indexer.ScoredSpli
 		return result, errors.New("availability search did not complete")
 	}
 	return result, nil
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+func (s *Service) requestScopeStillMatches(item request) bool {
+	if !s.EpisodeHintsEnabled() {
+		return false
+	}
+	resolve, err := s.scope(item.ProfileID, item.ClientID)
+	if err != nil {
+		return false
+	}
+	selected, err := resolve(item.Title.ID)
+	if err != nil {
+		return false
+	}
+	if item.Episode != nil {
+		selected = episodeSelection(selected, item.Episode, item.Title)
+	}
+	return selected.Key == item.Scope
 }

@@ -17,6 +17,7 @@ import (
 	"novastream/services/debrid"
 	"novastream/services/indexer"
 	"novastream/services/sourcehealth"
+	"novastream/services/trackselect"
 	"novastream/utils/filter"
 )
 
@@ -34,6 +35,7 @@ type IndexerHandler struct {
 	MovieMetadataSvc MovieDetailsProvider
 	DemoMode         bool
 	BadStreams       *badstreams.Service
+	TrackPreferences *trackselect.Resolver
 	SourceHealthSvc  *sourcehealth.Service
 }
 
@@ -209,7 +211,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		markBadScoredResults(scored, h.BadStreams)
+		markBadScoredResults(scored, h.BadStreams, reportContextForSearch(h.TrackPreferences, opts))
 		if h.DemoMode {
 			maskedTitle := buildMaskedTitle(query, year, mediaType)
 			for i := range scored {
@@ -217,7 +219,10 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 				scored[i].Indexer = "Demo"
 			}
 		}
-		annotateScoredResultsProfile(scored, userID)
+		annotateScoredResultsProfile(scored, userID, titleID)
+		for i := range scored {
+			annotateReportEpisode(scored[i].Attributes, opts)
+		}
 
 		// Ensure we return [] instead of null for empty results
 		if scored == nil {
@@ -259,7 +264,14 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		results = []models.NZBResult{}
 	}
 	if h.BadStreams != nil {
-		results = h.BadStreams.FilterResults(results)
+		ctx := reportContextForSearch(h.TrackPreferences, opts)
+		filtered := make([]models.NZBResult, 0, len(results))
+		for _, result := range results {
+			if h.BadStreams.MatchFor(result, ctx) == nil {
+				filtered = append(filtered, result)
+			}
+		}
+		results = filtered
 	}
 
 	// In demo mode, mask actual filenames with the search query info
@@ -270,7 +282,10 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			results[i].Indexer = "Demo"
 		}
 	}
-	annotateResultsProfile(results, userID)
+	annotateResultsProfile(results, userID, titleID)
+	for i := range results {
+		annotateReportEpisode(results[i].Attributes, opts)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if h.SourceHealthSvc != nil && wantsSourceHealth(r) {
@@ -304,27 +319,37 @@ func (h *IndexerHandler) annotatePlainResults(ctx context.Context, results []mod
 	return out
 }
 
-func annotateResultsProfile(results []models.NZBResult, userID string) {
+func annotateResultsProfile(results []models.NZBResult, userID string, titles ...string) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return
 	}
 	for i := range results {
-		if results[i].Attributes == nil {
-			results[i].Attributes = map[string]string{}
+		attrs := make(map[string]string, len(results[i].Attributes)+2)
+		for key, value := range results[i].Attributes {
+			attrs[key] = value
+		}
+		results[i].Attributes = attrs
+		if len(titles) > 0 {
+			attrs["titleId"] = titles[0]
 		}
 		results[i].Attributes["profileId"] = userID
 	}
 }
 
-func annotateScoredResultsProfile(results []models.ScoredNZBResult, userID string) {
+func annotateScoredResultsProfile(results []models.ScoredNZBResult, userID string, titles ...string) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return
 	}
 	for i := range results {
-		if results[i].Attributes == nil {
-			results[i].Attributes = map[string]string{}
+		attrs := make(map[string]string, len(results[i].Attributes)+2)
+		for key, value := range results[i].Attributes {
+			attrs[key] = value
+		}
+		results[i].Attributes = attrs
+		if len(titles) > 0 {
+			attrs["titleId"] = titles[0]
 		}
 		results[i].Attributes["profileId"] = userID
 	}
@@ -484,7 +509,7 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	markBadScoredResults(results, h.BadStreams)
+	markBadScoredResults(results, h.BadStreams, reportContextForSearch(h.TrackPreferences, opts))
 
 	// Ensure we return [] instead of null for empty results
 	if results == nil {
@@ -506,12 +531,16 @@ func normalizeDecoratedSeriesQuery(query, mediaType string) string {
 	return fmt.Sprintf("%s S%02dE%02d", parsed.Title, parsed.Season, parsed.Episode)
 }
 
-func markBadScoredResults(results []models.ScoredNZBResult, badStreams *badstreams.Service) {
+func markBadScoredResults(results []models.ScoredNZBResult, badStreams *badstreams.Service, contexts ...badstreams.PlaybackContext) {
+	var ctx badstreams.PlaybackContext
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	if badStreams == nil {
 		return
 	}
 	for i := range results {
-		if !badStreams.IsBad(results[i].NZBResult) {
+		if badStreams.MatchFor(results[i].NZBResult, ctx) == nil {
 			continue
 		}
 		results[i].FilterStatus = "filtered"

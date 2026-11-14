@@ -54,6 +54,29 @@ Not every integration is required. A typical installation needs TMDB plus at lea
 
 All clients require a running mediastorm backend.
 
+## Local library playback fallback
+
+Normal Play chooses between the configured search sources and confirmed matching files in accessible, scanned local libraries. By default, search sources come first; a local file can play when search returns no usable source or source preparation fails. Enable **Prefer Local Files** under profile playback settings to try the local file first and search normally if it is missing, inaccessible, incompatible or unplayable. Server playback settings provide a shared default, which each profile can override.
+
+The setting is stored as `playback.preferLocalFiles`: `true` prefers local files, `false` prefers search sources, and an unset profile value inherits the server default (`false` initially). Changing the preference separates prepared playback scopes, and a warmed search stream cannot bypass a matching local-first choice. Saving the profile preference preserves its existing audio language and other settings.
+
+In search-first mode, a known local candidate gives metadata/search preparation a 20-second budget, followed by up to 10 seconds for local validation; cancellation and resolver cleanup can add a short delay. No library scan or new download starts when Play is pressed.
+
+Automatic selection requires a confirmed provider identity and, for series, the exact season and episode. Low-confidence matches and similar filenames are excluded. Known date-based shows require an explicit manual catalog match until local air-date matching is available. The media folder must already be mounted and readable by the backend.
+
+Library permissions and profile restrictions are checked again before using a file and when returning a saved local prequeue. Kids profiles in rating mode require an allowed, known certification. Local substitution is disabled for content-list kids profiles because the catalog does not establish list membership. Profile and device size, resolution and HDR limits remain in effect; the normal player selects tracks and retains the original title/episode identity for progress.
+
+Persistent local-first preferences per title or season, local availability badges, Plex/Jellyfin substitution and starting new downloads are separate follow-up work. Physical client and network-share acceptance still require testing on the intended installation.
+
+The backend suite includes synthetic fallback, both source orders, profile inheritance, persistence, authorization, cancellation and exact-episode tests. When `ffmpeg` and `ffprobe` are installed, it also generates a two-language video and verifies German track selection through the normal playback worker:
+
+```sh
+cd backend
+go test ./handlers ./services/localmedia ./services/user_settings -run 'TestLocalPreference|TestLocalFallback|TestPlaybackCandidates|TestFallbackItem' -count=1
+```
+
+The optional settings browser suite uses isolated synthetic profiles. Set `MEDIASTORM_BROWSER_PYTHON` to a Python environment with Playwright and `MEDIASTORM_CHROMIUM` to its Chromium executable, then run `go test ./handlers -run '^TestLocalPreferenceSettingsBrowser$' -count=1` from `backend`. It checks saving, reloading, profile isolation, retained audio preferences, admin controls and desktop/mobile layout.
+
 ## Quick Start
 
 The repository's [`docker-compose.yml`](docker-compose.yml) is the canonical deployment example.

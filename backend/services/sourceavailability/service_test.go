@@ -72,6 +72,20 @@ func testTitle(id string) models.Title {
 	return models.Title{ID: id, Name: "Example", MediaType: "movie", Year: 2024, CardSubtitle: "Netflix #2"}
 }
 
+// visibleTitlesForTest models a delivered catalogue followed by explicit visibility.
+func visibleTitlesForTest(t *testing.T, svc *Service, profile, client string, titles []models.Title) {
+	t.Helper()
+	svc.AnnotateTitles(profile, client, titles)
+	version := int64(1)
+	identity := "title\x00" + profile + "\x00" + client + "\x00test-visible"
+	if old, ok := svc.views[identity]; ok {
+		version = old.Version + 1
+	}
+	if _, err := svc.ReplaceTitleView(profile, client, "test-visible", version, titles); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAvailabilityIncompleteSearchNeverMarksMissing(t *testing.T) {
 	for _, tc := range []struct {
 		name, state, reason string
@@ -83,8 +97,8 @@ func TestAvailabilityIncompleteSearchNeverMarksMissing(t *testing.T) {
 		{name: "quota error", state: "unknown", result: indexer.ScoredSplitSearchResult{Err: errors.New("quota reached")}},
 		{name: "disabled provider", state: "unknown", result: indexer.ScoredSplitSearchResult{Disabled: true}},
 		{name: "channel closed without result", state: "unknown", missing: true},
-		{name: "matching audio", state: "found", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Attributes: map[string]string{"languages": "German"}}}}}},
-		{name: "unconfirmed audio", state: "unknown", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Attributes: map[string]string{"languages": "English"}}}}}},
+		{name: "matching audio", state: "found", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Title: "Synthetic.Movie.1080p", Attributes: map[string]string{"languages": "German"}}}}}},
+		{name: "unconfirmed audio", state: "unknown", result: indexer.ScoredSplitSearchResult{Scored: []models.ScoredNZBResult{{NZBResult: models.NZBResult{Title: "Synthetic.Movie.1080p", Attributes: map[string]string{"languages": "English"}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, search, _ := availabilityFixture(t)
@@ -95,6 +109,7 @@ func TestAvailabilityIncompleteSearchNeverMarksMissing(t *testing.T) {
 			if search.calls != 0 || initial[0].SourceAvailability.State != "unknown" {
 				t.Fatal("response performed provider work")
 			}
+			visibleTitlesForTest(t, svc, "stefan", "tv", titles)
 			svc.checkOne(t.Context())
 			value := svc.Store.Get("stefan", titles[0].ID, "scope-tv")
 			if value.State != tc.state {
@@ -123,7 +138,7 @@ func TestAvailabilityIncompleteSearchNeverMarksMissing(t *testing.T) {
 func TestAvailabilityBudgetSurvivesRestartAndDefersBusySearch(t *testing.T) {
 	svc, search, manager := availabilityFixture(t)
 	titles := []models.Title{testTitle("a"), testTitle("b"), testTitle("c")}
-	svc.AnnotateTitles("stefan", "tv", titles)
+	visibleTitlesForTest(t, svc, "stefan", "tv", titles)
 	search.busy = true
 	svc.checkOne(t.Context())
 	if search.calls != 0 {
@@ -141,13 +156,14 @@ func TestAvailabilityBudgetSurvivesRestartAndDefersBusySearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	restart := NewService(store, manager, search, svc.scope)
-	restart.AnnotateTitles("stefan", "tv", titles)
+	visibleTitlesForTest(t, restart, "stefan", "tv", titles)
 	restart.checkOne(t.Context())
 	if search.calls != 2 {
 		t.Fatal("restart reset budget")
 	}
 	restart.now = func() time.Time { return time.Now().Add(7 * time.Hour) }
 	store.now = restart.now
+	visibleTitlesForTest(t, restart, "stefan", "tv", titles)
 	restart.checkOne(t.Context())
 	if search.calls != 3 {
 		t.Fatal("next interval did not resume")
@@ -175,7 +191,7 @@ func TestAvailabilityDisabledOrEmptyProviderChoiceNeverSearches(t *testing.T) {
 
 func TestAvailabilityPreparedSourceOnlyRecordsSuccessfulCapturedScope(t *testing.T) {
 	svc, _, _ := availabilityFixture(t)
-	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "series")
+	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "movie")
 	observe(false)
 	if svc.Store.Get("stefan", "a", "scope-tv").State != "unknown" {
 		t.Fatal("failed playback recorded")
@@ -232,7 +248,7 @@ func TestAvailabilityPreferenceChangesDuringWorkDiscardStaleObservations(t *test
 	svc.scope = func(string, string) (func(string) (Selection, error), error) {
 		return func(string) (Selection, error) { return Selection{Key: identity}, nil }, nil
 	}
-	svc.AnnotateTitles("stefan", "tv", []models.Title{testTitle("a")})
+	visibleTitlesForTest(t, svc, "stefan", "tv", []models.Title{testTitle("a")})
 	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "movie")
 	search.beforeReturn = func() { identity = "new-language-scope" }
 	svc.checkOne(t.Context())

@@ -428,6 +428,7 @@ func (h *AccountUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Reques
 	if h.configManager != nil {
 		if globalSettings, err := h.configManager.Load(); err == nil {
 			// Merge global playback preferences into defaults
+			defaults.Playback.PreferLocalFiles = models.BoolPtr(globalSettings.Playback.PreferLocalFiles)
 			if globalSettings.Playback.PreferredAudioLanguage != "" {
 				defaults.Playback.PreferredAudioLanguage = globalSettings.Playback.PreferredAudioLanguage
 			}

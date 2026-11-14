@@ -7,12 +7,16 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"novastream/internal/auth"
 	"novastream/services/badstreams"
 )
 
 type BadStreamsHandler struct {
 	service *badstreams.Service
+	users   prequeueOwnershipService
 }
+
+func (h *BadStreamsHandler) SetUsersService(users prequeueOwnershipService) { h.users = users }
 
 type badStreamsListResponse struct {
 	Streams    []badstreams.Entry `json:"streams"`
@@ -32,7 +36,22 @@ func (h *BadStreamsHandler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad stream service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	streams := filterBadStreams(h.service.List(), r.URL.Query().Get("q"))
+	includeScoped := r.URL.Query().Get("includeScoped") == "true"
+	if includeScoped && !auth.IsMaster(r) {
+		http.Error(w, "administrator access required", http.StatusForbidden)
+		return
+	}
+	streams := h.service.List()
+	if !includeScoped {
+		legacy := make([]badstreams.Entry, 0, len(streams))
+		for _, entry := range streams {
+			if entry.Scope == nil {
+				legacy = append(legacy, entry)
+			}
+		}
+		streams = legacy
+	}
+	streams = filterBadStreams(streams, r.URL.Query().Get("q"))
 	page, perPage := parseBadStreamsPage(r)
 	total := len(streams)
 	totalPages := 0
@@ -62,6 +81,10 @@ func (h *BadStreamsHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BadStreamsHandler) Mark(w http.ResponseWriter, r *http.Request) {
+	if !auth.IsMaster(r) {
+		http.Error(w, "use the selected release report action", http.StatusForbidden)
+		return
+	}
 	if h == nil || h.service == nil {
 		http.Error(w, "bad stream service unavailable", http.StatusServiceUnavailable)
 		return
@@ -89,17 +112,47 @@ func (h *BadStreamsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
+	if !auth.IsMaster(r) {
+		entry := h.service.Get(id)
+		profile := strings.TrimSpace(r.URL.Query().Get("profileId"))
+		if entry == nil || entry.Scope == nil || profile == "" || entry.Scope.ProfileID != profile || h.users == nil || !h.users.BelongsToAccount(profile, auth.GetAccountID(r)) {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	existing := h.service.Get(id)
 	deleted := h.service.Delete(id)
+	if existing != nil && !deleted {
+		http.Error(w, "could not remove the report", http.StatusServiceUnavailable)
+		return
+	}
 	writeBadStreamsJSON(w, map[string]interface{}{"deleted": deleted})
 }
 
 func (h *BadStreamsHandler) Clear(w http.ResponseWriter, r *http.Request) {
+	if !auth.IsMaster(r) {
+		http.Error(w, "administrator access required", http.StatusForbidden)
+		return
+	}
 	if h == nil || h.service == nil {
 		http.Error(w, "bad stream service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	count := h.service.Clear()
 	writeBadStreamsJSON(w, map[string]interface{}{"deleted": count})
+}
+
+func (h *BadStreamsHandler) ShareReport(w http.ResponseWriter, r *http.Request) {
+	if !auth.IsMaster(r) {
+		http.Error(w, "administrator access required", http.StatusForbidden)
+		return
+	}
+	entry, err := h.service.ShareReport(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeBadStreamsJSON(w, entry)
 }
 
 func (h *BadStreamsHandler) Options(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +202,9 @@ func badStreamMatchesQuery(stream badstreams.Entry, query string) bool {
 		stream.SourcePath,
 		stream.Reason,
 		stream.ID,
+	}
+	if stream.Scope != nil {
+		fields = append(fields, stream.Scope.TitleID, stream.Scope.Kind, stream.Scope.ProfileID, stream.Scope.AudioLanguage, stream.Scope.ClientID)
 	}
 	for _, field := range fields {
 		if strings.Contains(strings.ToLower(field), query) {

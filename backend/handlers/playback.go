@@ -190,7 +190,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		request.Result.Attributes["profileId"] = request.ProfileID
 	}
 	if h.BadStreams != nil {
-		if match := h.BadStreams.Match(request.Result); match != nil {
+		if match := h.BadStreams.MatchFor(request.Result, reportContextForResult(h.TrackPreferences, request.Result, request.ProfileID, firstNonEmpty(request.ClientID, normalizeClientID(r.Header.Get("X-Client-ID"))), request.TitleID)); match != nil {
 			if request.AllowMarkedBad {
 				log.Printf("[playback-handler] manual override for marked bad stream service=%q provider=%q release=%q badStreamID=%q", request.Result.ServiceType, request.Result.Attributes["provider"], request.Result.Title, match.ID)
 			} else {
@@ -216,6 +216,15 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 
 	if request.IncludeTrackSelection {
 		resolution = h.withTrackSelection(r, resolution, request.ProfileID, request.ClientID, firstNonEmpty(request.TitleID, request.Result.Attributes["titleId"]))
+	}
+
+	if !request.AllowMarkedBad {
+		ctx := reportContextForResult(h.TrackPreferences, request.Result, request.ProfileID, firstNonEmpty(request.ClientID, normalizeClientID(r.Header.Get("X-Client-ID"))), request.TitleID)
+		resolution, err = h.filterResolvedReportedAudio(r, request.Result, resolution, ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 	}
 
 	// Subtitle pre-extraction disabled — the player handles subtitles natively.

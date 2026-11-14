@@ -1481,6 +1481,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 	return models.UserSettings{
 		Recommendations: &globalSettings.Recommendations,
 		Playback: models.PlaybackSettings{
+			PreferLocalFiles:              models.BoolPtr(globalSettings.Playback.PreferLocalFiles),
 			PreferredPlayer:               globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:        globalSettings.Playback.PreferredAudioLanguage,
 			PreferredSubtitleLanguage:     globalSettings.Playback.PreferredSubtitleLanguage,

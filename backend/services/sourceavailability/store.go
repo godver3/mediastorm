@@ -21,6 +21,7 @@ type record struct {
 	TitleID   string                    `json:"titleId"`
 	Scope     string                    `json:"scope"`
 	Value     models.SourceAvailability `json:"value"`
+	Evidence  *observation              `json:"evidence,omitempty"`
 }
 type Store struct {
 	mu        sync.Mutex
@@ -70,6 +71,9 @@ func NewStore(directory string) (*Store, error) {
 		if key(entry.ProfileID, entry.TitleID, entry.Scope)+".json" != name {
 			continue
 		}
+		if !validObservation(entry.Evidence) {
+			entry.Evidence = nil
+		}
 		if len(s.records) < MaxRecords {
 			s.records[strings.TrimSuffix(name, ".json")] = entry
 		} else {
@@ -104,19 +108,28 @@ func copyValue(value models.SourceAvailability) models.SourceAvailability {
 }
 
 func (s *Store) Get(profile, title, scope string) models.SourceAvailability {
+	value, _ := s.getObservation(profile, title, scope)
+	return value
+}
+
+func (s *Store) getObservation(profile, title, scope string) (models.SourceAvailability, *observation) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry, ok := s.records[key(profile, title, scope)]
 	if !ok {
-		return unknown("not_checked")
+		return unknown("not_checked"), nil
 	}
 	if entry.Value.ExpiresAt == nil || !entry.Value.ExpiresAt.After(s.now()) {
-		return unknown("expired")
+		return unknown("expired"), nil
 	}
-	return copyValue(entry.Value)
+	return copyValue(entry.Value), copyObservation(entry.Evidence)
 }
 
 func (s *Store) Put(profile, title, scope string, value models.SourceAvailability) error {
+	return s.putObservation(profile, title, scope, value, nil)
+}
+
+func (s *Store) putObservation(profile, title, scope string, value models.SourceAvailability, evidence *observation) error {
 	if profile == "" || title == "" || scope == "" || value.CheckedAt == nil || value.ExpiresAt == nil {
 		return errors.New("availability identity and dates required")
 	}
@@ -127,7 +140,10 @@ func (s *Store) Put(profile, title, scope string, value models.SourceAvailabilit
 		return errors.New("incomplete search cannot prove a missing candidate")
 	}
 	value = copyValue(value)
-	entry := record{ProfileID: profile, TitleID: title, Scope: scope, Value: value}
+	if evidence != nil && !validObservation(evidence) {
+		return errors.New("invalid source observation")
+	}
+	entry := record{ProfileID: profile, TitleID: title, Scope: scope, Value: value, Evidence: copyObservation(evidence)}
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
