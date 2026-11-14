@@ -17,43 +17,44 @@ func boolPtr(v bool) *bool        { return &v }
 
 // Settings represents the application configuration persisted to disk.
 type Settings struct {
-	Server          ServerSettings          `json:"server"`
-	Usenet          []UsenetSettings        `json:"usenet"`
-	UsenetEngines   []UsenetEngineSettings  `json:"usenetEngines,omitempty"`
-	Indexers        []IndexerConfig         `json:"indexers"`
-	TorrentScrapers []TorrentScraperConfig  `json:"torrentScrapers"`
-	Metadata        MetadataSettings        `json:"metadata"`
-	Cache           CacheSettings           `json:"cache"`
-	WebDAV          WebDAVSettings          `json:"webdav"`
-	Database        DatabaseSettings        `json:"database"`
-	Streaming       StreamingSettings       `json:"streaming"`
-	Import          ImportSettings          `json:"import"`
-	SABnzbd         SABnzbdSettings         `json:"sabnzbd"`
-	AltMount        *AltMountSettings       `json:"altmount,omitempty"`
-	Transmux        TransmuxSettings        `json:"transmux"`
-	Playback        PlaybackSettings        `json:"playback"`
-	Live            LiveSettings            `json:"live"`
-	HomeShelves     HomeShelvesSettings     `json:"homeShelves"`
-	Filtering       FilterSettings          `json:"filtering"`
-	AnimeFiltering  AnimeFilteringSettings  `json:"animeFiltering"`
-	UI              UISettings              `json:"ui"`
-	Display         DisplaySettings         `json:"display"`
-	Subtitles       SubtitleSettings        `json:"subtitles"`
-	MDBList         MDBListSettings         `json:"mdblist"`
-	PublicMetaDB    PublicMetaDBSettings    `json:"publicMetaDB,omitempty"`
-	Trakt           TraktSettings           `json:"trakt,omitempty"`
-	Simkl           SimklSettings           `json:"simkl,omitempty"`
-	Scrob           ScrobSettings           `json:"scrob,omitempty"`
-	Plex            PlexSettings            `json:"plex,omitempty"`
-	Jellyfin        JellyfinSettings        `json:"jellyfin,omitempty"`
-	JellyfinBridge  JellyfinBridgeSettings  `json:"jellyfinBridge"`
-	Log             LogConfig               `json:"log"`
-	ScheduledTasks  ScheduledTasksSettings  `json:"scheduledTasks,omitempty"`
-	Network         NetworkSettings         `json:"network,omitempty"`
-	Ranking         RankingSettings         `json:"ranking,omitempty"`
-	BackupRetention BackupRetentionSettings `json:"backupRetention,omitempty"`
-	Sports          SportsSettings          `json:"sports,omitempty"`
-	Security        SecuritySettings        `json:"security"`
+	SourceAvailability SourceAvailabilitySettings `json:"sourceAvailability"`
+	Server             ServerSettings             `json:"server"`
+	Usenet             []UsenetSettings           `json:"usenet"`
+	UsenetEngines      []UsenetEngineSettings     `json:"usenetEngines,omitempty"`
+	Indexers           []IndexerConfig            `json:"indexers"`
+	TorrentScrapers    []TorrentScraperConfig     `json:"torrentScrapers"`
+	Metadata           MetadataSettings           `json:"metadata"`
+	Cache              CacheSettings              `json:"cache"`
+	WebDAV             WebDAVSettings             `json:"webdav"`
+	Database           DatabaseSettings           `json:"database"`
+	Streaming          StreamingSettings          `json:"streaming"`
+	Import             ImportSettings             `json:"import"`
+	SABnzbd            SABnzbdSettings            `json:"sabnzbd"`
+	AltMount           *AltMountSettings          `json:"altmount,omitempty"`
+	Transmux           TransmuxSettings           `json:"transmux"`
+	Playback           PlaybackSettings           `json:"playback"`
+	Live               LiveSettings               `json:"live"`
+	HomeShelves        HomeShelvesSettings        `json:"homeShelves"`
+	Filtering          FilterSettings             `json:"filtering"`
+	AnimeFiltering     AnimeFilteringSettings     `json:"animeFiltering"`
+	UI                 UISettings                 `json:"ui"`
+	Display            DisplaySettings            `json:"display"`
+	Subtitles          SubtitleSettings           `json:"subtitles"`
+	MDBList            MDBListSettings            `json:"mdblist"`
+	PublicMetaDB       PublicMetaDBSettings       `json:"publicMetaDB,omitempty"`
+	Trakt              TraktSettings              `json:"trakt,omitempty"`
+	Simkl              SimklSettings              `json:"simkl,omitempty"`
+	Scrob              ScrobSettings              `json:"scrob,omitempty"`
+	Plex               PlexSettings               `json:"plex,omitempty"`
+	Jellyfin           JellyfinSettings           `json:"jellyfin,omitempty"`
+	JellyfinBridge     JellyfinBridgeSettings     `json:"jellyfinBridge"`
+	Log                LogConfig                  `json:"log"`
+	ScheduledTasks     ScheduledTasksSettings     `json:"scheduledTasks,omitempty"`
+	Network            NetworkSettings            `json:"network,omitempty"`
+	Ranking            RankingSettings            `json:"ranking,omitempty"`
+	BackupRetention    BackupRetentionSettings    `json:"backupRetention,omitempty"`
+	Sports             SportsSettings             `json:"sports,omitempty"`
+	Security           SecuritySettings           `json:"security"`
 }
 
 // DefaultProfileUnlockTTLHours is the default lifetime of a profile unlock
@@ -600,6 +601,7 @@ type AltMountSettings struct {
 
 // PlaybackSettings controls how the client should launch resolved streams.
 type PlaybackSettings struct {
+	PreferLocalFiles              bool                      `json:"preferLocalFiles"` // Profiles can override the automatic source preference.
 	PreferredPlayer               string                    `json:"preferredPlayer"`
 	PreferredAudioLanguage        string                    `json:"preferredAudioLanguage,omitempty"`
 	PreferredSubtitleLanguage     string                    `json:"preferredSubtitleLanguage,omitempty"`
@@ -2167,18 +2169,19 @@ func DefaultSettings() Settings {
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
-		Metadata:  MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: []string{"eng"}, PrimaryLanguage: "eng", AllowAdultSearch: false},
-		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
-		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
-		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeHybrid, ResolveFirstReadySource: true, SearchMode: SearchModeAccurate, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, UsenetPreflightProbeSec: 5, IndexerTimeoutSec: 5, HealthCheckTimeoutSec: 15, MaxAlternateTitleSearches: 1, MaxDailyUsenetQueries: 5, ResolutionSettleWindowMs: 250, ResolutionEndRaceEarly: true},
-		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: false, RarMaxMemoryGB: 8, UsenetMaxConcurrentFileParsers: 16, UsenetParserShareDivisor: 4},
-		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
-		AltMount:  nil,
-		Transmux:  TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls", HardwareAcceleration: "auto"},
-		Playback:  PlaybackSettings{PreferredPlayer: "native", PreferredAudioLanguage: "eng", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleUseCropDetectPosition: false, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleBold: false, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10, PrerollMode: "artwork", PrerollMediaScope: "all", StreamMigrationEnabled: true, CreditsDetectionEnabled: false, MatchFrameRate: false, LiveClosedCaptionExtraction: true, Thumbnails: PlaybackThumbnailSettings{Enabled: false, Workers: 1}},
-		Live:      LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24, EPG: EPGSettings{RefreshIntervalHours: 12, RetentionDays: 7}},
-		Sports:    SportsSettings{EnabledLeagues: append([]string(nil), defaultEnabledLeagueIDs...)},
+		Metadata:           MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: []string{"eng"}, PrimaryLanguage: "eng", AllowAdultSearch: false},
+		SourceAvailability: SourceAvailabilitySettings{RefreshHours: 6, MaxTitlesPerCycle: 20, IndexerNames: []string{}},
+		Cache:              CacheSettings{Directory: "cache", MetadataTTLHours: 24},
+		WebDAV:             WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
+		Database:           DatabaseSettings{Path: "cache/queue.db"},
+		Streaming:          StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeHybrid, ResolveFirstReadySource: true, SearchMode: SearchModeAccurate, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, UsenetPreflightProbeSec: 5, IndexerTimeoutSec: 5, HealthCheckTimeoutSec: 15, MaxAlternateTitleSearches: 1, MaxDailyUsenetQueries: 5, ResolutionSettleWindowMs: 250, ResolutionEndRaceEarly: true},
+		Import:             ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: false, RarMaxMemoryGB: 8, UsenetMaxConcurrentFileParsers: 16, UsenetParserShareDivisor: 4},
+		SABnzbd:            SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
+		AltMount:           nil,
+		Transmux:           TransmuxSettings{Enabled: true, FFmpegPath: "ffmpeg", FFprobePath: "ffprobe", HLSTempDirectory: "/tmp/novastream-hls", HardwareAcceleration: "auto"},
+		Playback:           PlaybackSettings{PreferredPlayer: "native", PreferredAudioLanguage: "eng", PauseWhenAppInactive: false, UseLoadingScreen: false, SubtitleSize: 1.0, SubtitleUseCropDetectPosition: false, SubtitleColor: "#FFFFFF", SubtitleOpacity: 1.0, SubtitleBold: false, SubtitleOutlineEnabled: false, SubtitleOutlineColor: "#000000", SubtitleOutlineWeight: 0.35, SubtitleBackgroundEnabled: true, SubtitleBackgroundColor: "#000000", SubtitleBackgroundOpacity: 0.6, SeekForwardSeconds: 30, SeekBackwardSeconds: 10, PrerollMode: "artwork", PrerollMediaScope: "all", StreamMigrationEnabled: true, CreditsDetectionEnabled: false, MatchFrameRate: false, LiveClosedCaptionExtraction: true, Thumbnails: PlaybackThumbnailSettings{Enabled: false, Workers: 1}},
+		Live:               LiveSettings{Mode: "m3u", PlaylistURL: "", MaxStreams: 0, PlaylistCacheTTLHours: 24, EPG: EPGSettings{RefreshIntervalHours: 12, RetentionDays: 7}},
+		Sports:             SportsSettings{EnabledLeagues: append([]string(nil), defaultEnabledLeagueIDs...)},
 		HomeShelves: HomeShelvesSettings{
 			Shelves:                      DefaultHomeShelfConfigs(),
 			ExploreCardPosition:          ExploreCardPositionEnd,

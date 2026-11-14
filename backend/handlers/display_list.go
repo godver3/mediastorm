@@ -318,6 +318,9 @@ func (h *DisplayListHandler) get(w http.ResponseWriter, r *http.Request) {
 		items = []models.WatchlistItem{}
 	}
 	logDisplayListWatchlistArtworkTrace(userID, source, items)
+	if h.MetadataHandler != nil {
+		items = availabilityWatchlist(h.MetadataHandler.SourceAvailability, userID, requestClientID(r), items)
+	}
 	responseItems := interface{}(items)
 	metadataPending := false
 	if source == "permanent-prequeue" || customListShelf {
@@ -396,21 +399,24 @@ func watchlistItemsToTrending(items []models.WatchlistItem) []models.TrendingIte
 	result := make([]models.TrendingItem, 0, len(items))
 	for i, item := range items {
 		title := models.Title{
-			ID:              item.ID,
-			Name:            item.Name,
-			Overview:        item.Overview,
-			Year:            item.Year,
-			MediaType:       item.MediaType,
-			Genres:          item.Genres,
-			RuntimeMinutes:  item.RuntimeMinutes,
-			WatchState:      item.WatchState,
-			UnwatchedCount:  item.UnwatchedCount,
-			Ratings:         item.Ratings,
-			Status:          item.Status,
-			LifecycleStatus: item.LifecycleStatus,
-			Theatrical:      item.Theatrical,
-			HomeRelease:     item.HomeRelease,
-			ReleaseDate:     item.ReleaseDate,
+			SourceAvailability: item.SourceAvailability,
+			CardSubtitle:       item.CardSubtitle,
+			ForceTitleOverlay:  item.ForceTitleOverlay,
+			ID:                 item.ID,
+			Name:               item.Name,
+			Overview:           item.Overview,
+			Year:               item.Year,
+			MediaType:          item.MediaType,
+			Genres:             item.Genres,
+			RuntimeMinutes:     item.RuntimeMinutes,
+			WatchState:         item.WatchState,
+			UnwatchedCount:     item.UnwatchedCount,
+			Ratings:            item.Ratings,
+			Status:             item.Status,
+			LifecycleStatus:    item.LifecycleStatus,
+			Theatrical:         item.Theatrical,
+			HomeRelease:        item.HomeRelease,
+			ReleaseDate:        item.ReleaseDate,
 		}
 		if value := item.ExternalIDs["tmdb"]; value != "" {
 			title.TMDBID, _ = strconv.ParseInt(value, 10, 64)
