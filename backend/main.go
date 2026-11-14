@@ -69,6 +69,7 @@ import (
 	"novastream/services/scrob"
 	"novastream/services/sessions"
 	"novastream/services/simkl"
+	"novastream/services/sourceavailability"
 	"novastream/services/sourcehealth"
 	"novastream/services/sports"
 	"novastream/services/streaming"
@@ -616,6 +617,18 @@ func main() {
 	indexerService.SetClientSettingsProvider(clientSettingsService)
 	metadataHandler.SetClientSettingsProvider(clientSettingsService)
 
+	availabilityStore, availabilityErr := sourceavailability.NewStore(filepath.Join(settings.Cache.Directory, "source-availability"))
+	if availabilityErr != nil {
+		log.Fatalf("initialize source availability: %v", availabilityErr)
+	}
+	availabilityService := sourceavailability.NewService(availabilityStore, cfgManager, indexerService,
+		sourceavailability.NewScopeFactory(cfgManager, userSettingsService, clientSettingsService, contentPreferencesService, userService.Exists))
+	availabilityContext, stopAvailability := context.WithCancel(context.Background())
+	defer stopAvailability()
+	availabilityService.Start(availabilityContext)
+	metadataHandler.SetSourceAvailability(availabilityService)
+	watchlistHandler.SourceAvailability = availabilityService
+
 	var historyService *history.Service
 	if store != nil {
 		historyService, err = history.NewServiceWithStore(store)
@@ -778,6 +791,7 @@ func main() {
 	startupHandler.SetCustomListsService(customListsService)
 	startupHandler.SetDisplayListHandler(displayListHandler)
 	startupHandler.SetClientSettingsProvider(clientSettingsService)
+	startupHandler.SetSourceAvailability(availabilityService)
 
 	// Details bundle handler bundles details-page API calls for low-power devices
 	detailsBundleHandler := handlers.NewDetailsBundleHandler(
@@ -817,6 +831,7 @@ func main() {
 	displayListHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	historyHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	startupHandler.SetPrequeueStore(prequeueHandler.GetStore())
+	prequeueHandler.SetSourceAvailability(availabilityService)
 	log.Printf("[startup] phase=prequeue-handler-wiring duration=%s", time.Since(startupPhaseStarted))
 
 	if settings.Transmux.FFmpegPath == "" {
