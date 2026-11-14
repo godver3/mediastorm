@@ -28,9 +28,10 @@ type request struct {
 	LastSeen                   time.Time
 }
 type Service struct {
-	episodeViews    map[string]episodeView
-	activeEpisodeID string
-	cancelEpisode   context.CancelFunc
+	views           map[string]episodeView
+	delivered       map[string]deliveredTitle
+	activeRequestID string
+	cancelRequest   context.CancelFunc
 	Store           *Store
 	manager         *config.Manager
 	search          searcher
@@ -103,7 +104,7 @@ func (s *Service) AnnotateTitles(profileID, clientID string, titles []models.Tit
 			title.CardSubtitle = label
 			title.ForceTitleOverlay = true
 		}
-		s.enqueue(request{ProfileID: profileID, ClientID: clientID, Scope: identity.Key, AudioLanguage: identity.AudioLanguage, Title: titles[i], LastSeen: s.now()})
+		s.rememberDelivered(profileID, clientID, titles[i])
 	}
 	return result
 }
@@ -229,7 +230,7 @@ func (s *Service) checkOne(ctx context.Context) {
 			delete(s.pending, id)
 			continue
 		}
-		if item.Episode != nil && s.neededUntilLocked(id).IsZero() {
+		if s.neededUntilLocked(id).IsZero() {
 			delete(s.pending, id)
 			continue
 		}
@@ -268,12 +269,6 @@ func (s *Service) checkOne(ctx context.Context) {
 		s.mu.Lock()
 		delete(s.pending, chosenID)
 		s.mu.Unlock()
-		if chosen.Episode != nil {
-			return
-		}
-		chosen.Scope = current.Key
-		chosen.AudioLanguage = current.AudioLanguage
-		s.enqueue(chosen)
 		return
 	}
 	providers := selectedIndexers(settings, chosen.ProfileID)
@@ -283,21 +278,16 @@ func (s *Service) checkOne(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-	if chosen.Episode != nil {
-		s.mu.Lock()
-		until := s.neededUntilLocked(chosenID)
-		if until.IsZero() {
-			s.mu.Unlock()
-			cancel()
-			return
-		}
-		cancel()
-		bounded, cancel = context.WithDeadline(ctx, minTime(time.Now().Add(10*time.Second), until))
-		s.activeEpisodeID, s.cancelEpisode = chosenID, cancel
+	s.mu.Lock()
+	until := s.neededUntilLocked(chosenID)
+	if until.IsZero() {
 		s.mu.Unlock()
-		defer func() { s.mu.Lock(); s.activeEpisodeID = ""; s.cancelEpisode = nil; s.mu.Unlock() }()
+		return
 	}
+	bounded, cancel := context.WithDeadline(ctx, minTime(time.Now().Add(10*time.Second), until))
+	s.activeRequestID, s.cancelRequest = chosenID, cancel
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.activeRequestID = ""; s.cancelRequest = nil; s.mu.Unlock() }()
 	defer cancel()
 	work, release, err := s.search.BeginAvailabilitySearch(bounded)
 	if err != nil {
@@ -322,10 +312,10 @@ func (s *Service) checkOne(ctx context.Context) {
 	expires := checked.Add(interval)
 	value := models.SourceAvailability{State: "unknown", CheckedAt: &checked, ExpiresAt: &expires, Providers: providers, Reason: "search_incomplete"}
 	evidence := searchObservation(result, err == nil && result.Err == nil && !result.Incomplete && !result.Disabled)
+	if !s.episodeNeeded(chosenID) || work.Err() != nil {
+		return
+	}
 	if chosen.Episode != nil {
-		if !s.episodeNeeded(chosenID) || work.Err() != nil {
-			return
-		}
 		value = s.evaluateEpisode(value, evidence, chosen, current)
 	} else {
 		value = s.evaluate(value, evidence, s.reportContext(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, current))
@@ -334,7 +324,13 @@ func (s *Service) checkOne(ctx context.Context) {
 		retry := checked.Add(5 * time.Minute)
 		value.ExpiresAt = &retry
 	}
-	_ = s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence)
+	// Serialize the final visibility check with a departing consumer. Once its
+	// release has completed, late work cannot commit a negative observation.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.neededUntilLocked(chosenID).IsZero() && work.Err() == nil {
+		_ = s.Store.putObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope, value, evidence)
+	}
 }
 
 func cleanSubtitle(subtitle string) string {

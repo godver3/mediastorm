@@ -79,6 +79,7 @@ func TestAvailabilityLiveSelectedIndexer(t *testing.T) {
 	if initial[0].SourceAvailability.State != "unknown" || calls.Load() != 0 {
 		t.Fatal("initial overview performed an indexer request")
 	}
+	visibleTitlesForTest(t, service, "test-profile", "browser", titles)
 	started = time.Now()
 	service.checkOne(t.Context())
 	searchTime := time.Since(started)

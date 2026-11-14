@@ -82,7 +82,7 @@ func reportRelease(t *testing.T, svc *Service, result models.NZBResult, profile,
 }
 func warm(t *testing.T, svc *Service, profile, client string) {
 	t.Helper()
-	cachedStatus(t, svc, profile, client)
+	visibleTitlesForTest(t, svc, profile, client, []models.Title{testTitle("tmdb:movie:1")})
 	svc.checkOne(t.Context())
 }
 
@@ -280,6 +280,7 @@ func TestAvailabilityPreparedObservationRechecksReportsAndPreservesSearchEvidenc
 	checkStatus(t, svc, "profile", "tv", "found")
 	report := reportRelease(t, svc, item, "profile", "tv", "missing_language", true)
 	checkStatus(t, svc, "profile", "tv", "unknown")
+	visibleTitlesForTest(t, svc, "profile", "tv", []models.Title{testTitle("tmdb:movie:1")})
 	svc.checkOne(t.Context())
 	checkStatus(t, svc, "profile", "tv", "not_found")
 	if !registry.Delete(report.ID) {
@@ -312,7 +313,7 @@ func TestAvailabilityEpisodeReportsAndPreparationDoNotQualifyWholeSeries(t *test
 	searchReleases(search, item)
 	title := testTitle("tmdb:series:1")
 	title.MediaType = "series"
-	svc.AnnotateTitles("profile", "tv", []models.Title{title})
+	visibleTitlesForTest(t, svc, "profile", "tv", []models.Title{title})
 	svc.checkOne(t.Context())
 	before := svc.Revision("profile", "tv")
 	_, err := registry.Report(badstreams.ReportRequest{Result: item, Context: badstreams.PlaybackContext{ProfileID: "profile", TitleID: title.ID, Episode: &models.EpisodeReference{SeasonNumber: 1, EpisodeNumber: 2}}, Reason: "wrong_episode", ReporterID: "profile", Shared: true})
@@ -344,6 +345,7 @@ func TestAvailabilityLegacyRecordsRecheckWithinBudget(t *testing.T) {
 	}
 	reportRelease(t, svc, item, "profile", "tv", "wrong_title", true)
 	checkStatus(t, svc, "profile", "tv", "unknown")
+	visibleTitlesForTest(t, svc, "profile", "tv", []models.Title{testTitle("tmdb:movie:1")})
 	svc.checkOne(t.Context())
 	checkStatus(t, svc, "profile", "tv", "not_found")
 	// Reloading malformed/unknown observation versions cannot restore a badge.
@@ -415,7 +417,7 @@ func TestAvailabilityReportSharingAndOtherTitlesUseLiveScope(t *testing.T) {
 	warm(t, svc, "profile", "tv")
 	warm(t, svc, "another-profile", "tv")
 	other := testTitle("tmdb:movie:2")
-	svc.AnnotateTitles("profile", "tv", []models.Title{other})
+	visibleTitlesForTest(t, svc, "profile", "tv", []models.Title{other})
 	svc.checkOne(t.Context())
 	report := reportRelease(t, svc, item, "profile", "tv", "wrong_title", false)
 	checkStatus(t, svc, "profile", "tv", "not_found")

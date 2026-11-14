@@ -878,6 +878,11 @@ func TestOpenAPIContract(t *testing.T) {
 		}, h.PatchSkipping, http.StatusOK)
 	})
 
+	t.Run("visible title source hints", func(t *testing.T) {
+		h, _ := titleEndpointFixture(t)
+		exercise(t, v, contractCall{method: "PUT", target: "/api/users/profile/source-availability/titles/view-1", vars: map[string]string{"userID": "profile", "viewID": "view-1"}, headers: map[string]string{"X-Client-ID": "fixture-client"}, body: map[string]any{"version": 1, "titles": []any{}}}, h.TitleSourceHints, 200)
+	})
+
 	t.Run("visible episode source hints", func(t *testing.T) {
 		h, _, _ := episodeEndpointFixture()
 		exercise(t, v, contractCall{method: "PUT", target: "/api/users/profile/source-availability/episodes/view-1", vars: map[string]string{"userID": "profile", "viewID": "view-1"}, headers: map[string]string{"X-Client-ID": "fixture-client"}, body: map[string]any{"version": 1, "episodes": []any{}}}, h.EpisodeSourceHints, 200)

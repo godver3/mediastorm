@@ -26,7 +26,7 @@ profile and 128 globally, and retain short tombstones against late updates.
 Versions must increase; stale updates return 409. Capacity failures return 429.
 The last departing consumer cancels its active search. A second visible view of
 the same selection keeps that search alive. A refresh or a different view cannot
-reset the persisted provider budget. Overview title scheduling is unchanged.
+reset the persisted provider budget. Title scheduling also requires explicit visible demand; see `title-testing.md`.
 
 Cache identities include the selected series, numbering, season, episode and
 metadata provenance. Evidence is re-evaluated with the episode-specific report

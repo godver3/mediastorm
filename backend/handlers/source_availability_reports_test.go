@@ -92,6 +92,9 @@ func availabilityReportHTTPFixture(t *testing.T) http.Handler {
 	title := models.Title{ID: entry.TitleID, Name: "Synthetic Movie", MediaType: "movie", Year: 2024, CardSubtitle: "Synthetic catalogue"}
 	for _, id := range []string{"profile", "shared-french", "english"} {
 		svc.AnnotateTitles(id, "fixture-device", []models.Title{title})
+		if _, err := svc.ReplaceTitleView(id, "fixture-device", "fixture", 1, []models.Title{title}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)

@@ -65,7 +65,7 @@ func (item request) cacheID() string {
 func requestID(item request) string { return key(item.ProfileID, item.cacheID(), item.Scope) }
 func (s *Service) neededUntilLocked(id string) time.Time {
 	var until time.Time
-	for _, view := range s.episodeViews {
+	for _, view := range s.views {
 		expiry := view.Updated.Add(episodeViewTTL)
 		if view.Requests[id] && expiry.After(s.now()) && expiry.After(until) {
 			until = expiry
@@ -124,38 +124,9 @@ func (s *Service) ReplaceEpisodeView(profile, client, viewID string, version int
 		}
 	}
 	s.mu.Lock()
-	if s.episodeViews == nil {
-		s.episodeViews = map[string]episodeView{}
-	}
-	for id, view := range s.episodeViews {
-		if s.now().Sub(view.Updated) > 2*time.Minute {
-			delete(s.episodeViews, id)
-		}
-	}
-	if old, ok := s.episodeViews[identity]; ok && version <= old.Version {
+	if err := s.replaceViewLocked("episode\x00"+identity, version, desired); err != nil {
 		s.mu.Unlock()
-		return response, ErrStaleEpisodeView
-	}
-	if _, ok := s.episodeViews[identity]; !ok {
-		ownViews := 0
-		for id := range s.episodeViews {
-			if strings.HasPrefix(id, profile+"\x00") {
-				ownViews++
-			}
-		}
-		if len(s.episodeViews) >= maxEpisodeViews || ownViews >= 16 {
-			s.mu.Unlock()
-			return response, ErrEpisodeViewLimit
-		}
-	}
-	s.episodeViews[identity] = episodeView{Version: version, Updated: s.now(), Requests: desired}
-	for id, item := range s.pending {
-		if item.Episode != nil && s.neededUntilLocked(id).IsZero() {
-			delete(s.pending, id)
-		}
-	}
-	if s.activeEpisodeID != "" && s.neededUntilLocked(s.activeEpisodeID).IsZero() && s.cancelEpisode != nil {
-		s.cancelEpisode()
+		return response, err
 	}
 	for _, item := range pending {
 		s.enqueueLocked(item)
@@ -304,4 +275,40 @@ func (s *Service) makeEpisodeReportContext(item request, selection Selection) ba
 		ctx.Episode = &models.EpisodeReference{Numbering: ep.Numbering, SeasonNumber: ep.SeasonNumber, EpisodeNumber: ep.EpisodeNumber}
 	}
 	return ctx
+}
+
+// replaceViewLocked shares capacity and cancellation across title and episode views.
+func (s *Service) replaceViewLocked(identity string, version int64, desired map[string]bool) error {
+	if s.views == nil {
+		s.views = map[string]episodeView{}
+	}
+	for id, view := range s.views {
+		if s.now().Sub(view.Updated) > 2*time.Minute {
+			delete(s.views, id)
+		}
+	}
+	if old, ok := s.views[identity]; ok && version <= old.Version {
+		return ErrStaleEpisodeView
+	}
+	if _, ok := s.views[identity]; !ok {
+		ownViews := 0
+		for id := range s.views {
+			if strings.Split(id, "\x00")[1] == strings.Split(identity, "\x00")[1] {
+				ownViews++
+			}
+		}
+		if len(s.views) >= maxEpisodeViews || ownViews >= 16 {
+			return ErrEpisodeViewLimit
+		}
+	}
+	s.views[identity] = episodeView{Version: version, Updated: s.now(), Requests: desired}
+	for id := range s.pending {
+		if s.neededUntilLocked(id).IsZero() {
+			delete(s.pending, id)
+		}
+	}
+	if s.activeRequestID != "" && s.neededUntilLocked(s.activeRequestID).IsZero() && s.cancelRequest != nil {
+		s.cancelRequest()
+	}
+	return nil
 }
