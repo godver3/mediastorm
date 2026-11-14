@@ -229,6 +229,12 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 	defer s.mu.RUnlock()
 
 	if settings, ok := s.settings[userID]; ok {
+		var base config.RecommendationSettings
+		if defaults.Recommendations != nil {
+			base = *defaults.Recommendations
+		}
+		merged := base.Merge(settings.Recommendations).WithDefaults()
+		settings.Recommendations = &merged
 		// Sanitize language codes (strip stray quotes/whitespace)
 		settings.SportsPreferences = append(json.RawMessage(nil), settings.SportsPreferences...)
 		settings.Playback.PreferredAudioLanguage = sanitizeLanguageCode(settings.Playback.PreferredAudioLanguage)
@@ -707,6 +713,10 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	// must not overwrite these two values, whether it omits them or not.
 	settings.Playback.IntroAutoSkip = s.settings[userID].Playback.IntroAutoSkip
 	settings.Playback.RecapAutoSkip = s.settings[userID].Playback.RecapAutoSkip
+	// Older clients do not know this section and must not reset profile choices.
+	if settings.Recommendations == nil {
+		settings.Recommendations = s.settings[userID].Recommendations
+	}
 	if isSettingsEmpty(settings) {
 		log.Printf("[user-settings] Update(%q): settings empty, deleting entry", userID)
 		delete(s.settings, userID)

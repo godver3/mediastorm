@@ -17,6 +17,7 @@ func boolPtr(v bool) *bool        { return &v }
 
 // Settings represents the application configuration persisted to disk.
 type Settings struct {
+	Recommendations    RecommendationSettings     `json:"recommendations"`
 	SourceAvailability SourceAvailabilitySettings `json:"sourceAvailability"`
 	Server             ServerSettings             `json:"server"`
 	Usenet             []UsenetSettings           `json:"usenet"`
@@ -2168,6 +2169,7 @@ func DefaultSettings() Settings {
 		TorrentScrapers: []TorrentScraperConfig{
 			{Name: "Torrentio", Type: "torrentio", Enabled: true, Options: "sort=qualitysize|qualityfilter=480p,scr,cam"},
 		},
+		Recommendations:    RecommendationSettings{UseWatchlist: boolPtr(true), UseCustomLists: boolPtr(true), UseSearchInterests: boolPtr(false)},
 		Metadata:           MetadataSettings{TVDBAPIKey: "", TMDBAPIKey: "", Language: []string{"eng"}, PrimaryLanguage: "eng", AllowAdultSearch: false},
 		SourceAvailability: SourceAvailabilitySettings{RefreshHours: 6, MaxTitlesPerCycle: 20, IndexerNames: []string{}},
 		Cache:              CacheSettings{Directory: "cache", MetadataTTLHours: 24},

@@ -64,6 +64,7 @@ type startupHistorySnapshot struct {
 // HTTP round-trips required when the frontend initialises.  All seven data
 // fetches are performed concurrently.
 type StartupHandler struct {
+	Interests          interestService
 	sourceAvailability sourceAvailabilityService
 	userSettings       userSettingsService
 	watchlist          watchlistService
@@ -171,6 +172,7 @@ type HomeShelfManifest struct {
 }
 
 type HomeManifestResponse struct {
+	RecommendationsRevision    string              `json:"recommendationsRevision,omitempty"`
 	SourceAvailabilityRevision string              `json:"sourceAvailabilityRevision,omitempty"`
 	DiscoveryRevision          string              `json:"discoveryRevision,omitempty"`
 	Revision                   string              `json:"revision"`
@@ -210,7 +212,7 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		log.Printf("[home-manifest] user settings error for %s: %v", userID, err)
 	} else {
-		resp.SettingsHash = hashForManifest(settings.HomeShelves, settings.Display)
+		resp.SettingsHash = hashForManifest(settings.HomeShelves, settings.Display, settings.Recommendations)
 		resp.Shelves = buildHomeShelfManifest(settings.HomeShelves.Shelves)
 		resp.ShelvesHash = hashForManifest(resp.Shelves)
 		resp.DiscoveryRevision = regionalHomeRevision(settings.HomeShelves.Shelves, resp.GeneratedAt)
@@ -242,6 +244,13 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 	if h.sourceAvailability != nil {
 		resp.SourceAvailabilityRevision = h.sourceAvailability.Revision(userID, requestClientID(r))
 	}
+	if h.Interests != nil {
+		var interests []models.RecommendationInterest
+		if settings.Recommendations != nil && settings.Recommendations.SearchInterestsEnabled() {
+			interests = h.Interests.List(userID)
+		}
+		resp.RecommendationsRevision = hashForManifest(settings.Recommendations, interests, resp.GeneratedAt.UTC().Format("2006-01-02"))
+	}
 
 	resp.Revision = hashForManifest(
 		resp.SettingsHash,
@@ -254,6 +263,7 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 		resp.CustomListsHash,
 		resp.DiscoveryRevision,
 		resp.SourceAvailabilityRevision,
+		resp.RecommendationsRevision,
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1469,6 +1479,7 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 	shelves := convertShelves(globalSettings.HomeShelves.Shelves)
 
 	return models.UserSettings{
+		Recommendations: &globalSettings.Recommendations,
 		Playback: models.PlaybackSettings{
 			PreferredPlayer:               globalSettings.Playback.PreferredPlayer,
 			PreferredAudioLanguage:        globalSettings.Playback.PreferredAudioLanguage,
