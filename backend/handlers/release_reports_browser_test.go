@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -25,9 +26,24 @@ func releaseReportBrowserFixture(t *testing.T) http.Handler {
 	bad := NewBadStreamsHandler(registry)
 	bad.SetUsersService(h.users)
 	router := mux.NewRouter()
-	router.Handle("/watch/playback.html", web)
+	router.HandleFunc("/watch/playback.html", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("fixtureTransport") != "1" {
+			web.ServeHTTP(w, r)
+			return
+		}
+		recorder := httptest.NewRecorder()
+		web.ServeHTTP(recorder, r)
+		for key, values := range recorder.Header() {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		body := strings.Replace(recorder.Body.String(), "</body>", releasePreparedPreviewTransport+"</body>", 1)
+		w.WriteHeader(recorder.Code)
+		_, _ = w.Write([]byte(body))
+	})
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		params := url.Values{"token": {"fixture-token"}, "profileId": {"profile"}, "title": {"Synthetic Movie"}, "sourcePath": {entry.StreamPath}, "prequeueId": {entry.ID}}
+		params := url.Values{"token": {"fixture-token"}, "profileId": {"profile"}, "title": {"Synthetic Movie"}, "sourcePath": {entry.StreamPath}, "prequeueId": {entry.ID}, "fixtureTransport": {"1"}}
 		http.Redirect(w, r, "/watch/playback.html?"+params.Encode(), http.StatusSeeOther)
 	}).Methods("GET")
 	router.PathPrefix("/api/static/").Handler(http.StripPrefix("/api/static/", http.FileServer(http.Dir("static"))))
@@ -95,3 +111,19 @@ func TestReleaseReportPlayerPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Available only from this opt-in fixture server, never from application routes.
+const releasePreparedPreviewTransport = `<script>
+document.addEventListener('DOMContentLoaded', () => {
+  let position = 42;
+  currentAbsoluteTime = () => position;
+  startWebPlayerFromSource = async options => {
+    position = options?.startOffset == null ? 42 : Math.max(0, Number(options.startOffset) || 0);
+    const host = document.getElementById('videoHost');
+    const label = document.createElement('div');
+    label.style.cssText = 'min-height:280px;display:grid;place-items:center;padding:24px;background:#15202c;color:#a8c5ff';
+    label.textContent = 'SYNTHETIC PREVIEW: media transport is stubbed. Position: ' + position + ' seconds. Use Report / change source to prepare and confirm an alternative.';
+    host.replaceChildren(label);
+  };
+});
+</script>`

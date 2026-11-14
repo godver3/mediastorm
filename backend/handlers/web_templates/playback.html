@@ -1136,19 +1136,35 @@
     </div>
     <p id="releaseReportScope" role="status"></p>
     <p id="releaseReportError" role="alert"></p>
+    <section id="releaseReplacementReady" hidden aria-labelledby="releaseReplacementTitle">
+      <h3 id="releaseReplacementTitle">Prepared alternative</h3>
+      <p id="releaseReplacementName"></p>
+      <p id="releaseReplacementAudio"></p>
+      <label for="releaseReplacementResume">Start position</label>
+      <select id="releaseReplacementResume">
+        <option value="rewind">10 seconds back</option>
+        <option value="current">At the current position</option>
+        <option value="beginning">From the beginning</option>
+      </select>
+      <p id="releaseReplacementTiming">Position is calculated when you switch. Different edits may use different timing.</p>
+      <button class="btn btn-primary" id="releaseReplacementStart" type="button" onclick="startPreparedRelease()">Start prepared alternative</button>
+    </section>
     <div class="share-actions" style="flex-wrap:wrap">
       <button class="btn" type="button" onclick="closeReleaseReport()">Cancel</button>
       <button class="btn" id="releaseReportOnly" type="button" onclick="submitReleaseReport(false)">Report only</button>
-      <button class="btn btn-primary" id="releaseReportRetry" type="button" onclick="submitReleaseReport(true)">Report and try an alternative</button>
-      <button class="btn" id="releaseManualRetry" type="button" onclick="retryReleaseWithoutReport()">Try an alternative without reporting</button>
-      <button class="btn" id="releaseReportUndo" type="button" onclick="undoReleaseReport()" hidden>Undo report</button>
+      <button class="btn btn-primary" id="releaseReportRetry" type="button" onclick="submitReleaseReport(true)">Report and prepare an alternative</button>
+      <button class="btn" id="releaseManualRetry" type="button" onclick="retryReleaseWithoutReport()">Prepare an alternative without reporting</button>
+      <button class="btn" id="releaseReportUndo" type="button" onclick="undoReleaseReport()" hidden>Undo last report</button>
     </div>
   </dialog>
   <style>
     #releaseReportDialog::backdrop { background:rgba(4,6,10,.8); }
     #releaseReportDialog { color:#f1f5f9; max-height:90vh; overflow:auto; }
     #releaseReportDialog select { width:100%; margin:8px 0 16px; padding:10px; color:#f1f5f9; background:#222936; border:1px solid #64748b; border-radius:6px; }
-    #releaseReportName { overflow-wrap:anywhere; }
+    #releaseReportName, #releaseReplacementName { overflow-wrap:anywhere; }
+    #releaseReportDialog [hidden] { display:none; }
+    #releaseReplacementReady { border:1px solid #64748b; border-radius:8px; padding:12px; margin:12px 0; }
+    #releaseReplacementReady h3 { margin-top:0; }
     #releaseReportError { color:#fbbf24; }
     #releaseReportButton[hidden] { display:none; }
     #releaseReportButton { position:fixed; right:16px; top:80px; z-index:150; }
@@ -1290,6 +1306,7 @@
     const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0 };
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
+    let webPlayerAudioPreferenceSaveFailed = false;
     let webPlayerAudioPreferenceGeneration = 0;
     let webPlayerPreferences = {
       audioLanguage: '',
@@ -1766,7 +1783,9 @@
           keepalive: true,
           body: JSON.stringify({ ...existing, contentId, contentType, audioLanguage: language }),
         });
+        webPlayerAudioPreferenceSaveFailed = false;
       }).catch((error) => {
+        webPlayerAudioPreferenceSaveFailed = true;
         console.warn('[web-player] audio preference save failed', error);
         setTransientStatus('Audio changed, but its language could not be saved.');
       });
@@ -4200,6 +4219,7 @@
     function armWebMigrationStallTimer(reason) {
       clearWebMigrationStallTimer();
       const state = webPlayerMigrationState;
+      if (typeof releaseReportBlocksMigration === 'function' && releaseReportBlocksMigration()) return false;
       if (!state || webPlayerMigrationInProgress || playbackMeta.isLive || SHARE_MODE || !webPlayerPreferences.streamMigrationEnabled) return;
       if (webPlayerMigrationProbation) webPlayerMigrationProbation.firstProgressAt = null;
       webPlayerMigrationStallTimer = window.setTimeout(() => {
@@ -4289,6 +4309,7 @@
     }
 
     async function migrateWebStream(reason) {
+      if (typeof releaseReportBlocksMigration === 'function' && releaseReportBlocksMigration()) return false;
       const state = webPlayerMigrationState;
       if (!state || webPlayerMigrationInProgress || SHARE_MODE || playbackMeta.isLive || !webPlayerPreferences.streamMigrationEnabled || /^local:/i.test(sourcePath)) return false;
       clearWebMigrationStallTimer();
