@@ -757,7 +757,7 @@ func TestGetLingeringStreamsBridgesRangeRequestGaps(t *testing.T) {
 		recentlyEnded: map[string]recentlyEndedStream{
 			"older":         {stream: movie("older"), endedAt: now.Add(-10 * time.Second)},
 			"newer":         {stream: movie("newer"), endedAt: now.Add(-2 * time.Second)},
-			"episode-range": {stream: episode, endedAt: now.Add(-playbackNotificationTeardownGrace - time.Second)},
+			"episode-range": {stream: episode, endedAt: now.Add(-dashboardLingerGrace - time.Second)},
 		},
 	}
 
@@ -770,6 +770,38 @@ func TestGetLingeringStreamsBridgesRangeRequestGaps(t *testing.T) {
 	tracker.streams["open"] = movie("open")
 	if got := tracker.GetLingeringStreams(); len(got) != 0 {
 		t.Fatalf("GetLingeringStreams() with an open request = %v, want none", streamIDs(got))
+	}
+}
+
+// Large read-ahead buffers leave minutes between range requests; the latest
+// ended request of the playback must survive pruning past the teardown grace.
+func TestRecentlyEndedPruneKeepsLatestPerSlotForDashboard(t *testing.T) {
+	now := time.Now()
+	movie := func(id string) *TrackedStream {
+		return &TrackedStream{
+			ID:            id,
+			ProfileID:     "profile",
+			Path:          "/movie.mkv",
+			MediaMetadata: StreamMediaMetadata{MediaType: "movie", ItemID: "tmdb:movie:1"},
+		}
+	}
+	tracker := &StreamTracker{
+		streams: make(map[string]*TrackedStream),
+		recentlyEnded: map[string]recentlyEndedStream{
+			"old":    {stream: movie("old"), endedAt: now.Add(-3 * time.Minute)},
+			"latest": {stream: movie("latest"), endedAt: now.Add(-2 * time.Minute)},
+		},
+	}
+	tracker.pruneRecentlyEndedLocked(now)
+	if _, ok := tracker.recentlyEnded["old"]; ok {
+		t.Fatal("older ended request of the slot survived prune")
+	}
+	got := tracker.GetLingeringStreams()
+	if len(got) != 1 || got[0].ID != "latest" {
+		t.Fatalf("GetLingeringStreams() = %v, want latest after a 2-minute gap", streamIDs(got))
+	}
+	if _, ok := tracker.GetEndedStream("latest"); !ok {
+		t.Fatal("GetEndedStream(latest) = false, want the lingering stream stoppable")
 	}
 }
 
@@ -823,9 +855,9 @@ func TestPlaybackSlotStatsAccumulatesAcrossRangeRequests(t *testing.T) {
 		t.Fatalf("BytesStreamed = %d, want ended + open requests (3500)", got)
 	}
 
-	// A playback idle past the teardown grace is dropped.
+	// A playback idle past the dashboard linger grace is dropped.
 	delete(tracker.streams, open.ID)
-	tracker.slotTotals[key].lastSeen = time.Now().Add(-playbackNotificationTeardownGrace - time.Second)
+	tracker.slotTotals[key].lastSeen = time.Now().Add(-dashboardLingerGrace - time.Second)
 	if _, ok := tracker.PlaybackSlotStats()[key]; ok {
 		t.Fatal("expired playback slot still reported")
 	}

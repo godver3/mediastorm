@@ -260,6 +260,13 @@ const playbackStopSignalDuration = 2 * time.Minute
 const playbackMigrationSignalDuration = 30 * time.Second
 const playbackNotificationTeardownGrace = 30 * time.Second
 
+// dashboardLingerGrace is how long the latest ended request of a playback slot
+// is kept so the dashboard can list it between range requests. Players with
+// large read-ahead buffers (low-bitrate files especially) can go minutes
+// between requests; the dashboard only shows a lingering stream while the
+// playback heartbeat is fresh, so this just bounds memory.
+const dashboardLingerGrace = 15 * time.Minute
+
 // GetStreamTracker returns the global stream tracker
 func GetStreamTracker() *StreamTracker {
 	return globalStreamTracker
@@ -730,13 +737,13 @@ func (t *StreamTracker) terminateEndedSlotLocked(stream *TrackedStream) {
 	}
 }
 
-// GetEndedStream returns a stream whose request ended within the teardown
-// grace, as the dashboard still lists it.
+// GetEndedStream returns a stream whose request ended within the dashboard
+// linger grace, as the dashboard still lists it.
 func (t *StreamTracker) GetEndedStream(id string) (*TrackedStream, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	ended, ok := t.recentlyEnded[id]
-	if !ok || ended.stream == nil || ended.terminated || time.Since(ended.endedAt) > playbackNotificationTeardownGrace {
+	if !ok || ended.stream == nil || ended.terminated || time.Since(ended.endedAt) > dashboardLingerGrace {
 		return nil, false
 	}
 	return snapshotTrackedStream(ended.stream, false), true
@@ -1182,7 +1189,7 @@ func (t *StreamTracker) PlaybackSlotStats() map[string]PlaybackSlotStats {
 	}
 	stats := make(map[string]PlaybackSlotStats, len(t.slotTotals))
 	for key, totals := range t.slotTotals {
-		if now.Sub(totals.lastSeen) > playbackNotificationTeardownGrace {
+		if now.Sub(totals.lastSeen) > dashboardLingerGrace {
 			delete(t.slotTotals, key)
 			continue
 		}
@@ -1195,9 +1202,34 @@ func (t *StreamTracker) PlaybackSlotStats() map[string]PlaybackSlotStats {
 	return stats
 }
 
+// pruneRecentlyEndedLocked drops ended requests past the teardown grace,
+// except the latest of each playback slot, which stays for the dashboard
+// linger window.
 func (t *StreamTracker) pruneRecentlyEndedLocked(now time.Time) {
+	latest := make(map[string]string)
 	for id, ended := range t.recentlyEnded {
-		if ended.stream == nil || now.Sub(ended.endedAt) > playbackNotificationTeardownGrace {
+		if ended.stream == nil {
+			continue
+		}
+		key := trackedStreamSlotKey(ended.stream)
+		if key == "" {
+			continue
+		}
+		if prevID, ok := latest[key]; !ok || ended.endedAt.After(t.recentlyEnded[prevID].endedAt) {
+			latest[key] = id
+		}
+	}
+	keep := make(map[string]struct{}, len(latest))
+	for _, id := range latest {
+		keep[id] = struct{}{}
+	}
+	for id, ended := range t.recentlyEnded {
+		age := now.Sub(ended.endedAt)
+		if ended.stream == nil || age > dashboardLingerGrace {
+			delete(t.recentlyEnded, id)
+			continue
+		}
+		if _, ok := keep[id]; !ok && age > playbackNotificationTeardownGrace {
 			delete(t.recentlyEnded, id)
 		}
 	}
@@ -1215,8 +1247,8 @@ func (t *StreamTracker) GetActiveStreams() []*TrackedStream {
 	return streams
 }
 
-// GetLingeringStreams returns streams whose request ended within the teardown
-// grace and whose playback has no open request. Native players read the file
+// GetLingeringStreams returns streams whose request ended within the dashboard
+// linger grace and whose playback has no open request. Native players read the file
 // in short range requests with idle gaps between them; the dashboard keeps
 // such a playback listed through the gaps while its heartbeat stays fresh.
 // At most one stream (the latest to end) is returned per playback slot.
@@ -1231,7 +1263,7 @@ func (t *StreamTracker) GetLingeringStreams() []*TrackedStream {
 	}
 	latest := make(map[string]recentlyEndedStream)
 	for _, ended := range t.recentlyEnded {
-		if ended.stream == nil || ended.terminated || now.Sub(ended.endedAt) > playbackNotificationTeardownGrace {
+		if ended.stream == nil || ended.terminated || now.Sub(ended.endedAt) > dashboardLingerGrace {
 			continue
 		}
 		key := trackedStreamSlotKey(ended.stream)
