@@ -16,6 +16,26 @@ import (
 	"novastream/models"
 )
 
+// awaitStaleProgressRemoval observes the completed asynchronous persistence
+// through the service lock before a regression removes its temporary storage.
+func awaitStaleProgressRemoval(t *testing.T, svc *Service, userID, itemID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		progress, err := svc.GetPlaybackProgress(userID, "episode", itemID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if progress == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stale playback progress was not removed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestNormalizeSeriesName(t *testing.T) {
 	tests := map[string]string{
 		"Legion • S02E01 – Chapter 9": "Legion",
@@ -4572,22 +4592,7 @@ func TestContinueWatching_AbsoluteNumberedInProgressTreatedAsWatched(t *testing.
 	if next.SeasonNumber != 23 || next.EpisodeNumber != 9 {
 		t.Fatalf("NextEpisode = S%02dE%02d, want S23E09", next.SeasonNumber, next.EpisodeNumber)
 	}
-	// The stale-progress cleanup persists asynchronously. Observe its completed
-	// effect before TempDir removes the storage directory.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		progress, err := svc.GetPlaybackProgress(userID, "episode", seriesID+":s23e1163")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if progress == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("stale absolute progress was not removed")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	awaitStaleProgressRemoval(t, svc, userID, seriesID+":s23e1163")
 }
 
 func TestContinueWatching_ManualUnwatchSuppressesAbsoluteWatchedDuplicate(t *testing.T) {
@@ -7239,6 +7244,7 @@ func TestContinueWatchingReconcilesCrossProviderWatchedProgress(t *testing.T) {
 	if next == nil || next.SeasonNumber != 1 || next.EpisodeNumber != 2 {
 		t.Fatalf("expected next episode S1E2 (watched S1E1 must not resurface as resume), got %+v", next)
 	}
+	awaitStaleProgressRemoval(t, svc, userID, "tmdb:tv:95396:s01e01")
 }
 
 func TestDedupeWatchHistoryPrefersSeasonalEpisode(t *testing.T) {
