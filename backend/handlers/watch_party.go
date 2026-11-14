@@ -483,7 +483,7 @@ func (h *WatchPartyHandler) PlaybackGrant(w http.ResponseWriter, r *http.Request
 	if duration > SharePlaybackSessionTTL {
 		duration = SharePlaybackSessionTTL
 	}
-	streamSession, err := h.sessions.CreateScopedWithResource(guestSession.AccountID, false, r.UserAgent(), clientIPForShare(r), duration, models.SessionScopeStream, source.Resource)
+	streamSession, err := h.sessions.CreateWatchPartyPlayback(guestSession.AccountID, r.UserAgent(), clientIPForShare(r), duration, roomID, guestID, source.Resource)
 	if err != nil {
 		writeJSONError(w, "failed to grant watch party playback", http.StatusInternalServerError)
 		return

@@ -1089,6 +1089,7 @@ func main() {
 	var watchPartyHandler *handlers.WatchPartyHandler
 	if store != nil {
 		watchRoomsService := watchrooms.New(store.WatchRooms(), userService, accountsService)
+		sessionsService.SetWatchPartyPlaybackValidator(watchRoomsService.ValidateExternalPlayback)
 		watchRoomsHandler = handlers.NewWatchRoomsHandler(watchRoomsService)
 		watchPartyHandler = handlers.NewWatchPartyHandler(watchRoomsService, sessionsService, settings.Server.BasePath)
 		watchPartyHandler.SetLibraryAccessService(libraryAccessService)
