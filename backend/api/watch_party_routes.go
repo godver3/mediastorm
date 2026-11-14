@@ -12,10 +12,14 @@ import (
 
 // Guest polling is budgeted by verified session, so household/NAT peers do not
 // consume each other's quota. Unauthenticated traffic keeps a per-IP budget.
-func watchPartyRateLimitHandlerFunc(limiter *IPRateLimiter, guestKey func(*http.Request) (string, bool), next http.HandlerFunc) http.HandlerFunc {
+//
+// guestKey validates the guest once and returns a request carrying that
+// session, which the handler reuses instead of loading it again.
+func watchPartyRateLimitHandlerFunc(limiter *IPRateLimiter, guestKey func(*http.Request) (*http.Request, string, bool), next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := "ip:" + getClientIP(r)
-		if guest, ok := guestKey(r); ok {
+		r, guest, ok := guestKey(r)
+		if ok {
 			key = "guest:" + guest
 		}
 		if !limiter.getLimiter(key).Allow() {

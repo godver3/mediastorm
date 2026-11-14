@@ -274,6 +274,9 @@ func (h *WatchPartyHandler) guestSession(r *http.Request, roomID string) (models
 var errGuestSessionMissing = errors.New("watch party session required")
 
 func (h *WatchPartyHandler) lookupGuestSession(r *http.Request, roomID string) (models.Session, string, error) {
+	if session, guestID, ok := verifiedGuestFromContext(r, roomID); ok {
+		return session, guestID, nil
+	}
 	cookie, err := r.Cookie(watchPartyCookieName)
 	if err != nil || h.sessions == nil {
 		return models.Session{}, "", errGuestSessionMissing
