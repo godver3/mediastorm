@@ -809,6 +809,7 @@ func main() {
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
 	prequeueHandler.SetBadStreamsService(badStreamsService)
 	prequeueHandler.SetUsersService(userService)
+	prequeueHandler.SetLocalFallback(localMediaService, libraryAccessService)
 	playbackHandler.SetUsersService(userService)
 	if store != nil {
 		prequeueHandler.GetStore().SetDataStore(store)
