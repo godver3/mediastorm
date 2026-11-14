@@ -707,6 +707,8 @@ var SettingsSchema = map[string]interface{}{
 			"stalkerDeviceId2":            map[string]interface{}{"type": "password", "label": "Device ID 2", "description": "Optional secondary portal device ID.", "showWhen": map[string]interface{}{"field": "mode", "value": "stalker"}, "order": 7},
 			"stalkerSignature":            map[string]interface{}{"type": "password", "label": "Signature", "description": "Optional portal device signature.", "showWhen": map[string]interface{}{"field": "mode", "value": "stalker"}, "order": 8},
 			"maxStreams":                  map[string]interface{}{"type": "number", "label": "Max Streams", "description": "Maximum concurrent Live TV streams per provider (0 = unlimited)", "order": 5},
+			"groupChannelsByStation":      map[string]interface{}{"type": "boolean", "label": "Group matching channel variants", "description": "Keep variants of the same broadcast together across permitted playlists. Every source remains selectable.", "order": 10.6, "globalOnly": true},
+			"autoChannelFailover":         map[string]interface{}{"type": "boolean", "label": "Try another channel source automatically", "description": "For matching M3U and Xtream variants, use managed HLS and try up to four permitted sources when an input fails. Each source has a bounded startup wait. Both settings are off by default.", "order": 10.7, "globalOnly": true},
 			"streamFormat":                map[string]interface{}{"type": "select", "label": "Stream Format", "description": "HLS re-segments the stream via FFmpeg (more compatible). Direct proxies the source stream (lower latency, less CPU).", "options": []map[string]string{{"value": "hls", "label": "HLS"}, {"value": "direct", "label": "Direct (MPEG-TS)"}}, "order": 6},
 			"playlistCacheTtlHours":       map[string]interface{}{"type": "number", "label": "Cache TTL (hours)", "description": "Playlist cache duration", "order": 7},
 			"probeSizeMb":                 map[string]interface{}{"type": "number", "label": "Probe Size (MB)", "description": "FFmpeg probesize for stream analysis (0 = default ~5MB). Higher values improve stability but increase initial buffering.", "order": 8},
@@ -723,6 +725,18 @@ var SettingsSchema = map[string]interface{}{
 			"epg.timeOffsetMinutes":    map[string]interface{}{"type": "number", "label": "EPG Time Offset (minutes)", "description": "Shift EPG program times by this many minutes. Use positive values to move programs forward, negative to move them backward.", "showWhen": map[string]interface{}{"field": "epg.enabled", "value": true}, "order": 17},
 		},
 	},
+	"live.stationMappings": map[string]interface{}{
+		"label": "Channel identity corrections", "icon": "tv", "group": "providers", "order": 2.1,
+		"description": "Associate playlist entries that the catalog cannot safely match automatically.",
+		"is_array":    true, "parent": "live", "key": "stationMappings",
+		"fields": map[string]interface{}{
+			"sourceId":  map[string]interface{}{"type": "text", "label": "Source ID", "order": 0},
+			"channelId": map[string]interface{}{"type": "text", "label": "Channel ID", "description": "The full entry ID from this source's channel catalog.", "order": 1},
+			"stationId": map[string]interface{}{"type": "text", "label": "Shared channel key", "description": "Entries with the same key belong to one broadcast.", "order": 2},
+			"name":      map[string]interface{}{"type": "text", "label": "Channel name", "order": 3},
+		},
+	},
+
 	"live.sources": map[string]interface{}{
 		"label":    "Live TV",
 		"icon":     "tv",

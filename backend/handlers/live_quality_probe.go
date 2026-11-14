@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"novastream/internal/auth"
+	"novastream/internal/livecapacity"
 	"novastream/internal/streamheaders"
 )
 
@@ -129,11 +130,17 @@ func (h *VideoHandler) ProbeLiveQuality(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
-	target := h.resolveLiveStreamTargetForSource(req.ProfileID, req.SourceID)
-	if target.MaxStreams > 0 && h.buildLiveUsageSummary(target).AtLimit {
-		http.Error(w, "Provider connection limit reached. Stop playback before checking quality.", http.StatusConflict)
+	target, targetErr := h.liveCapacityTarget(authorizationRequest, req.URL)
+	if targetErr != nil {
+		http.Error(w, "live provider unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	lease, capacityErr := livecapacity.Default.Acquire(target.BucketKey, "", target.MaxStreams)
+	if capacityErr != nil {
+		writeLiveCapacityError(w, target)
+		return
+	}
+	defer lease.Release()
 	streamURL := req.URL
 	var headers map[string]string
 	if normalizeLiveProvider(target.Provider) == "stalker" {

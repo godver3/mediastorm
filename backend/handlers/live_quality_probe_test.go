@@ -102,8 +102,8 @@ func TestLiveQualityIPTVAddonAndAdaptiveMedia(t *testing.T) {
 			if tc.name == "embedded-playback-headers" {
 				streamURL = streamheaders.Attach(streamURL, map[string]string{"Referer": "https://provider.example/"})
 			}
-			h.SetLiveChannelProvider(staticLiveChannelProvider{channels: []LiveChannel{{ID: tc.name, SourceID: "fixture", URL: streamURL}}})
-			body, _ := json.Marshal(liveQualityRequest{URL: streamURL, SourceID: "fixture", ChannelID: tc.name, StreamIndex: tc.index})
+			h.SetLiveChannelProvider(staticLiveChannelProvider{channels: []LiveChannel{{ID: tc.name, SourceID: "default", URL: streamURL}}})
+			body, _ := json.Marshal(liveQualityRequest{URL: streamURL, SourceID: "default", ChannelID: tc.name, StreamIndex: tc.index})
 			req := httptest.NewRequest(http.MethodPost, "/video/live/quality", strings.NewReader(string(body)))
 			rec := httptest.NewRecorder()
 			h.ProbeLiveQuality(rec, req)
@@ -186,9 +186,9 @@ func TestLiveQualityRejectsNonHTTPAndRedactsProbeErrors(t *testing.T) {
 	defer server.Close()
 	h.ffprobePath = script
 	h.SetConfigManager(fakeLiveUsageConfigProvider{settings: config.Settings{Live: config.LiveSettings{PlaylistURL: server.URL}}})
-	h.SetLiveChannelProvider(staticLiveChannelProvider{channels: []LiveChannel{{ID: "fixture", SourceID: "fixture", URL: server.URL}}})
+	h.SetLiveChannelProvider(staticLiveChannelProvider{channels: []LiveChannel{{ID: "fixture", SourceID: "default", URL: server.URL}}})
 	rec = httptest.NewRecorder()
-	h.ProbeLiveQuality(rec, httptest.NewRequest("POST", "/video/live/quality", strings.NewReader(fmt.Sprintf(`{"url":%q,"sourceId":"fixture","channelId":"fixture"}`, server.URL))))
+	h.ProbeLiveQuality(rec, httptest.NewRequest("POST", "/video/live/quality", strings.NewReader(fmt.Sprintf(`{"url":%q,"sourceId":"default","channelId":"fixture"}`, server.URL))))
 	if rec.Code != 502 || strings.Contains(rec.Body.String(), "secret") {
 		t.Fatalf("unsafe response: %d %s", rec.Code, rec.Body.String())
 	}
