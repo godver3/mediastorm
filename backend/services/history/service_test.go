@@ -4572,6 +4572,22 @@ func TestContinueWatching_AbsoluteNumberedInProgressTreatedAsWatched(t *testing.
 	if next.SeasonNumber != 23 || next.EpisodeNumber != 9 {
 		t.Fatalf("NextEpisode = S%02dE%02d, want S23E09", next.SeasonNumber, next.EpisodeNumber)
 	}
+	// The stale-progress cleanup persists asynchronously. Observe its completed
+	// effect before TempDir removes the storage directory.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		progress, err := svc.GetPlaybackProgress(userID, "episode", seriesID+":s23e1163")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if progress == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stale absolute progress was not removed")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestContinueWatching_ManualUnwatchSuppressesAbsoluteWatchedDuplicate(t *testing.T) {
