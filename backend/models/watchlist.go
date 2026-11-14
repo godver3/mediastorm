@@ -4,32 +4,35 @@ import "time"
 
 // WatchlistItem represents a media entry saved by the user for quick access.
 type WatchlistItem struct {
-	ID              string            `json:"id"`
-	MediaType       string            `json:"mediaType"` // movie | series
-	Name            string            `json:"name"`
-	Overview        string            `json:"overview,omitempty"`
-	Year            int               `json:"year,omitempty"`
-	PosterURL       string            `json:"posterUrl,omitempty"`
-	TextPosterURL   string            `json:"textPosterUrl,omitempty"` // Poster with title text (enriched at response time)
-	BackdropURL     string            `json:"backdropUrl,omitempty"`
-	TextBackdropURL string            `json:"textBackdropUrl,omitempty"` // Backdrop with title text (enriched at response time)
-	BackdropURLs    []string          `json:"backdropUrls,omitempty"`    // Ranked alternate backdrops (enriched at response time)
-	LogoURL         string            `json:"logoUrl,omitempty"`         // Title logo (enriched at response time)
-	AddedAt         time.Time         `json:"addedAt"`
-	ExternalIDs     map[string]string `json:"externalIds,omitempty"`
-	Genres          []string          `json:"genres,omitempty"`
-	RuntimeMinutes  int               `json:"runtimeMinutes,omitempty"`
-	SyncSource      string            `json:"syncSource,omitempty"`      // e.g., "plex:<accountId>:<taskId>" for synced items
-	SyncedAt        *time.Time        `json:"syncedAt,omitempty"`        // when last synced from external source
-	WatchState      string            `json:"watchState,omitempty"`      // "none" | "partial" | "complete"
-	UnwatchedCount  *int              `json:"unwatchedCount,omitempty"`  // series only: total - watched
-	Ratings         []Rating          `json:"ratings,omitempty"`         // hydrated at response time from MDBList
-	Status          string            `json:"status,omitempty"`          // release availability
-	LifecycleStatus string            `json:"lifecycleStatus,omitempty"` // series lifecycle
-	Theatrical      *Release          `json:"theatricalRelease,omitempty"`
-	HomeRelease     *Release          `json:"homeRelease,omitempty"`
-	ReleaseDate     string            `json:"releaseDate,omitempty"`  // YYYY-MM-DD first watchable date (see Title.ReleaseDate)
-	Availability    string            `json:"availability,omitempty"` // derived at encode time (see Title.Availability)
+	SourceAvailability *SourceAvailability `json:"sourceAvailability,omitempty"`
+	CardSubtitle       string              `json:"cardSubtitle,omitempty"`
+	ForceTitleOverlay  bool                `json:"forceTitleOverlay,omitempty"`
+	ID                 string              `json:"id"`
+	MediaType          string              `json:"mediaType"` // movie | series
+	Name               string              `json:"name"`
+	Overview           string              `json:"overview,omitempty"`
+	Year               int                 `json:"year,omitempty"`
+	PosterURL          string              `json:"posterUrl,omitempty"`
+	TextPosterURL      string              `json:"textPosterUrl,omitempty"` // Poster with title text (enriched at response time)
+	BackdropURL        string              `json:"backdropUrl,omitempty"`
+	TextBackdropURL    string              `json:"textBackdropUrl,omitempty"` // Backdrop with title text (enriched at response time)
+	BackdropURLs       []string            `json:"backdropUrls,omitempty"`    // Ranked alternate backdrops (enriched at response time)
+	LogoURL            string              `json:"logoUrl,omitempty"`         // Title logo (enriched at response time)
+	AddedAt            time.Time           `json:"addedAt"`
+	ExternalIDs        map[string]string   `json:"externalIds,omitempty"`
+	Genres             []string            `json:"genres,omitempty"`
+	RuntimeMinutes     int                 `json:"runtimeMinutes,omitempty"`
+	SyncSource         string              `json:"syncSource,omitempty"`      // e.g., "plex:<accountId>:<taskId>" for synced items
+	SyncedAt           *time.Time          `json:"syncedAt,omitempty"`        // when last synced from external source
+	WatchState         string              `json:"watchState,omitempty"`      // "none" | "partial" | "complete"
+	UnwatchedCount     *int                `json:"unwatchedCount,omitempty"`  // series only: total - watched
+	Ratings            []Rating            `json:"ratings,omitempty"`         // hydrated at response time from MDBList
+	Status             string              `json:"status,omitempty"`          // release availability
+	LifecycleStatus    string              `json:"lifecycleStatus,omitempty"` // series lifecycle
+	Theatrical         *Release            `json:"theatricalRelease,omitempty"`
+	HomeRelease        *Release            `json:"homeRelease,omitempty"`
+	ReleaseDate        string              `json:"releaseDate,omitempty"`  // YYYY-MM-DD first watchable date (see Title.ReleaseDate)
+	Availability       string              `json:"availability,omitempty"` // derived at encode time (see Title.Availability)
 }
 
 // WatchlistTombstone records an explicit user removal so source syncs do not
