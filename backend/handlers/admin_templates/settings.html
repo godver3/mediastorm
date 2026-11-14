@@ -3897,6 +3897,8 @@
         if (!fieldDef) return undefined;
         if (fieldDef.type === 'boolean') return false;
         if (fieldDef.type === 'number') return 0;
+        // Unset account assignment is "Legacy visibility", not an empty list.
+        if (fieldDef.optionsFrom === 'accounts') return undefined;
         if (['tags', 'weighted-tags', 'multiselect', 'ordered-multiselect'].includes(fieldDef.type)) return [];
         if (['text', 'password', 'select'].includes(fieldDef.type)) return '';
         return undefined;
@@ -7679,6 +7681,11 @@
                 case 'boolean': defaultValue = (sectionKey.endsWith('sources') || sectionKey.endsWith('playlistSources')) && fieldKey === 'enabled'; break;
                 case 'number': defaultValue = 0; break;
                 case 'multiselect':
+                    // Account assignment starts unset ("Legacy visibility"). An
+                    // empty list means "no accounts" and switches Live TV into
+                    // account-managed mode, so a new provider must not get one.
+                    defaultValue = fieldDef.optionsFrom === 'accounts' ? null : [];
+                    break;
                 case 'checkboxes':
                 case 'tags':
                 case 'weighted-tags':

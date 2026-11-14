@@ -63,14 +63,13 @@ func filterEPGChannelIDs(r *http.Request, manager *config.Manager, provider Live
 			}
 		}
 	}
+	// Channels the profile cannot see are dropped; none left is an empty
+	// guide, not an error. Single-channel routes treat an empty result as 404.
 	result := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if allowed[strings.TrimSpace(id)] {
 			result = append(result, id)
 		}
-	}
-	if len(result) == 0 {
-		return nil, errors.New("channel not available")
 	}
 	return result, nil
 }

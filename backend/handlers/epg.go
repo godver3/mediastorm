@@ -249,7 +249,7 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 	start := time.Now().UTC().Add(-offset)
 	end := start.Add(time.Duration(days) * 24 * time.Hour)
 
-	if _, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil {
+	if allowed, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil || len(allowed) == 0 {
 		http.Error(w, "channel not available", http.StatusNotFound)
 		return
 	}
@@ -418,7 +418,7 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 	year, month, day := date.Date()
 	queryStart := time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Add(-offset)
 	queryEnd := queryStart.Add(24 * time.Hour)
-	if _, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil {
+	if allowed, accessErr := filterEPGChannelIDs(r, h.cfgManager, h.liveChannels, []string{channelID}); accessErr != nil || len(allowed) == 0 {
 		http.Error(w, "channel not available", http.StatusNotFound)
 		return
 	}

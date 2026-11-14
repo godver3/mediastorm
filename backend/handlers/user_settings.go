@@ -80,7 +80,7 @@ func (h *UserSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	scopeUserLiveSettings(&settings, h.ConfigManager, userID, auth.GetAccountID(r))
+	scopeUserLiveSettings(&settings, h.ConfigManager, userID, auth.GetAccountID(r), auth.IsMaster(r))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }
@@ -134,6 +134,7 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	restoreScopedLiveSettings(&settings, oldSettings, h.ConfigManager, userID, auth.GetAccountID(r), auth.IsMaster(r))
 
 	if err := h.Service.Update(userID, settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -175,10 +175,15 @@ accounts cannot inherit unassigned providers. The older single-provider connecti
 has a separate Legacy Provider Accounts selection.
 
 Account assignments and existing Allowed Profiles restrictions are intersected.
-Once account rules are used, profiles keep their own favorites and hidden channels,
-but cannot define additional provider connections through an older settings document.
-Guide queries require a visible channel and selected profile; recording requests use
-the server's authorized channel URL instead of a submitted arbitrary URL. Administrator
+The primary (master) account's own profiles are filtered like any other household,
+so assign providers to it as well before enabling **Require Account Assignment**.
+Once account rules are used, profiles keep their favorites, hidden channels,
+categories, filtering, tuning and guide offset, but provider connections are
+managed by the administrator: a profile's own provider copy is ignored, hidden from
+sub-accounts and kept unchanged when they save their settings. Guide queries only
+return visible channels for the selected profile; recording requests use the
+server's authorized channel URL instead of a submitted arbitrary URL. Catch-up
+playback accepts the archive URLs the server issued to that profile. Administrator
 configuration remains available through the management interface.
 
 ## Connection Invites and Iroh Remote Access

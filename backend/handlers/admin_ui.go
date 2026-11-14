@@ -4074,7 +4074,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
-			scopeUserLiveSettings(userSettings, h.configManager, userID, accountID)
+			scopeUserLiveSettings(userSettings, h.configManager, userID, accountID, false)
 		}
 		json.NewEncoder(w).Encode(userSettings)
 		return
@@ -4213,7 +4213,7 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 	}
 
 	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
-		scopeUserLiveSettings(&userSettings, h.configManager, userID, accountID)
+		scopeUserLiveSettings(&userSettings, h.configManager, userID, accountID, false)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userSettings)
@@ -4243,6 +4243,9 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 	}
 
 	previous, _ := h.userSettingsService.Get(userID)
+	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
+		restoreScopedLiveSettings(&settings, previous, h.configManager, userID, accountID, false)
+	}
 	if err := h.userSettingsService.Update(userID, settings); err != nil {
 		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return

@@ -178,8 +178,8 @@ func TestAccountGuideQueriesCannotNameInvisibleChannels(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0] != "allowed.epg" {
 		t.Fatalf("mixed query: %v %v", got, err)
 	}
-	if _, err := filterEPGChannelIDs(r, manager, provider, []string{"private.epg"}); err == nil {
-		t.Fatal("invisible guide was readable")
+	if got, err := filterEPGChannelIDs(r, manager, provider, []string{"private.epg"}); err != nil || len(got) != 0 {
+		t.Fatalf("invisible guide was readable: %v %v", got, err)
 	}
 	r = httptest.NewRequest(http.MethodGet, "/api/live/epg/now", nil)
 	if _, err := filterEPGChannelIDs(r, manager, provider, []string{"allowed.epg"}); err == nil {
@@ -194,15 +194,18 @@ func TestAccountGuideHTTPRoutesRequireVisibleChannel(t *testing.T) {
 	}
 	h := NewEPGHandler(epg.NewService(t.TempDir(), manager), manager, nil)
 	h.SetLiveChannelProvider(fixedAccountChannels{channels: []LiveChannel{{ID: "visible", TvgID: "visible.epg"}}})
+	// Batch routes answer with an empty guide (clients expect [] / {}); the
+	// single-channel routes answer 404.
 	for _, tc := range []struct {
 		target, body string
 		handler      http.HandlerFunc
+		status       int
 	}{
-		{"/api/live/epg/now?profileId=child&channels=private.epg", "", h.GetNowPlaying},
-		{"/api/live/epg/now?profileId=child", `{"channels":["private.epg"]}`, h.GetNowPlaying},
-		{"/api/live/epg/schedule?profileId=child&channel=private.epg", "", h.GetSchedule},
-		{"/api/live/epg/schedule/batch?profileId=child&channels=private.epg", "", h.GetScheduleMultiple},
-		{"/api/live/epg/channel/private.epg?profileId=child", "", h.GetChannelSchedule},
+		{"/api/live/epg/now?profileId=child&channels=private.epg", "", h.GetNowPlaying, http.StatusOK},
+		{"/api/live/epg/now?profileId=child", `{"channels":["private.epg"]}`, h.GetNowPlaying, http.StatusOK},
+		{"/api/live/epg/schedule?profileId=child&channel=private.epg", "", h.GetSchedule, http.StatusNotFound},
+		{"/api/live/epg/schedule/batch?profileId=child&channels=private.epg", "", h.GetScheduleMultiple, http.StatusOK},
+		{"/api/live/epg/channel/private.epg?profileId=child", "", h.GetChannelSchedule, http.StatusNotFound},
 	} {
 		method := http.MethodGet
 		if tc.body != "" {
@@ -211,7 +214,7 @@ func TestAccountGuideHTTPRoutesRequireVisibleChannel(t *testing.T) {
 		r := httptest.NewRequest(method, tc.target, strings.NewReader(tc.body))
 		w := httptest.NewRecorder()
 		tc.handler(w, r)
-		if w.Code != http.StatusNotFound {
+		if w.Code != tc.status || strings.Contains(w.Body.String(), "private.epg\"") {
 			t.Fatalf("%s %s: %d %s", method, tc.target, w.Code, w.Body.String())
 		}
 	}
