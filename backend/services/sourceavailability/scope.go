@@ -66,7 +66,7 @@ func NewScopeFactory(manager *config.Manager, profiles profileSettings, devices 
 		}
 		// The digest never exposes configuration credentials. Hashing the entire
 		// selected source configuration also detects permission/key/URL changes.
-		parts := []any{visible.Indexers, cfg.SourceAvailability, cfg.Filtering, cfg.AnimeFiltering, cfg.Ranking, cfg.Playback.PreferredAudioLanguage, cfg.Metadata, device}
+		parts := []any{visible.Indexers, cfg.SourceAvailability, cfg.Streaming, cfg.Filtering, cfg.AnimeFiltering, cfg.Ranking, cfg.Playback.PreferredAudioLanguage, cfg.Metadata, device}
 		audio := cfg.Playback.PreferredAudioLanguage
 		if profile != nil {
 			parts = append(parts, profile.Filtering, profile.AnimeFiltering, profile.Ranking, profile.Playback.PreferredAudioLanguage, profile.Metadata)

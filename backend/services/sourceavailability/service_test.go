@@ -16,11 +16,12 @@ import (
 )
 
 type fakeSearch struct {
-	result  indexer.ScoredSplitSearchResult
-	calls   int
-	options indexer.SearchOptions
-	busy    bool
-	cancel  bool
+	beforeReturn func()
+	result       indexer.ScoredSplitSearchResult
+	calls        int
+	options      indexer.SearchOptions
+	busy         bool
+	cancel       bool
 }
 
 func (f *fakeSearch) BeginAvailabilitySearch(ctx context.Context) (context.Context, func(), error) {
@@ -32,6 +33,9 @@ func (f *fakeSearch) BeginAvailabilitySearch(ctx context.Context) (context.Conte
 func (f *fakeSearch) SearchWithScoringSplit(ctx context.Context, opts indexer.SearchOptions) (<-chan indexer.ScoredSplitSearchResult, <-chan indexer.ScoredSplitSearchResult) {
 	f.calls++
 	f.options = opts
+	if f.beforeReturn != nil {
+		f.beforeReturn()
+	}
 	u, d := make(chan indexer.ScoredSplitSearchResult, 1), make(chan indexer.ScoredSplitSearchResult, 1)
 	if !f.cancel {
 		u <- f.result
@@ -219,5 +223,21 @@ func TestAvailabilityQueueBounded(t *testing.T) {
 	}
 	if len(svc.pending) != MaxRecords {
 		t.Fatalf("queue size=%d", len(svc.pending))
+	}
+}
+
+func TestAvailabilityPreferenceChangesDuringWorkDiscardStaleObservations(t *testing.T) {
+	svc, search, _ := availabilityFixture(t)
+	identity := "scope-tv"
+	svc.scope = func(string, string) (func(string) (Selection, error), error) {
+		return func(string) (Selection, error) { return Selection{Key: identity}, nil }, nil
+	}
+	svc.AnnotateTitles("stefan", "tv", []models.Title{testTitle("a")})
+	observe := svc.ObservePlaybackStart("stefan", "tv", "a", "movie")
+	search.beforeReturn = func() { identity = "new-language-scope" }
+	svc.checkOne(t.Context())
+	observe(true)
+	if svc.Store.Get("stefan", "a", "scope-tv").State != "unknown" {
+		t.Fatal("changed preferences reused an in-flight result")
 	}
 }

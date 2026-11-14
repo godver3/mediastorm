@@ -7,6 +7,7 @@ import (
 	"novastream/models"
 	"novastream/services/indexer"
 	"novastream/utils/language"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -134,13 +135,26 @@ func (s *Service) ObservePlaybackStart(profileID, clientID, titleID, mediaType s
 		return func(bool) {}
 	}
 	return func(prepared bool) {
-		if !prepared {
+		if !prepared || !s.scopeStillMatches(profileID, clientID, titleID, identity.Key) {
 			return
 		}
 		checked := s.now().UTC()
 		expires := checked.Add(time.Duration(cfg.SourceAvailability.EffectiveRefreshHours()) * time.Hour)
 		_ = s.Store.Put(profileID, titleID, identity.Key, models.SourceAvailability{State: "found", CheckedAt: &checked, ExpiresAt: &expires, Reason: "prepared_source"})
 	}
+}
+
+func (s *Service) scopeStillMatches(profile, client, title, identity string) bool {
+	cfg, err := s.manager.Load()
+	if err != nil || !cfg.SourceAvailability.Enabled {
+		return false
+	}
+	resolve, err := s.scope(profile, client)
+	if err != nil {
+		return false
+	}
+	selection, err := resolve(title)
+	return err == nil && selection.Key == identity
 }
 
 func (s *Service) Start(ctx context.Context) {
@@ -251,6 +265,10 @@ func (s *Service) checkOne(ctx context.Context) {
 	}
 	u, d := s.search.SearchWithScoringSplit(work, indexer.SearchOptions{AvailabilityCheck: true, AvailabilityIndexerNames: providers, TitleID: chosen.Title.ID, Query: chosen.Title.Name, MediaType: media, Year: chosen.Title.Year, IMDBID: chosen.Title.IMDBID, TVDBID: chosen.Title.TVDBID, UserID: chosen.ProfileID, ClientID: chosen.ClientID, OriginalLanguage: chosen.Title.Language, AlternateTitles: []string{chosen.Title.OriginalName}, MaxResults: 20})
 	result, err := receiveSearch(work, u, d)
+	latest, loadErr := s.manager.Load()
+	if loadErr != nil || !slices.Equal(providers, selectedIndexers(latest, chosen.ProfileID)) || !s.scopeStillMatches(chosen.ProfileID, chosen.ClientID, chosen.Title.ID, chosen.Scope) {
+		return
+	}
 	checked := s.now().UTC()
 	expires := checked.Add(interval)
 	value := models.SourceAvailability{State: "unknown", CheckedAt: &checked, ExpiresAt: &expires, Providers: providers, Reason: "search_incomplete"}
