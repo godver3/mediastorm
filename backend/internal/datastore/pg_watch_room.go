@@ -373,13 +373,17 @@ func (r *pgWatchRoomRepo) JoinExternalGuest(ctx context.Context, roomID, guestID
 	return err
 }
 
+// IsExternalGuest reports whether a guest who already joined may keep using the
+// room. It deliberately ignores the invitation's state: disabling or rotating
+// the link only stops new joins (JoinExternalGuest and the invitation lookups
+// still require an active invitation); guests already in the room stay until
+// they leave or the room ends or expires.
 func (r *pgWatchRoomRepo) IsExternalGuest(ctx context.Context, roomID, guestID string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `SELECT EXISTS(
 		SELECT 1 FROM watch_room_guest_members g
-		JOIN watch_room_external_invites i ON i.room_id=g.room_id
 		JOIN watch_rooms r ON r.id=g.room_id
-		WHERE g.room_id=$1 AND g.guest_id=$2 AND i.active AND i.expires_at>now()
+		WHERE g.room_id=$1 AND g.guest_id=$2
 			AND r.status<>'ended' AND r.expires_at>now())`, roomID, guestID).Scan(&exists)
 	return exists, err
 }
