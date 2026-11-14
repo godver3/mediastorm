@@ -919,15 +919,27 @@ func buildPersonalizedExplanation(seeds []personalizedSeed, days int, popularity
 			break
 		}
 	}
+	onlyRatings := true
+	hasInterests := false
+	for _, seed := range seeds {
+		rated := seed.Source == "rating_like" || seed.Source == "rating_love"
+		onlyRatings = onlyRatings && rated
+		hasInterests = hasInterests || rated || seed.Source == "watchlist" || seed.Source == "custom_list" || seed.Source == "search"
+	}
 	summary := "Based on your recent watch activity"
-	if len(names) > 0 {
-		summary = "Because you watched " + joinPersonalizedNames(names)
-		for _, seed := range seeds {
-			if seed.Source == "watchlist" || seed.Source == "custom_list" || seed.Source == "search" {
-				summary = "Based on your interests in " + joinPersonalizedNames(names)
-				break
-			}
+	switch {
+	case onlyRatings:
+		summary = "Based on your personal ratings"
+		if len(names) > 0 {
+			summary = "Because you liked " + joinPersonalizedNames(names)
 		}
+	case hasInterests:
+		summary = "Based on your interests"
+		if len(names) > 0 {
+			summary += " in " + joinPersonalizedNames(names)
+		}
+	case len(names) > 0:
+		summary = "Because you watched " + joinPersonalizedNames(names)
 	}
 
 	details := make([]PersonalizedRecommendationSeed, 0, minInt(len(seeds), 12))

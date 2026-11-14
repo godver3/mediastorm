@@ -2223,6 +2223,10 @@ components:
       type: object
       required: [id, name, mediaType]
       properties:
+        personalRating:
+          type: string
+          enum: [like, love, dislike]
+          description: Optional profile preference. Omission does not prove that ratings were loaded; use the rating endpoint for an authoritative state.
         sourceAvailability:
           $ref: '#/components/schemas/SourceAvailability'
         id:

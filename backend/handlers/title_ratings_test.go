@@ -321,3 +321,22 @@ func TestSparseRatedMetadataRetainsVerifiedProviderAliasesInRecommendationInputs
 		t.Fatal("other preference lost")
 	}
 }
+
+func TestRatingRecommendationExplanationsNeverInventPlayback(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		seeds    []personalizedSeed
+		expected string
+	}{
+		{"rated only", []personalizedSeed{{Title: "Synthetic Favorite", Source: "rating_love"}}, "Because you liked Synthetic Favorite"},
+		{"unnamed preference", []personalizedSeed{{Source: "rating_like"}}, "Based on your personal ratings"},
+		{"mixed interests", []personalizedSeed{{Title: "Synthetic Favorite", Source: "rating_like"}, {Title: "Synthetic Saved", Source: "watchlist"}}, "Based on your interests in"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := buildPersonalizedExplanation(test.seeds, 14, false)
+			if result == nil || !strings.HasPrefix(result.Summary, test.expected) || strings.Contains(strings.ToLower(result.Summary), "watched") {
+				t.Fatal("unplayed preferences described as playback")
+			}
+		})
+	}
+}
