@@ -834,6 +834,7 @@ func main() {
 	historyHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	startupHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	prequeueHandler.SetSourceAvailability(availabilityService)
+	availabilityService.SetLocalChecker(handlers.NewCatalogueLocalChecker(prequeueHandler, accountsService))
 	log.Printf("[startup] phase=prequeue-handler-wiring duration=%s", time.Since(startupPhaseStarted))
 
 	if settings.Transmux.FFmpegPath == "" {

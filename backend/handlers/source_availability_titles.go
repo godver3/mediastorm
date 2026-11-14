@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -136,6 +137,11 @@ func (h *MetadataHandler) TitleSourceHints(w http.ResponseWriter, r *http.Reques
 			}
 			response.Items = append(response.Items, item)
 		}
+	}
+	if local, ok := service.(interface {
+		ApplyLocalTitles(context.Context, string, string, []models.Title, sourceavailability.TitleViewResponse) sourceavailability.TitleViewResponse
+	}); ok {
+		response = local.ApplyLocalTitles(r.Context(), profile, client, titles, response)
 	}
 	writeTitleHints(w, response)
 }

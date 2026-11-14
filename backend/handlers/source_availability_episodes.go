@@ -175,6 +175,11 @@ func (h *MetadataHandler) EpisodeSourceHints(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "visible episode demand could not be accepted", status)
 		return
 	}
+	if local, ok := service.(interface {
+		ApplyLocalEpisodes(context.Context, string, string, models.Title, []models.SeriesEpisode, sourceavailability.EpisodeViewResponse) sourceavailability.EpisodeViewResponse
+	}); ok {
+		response = local.ApplyLocalEpisodes(r.Context(), profile, client, title, episodes, response)
+	}
 	writeEpisodeHints(w, response)
 }
 func writeEpisodeHints(w http.ResponseWriter, value sourceavailability.EpisodeViewResponse) {

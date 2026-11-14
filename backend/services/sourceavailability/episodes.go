@@ -118,7 +118,7 @@ func (s *Service) ReplaceEpisodeView(profile, client, viewID string, version int
 		item := request{ProfileID: profile, ClientID: client, Title: title, Episode: &copy, Scope: selected.Key, AudioLanguage: selected.AudioLanguage, LastSeen: s.now()}
 		value := s.episodeAvailability(item, selected)
 		response.Items = append(response.Items, EpisodeHint{ID: ep.ID, Season: ep.SeasonNumber, Episode: ep.EpisodeNumber, Availability: &value})
-		if episodeEligibility(title, ep, s.now()) == "" {
+		if episodeEligibility(title, ep, s.now()) == "" || s.hasLocalChecker() {
 			pending = append(pending, item)
 			desired[requestID(item)] = true
 		}
@@ -171,7 +171,7 @@ func (s *Service) episodeAvailability(item request, selection Selection) models.
 		return unknown(reason)
 	}
 	value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), selection.Key)
-	return s.evaluateEpisode(value, evidence, item, selection)
+	return s.localConservative(s.evaluateEpisode(value, evidence, item, selection))
 }
 func (s *Service) evaluateEpisode(value models.SourceAvailability, evidence *observation, item request, selection Selection) models.SourceAvailability {
 	if evidence == nil {

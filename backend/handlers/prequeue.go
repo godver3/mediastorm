@@ -1661,7 +1661,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		observe := h.sourceAvailability.ObservePlaybackStart(userID, clientID, titleID, mediaType)
 		defer func() {
 			entry, ok := h.store.Get(prequeueID)
-			observe(ok && entry.Status == playback.PrequeueStatusReady && entry.StreamPath != "")
+			observe(ok && entry.Status == playback.PrequeueStatusReady && entry.StreamPath != "" && !strings.HasPrefix(entry.StreamPath, "localmedia:"))
 		}()
 	}
 	// Create cancellable context

@@ -28,6 +28,8 @@ type request struct {
 	LastSeen                   time.Time
 }
 type Service struct {
+	localChecker    LocalChecker
+	localRecords    map[string]localObservation
 	views           map[string]episodeView
 	delivered       map[string]deliveredTitle
 	activeRequestID string
@@ -161,7 +163,7 @@ func (s *Service) ObservePlaybackStart(profileID, clientID, titleID, mediaType s
 		}
 		checked := s.now().UTC()
 		expires := checked.Add(time.Duration(cfg.SourceAvailability.EffectiveRefreshHours()) * time.Hour)
-		_ = s.Store.putObservation(profileID, titleID, identity.Key, models.SourceAvailability{State: "found", CheckedAt: &checked, ExpiresAt: &expires, Reason: "prepared_source"}, &observation{Version: 1, Kind: "prepared", ReportRevision: revision})
+		_ = s.Store.putObservation(profileID, titleID, identity.Key, models.SourceAvailability{State: "found", CheckedAt: &checked, ExpiresAt: &expires, Reason: "prepared_source"}, &observation{Version: 1, Kind: "prepared", PreparedRemote: true, ReportRevision: revision})
 	}
 }
 
@@ -213,11 +215,11 @@ func selectedIndexers(settings config.Settings, profileID string) []string {
 // checkOne limits total title checks per six-to-24-hour window and never
 // downloads an NZB or resolves playback. Incomplete searches remain unknown.
 func (s *Service) checkOne(ctx context.Context) {
-	if s.search == nil || s.scope == nil {
+	if s.scope == nil {
 		return
 	}
 	settings, err := s.manager.Load()
-	if err != nil || !settings.SourceAvailability.Enabled || len(settings.SourceAvailability.IndexerNames) == 0 {
+	if err != nil || !settings.SourceAvailability.Enabled {
 		return
 	}
 	now := s.now()
@@ -236,10 +238,16 @@ func (s *Service) checkOne(ctx context.Context) {
 		}
 		value, evidence := s.Store.getObservation(item.ProfileID, item.cacheID(), item.Scope)
 		legacy := s.reports != nil && evidence == nil && value.CheckedAt != nil
-		changedPreparation := evidence != nil && evidence.Kind == "prepared" && evidence.ReportRevision != s.reports.RevisionFor(badstreams.PlaybackContext{
+		changedPreparation := evidence != nil && evidence.Kind == "prepared" && (s.localChecker != nil && !evidence.PreparedRemote || evidence.ReportRevision != s.reports.RevisionFor(badstreams.PlaybackContext{
 			ProfileID: item.ProfileID, ClientID: item.ClientID, TitleID: item.Title.ID, AudioLanguage: item.AudioLanguage,
-		})
-		if value.ExpiresAt != nil && value.ExpiresAt.After(now) && !legacy && !changedPreparation {
+		}))
+		localDue := s.localDueLocked(item)
+		localFound := !localDue && s.localChecker != nil && s.localRecords[id].State == "found"
+		remoteFresh := value.ExpiresAt != nil && value.ExpiresAt.After(now) && !legacy && !changedPreparation
+		if item.Episode != nil && episodeEligibility(item.Title, *item.Episode, now) != "" {
+			remoteFresh = true
+		}
+		if !localDue && (remoteFresh || localFound || len(settings.SourceAvailability.IndexerNames) == 0) {
 			continue
 		}
 		if chosenID == "" || item.LastSeen.After(chosen.LastSeen) {
@@ -272,12 +280,6 @@ func (s *Service) checkOne(ctx context.Context) {
 		return
 	}
 	providers := selectedIndexers(settings, chosen.ProfileID)
-	if len(providers) == 0 {
-		s.mu.Lock()
-		delete(s.pending, chosenID)
-		s.mu.Unlock()
-		return
-	}
 	s.mu.Lock()
 	until := s.neededUntilLocked(chosenID)
 	if until.IsZero() {
@@ -289,11 +291,35 @@ func (s *Service) checkOne(ctx context.Context) {
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); s.activeRequestID = ""; s.cancelRequest = nil; s.mu.Unlock() }()
 	defer cancel()
+	if s.search == nil {
+		return
+	}
 	work, release, err := s.search.BeginAvailabilitySearch(bounded)
 	if err != nil {
 		return
 	}
 	defer release()
+	if s.checkedLocal(work, chosen, current) {
+		return
+	}
+	if work.Err() != nil || !s.episodeNeeded(chosenID) {
+		return
+	}
+	if chosen.Episode != nil && episodeEligibility(chosen.Title, *chosen.Episode, s.now()) != "" {
+		return
+	}
+	if len(providers) == 0 {
+		s.mu.Lock()
+		delete(s.pending, chosenID)
+		s.mu.Unlock()
+		return
+	}
+	cached, existing := s.Store.getObservation(chosen.ProfileID, chosen.cacheID(), chosen.Scope)
+	fresh := cached.ExpiresAt != nil && cached.ExpiresAt.After(s.now())
+	recheck := existing != nil && existing.Kind == "prepared" && (s.hasLocalChecker() && !existing.PreparedRemote || existing.ReportRevision != s.reports.RevisionFor(s.makeEpisodeReportContext(chosen, current)))
+	if fresh && existing != nil && !recheck {
+		return
+	}
 	reserved, err := s.Store.reserveCheck(now, interval, settings.SourceAvailability.EffectiveMaxTitles())
 	if err != nil || !reserved {
 		return

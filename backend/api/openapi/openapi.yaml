@@ -2049,6 +2049,7 @@ components:
       type: object
       required: [state, complete]
       properties:
+        sourceType: {type: string, enum: [local], description: Locally checked file and requested audio; not a playback guarantee}
         state:
           type: string
           enum: [unknown, found, not_found]

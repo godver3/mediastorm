@@ -25,6 +25,7 @@ type candidate struct {
 }
 
 type observation struct {
+	PreparedRemote bool        `json:"preparedRemote,omitempty"`
 	Version        int         `json:"version"`
 	Kind           string      `json:"kind"`
 	Candidates     []candidate `json:"candidates,omitempty"`
@@ -167,5 +168,9 @@ func (s *Service) evaluate(value models.SourceAvailability, evidence *observatio
 
 func (s *Service) availability(profile, client, title string, selection Selection) models.SourceAvailability {
 	value, evidence := s.Store.getObservation(profile, title, selection.Key)
-	return s.evaluate(value, evidence, s.reportContext(profile, client, title, selection))
+	value = s.evaluate(value, evidence, s.reportContext(profile, client, title, selection))
+	if s.hasLocalChecker() && evidence != nil && evidence.Kind == "prepared" && !evidence.PreparedRemote && value.State == "found" {
+		value.State, value.Complete, value.Reason = "unknown", false, "prepared_source_requires_recheck"
+	}
+	return s.localConservative(value)
 }
