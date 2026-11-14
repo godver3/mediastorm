@@ -105,6 +105,52 @@ tags:
   - name: clients
 
 paths:
+  /api/users/{userId}/settings/skipping:
+    patch:
+      operationId: patchProfileSkipping
+      summary: Patch profile auto-skip preferences
+      description: |
+        Updates only supplied segment types and preserves unrelated settings.
+        Values are stored per profile and returned by GET /api/users/{userId}/settings
+        as playback.introAutoSkip, playback.recapAutoSkip and playback.creditsAutoSkip.
+        Requires ownership of the profile and its unlock token when PIN enforcement is on.
+        Clients must not import unscoped browser preferences into an arbitrary profile.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                intro: {type: boolean}
+                recap: {type: boolean}
+                credits: {type: boolean}
+      responses:
+        '200':
+          description: Supplied preferences saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  intro: {type: boolean}
+                  recap: {type: boolean}
+                  credits: {type: boolean}
+        '400':
+          description: Empty, unknown or malformed preferences
+        '403':
+          description: Profile PIN required
+        '404':
+          description: Profile not owned by this account
+
   /api/auth/login:
     post:
       tags: [auth]

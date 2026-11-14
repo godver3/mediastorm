@@ -23,6 +23,7 @@ import (
 	"novastream/services/profileunlock"
 	"novastream/services/sessions"
 	"novastream/services/sourcehealth"
+	user_settings "novastream/services/user_settings"
 	"novastream/services/users"
 	"novastream/services/watchlist"
 )
@@ -854,6 +855,27 @@ func TestOpenAPIContract(t *testing.T) {
 		}}, h.Register, http.StatusOK)
 		exercise(t, v, contractCall{method: http.MethodPost, target: "/api/clients/register", body: map[string]string{"userId": profile.ID}, invalid: true},
 			h.Register, http.StatusBadRequest)
+	})
+
+	t.Run("profile-skipping", func(t *testing.T) {
+		dir := t.TempDir()
+		usersSvc, err := users.NewService(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile, err := usersSvc.CreateForAccount(contractAccountID, "Fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		settingsSvc, err := user_settings.NewService(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := NewUserSettingsHandler(settingsSvc, usersSvc, nil)
+		exercise(t, v, contractCall{method: http.MethodPatch,
+			target: "/api/users/" + profile.ID + "/settings/skipping",
+			vars:   map[string]string{"userID": profile.ID}, body: map[string]bool{"intro": true, "recap": false},
+		}, h.PatchSkipping, http.StatusOK)
 	})
 
 	t.Run("coverage", func(t *testing.T) {

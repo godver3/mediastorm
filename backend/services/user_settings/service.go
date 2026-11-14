@@ -316,6 +316,12 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Playback.RewindOnPlaybackStart == nil {
 			settings.Playback.RewindOnPlaybackStart = defaults.Playback.RewindOnPlaybackStart
 		}
+		if settings.Playback.IntroAutoSkip == nil {
+			settings.Playback.IntroAutoSkip = defaults.Playback.IntroAutoSkip
+		}
+		if settings.Playback.RecapAutoSkip == nil {
+			settings.Playback.RecapAutoSkip = defaults.Playback.RecapAutoSkip
+		}
 		if settings.Playback.CreditsAutoSkip == nil {
 			settings.Playback.CreditsAutoSkip = defaults.Playback.CreditsAutoSkip
 		}
@@ -695,6 +701,14 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	// If settings are empty, delete the entry instead of saving
 	// General settings PUTs (including older clients) cannot replace sports data.
 	settings.SportsPreferences = s.settings[userID].SportsPreferences
+	// Older clients do not know these fields; their full settings PUT must not
+	// silently erase preferences saved by a newer player.
+	if settings.Playback.IntroAutoSkip == nil {
+		settings.Playback.IntroAutoSkip = s.settings[userID].Playback.IntroAutoSkip
+	}
+	if settings.Playback.RecapAutoSkip == nil {
+		settings.Playback.RecapAutoSkip = s.settings[userID].Playback.RecapAutoSkip
+	}
 	if isSettingsEmpty(settings) {
 		log.Printf("[user-settings] Update(%q): settings empty, deleting entry", userID)
 		delete(s.settings, userID)

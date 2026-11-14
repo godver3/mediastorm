@@ -1198,9 +1198,6 @@
     let webPlayerControlsHideTimer = null;
     let webPlayerMediaRecoverAttempts = 0;
     const WEB_PLAYER_VOLUME_STORAGE_KEY = 'strmr.webPlayerVolume';
-    const WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY = 'strmr.webPlayerAutoSkipRecap.v1';
-    const WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY = 'strmr.webPlayerAutoSkipIntro.v1';
-    const WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY = 'strmr.webPlayerAutoSkipCredits.v1';
     const savedWebPlayerVolume = loadWebPlayerVolumePrefs();
     let webPlayerVolume = savedWebPlayerVolume.volume;
     let webPlayerMuted = savedWebPlayerVolume.muted;
@@ -1231,10 +1228,12 @@
     let webPlayerWatchNextDeadline = 0;
     let webPlayerWatchNextTimer = null;
     let webPlayerPromptConfirmed = false;
-    let webPlayerAutoSkipRecapPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY);
-    let webPlayerAutoSkipIntroPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY);
-    let webPlayerAutoSkipCreditsPreference = loadWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY);
+    let webPlayerAutoSkipRecapPreference = false;
+    let webPlayerAutoSkipIntroPreference = false;
+    let webPlayerAutoSkipCreditsPreference = false;
     let webPlayerAutoSkipInProgress = false;
+    let webPlayerSkipPreferenceSave = Promise.resolve();
+    let webPlayerSkipPreferenceGeneration = 0;
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
     let webPlayerAudioPreferenceGeneration = 0;
@@ -1721,6 +1720,8 @@
     async function loadEffectiveWebPlaybackSettings() {
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
       await webPlayerAudioPreferenceSave;
+      await webPlayerSkipPreferenceSave;
+      const skipGeneration = webPlayerSkipPreferenceGeneration;
       // These three are independent of each other — only their merged result
       // (below) depends on all three — so fetch them concurrently instead of
       // one after another to cut startup latency.
@@ -1743,30 +1744,28 @@
         creditsDetectionEnabled: Boolean(pick(undefined, client.creditsDetectionEnabled, base.creditsDetectionEnabled, legacyCredits)),
         creditsAutoSkip: Boolean(pick(undefined, client.creditsAutoSkip, base.creditsAutoSkip, legacyCredits)),
       };
-      if (webPlayerAutoSkipCreditsPreference === null) {
-        webPlayerAutoSkipCreditsPreference = Boolean(webPlayerPreferences.creditsAutoSkip);
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY, webPlayerAutoSkipCreditsPreference);
-      }
-      if (webPlayerAutoSkipRecapPreference === null) {
-        webPlayerAutoSkipRecapPreference = false;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY, webPlayerAutoSkipRecapPreference);
-      }
-      if (webPlayerAutoSkipIntroPreference === null) {
-        webPlayerAutoSkipIntroPreference = false;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY, webPlayerAutoSkipIntroPreference);
+      // The profile is authoritative, including explicit false. Browser storage
+      // and per-device defaults must not leak preferences between profiles.
+      if (skipGeneration === webPlayerSkipPreferenceGeneration) {
+        webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
+        webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
+        webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
       }
       return webPlayerPreferences;
     }
 
-    function loadWebAutoSkipPreference(key) {
-      try {
-        const value = window.localStorage?.getItem(key);
-        return value === null ? null : value === 'true';
-      } catch { return null; }
-    }
-
-    function persistWebAutoSkipPreference(key, value) {
-      try { window.localStorage?.setItem(key, String(Boolean(value))); } catch {}
+    function saveWebSkipPreference(type, value) {
+      if (!activeProfileId || SHARE_MODE || WATCH_PARTY_MODE) return;
+      const profileId = activeProfileId;
+      const field = { intro: 'intro', recap: 'recap', credits: 'credits' }[type];
+      if (!field) return;
+      webPlayerSkipPreferenceSave = webPlayerSkipPreferenceSave.then(() => apiCall(
+        '/users/' + encodeURIComponent(profileId) + '/settings/skipping', {
+          method: 'PATCH', keepalive: true, body: JSON.stringify({ [field]: value }),
+        }
+      )).catch(() => {
+        setTransientStatus('Auto-skip changed for this playback, but could not be saved to your profile.');
+      });
     }
 
     // Each segment kind has its own independent auto-skip toggle. 'credits'
@@ -1796,18 +1795,17 @@
 
     function setWebAutoSkipPreference(enabled, type) {
       const value = Boolean(enabled);
+      webPlayerSkipPreferenceGeneration += 1;
       if (type === 'recap') {
         webPlayerAutoSkipRecapPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_RECAP_STORAGE_KEY, value);
       } else if (type === 'credits') {
         webPlayerAutoSkipCreditsPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_CREDITS_STORAGE_KEY, value);
         if (value) webPlayerWatchNextAutoAdvanceBlocked = false;
         else clearWatchNextCountdown();
       } else {
         webPlayerAutoSkipIntroPreference = value;
-        persistWebAutoSkipPreference(WEB_PLAYER_AUTO_SKIP_INTRO_STORAGE_KEY, value);
       }
+      saveWebSkipPreference(type || 'intro', value);
       syncWebAutoSkipControls();
       updateWebSegmentPrompts();
       updateUpNextVisibility();
@@ -2005,7 +2003,7 @@
           ${WATCH_PARTY_MODE ? `<aside id="watchPartyPanel" class="watch-party-panel desktop-only" aria-label="Watching Together"><div class="watch-party-panel-title"><span>Watching Together</span><button id="watchPartyPanelToggle" class="watch-party-panel-toggle" type="button" aria-label="Collapse Watching Together" aria-expanded="true" onclick="toggleWatchPartyPanel()">−</button></div><div id="watchPartyMembers"></div></aside>` : ''}
           <div id="skipSegmentPrompt" class="skip-segment-prompt">
             <button id="skipSegmentButton" class="skip-segment-button" type="button" onclick="skipActiveWebSegment()" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true" title="The host controls playback"' : ''}></button>
-            <label class="web-auto-skip-control" title="Remember on this browser">
+            <label class="web-auto-skip-control" title="Save to this profile on all devices">
               <input class="web-auto-skip-toggle" type="checkbox" data-skip-type="intro" onchange="setWebAutoSkipPreference(this.checked, this.dataset.skipType)">
               <span>Auto</span>
             </label>
@@ -2017,7 +2015,7 @@
                 <div class="up-next-label">Up Next</div>
                 <div id="upNextTitle" class="up-next-title"></div>
                 <div id="upNextCountdown" class="up-next-countdown"></div>
-                <label class="web-auto-skip-control up-next-auto-skip" title="Remember on this browser">
+                <label class="web-auto-skip-control up-next-auto-skip" title="Save to this profile on all devices">
                   <input class="web-auto-skip-toggle" type="checkbox" onchange="setWebAutoSkipPreference(this.checked, 'credits')">
                   <span>Auto-skip credits</span>
                 </label>
