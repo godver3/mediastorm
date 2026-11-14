@@ -42,6 +42,7 @@ type User struct {
 	// remain not_shared so existing profiles are never silently opted in.
 	ActivityPrivacy string `json:"activityPrivacy"`
 	// Kids profile content restriction settings
+	KidsLiveMaxAge     *int      `json:"kidsLiveMaxAge,omitempty"`     // Numeric minimum-age ceiling for rated Live TV; nil blocks Live TV for kids
 	KidsMode           string    `json:"kidsMode,omitempty"`           // "rating", "content_list", or "" (disabled)
 	KidsMaxRating      string    `json:"kidsMaxRating,omitempty"`      // Deprecated: use KidsMaxMovieRating/KidsMaxTVRating instead
 	KidsMaxMovieRating string    `json:"kidsMaxMovieRating,omitempty"` // Max allowed movie rating: "G", "PG", "PG-13", "R", "NC-17"

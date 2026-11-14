@@ -120,6 +120,21 @@
         </div>
     </div>
 
+    <div class="card" id="live-age-section">
+        <div class="card-header"><h2>Live TV age limit</h2></div>
+        <div class="card-body">
+            <p>Allow live programmes with a verified German FSK/FSF minimum age up to this limit. Missing or unsupported guide ratings are blocked. The same channel is checked again when its programme changes.</p>
+            <label class="form-label" for="liveMaxAge">Maximum programme age</label>
+            <select id="liveMaxAge" class="form-select">
+                <option value="">Live TV blocked</option>
+                <option value="0">FSK 0</option><option value="6">FSK 6</option>
+                <option value="12">FSK 12</option><option value="16">FSK 16</option><option value="18">FSK 18</option>
+            </select>
+            <p class="form-hint">Managed HLS playback is required. Catch-up, timeshift, raw playlist export and recording are unavailable for kids profiles.</p>
+            <button type="button" class="btn btn-primary" onclick="saveLiveAge()">Save Live TV age limit</button>
+        </div>
+    </div>
+
     <!-- Allowed Lists -->
     <div class="card" id="lists-section">
         <div class="card-header">
@@ -355,6 +370,8 @@ async function loadProfile() {
         const mode = profile.kidsMode || 'rating';
         document.querySelector(`input[name="kidsMode"][value="${mode}"]`).checked = true;
 
+        document.getElementById("liveMaxAge").value = profile.kidsLiveMaxAge == null ? "" : String(profile.kidsLiveMaxAge);
+
         // Set ratings - use separate movie/TV ratings, or fall back to old combined rating, or default to G/TV-Y
         const movieRating = profile.kidsMaxMovieRating || profile.kidsMaxRating || 'G';
         const tvRating = profile.kidsMaxTVRating || movieToTvRating[profile.kidsMaxRating] || 'TV-Y';
@@ -419,6 +436,19 @@ function renderLists() {
             </button>
         </div>
     `).join('');
+}
+
+async function saveLiveAge() {
+    const value = document.getElementById('liveMaxAge').value;
+    const maxAge = value === '' ? null : Number(value);
+    try {
+        const res = await fetch(basePath + '/api/users/' + profileId + '/kids/live-age', {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({maxAge})
+        });
+        if (!res.ok) throw new Error(await res.text());
+        profile.kidsLiveMaxAge = maxAge;
+        showToast('Live TV age limit saved');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
 }
 
 async function saveMode() {

@@ -460,6 +460,10 @@ func TestOpenAPIContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		h := NewUsersHandler(usersSvc)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/users/" + profile.ID + "/kids/live-age", vars: map[string]string{"userID": profile.ID}, body: map[string]any{"maxAge": 6}, master: true}, h.SetKidsLiveMaxAge, http.StatusOK)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/users/" + profile.ID + "/kids/live-age", vars: map[string]string{"userID": profile.ID}, body: map[string]any{"maxAge": 18}}, h.SetKidsLiveMaxAge, http.StatusForbidden)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/users/" + profile.ID + "/kids/live-age", vars: map[string]string{"userID": profile.ID}, body: map[string]any{"maxAge": nil}, master: true}, h.SetKidsLiveMaxAge, http.StatusOK)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/users/" + profile.ID + "/kids/live-age", vars: map[string]string{"userID": profile.ID}, body: map[string]any{"maxAge": 7}, master: true, invalid: true}, h.SetKidsLiveMaxAge, http.StatusBadRequest)
 		unlocks := profileunlock.NewService(nil)
 		h.SetProfileUnlocks(unlocks, func() time.Duration { return time.Hour })
 		session := &models.Session{Token: "contract-test-token", AccountID: contractAccountID, ExpiresAt: time.Now().Add(24 * time.Hour)}

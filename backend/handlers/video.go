@@ -5256,6 +5256,11 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	var referenceOK bool
+	liveURL, referenceOK = h.resolveKidsLiveReference(w, r, liveURL)
+	if !referenceOK {
+		return
+	}
 	// Provider resolution below may replace liveURL; share links are bound to this one.
 	requestedURL := liveURL
 
@@ -5271,6 +5276,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	hdHomeRunInput, authorizeErr := authorizeLiveStreamURL(r, liveURL, h.configManager, h.liveChannels)
 	if authorizeErr != nil {
 		http.Error(w, "external media URL is not allowed", http.StatusBadRequest)
+		return
+	}
+	if !h.requireLiveProgramme(w, r, requestedURL) {
 		return
 	}
 	profileName := strings.TrimSpace(r.URL.Query().Get("profileName"))
@@ -5324,7 +5332,11 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	if parseOptionalBool(r.URL.Query().Get("timeshift")) {
 		timeshiftWindow = h.liveTimeshiftWindow()
 	}
-	forceHLS := timeshiftWindow > 0 ||
+	kidsLive := isLiveKidsProfile(h.usersSvc, profileID)
+	if kidsLive {
+		timeshiftWindow = 0
+	}
+	forceHLS := kidsLive || timeshiftWindow > 0 ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "web") ||
 		(hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("target")), "cast"))
@@ -5383,6 +5395,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 				ProxyURL:       target.ProxyURL,
 				RequestHeaders: providerRequestHeaders,
 				AccountID:      auth.GetAccountID(r),
+				ProfileID:      profileID,
 				Provider:       target.Provider,
 				BucketKey:      target.BucketKey,
 			})
@@ -5457,6 +5470,8 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 	session.mu.Lock()
 	session.MediaMetadata = mediaMetadata
 	session.ClientID = clientID
+	session.LiveChannelID = r.URL.Query().Get("channelId")
+	session.LiveSourceID = r.URL.Query().Get("sourceId")
 	if requestedURL != liveURL {
 		session.RequestedSource = requestedURL
 	}
@@ -5481,6 +5496,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		log.Printf("[video] failed to encode live HLS session response: %v", err)
 	}
 
+	h.monitorLiveProgramme(r, session.ID, requestedURL)
 	log.Printf("[video] created live HLS session %s", session.ID)
 }
 
@@ -5970,6 +5986,9 @@ func (h *VideoHandler) resolveLiveStreamTargetForSource(profileID, sourceID stri
 		if us, userErr := h.userSettingsSvc.Get(profileID); userErr == nil && us != nil {
 			userSettings = us
 		}
+	}
+	if isLiveKidsProfile(h.usersSvc, profileID) {
+		userSettings = accountManagedLivePreferences(userSettings)
 	}
 	targets := resolveProfileLiveStreamTargets(settings, profileID, userSettings, liveAccountForProfile(h.usersSvc, profileID))
 	return pickLiveStreamTarget(targets, sourceID)
@@ -7287,6 +7306,10 @@ func (h *VideoHandler) configuredExternalHostPolicy() requestsecurity.Restricted
 
 func (h *VideoHandler) requireAllowedExternalPath(w http.ResponseWriter, r *http.Request, source string) bool {
 	source = strings.TrimSpace(source)
+	if isKidsLiveReference(source) {
+		http.Error(w, "channel references require managed Live TV playback", http.StatusForbidden)
+		return false
+	}
 	if !strings.HasPrefix(source, "http://") && !strings.HasPrefix(source, "https://") {
 		return true
 	}

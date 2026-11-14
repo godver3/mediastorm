@@ -4,17 +4,24 @@ import (
 	"time"
 )
 
+// EPGRating retains the XMLTV rating system so numeric values are not guessed.
+type EPGRating struct {
+	System string `json:"system"`
+	Value  string `json:"value"`
+}
+
 // EPGProgram represents a single program in the EPG schedule.
 type EPGProgram struct {
-	ChannelID   string    `json:"channelId"` // Links to LiveChannel.TvgID
-	Title       string    `json:"title"`
-	Description string    `json:"description,omitempty"`
-	Start       time.Time `json:"start"`
-	Stop        time.Time `json:"stop"`
-	Icon        string    `json:"icon,omitempty"`
-	Categories  []string  `json:"categories,omitempty"`
-	Episode     string    `json:"episode,omitempty"` // Episode number in standard format (e.g., "S01E05")
-	Rating      string    `json:"rating,omitempty"`
+	ChannelID   string      `json:"channelId"` // Links to LiveChannel.TvgID
+	Title       string      `json:"title"`
+	Description string      `json:"description,omitempty"`
+	Start       time.Time   `json:"start"`
+	Stop        time.Time   `json:"stop"`
+	Icon        string      `json:"icon,omitempty"`
+	Categories  []string    `json:"categories,omitempty"`
+	Episode     string      `json:"episode,omitempty"` // Episode number in standard format (e.g., "S01E05")
+	Rating      string      `json:"rating,omitempty"`
+	Ratings     []EPGRating `json:"ratings,omitempty"`
 	// Airing flags from XMLTV. New covers <new/>, <premiere> and <live/>;
 	// PreviouslyShown is <previously-shown>. Most guides set neither.
 	New             bool `json:"new,omitempty"`

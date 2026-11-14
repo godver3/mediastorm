@@ -13,6 +13,7 @@ import (
 
 	"novastream/internal/auth"
 	"novastream/internal/netproxy"
+	"novastream/internal/profileaccess"
 	"novastream/internal/requestsecurity"
 
 	"github.com/gorilla/mux"
@@ -24,6 +25,7 @@ type liveDirectTarget struct {
 	URL            string
 	ProxyURL       string
 	RequestHeaders map[string]string
+	ProfileID      string
 	AccountID      string
 	Provider       string
 	BucketKey      string
@@ -112,6 +114,15 @@ func (h *VideoHandler) ServeLiveDirect(w http.ResponseWriter, r *http.Request) {
 	if ticket == "" {
 		http.NotFound(w, r)
 		return
+	}
+	if target, ok := h.peekLiveDirectTarget(ticket, auth.GetAccountID(r)); ok {
+		if !profileaccess.CheckResource(w, r, target.ProfileID, target.URL) {
+			return
+		}
+		if isLiveKidsProfile(h.usersSvc, target.ProfileID) {
+			http.Error(w, "kids Live TV requires a managed HLS session", http.StatusForbidden)
+			return
+		}
 	}
 	if r.Method == http.MethodHead {
 		if _, ok := h.peekLiveDirectTarget(ticket, auth.GetAccountID(r)); !ok {

@@ -22,7 +22,7 @@ import (
 )
 
 func TestParentalControlsRequireFreshAccountPassword(t *testing.T) {
-	for _, action := range []string{"flag", "mode", "rating", "movie rating", "tv rating", "replace lists", "add list", "remove list", "set PIN", "clear PIN", "delete"} {
+	for _, action := range []string{"flag", "mode", "rating", "movie rating", "tv rating", "live age", "replace lists", "add list", "remove list", "set PIN", "clear PIN", "delete"} {
 		for _, password := range []string{"", "incorrect", "fixture-parent-password"} {
 			name := action + "/missing"
 			if password != "" {
@@ -78,6 +78,9 @@ func TestParentalControlsRequireFreshAccountPassword(t *testing.T) {
 				case "tv rating":
 					handler = h.SetKidsMaxTVRating
 					body = `{"rating":"TV-MA"}`
+				case "live age":
+					handler = h.SetKidsLiveMaxAge
+					body = `{"maxAge":18}`
 				case "replace lists":
 					handler = h.SetKidsAllowedLists
 					body = `{"lists":[]}`

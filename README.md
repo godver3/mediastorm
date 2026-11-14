@@ -285,3 +285,15 @@ The original Expo (React Native) apps are listed here for reference only. They a
 ## License
 
 MIT
+
+### Programme age limits for kids Live TV
+
+A parent can configure a kids profile's **Live TV age limit** on the Kids Profile Settings page. The limit is stored on the profile and requires fresh account-password confirmation. It is separate from the existing movie and TV catalogue ratings.
+
+Only explicitly labelled German FSK/FSF guide minimum ages are accepted (0, 6, 12, 16, 18). Missing, expired or unsupported ratings block playback; an unlabelled numeric rating is not assumed to be German. XMLTV rating systems are retained alongside the legacy display rating. Existing cached guides need a refresh to acquire that new information.
+
+Kids catalogues return opaque channel references. Managed HLS resolves the source on the server and checks the stored profile and current programme on every playlist, subtitle and segment request. A monitor ends upstream work when an active or paused session becomes ineligible. Already downloaded or buffered bytes cannot be revoked, and guide timing remains dependent on the provider's accuracy.
+
+Kids cannot export raw playlists, choose provider streams, use direct streaming, rewind live TV, request catch-up, or create/play recordings through the recording API. Profile-level connection and guide-offset overrides do not replace the trusted provider settings. Leave the Live TV age limit unset to keep Live TV blocked for a kids profile. Native devices need to use the managed HLS tune-in endpoint; device playback acceptance is still required.
+
+Database migration `071_profile_live_age.sql` adds the nullable age ceiling. Removing it discards those ceilings and restores the blocked default after a later upgrade.

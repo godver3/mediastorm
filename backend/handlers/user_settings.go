@@ -81,6 +81,9 @@ func (h *UserSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request
 	}
 
 	scopeUserLiveSettings(&settings, h.ConfigManager, userID, auth.GetAccountID(r))
+	if users, ok := h.Users.(UsersProvider); ok && isLiveKidsProfile(users, userID) {
+		settings.LiveTV = accountManagedLivePreferences(&settings).LiveTV
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(settings)
 }

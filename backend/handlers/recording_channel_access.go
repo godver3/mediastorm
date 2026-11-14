@@ -44,6 +44,9 @@ func (h *RecordingsHandler) bindRecordingChannel(w http.ResponseWriter, r *http.
 
 // AuthorizeRecording also runs for queued and rule-created jobs at actual start.
 func (h *LiveHandler) AuthorizeRecording(ctx context.Context, recording models.Recording) (string, error) {
+	if isLiveKidsProfile(h.usersSvc, recording.UserID) {
+		return "", errors.New("recordings are unavailable for kids profiles")
+	}
 	enabled, err := liveAccountPolicyEnabled(h.cfgManager)
 	if err != nil {
 		return "", err

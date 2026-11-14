@@ -895,6 +895,9 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 				// Parse rating
 				if len(prog.Rating) > 0 {
 					epgProgram.Rating = prog.Rating[0].Value.Value
+					for _, rating := range prog.Rating {
+						epgProgram.Ratings = append(epgProgram.Ratings, models.EPGRating{System: rating.System, Value: strings.TrimSpace(rating.Value.Value)})
+					}
 				}
 
 				epgProgram.New = prog.New != nil || prog.Premiere != nil || prog.Live != nil

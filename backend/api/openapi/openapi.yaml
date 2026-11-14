@@ -235,6 +235,53 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
 
+  /api/users/{userId}/kids/live-age:
+    put:
+      tags: [profiles]
+      operationId: setProfileLiveAge
+      summary: Set the maximum verified German minimum age for Live TV
+      description: |
+        Requires fresh parental authorization. A null limit blocks Live TV for
+        kids. Missing, expired or unsupported EPG ratings are blocked. Kids use
+        opaque channel references and managed HLS without timeshift; playlist,
+        subtitle and segment requests recheck the stored profile and current
+        programme. Previously buffered bytes cannot be revoked.
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: X-Account-Password
+          in: header
+          schema:
+            type: string
+          description: Fresh account password; never persist it or put it in a URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [maxAge]
+              properties:
+                maxAge:
+                  type: integer
+                  nullable: true
+                  enum: [null, 0, 6, 12, 16, 18]
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+
   /api/users/{userId}/pin/verify:
     post:
       tags: [profiles]
@@ -1632,6 +1679,11 @@ components:
           type: string
         kidsMaxTVRating:
           type: string
+        kidsLiveMaxAge:
+          type: integer
+          nullable: true
+          enum: [0, 6, 12, 16, 18]
+          description: Maximum verified German minimum age for Live TV. Null blocks Live TV for kids.
         kidsAllowedLists:
           type: array
           items:

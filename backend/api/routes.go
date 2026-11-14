@@ -828,6 +828,8 @@ func Register(
 	profileProtected.HandleFunc("/{userID}/simkl", usersHandler.Options).Methods(http.MethodOptions)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.SetKidsProfile).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/kids-profile", usersHandler.Options).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/kids/live-age", usersHandler.SetKidsLiveMaxAge).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/kids/live-age", usersHandler.Options).Methods(http.MethodOptions)
 	// Kids profile content restriction configuration
 	profileProtected.HandleFunc("/{userID}/kids/mode", usersHandler.SetKidsMode).Methods(http.MethodPut)
 	profileProtected.HandleFunc("/{userID}/kids/mode", usersHandler.Options).Methods(http.MethodOptions)

@@ -432,6 +432,10 @@ func (h *LiveHandler) buildCatchupURL(ctx context.Context, channel LiveChannel, 
 // are: the offset corrects the guide to when programmes really air, which is also how the
 // provider files its archive (on its own clock; see xtreamPanelLocation).
 func (h *LiveHandler) GetCatchup(w http.ResponseWriter, r *http.Request) {
+	if isLiveKidsProfile(h.usersSvc, r.URL.Query().Get("profileId")) {
+		http.Error(w, "catch-up is unavailable for kids profiles", http.StatusForbidden)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	fail := func(status int, err error) {
 		w.WriteHeader(status)

@@ -14,6 +14,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/auth"
+	"novastream/internal/profileaccess"
 	"novastream/models"
 	"novastream/services/recordings"
 
@@ -766,6 +767,15 @@ func (h *RecordingsHandler) requireProfileOwnership(w http.ResponseWriter, r *ht
 	if accountID == "" || h.users == nil || !h.users.BelongsToAccount(profileID, accountID) {
 		http.Error(w, "profile not found", http.StatusNotFound)
 		return "", false
+	}
+	if !profileaccess.CheckResource(w, r, profileID, "") {
+		return "", false
+	}
+	for _, profile := range h.users.ListAll() {
+		if profile.ID == profileID && profile.IsKidsProfile {
+			http.Error(w, "recordings are unavailable for kids profiles", http.StatusForbidden)
+			return "", false
+		}
 	}
 	return profileID, true
 }

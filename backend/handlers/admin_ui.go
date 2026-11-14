@@ -4075,6 +4075,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 		}
 		if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
 			scopeUserLiveSettings(userSettings, h.configManager, userID, accountID)
+			if isLiveKidsProfile(h.usersService, userID) {
+				userSettings.LiveTV = accountManagedLivePreferences(userSettings).LiveTV
+			}
 		}
 		json.NewEncoder(w).Encode(userSettings)
 		return
@@ -4214,6 +4217,9 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 
 	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
 		scopeUserLiveSettings(&userSettings, h.configManager, userID, accountID)
+		if isLiveKidsProfile(h.usersService, userID) {
+			userSettings.LiveTV = accountManagedLivePreferences(&userSettings).LiveTV
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(userSettings)

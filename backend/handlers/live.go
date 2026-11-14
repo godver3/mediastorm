@@ -435,6 +435,10 @@ func NewLiveHandler(client *http.Client, transmuxEnabled bool, ffmpegPath string
 }
 
 func (h *LiveHandler) FetchPlaylist(w http.ResponseWriter, r *http.Request) {
+	if isLiveKidsProfile(h.usersSvc, r.URL.Query().Get("profileId")) {
+		http.Error(w, "playlist export is unavailable for kids profiles", http.StatusForbidden)
+		return
+	}
 	settings, err := h.cfgManager.Load()
 	if err != nil {
 		http.Error(w, "live access unavailable", http.StatusServiceUnavailable)
@@ -534,6 +538,10 @@ func (h *LiveHandler) StreamChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isLiveKidsProfile(h.usersSvc, r.URL.Query().Get("profileId")) {
+		http.Error(w, "kids Live TV requires a managed HLS session", http.StatusForbidden)
+		return
+	}
 	if !h.transmuxEnabled {
 		http.Error(w, "live transmuxing disabled", http.StatusNotImplemented)
 		return
@@ -2366,6 +2374,9 @@ func (h *LiveHandler) resolveProfileLiveSourceForID(profileID string, globalSett
 		return global
 	}
 
+	if isLiveKidsProfile(h.usersSvc, profileID) {
+		userSettings = accountManagedLivePreferences(userSettings)
+	}
 	return applyProfileLiveSources(global, globalSettings, profileID, userSettings, accountID)
 }
 
@@ -2880,6 +2891,10 @@ func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin 
 	if pageChannels == nil {
 		// An empty source must encode as [], not null; the native clients fail to decode null.
 		pageChannels = []LiveChannel{}
+	}
+
+	if isLiveKidsProfile(h.usersSvc, profileID) {
+		pageChannels = redactKidsLiveChannels(pageChannels)
 	}
 
 	response := LiveChannelsResponse{

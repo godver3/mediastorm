@@ -667,6 +667,10 @@ func (h *LiveHandler) resolveStremioStream(ctx context.Context, streamResourceUR
 }
 
 func (h *LiveHandler) GetStremioStreamOptions(w http.ResponseWriter, r *http.Request) {
+	if isLiveKidsProfile(h.usersSvc, r.URL.Query().Get("profileId")) {
+		http.Error(w, "stream selection is unavailable for kids profiles", http.StatusForbidden)
+		return
+	}
 	streamResourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
 	if streamResourceURL == "" {
 		http.Error(w, `{"error":"missing url parameter"}`, http.StatusBadRequest)

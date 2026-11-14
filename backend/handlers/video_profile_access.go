@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 
 	"novastream/internal/profileaccess"
 )
@@ -18,6 +19,8 @@ func (h *VideoHandler) requireHLSSessionAccess(w http.ResponseWriter, r *http.Re
 	}
 	session.mu.RLock()
 	profileID, resource := session.ProfileID, session.RequestedSource
+	isLive := session.IsLive
+	liveChannelID, liveSourceID := session.LiveChannelID, session.LiveSourceID
 	if resource == "" {
 		resource = session.OriginalPath
 	}
@@ -25,5 +28,15 @@ func (h *VideoHandler) requireHLSSessionAccess(w http.ResponseWriter, r *http.Re
 		resource = session.Path
 	}
 	session.mu.RUnlock()
-	return profileaccess.CheckResource(w, r, profileID, resource)
+	if !profileaccess.CheckResource(w, r, profileID, resource) {
+		return false
+	}
+	if isLive {
+		request := r.Clone(r.Context())
+		u := *r.URL
+		u.RawQuery = url.Values{"profileId": {profileID}, "channelId": {liveChannelID}, "sourceId": {liveSourceID}}.Encode()
+		request.URL = &u
+		return h.requireLiveProgramme(w, request, resource)
+	}
+	return true
 }

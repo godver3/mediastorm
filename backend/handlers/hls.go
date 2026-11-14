@@ -362,6 +362,8 @@ type HLSSession struct {
 	// resolution (Stalker portals, Stremio streams) rewrote Path and
 	// OriginalPath. Share-link access is checked against it; empty means
 	// OriginalPath is the requested source.
+	LiveChannelID       string
+	LiveSourceID        string
 	RequestedSource     string
 	OutputDir           string
 	CreatedAt           time.Time

@@ -93,6 +93,10 @@ func (h *VideoHandler) ProbeLiveQuality(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid probe request", http.StatusBadRequest)
 		return
 	}
+	if isLiveKidsProfile(h.usersSvc, req.ProfileID) {
+		http.Error(w, "quality probing is unavailable for kids profiles", http.StatusForbidden)
+		return
+	}
 	if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
 		http.Error(w, "invalid stream URL", http.StatusBadRequest)
 		return
