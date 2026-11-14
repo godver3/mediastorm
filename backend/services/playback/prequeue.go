@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,13 @@ const (
 )
 
 const readyStreamValidationTTL = 5 * time.Minute
+
+// readyStreamPlaybackRevalidateAfter is how long a successful probe of a
+// prepared (non-URL) source covers reuse for playback. Clients reuse entries
+// through POST /prequeue both when a details page opens and when Play is
+// pressed, so a short window avoids probing twice for one open-then-play
+// while still catching a registration that disappeared minutes ago.
+const readyStreamPlaybackRevalidateAfter = 30 * time.Second
 
 const persistedPrequeueOperationTimeout = 30 * time.Second
 
@@ -893,13 +901,12 @@ func (s *PrequeueStore) get(id string, forPlayback bool) (*PrequeueEntry, bool) 
 	entryCopy := copyPrequeueEntryForRead(entry)
 	validator := s.streamPathValidator
 	snapshot := readyValidationSnapshot{
-		ID:         entryCopy.ID,
-		TitleID:    entryCopy.TitleID,
-		UserID:     entryCopy.UserID,
-		Status:     entryCopy.Status,
-		StreamPath: entryCopy.StreamPath,
-		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entryCopy.StreamPath, time.Now()) &&
-			(!forPlayback || strings.HasPrefix(entryCopy.StreamPath, "http://") || strings.HasPrefix(entryCopy.StreamPath, "https://")),
+		ID:                entryCopy.ID,
+		TitleID:           entryCopy.TitleID,
+		UserID:            entryCopy.UserID,
+		Status:            entryCopy.Status,
+		StreamPath:        entryCopy.StreamPath,
+		RecentlyValidated: s.streamPathRecentlyValidatedLocked(id, entryCopy.StreamPath, time.Now(), validationTTLFor(entryCopy.StreamPath, forPlayback)),
 	}
 	s.mu.RUnlock()
 
@@ -950,6 +957,14 @@ func (s *PrequeueStore) validateReadyEntry(entry readyValidationSnapshot, valida
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := validator(ctx, entry.StreamPath); err != nil {
+		if isTransientLocalProbeError(entry.StreamPath, err) {
+			// A slow usenet segment or debrid lookup proves nothing about the
+			// source. Keep the entry (unvalidated, so the next reuse probes
+			// again); playback's own recovery handles a source that is really gone.
+			log.Printf("[prequeue] Keeping ready entry %s for title=%s user=%s: source probe did not finish: %s",
+				entry.ID, entry.TitleID, entry.UserID, requestsecurity.TextForLog(err.Error()))
+			return true
+		}
 		log.Printf("[prequeue] Removing stale ready entry %s for title=%s user=%s path=%q: %s",
 			entry.ID, entry.TitleID, entry.UserID, requestsecurity.URLForLog(entry.StreamPath), requestsecurity.TextForLog(err.Error()))
 		s.mu.Lock()
@@ -965,16 +980,44 @@ func (s *PrequeueStore) validateReadyEntry(entry readyValidationSnapshot, valida
 	return true
 }
 
+// isTransientLocalProbeError reports whether a failed probe of a prepared
+// (non-URL) source only ran out of time rather than finding the source gone.
+// Probes now run each time a prepared entry is reused, so treating a timeout
+// as a missing source would discard working preparations. External URLs keep
+// the old rule: any failure drops the entry.
+func isTransientLocalProbeError(streamPath string, err error) bool {
+	path := strings.TrimSpace(streamPath)
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func streamPathValidationKey(id, streamPath string) string {
 	return id + "\x00" + strings.TrimSpace(streamPath)
 }
 
-func (s *PrequeueStore) streamPathRecentlyValidatedLocked(id, streamPath string, now time.Time) bool {
+// validationTTLFor returns how long a successful probe stays trusted. Reuse for
+// playback rechecks prepared local sources after a short window; external URLs
+// are probed by the handler itself, and status polling keeps the long cache.
+func validationTTLFor(streamPath string, forPlayback bool) time.Duration {
+	path := strings.TrimSpace(streamPath)
+	if forPlayback && !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		return readyStreamPlaybackRevalidateAfter
+	}
+	return readyStreamValidationTTL
+}
+
+func (s *PrequeueStore) streamPathRecentlyValidatedLocked(id, streamPath string, now time.Time, ttl time.Duration) bool {
 	if s.streamPathValidated == nil {
 		return false
 	}
 	validatedAt, ok := s.streamPathValidated[streamPathValidationKey(id, streamPath)]
-	return ok && now.Sub(validatedAt) < readyStreamValidationTTL
+	return ok && now.Sub(validatedAt) < ttl
 }
 
 func (s *PrequeueStore) markStreamPathValidated(id, streamPath string) {
