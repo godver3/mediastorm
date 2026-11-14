@@ -43,3 +43,8 @@ are written to the result artifact.
 coverage through Chromium; it does not render native Compose rating controls.
 Those controls require the separate TV/phone unit suites and APK builds, with
 physical-device focus, large-font and accessibility acceptance still outstanding.
+
+[`preview.html`](preview.html) links the saved application results and actual
+desktop/mobile web-player screenshots. The full browser regression also opens
+and closes the real mobile audio/subtitle sheet and checks its viewport bounds
+after CSS transitions settle. None of these images depicts native rating UI.

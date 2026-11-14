@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal title ratings · validation evidence</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1018;color:#edf1f8}*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:32px 20px 60px}a{color:#9dc2ff}h1{font-size:clamp(30px,6vw,52px);line-height:1.08;margin:14px 0}h2{margin-top:38px;font-size:23px}p,li{line-height:1.6}p{max-width:78ch;color:#c4cfdf}.eyebrow{color:#a4b4ca;font-size:13px;letter-spacing:.1em;text-transform:uppercase}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:26px 0}.metric,figure{background:#151c29;border:1px solid #2c384c;border-radius:12px}.metric{padding:18px}.metric strong{font-size:30px;display:block}.metric span,figcaption{color:#bcc9da;font-size:14px}.pass{color:#9fe2b6}.note{border-left:3px solid #7d9bc9;padding-left:18px}figure{margin:18px 0;overflow:hidden}img{display:block;width:100%;height:auto}figcaption{padding:14px 16px;line-height:1.5}.phones{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:820px}.phones figure{margin:0}.links{display:flex;gap:18px;flex-wrap:wrap}@media(max-width:650px){main{padding:24px 16px 40px}.metrics{grid-template-columns:1fr}.metric strong{font-size:27px}.phones{grid-template-columns:1fr}.phones figure{max-width:390px;margin:auto}}
+</style>
+<main>
+<p class="eyebrow">Mediastorm · synthetic validation fixtures</p>
+<h1>Personal title ratings</h1>
+<p>Permanent profile preferences with independent Like, Love, Not for me and cleared states. Positive preferences influence recommendations; explicit dislikes override implicit viewing and list signals.</p>
+<div class="metrics">
+<div class="metric"><strong class="pass">8,092 passed</strong><span>Go cases, including subtests · 100 test packages<br>29 explicit test skips; 21 packages without runnable tests</span></div>
+<div class="metric"><strong class="pass">690 passed</strong><span>Core, TV and phone unit tests<br>16 new rating-controller regressions; both APKs built</span></div>
+<div class="metric"><strong class="pass">7 API checks</strong><span>Executed through Chromium against the real demo app<br>Fresh/upgrade PostgreSQL and race checks also pass</span></div>
+</div>
+<p class="note">This page presents recorded validation evidence. The browser requests exercise the actual authenticated rating API. Screenshots below show the existing web playback regression with generated media. They do not show native Compose rating controls, which still need physical-device focus and accessibility acceptance.</p>
+<h2>What the application verified</h2>
+<ul>
+<li>Preference round-trips for Like, Love, Not for me and No rating.</li>
+<li>Foreign profiles, locked profiles and undelivered client contexts are rejected.</li>
+<li>Catalogue annotations and recommendation/Home revisions follow the active profile's preference.</li>
+<li>Watched state, progress, watchlists and hidden titles remain independent.</li>
+<li>Account login, profile selection, PIN verification, decoded frames and persisted playback progress work.</li>
+<li>The mobile audio/subtitle sheet opens and closes within the viewport after layout transitions settle.</li>
+</ul>
+<div class="links"><a href="application-results.json">Rating API results</a><a href="backend-results.json">Go results and explicit skips</a><a href="native-results.json">Native tests and APK checksums</a><a href="playback-results.json">Full application playback results</a></div>
+<h2>Actual desktop playback</h2>
+<figure><a href="desktop.png"><img src="desktop.png" alt="Actual desktop web player decoding a generated color-pattern video under a synthetic profile"></a><figcaption>Generated H.264/AAC fixture in the real web player. The catalogue title is demo metadata; the picture is a generated test pattern.</figcaption></figure>
+<h2>Actual phone-sized playback and track selection</h2>
+<div class="phones">
+<figure><a href="mobile.png"><img src="mobile.png" alt="Actual narrow web player with transport and seek controls"></a><figcaption>390-pixel viewport after seeking and resuming. The track sheet has closed and finished its transition.</figcaption></figure>
+<figure><a href="tracks.png"><img src="tracks.png" alt="Actual mobile audio and subtitle selectors contained within the viewport"></a><figcaption>The real Audio &amp; Subtitles sheet, opened through the player button and checked against the viewport bounds.</figcaption></figure>
+</div>
+<h2>Scope and remaining acceptance</h2>
+<p>The demo lacks external metadata/provider keys, producing the documented top-ten and movie-detail errors. Generated cached media still plays. This does not establish real Usenet cold-start performance or p95 latency. Curated child profiles retain their restrictions; external rating import and write synchronization remain off. Native device rendering and the separate Watch web-client rating control remain outstanding.</p>
+<p>All fixture accounts and media inputs are synthetic. The artifacts contain no private playlist or credentials. These checks did not deploy to production or merge upstream.</p>
+</main>
+</html>

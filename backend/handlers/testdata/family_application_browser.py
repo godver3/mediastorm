@@ -162,6 +162,21 @@ def run(args):
             player.wait_for_function('document.querySelector("video").paused===false&&document.querySelector("video").readyState>=2')
             player.set_viewport_size({"width": 390, "height": 844})
             require(player.evaluate("document.documentElement.scrollWidth<=innerWidth"), "Mobile playback overflows horizontally")
+            # Resizing crosses a CSS animation breakpoint. Wait for the closed
+            # sheet to settle, then exercise the real mobile audio/subtitle UI.
+            step = "mobile-track-sheet"
+            player.wait_for_function('document.querySelector(".track-controls").getBoundingClientRect().top>=innerHeight')
+            player.get_by_role("button", name="Audio & subtitles", exact=True).click()
+            player.wait_for_function("""() => {
+                const r=document.querySelector('.track-controls').getBoundingClientRect();
+                return r.left>=-1&&r.right<=innerWidth+1&&r.top>=-1&&r.bottom<=innerHeight+1;
+            }""")
+            panel = player.get_by_role("dialog", name="Audio and subtitles", exact=True)
+            panel.get_by_role("button", name="Close", exact=True).wait_for(state="visible")
+            require(panel.locator("select").count() >= 2, "Audio/subtitle selectors missing")
+            player.screenshot(path=str(artifacts / "mediastorm-family-app-tracks.png"))
+            panel.get_by_role("button", name="Close", exact=True).click()
+            player.wait_for_function('document.querySelector(".track-controls").getBoundingClientRect().top>=innerHeight')
             player.screenshot(path=str(artifacts / "mediastorm-family-app-mobile.png"))
             step = "persisted-progress"
             deadline = time.monotonic() + 15
@@ -182,7 +197,8 @@ def run(args):
                       "click_to_decoded_frame_seconds": elapsed, "decoded_media": media,
                       "report_cancel_keeps_source": True, "pause_seek_resume_controls": True,
                       "persisted_progress_seconds": progress["position"],
-                      "desktop_mobile_web_rendering": True, "page_errors": errors,
+                      "desktop_mobile_web_rendering": True,
+                "mobile_track_sheet_open_close_and_bounds": True, "page_errors": errors,
                       "known_demo_metadata_and_netflix_requests": [r for r in failures if r["status"] >= 500 and r["path"] in known_paths],
                       "native_device_acceptance": False, "usenet_performance_acceptance": False}
             (artifacts / "mediastorm-family-app-results.json").write_text(json.dumps(result, indent=2) + "\n")
