@@ -451,6 +451,8 @@ func Register(
 		protected.HandleFunc("/playback/bad-streams", badStreamsHandler.Mark).Methods(http.MethodPost)
 		protected.HandleFunc("/playback/bad-streams", badStreamsHandler.Clear).Methods(http.MethodDelete)
 		protected.HandleFunc("/playback/bad-streams", badStreamsHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/playback/bad-streams/{id}/share", badStreamsHandler.ShareReport).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/bad-streams/{id}/share", badStreamsHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/playback/bad-streams/{id}", badStreamsHandler.Delete).Methods(http.MethodDelete)
 		protected.HandleFunc("/playback/bad-streams/{id}", badStreamsHandler.Options).Methods(http.MethodOptions)
 	}
@@ -464,6 +466,12 @@ func Register(
 		protected.HandleFunc("/playback/prequeue/manual", prequeueHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.GetStatus).Methods(http.MethodGet)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}", prequeueHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/retry", prequeueHandler.RetryRelease).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/retry", prequeueHandler.CancelReleaseRetry).Methods(http.MethodDelete)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/retry", prequeueHandler.Options).Methods(http.MethodOptions)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/report", prequeueHandler.ReleaseReportOptions).Methods(http.MethodGet)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/report", prequeueHandler.ReportRelease).Methods(http.MethodPost)
+		protected.HandleFunc("/playback/prequeue/{prequeueID}/report", prequeueHandler.Options).Methods(http.MethodOptions)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}/adopt-migration", prequeueHandler.AdoptMigration).Methods(http.MethodPost)
 		protected.HandleFunc("/playback/prequeue/{prequeueID}/adopt-migration", prequeueHandler.Options).Methods(http.MethodOptions)
 		// Lazy subtitle extraction - called when user plays with known offset
@@ -882,6 +890,11 @@ func Register(
 		protected.HandleFunc("/clients/{clientID}/messages", clientsHandler.CheckMessages).Methods(http.MethodGet)
 		protected.HandleFunc("/clients/{clientID}/messages", clientsHandler.Options).Methods(http.MethodOptions)
 	}
+
+	profileProtected.HandleFunc("/{userID}/source-availability/titles/{viewID}", metadataHandler.TitleSourceHints).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/source-availability/titles/{viewID}", handleOptions).Methods(http.MethodOptions)
+	profileProtected.HandleFunc("/{userID}/source-availability/episodes/{viewID}", metadataHandler.EpisodeSourceHints).Methods(http.MethodPut)
+	profileProtected.HandleFunc("/{userID}/source-availability/episodes/{viewID}", handleOptions).Methods(http.MethodOptions)
 
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.List).Methods(http.MethodGet)
 	profileProtected.HandleFunc("/{userID}/watchlist", watchlistHandler.Add).Methods(http.MethodPost)

@@ -69,6 +69,7 @@ import (
 	"novastream/services/scrob"
 	"novastream/services/sessions"
 	"novastream/services/simkl"
+	"novastream/services/sourceavailability"
 	"novastream/services/sourcehealth"
 	"novastream/services/sports"
 	"novastream/services/streaming"
@@ -451,6 +452,7 @@ func main() {
 		log.Fatalf("failed to initialise users: %v", err)
 	}
 	usersHandler := handlers.NewUsersHandler(userService, accountsService)
+	badStreamsHandler.SetUsersService(userService)
 	var sessionsService *sessions.Service
 	if store != nil {
 		sessionsService, err = sessions.NewServiceWithStore(store, 0)
@@ -616,6 +618,18 @@ func main() {
 	indexerService.SetClientSettingsProvider(clientSettingsService)
 	metadataHandler.SetClientSettingsProvider(clientSettingsService)
 
+	availabilityStore, availabilityErr := sourceavailability.NewStore(filepath.Join(settings.Cache.Directory, "source-availability"))
+	if availabilityErr != nil {
+		log.Fatalf("initialize source availability: %v", availabilityErr)
+	}
+	availabilityService := sourceavailability.NewService(availabilityStore, cfgManager, indexerService,
+		sourceavailability.NewScopeFactory(cfgManager, userSettingsService, clientSettingsService, contentPreferencesService, userService.Exists), badStreamsService)
+	availabilityContext, stopAvailability := context.WithCancel(context.Background())
+	defer stopAvailability()
+	availabilityService.Start(availabilityContext)
+	metadataHandler.SetSourceAvailability(availabilityService)
+	watchlistHandler.SourceAvailability = availabilityService
+
 	var historyService *history.Service
 	if store != nil {
 		historyService, err = history.NewServiceWithStore(store)
@@ -778,6 +792,7 @@ func main() {
 	startupHandler.SetCustomListsService(customListsService)
 	startupHandler.SetDisplayListHandler(displayListHandler)
 	startupHandler.SetClientSettingsProvider(clientSettingsService)
+	startupHandler.SetSourceAvailability(availabilityService)
 
 	// Details bundle handler bundles details-page API calls for low-power devices
 	detailsBundleHandler := handlers.NewDetailsBundleHandler(
@@ -809,6 +824,7 @@ func main() {
 	prequeueHandler = handlers.NewPrequeueHandler(indexerService, playbackService, historyService, nil, nil, *demoMode)
 	prequeueHandler.SetBadStreamsService(badStreamsService)
 	prequeueHandler.SetUsersService(userService)
+	prequeueHandler.SetLocalFallback(localMediaService, libraryAccessService)
 	playbackHandler.SetUsersService(userService)
 	if store != nil {
 		prequeueHandler.GetStore().SetDataStore(store)
@@ -817,6 +833,8 @@ func main() {
 	displayListHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	historyHandler.SetPrequeueStore(prequeueHandler.GetStore())
 	startupHandler.SetPrequeueStore(prequeueHandler.GetStore())
+	prequeueHandler.SetSourceAvailability(availabilityService)
+	availabilityService.SetLocalChecker(handlers.NewCatalogueLocalChecker(prequeueHandler, accountsService))
 	log.Printf("[startup] phase=prequeue-handler-wiring duration=%s", time.Since(startupPhaseStarted))
 
 	if settings.Transmux.FFmpegPath == "" {
@@ -943,6 +961,7 @@ func main() {
 		// Manual source resolve shares prequeue's track selection (includeTrackSelection).
 		playbackHandler.SetVideoProber(videoHandler)
 		playbackHandler.SetTrackPreferenceResolver(prequeueHandler.TrackPreferenceResolver())
+		indexerHandler.TrackPreferences = prequeueHandler.TrackPreferenceResolver()
 
 		// Wire up subtitle pre-extraction for direct streaming (SDR content)
 		if subtitleMgr := videoHandler.GetSubtitleExtractManager(); subtitleMgr != nil {
@@ -1347,6 +1366,7 @@ func main() {
 	r.HandleFunc("/admin/api/bad-streams", adminUIHandler.RequireMasterAuth(badStreamsHandler.List)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/bad-streams", adminUIHandler.RequireMasterAuth(badStreamsHandler.Mark)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/bad-streams", adminUIHandler.RequireMasterAuth(badStreamsHandler.Clear)).Methods(http.MethodDelete)
+	r.HandleFunc("/admin/api/bad-streams/{id}/share", adminUIHandler.RequireMasterAuth(badStreamsHandler.ShareReport)).Methods(http.MethodPost)
 	r.HandleFunc("/admin/api/bad-streams/{id}", adminUIHandler.RequireMasterAuth(badStreamsHandler.Delete)).Methods(http.MethodDelete)
 	r.HandleFunc("/admin/api/playback/strm", adminUIHandler.RequireAuth(adminUIHandler.DownloadSTRM)).Methods(http.MethodGet)
 	r.HandleFunc("/admin/api/share/create", adminUIHandler.RequireAuth(shareHandler.Create)).Methods(http.MethodPost)
@@ -1752,6 +1772,17 @@ func main() {
 	r.HandleFunc("/account/api/users/{userID}/details-bundle", adminUIHandler.RequireAuth(detailsBundleHandler.GetDetailsBundle)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/indexers/search", adminUIHandler.RequireAuth(indexerHandler.Search)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/playback/resolve", adminUIHandler.RequireAuth(playbackHandler.Resolve)).Methods(http.MethodPost)
+	releaseCookieHandler := func(next http.HandlerFunc) http.HandlerFunc {
+		guarded := api.ProfilePinMiddleware(userService, profileUnlockService, api.CachedSecuritySettings(cfgManager, 3*time.Second))(http.HandlerFunc(next))
+		return adminUIHandler.RequireAuth(guarded.ServeHTTP)
+	}
+	r.HandleFunc("/account/api/playback/prequeue/{prequeueID}", releaseCookieHandler(prequeueHandler.GetStatus)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/playback/prequeue/{prequeueID}/report", releaseCookieHandler(prequeueHandler.ReleaseReportOptions)).Methods(http.MethodGet)
+	r.HandleFunc("/account/api/playback/prequeue/{prequeueID}/report", releaseCookieHandler(prequeueHandler.ReportRelease)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/playback/prequeue/{prequeueID}/retry", releaseCookieHandler(prequeueHandler.RetryRelease)).Methods(http.MethodPost)
+	r.HandleFunc("/account/api/playback/prequeue/{prequeueID}/retry", releaseCookieHandler(prequeueHandler.CancelReleaseRetry)).Methods(http.MethodDelete)
+	r.HandleFunc("/account/api/playback/bad-streams/{id}", releaseCookieHandler(badStreamsHandler.Delete)).Methods(http.MethodDelete)
+
 	r.HandleFunc("/account/api/playback/strm", adminUIHandler.RequireAuth(adminUIHandler.DownloadSTRM)).Methods(http.MethodGet)
 	r.HandleFunc("/account/api/share/create", adminUIHandler.RequireAuth(shareHandler.Create)).Methods(http.MethodPost)
 	r.HandleFunc("/account/api/share/links", adminUIHandler.RequireAuth(shareHandler.List)).Methods(http.MethodGet)

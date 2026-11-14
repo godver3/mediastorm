@@ -106,13 +106,13 @@ func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Req
 	if query == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "query is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "query is required"})
 		return
 	}
 	if len([]rune(query)) < 2 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "query must be at least 2 characters"})
+		h.encodeMetadata(w, r, map[string]string{"error": "query must be at least 2 characters"})
 		return
 	}
 
@@ -134,7 +134,7 @@ func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Req
 		log.Printf("[metadata] youtube search error query=%q err=%v", query, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	if results == nil {
@@ -142,7 +142,7 @@ func (h *MetadataHandler) SearchYouTubeVideos(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	h.encodeMetadata(w, r, results)
 }
 
 type topTenDebugService interface {
@@ -193,6 +193,7 @@ type accountsServiceInterface interface {
 }
 
 type MetadataHandler struct {
+	SourceAvailability sourceAvailabilityService
 	Service            metadataService
 	CfgManager         *config.Manager
 	UserSettings       userSettingsProvider
@@ -393,7 +394,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -465,7 +466,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	if hideUnreleased || hideWatched {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
-	json.NewEncoder(w).Encode(resp)
+	h.encodeMetadata(w, r, resp)
 }
 
 func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +484,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 			if user.KidsMode == "content_list" || mediaType == "person" {
 				// Curated profiles cannot search; kids cannot open actor filmographies.
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode([]models.SearchResult{})
+				h.encodeMetadata(w, r, []models.SearchResult{})
 				return
 			}
 		}
@@ -493,7 +494,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	// Actor biographies link to unrestricted filmographies, just like the cast
@@ -556,7 +557,7 @@ func (h *MetadataHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	h.encodeMetadata(w, r, results)
 }
 
 func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) {
@@ -605,12 +606,12 @@ func (h *MetadataHandler) SeriesDetails(w http.ResponseWriter, r *http.Request) 
 			status = http.StatusNotFound
 		}
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(details)
+	h.encodeMetadata(w, r, details)
 }
 
 func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Request) {
@@ -620,7 +621,7 @@ func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Requ
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid request body"})
 		return
 	}
 
@@ -636,7 +637,7 @@ func (h *MetadataHandler) BatchSeriesDetails(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.encodeMetadata(w, r, response)
 }
 
 func (h *MetadataHandler) BatchMovieReleases(w http.ResponseWriter, r *http.Request) {
@@ -644,7 +645,7 @@ func (h *MetadataHandler) BatchMovieReleases(w http.ResponseWriter, r *http.Requ
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid request body"})
 		return
 	}
 
@@ -655,7 +656,7 @@ func (h *MetadataHandler) BatchMovieReleases(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.encodeMetadata(w, r, response)
 }
 
 func (h *MetadataHandler) BatchMovieTitleFields(w http.ResponseWriter, r *http.Request) {
@@ -665,7 +666,7 @@ func (h *MetadataHandler) BatchMovieTitleFields(w http.ResponseWriter, r *http.R
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotImplemented)
-		json.NewEncoder(w).Encode(map[string]string{"error": "movie title fields are not supported"})
+		h.encodeMetadata(w, r, map[string]string{"error": "movie title fields are not supported"})
 		return
 	}
 
@@ -673,7 +674,7 @@ func (h *MetadataHandler) BatchMovieTitleFields(w http.ResponseWriter, r *http.R
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid request body"})
 		return
 	}
 
@@ -682,7 +683,7 @@ func (h *MetadataHandler) BatchMovieTitleFields(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.encodeMetadata(w, r, response)
 }
 
 func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
@@ -726,12 +727,12 @@ func (h *MetadataHandler) MovieDetails(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(details)
+	h.encodeMetadata(w, r, details)
 }
 
 func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Request) {
@@ -741,7 +742,7 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 	if collectionIDStr == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "collection id is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "collection id is required"})
 		return
 	}
 
@@ -749,7 +750,7 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 	if err != nil || collectionID <= 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid collection id"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid collection id"})
 		return
 	}
 
@@ -762,7 +763,7 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 		log.Printf("[metadata] collection details error collectionId=%d err=%v", collectionID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -777,7 +778,7 @@ func (h *MetadataHandler) CollectionDetails(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(details)
+	h.encodeMetadata(w, r, details)
 }
 
 func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
@@ -789,7 +790,7 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 	if tmdbIDStr == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "tmdbId is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "tmdbId is required"})
 		return
 	}
 
@@ -797,7 +798,7 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 	if err != nil || tmdbID <= 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid tmdbId"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid tmdbId"})
 		return
 	}
 
@@ -808,7 +809,7 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[metadata] similar error type=%s tmdbId=%d err=%v", mediaType, tmdbID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -822,7 +823,7 @@ func (h *MetadataHandler) Similar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(titles)
+	h.encodeMetadata(w, r, titles)
 }
 
 func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) {
@@ -832,7 +833,7 @@ func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) 
 	if personIDStr == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "person id is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "person id is required"})
 		return
 	}
 
@@ -840,7 +841,7 @@ func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) 
 	if err != nil || personID <= 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid person id"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid person id"})
 		return
 	}
 
@@ -851,7 +852,7 @@ func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) 
 		log.Printf("[metadata] person details error personId=%d err=%v", personID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	if details != nil {
@@ -861,7 +862,7 @@ func (h *MetadataHandler) PersonDetails(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(details)
+	h.encodeMetadata(w, r, details)
 }
 
 func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
@@ -906,7 +907,7 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -917,7 +918,7 @@ func (h *MetadataHandler) Trailers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.encodeMetadata(w, r, response)
 }
 
 // isYouTubeURL validates that the given URL actually points to a YouTube domain
@@ -946,7 +947,7 @@ func (h *MetadataHandler) TrailerStream(w http.ResponseWriter, r *http.Request) 
 	if videoURL == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "url parameter required"})
 		return
 	}
 
@@ -954,7 +955,7 @@ func (h *MetadataHandler) TrailerStream(w http.ResponseWriter, r *http.Request) 
 	if !isYouTubeURL(videoURL) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "only YouTube URLs are supported"})
+		h.encodeMetadata(w, r, map[string]string{"error": "only YouTube URLs are supported"})
 		return
 	}
 
@@ -962,12 +963,12 @@ func (h *MetadataHandler) TrailerStream(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TrailerStreamResponse{StreamURL: streamURL})
+	h.encodeMetadata(w, r, TrailerStreamResponse{StreamURL: streamURL})
 }
 
 // TrailerProxy streams a YouTube video through the backend using yt-dlp
@@ -1044,7 +1045,7 @@ func (h *MetadataHandler) TrailerPrequeue(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TrailerPrequeueResponse{
+	h.encodeMetadata(w, r, TrailerPrequeueResponse{
 		ID:     id,
 		Status: "pending",
 	})
@@ -1065,7 +1066,7 @@ func (h *MetadataHandler) TrailerPrequeueStatus(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TrailerPrequeueResponse{
+	h.encodeMetadata(w, r, TrailerPrequeueResponse{
 		ID:       item.ID,
 		Status:   string(item.Status),
 		Error:    item.Error,
@@ -1209,7 +1210,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	if listURL == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "url parameter required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "url parameter required"})
 		return
 	}
 
@@ -1243,7 +1244,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(listURL, "mdblist.com/lists/") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid MDBList URL format"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid MDBList URL format"})
 		return
 	}
 
@@ -1307,14 +1308,14 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		h.encodeMetadata(w, r, resp)
 		return
 	}
 	items, filteredTotal, unfilteredTotal, err := service.GetCustomList(r.Context(), listURL, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 	// Apply kids rating filter for kids profiles.
@@ -1355,7 +1356,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	if hideUnreleased || hideWatched || visibilityFiltered || query.Active() {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
-	json.NewEncoder(w).Encode(resp)
+	h.encodeMetadata(w, r, resp)
 }
 
 type traktShelfSourceItem struct {
@@ -1386,13 +1387,13 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if h.TraktClient == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "trakt client unavailable"})
+		h.encodeMetadata(w, r, map[string]string{"error": "trakt client unavailable"})
 		return
 	}
 	if h.UsersService == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "users service unavailable"})
+		h.encodeMetadata(w, r, map[string]string{"error": "users service unavailable"})
 		return
 	}
 
@@ -1400,14 +1401,14 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "userId parameter required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "userId parameter required"})
 		return
 	}
 	user, ok := h.UsersService.Get(userID)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "user not found"})
+		h.encodeMetadata(w, r, map[string]string{"error": "user not found"})
 		return
 	}
 
@@ -1417,25 +1418,25 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if accountID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "accountId parameter required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "accountId parameter required"})
 		return
 	}
 	if listType != "watchlist" && listType != "custom" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid listType"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid listType"})
 		return
 	}
 	if listType == "custom" && listID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "listId parameter required for custom lists"})
+		h.encodeMetadata(w, r, map[string]string{"error": "listId parameter required for custom lists"})
 		return
 	}
 	if accountID == "__all__" && listType != "watchlist" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "all accounts is only supported for watchlists"})
+		h.encodeMetadata(w, r, map[string]string{"error": "all accounts is only supported for watchlists"})
 		return
 	}
 
@@ -1459,7 +1460,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "failed to load settings"})
+		h.encodeMetadata(w, r, map[string]string{"error": "failed to load settings"})
 		return
 	}
 
@@ -1471,7 +1472,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusNotFound
 		}
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -1479,7 +1480,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -1508,7 +1509,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.serviceForUser(userID).(shelfCardsService); ok && progressiveShelfRequest(r) {
 		resp := h.buildShelfFromCurated(w, r, curated, label, userID, hideUnreleased, hideWatched, limit, offset)
 		if resp != nil {
-			json.NewEncoder(w).Encode(resp)
+			h.encodeMetadata(w, r, resp)
 		}
 		return
 	}
@@ -1517,7 +1518,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -1554,7 +1555,7 @@ func (h *MetadataHandler) TraktList(w http.ResponseWriter, r *http.Request) {
 	if hideUnreleased || hideWatched {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
-	json.NewEncoder(w).Encode(resp)
+	h.encodeMetadata(w, r, resp)
 }
 
 func (h *MetadataHandler) resolveTraktShelfAccounts(user models.User, settings config.Settings, requestedAccountID string) ([]config.TraktAccount, error) {
@@ -1843,7 +1844,7 @@ func (h *MetadataHandler) SimklList(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		return // error already written
 	}
-	json.NewEncoder(w).Encode(items)
+	h.encodeMetadata(w, r, items)
 }
 
 func (h *MetadataHandler) resolveSimklShelfAccount(user models.User, settings config.Settings, accountID string) (*config.SimklAccount, error) {
@@ -1889,7 +1890,7 @@ func (h *MetadataHandler) LetterboxdList(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(items)
+		h.encodeMetadata(w, r, items)
 		return
 	}
 
@@ -1959,7 +1960,7 @@ func (h *MetadataHandler) LetterboxdList(w http.ResponseWriter, r *http.Request)
 	if sourceTotal > items.Total && !hideUnreleased && !hideWatched && !items.TotalPending {
 		items.Total = sourceTotal
 	}
-	json.NewEncoder(w).Encode(items)
+	h.encodeMetadata(w, r, items)
 }
 
 func maxShelfSourceItems(limit, offset int) int {
@@ -1997,7 +1998,7 @@ func (h *MetadataHandler) LetterboxdSources(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"lists": out})
+	h.encodeMetadata(w, r, map[string]interface{}{"lists": out})
 }
 
 // buildShelfFromCurated enriches curated items, applies the shared shelf
@@ -2078,13 +2079,13 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid JSON body"})
 		return
 	}
 	if len(req.Items) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "items must not be empty"})
+		h.encodeMetadata(w, r, map[string]string{"error": "items must not be empty"})
 		return
 	}
 
@@ -2094,7 +2095,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2115,7 +2116,7 @@ func (h *MetadataHandler) CuratedList(w http.ResponseWriter, r *http.Request) {
 	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"items": items})
+	h.encodeMetadata(w, r, map[string]interface{}{"items": items})
 }
 
 // TMDBSources resolves a source-builder search term, numeric ID, or TMDB URL.
@@ -2146,7 +2147,7 @@ func (h *MetadataHandler) TMDBSources(w http.ResponseWriter, r *http.Request) {
 		results = []metadatapkg.TMDBSourceResult{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"items": results})
+	h.encodeMetadata(w, r, map[string]interface{}{"items": results})
 }
 
 // TMDBList returns a shelf built from any TMDB source-builder type.
@@ -2181,7 +2182,7 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		h.encodeMetadata(w, r, response)
 		return
 	}
 	if postFilterPagination {
@@ -2237,7 +2238,7 @@ func (h *MetadataHandler) TMDBList(w http.ResponseWriter, r *http.Request) {
 		response.UnfilteredTotal = unfilteredTotal
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	h.encodeMetadata(w, r, response)
 }
 
 // DiscoverByGenre returns TMDB discover results for a specific genre
@@ -2250,7 +2251,7 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 	if genreIDStr == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "genreId is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "genreId is required"})
 		return
 	}
 
@@ -2258,7 +2259,7 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 	if err != nil || genreID <= 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid genreId"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid genreId"})
 		return
 	}
 
@@ -2287,7 +2288,7 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 		log.Printf("[metadata] discover genre error type=%s genreId=%d: %v", mediaType, genreID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2327,7 +2328,7 @@ func (h *MetadataHandler) DiscoverByGenre(w http.ResponseWriter, r *http.Request
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards", Items: items, Total: total})
+	h.encodeMetadata(w, r, DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards", Items: items, Total: total})
 }
 
 // DiscoverByDecade returns TMDB discover results for a specific decade
@@ -2340,7 +2341,7 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 	if decadeStr == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "decade is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "decade is required"})
 		return
 	}
 
@@ -2348,7 +2349,7 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 	if err != nil || decade < 1900 || decade%10 != 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid decade"})
+		h.encodeMetadata(w, r, map[string]string{"error": "invalid decade"})
 		return
 	}
 
@@ -2377,7 +2378,7 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 		log.Printf("[metadata] discover decade error type=%s decade=%d: %v", mediaType, decade, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2417,7 +2418,7 @@ func (h *MetadataHandler) DiscoverByDecade(w http.ResponseWriter, r *http.Reques
 	)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards", Items: items, Total: total})
+	h.encodeMetadata(w, r, DiscoverNewResponse{MetadataPending: r.URL.Query().Get("shelfPhase") == "cards", Items: items, Total: total})
 }
 
 // GetAIRecommendations returns AI-powered personalized recommendations.
@@ -2428,7 +2429,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 	if userID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "userId is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "userId is required"})
 		return
 	}
 
@@ -2483,7 +2484,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 
 	if len(watchedTitles) == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0})
+		h.encodeMetadata(w, r, DiscoverNewResponse{Items: []models.TrendingItem{}, Total: 0})
 		return
 	}
 
@@ -2493,7 +2494,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 		log.Printf("[metadata] ai recommendations error user=%s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2504,7 +2505,7 @@ func (h *MetadataHandler) GetAIRecommendations(w http.ResponseWriter, r *http.Re
 	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+	h.encodeMetadata(w, r, DiscoverNewResponse{Items: items, Total: len(items)})
 }
 
 // GetAISimilar returns AI-powered recommendations similar to a specific title.
@@ -2516,7 +2517,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	if seedTitle == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "title is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "title is required"})
 		return
 	}
 	if mediaType == "" {
@@ -2534,7 +2535,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[metadata] ai similar error seed=%q: %v", seedTitle, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2547,7 +2548,7 @@ func (h *MetadataHandler) GetAISimilar(w http.ResponseWriter, r *http.Request) {
 	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+	h.encodeMetadata(w, r, DiscoverNewResponse{Items: items, Total: len(items)})
 }
 
 // GetAICustomRecommendations returns recommendations based on a free-text query.
@@ -2557,7 +2558,7 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 	if query == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "q (query) is required"})
+		h.encodeMetadata(w, r, map[string]string{"error": "q (query) is required"})
 		return
 	}
 
@@ -2566,7 +2567,7 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 		log.Printf("[metadata] ai custom recommendations error query=%q: %v", query, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2577,7 +2578,7 @@ func (h *MetadataHandler) GetAICustomRecommendations(w http.ResponseWriter, r *h
 	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(DiscoverNewResponse{Items: items, Total: len(items)})
+	h.encodeMetadata(w, r, DiscoverNewResponse{Items: items, Total: len(items)})
 }
 
 // GetAISurprise returns a single random movie/show recommendation.
@@ -2590,7 +2591,7 @@ func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) 
 		log.Printf("[metadata] ai surprise error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2602,7 +2603,7 @@ func (h *MetadataHandler) GetAISurprise(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(item)
+	h.encodeMetadata(w, r, item)
 }
 
 // TopTen handles GET /api/discover/top-ten
@@ -2644,7 +2645,7 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		h.encodeMetadata(w, r, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -2667,7 +2668,7 @@ func (h *MetadataHandler) TopTen(w http.ResponseWriter, r *http.Request) {
 	enrichTrendingRatings(items, service)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TopTenResponse{Items: items, Total: len(items), Debug: debug})
+	h.encodeMetadata(w, r, TopTenResponse{Items: items, Total: len(items), Debug: debug})
 }
 
 func selectTopTenResponseItems(items []models.TrendingItem, mediaType string) []models.TrendingItem {
@@ -2737,7 +2738,7 @@ func selectTopTenResponseItems(items []models.TrendingItem, mediaType string) []
 func (h *MetadataHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
 	snapshot := h.Service.GetProgressSnapshot()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snapshot)
+	h.encodeMetadata(w, r, snapshot)
 }
 
 // cachedPopularOnServer holds a cached "Popular on This Server" response.
@@ -3148,5 +3149,5 @@ func (h *MetadataHandler) writeSharedShelfResponse(
 		total = len(items)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(PopularOnServerResponse{Items: items, Total: total})
+	_ = h.encodeMetadata(w, r, PopularOnServerResponse{Items: items, Total: total})
 }
