@@ -661,15 +661,23 @@ func TestUsersHandler_SetKidsProfile_MasterBypass(t *testing.T) {
 	// even when BelongsToAccount returns false (different account)
 	expected := models.User{ID: "u1", IsKidsProfile: true}
 	svc := &fakeUsersService{existsVal: true, belongsTo: false, setKidsUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, &fakeAccountPasswordVerifier{account: models.Account{ID: "master", Username: "host"}})
 
 	body := map[string]bool{"isKidsProfile": true}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	// The master account still confirms its own password.
+	denied := httptest.NewRecorder()
+	h.SetKidsProfile(denied, r)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("master without password: status = %d, want 403", denied.Code)
+	}
+	r = usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetKidsProfile(w, r)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (master should bypass ownership check)", w.Code, http.StatusOK)
+		t.Fatalf("status = %d, want %d (master with its password should reach any profile)", w.Code, http.StatusOK)
 	}
 }
 
@@ -722,15 +730,23 @@ func TestUsersHandler_SetKidsMode_MasterBypass(t *testing.T) {
 	// even when BelongsToAccount returns false (profile belongs to non-default account)
 	expected := models.User{ID: "u1", KidsMode: "rating"}
 	svc := &fakeUsersService{getOK: true, getUser: models.User{ID: "u1"}, belongsTo: false, setKidsModeUser: expected}
-	h := handlers.NewUsersHandler(svc)
+	h := handlers.NewUsersHandler(svc, &fakeAccountPasswordVerifier{account: models.Account{ID: "master", Username: "host"}})
 
 	body := map[string]string{"mode": "rating"}
 	r := usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	// The master account still confirms its own password.
+	denied := httptest.NewRecorder()
+	h.SetKidsMode(denied, r)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("master without password: status = %d, want 403", denied.Code)
+	}
+	r = usersRequest(http.MethodPut, "/", body, map[string]string{"userID": "u1"}, "master", true)
+	r.Header.Set("X-Account-Password", "correct-password")
 	w := httptest.NewRecorder()
 	h.SetKidsMode(w, r)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (master should bypass ownership check)", w.Code, http.StatusOK)
+		t.Fatalf("status = %d, want %d (master with its password should reach any profile)", w.Code, http.StatusOK)
 	}
 }
 

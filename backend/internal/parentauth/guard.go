@@ -40,16 +40,15 @@ func New(accounts Accounts) *Guard {
 	return &Guard{accounts: accounts, attempts: make(map[string]*attemptBudget)}
 }
 
-// Require accepts an administrator or the current account's password for this
-// mutation. Neither an account session nor a child's own PIN is parental proof.
-// No password or successful authorization is retained after the request.
+// Require accepts the current account's password for this mutation. The
+// master (host) account is held to the same rule as every other account: a
+// signed-in session, master or not, is not parental proof, and neither is a
+// child's own PIN. No password or successful authorization is retained after
+// the request.
 func (g *Guard) Require(w http.ResponseWriter, r *http.Request) bool {
 	if auth.GetSessionScope(r) != "" {
 		apierror.Write(w, http.StatusForbidden, apierror.CodeForbidden, "session not permitted for this endpoint")
 		return false
-	}
-	if auth.IsMaster(r) {
-		return true
 	}
 	accountID := auth.GetAccountID(r)
 	password := r.Header.Get(PasswordHeader)

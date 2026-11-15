@@ -386,6 +386,7 @@ func TestAdminUIHandler_CreateProfile(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 
 	req := createAuthenticatedRequest(t, http.MethodPost, "/api/admin/profiles", body, sessionsService, masterAccount.ID, true)
+	req.Header.Set("X-Account-Password", accounts.DefaultMasterPassword)
 	rec := httptest.NewRecorder()
 
 	handler.RequireAuth(handler.CreateProfile)(rec, req)
@@ -417,6 +418,7 @@ func TestAdminUIHandler_GetUserAccounts(t *testing.T) {
 		t.Fatalf("marshal create profile request: %v", err)
 	}
 	createReq := createAuthenticatedRequest(t, http.MethodPost, "/admin/api/profiles", createBody, sessionsService, masterAccount.ID, true)
+	createReq.Header.Set("X-Account-Password", accounts.DefaultMasterPassword)
 	createRec := httptest.NewRecorder()
 	handler.RequireAuth(handler.CreateProfile)(createRec, createReq)
 	if createRec.Code != http.StatusOK {
