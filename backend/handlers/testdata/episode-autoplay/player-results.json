@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "checks": [
+    "real-decoded-video-end-with-credits-skip-off-and-countdown-pause",
+    "countdown-and-cancel-fit-six-browser-widths",
+    "real-profile-control-stops-an-active-countdown",
+    "cancel-survives-late-real-player-ended-handler",
+    "autoplay-off-keeps-manual-next-and-source-failure-retries-same-episode",
+    "natural-end-countdown-calls-real-transition-once"
+  ],
+  "production_template": true,
+  "generated_media_decoded": true,
+  "next_source_failure_synthetic": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false,
+  "viewports": [
+    320,
+    375,
+    390,
+    414,
+    768,
+    1280
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "packages": [
+    "novastream/services/user_settings",
+    "novastream/handlers"
+  ],
+  "race_instrumentation": true,
+  "linker_flags": "-w",
+  "selection": "profile skip/autoplay persistence, authorization, cached PUT protection and rendered JavaScript behavior"
+}

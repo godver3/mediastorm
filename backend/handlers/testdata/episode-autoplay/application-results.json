@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "checks": [
+    "profile-toggle-persists-on-another-device-independent-of-credits",
+    "stale-full-settings-save-cannot-reset-autoplay",
+    "foreign-and-pin-locked-profile-writes-rejected"
+  ],
+  "real_application_api_through_chromium": true,
+  "profile_and_credits_independent": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false
+}
