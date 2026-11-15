@@ -710,10 +710,11 @@ func (s *Service) Update(userID string, settings models.UserSettings) error {
 	// If settings are empty, delete the entry instead of saving
 	// General settings PUTs (including older clients) cannot replace sports data.
 	settings.SportsPreferences = s.settings[userID].SportsPreferences
-	// Intro and recap auto-skip change only through UpdateSkipping (PATCH
+	// Intro, recap and next-episode autoplay change only through UpdateSkipping (PATCH
 	// /settings/skipping). Clients send back the whole document they last
 	// read, often from a cache older than the latest toggle, so a full PUT
-	// must not overwrite these two values, whether it omits them or not.
+	// must not overwrite those values, whether it omits them or not.
+	settings.Playback.NextEpisodeAutoPlay = s.settings[userID].Playback.NextEpisodeAutoPlay
 	settings.Playback.IntroAutoSkip = s.settings[userID].Playback.IntroAutoSkip
 	settings.Playback.RecapAutoSkip = s.settings[userID].Playback.RecapAutoSkip
 	// Older clients do not know this section and must not reset profile choices.

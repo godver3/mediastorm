@@ -404,14 +404,18 @@
 
     .up-next-actions {
       display: flex;
+      flex-wrap: wrap;
       gap: 0.45rem;
       margin-top: 0.35rem;
     }
 
+    .up-next-actions .btn[hidden] { display: none; }
+
     .up-next-actions .btn {
       flex: 1;
       justify-content: center;
-      min-height: 2.1rem;
+      min-height: 2.75rem;
+      flex-basis: 40%;
       font-size: 0.85rem;
     }
 
@@ -1209,9 +1213,9 @@
     const WEB_PREQUEUE_POLL_MS = 1500;
     const WEB_PREQUEUE_MAX_POLLS = 40;
     const SUBTITLE_OFFSET_STEP = 0.25;
-    const WEB_WATCH_NEXT_COUNTDOWN_MS = 15000;
+    const WEB_WATCH_NEXT_COUNTDOWN_MS = 7000;
     // Short grace period after an episode genuinely finishes before advancing,
-    // mirroring the native player's unconditional end-of-episode autoplay.
+    // enabled independently of credits skipping by the profile's autoplay choice.
     const WEB_ENDED_NEXT_COUNTDOWN_MS = 5000;
     const WEB_NEXT_EPISODE_READY_TIMEOUT_MS = 45000;
     const WEB_MIN_REWIND_PAUSE_MS = 10000;
@@ -1293,17 +1297,21 @@
     let webPlayerSkipDismissed = new Set();
     let webPlayerCreditsPollTimer = null;
     let webPlayerCreditsDetectionStarted = false;
-    let webPlayerWatchNextDeadline = 0;
+    let webPlayerWatchNextRemainingMs = 0;
+    let webPlayerWatchNextTickMs = 0;
+    let webPlayerWatchNextPaused = false;
+    let webPlayerWatchNextGeneration = 0;
     let webPlayerWatchNextTimer = null;
     let webPlayerPromptConfirmed = false;
     let webPlayerAutoSkipRecapPreference = false;
     let webPlayerAutoSkipIntroPreference = false;
     let webPlayerAutoSkipCreditsPreference = false;
+    let webPlayerNextEpisodeAutoPlayPreference = false;
     let webPlayerAutoSkipInProgress = false;
     let webPlayerSkipPreferenceSave = Promise.resolve();
     // One counter per segment type, so toggling one type while settings load
     // only discards the loaded value for that type.
-    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0 };
+    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0, nextEpisode: 0 };
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
     let webPlayerAudioPreferenceSaveFailed = false;
@@ -1795,6 +1803,7 @@
       if (!activeProfileId || SHARE_MODE) return webPlayerPreferences;
       await webPlayerAudioPreferenceSave;
       await webPlayerSkipPreferenceSave;
+      const profileId = activeProfileId;
       const skipGeneration = { ...webPlayerSkipPreferenceGeneration };
       let profileLoaded = true;
       // These three are independent of each other — only their merged result
@@ -1810,7 +1819,9 @@
           : Promise.resolve({}),
         fetchWebContentPreference(activeProfileId).catch(() => ({})),
       ]);
+      if (activeProfileId !== profileId) return webPlayerPreferences;
       const base = profile?.playback || {};
+      profileLoaded = profileLoaded && profile?.playback != null;
       const pick = (contentValue, clientValue, baseValue, fallback) => contentValue !== undefined && contentValue !== '' ? contentValue : clientValue !== undefined && clientValue !== null ? clientValue : baseValue !== undefined && baseValue !== null ? baseValue : fallback;
       const legacyCredits = Boolean(base.creditsDetection);
       webPlayerPreferences = {
@@ -1829,6 +1840,7 @@
       // wins over the loaded value for that type.
       if (profileLoaded) {
         const unchanged = (type) => skipGeneration[type] === webPlayerSkipPreferenceGeneration[type];
+        if (unchanged('nextEpisode')) webPlayerNextEpisodeAutoPlayPreference = base.nextEpisodeAutoPlay == null || base.nextEpisodeAutoPlay === true;
         if (unchanged('intro')) webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
         if (unchanged('recap')) webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
         if (unchanged('credits')) webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
@@ -1839,21 +1851,22 @@
     function saveWebSkipPreference(type, value) {
       if (!activeProfileId || SHARE_MODE || WATCH_PARTY_MODE) return;
       const profileId = activeProfileId;
-      const field = { intro: 'intro', recap: 'recap', credits: 'credits' }[type];
+      const field = { intro: 'intro', recap: 'recap', credits: 'credits', nextEpisode: 'nextEpisode' }[type];
       if (!field) return;
       webPlayerSkipPreferenceSave = webPlayerSkipPreferenceSave.then(() => apiCall(
         '/users/' + encodeURIComponent(profileId) + '/settings/skipping', {
           method: 'PATCH', keepalive: true, body: JSON.stringify({ [field]: value }),
         }
       )).catch(() => {
-        setTransientStatus('Auto-skip changed for this playback, but could not be saved to your profile.');
+        setTransientStatus('Playback choice changed for this session, but could not be saved to your profile.');
       });
     }
 
     // Each segment kind has its own independent auto-skip toggle. 'credits'
-    // also gates the Up Next auto-advance countdown, since both fire off the
-    // same final-credits marker.
+    // controls early advance at the final-credits marker. Next-episode autoplay
+    // independently decides whether any automatic episode transition is allowed.
     const WEB_AUTO_SKIP_PREFERENCE_VARS = {
+      nextEpisode: () => webPlayerNextEpisodeAutoPlayPreference,
       recap: () => webPlayerAutoSkipRecapPreference,
       intro: () => webPlayerAutoSkipIntroPreference,
       credits: () => webPlayerAutoSkipCreditsPreference,
@@ -1871,20 +1884,24 @@
         promptToggle.dataset.skipType = type;
         promptToggle.checked = webAutoSkipEnabled(type);
       }
-      const upNextToggle = document.querySelector('#upNextCard .web-auto-skip-toggle');
+      const upNextToggle = document.querySelector('#upNextCard .web-auto-skip-toggle[data-skip-type="credits"]');
       if (upNextToggle) upNextToggle.checked = webAutoSkipEnabled('credits');
+      const autoplayToggle = document.getElementById('nextEpisodeAutoPlay');
+      if (autoplayToggle) autoplayToggle.checked = webAutoSkipEnabled('nextEpisode');
     }
 
     function setWebAutoSkipPreference(enabled, type) {
       const value = Boolean(enabled);
-      const skipType = type === 'recap' || type === 'credits' ? type : 'intro';
+      const skipType = type === 'recap' || type === 'credits' || type === 'nextEpisode' ? type : 'intro';
       webPlayerSkipPreferenceGeneration[skipType] += 1;
-      if (type === 'recap') {
+      if (type === 'nextEpisode') {
+        webPlayerNextEpisodeAutoPlayPreference = value;
+        if (!value) clearWatchNextCountdown();
+      } else if (type === 'recap') {
         webPlayerAutoSkipRecapPreference = value;
       } else if (type === 'credits') {
         webPlayerAutoSkipCreditsPreference = value;
-        if (value) webPlayerWatchNextAutoAdvanceBlocked = false;
-        else clearWatchNextCountdown();
+        if (!value) clearWatchNextCountdown();
       } else {
         webPlayerAutoSkipIntroPreference = value;
       }
@@ -2100,12 +2117,17 @@
                 <div id="upNextTitle" class="up-next-title"></div>
                 <div id="upNextCountdown" class="up-next-countdown"></div>
                 <label class="web-auto-skip-control up-next-auto-skip" title="Save to this profile on all devices">
-                  <input class="web-auto-skip-toggle" type="checkbox" onchange="setWebAutoSkipPreference(this.checked, 'credits')">
+                  <input class="web-auto-skip-toggle" data-skip-type="credits" type="checkbox" onchange="setWebAutoSkipPreference(this.checked, 'credits')">
                   <span>Auto-skip credits</span>
+                </label>
+                <label class="web-auto-skip-control up-next-auto-skip" title="Save to this profile on all devices">
+                  <input id="nextEpisodeAutoPlay" type="checkbox" onchange="setWebAutoSkipPreference(this.checked, 'nextEpisode')">
+                  <span>Auto-play next episode</span>
                 </label>
                 <div class="up-next-actions">
                   <button class="btn btn-primary" type="button" onclick="playNextEpisode()" ${WATCH_PARTY_MODE ? 'disabled aria-disabled="true" title="The host controls playback"' : ''}>Watch Now</button>
-                  <button class="btn" type="button" onclick="dismissUpNext()">Dismiss</button>
+                  <button id="pauseNextCountdown" hidden class="btn" type="button" onclick="toggleWatchNextCountdownPause()">Pause countdown</button>
+                  <button class="btn" type="button" onclick="dismissUpNext()">Cancel</button>
                 </div>
               </div>
             </div>
@@ -3720,30 +3742,65 @@
     }
 
     function clearWatchNextCountdown() {
+      webPlayerWatchNextGeneration += 1;
+      const button = document.getElementById('pauseNextCountdown');
+      if (button) button.hidden = true;
       if (webPlayerWatchNextTimer) clearInterval(webPlayerWatchNextTimer);
       webPlayerWatchNextTimer = null;
-      webPlayerWatchNextDeadline = 0;
+      webPlayerWatchNextRemainingMs = 0;
+      webPlayerWatchNextTickMs = 0;
       const label = document.getElementById('upNextCountdown');
       if (label) label.textContent = '';
     }
 
+    function watchNextClock() {
+      return typeof performance !== 'undefined' ? performance.now() : Date.now();
+    }
+
+    function toggleWatchNextCountdownPause() {
+      webPlayerWatchNextPaused = !webPlayerWatchNextPaused;
+      webPlayerWatchNextTickMs = watchNextClock();
+      const button = document.getElementById('pauseNextCountdown');
+      if (button) button.textContent = webPlayerWatchNextPaused ? 'Resume countdown' : 'Pause countdown';
+    }
+
     function ensureWatchNextCountdown() {
-      // A genuine end of playback always auto-advances (like the native player);
-      // the credits-marker countdown stays gated on the credits preference.
       const creditsAdvance = webPlayerPromptConfirmed && webAutoSkipEnabled('credits');
-      if (WATCH_PARTY_MODE || !(creditsAdvance || webPlayerPlaybackEnded) || webPlayerWatchNextAutoAdvanceBlocked || upNextDismissed || playingNextEpisode) {
+      if (WATCH_PARTY_MODE || !webAutoSkipEnabled('nextEpisode') || !(creditsAdvance || webPlayerPlaybackEnded) || webPlayerWatchNextAutoAdvanceBlocked || upNextDismissed || playingNextEpisode) {
         clearWatchNextCountdown();
         return;
       }
       const countdownMs = webPlayerPlaybackEnded ? WEB_ENDED_NEXT_COUNTDOWN_MS : WEB_WATCH_NEXT_COUNTDOWN_MS;
-      const proposedDeadline = Date.now() + countdownMs;
-      if (!webPlayerWatchNextDeadline || proposedDeadline < webPlayerWatchNextDeadline) webPlayerWatchNextDeadline = proposedDeadline;
+      if (!webPlayerWatchNextRemainingMs) webPlayerWatchNextRemainingMs = countdownMs;
+      else webPlayerWatchNextRemainingMs = Math.min(webPlayerWatchNextRemainingMs, countdownMs);
       if (webPlayerWatchNextTimer) return;
+      webPlayerWatchNextTickMs = watchNextClock();
+      const generation = webPlayerWatchNextGeneration;
+      const pauseButton = document.getElementById('pauseNextCountdown');
+      if (pauseButton) {
+        pauseButton.hidden = false;
+        pauseButton.textContent = webPlayerWatchNextPaused ? 'Resume countdown' : 'Pause countdown';
+      }
       const tick = () => {
-        const remaining = Math.max(0, webPlayerWatchNextDeadline - Date.now());
+        if (generation !== webPlayerWatchNextGeneration) return;
+        if (upNextDismissed || playingNextEpisode || webPlayerWatchNextAutoAdvanceBlocked || !webAutoSkipEnabled('nextEpisode') || !(webPlayerPlaybackEnded || (webPlayerPromptConfirmed && webAutoSkipEnabled('credits')))) {
+          clearWatchNextCountdown();
+          return;
+        }
+        const now = watchNextClock();
+        const video = document.getElementById('webPlayer');
+        if (video?.seeking || webPlayerSeekInProgress) {
+          webPlayerWatchNextAutoAdvanceBlocked = true;
+          clearWatchNextCountdown();
+          return;
+        }
+        // Natural media end also sets paused. It must not freeze the end countdown.
+        const held = webPlayerWatchNextPaused || (!webPlayerPlaybackEnded && video?.paused);
+        if (!held) webPlayerWatchNextRemainingMs = Math.max(0, webPlayerWatchNextRemainingMs - Math.max(0, now - webPlayerWatchNextTickMs));
+        webPlayerWatchNextTickMs = now;
         const label = document.getElementById('upNextCountdown');
-        if (label) label.textContent = remaining > 0 ? 'Auto-playing in ' + Math.ceil(remaining / 1000) + 's' : '';
-        if (remaining <= 0) { clearWatchNextCountdown(); playNextEpisode(); }
+        if (label) label.textContent = (held ? 'Countdown paused · ' : 'Auto-playing in ') + Math.ceil(webPlayerWatchNextRemainingMs / 1000) + 's';
+        if (webPlayerWatchNextRemainingMs <= 0) { clearWatchNextCountdown(); playNextEpisode(); }
       };
       tick();
       webPlayerWatchNextTimer = window.setInterval(tick, 250);
@@ -3914,11 +3971,15 @@
       const visible = webPlayerPromptConfirmed || manualFallback;
       host.classList.toggle('up-next-visible', visible);
       if (visible && (webPlayerPromptConfirmed || webPlayerPlaybackEnded)) ensureWatchNextCountdown();
-      else clearWatchNextCountdown();
+      else {
+        if (webPlayerWatchNextTimer && !webPlayerPlaybackEnded) webPlayerWatchNextAutoAdvanceBlocked = true;
+        clearWatchNextCountdown();
+      }
     }
 
     function dismissUpNext() {
       upNextDismissed = true;
+      webPlayerWatchNextAutoAdvanceBlocked = true;
       clearWatchNextCountdown();
       const host = document.getElementById('videoHost');
       host?.classList.remove('up-next-visible');
@@ -3931,6 +3992,7 @@
       webPlayerSegmentGeneration += 1;
       webPlayerSegments = { recap: null, intro: null, outro: null };
       webPlayerPromptConfirmed = false;
+      webPlayerWatchNextPaused = false;
       webPlayerPlaybackEnded = false;
       webPlayerAutoSkipInProgress = false;
       nextEpisodeInfo = null;

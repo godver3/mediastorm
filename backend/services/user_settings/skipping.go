@@ -6,11 +6,12 @@ import (
 	"novastream/models"
 )
 
-// SkipPreferences patches only the supplied segment types. Nil means unchanged.
+// SkipPreferences patches only supplied playback choices. Nil means unchanged.
 type SkipPreferences struct {
-	Intro   *bool `json:"intro,omitempty"`
-	Recap   *bool `json:"recap,omitempty"`
-	Credits *bool `json:"credits,omitempty"`
+	NextEpisode *bool `json:"nextEpisode,omitempty"`
+	Intro       *bool `json:"intro,omitempty"`
+	Recap       *bool `json:"recap,omitempty"`
+	Credits     *bool `json:"credits,omitempty"`
 }
 
 // UpdateSkipping preserves unrelated settings and serializes concurrent toggles.
@@ -23,6 +24,9 @@ func (s *Service) UpdateSkipping(userID string, patch SkipPreferences) error {
 	defer s.mu.Unlock()
 	previous, existed := s.settings[userID]
 	updated := previous
+	if patch.NextEpisode != nil {
+		updated.Playback.NextEpisodeAutoPlay = models.BoolPtr(*patch.NextEpisode)
+	}
 	if patch.Intro != nil {
 		updated.Playback.IntroAutoSkip = models.BoolPtr(*patch.Intro)
 	}

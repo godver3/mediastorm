@@ -309,6 +309,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			StreamMigrationEnabled:     models.BoolPtr(globalSettings.Playback.StreamMigrationEnabled),
 			IgnoreDVCompatibilityCheck: models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
+			NextEpisodeAutoPlay:        models.BoolPtr(true),
 			IntroAutoSkip:              models.BoolPtr(false),
 			RecapAutoSkip:              models.BoolPtr(false),
 			CreditsAutoSkip:            models.BoolPtr(globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection),

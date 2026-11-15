@@ -540,11 +540,15 @@ paths:
   /api/users/{userId}/settings/skipping:
     patch:
       operationId: patchProfileSkipping
-      summary: Patch profile auto-skip preferences
+      summary: Patch profile auto-skip and next-episode preferences
       description: |
-        Updates only supplied segment types and preserves unrelated settings.
+        Updates only supplied playback choices and preserves unrelated settings.
         Values are stored per profile and returned by GET /api/users/{userId}/settings
-        as playback.introAutoSkip, playback.recapAutoSkip and playback.creditsAutoSkip.
+        as playback.introAutoSkip, playback.recapAutoSkip, playback.creditsAutoSkip
+        and playback.nextEpisodeAutoPlay. The `nextEpisode` choice independently
+        controls automatic next-episode playback, including at genuine media end.
+        Missing legacy values default to enabled after a successful settings read.
+        General settings PUTs cannot overwrite this choice from an older snapshot.
         Requires ownership of the profile and its unlock token when PIN enforcement is on.
         Clients must not import unscoped browser preferences into an arbitrary profile.
       parameters:
@@ -564,6 +568,7 @@ paths:
                 intro: {type: boolean}
                 recap: {type: boolean}
                 credits: {type: boolean}
+                nextEpisode: {type: boolean}
       responses:
         '200':
           description: Supplied preferences saved
@@ -576,6 +581,7 @@ paths:
                   intro: {type: boolean}
                   recap: {type: boolean}
                   credits: {type: boolean}
+                  nextEpisode: {type: boolean}
         '400':
           description: Empty, unknown or malformed preferences
         '403':

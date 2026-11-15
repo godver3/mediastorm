@@ -514,6 +514,7 @@ type PlaybackSettings struct {
 	CreditsDetectionEnabled       *bool     `json:"creditsDetectionEnabled,omitempty"`             // Enable on-device credits detection/OCR during playback
 	IntroAutoSkip                 *bool     `json:"introAutoSkip,omitempty"`                       // Automatically skip known intro segments
 	RecapAutoSkip                 *bool     `json:"recapAutoSkip,omitempty"`                       // Automatically skip known recap segments
+	NextEpisodeAutoPlay           *bool     `json:"nextEpisodeAutoPlay,omitempty"`                 // Automatically start the next episode, independently of credits skipping
 	CreditsAutoSkip               *bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	ScrobbleStartDelaySeconds     *int      `json:"scrobbleStartDelaySeconds,omitempty"`           // Active playback time before real-time scrobble events begin
 	CreditsDetection              bool      `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
@@ -1166,6 +1167,7 @@ func DefaultUserSettings() UserSettings {
 			PrerollMediaScope:             "all",
 			IntroAutoSkip:                 BoolPtr(false),
 			RecapAutoSkip:                 BoolPtr(false),
+			NextEpisodeAutoPlay:           BoolPtr(true),
 			CreditsAutoSkip:               BoolPtr(false),
 			StreamMigrationEnabled:        BoolPtr(true),
 			IgnoreDVCompatibilityCheck:    BoolPtr(false),

@@ -440,3 +440,24 @@ func TestUserSettingsHandler_GetSettings_DefaultsIncludeDownloadPreferredTerms(t
 		t.Fatalf("requiredTerms defaults = %v, want [Multi French]", got)
 	}
 }
+
+func TestUserSettingsHandler_NextEpisodeAutoplayDefaultIsIndependentOfCredits(t *testing.T) {
+	for _, credits := range []bool{false, true} {
+		svc := &fakeUserSettingsService{}
+		manager := config.NewManager(t.TempDir() + "/settings.json")
+		cfg := config.DefaultSettings()
+		cfg.Playback.CreditsAutoSkip = credits
+		if err := manager.Save(cfg); err != nil {
+			t.Fatal(err)
+		}
+		h := handlers.NewUserSettingsHandler(svc, &fakeUserExistsService{exists: true}, manager)
+		w := httptest.NewRecorder()
+		h.GetSettings(w, userSettingsRequest(http.MethodGet, "/", nil, map[string]string{"userID": "u1"}))
+		if w.Code != http.StatusOK {
+			t.Fatal(w.Code)
+		}
+		if svc.lastDefaults.Playback.NextEpisodeAutoPlay == nil || !*svc.lastDefaults.Playback.NextEpisodeAutoPlay {
+			t.Fatal("legacy autoplay default depended on credits skipping")
+		}
+	}
+}

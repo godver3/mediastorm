@@ -17,7 +17,7 @@ func TestSkipPreferencesPersistIndependentlyAcrossProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for _, patch := range []SkipPreferences{{Intro: models.BoolPtr(true)}, {Recap: models.BoolPtr(false)}, {Credits: models.BoolPtr(true)}} {
+	for _, patch := range []SkipPreferences{{Intro: models.BoolPtr(true)}, {Recap: models.BoolPtr(false)}, {Credits: models.BoolPtr(true)}, {NextEpisode: models.BoolPtr(false)}} {
 		wg.Add(1)
 		go func(p SkipPreferences) {
 			defer wg.Done()
@@ -27,7 +27,7 @@ func TestSkipPreferencesPersistIndependentlyAcrossProfiles(t *testing.T) {
 		}(patch)
 	}
 	wg.Wait()
-	if err := s.UpdateSkipping("child", SkipPreferences{Intro: models.BoolPtr(false)}); err != nil {
+	if err := s.UpdateSkipping("child", SkipPreferences{Intro: models.BoolPtr(false), NextEpisode: models.BoolPtr(true)}); err != nil {
 		t.Fatal(err)
 	}
 	// An older client's settings screen must not erase new fields it cannot decode.
@@ -42,6 +42,9 @@ func TestSkipPreferencesPersistIndependentlyAcrossProfiles(t *testing.T) {
 	child, _ := reopened.Get("child")
 	if adult.Playback.IntroAutoSkip == nil || !*adult.Playback.IntroAutoSkip || adult.Playback.RecapAutoSkip == nil || *adult.Playback.RecapAutoSkip || !*adult.Playback.CreditsAutoSkip {
 		t.Fatalf("lost skip choices: %+v", adult.Playback)
+	}
+	if adult.Playback.NextEpisodeAutoPlay == nil || *adult.Playback.NextEpisodeAutoPlay || child.Playback.NextEpisodeAutoPlay == nil || !*child.Playback.NextEpisodeAutoPlay {
+		t.Fatal("next-episode choice was lost or leaked between profiles")
 	}
 	if adult.Playback.PreferredAudioLanguage != "eng" {
 		t.Fatal("unrelated setting lost")
@@ -100,5 +103,57 @@ func TestStaleFullSettingsSaveKeepsSkipChoices(t *testing.T) {
 	}
 	if adult.Playback.PreferredAudioLanguage != "eng" {
 		t.Fatal("full settings save did not apply its other fields")
+	}
+}
+
+func TestNextEpisodeAutoplayFalseSurvivesReopenDefaultsAndStaleFullSave(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewService(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := models.DefaultUserSettings()
+	if defaults.Playback.NextEpisodeAutoPlay == nil || !*defaults.Playback.NextEpisodeAutoPlay {
+		t.Fatal("legacy autoplay default must be on")
+	}
+	if err := s.UpdateSkipping("profile", SkipPreferences{NextEpisode: models.BoolPtr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []*bool{nil, models.BoolPtr(true)} {
+		if err := s.Update("profile", models.UserSettings{Playback: models.PlaybackSettings{NextEpisodeAutoPlay: value}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reopened, err := NewService(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reopened.GetWithDefaults("profile", defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Playback.NextEpisodeAutoPlay == nil || *got.Playback.NextEpisodeAutoPlay {
+		t.Fatal("explicit false was treated as an empty override")
+	}
+	if got.Playback.CreditsAutoSkip != nil && *got.Playback.CreditsAutoSkip {
+		t.Fatal("autoplay changed credits skipping")
+	}
+}
+
+func TestNextEpisodeAutoplayStorageFailureRollsBack(t *testing.T) {
+	s, err := NewService(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateSkipping("profile", SkipPreferences{NextEpisode: models.BoolPtr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	s.path = t.TempDir() + "/missing/settings.json"
+	if err := s.UpdateSkipping("profile", SkipPreferences{NextEpisode: models.BoolPtr(true)}); err == nil {
+		t.Fatal("expected save failure")
+	}
+	got, _ := s.Get("profile")
+	if got.Playback.NextEpisodeAutoPlay == nil || *got.Playback.NextEpisodeAutoPlay {
+		t.Fatal("failed save changed live choice")
 	}
 }
