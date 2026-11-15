@@ -3918,7 +3918,9 @@
       const state = webPostPlayState;
       if (!webPostPlayCurrent(state) || state.busy) return;
       state.busy = true;
-      state.rating = null;
+      state.rating = null;state.items = [];state.artObserver?.disconnect();
+      if (state.sourceTimer) {clearInterval(state.sourceTimer);state.sourceTimer = null;}
+      document.getElementById('postPlayCards').replaceChildren();
       document.getElementById('postPlayRating').hidden = true;
       const generation = ++state.generation;
       document.getElementById('postPlayLoading').hidden = false;
