@@ -1089,7 +1089,13 @@ func main() {
 	var watchPartyHandler *handlers.WatchPartyHandler
 	if store != nil {
 		watchRoomsService := watchrooms.New(store.WatchRooms(), userService, accountsService)
-		sessionsService.SetWatchPartyPlaybackValidator(watchRoomsService.ValidateExternalPlayback)
+		sessionsService.SetWatchPartyPlaybackValidator(func(ctx context.Context, roomID, guestID, resource string) error {
+			err := watchRoomsService.ValidateExternalPlayback(ctx, roomID, guestID, resource)
+			if err == nil || watchrooms.IsExternalPlaybackDenied(err) {
+				return err
+			}
+			return fmt.Errorf("%w: %v", sessions.ErrAuthorityUnavailable, err)
+		})
 		watchRoomsHandler = handlers.NewWatchRoomsHandler(watchRoomsService)
 		watchPartyHandler = handlers.NewWatchPartyHandler(watchRoomsService, sessionsService, settings.Server.BasePath)
 		watchPartyHandler.SetLibraryAccessService(libraryAccessService)

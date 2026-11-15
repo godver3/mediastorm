@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -125,6 +126,13 @@ func AccountAuthMiddleware(sessionsSvc *sessions.Service, accountsSvc *accounts.
 
 			session, err := sessionsSvc.Validate(token)
 			if err != nil {
+				// A session that could not be checked (store outage) is not an
+				// invalid one: answer with a retryable error so players keep
+				// their session instead of treating it as revoked.
+				if sessionUnavailable(err) {
+					apierror.Write(w, http.StatusServiceUnavailable, apierror.CodeServiceUnavailable, "session check temporarily unavailable")
+					return
+				}
 				apierror.Write(w, http.StatusUnauthorized, apierror.CodeSessionExpired, "invalid or expired session")
 				return
 			}
@@ -276,4 +284,11 @@ func queryTokenAllowed(path string) bool {
 		return true
 	}
 	return false
+}
+
+// sessionUnavailable reports a Validate failure that is not an authentication
+// decision, such as the session store or a watch-party room being unreachable.
+func sessionUnavailable(err error) bool {
+	return !errors.Is(err, sessions.ErrSessionNotFound) && !errors.Is(err, sessions.ErrSessionExpired) &&
+		!errors.Is(err, sessions.ErrInvalidToken)
 }

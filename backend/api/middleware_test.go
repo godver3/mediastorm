@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -185,5 +187,42 @@ func TestExtractTokenRestrictsQueryTokensToMediaRoutes(t *testing.T) {
 	settingsReq := httptest.NewRequest("GET", "/api/settings?token=leaked-token", nil)
 	if got := extractToken(settingsReq); got != "" {
 		t.Fatalf("general API accepted query token %q", got)
+	}
+}
+
+// A guest media grant whose room cannot be checked gets a retryable 503, not
+// the 401 that tells players their session was revoked.
+func TestAccountAuthAnswersAuthorityOutageWithServiceUnavailable(t *testing.T) {
+	sessionsService, err := sessions.NewService("", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := sessionsService.CreateWatchPartyPlayback("account-1", "test", "127.0.0.1", time.Hour, "room", "guest", "/source.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := false
+	sessionsService.SetWatchPartyPlaybackValidator(func(context.Context, string, string, string) error {
+		if ended {
+			return errors.New("watch room has ended")
+		}
+		return fmt.Errorf("%w: timeout", sessions.ErrAuthorityUnavailable)
+	})
+	handler := AccountAuthMiddleware(sessionsService, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	serve := func() int {
+		req := httptest.NewRequest(http.MethodGet, "/api/video/hls/session/stream.m3u8", nil)
+		req.Header.Set("Authorization", "Bearer "+grant.Token)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		return recorder.Code
+	}
+	if code := serve(); code != http.StatusServiceUnavailable {
+		t.Fatalf("outage status=%d, want 503", code)
+	}
+	ended = true
+	if code := serve(); code != http.StatusUnauthorized {
+		t.Fatalf("ended room status=%d, want 401", code)
 	}
 }

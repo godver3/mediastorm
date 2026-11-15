@@ -445,6 +445,14 @@ func (s *Service) ExternalSourceForGuest(ctx context.Context, roomID, guestID st
 	return source, nil
 }
 
+// IsExternalPlaybackDenied reports whether err from ValidateExternalPlayback
+// is an authorization decision (room ended, guest gone, source changed) rather
+// than a failure to reach the room store.
+func IsExternalPlaybackDenied(err error) bool {
+	return errors.Is(err, ErrNotMember) || errors.Is(err, ErrNotFound) ||
+		errors.Is(err, ErrRoomEnded) || errors.Is(err, ErrSourceUnavailable)
+}
+
 // ValidateExternalPlayback rechecks persisted room authority for every media
 // request, including already-issued playlist URLs and new HLS session creation.
 func (s *Service) ValidateExternalPlayback(ctx context.Context, roomID, guestID, resource string) error {

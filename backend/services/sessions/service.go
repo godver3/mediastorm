@@ -45,6 +45,8 @@ type Service struct {
 	sessions                    map[string]models.Session
 	sessionDuration             time.Duration
 	watchPartyPlaybackValidator WatchPartyPlaybackValidator
+	watchPartyAuthority         map[string]time.Time
+	watchPartyAuthorityTTL      time.Duration
 }
 
 type sessionReader interface {
@@ -65,6 +67,8 @@ func NewServiceWithStore(store *datastore.DataStore, defaultDuration time.Durati
 		sessionReader:   store.Sessions(),
 		sessions:        make(map[string]models.Session),
 		sessionDuration: defaultDuration,
+
+		watchPartyAuthorityTTL: watchPartyAuthorityTTL,
 	}
 
 	if err := svc.load(); err != nil {

@@ -42,6 +42,9 @@ const (
 	// CodeDefaultPassword: the master account still uses the default password
 	// and must be changed via login with newPassword (428).
 	CodeDefaultPassword = "default_password"
+	// CodeServiceUnavailable: a dependency such as the session store could not
+	// be reached; the request may be retried (503).
+	CodeServiceUnavailable = "service_unavailable"
 )
 
 // Body is the JSON error envelope.
