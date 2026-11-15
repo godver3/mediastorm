@@ -1008,10 +1008,12 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	settingsScopeKey, adaptiveCaps := h.prequeueSettingsScope(req.UserID, clientID, req.TitleID, throughput)
 	log.Printf("[prequeue] Effective settings scope for title=%s user=%s client=%s: %s", req.TitleID, req.UserID, clientID, settingsScopeKey)
 
-	// Check for pre-warmed entry before creating a new one
+	// Warm references may share settings across profiles, but preparation IDs
+	// carry their owner's PIN and source rights. Select the current profile's
+	// indexed entry before validating a warmed stream.
 	if h.prewarmSvc != nil {
 		if warm := h.prewarmSvc.GetWarmScoped(req.TitleID, req.UserID, settingsScopeKey); warm != nil && warm.PrequeueID != "" {
-			if warmEntry, ok := h.store.GetForPlayback(warm.PrequeueID); ok && warmEntry.Status == playback.PrequeueStatusReady && hasReusablePreparation(warmEntry) {
+			if warmEntry, ok := h.store.GetByTitleUserScopeForPlayback(req.TitleID, req.UserID, settingsScopeKey); ok && warmEntry.ID == warm.PrequeueID && warmEntry.Status == playback.PrequeueStatusReady && hasReusablePreparation(warmEntry) {
 				if !readyEntryFitsAdaptiveCaps(warmEntry, adaptiveCaps) {
 					log.Printf("[prequeue] Ignoring pre-warmed entry %s: file size %d exceeds current adaptive throughput cap, resolving fresh",
 						warm.PrequeueID, warmEntry.FileSize)
@@ -1046,13 +1048,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 						warm.PrequeueID, warmEntry.TargetEpisode, targetEpisode)
 				}
 			} else {
-				if _, storeOK := h.store.Get(warm.PrequeueID); !storeOK {
-					log.Printf("[prequeue] Ignoring pre-warmed entry %s: no longer in store (replaced by newer prequeue), resolving fresh",
-						warm.PrequeueID)
-				} else {
-					log.Printf("[prequeue] Ignoring pre-warmed entry %s: not ready or missing reusable preparation metadata, resolving fresh",
-						warm.PrequeueID)
-				}
+				log.Printf("[prequeue] Ignoring pre-warmed reference %s: no reusable preparation for the requested profile and settings scope, resolving under current profile", warm.PrequeueID)
 			}
 		}
 	}
