@@ -1252,7 +1252,10 @@ paths:
             `popular-on-server`, `recently-watched`, `trending`, `genre`,
             `decade`, `mdblist`, `stremio`, `tmdb-list`, `trakt-list`,
             `publicmetadb-list`, `simkl-list`, `letterboxd-list`,
-            `personalized`, `custom-ai`, `similar`, `collection`.
+            `personalized`, `loved`, `custom-ai`, `similar`, `collection`.
+            `loved` reads the active profile's existing Love ratings, with current
+            profile/PIN/child restrictions, bounded paging and cache-only artwork;
+            it does not create another list or start provider searches.
           schema:
             type: string
             default: watchlist

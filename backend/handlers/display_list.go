@@ -231,6 +231,9 @@ func (h *DisplayListHandler) get(w http.ResponseWriter, r *http.Request) {
 	case "letterboxd-list":
 		h.delegateMetadata(w, r, source, h.MetadataHandler.LetterboxdList, displayListQuery(r, userID, nil))
 		return
+	case "loved":
+		h.delegateMetadata(w, r, source, h.MetadataHandler.LovedTitles, displayListQuery(r, userID, nil))
+		return
 	case "personalized", "my-recommended":
 		source = "personalized"
 		h.delegateMetadata(w, r, source, h.MetadataHandler.GetPersonalizedRecommendations, displayListQuery(r, userID, nil))
@@ -582,6 +585,9 @@ func (h *DisplayListHandler) delegateMetadata(
 		return
 	}
 
+	if control := rec.Header().Get("Cache-Control"); control != "" {
+		w.Header().Set("Cache-Control", control)
+	}
 	normalised := normaliseDisplayListPayload(source, payload)
 	if h.HiddenItemsService != nil && !filters.applied {
 		normalised = h.filterHiddenPayload(query.Get("userId"), normalised)
