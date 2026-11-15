@@ -885,6 +885,21 @@ func TestOpenAPIContract(t *testing.T) {
 		exercise(t, v, contractCall{method: http.MethodDelete, target: "/api/users/foreign/recommendation-interests", vars: map[string]string{"userID": "foreign"}}, h.ClearSearchInterests, http.StatusNotFound)
 	})
 
+	t.Run("profile starting interests", func(t *testing.T) {
+		h, _, _, title := tasteFixture(t)
+		h.UsersService = &fakeUsersServiceForSearch{users: map[string]models.User{"profile": {ID: "profile", AccountID: contractAccountID}}}
+		h.TitleRatings.Observe("profile", "fixture-client", []models.Title{title})
+		vars := map[string]string{"userID": "profile"}
+		headers := map[string]string{"X-Client-ID": "fixture-client"}
+		path := "/api/users/profile/taste-onboarding"
+		exercise(t, v, contractCall{method: "GET", target: path, vars: vars, headers: headers}, h.TasteOnboarding, 200)
+		for _, body := range []any{map[string]any{"action": "save", "titles": []map[string]string{{"titleId": title.ID, "mediaType": "movie"}}}, map[string]string{"action": "skip"}, map[string]any{"action": "save", "titles": []any{}}} {
+			exercise(t, v, contractCall{method: "PUT", target: path, vars: vars, headers: headers, body: body}, h.TasteOnboarding, 200)
+		}
+		exercise(t, v, contractCall{method: "DELETE", target: path, vars: vars, headers: headers}, h.TasteOnboarding, 200)
+		exercise(t, v, contractCall{method: "GET", target: path + "/candidates?kind=movie", vars: vars, headers: headers}, h.TasteCandidates, 200)
+	})
+
 	t.Run("personal title ratings", func(t *testing.T) {
 		h, service, _, title := ratingFixture(t)
 		h.UsersService = &fakeUsersServiceForSearch{users: map[string]models.User{"profile": {ID: "profile", AccountID: contractAccountID}}}

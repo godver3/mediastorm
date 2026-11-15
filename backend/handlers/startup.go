@@ -66,6 +66,7 @@ type startupHistorySnapshot struct {
 type StartupHandler struct {
 	Interests          interestService
 	TitleRatings       titleRatingService
+	Taste              tasteOnboardingService
 	sourceAvailability sourceAvailabilityService
 	userSettings       userSettingsService
 	watchlist          watchlistService
@@ -267,6 +268,12 @@ func (h *StartupHandler) GetHomeManifest(w http.ResponseWriter, r *http.Request)
 				values = append(values, ratingRevision{Key: item.Key, Value: item.Value, Aliases: item.Aliases, Title: item.Title})
 			}
 			resp.RecommendationsRevision = hashForManifest(resp.RecommendationsRevision, values)
+		}
+	}
+
+	if h.Taste != nil {
+		if state, err := h.Taste.Get(r.Context(), userID); err == nil {
+			resp.RecommendationsRevision = hashForManifest(resp.RecommendationsRevision, state.Status, state.Source, state.Interests)
 		}
 	}
 

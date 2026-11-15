@@ -165,6 +165,12 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 		return
 	}
 	additional = append(additional, ratingSeeds...)
+	tasteSeeds, tasteErr := h.tasteRecommendationSeeds(r.Context(), userID)
+	if tasteErr != nil {
+		http.Error(w, "personal recommendations unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	additional = append(additional, tasteSeeds...)
 	kidsRatingFilter := h.personalizedKidsRatingFilter(userID)
 	cacheKey := personalizedRecommendationsCacheKey(userID, days, limitPerType, history, progress)
 	language := ""
@@ -797,7 +803,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 	}
 
 	addSeed := func(seed personalizedSeed) {
-		if seed.Strength < 0 || seed.TMDBID <= 0 || seed.MediaType == "" || (seed.Activity.Before(cutoff) && seed.Source != "watchlist" && seed.Source != "custom_list" && !strings.HasPrefix(seed.Source, "rating_")) {
+		if seed.Strength < 0 || seed.TMDBID <= 0 || seed.MediaType == "" || (seed.Activity.Before(cutoff) && seed.Source != "watchlist" && seed.Source != "custom_list" && !strings.HasPrefix(seed.Source, "rating_") && seed.Source != "onboarding") {
 			return
 		}
 		identity := models.Title{MediaType: seed.MediaType, TMDBID: seed.TMDBID}
@@ -816,7 +822,7 @@ func buildPersonalizedSeeds(userID string, history []models.WatchHistoryItem, pr
 		}
 		if seed.Activity.After(existing.Activity) {
 			existing.Activity = seed.Activity
-			if seed.Source != "" {
+			if seed.Source != "" && !strings.HasPrefix(existing.Source, "rating_") {
 				existing.Source = seed.Source
 			}
 		}
@@ -924,7 +930,7 @@ func buildPersonalizedExplanation(seeds []personalizedSeed, days int, popularity
 	for _, seed := range seeds {
 		rated := seed.Source == "rating_like" || seed.Source == "rating_love"
 		onlyRatings = onlyRatings && rated
-		hasInterests = hasInterests || rated || seed.Source == "watchlist" || seed.Source == "custom_list" || seed.Source == "search"
+		hasInterests = hasInterests || rated || seed.Source == "watchlist" || seed.Source == "custom_list" || seed.Source == "search" || seed.Source == "onboarding"
 	}
 	summary := "Based on your recent watch activity"
 	switch {

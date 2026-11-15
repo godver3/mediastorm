@@ -137,6 +137,140 @@ paths:
           description: Storage error
         '503':
           description: Search-interest storage unavailable
+  /api/users/{userId}/taste-onboarding:
+    parameters:
+      - $ref: '#/components/parameters/UserID'
+      - $ref: '#/components/parameters/ProfileUnlock'
+      - name: X-Client-ID
+        in: header
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+    get:
+      operationId: getTasteOnboarding
+      summary: Read this profile's optional starting interests
+      description: Returns only titles still allowed by the current profile policy. No automatic import, external activity or rating write occurs.
+      responses:
+        '200':
+          description: Current setup status and editable interests
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TasteOnboardingState'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateTasteOnboarding
+      summary: Save starting interests, skip setup or explicitly use existing profile history
+      description: |
+        Manual selections contain only coordinates delivered to this profile/client.
+        Skip preserves previously saved interests. Save with an empty array clears
+        the selection without changing ratings, history, lists or external services.
+        History uses only actual, usable watched titles already saved for this adult
+        profile; it never imports another profile or enables an external service.
+        Child selection uses the dedicated candidate endpoint and known rating caps.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: {type: string, enum: [save, skip, history]}
+                titles:
+                  type: array
+                  nullable: true
+                  maxItems: 40
+                  description: Required for save; other actions accept only an empty or omitted selection.
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [titleId, mediaType]
+                    properties:
+                      titleId: {type: string, minLength: 1, maxLength: 128}
+                      mediaType: {type: string, enum: [movie, series]}
+      responses:
+        '200':
+          description: Saved status and selection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TasteOnboardingState'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: clearTasteOnboarding
+      summary: Remove only this profile's starting selection and setup status
+      description: Remains possible after a profile restriction change; previously disallowed title metadata is not returned.
+      responses:
+        '200':
+          description: Reset setup state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TasteOnboardingState'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/users/{userId}/taste-onboarding/candidates:
+    parameters:
+      - $ref: '#/components/parameters/UserID'
+      - $ref: '#/components/parameters/ProfileUnlock'
+      - name: X-Client-ID
+        in: header
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+      - name: kind
+        in: query
+        required: true
+        schema: {type: string, enum: [movie, series]}
+      - name: q
+        in: query
+        schema: {type: string, maxLength: 200}
+    get:
+      operationId: getTasteOnboardingCandidates
+      summary: Find titles for the optional profile setup
+      description: |
+        At most 24 allowed catalogue titles are returned. Current child rating caps
+        are applied before delivery; unknown or mature titles are excluded. This
+        search does not create ordinary search interests or queue Usenet work.
+        Empty q uses deferred-artwork discovery. The metadata request is bounded.
+      responses:
+        '200':
+          description: Delivered candidate titles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 24
+                    items: {$ref: '#/components/schemas/TrendingItem'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '500': {$ref: '#/components/responses/Error'}
+        '501': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/users/{userId}/ratings/{mediaType}/{titleId}:
     parameters:
       - $ref: '#/components/parameters/UserID'
@@ -1844,6 +1978,24 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    TasteOnboardingState:
+      type: object
+      additionalProperties: false
+      required: [status, source, titles, available, canUseHistory, mediaTypes]
+      properties:
+        status: {type: string, enum: [new, skipped, completed]}
+        source: {type: string, enum: ['', manual, history]}
+        available: {type: boolean}
+        canUseHistory: {type: boolean}
+        mediaTypes:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          items: {type: string, enum: [movie, series]}
+        titles:
+          type: array
+          maxItems: 40
+          items: {$ref: '#/components/schemas/Title'}
     PersonalTitleRating:
       type: object
       additionalProperties: false

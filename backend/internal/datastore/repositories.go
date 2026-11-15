@@ -446,3 +446,11 @@ type TitleRatingRepository interface {
 	List(context.Context, string) ([]models.TitleRating, error)
 	Put(context.Context, string, models.TitleRating) error
 }
+
+// TasteOnboardingRepository stores an optional starting selection per profile.
+type TasteOnboardingRepository interface {
+	Get(context.Context, string) (models.TasteOnboardingState, error)
+	Save(context.Context, string, models.TasteOnboardingState) error
+	Skip(context.Context, string, time.Time) error
+	Delete(context.Context, string) error
+}

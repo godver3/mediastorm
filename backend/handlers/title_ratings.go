@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"novastream/internal/auth"
@@ -148,28 +149,32 @@ func (h *MetadataHandler) ratingRecommendationSeeds(ctx context.Context, profile
 		if item.Value == "dislike" {
 			strength = -1
 		}
-		tmdb := extractTMDBID(item.Title.MediaType, item.Title.ID, map[string]string{"tmdb": strconv.FormatInt(item.Title.TMDBID, 10)})
-		keys := []string{}
-		for _, alias := range item.Aliases {
-			parts := strings.SplitN(alias, ":", 3)
-			if len(parts) != 3 || parts[0] != item.Title.MediaType {
-				continue
-			}
-			value := parts[2]
-			if parts[1] == "id" {
-				value = normalizePersonalizedID(value)
-			} else {
-				value = normalizeExternalID(value)
-			}
-			keys = append(keys, parts[0]+":"+parts[1]+":"+value)
-			if tmdb == 0 && parts[1] == "tmdb" {
-				parsed, _ := strconv.ParseInt(value, 10, 64)
-				if parsed > 0 {
-					tmdb = parsed
-				}
-			}
-		}
-		seeds = append(seeds, personalizedSeed{MediaType: item.Title.MediaType, TMDBID: tmdb, Title: item.Title.Name, Activity: item.UpdatedAt, Strength: strength, Source: "rating_" + item.Value, Identity: &item.Title, IdentityKeys: keys})
+		seeds = append(seeds, preferenceRecommendationSeed(item.Title, item.Aliases, item.UpdatedAt, strength, "rating_"+item.Value))
 	}
 	return seeds, nil
+}
+
+func preferenceRecommendationSeed(title models.Title, aliases []string, activity time.Time, strength float64, source string) personalizedSeed {
+	tmdb := extractTMDBID(title.MediaType, title.ID, map[string]string{"tmdb": strconv.FormatInt(title.TMDBID, 10)})
+	keys := []string{}
+	for _, alias := range aliases {
+		parts := strings.SplitN(alias, ":", 3)
+		if len(parts) != 3 || parts[0] != title.MediaType {
+			continue
+		}
+		value := parts[2]
+		if parts[1] == "id" {
+			value = normalizePersonalizedID(value)
+		} else {
+			value = normalizeExternalID(value)
+		}
+		keys = append(keys, parts[0]+":"+parts[1]+":"+value)
+		if tmdb == 0 && parts[1] == "tmdb" {
+			parsed, _ := strconv.ParseInt(value, 10, 64)
+			if parsed > 0 {
+				tmdb = parsed
+			}
+		}
+	}
+	return personalizedSeed{MediaType: title.MediaType, TMDBID: tmdb, Title: title.Name, Activity: activity, Strength: strength, Source: source, Identity: &title, IdentityKeys: keys}
 }

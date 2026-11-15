@@ -74,6 +74,7 @@ import (
 	"novastream/services/sourcehealth"
 	"novastream/services/sports"
 	"novastream/services/streaming"
+	"novastream/services/tasteonboarding"
 	"novastream/services/titleratings"
 	"novastream/services/trakt"
 	"novastream/services/usenet"
@@ -722,6 +723,8 @@ func main() {
 	metadataHandler.Interests = interestService
 	titleRatingsService := titleratings.New(store.TitleRatings())
 	metadataHandler.TitleRatings = titleRatingsService
+	tasteOnboardingService := tasteonboarding.New(store.TasteOnboarding())
+	metadataHandler.Taste = tasteOnboardingService
 
 	metadataHandler.SetTraktClient(traktClient)
 	metadataHandler.SetSimklClient(simklClient)
@@ -803,6 +806,7 @@ func main() {
 	startupHandler.SetUsersProvider(userService)
 	startupHandler.Interests = interestService
 	startupHandler.TitleRatings = titleRatingsService
+	startupHandler.Taste = tasteOnboardingService
 	startupHandler.SetLocalMedia(localMediaService)
 	startupHandler.SetHiddenItemsService(hiddenItemsService)
 	startupHandler.SetCustomListsService(customListsService)

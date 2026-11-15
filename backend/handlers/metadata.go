@@ -193,6 +193,7 @@ type accountsServiceInterface interface {
 }
 
 type MetadataHandler struct {
+	Taste              tasteOnboardingService
 	TitleRatings       titleRatingService
 	SourceAvailability sourceAvailabilityService
 	Interests          interestService
