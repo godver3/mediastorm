@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "checks": [
+    "foreign-pin-and-undelivered-client-boundaries",
+    "skip-persists-without-creating-preferences",
+    "manual-selection-reopen-and-independent-rating",
+    "forged-metadata-and-empty-history-cannot-change-selection",
+    "skip-preserves-and-clear-reset-are-independent",
+    "history-progress-lists-hidden-settings-unchanged"
+  ],
+  "synthetic_unused_profile_guard": true,
+  "real_application_api_through_chromium": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false
+}

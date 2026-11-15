@@ -1,0 +1,43 @@
+{
+  "passed": true,
+  "actual_full_application": true,
+  "synthetic_accounts_and_generated_media_only": true,
+  "account_login_profile_selection_pin": true,
+  "foreign_profile_404": true,
+  "locked_recheck_403": true,
+  "second_profile_progress_isolated": true,
+  "click_to_decoded_frame_seconds": 1.5262976759113371,
+  "decoded_media": [
+    {
+      "ready": 4,
+      "time": 0.029708,
+      "width": 640,
+      "height": 360,
+      "decoded": 5,
+      "paused": false,
+      "error": null
+    }
+  ],
+  "report_cancel_keeps_source": true,
+  "pause_seek_resume_controls": true,
+  "persisted_progress_seconds": 30,
+  "desktop_mobile_web_rendering": true,
+  "mobile_track_sheet_open_close_and_bounds": true,
+  "page_errors": [],
+  "known_demo_metadata_and_netflix_requests": [
+    {
+      "path": "/api/discover/top-ten",
+      "status": 502
+    },
+    {
+      "path": "/api/discover/top-ten",
+      "status": 502
+    },
+    {
+      "path": "/api/metadata/movies/details",
+      "status": 502
+    }
+  ],
+  "native_device_acceptance": false,
+  "usenet_performance_acceptance": false
+}
