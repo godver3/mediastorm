@@ -20,9 +20,10 @@ type Repository interface {
 
 type projectionKey struct{ profile, client, kind, id string }
 type projection struct {
-	title    models.Title
-	expires  time.Time
-	sequence uint64
+	title           models.Title
+	expires         time.Time
+	postPlayExpires time.Time
+	sequence        uint64
 }
 type Service struct {
 	repo      Repository
@@ -75,7 +76,7 @@ func (s *Service) Observe(profile, client string, titles []models.Title) {
 	defer s.mu.Unlock()
 	now := s.now()
 	for key, value := range s.delivered {
-		if !now.Before(value.expires) {
+		if !now.Before(value.postPlayExpires) {
 			delete(s.delivered, key)
 		}
 	}
@@ -97,7 +98,7 @@ func (s *Service) Observe(profile, client string, titles []models.Title) {
 			delete(s.delivered, oldest)
 		}
 		s.sequence++
-		s.delivered[key] = projection{BareTitle(title), now.Add(30 * time.Minute), s.sequence}
+		s.delivered[key] = projection{title: BareTitle(title), expires: now.Add(30 * time.Minute), postPlayExpires: now.Add(24 * time.Hour), sequence: s.sequence}
 	}
 }
 
@@ -107,11 +108,30 @@ func (s *Service) Resolve(profile, client, kind, id string) (models.Title, bool)
 	key := projectionKey{profile, client, kind, id}
 	item, ok := s.delivered[key]
 	if !ok || !s.now().Before(item.expires) {
+		if ok && !s.now().Before(item.postPlayExpires) {
+			delete(s.delivered, key)
+		}
+		return models.Title{}, false
+	}
+	return item.title, true
+}
+
+// ResolveCompleted retains only a bounded, non-durable catalogue identity for
+// long playback. The post-play handler must independently verify owned played
+// history and current profile policy before renewing the ordinary projection.
+// This never grants a normal rating request a longer authorization lifetime.
+func (s *Service) ResolveCompleted(profile, client, kind, id string) (models.Title, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := projectionKey{profile, client, kind, id}
+	item, ok := s.delivered[key]
+	if !ok || !s.now().Before(item.postPlayExpires) {
 		delete(s.delivered, key)
 		return models.Title{}, false
 	}
 	return item.title, true
 }
+
 func (s *Service) List(ctx context.Context, profile string) ([]models.TitleRating, error) {
 	return s.repo.List(ctx, profile)
 }

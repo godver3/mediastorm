@@ -103,6 +103,7 @@ type personalizedBuildDiagnostics struct {
 }
 
 type personalizedRecommendationsCacheEntry struct {
+	profile   string
 	response  PersonalizedRecommendationsResponse
 	expiresAt time.Time
 }
@@ -222,7 +223,7 @@ func (h *MetadataHandler) GetPersonalizedRecommendations(w http.ResponseWriter, 
 	if !cacheResponse && r.Context().Err() == nil {
 		log.Printf("[metadata] personalized recommendations empty result not cached user=%s seeds=%d", userID, resp.SeedCount)
 	}
-	h.finishPersonalizedRecommendationsBuild(cacheKey, build, resp, cacheResponse)
+	h.finishPersonalizedRecommendationsBuild(cacheKey, build, resp, cacheResponse, userID)
 	h.writePersonalizedRecommendations(w, r, userID, resp, history, progress)
 }
 
@@ -377,11 +378,17 @@ func (h *MetadataHandler) finishPersonalizedRecommendationsBuild(
 	build *personalizedRecommendationsBuild,
 	response PersonalizedRecommendationsResponse,
 	cacheResponse bool,
+	profile ...string,
 ) {
 	h.personalizedMu.Lock()
 	build.response = response
 	if cacheResponse {
+		owner := ""
+		if len(profile) > 0 {
+			owner = profile[0]
+		}
 		h.personalizedCache[key] = personalizedRecommendationsCacheEntry{
+			profile:   owner,
 			response:  response,
 			expiresAt: time.Now().Add(personalizedResponseCacheTTL),
 		}

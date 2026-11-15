@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"novastream/config"
+	"novastream/internal/profileaccess"
 	"novastream/models"
 	"novastream/services/history"
 	metadatapkg "novastream/services/metadata"
@@ -24,13 +25,14 @@ import (
 // number of HTTP round-trips when the frontend opens a title details screen.
 // All sub-fetches are performed concurrently.
 type DetailsBundleHandler struct {
-	metadata     metadataService
-	history      historyService
-	contentPrefs contentPreferencesService
-	users        userService
-	cfgManager   *config.Manager
-	userSettings userSettingsProvider
-	watchlist    watchlistMembership
+	metadata          metadataService
+	history           historyService
+	contentPrefs      contentPreferencesService
+	users             userService
+	cfgManager        *config.Manager
+	userSettings      userSettingsProvider
+	watchlist         watchlistMembership
+	catalogueObserver func(*http.Request, []models.Title)
 }
 
 // movieWatchState answers "is this movie marked watched?" across ID forms.
@@ -78,6 +80,30 @@ func (h *DetailsBundleHandler) SetUserSettingsProvider(provider userSettingsProv
 
 func (h *DetailsBundleHandler) SetWatchlistService(service watchlistMembership) {
 	h.watchlist = service
+}
+
+// SetCatalogueObserver registers only metadata actually delivered by this handler.
+func (h *DetailsBundleHandler) SetCatalogueObserver(observer func(*http.Request, []models.Title)) {
+	h.catalogueObserver = observer
+}
+
+func (h *DetailsBundleHandler) observeCatalogue(w http.ResponseWriter, r *http.Request, movie *models.Title, series *models.SeriesDetails, similar []models.Title) {
+	if h.catalogueObserver == nil {
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	titles := make([]models.Title, 0, 82)
+	if movie != nil {
+		titles = append(titles, *movie)
+	}
+	if series != nil {
+		titles = append(titles, series.Title)
+	}
+	if len(similar) > 80 {
+		similar = similar[:80]
+	}
+	titles = append(titles, similar...)
+	h.catalogueObserver(r, titles)
 }
 
 func (h *DetailsBundleHandler) metadataForUser(userID string) metadataService {
@@ -241,6 +267,10 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if !profileaccess.CheckResource(w, r, userID, "") {
+		return
+	}
+
 	contentType, titleID, name, imdbID, year, _, tvdbID, tmdbID := parseDetailsRequest(r)
 	metadataSvc := h.metadataForUser(userID)
 	shellStart := time.Now()
@@ -298,6 +328,7 @@ func (h *DetailsBundleHandler) GetDetailsShell(w http.ResponseWriter, r *http.Re
 	}
 
 	log.Printf("[details-shell timing] TOTAL: %dms (type=%s, titleId=%s)", time.Since(shellStart).Milliseconds(), contentType, titleID)
+	h.observeCatalogue(w, r, resp.MovieDetails, resp.SeriesDetails, nil)
 	writeCompressedJSON(w, r, resp, "details-shell")
 }
 
@@ -310,6 +341,10 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		} else {
 			http.Error(w, "user not found", http.StatusNotFound)
 		}
+		return
+	}
+
+	if !profileaccess.CheckResource(w, r, userID, "") {
 		return
 	}
 
@@ -559,6 +594,7 @@ func (h *DetailsBundleHandler) GetDetailsBundle(w http.ResponseWriter, r *http.R
 		resp.Trailers.Trailers = []models.Trailer{}
 	}
 
+	h.observeCatalogue(w, r, resp.MovieDetails, resp.SeriesDetails, resp.Similar)
 	writeCompressedJSON(w, r, resp, "details-bundle")
 }
 

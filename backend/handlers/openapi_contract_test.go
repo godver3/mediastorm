@@ -911,6 +911,19 @@ func TestOpenAPIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("post-play completion and suggestions", func(t *testing.T) {
+		h, service, _, title := postPlayRecommendationFixture(t)
+		h.UsersService = &fakeUsersServiceForSearch{users: map[string]models.User{"profile": {ID: "profile", AccountID: contractAccountID}}}
+		if err := service.Put(context.Background(), "profile", models.Title{ID: "tmdb:movie:8", Name: "Synthetic suggestion", MediaType: "movie", TMDBID: 8}, "like"); err != nil {
+			t.Fatal(err)
+		}
+		vars := map[string]string{"userID": "profile", "mediaType": "movie", "titleID": title.ID}
+		headers := map[string]string{"X-Client-ID": "fixture-client"}
+		path := "/api/users/profile/post-play/movie/" + title.ID
+		exercise(t, v, contractCall{method: "GET", target: path, vars: vars, headers: headers}, h.PostPlayContext, 200)
+		exercise(t, v, contractCall{method: "GET", target: path + "/recommendations", vars: vars, headers: headers}, h.PostPlayRecommendations, 200)
+	})
+
 	t.Run("explicit source recheck", func(t *testing.T) {
 		h, service := titleEndpointFixture(t)
 		service.AnnotateTitles("profile", "fixture-client", []models.Title{{ID: "synthetic-movie", Name: "Synthetic Movie", MediaType: "movie"}})

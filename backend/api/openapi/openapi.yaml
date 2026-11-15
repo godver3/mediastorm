@@ -271,6 +271,84 @@ paths:
         '500': {$ref: '#/components/responses/Error'}
         '501': {$ref: '#/components/responses/Error'}
         '503': {$ref: '#/components/responses/Error'}
+  /api/users/{userId}/post-play/{mediaType}/{titleId}:
+    parameters:
+      - {in: path, name: userId, required: true, schema: {type: string}}
+      - {in: path, name: mediaType, required: true, schema: {type: string, enum: [movie, series]}}
+      - {in: path, name: titleId, required: true, schema: {type: string, maxLength: 128}}
+      - {in: query, name: itemId, schema: {type: string, maxLength: 512}, description: Canonical completed progress item. Required for a series episode.}
+    get:
+      operationId: getPostPlayContext
+      summary: Read an owned completed title and its existing personal rating
+      description: |
+        Requires a full owned profile session, client identity and PIN unlock.
+        Only an existing server catalogue identity for this profile/client and
+        matching played watch history may renew the ordinary rating projection.
+        A bounded in-memory identity retained for up to 24 hours supports long
+        movies; ordinary rating requests retain their 30-minute lifetime.
+        Marked or imported history alone does not authorize renewal. The read
+        never changes ratings, watched state, lists or saved starting interests.
+        An episode response labels the rating as the whole series and does not
+        claim that the series has ended or that a future episode is playable.
+      responses:
+        '200':
+          description: Verified completion context and current personal rating
+          headers:
+            Cache-Control: {schema: {type: string}, description: Private and no-store}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, rating, ratingScope, completion]
+                properties:
+                  title: {$ref: '#/components/schemas/Title'}
+                  rating: {type: string, enum: [none, like, love, dislike]}
+                  ratingScope: {type: string, enum: [movie, series]}
+                  completion: {type: string, enum: [movie, episode]}
+        '400': {description: Invalid coordinates or missing completed episode identity}
+        '403': {description: Locked profile or restricted session}
+        '404': {description: Profile or title unavailable under the current policy}
+        '409': {description: Reload the title or wait for played history to be recorded}
+        '503': {description: Stored completion context or preferences unavailable}
+  /api/users/{userId}/post-play/{mediaType}/{titleId}/recommendations:
+    parameters:
+      - {in: path, name: userId, required: true, schema: {type: string}}
+      - {in: path, name: mediaType, required: true, schema: {type: string, enum: [movie, series]}}
+      - {in: path, name: titleId, required: true, schema: {type: string, maxLength: 128}}
+      - {in: query, name: itemId, schema: {type: string, maxLength: 512}, description: Canonical completed progress item. Required for a series episode.}
+    get:
+      operationId: getPostPlayRecommendations
+      summary: Read bounded current profile suggestions after verified playback
+      description: |
+        Uses the same completion, ownership and PIN checks as post-play context.
+        Returns at most six movies and six series. Current seen/progress,
+        hidden-title, explicit dislike and child policies are reapplied.
+        Recommendation metadata work is bounded to two seconds and does not
+        prepare streams or warm ratings/artwork. Cached profile suggestions and
+        verified saved choices provide fallback when external recommendations
+        fail. A disliked seed cannot reuse its earlier positive cached context.
+        Titles are candidates; this endpoint does not assert source playability.
+      responses:
+        '200':
+          description: Suggestions or an explicitly unavailable empty result
+          headers:
+            Cache-Control: {schema: {type: string}, description: Private and no-store}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, source, rating, ratingScope]
+                properties:
+                  items: {type: array, maxItems: 12, items: {$ref: '#/components/schemas/TrendingItem'}}
+                  total: {type: integer, minimum: 0, maximum: 12}
+                  source: {type: string, enum: [personalized, saved_choices, unavailable]}
+                  rating: {type: string, enum: [none, like, love, dislike]}
+                  ratingScope: {type: string, enum: [movie, series]}
+        '400': {description: Invalid coordinates or missing completed episode identity}
+        '403': {description: Locked profile or restricted session}
+        '404': {description: Profile or title unavailable under the current policy}
+        '409': {description: Reload the title or wait for played history to be recorded}
+        '503': {description: 'Stored preferences, history or hidden-title policy unavailable'}
   /api/users/{userId}/ratings/{mediaType}/{titleId}:
     parameters:
       - $ref: '#/components/parameters/UserID'

@@ -185,6 +185,7 @@ async function performReleaseAction(reporting, retry) {
   // Observe this exact action, including responses received after cancellation.
   request.then(response => {
     rememberReleaseReport(action, response);
+    if (response?.report?.id && ['wrong_title','wrong_episode'].includes(action.reason) && typeof discardWebPostPlaySource === 'function') discardWebPostPlaySource(action.state);
     action.replacementId = response?.replacement?.prequeueId || '';
     action.responseReceived = true;
     for (const previous of action.deferredCleanup) cancelReleaseAction(previous);
@@ -327,6 +328,7 @@ function closeReleaseReport() {
   setReleaseReportBusy(false);
   document.getElementById('releaseReportDialog').close();
   document.getElementById('releaseReportButton')?.focus();
+  if (typeof maybeOfferWebPostPlay === 'function') maybeOfferWebPostPlay().catch(() => {});
 }
 
 document.getElementById('releaseReportDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeReleaseReport(); });
