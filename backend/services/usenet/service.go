@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 	"novastream/config"
 	"novastream/internal/httpheaders"
+	"novastream/internal/nzbfetch"
 	"novastream/internal/pool"
 	"novastream/internal/requestsecurity"
 	"novastream/models"
@@ -216,6 +218,12 @@ func externalEngineHealthCheck(candidate models.NZBResult, fileName string) (*mo
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
+	if endpoint := strings.TrimSpace(os.Getenv("NZB_GATEWAY_URL")); endpoint != "" {
+		return nzbfetch.Fetch(ctx, endpoint, downloadURL, candidate)
+	}
+	if os.Getenv("NZB_GATEWAY_REQUIRED") == "1" {
+		return nil, "", fmt.Errorf("configure the shared NZB acquisition gateway before using Usenet")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("build nzb request: %w", err)

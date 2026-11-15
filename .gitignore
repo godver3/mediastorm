@@ -168,3 +168,5 @@ backend/tools/benchfb/
 backend/tools/benchrar/
 backend/benchfb
 backend/benchrar
+# Local credentials for the optional NZB policy deployment.
+/nzb-gateway/

@@ -1893,6 +1893,7 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		resolveFirstReadySource, candidates.Total(), prequeueResolutionWidth(resolveFirstReadySource), time.Since(workerStart))
 
 	choice, resolveErr := h.resolveCandidates(ctx, prequeueID, candidates, prequeueResolutionOptions{
+		titleID:                titleID,
 		mediaType:              mediaType,
 		targetEpisode:          targetEpisode,
 		userID:                 userID,
@@ -2260,6 +2261,7 @@ type prequeueResolutionChoice struct {
 
 // prequeueResolutionOptions configures the resolution phase.
 type prequeueResolutionOptions struct {
+	titleID                string
 	mediaType              string
 	targetEpisode          *models.EpisodeReference
 	userID                 string
@@ -2933,6 +2935,7 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 			annotated.Attributes = cloned
 		}
 		annotateResultProfile(&annotated, opts.userID)
+		annotateResultNZBContent(&annotated, opts.titleID, opts.mediaType, opts.targetEpisode)
 		result = annotated
 
 		resolution, resolveErr := h.playbackSvc.Resolve(raceCtx, result)
@@ -3714,6 +3717,20 @@ func (h *PrequeueHandler) failPrequeue(prequeueID, errMsg string) {
 		e.ProgressTotal = 0
 		e.Error = errMsg
 	})
+}
+
+func annotateResultNZBContent(result *models.NZBResult, titleID, mediaType string, episode *models.EpisodeReference) {
+	if result == nil || strings.TrimSpace(titleID) == "" {
+		return
+	}
+	if result.Attributes == nil {
+		result.Attributes = map[string]string{}
+	}
+	key := strings.ToLower(strings.TrimSpace(mediaType)) + ":" + strings.TrimSpace(titleID)
+	if episode != nil {
+		key += fmt.Sprintf(":s%de%d", episode.SeasonNumber, episode.EpisodeNumber)
+	}
+	result.Attributes["nzbContentKey"] = key
 }
 
 func annotateResultProfile(result *models.NZBResult, userID string) {

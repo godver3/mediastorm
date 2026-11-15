@@ -1,0 +1,13 @@
+{
+  "manager_origins": ["http://host.docker.internal:9696"],
+  "indexers": {
+    "2": {"enabled": false, "name": "Example indexer", "hosts": ["indexer.example"]}
+  },
+  "user_agent": "SABnzbd/5.1.3",
+  "window_seconds": 600,
+  "max_per_title": 3,
+  "min_interval_seconds": 30,
+  "cache_seconds": 604800,
+  "cache_bytes": 1000000000,
+  "max_nzb_bytes": 52428800
+}

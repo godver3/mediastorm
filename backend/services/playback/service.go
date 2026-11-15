@@ -2253,6 +2253,12 @@ func externalUsenetEnabledForProfile(settings config.Settings, profileID string)
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
+	if endpoint := strings.TrimSpace(os.Getenv("NZB_GATEWAY_URL")); endpoint != "" {
+		return s.fetchGatewayNZB(ctx, endpoint, downloadURL, candidate)
+	}
+	if os.Getenv("NZB_GATEWAY_REQUIRED") == "1" {
+		return nil, "", fmt.Errorf("configure the shared NZB acquisition gateway before using Usenet")
+	}
 	breaker := s.providerBreaker
 	if breaker == nil {
 		breaker = providerbreaker.Shared()

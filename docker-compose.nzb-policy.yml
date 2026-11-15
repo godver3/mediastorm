@@ -1,0 +1,44 @@
+# Optional overlay. See contrib/nzb-gateway/README.md before enabling.
+services:
+  mediastorm:
+    environment:
+      - NZB_GATEWAY_URL=http://nzb-gateway:8799
+      - NZB_GATEWAY_TOKEN_FILE=/run/secrets/nzb_gateway_token
+      - NZB_GATEWAY_REQUIRED=1
+    depends_on:
+      nzb-gateway:
+        condition: service_healthy
+    secrets:
+      - nzb_gateway_token
+
+  nzb-gateway:
+    build:
+      context: ./contrib/nzb-gateway
+      args:
+        GATEWAY_UID: ${PUID:-1000}
+        GATEWAY_GID: ${PGID:-1000}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    environment:
+      NZB_GATEWAY_CONFIG: /run/config/nzb-gateway.json
+      NZB_GATEWAY_TOKEN_FILE: /run/secrets/nzb_gateway_token
+    volumes:
+      - nzb_policy_data:/data
+      - ${NZB_POLICY_CONFIG_FILE:?Set NZB_POLICY_CONFIG_FILE}:/run/config/nzb-gateway.json:ro
+    secrets:
+      - nzb_gateway_token
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 64
+
+secrets:
+  nzb_gateway_token:
+    file: ${NZB_POLICY_TOKEN_FILE:?Set NZB_POLICY_TOKEN_FILE}
+
+volumes:
+  nzb_policy_data:

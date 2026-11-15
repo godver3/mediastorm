@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"novastream/internal/httpheaders"
 	"novastream/internal/mediaresolve"
+	"novastream/internal/nzbfetch"
 	"novastream/models"
 	usenetsvc "novastream/services/usenet"
 )
@@ -87,7 +89,7 @@ func (p *usenetTrackProber) probe(ctx context.Context, candidate models.NZBResul
 	if p.userAgentFor != nil {
 		userAgent = p.userAgentFor(candidate.Indexer)
 	}
-	nzbBytes, fileName, err := p.fetchNZB(ctx, downloadURL, userAgent)
+	nzbBytes, fileName, err := p.fetchNZB(ctx, downloadURL, userAgent, candidate)
 	if err != nil {
 		return nil, nil, fmt.Sprintf("fetch NZB: %v", err)
 	}
@@ -281,7 +283,16 @@ func (p *usenetTrackProber) findBestProbeMediaFile(dirPath string, hints mediare
 	return candidates[0].path, nil
 }
 
-func (p *usenetTrackProber) fetchNZB(ctx context.Context, downloadURL, userAgent string) ([]byte, string, error) {
+func (p *usenetTrackProber) fetchNZB(ctx context.Context, downloadURL, userAgent string, candidates ...models.NZBResult) ([]byte, string, error) {
+	if endpoint := strings.TrimSpace(os.Getenv("NZB_GATEWAY_URL")); endpoint != "" {
+		if len(candidates) != 1 {
+			return nil, "", fmt.Errorf("NZB acquisition requires source metadata")
+		}
+		return nzbfetch.Fetch(ctx, endpoint, downloadURL, candidates[0])
+	}
+	if os.Getenv("NZB_GATEWAY_REQUIRED") == "1" {
+		return nil, "", fmt.Errorf("configure the shared NZB acquisition gateway before using Usenet")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return nil, "", err

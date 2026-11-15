@@ -113,6 +113,14 @@ When upgrading an older installation to PostgreSQL, mediastorm migrates supporte
 
 Use **Admin → Backups** to create, download, restore, or schedule application backups. Also protect the PostgreSQL volume and cache directory as part of the host's normal backup strategy.
 
+### Optional NZB Download Policy
+
+The [NZB download policy](contrib/nzb-gateway/README.md) adds a shared persistent
+NZB cache, per-title acquisition budgets, and indexer cooldowns for playback,
+availability checks, and track probes. It is opt-in and includes a companion
+service and Compose overlay in this repository. Search traffic is unchanged;
+the policy does not guarantee anonymity or permission to use an indexer.
+
 ## Web and Native Clients
 
 The server provides three browser entry points:
