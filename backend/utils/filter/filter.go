@@ -1559,6 +1559,13 @@ func isStrongTitleIdentity(parsedTitle, matchedTitle string, titleSimilarity flo
 	if stripLeadingTitleArticle(parsed) == stripLeadingTitleArticle(expected) {
 		return true
 	}
+	// Catalog names such as "Treasure Island (2026)" carry a disambiguating
+	// year that release parsers strip from the release title. The year itself
+	// is verified separately, so compare the names without it.
+	if p, e := stripTrailingTitleYear(parsed), stripTrailingTitleYear(expected); p != "" && e != "" &&
+		(p != parsed || e != expected) && stripLeadingTitleArticle(p) == stripLeadingTitleArticle(e) {
+		return true
+	}
 	if formulaOneTitleIdentity(parsed) != "" && formulaOneTitleIdentity(parsed) == formulaOneTitleIdentity(expected) {
 		return true
 	}
@@ -1572,6 +1579,21 @@ func rawTitleHasStrongIdentity(rawTitle, matchedTitle string) bool {
 		}
 	}
 	return false
+}
+
+// stripTrailingTitleYear drops a final 19xx/20xx token from a normalized title.
+func stripTrailingTitleYear(title string) string {
+	fields := strings.Fields(title)
+	if len(fields) < 2 {
+		return title
+	}
+	last := fields[len(fields)-1]
+	if len(last) == 4 && (strings.HasPrefix(last, "19") || strings.HasPrefix(last, "20")) {
+		if _, err := strconv.Atoi(last); err == nil {
+			return strings.Join(fields[:len(fields)-1], " ")
+		}
+	}
+	return title
 }
 
 func stripLeadingTitleArticle(title string) string {

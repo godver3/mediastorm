@@ -1083,6 +1083,33 @@ func TestResults_SeriesYearMismatch(t *testing.T) {
 		}
 	})
 
+	t.Run("catalog title year suffix does not make identity loose", func(t *testing.T) {
+		results := []models.NZBResult{
+			{Title: "Treasure Island 2026 S01E03 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune"},
+			{Title: "Treasure.Island.2026.S01E03.1080p.WEB.H264-ETHEL"},
+			{Title: "Treasure.Island.With.Bear.Grylls.S01E03.1080p.HEVC.x265-MeGusta"},
+		}
+		opts := Options{
+			ExpectedTitle:  "Treasure Island (2026)",
+			ExpectedYear:   2026,
+			EpisodeAirYear: 2026,
+			TargetSeason:   1,
+			TargetEpisode:  3,
+		}
+		filtered := ResultsWithDetails(results, opts)
+		if len(filtered) != 3 {
+			t.Fatalf("expected 3 detailed results, got %d", len(filtered))
+		}
+		for _, f := range filtered[:2] {
+			if !f.Passed {
+				t.Fatalf("expected %q to pass, got rejection %q", f.Result.Title, f.RejectReason)
+			}
+		}
+		if filtered[2].Passed {
+			t.Fatal("expected Bear Grylls spin-off to stay rejected")
+		}
+	})
+
 	t.Run("matching year does not override extended title identity", func(t *testing.T) {
 		results := []models.NZBResult{
 			{Title: "Show Name New Chapter 2026 S01 1080p WEB-DL"},
