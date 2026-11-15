@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "race_detector_enabled": true,
+  "packages": [
+    "novastream/handlers"
+  ],
+  "test_pattern": "^(TestLovedTitles|TestDisplayListDelegationPreservesPrivateSourceCacheDirectives)",
+  "linker_flags": "-w",
+  "dwarf_debug_artifacts_omitted_only": true,
+  "race_instrumentation_unchanged": true,
+  "application_browser_included_in_separate_full_suite": true
+}

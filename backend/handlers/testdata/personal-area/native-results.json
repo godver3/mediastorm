@@ -1,0 +1,41 @@
+{
+  "tests": {
+    "core": {
+      "tests": 617,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "app": {
+      "tests": 44,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mobile": {
+      "tests": 89,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "total_tests": 750,
+  "new_main_tests": 12,
+  "apks": {
+    "app": {
+      "bytes": 70256924,
+      "sha256": "a405f91a3d03b04310f7751b69cb3a914d0ac7ee0c69fda424477cc358c712fb"
+    },
+    "mobile": {
+      "bytes": 78815921,
+      "sha256": "888e466c6f3464872b40587a28500d486b7dfdf1264723903df8b7a20373f7da"
+    }
+  },
+  "debug_prefill_all_empty": true,
+  "private_properties_absent": true,
+  "native_device_acceptance": false,
+  "provider_work_added": false,
+  "personal_area_and_preference_preview_tests": true,
+  "reference_is_not_native_layout": true,
+  "private_preview_url": "http://100.68.37.82:18914/preview.html"
+}

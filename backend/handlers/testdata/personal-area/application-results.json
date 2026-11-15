@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "checks": [
+    "foreign-pin-and-conflicting-profile-selectors-rejected",
+    "love-view-uses-existing-rating-and-private-cache-boundary",
+    "owned-favorite-delivery-works-on-another-device",
+    "kind-filter-and-bounded-paging",
+    "negative-and-cleared-preferences-leave-the-loved-view",
+    "history-progress-watchlist-hidden-settings-and-starting-interests-unchanged"
+  ],
+  "real_application_api_through_chromium": true,
+  "existing_preference_dataset_only": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false
+}

@@ -1,0 +1,32 @@
+{
+  "scope": "Native personal list entry only; preserve the existing Compose Material system",
+  "macrostructure": "Ecosystem Index",
+  "theme": "Existing Mediastorm",
+  "scores": {
+    "philosophy": 4,
+    "hierarchy": 4,
+    "execution": 3,
+    "specificity": 4,
+    "restraint": 5,
+    "variety": 4
+  },
+  "static_review": {
+    "no_new_fonts_or_palette": true,
+    "no_new_decorative_motion": true,
+    "existing_platform_focus_and_press_states_reused": true,
+    "no_fabricated_counts_or_media_claims": true,
+    "no_fake_device_or_browser_chrome": true,
+    "stable_user_list_keys": true,
+    "existing_routes_and_datasets_reused": true,
+    "child_profiles_not_exposed_to_the_new_aggregate": true
+  },
+  "render_checks_pending": [
+    "Native layout at 320,375,414,768dp",
+    "Physical TV focus and focus restoration",
+    "Touch and screen-reader acceptance",
+    "Rendered contrast, text wrapping and full keyboard/remote traversal"
+  ],
+  "all_58_web_gates_claimed_passed": false,
+  "native_rendering_claimed": false,
+  "css_and_html_specific_gates_not_applicable_to_compose": true
+}
