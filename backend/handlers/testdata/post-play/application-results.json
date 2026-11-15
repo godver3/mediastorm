@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "checks": [
+    "foreign-pin-and-undelivered-client-rejected-before-mutation",
+    "real-canonical-completion-existing-rating-and-negative-aware-suggestions",
+    "actual-catalogue-delivery-registers-client-scoped-completion",
+    "completion-reads-and-ratings-preserve-other-profile-datasets"
+  ],
+  "real_application_api_through_chromium": true,
+  "existing_preference_dataset_only": true,
+  "external_details_available": false,
+  "synthetic_completion_history_written": true,
+  "native_ui_rendered": false,
+  "private_values_in_artifact": false
+}

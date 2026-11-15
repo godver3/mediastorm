@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "checks": [
+    "decoded-generated-movie-natural-end-opens-voluntary-profile-rating",
+    "stable-close-focus-and-six-responsive-widths",
+    "skip-never-writes-and-repeated-end-does-not-reask",
+    "negative-rating-confirms-existing-api-and-lost-save-retries",
+    "safe-real-watch-route-and-confirmed-save-without-source-preload",
+    "late-suggestion-response-cannot-overwrite-newer-vote",
+    "failed-context-reload-clears-stale-actions-and-recovers",
+    "existing-vote-and-episode-ordering-preserve-next-episode-flow",
+    "late-wrong-content-report-and-navigation-suppress-offer"
+  ],
+  "production_template": true,
+  "generated_media_decoded": true,
+  "profile_api_responses_synthetic": true,
+  "native_ui_rendered": false,
+  "viewports": [
+    320,
+    375,
+    390,
+    414,
+    768,
+    1280
+  ]
+}

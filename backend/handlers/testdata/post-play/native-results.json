@@ -1,0 +1,44 @@
+{
+  "unit_source_head": "a64870773521e18fccb250f5666a9945bd771eac",
+  "apk_source_head": "f9b9d1da8dee4a9f3b2d673f2555842cd9af8b45",
+  "product_source_matches_tested_commit": true,
+  "tests": {
+    "core": {
+      "tests": 672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "app": {
+      "tests": 44,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mobile": {
+      "tests": 89,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "total_tests": 805,
+  "new_main_tests": 29,
+  "apks": {
+    "app": {
+      "bytes": 70338844,
+      "sha256": "c2f33ec9632e0c18a89bed07b6eaef432e3d12c881afa17c57d03937cb7f6f2d"
+    },
+    "mobile": {
+      "bytes": 78897841,
+      "sha256": "57e4112a148f60faa1fcf898a33467cef6ee715d25bced146cfb4570143a9734"
+    }
+  },
+  "debug_prefill_all_empty": true,
+  "private_properties_absent": true,
+  "native_device_acceptance": false,
+  "source_checks_visible_completed_cards_only": true,
+  "completion_policy_profile_editor_and_navigation_tests": true,
+  "reference_is_not_native_layout": true,
+  "private_preview_url": "http://100.68.37.82:18916/preview.html"
+}

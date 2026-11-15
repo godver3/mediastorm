@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "packages": [
+    "novastream/services/titleratings",
+    "novastream/handlers"
+  ],
+  "race_instrumentation": true,
+  "linker_flags": "-w",
+  "selection": "completion catalogue TTL and bounded retention, played identity, profile/PIN policy, recommendations and rendered behavior"
+}

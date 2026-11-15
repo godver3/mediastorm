@@ -1,0 +1,133 @@
+{
+  "passed": true,
+  "tests": {
+    "pass": 8204,
+    "skip": 29
+  },
+  "packages": {
+    "pass": 101,
+    "skip": 21
+  },
+  "skipped_tests": [
+    {
+      "package": "novastream/handlers",
+      "test": "TestStableCopyFMP4EndToEnd"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestStableCopyHDRVariantsEndToEnd"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestStableCopyAV1EndToEnd"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestForcedCopyEndToEnd"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestLiveTimeshiftEndToEnd"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestLetterboxdTop500Live"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestLocalPreferenceSettingsPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestReleaseReportPlayerPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestEpisodeHintsPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestLocalSourceHintsPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestSourceRecheckPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestAvailabilityReportsPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestVisibleTitleHintsPreview"
+    },
+    {
+      "package": "novastream/handlers",
+      "test": "TestSeekrLive"
+    },
+    {
+      "package": "novastream/internal/datastore",
+      "test": "TestSportsIntegrationMigrationPaths"
+    },
+    {
+      "package": "novastream/internal/mediaidentity",
+      "test": "TestFullAnimeMappingSnapshot"
+    },
+    {
+      "package": "novastream/internal/mediaidentity",
+      "test": "TestDiscoveryLiveTMDBWikidata"
+    },
+    {
+      "package": "novastream/services/metadata",
+      "test": "TestRegionalDiscoveryLiveProviders"
+    },
+    {
+      "package": "novastream/services/metadata",
+      "test": "TestShelfCardsLiveTMDBOnly"
+    },
+    {
+      "package": "novastream/services/metadata",
+      "test": "TestTVDBLiveRemoteIDAndExtendedTranslations"
+    },
+    {
+      "package": "novastream/services/sourceavailability",
+      "test": "TestAvailabilityLiveSelectedIndexer"
+    },
+    {
+      "package": "novastream/services/sports",
+      "test": "TestEveryActivatedCoverageFixtureNormalizes"
+    },
+    {
+      "package": "novastream/services/sports",
+      "test": "TestActivatedOptionalProviderFixtures"
+    },
+    {
+      "package": "novastream/services/sports",
+      "test": "TestCyclingDownloadedSubscription"
+    },
+    {
+      "package": "novastream/services/sports",
+      "test": "TestCyclingPublicSubscriptionLive"
+    },
+    {
+      "package": "novastream/services/sports",
+      "test": "TestExportHistoricalBatch"
+    },
+    {
+      "package": "novastream/services/usenet",
+      "test": "TestFullHealthCheckSpecificNZB"
+    },
+    {
+      "package": "novastream/services/usenet",
+      "test": "TestCheckSegmentsWithPoolTrustsArticleNotFoundError"
+    },
+    {
+      "package": "novastream/services/usenet",
+      "test": "TestCheckSegmentsWithPoolFallsBackOnConnectionErrors"
+    }
+  ],
+  "all_json_lines_parsed": true,
+  "source_head": "4a83ce95839e3fe68807d45f78cf34c39ded84d6",
+  "both_postgres_fixtures_enabled": true,
+  "full_application_and_rendered_player_browser_included": true
+}
