@@ -186,6 +186,27 @@ func (p *StreamingProvider) evictCachedURL(cacheKey string) bool {
 	return true
 }
 
+// shouldRetryFailedURL reports whether a failed download URL should be
+// dropped and re-resolved once. URLs from this proxy's cache always qualify.
+// AllDebrid URLs also qualify on a proxy cache miss because the AllDebrid
+// client keeps its own longer-lived unlock cache, which may have handed back
+// a link that has since died.
+func (p *StreamingProvider) shouldRetryFailedURL(providerName string, fromCache, retryCachedFailure bool) bool {
+	if !retryCachedFailure {
+		return false
+	}
+	return fromCache || strings.EqualFold(providerName, "alldebrid")
+}
+
+// forgetFailedURL drops a download URL that was proven unusable from every
+// cache that could hand it out again.
+func (p *StreamingProvider) forgetFailedURL(providerName, cacheKey, downloadURL string) {
+	p.evictCachedURL(cacheKey)
+	if strings.EqualFold(providerName, "alldebrid") {
+		InvalidateAllDebridDownloadURL(downloadURL)
+	}
+}
+
 // GetDirectURL returns the unrestricted HTTP download URL for the given debrid path.
 // This URL can be used directly by FFmpeg for seekable input.
 func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (string, error) {
@@ -483,10 +504,15 @@ func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req stre
 		log.Printf("[debrid-stream] TorBox CDN rate limited torrent %s file %s; retrying same URL after %s", torrentID, fileID, delay.Round(time.Millisecond))
 	}
 	if err != nil {
-		if fromCache && retryCachedFailure {
-			if p.evictCachedURL(cacheKey) {
-				log.Printf("[debrid-stream] evicted cached URL for torrent %s file %s after request failure: %v", torrentID, fileID, err)
-			}
+		// The caller went away (player seek/stop). The URL is not proven bad, so
+		// keep it cached: evicting here forced a fresh unlock on the next range
+		// request, which on AllDebrid counts as another generated link.
+		if ctx.Err() != nil {
+			return nil, &SourceError{Provider: providerName, URL: downloadURL, Err: err}
+		}
+		if p.shouldRetryFailedURL(providerName, fromCache, retryCachedFailure) {
+			p.forgetFailedURL(providerName, cacheKey, downloadURL)
+			log.Printf("[debrid-stream] dropped URL for torrent %s file %s after request failure: %v", torrentID, fileID, err)
 			return p.streamWithProvider(ctx, req, client, torrentID, fileID, false)
 		}
 		return nil, &SourceError{
@@ -500,10 +526,9 @@ func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req stre
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		resp.Body.Close()
-		if fromCache && retryCachedFailure {
-			if p.evictCachedURL(cacheKey) {
-				log.Printf("[debrid-stream] evicted cached URL for torrent %s file %s after %s response: %s", torrentID, fileID, providerName, resp.Status)
-			}
+		if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable && p.shouldRetryFailedURL(providerName, fromCache, retryCachedFailure) {
+			p.forgetFailedURL(providerName, cacheKey, downloadURL)
+			log.Printf("[debrid-stream] dropped URL for torrent %s file %s after %s response: %s", torrentID, fileID, providerName, resp.Status)
 			return p.streamWithProvider(ctx, req, client, torrentID, fileID, false)
 		}
 		return nil, &SourceError{

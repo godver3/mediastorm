@@ -1022,6 +1022,33 @@ func TestRefreshURLs_SkipsExternalProxyURLs(t *testing.T) {
 	}
 }
 
+func TestRefreshURLs_SkipsAllDebridPaths(t *testing.T) {
+	refresher := &mockDebridRefresher{}
+
+	svc := NewService(nil, "")
+	svc.SetDebridStreaming(refresher)
+
+	for i, path := range []string{"/debrid/alldebrid/123/file/1/movie.mkv", "webdav/debrid/AllDebrid/456", "/debrid/realdebrid/789/file/2"} {
+		svc.entries[entryKey(fmt.Sprintf("title%d", i), "user1")] = &WarmEntry{
+			TitleID:     fmt.Sprintf("title%d", i),
+			UserID:      "user1",
+			StreamPath:  path,
+			LastRefresh: time.Now().Add(-10 * time.Minute),
+			ExpiresAt:   time.Now().Add(1 * time.Hour),
+		}
+	}
+
+	if err := svc.RefreshURLs(context.Background()); err != nil {
+		t.Fatalf("RefreshURLs failed: %v", err)
+	}
+
+	// AllDebrid counts each unlock as a generated link; timed refreshes of
+	// warm entries were creating links nobody downloaded.
+	if len(refresher.calls) != 1 || refresher.calls[0] != "/debrid/realdebrid/789/file/2" {
+		t.Fatalf("refresh calls = %v, want only the Real-Debrid path", refresher.calls)
+	}
+}
+
 func TestIsExternalStreamURL(t *testing.T) {
 	cases := map[string]bool{
 		"https://aiostreams.example.com/api/v1/proxy/x": true,

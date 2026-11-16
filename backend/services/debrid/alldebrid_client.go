@@ -527,6 +527,10 @@ func (c *AllDebridClient) DeleteTorrent(ctx context.Context, torrentID string) e
 }
 
 // UnrestrictLink converts an AllDebrid link to an actual download URL.
+//
+// Every /link/unlock call counts as a generated link on AllDebrid, so results
+// are cached and concurrent requests for the same link are collapsed (see
+// alldebrid_link_cache.go).
 func (c *AllDebridClient) UnrestrictLink(ctx context.Context, link string) (*UnrestrictResult, error) {
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("alldebrid API key not configured")
@@ -537,6 +541,35 @@ func (c *AllDebridClient) UnrestrictLink(ctx context.Context, link string) (*Unr
 		return nil, fmt.Errorf("link is required")
 	}
 
+	key := allDebridUnlockCacheKey(c.apiKey, trimmedLink)
+	if cached, ok := allDebridUnlocks.get(key); ok {
+		log.Printf("[alldebrid] reusing cached unlock for %s", trimmedLink)
+		return cached, nil
+	}
+
+	value, err, _ := allDebridUnlocks.group.Do(key, func() (interface{}, error) {
+		// A concurrent caller may have filled the cache while we waited.
+		if cached, ok := allDebridUnlocks.get(key); ok {
+			return cached, nil
+		}
+		// Detach from the first caller's cancellation so one aborted request
+		// (e.g. a player seek) does not fail every waiter sharing this unlock.
+		result, err := c.unlockLink(context.WithoutCancel(ctx), trimmedLink)
+		if err != nil {
+			return nil, err
+		}
+		allDebridUnlocks.put(key, result)
+		return result, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := *value.(*UnrestrictResult)
+	return &result, nil
+}
+
+// unlockLink performs the actual /link/unlock request.
+func (c *AllDebridClient) unlockLink(ctx context.Context, trimmedLink string) (*UnrestrictResult, error) {
 	endpoint := c.buildURL("/link/unlock")
 
 	formData := url.Values{}
