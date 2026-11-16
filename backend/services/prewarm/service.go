@@ -1007,6 +1007,14 @@ func (s *Service) RefreshURLs(ctx context.Context) error {
 			continue
 		}
 
+		// AllDebrid counts every unlock as a generated link and suspends
+		// accounts that create many links without downloading them. Its
+		// unlocked links stay valid for hours and are resolved lazily (and
+		// cached) when playback starts, so a timed refresh only adds links.
+		if isAllDebridStreamPath(entry.StreamPath) {
+			continue
+		}
+
 		if time.Since(entry.LastRefresh) < refreshInterval {
 			continue
 		}
@@ -1478,6 +1486,14 @@ func (s *Service) isAdoptedPrequeueID(prequeueID string) bool {
 func isExternalStreamURL(streamPath string) bool {
 	p := strings.TrimSpace(streamPath)
 	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://")
+}
+
+// isAllDebridStreamPath reports whether a stream path is served by AllDebrid.
+func isAllDebridStreamPath(streamPath string) bool {
+	p := strings.ToLower(strings.TrimSpace(streamPath))
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimPrefix(p, "webdav/")
+	return strings.HasPrefix(p, "debrid/alldebrid/")
 }
 
 func entryKey(titleID, userID string, settingsScopeKey ...string) string {
