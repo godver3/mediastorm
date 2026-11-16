@@ -700,6 +700,29 @@ func (c *TorboxClient) CheckInstantAvailabilityBulk(ctx context.Context, infoHas
 		return map[string]bool{}, fmt.Errorf("info hash is required")
 	}
 
+	results := make(map[string]bool, len(normalizedHashes))
+	for start := 0; start < len(normalizedHashes); start += torboxCheckCachedBatchSize {
+		end := start + torboxCheckCachedBatchSize
+		if end > len(normalizedHashes) {
+			end = len(normalizedHashes)
+		}
+		batch, err := c.checkCachedBatch(ctx, normalizedHashes[start:end])
+		if err != nil {
+			return nil, err
+		}
+		for hash, cached := range batch {
+			results[hash] = cached
+		}
+	}
+	return results, nil
+}
+
+// torboxCheckCachedBatchSize keeps each checkcached GET well under Torbox's
+// URL limit: requests over ~8 KB (around 200 hashes) are rejected with an HTML
+// 414, which used to fail the whole quick check for large searches.
+const torboxCheckCachedBatchSize = 100
+
+func (c *TorboxClient) checkCachedBatch(ctx context.Context, normalizedHashes []string) (map[string]bool, error) {
 	values := url.Values{}
 	values.Set("hash", strings.Join(normalizedHashes, ","))
 	values.Set("list_files", "true")
@@ -723,6 +746,9 @@ func (c *TorboxClient) CheckInstantAvailabilityBulk(ctx context.Context, infoHas
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode >= http.StatusBadRequest && !json.Valid(body) {
+		return nil, fmt.Errorf("check cached request failed: HTTP %d for %d hashes", resp.StatusCode, len(normalizedHashes))
 	}
 
 	cachedHashes, detail, err := parseTorboxCheckCachedResponse(body)
