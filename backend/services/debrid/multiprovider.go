@@ -202,7 +202,7 @@ func (s *MultiProviderService) checkProviderCache(
 
 	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
 		log.Printf("[multi-provider] %s: adding magnet", providerName)
-		addResp, err = pe.client.AddMagnet(ctx, candidate.Link)
+		addResp, err = addMagnetUnlessUncached(ctx, pe.client, candidate.Link)
 	} else if torrentURL != "" {
 		log.Printf("[multi-provider] %s: resolving torrent source from %s", providerName, safeURLForLog(torrentURL))
 		source, downloadErr := downloadTorrentSource(ctx, torrentURL, 30*time.Second)
@@ -277,6 +277,7 @@ func (s *MultiProviderService) checkProviderCache(
 	if !result.IsCached {
 		// Clean up non-cached torrent
 		log.Printf("[multi-provider] %s: not cached, cleaning up", providerName)
+		RememberUncached(pe.client.Name(), extractInfoHashFromMagnet(candidate.Link), info.Hash)
 		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
 		result.TorrentID = "" // Clear since we deleted it
 	}

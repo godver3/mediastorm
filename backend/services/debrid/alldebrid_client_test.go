@@ -2,9 +2,9 @@ package debrid
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -64,7 +64,7 @@ func TestAllDebridInstantAvailabilityIsReportedUnsupported(t *testing.T) {
 	if cached {
 		t.Fatal("CheckInstantAvailability returned cached=true for unsupported lookup")
 	}
-	if !strings.Contains(err.Error(), "does not support non-mutating instant cache checks") {
-		t.Fatalf("CheckInstantAvailability error = %q", err)
+	if !errors.Is(err, ErrInstantAvailabilityUnsupported) {
+		t.Fatalf("CheckInstantAvailability error = %q, want ErrInstantAvailabilityUnsupported", err)
 	}
 }

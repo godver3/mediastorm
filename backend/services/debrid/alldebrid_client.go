@@ -606,5 +606,5 @@ func (c *AllDebridClient) CheckInstantAvailability(_ context.Context, infoHash s
 		return false, fmt.Errorf("info hash is required")
 	}
 
-	return false, fmt.Errorf("alldebrid does not support non-mutating instant cache checks for %s", normalizedHash)
+	return false, fmt.Errorf("alldebrid has no non-mutating cache check for %s: %w", normalizedHash, ErrInstantAvailabilityUnsupported)
 }

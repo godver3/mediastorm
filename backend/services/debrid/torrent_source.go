@@ -22,10 +22,18 @@ type torrentSource struct {
 func (s torrentSource) add(ctx context.Context, provider Provider) (*AddMagnetResult, error) {
 	if s.magnet != "" {
 		log.Printf("[debrid] adding redirected magnet to %s", provider.Name())
-		return provider.AddMagnet(ctx, s.magnet)
+		return addMagnetUnlessUncached(ctx, provider, s.magnet)
+	}
+	infoHash, _ := torrentV1InfoHash(s.data)
+	if err := recentlyUncachedError(provider.Name(), infoHash); err != nil {
+		return nil, err
 	}
 	log.Printf("[debrid] uploading torrent file (%d bytes) to %s", len(s.data), provider.Name())
-	return provider.AddTorrentFile(ctx, s.data, s.filename)
+	result, err := provider.AddTorrentFile(ctx, s.data, s.filename)
+	if err == nil {
+		noteAddResult(provider.Name(), infoHash, result)
+	}
+	return result, err
 }
 
 func downloadTorrentSource(ctx context.Context, torrentURL string, timeout time.Duration) (torrentSource, error) {

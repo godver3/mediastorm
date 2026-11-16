@@ -213,7 +213,7 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 		// Use magnet link
 		log.Printf("[debrid-playback] TIMING: adding magnet to %s", providerName)
 		addStart := time.Now()
-		addResp, err = client.AddMagnet(ctx, candidate.Link)
+		addResp, err = addMagnetUnlessUncached(ctx, client, candidate.Link)
 		if err != nil {
 			return nil, fmt.Errorf("add magnet: %w", err)
 		}
@@ -241,6 +241,16 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	}
 
 	torrentID := addResp.ID
+	if addResp.CacheStatusKnown && !addResp.Cached {
+		// The add response already said "not cached" (e.g. AllDebrid's ready
+		// flag): skip the file listing/selection round trips. The add helper has
+		// already remembered the hash.
+		log.Printf("[debrid-playback] torrent %s reported not cached on add, removing from %s account", torrentID, providerName)
+		if err := client.DeleteTorrent(ctx, torrentID); err != nil {
+			log.Printf("[debrid-playback] warning: failed to delete non-cached torrent %s: %v", torrentID, err)
+		}
+		return nil, fmt.Errorf("torrent not cached (reported on add)")
+	}
 	// Register magnet link so the streaming layer can re-add if the torrent expires
 	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
 		RegisterMagnet(providerName, torrentID, candidate.Link)
@@ -302,6 +312,7 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 		// Torrent is not cached - it may be downloading. We must remove it from the account
 		// to avoid leaving orphaned downloads (especially important for Torbox).
 		log.Printf("[debrid-playback] torrent %s is not cached (status=%s), removing from %s account", torrentID, info.Status, providerName)
+		RememberUncached(providerName, infoHash, extractInfoHashFromMagnet(candidate.Link), info.Hash)
 		if err := client.DeleteTorrent(ctx, torrentID); err != nil {
 			log.Printf("[debrid-playback] warning: failed to delete non-cached torrent %s: %v", torrentID, err)
 		}
@@ -853,7 +864,7 @@ func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZB
 	// --- AddMagnet / AddTorrentFile (once) ---
 	var addResp *AddMagnetResult
 	if hasMagnet {
-		addResp, err = client.AddMagnet(ctx, candidate.Link)
+		addResp, err = addMagnetUnlessUncached(ctx, client, candidate.Link)
 	} else {
 		source, dlErr := downloadTorrentSource(ctx, torrentURL, 30*time.Second)
 		if dlErr != nil {
@@ -915,6 +926,7 @@ func (s *PlaybackService) ResolveBatch(ctx context.Context, candidate models.NZB
 	isCached := strings.ToLower(info.Status) == "downloaded"
 	if !isCached {
 		log.Printf("[debrid-playback-batch] torrent not cached (status=%s), cleaning up", info.Status)
+		RememberUncached(providerName, extractInfoHashFromMagnet(candidate.Link), info.Hash)
 		_ = client.DeleteTorrent(ctx, torrentID)
 		return nil, fmt.Errorf("torrent not cached (status: %s)", info.Status)
 	}

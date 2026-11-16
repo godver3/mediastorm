@@ -458,6 +458,15 @@ func (s *HealthService) checkQuickCacheAcrossProvidersBulk(ctx context.Context, 
 					result.cached[hash] = cached
 				}
 			}
+			// A provider without a live lookup still knows the hashes it recently
+			// reported as not cached; report those as a definite miss so ranking
+			// and "not cached on any provider" stay accurate without an upload.
+			for hash := range result.errors {
+				if IsRecentlyUncached(provider.name, hash) {
+					delete(result.errors, hash)
+					result.cached[hash] = false
+				}
+			}
 			logQuickCacheProviderErrors(provider.name, len(hashes), result.errors)
 			resultCh <- result
 		}(provider)
@@ -1076,7 +1085,7 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 	if strings.HasPrefix(strings.ToLower(result.Link), "magnet:") {
 		// Use magnet link
 		log.Printf("[debrid-health] adding magnet to %s", providerName)
-		addResp, err = client.AddMagnet(ctx, result.Link)
+		addResp, err = addMagnetUnlessUncached(ctx, client, result.Link)
 		if err != nil {
 			log.Printf("[debrid-health] %s add magnet failed for %s: %v", providerName, identifierForLog, err)
 			return &DebridHealthCheck{
@@ -1273,6 +1282,9 @@ func (s *HealthService) checkProviderHealth(ctx context.Context, client Provider
 	// Check if the torrent is already downloaded (cached)
 	isCached := providerReportedCached || strings.ToLower(info.Status) == "downloaded"
 	log.Printf("[debrid-health] %s torrent %s status=%s cached=%t", providerName, torrentID, info.Status, isCached)
+	if !isCached {
+		RememberUncached(providerName, infoHash, extractInfoHashFromMagnet(result.Link), info.Hash)
+	}
 
 	// Prepare the result
 	healthResult := &DebridHealthCheck{

@@ -1158,7 +1158,7 @@ func DefaultUserSettings() UserSettings {
 			AutoPlayTrailersTV:            BoolPtr(false),
 			RewindOnResumeFromPause:       IntPtr(0),
 			RewindOnPlaybackStart:         IntPtr(0),
-			DisablePrequeue:               BoolPtr(false),
+			DisablePrequeue:               BoolPtr(true),
 			PrerollMode:                   "artwork",
 			PrerollMediaScope:             "all",
 			IntroAutoSkip:                 BoolPtr(false),

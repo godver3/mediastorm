@@ -237,7 +237,7 @@ func (c *DebridLinkClient) CheckInstantAvailability(_ context.Context, infoHash 
 	if strings.TrimSpace(infoHash) == "" {
 		return false, fmt.Errorf("info hash is required")
 	}
-	return false, fmt.Errorf("debridlink does not support non-mutating instant cache checks")
+	return false, fmt.Errorf("debridlink has no non-mutating cache check: %w", ErrInstantAvailabilityUnsupported)
 }
 
 func (c *DebridLinkClient) GetAccountInfo(ctx context.Context) (*AccountInfo, error) {
