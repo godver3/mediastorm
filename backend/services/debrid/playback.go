@@ -21,6 +21,20 @@ type PlaybackService struct {
 	multiProvider *MultiProviderService
 	circuit       *providerResolutionCircuit
 	preflightData *torrentMetainfoCache
+	magnetJanitor *MagnetJanitor
+}
+
+// SetMagnetJanitor wires the janitor that removes magnets left behind by
+// cancelled resolves and losing provider checks.
+func (s *PlaybackService) SetMagnetJanitor(janitor *MagnetJanitor) {
+	if s == nil {
+		return
+	}
+	s.magnetJanitor = janitor
+	janitor.addHealthService(s.healthService)
+	if s.multiProvider != nil {
+		s.multiProvider.janitor = janitor
+	}
 }
 
 // NewPlaybackService creates a new debrid playback service.
@@ -201,9 +215,20 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 	return res, err
 }
 
-func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash, torrentURL string) (*models.PlaybackResolution, error) {
+func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash, torrentURL string) (_ *models.PlaybackResolution, retErr error) {
 	providerName := client.Name()
 	resolveStart := time.Now()
+
+	// If the caller cancels after the torrent was added (e.g. a concurrent
+	// prequeue race picked another candidate), the error-path deletes below run
+	// on a cancelled context and fail, leaving the torrent on the account.
+	// Hand it to the janitor, which deletes it once nothing references it.
+	var addedTorrentID string
+	defer func() {
+		if retErr != nil && addedTorrentID != "" && ctx.Err() != nil && s.magnetJanitor != nil {
+			s.magnetJanitor.ReleaseTorrent(providerName, addedTorrentID, "resolve cancelled")
+		}
+	}()
 
 	var addResp *AddMagnetResult
 	var err error
@@ -241,6 +266,7 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	}
 
 	torrentID := addResp.ID
+	addedTorrentID = torrentID
 	// Register magnet link so the streaming layer can re-add if the torrent expires
 	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
 		RegisterMagnet(providerName, torrentID, candidate.Link)

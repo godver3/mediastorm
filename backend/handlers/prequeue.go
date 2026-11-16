@@ -92,6 +92,7 @@ type PrequeueHandler struct {
 	movieMetadataSvc      MovieDetailsProvider  // For movie anime detection
 	subtitleExtractor     SubtitlePreExtractor  // For pre-extracting subtitles
 	prewarmSvc            PrewarmService        // For checking pre-warmed entries
+	magnetReleaser        MagnetReleaser        // Cleans up magnets of unused candidates
 	latencyTracker        *PlaybackLatencyTracker
 	failures              *streamFailureRegistry
 	badStreamsSvc         *badstreams.Service
@@ -824,6 +825,18 @@ func (h *PrequeueHandler) SetSubtitleExtractor(extractor SubtitlePreExtractor) {
 }
 
 // SetPrewarmService sets the prewarm service for checking pre-warmed entries
+// MagnetReleaser cleans up provider magnets behind stream paths that a
+// prequeue resolved but did not keep (implemented by debrid.MagnetJanitor).
+type MagnetReleaser interface {
+	ReleaseStreamPath(streamPath, reason string)
+}
+
+// SetMagnetReleaser wires cleanup of candidates that lost the resolution race
+// or failed validation after resolving.
+func (h *PrequeueHandler) SetMagnetReleaser(releaser MagnetReleaser) {
+	h.magnetReleaser = releaser
+}
+
 func (h *PrequeueHandler) SetPrewarmService(svc PrewarmService) {
 	h.prewarmSvc = svc
 }
@@ -2887,6 +2900,39 @@ func prequeueCandidateAbsoluteEpisodeMismatch(result models.NZBResult, target *m
 // only paired with concurrent mode, allowing the first-ready search source to
 // begin resolving while later sources are still feeding.
 func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID string, src prequeueCandidateSource, opts prequeueResolutionOptions) (prequeueResolutionChoice, error) {
+	// Every stream path a candidate resolved to. Whatever the race does not
+	// keep is released afterwards so its magnet does not stay on the account.
+	// Cancelled losers can finish resolving after the race returned; those are
+	// released as soon as they report.
+	var resolvedMu sync.Mutex
+	var resolvedPaths []string
+	resolvedClosed := false
+	keptPath := ""
+	noteResolved := func(path string) {
+		resolvedMu.Lock()
+		closed := resolvedClosed
+		if !closed {
+			resolvedPaths = append(resolvedPaths, path)
+		}
+		resolvedMu.Unlock()
+		if closed && h.magnetReleaser != nil {
+			h.magnetReleaser.ReleaseStreamPath(path, "prequeue candidate finished after race")
+		}
+	}
+	defer func() {
+		resolvedMu.Lock()
+		resolvedClosed = true
+		paths := append([]string(nil), resolvedPaths...)
+		resolvedMu.Unlock()
+		if h.magnetReleaser == nil {
+			return
+		}
+		for _, path := range paths {
+			if path != keptPath {
+				h.magnetReleaser.ReleaseStreamPath(path, "prequeue candidate not used")
+			}
+		}
+	}()
 	resolveStart := time.Now()
 
 	process := func(raceCtx context.Context, i int, result models.NZBResult) (accepted *candidateResolution, deprioritized *candidateResolution, err error) {
@@ -2975,6 +3021,7 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 			return nil, nil, resolveErr
 		}
 
+		noteResolved(resolution.WebDAVPath)
 		log.Printf("[prequeue] Resolved result [%d] (%s): %s -> %s", i, result.ServiceType, result.Title, requestsecurity.URLForLog(resolution.WebDAVPath))
 		rememberStreamRelease(resolution.WebDAVPath, result)
 		if isM2TSStreamPath(resolution.WebDAVPath) {
@@ -3112,6 +3159,9 @@ func (h *PrequeueHandler) resolveCandidates(ctx context.Context, prequeueID stri
 		log.Printf("[prequeue] All fully known candidates failed or were unavailable; using first deprioritized unknown-track result: %s", winner.result.Title)
 	} else {
 		log.Printf("[prequeue] TIMING: resolved (took: %v, total elapsed: %v)", time.Since(resolveStart), time.Since(opts.workerStart))
+	}
+	if winner.resolution != nil {
+		keptPath = winner.resolution.WebDAVPath
 	}
 	return prequeueResolutionChoice{
 		resolution:          winner.resolution,

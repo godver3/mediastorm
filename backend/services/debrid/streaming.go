@@ -73,6 +73,39 @@ type StreamingProvider struct {
 	cacheMux   sync.RWMutex
 	cacheTTL   time.Duration
 	httpClient *http.Client
+
+	// lastStreamed records when each provider torrent last served a request,
+	// so the magnet janitor never removes a magnet that is being watched.
+	activityMu   sync.Mutex
+	lastStreamed map[string]time.Time
+}
+
+func streamActivityKey(provider, torrentID string) string {
+	return strings.ToLower(strings.TrimSpace(provider)) + "|" + strings.TrimSpace(torrentID)
+}
+
+func (p *StreamingProvider) noteStreamed(provider, torrentID string) {
+	now := time.Now()
+	p.activityMu.Lock()
+	defer p.activityMu.Unlock()
+	if p.lastStreamed == nil {
+		p.lastStreamed = make(map[string]time.Time)
+	}
+	p.lastStreamed[streamActivityKey(provider, torrentID)] = now
+	if len(p.lastStreamed) > 1024 {
+		for key, at := range p.lastStreamed {
+			if now.Sub(at) > 24*time.Hour {
+				delete(p.lastStreamed, key)
+			}
+		}
+	}
+}
+
+func (p *StreamingProvider) streamedWithin(provider, torrentID string, window time.Duration) bool {
+	p.activityMu.Lock()
+	defer p.activityMu.Unlock()
+	at, ok := p.lastStreamed[streamActivityKey(provider, torrentID)]
+	return ok && time.Since(at) <= window
 }
 
 func parseDebridPath(path string) (provider, torrentID, fileID string, err error) {
@@ -214,6 +247,7 @@ func (p *StreamingProvider) GetDirectURL(ctx context.Context, path string) (stri
 	if err != nil {
 		return "", err
 	}
+	p.noteStreamed(provider, torrentID)
 
 	// Check cache first
 	cacheKey := cacheKeyFor(torrentID, fileID)
@@ -357,6 +391,7 @@ func (p *StreamingProvider) streamWithProvider(ctx context.Context, req streamin
 
 func (p *StreamingProvider) streamWithProviderInfo(ctx context.Context, req streaming.Request, client Provider, torrentID, fileID string, retryCachedFailure bool, prefetchedInfo *TorrentInfo) (*streaming.Response, error) {
 	providerName := client.Name()
+	p.noteStreamed(providerName, torrentID)
 	var downloadURL string
 	var filename string
 	var rarOffset, rarSize int64

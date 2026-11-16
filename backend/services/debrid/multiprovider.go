@@ -25,6 +25,7 @@ type ProviderCacheResult struct {
 type MultiProviderService struct {
 	cfg     *config.Manager
 	circuit *providerResolutionCircuit
+	janitor *MagnetJanitor
 }
 
 // NewMultiProviderService creates a new multi-provider service
@@ -137,11 +138,9 @@ func (s *MultiProviderService) checkFastestMode(
 	// Launch parallel checks
 	for _, p := range providers {
 		go func(pe providerEntry) {
-			result := s.checkProviderCache(checkCtx, candidate, pe)
-			select {
-			case resultChan <- result:
-			case <-checkCtx.Done():
-			}
+			// resultChan is buffered for every provider, so this never blocks;
+			// results that arrive after a winner are handed to the janitor.
+			resultChan <- s.checkProviderCache(checkCtx, candidate, pe)
 		}(p)
 	}
 
@@ -157,6 +156,7 @@ func (s *MultiProviderService) checkFastestMode(
 			if result.IsCached {
 				log.Printf("[multi-provider] %s returned CACHED first", result.Provider.Name)
 				cancel() // Cancel remaining checks
+				s.releaseLateResults(resultChan, len(providers)-checkedCount)
 				return result, nil
 			}
 
@@ -170,6 +170,7 @@ func (s *MultiProviderService) checkFastestMode(
 			}
 
 		case <-ctx.Done():
+			s.releaseLateResults(resultChan, len(providers)-checkedCount)
 			return nil, ctx.Err()
 		}
 	}
@@ -179,6 +180,37 @@ func (s *MultiProviderService) checkFastestMode(
 		return nil, fmt.Errorf("torrent cache check failed: %w", firstError)
 	}
 	return nil, fmt.Errorf("torrent not cached on any enabled provider")
+}
+
+// releaseLateResults collects the remaining provider results after the race
+// ended and hands any torrent they still hold to the magnet janitor. Losing
+// providers that also turned out cached used to stay on the account forever.
+func (s *MultiProviderService) releaseLateResults(resultChan <-chan *ProviderCacheResult, remaining int) {
+	if remaining <= 0 {
+		return
+	}
+	go func() {
+		for i := 0; i < remaining; i++ {
+			result := <-resultChan
+			if result == nil || result.TorrentID == "" || result.Client == nil {
+				continue
+			}
+			if s.janitor != nil {
+				s.janitor.ReleaseTorrent(result.Client.Name(), result.TorrentID, "multi-provider race loser")
+			}
+		}
+	}()
+}
+
+// discardProviderTorrent deletes a torrent the check added but cannot use.
+// When the check was cancelled (another provider won), the delete would fail
+// on the cancelled context, so the torrent ID is kept for releaseLateResults.
+func discardProviderTorrent(ctx context.Context, client Provider, result *ProviderCacheResult) {
+	if ctx.Err() != nil {
+		return
+	}
+	_ = client.DeleteTorrent(ctx, result.TorrentID)
+	result.TorrentID = ""
 }
 
 // checkProviderCache adds torrent, checks status, returns result (and cleans up if not cached)
@@ -233,8 +265,7 @@ func (s *MultiProviderService) checkProviderCache(
 	// Get info and check status
 	info, err := pe.client.GetTorrentInfo(ctx, result.TorrentID)
 	if err != nil {
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = ""
+		discardProviderTorrent(ctx, pe.client, result)
 		result.Error = fmt.Errorf("get torrent info: %w", err)
 		return result
 	}
@@ -242,22 +273,19 @@ func (s *MultiProviderService) checkProviderCache(
 	// Select files (required for some providers to trigger caching check)
 	selection := selectMediaFiles(info.Files, buildSelectionHints(candidate, info.Filename))
 	if selection == nil || len(selection.OrderedIDs) == 0 {
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = ""
+		discardProviderTorrent(ctx, pe.client, result)
 		result.Error = fmt.Errorf("no media files found")
 		return result
 	}
 	if selection.RejectionReason != "" {
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = ""
+		discardProviderTorrent(ctx, pe.client, result)
 		result.Error = fmt.Errorf("%s", selection.RejectionReason)
 		return result
 	}
 
 	fileSelection := strings.Join(selection.OrderedIDs, ",")
 	if err := pe.client.SelectFiles(ctx, result.TorrentID, fileSelection); err != nil {
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = ""
+		discardProviderTorrent(ctx, pe.client, result)
 		result.Error = fmt.Errorf("select files: %w", err)
 		return result
 	}
@@ -265,8 +293,7 @@ func (s *MultiProviderService) checkProviderCache(
 	// Re-check status after selection
 	info, err = pe.client.GetTorrentInfo(ctx, result.TorrentID)
 	if err != nil {
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = ""
+		discardProviderTorrent(ctx, pe.client, result)
 		result.Error = fmt.Errorf("get torrent info after selection: %w", err)
 		return result
 	}
@@ -277,8 +304,7 @@ func (s *MultiProviderService) checkProviderCache(
 	if !result.IsCached {
 		// Clean up non-cached torrent
 		log.Printf("[multi-provider] %s: not cached, cleaning up", providerName)
-		_ = pe.client.DeleteTorrent(ctx, result.TorrentID)
-		result.TorrentID = "" // Clear since we deleted it
+		discardProviderTorrent(ctx, pe.client, result) // Clear since we deleted it
 	}
 
 	return result

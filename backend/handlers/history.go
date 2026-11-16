@@ -658,6 +658,8 @@ func (h *HistoryHandler) UpdatePlaybackProgress(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), watchHistoryErrorStatus(err))
 		return
 	}
+	// Keeps the magnet janitor away from sources that are still being watched.
+	noteProgressSourcePath(update.SourcePath)
 	GetStreamTracker().AssociateClientWithPlayback(userID, update, requestClientID(r))
 	// Clients that stream straight from the provider via /video/direct-url are
 	// only visible through these heartbeats.

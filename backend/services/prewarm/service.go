@@ -1043,6 +1043,20 @@ func (s *Service) RefreshURLs(ctx context.Context) error {
 	return nil
 }
 
+// StreamPaths lists the stream paths of usable warm entries, so the magnet
+// janitor never removes a magnet a warm entry still points at.
+func (s *Service) StreamPaths() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	paths := make([]string, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if entry != nil && entry.Error == "" && entry.StreamPath != "" {
+			paths = append(paths, entry.StreamPath)
+		}
+	}
+	return paths
+}
+
 // GetWarm returns a warm entry for the given title+user, or nil if not found
 func (s *Service) GetWarm(titleID, userID string) *playback.WarmRef {
 	return s.GetWarmScoped(titleID, userID, playback.DefaultPrequeueSettingsScopeKey)

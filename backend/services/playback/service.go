@@ -172,6 +172,14 @@ func safeURLForLog(rawURL string) string {
 }
 
 // NewService returns a new playback service with a default HTTP client when one is not provided.
+// SetMagnetJanitor wires cleanup of debrid magnets left by cancelled resolves.
+func (s *Service) SetMagnetJanitor(janitor *debrid.MagnetJanitor) {
+	if s == nil || s.debrid == nil {
+		return
+	}
+	s.debrid.SetMagnetJanitor(janitor)
+}
+
 func NewService(cfg *config.Manager, nzbSystem *integration.NzbSystem, metadataSvc metadataService) *Service {
 	transport := &http.Transport{
 		MaxIdleConns:        100,

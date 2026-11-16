@@ -1669,6 +1669,28 @@ func main() {
 	prewarmService.SetScopeKeyFunc(prequeueHandler.PrequeueSettingsScopeKey)
 	schedulerService.SetPrewarmService(prewarmService)
 	prequeueHandler.SetPrewarmService(prewarmService)
+
+	// Remove AllDebrid magnets that playback added but no longer needs (race
+	// losers, cancelled resolves, expired or replaced prequeues). A magnet is
+	// only deleted when none of these sources still references it.
+	magnetJanitor := debrid.NewMagnetJanitor(cfgManager, debridStreamingProvider)
+	magnetJanitor.AddStreamPathSource(func() []string {
+		entries := prequeueHandler.GetStore().ListAll()
+		paths := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			paths = append(paths, entry.StreamPath)
+		}
+		return paths
+	})
+	magnetJanitor.AddStreamPathSource(prewarmService.StreamPaths)
+	magnetJanitor.AddStreamPathSource(handlers.GetStreamTracker().InUseSourcePaths)
+	if videoHandler != nil {
+		magnetJanitor.AddStreamPathSource(videoHandler.GetHLSManager().ActiveSourcePaths)
+	}
+	playbackService.SetMagnetJanitor(magnetJanitor)
+	debridPlaybackService.SetMagnetJanitor(magnetJanitor)
+	prequeueHandler.SetMagnetReleaser(magnetJanitor)
+	prequeueHandler.GetStore().SetStreamPathReleaser(magnetJanitor.ReleaseStreamPath)
 	if videoHandler != nil {
 		videoHandler.SetPrewarmService(prewarmService)
 	}

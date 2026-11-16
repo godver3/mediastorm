@@ -342,6 +342,11 @@ type PrequeueStore struct {
 	streamPathValidator StreamPathValidator
 	streamPathValidated map[string]time.Time
 
+	// streamPathReleaser is told about every resolved stream path that leaves
+	// the store, so provider resources behind it (AllDebrid magnets) can be
+	// cleaned up once nothing else uses them.
+	streamPathReleaser func(streamPath, reason string)
+
 	// generation counts DeleteAll and DeleteByUser calls. Everything that
 	// changes how releases rank (globally or for one profile) clears the
 	// store, so callers that keep resolved streams of their own (the
@@ -356,6 +361,24 @@ type DeletedPrequeueEntry struct {
 	TitleName  string
 	UserID     string
 	StreamPath string
+}
+
+// SetStreamPathReleaser registers a callback for stream paths of entries that
+// are removed (expired, replaced, deleted). It must not call back into the
+// store synchronously.
+func (s *PrequeueStore) SetStreamPathReleaser(releaser func(streamPath, reason string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamPathReleaser = releaser
+}
+
+func (s *PrequeueStore) releaseStreamPathLocked(entry *PrequeueEntry, reason string) {
+	if s.streamPathReleaser == nil || entry == nil {
+		return
+	}
+	if streamPath := strings.TrimSpace(entry.StreamPath); streamPath != "" {
+		s.streamPathReleaser(streamPath, reason)
+	}
 }
 
 // useDB returns true when the store is backed by PostgreSQL.
@@ -798,6 +821,7 @@ func (s *PrequeueStore) createScopedLocked(titleID, titleName, userID, mediaType
 				existing.cancelFunc()
 			}
 			// Remove old entry from memory and DB
+			s.releaseStreamPathLocked(existing, "prequeue replaced")
 			delete(s.entries, existingID)
 			if s.useDB() {
 				if err := s.repo.Delete(context.Background(), existingID); err != nil {
@@ -1180,6 +1204,7 @@ func (s *PrequeueStore) deleteLocked(id string) {
 		delete(s.byTitleUser, key)
 	}
 	s.removeStreamPathValidationsLocked(id)
+	s.releaseStreamPathLocked(entry, "prequeue deleted")
 
 	delete(s.entries, id)
 
@@ -1227,6 +1252,7 @@ func (s *PrequeueStore) DeleteByStreamPath(streamPath string) []DeletedPrequeueE
 			UserID:     entry.UserID,
 			StreamPath: entry.StreamPath,
 		})
+		s.releaseStreamPathLocked(entry, "prequeue stream removed")
 		delete(s.entries, id)
 
 		if s.useDB() {
@@ -1297,6 +1323,7 @@ func (s *PrequeueStore) DeleteAll() {
 		if entry.cancelFunc != nil {
 			entry.cancelFunc()
 		}
+		s.releaseStreamPathLocked(entry, "prequeue cleared")
 		delete(s.entries, id)
 	}
 	s.byTitleUser = make(map[string]string)
@@ -1328,6 +1355,7 @@ func (s *PrequeueStore) DeleteByUser(userID string) {
 			delete(s.byTitleUser, key)
 		}
 
+		s.releaseStreamPathLocked(entry, "prequeue cleared for user")
 		delete(s.entries, id)
 
 		if s.useDB() {
@@ -1385,6 +1413,7 @@ func (s *PrequeueStore) cleanup() {
 			delete(s.byTitleUser, key)
 		}
 
+		s.releaseStreamPathLocked(entry, "prequeue expired")
 		delete(s.entries, id)
 		log.Printf("[prequeue] Expired and removed prequeue %s", id)
 	}
