@@ -162,3 +162,40 @@ func IsProviderUnavailableError(err error) bool {
 		strings.Contains(msg, "temporarily unavailable") ||
 		strings.Contains(msg, "no download url returned")
 }
+
+// providerAccountDeniedMarkers identify errors that say the provider account
+// itself cannot be used (expired premium, bad or revoked key, ban). Retrying
+// other torrents cannot succeed, so these open the resolution circuit for a
+// long cooldown instead of hammering the provider with rejected requests.
+var providerAccountDeniedMarkers = []string{
+	"permission_denied",     // Real-Debrid: no premium / feature not allowed
+	"bad_token",             // Real-Debrid: invalid token
+	"account_locked",        // Real-Debrid
+	"account_not_activated", // Real-Debrid
+	"authentication failed", // provider clients' 401/403 handling
+	"invalid api key",
+	"auth_bad_apikey",  // AllDebrid
+	"auth_user_banned", // AllDebrid
+	"auth_blocked",     // AllDebrid
+	"must_be_premium",  // AllDebrid
+	"no_server",        // AllDebrid: server/VPN IP not allowed
+}
+
+// IsProviderAccountDeniedError reports whether err means the provider account
+// is unusable (as opposed to one torrent failing or a transient outage).
+func IsProviderAccountDeniedError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range providerAccountDeniedMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}

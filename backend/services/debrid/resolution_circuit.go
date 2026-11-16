@@ -13,6 +13,11 @@ const (
 	defaultResolutionAPITimeout  = 12 * time.Second
 	defaultResolutionCooldown    = 30 * time.Second
 	defaultResolutionMaxCooldown = 5 * time.Minute
+
+	// An unusable account (expired premium, revoked key, ban) will not recover
+	// in seconds, and every retry is another rejected request on that account.
+	defaultAccountDeniedCooldown    = 15 * time.Minute
+	defaultAccountDeniedMaxCooldown = 6 * time.Hour
 )
 
 type resolutionCircuitState struct {
@@ -31,6 +36,9 @@ type providerResolutionCircuit struct {
 	apiTimeout  time.Duration
 	baseBackoff time.Duration
 	maxBackoff  time.Duration
+
+	accountBaseBackoff time.Duration
+	accountMaxBackoff  time.Duration
 }
 
 type ResolutionCircuitOpenError struct {
@@ -56,6 +64,9 @@ func newProviderResolutionCircuit() *providerResolutionCircuit {
 		apiTimeout:  defaultResolutionAPITimeout,
 		baseBackoff: defaultResolutionCooldown,
 		maxBackoff:  defaultResolutionMaxCooldown,
+
+		accountBaseBackoff: defaultAccountDeniedCooldown,
+		accountMaxBackoff:  defaultAccountDeniedMaxCooldown,
 	}
 }
 
@@ -94,8 +105,12 @@ func (c *providerResolutionCircuit) after(provider, operation string, callErr er
 		c.releaseProbe(provider)
 		return
 	}
+	if callErr != nil && IsProviderAccountDeniedError(callErr) {
+		c.open(provider, operation, callErr, c.accountBaseBackoff, c.accountMaxBackoff)
+		return
+	}
 	if callErr != nil && IsProviderAPIUnavailableError(callErr) {
-		c.open(provider, operation, callErr)
+		c.open(provider, operation, callErr, c.baseBackoff, c.maxBackoff)
 		return
 	}
 	c.close(provider)
@@ -109,7 +124,7 @@ func (c *providerResolutionCircuit) releaseProbe(provider string) {
 	}
 }
 
-func (c *providerResolutionCircuit) open(provider, operation string, err error) {
+func (c *providerResolutionCircuit) open(provider, operation string, err error, baseBackoff, maxBackoff time.Duration) {
 	now := c.now()
 	c.mu.Lock()
 	state := c.states[provider]
@@ -126,12 +141,12 @@ func (c *providerResolutionCircuit) open(provider, operation string, err error) 
 		return
 	}
 	state.failures++
-	backoff := c.baseBackoff
-	for i := 1; i < state.failures && backoff < c.maxBackoff; i++ {
+	backoff := baseBackoff
+	for i := 1; i < state.failures && backoff < maxBackoff; i++ {
 		backoff *= 2
 	}
-	if backoff > c.maxBackoff {
-		backoff = c.maxBackoff
+	if backoff > maxBackoff {
+		backoff = maxBackoff
 	}
 	state.openUntil = now.Add(backoff)
 	state.probing = false

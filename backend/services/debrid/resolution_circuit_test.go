@@ -146,8 +146,8 @@ func TestResolutionCircuitDoesNotAmplifyConcurrentFailures(t *testing.T) {
 	circuit.now = func() time.Time { return now }
 	err := &ProviderError{StatusCode: http.StatusServiceUnavailable}
 
-	circuit.open("torbox", "first request", err)
-	circuit.open("torbox", "already in flight request", err)
+	circuit.open("torbox", "first request", err, circuit.baseBackoff, circuit.maxBackoff)
+	circuit.open("torbox", "already in flight request", err, circuit.baseBackoff, circuit.maxBackoff)
 
 	circuit.mu.Lock()
 	state := *circuit.states["torbox"]
@@ -187,5 +187,79 @@ func TestProviderAPIUnavailableClassification(t *testing.T) {
 	}
 	if IsProviderAPIUnavailableError(errors.New("torrent not cached")) {
 		t.Fatal("item-specific cache miss should not open provider circuit")
+	}
+}
+
+func TestResolutionCircuitHoldsOffDeniedAccountForLongCooldown(t *testing.T) {
+	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	circuit := newProviderResolutionCircuit()
+	circuit.now = func() time.Time { return now }
+	// Real-Debrid's response once premium lapses (seen 3k+ times in a day).
+	provider := &circuitTestProvider{err: errors.New(`add magnet failed with status 403: {"error": "permission_denied", "error_code": 9}`)}
+	wrapped := circuit.wrap(provider)
+
+	if _, err := wrapped.AddMagnet(context.Background(), "magnet:?xt=urn:btih:abc"); err == nil {
+		t.Fatal("denied account returned nil error")
+	}
+	// Well past the transient cooldown, still held off.
+	now = now.Add(defaultResolutionMaxCooldown + time.Minute)
+	if _, err := wrapped.AddMagnet(context.Background(), "magnet:?xt=urn:btih:def"); err == nil {
+		t.Fatal("open circuit returned nil error")
+	} else {
+		var openErr *ResolutionCircuitOpenError
+		if !errors.As(err, &openErr) {
+			t.Fatalf("error = %T, want ResolutionCircuitOpenError", err)
+		}
+	}
+	if got := provider.callCount(); got != 1 {
+		t.Fatalf("provider calls while account denied = %d, want 1", got)
+	}
+
+	// After the account cooldown one probe is allowed; a second denial doubles it.
+	now = now.Add(defaultAccountDeniedCooldown)
+	if _, err := wrapped.AddMagnet(context.Background(), "magnet:?xt=urn:btih:ghi"); err == nil {
+		t.Fatal("probe against denied account returned nil error")
+	}
+	now = now.Add(defaultAccountDeniedCooldown + time.Minute)
+	if _, err := wrapped.AddMagnet(context.Background(), "magnet:?xt=urn:btih:jkl"); err == nil {
+		t.Fatal("expected circuit still open after second denial")
+	}
+	if got := provider.callCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2 (initial + one probe)", got)
+	}
+}
+
+func TestProviderAccountDeniedClassification(t *testing.T) {
+	denied := []error{
+		errors.New(`add magnet failed with status 403: {"error": "permission_denied", "error_code": 9}`),
+		errors.New("alldebrid authentication failed: invalid API key"),
+		errors.New("add magnet failed: This account is banned (AUTH_USER_BANNED)"),
+		errors.New("unrestrict failed: Premium required (MUST_BE_PREMIUM)"),
+		&ProviderError{Provider: "torbox", StatusCode: http.StatusUnauthorized},
+	}
+	for _, err := range denied {
+		if !IsProviderAccountDeniedError(err) {
+			t.Errorf("expected account-denied: %v", err)
+		}
+	}
+	notDenied := []error{
+		errors.New("torrent not cached"),
+		&ProviderError{Provider: "torbox", StatusCode: http.StatusServiceUnavailable},
+		context.Canceled,
+		&RecentlyUncachedError{Provider: "alldebrid", InfoHash: "abc"},
+	}
+	for _, err := range notDenied {
+		if IsProviderAccountDeniedError(err) {
+			t.Errorf("unexpected account-denied: %v", err)
+		}
+	}
+}
+
+func TestAllDebridErrorTextKeepsCode(t *testing.T) {
+	if got := allDebridErrorText("AUTH_USER_BANNED", "This account is banned"); got != "This account is banned (AUTH_USER_BANNED)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := allDebridErrorText("", "msg"); got != "msg" {
+		t.Fatalf("got %q", got)
 	}
 }

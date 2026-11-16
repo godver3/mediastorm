@@ -207,7 +207,7 @@ func (c *AllDebridClient) AddMagnet(ctx context.Context, magnetURL string) (*Add
 	if result.Status != "success" {
 		errMsg := "unknown error"
 		if result.Error != nil {
-			errMsg = result.Error.Message
+			errMsg = allDebridErrorText(result.Error.Code, result.Error.Message)
 		}
 		return nil, fmt.Errorf("add magnet failed: %s", errMsg)
 	}
@@ -296,7 +296,7 @@ func (c *AllDebridClient) AddTorrentFile(ctx context.Context, torrentData []byte
 	if result.Status != "success" {
 		errMsg := "unknown error"
 		if result.Error != nil {
-			errMsg = result.Error.Message
+			errMsg = allDebridErrorText(result.Error.Code, result.Error.Message)
 		}
 		return nil, fmt.Errorf("add torrent failed: %s", errMsg)
 	}
@@ -361,7 +361,7 @@ func (c *AllDebridClient) GetTorrentInfo(ctx context.Context, torrentID string) 
 	if result.Status != "success" {
 		errMsg := "unknown error"
 		if result.Error != nil {
-			errMsg = result.Error.Message
+			errMsg = allDebridErrorText(result.Error.Code, result.Error.Message)
 		}
 		return nil, fmt.Errorf("get torrent info failed: %s", errMsg)
 	}
@@ -517,7 +517,7 @@ func (c *AllDebridClient) DeleteTorrent(ctx context.Context, torrentID string) e
 	if result.Status != "success" {
 		errMsg := "unknown error"
 		if result.Error != nil {
-			errMsg = result.Error.Message
+			errMsg = allDebridErrorText(result.Error.Code, result.Error.Message)
 		}
 		return fmt.Errorf("delete torrent failed: %s", errMsg)
 	}
@@ -606,7 +606,7 @@ func (c *AllDebridClient) unlockLink(ctx context.Context, trimmedLink string) (*
 	if result.Status != "success" {
 		errMsg := "unknown error"
 		if result.Error != nil {
-			errMsg = result.Error.Message
+			errMsg = allDebridErrorText(result.Error.Code, result.Error.Message)
 		}
 		return nil, fmt.Errorf("unrestrict failed: %s", errMsg)
 	}
@@ -640,4 +640,20 @@ func (c *AllDebridClient) CheckInstantAvailability(_ context.Context, infoHash s
 	}
 
 	return false, fmt.Errorf("alldebrid has no non-mutating cache check for %s: %w", normalizedHash, ErrInstantAvailabilityUnsupported)
+}
+
+// allDebridErrorText keeps AllDebrid's machine-readable error code (e.g.
+// AUTH_USER_BANNED, MUST_BE_PREMIUM) next to its message so account-level
+// denials can be recognised by the resolution circuit.
+func allDebridErrorText(code, message string) string {
+	code = strings.TrimSpace(code)
+	message = strings.TrimSpace(message)
+	switch {
+	case code == "":
+		return message
+	case message == "":
+		return code
+	default:
+		return message + " (" + code + ")"
+	}
 }
