@@ -1733,7 +1733,8 @@ func (s *Service) buildItem(ctx context.Context, library models.LocalMediaLibrar
 	match := localMediaMatch{
 		status: models.LocalMediaMatchStatusUnmatched,
 	}
-	if library.Type != models.LocalMediaLibraryTypeOther && s.metadata != nil && detected.title != "" {
+	keepManual := hasExisting && existing.MatchStatus == models.LocalMediaMatchStatusManual
+	if !keepManual && library.Type != models.LocalMediaLibraryTypeOther && s.metadata != nil && detected.title != "" {
 		match = s.matchMetadata(ctx, library.Type, detected, metadataCache)
 	}
 
@@ -1768,6 +1769,16 @@ func (s *Service) buildItem(ctx context.Context, library models.LocalMediaLibrar
 	if hasExisting {
 		item.ID = existing.ID
 		item.CreatedAt = existing.CreatedAt
+		if keepManual {
+			// A changed file at the same path keeps the title an admin chose.
+			item.Confidence = existing.Confidence
+			item.MatchStatus = existing.MatchStatus
+			item.MatchedTitleID = existing.MatchedTitleID
+			item.MatchedMediaType = existing.MatchedMediaType
+			item.MatchedName = existing.MatchedName
+			item.MatchedYear = existing.MatchedYear
+			item.Metadata = existing.Metadata
+		}
 	}
 	item.ModifiedAt = &modifiedAt
 	return item, false, nil
@@ -1804,7 +1815,9 @@ func canReuseLocalMediaItem(existing models.LocalMediaItem, filePath string, siz
 	if existing.ModifiedAt == nil {
 		return false
 	}
-	return existing.ModifiedAt.UTC().Equal(modifiedAt.UTC())
+	// PostgreSQL TIMESTAMPTZ keeps microseconds while ext4/APFS/btrfs report
+	// nanoseconds, so compare at the precision the stored value survives at.
+	return existing.ModifiedAt.UTC().Truncate(time.Microsecond).Equal(modifiedAt.UTC().Truncate(time.Microsecond))
 }
 
 func hydrateLocalMediaItemResultExternalIDs(result *models.LocalMediaItemListResult) {
