@@ -42,7 +42,6 @@ type ClientFilterSettings struct {
 	MoveDetailsRatingsToMetadata                 *bool               `json:"moveDetailsRatingsToMetadata,omitempty"`
 	HideDetailsPoster                            *bool               `json:"hideDetailsPoster,omitempty"`
 	ShowDetailsPrequeueFilename                  *bool               `json:"showDetailsPrequeueFilename,omitempty"`
-	ShowDetailsRuntime                           *bool               `json:"showDetailsRuntime,omitempty"`
 	ShowDetailsSelectedTracks                    *bool               `json:"showDetailsSelectedTracks,omitempty"`
 	HideTVDrawerRail                             *bool               `json:"hideTvDrawerRail,omitempty"`
 	SimpleMode                                   *bool               `json:"simpleMode,omitempty"`
@@ -146,7 +145,6 @@ func (c *ClientFilterSettings) IsEmpty() bool {
 		c.MoveDetailsRatingsToMetadata == nil &&
 		c.HideDetailsPoster == nil &&
 		c.ShowDetailsPrequeueFilename == nil &&
-		c.ShowDetailsRuntime == nil &&
 		c.ShowDetailsSelectedTracks == nil &&
 		c.HideTVDrawerRail == nil &&
 		c.SimpleMode == nil &&

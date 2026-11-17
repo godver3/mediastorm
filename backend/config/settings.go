@@ -1576,8 +1576,6 @@ type DisplaySettings struct {
 	HideDetailsPoster bool `json:"hideDetailsPoster,omitempty"`
 	// ShowDetailsPrequeueFilename shows the prequeued release filename beneath the native TV Details button row.
 	ShowDetailsPrequeueFilename bool `json:"showDetailsPrequeueFilename,omitempty"`
-	// ShowDetailsRuntime shows the movie or selected episode runtime beneath the native TV Details button row.
-	ShowDetailsRuntime bool `json:"showDetailsRuntime,omitempty"`
 	// ShowDetailsSelectedTracks shows the audio and subtitle tracks playback will use beneath the native TV Details button row.
 	ShowDetailsSelectedTracks bool `json:"showDetailsSelectedTracks,omitempty"`
 	// HideTVDrawerRail fully hides the collapsed TV navigation drawer instead of leaving its icon rail visible.

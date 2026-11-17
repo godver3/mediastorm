@@ -357,7 +357,6 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			MoveDetailsRatingsToMetadata:                 models.BoolPtr(globalSettings.Display.MoveDetailsRatingsToMetadata),
 			HideDetailsPoster:                            models.BoolPtr(globalSettings.Display.HideDetailsPoster),
 			ShowDetailsPrequeueFilename:                  models.BoolPtr(globalSettings.Display.ShowDetailsPrequeueFilename),
-			ShowDetailsRuntime:                           models.BoolPtr(globalSettings.Display.ShowDetailsRuntime),
 			ShowDetailsSelectedTracks:                    models.BoolPtr(globalSettings.Display.ShowDetailsSelectedTracks),
 			HideTVDrawerRail:                             models.BoolPtr(globalSettings.Display.HideTVDrawerRail),
 			SimpleMode:                                   models.BoolPtr(globalSettings.Display.SimpleMode),

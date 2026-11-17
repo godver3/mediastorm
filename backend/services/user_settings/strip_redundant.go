@@ -201,7 +201,6 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			MoveDetailsRatingsToMetadata:           models.BoolPtr(g.Display.MoveDetailsRatingsToMetadata),
 			HideDetailsPoster:                      models.BoolPtr(g.Display.HideDetailsPoster),
 			ShowDetailsPrequeueFilename:            models.BoolPtr(g.Display.ShowDetailsPrequeueFilename),
-			ShowDetailsRuntime:                     models.BoolPtr(g.Display.ShowDetailsRuntime),
 			ShowDetailsSelectedTracks:              models.BoolPtr(g.Display.ShowDetailsSelectedTracks),
 			HideTVDrawerRail:                       models.BoolPtr(g.Display.HideTVDrawerRail),
 			SimpleMode:                             models.BoolPtr(g.Display.SimpleMode),
@@ -536,9 +535,6 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Display.ShowDetailsPrequeueFilename == nil {
 		eff.Display.ShowDetailsPrequeueFilename = models.BoolPtr(g.Display.ShowDetailsPrequeueFilename)
-	}
-	if eff.Display.ShowDetailsRuntime == nil {
-		eff.Display.ShowDetailsRuntime = models.BoolPtr(g.Display.ShowDetailsRuntime)
 	}
 	if eff.Display.ShowDetailsSelectedTracks == nil {
 		eff.Display.ShowDetailsSelectedTracks = models.BoolPtr(g.Display.ShowDetailsSelectedTracks)
@@ -1059,10 +1055,6 @@ func stripDisplay(d *models.DisplaySettings, g config.DisplaySettings) bool {
 		d.ShowDetailsPrequeueFilename = nil
 		changed = true
 	}
-	if d.ShowDetailsRuntime != nil && *d.ShowDetailsRuntime == g.ShowDetailsRuntime {
-		d.ShowDetailsRuntime = nil
-		changed = true
-	}
 	if d.ShowDetailsSelectedTracks != nil && *d.ShowDetailsSelectedTracks == g.ShowDetailsSelectedTracks {
 		d.ShowDetailsSelectedTracks = nil
 		changed = true
@@ -1484,10 +1476,6 @@ func stripClientSettings(cs *models.ClientFilterSettings, eff models.UserSetting
 	}
 	if cs.ShowDetailsPrequeueFilename != nil && eff.Display.ShowDetailsPrequeueFilename != nil && *cs.ShowDetailsPrequeueFilename == *eff.Display.ShowDetailsPrequeueFilename {
 		cs.ShowDetailsPrequeueFilename = nil
-		changed = true
-	}
-	if cs.ShowDetailsRuntime != nil && eff.Display.ShowDetailsRuntime != nil && *cs.ShowDetailsRuntime == *eff.Display.ShowDetailsRuntime {
-		cs.ShowDetailsRuntime = nil
 		changed = true
 	}
 	if cs.ShowDetailsSelectedTracks != nil && eff.Display.ShowDetailsSelectedTracks != nil && *cs.ShowDetailsSelectedTracks == *eff.Display.ShowDetailsSelectedTracks {
