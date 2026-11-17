@@ -1,0 +1,82 @@
+package providerbreaker
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+type memoryCooldowns map[string]Cooldown
+
+func (s memoryCooldowns) LoadCooldowns(context.Context) (map[string]Cooldown, error) { return s, nil }
+func (s memoryCooldowns) SaveCooldown(_ context.Context, provider string, c Cooldown) error {
+	s[provider] = c
+	return nil
+}
+func (s memoryCooldowns) ClearCooldown(_ context.Context, provider string, until time.Time) error {
+	if !s[provider].Until.After(until) {
+		delete(s, provider)
+	}
+	return nil
+}
+
+func TestPersistedCooldownRestoresHalfOpenBackoff(t *testing.T) {
+	now := time.Now().UTC()
+	store := memoryCooldowns{"fixture": {Until: now.Add(-time.Second), Failures: 2}}
+	b := New()
+	b.now = func() time.Time { return now }
+	if err := b.Restore(t.Context(), store); err != nil {
+		t.Fatal(err)
+	}
+	allowed, _, probe := b.Allow("fixture")
+	if !allowed || !probe {
+		t.Fatal("restored expired circuit did not half-open")
+	}
+	// A failed body must release the half-open probe without erasing its history.
+	b.ReleaseProbe("fixture", probe)
+	if allowed, _, probe = b.Allow("fixture"); !allowed || !probe {
+		t.Fatal("failed probe left circuit stuck")
+	}
+	until := b.RecordRateLimit("fixture", 0)
+	if until.Sub(now) != 4*time.Hour {
+		t.Fatalf("backoff history lost: %v", until.Sub(now))
+	}
+	b.RecordSuccess("fixture", true) // late success must not erase the newer 429
+	if allowed, _, _ := b.Allow("fixture"); allowed || store["fixture"].Until != until {
+		t.Fatal("late success erased a newer cooldown")
+	}
+	now = until
+	if allowed, _, probe = b.Allow("fixture"); !allowed || !probe {
+		t.Fatal("missing next probe")
+	}
+	b.RecordSuccess("fixture", probe)
+	if len(store) != 0 {
+		t.Fatal("successful probe did not clear persisted cooldown")
+	}
+}
+
+type brokenCooldownStore struct{ memoryCooldowns }
+
+func (brokenCooldownStore) LoadCooldowns(context.Context) (map[string]Cooldown, error) {
+	return nil, errors.New("unavailable")
+}
+
+func TestRestoreRefusesStorageFailure(t *testing.T) {
+	if err := New().Restore(t.Context(), brokenCooldownStore{}); err == nil {
+		t.Fatal("ignored storage failure")
+	}
+}
+
+func TestLongRetryHintsAreNotCappedOrShortened(t *testing.T) {
+	b := New()
+	now := time.Now()
+	b.now = func() time.Time { return now }
+	until := b.RecordRateLimit("fixture", 72*time.Hour)
+	if until.Sub(now) != 72*time.Hour {
+		t.Fatal("long hint capped")
+	}
+	if got := b.RecordRateLimit("fixture", 0); got.Before(until) {
+		t.Fatal("later short hint shortened existing cooldown")
+	}
+}

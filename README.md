@@ -227,6 +227,13 @@ Pull the model on the Ollama server before using **Test Connection**. That test 
 
 See [Ollama setup](https://docs.ollama.com/faq) and [API compatibility](https://docs.ollama.com/api/openai-compatibility).
 
+### NZB Download Budget
+
+An optional NZB download budget can be enabled with `NZB_TITLE_BUDGET_ENABLED=true`.
+It limits acquisitions per catalog movie or episode across profiles and keeps
+budgets and indexer cooldowns in PostgreSQL. See the [NZB acquisition guide](backend/internal/nzbfetch/README.md)
+for limits, required catalog context, and restart behavior.
+
 ## Troubleshooting
 
 - **Backend does not become healthy:** Run `docker compose ps`, then inspect `docker compose logs mediastorm` and `docker compose logs postgres`.

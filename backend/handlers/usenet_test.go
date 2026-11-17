@@ -108,7 +108,7 @@ func TestUsenetTrackProberFetchNZBSetsDownloadHeaders(t *testing.T) {
 	defer server.Close()
 
 	prober := &usenetTrackProber{httpClient: server.Client()}
-	_, _, err := prober.fetchNZB(context.Background(), server.URL+"/test.nzb", "")
+	_, _, err := prober.fetchNZB(context.Background(), server.URL+"/test.nzb", "", models.NZBResult{})
 	if err != nil {
 		t.Fatalf("fetchNZB returned error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestUsenetTrackProberFetchNZBSetsDownloadHeaders(t *testing.T) {
 	}
 
 	const override = "Sonarr/4.0.20.3014 (ubuntu 24.04)"
-	if _, _, err := prober.fetchNZB(context.Background(), server.URL+"/test.nzb", override); err != nil {
+	if _, _, err := prober.fetchNZB(context.Background(), server.URL+"/test.nzb", override, models.NZBResult{}); err != nil {
 		t.Fatalf("fetchNZB with override returned error: %v", err)
 	}
 	if receivedUserAgent != override {

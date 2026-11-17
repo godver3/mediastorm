@@ -3732,6 +3732,18 @@ func annotateResultEpisode(result *models.NZBResult, episode *models.EpisodeRefe
 		return
 	}
 
+	identity := result.NZBIdentity()
+	if identity.MediaType == "series" && identity.CatalogID != "" {
+		identity.Season, identity.Episode = episode.SeasonNumber, episode.EpisodeNumber
+		if episode.Numbering != nil {
+			if episode.Numbering.SeriesID != "" {
+				identity.CatalogID = mediaidentity.CanonicalSeriesID(episode.Numbering.SeriesID, nil)
+			}
+			identity.Ordering = episode.Numbering.Ordering
+		}
+		*result = result.WithNZBIdentity(identity)
+	}
+
 	// Search results may come from the raw-result cache. Clone the attributes so
 	// request-specific episode hints do not mutate the cached result shared by
 	// other searches.
