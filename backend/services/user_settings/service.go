@@ -409,6 +409,15 @@ func (s *Service) GetWithDefaults(userID string, defaults models.UserSettings) (
 		if settings.Display.HideDetailsPoster == nil {
 			settings.Display.HideDetailsPoster = defaults.Display.HideDetailsPoster
 		}
+		if settings.Display.ShowDetailsPrequeueFilename == nil {
+			settings.Display.ShowDetailsPrequeueFilename = defaults.Display.ShowDetailsPrequeueFilename
+		}
+		if settings.Display.ShowDetailsRuntime == nil {
+			settings.Display.ShowDetailsRuntime = defaults.Display.ShowDetailsRuntime
+		}
+		if settings.Display.ShowDetailsSelectedTracks == nil {
+			settings.Display.ShowDetailsSelectedTracks = defaults.Display.ShowDetailsSelectedTracks
+		}
 		if settings.Display.HideTVDrawerRail == nil {
 			settings.Display.HideTVDrawerRail = defaults.Display.HideTVDrawerRail
 		}
@@ -885,6 +894,9 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		s.Display.HideContinueWatchingHeroMetadata != nil ||
 		s.Display.MoveDetailsRatingsToMetadata != nil ||
 		s.Display.HideDetailsPoster != nil ||
+		s.Display.ShowDetailsPrequeueFilename != nil ||
+		s.Display.ShowDetailsRuntime != nil ||
+		s.Display.ShowDetailsSelectedTracks != nil ||
 		s.Display.HideTVDrawerRail != nil ||
 		s.Display.SimpleMode != nil ||
 		s.Display.SimpleModeHomeShelves != nil ||

@@ -90,6 +90,9 @@ func TestDefaultUserSettingsKeepsTVDisplayOptionsDisabled(t *testing.T) {
 		"hideContinueWatchingHeroMetadata": settings.Display.HideContinueWatchingHeroMetadata,
 		"moveDetailsRatingsToMetadata":     settings.Display.MoveDetailsRatingsToMetadata,
 		"hideDetailsPoster":                settings.Display.HideDetailsPoster,
+		"showDetailsPrequeueFilename":      settings.Display.ShowDetailsPrequeueFilename,
+		"showDetailsRuntime":               settings.Display.ShowDetailsRuntime,
+		"showDetailsSelectedTracks":        settings.Display.ShowDetailsSelectedTracks,
 		"hideTvDrawerRail":                 settings.Display.HideTVDrawerRail,
 		"simpleMode":                       settings.Display.SimpleMode,
 	}

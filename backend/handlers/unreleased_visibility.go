@@ -87,6 +87,9 @@ func displayUnreleasedVisibilityInitialized(display config.DisplaySettings) bool
 		display.HideContinueWatchingHeroMetadata ||
 		display.MoveDetailsRatingsToMetadata ||
 		display.HideDetailsPoster ||
+		display.ShowDetailsPrequeueFilename ||
+		display.ShowDetailsRuntime ||
+		display.ShowDetailsSelectedTracks ||
 		display.HideTVDrawerRail ||
 		display.DisableTVHomeCardDimming ||
 		display.EnableAnimations ||

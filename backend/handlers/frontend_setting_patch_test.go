@@ -35,7 +35,7 @@ func TestJSONModelPathOverridden(t *testing.T) {
 			t.Fatalf("%s should be reported as overridden", path)
 		}
 	}
-	for _, path := range []string{"playback.subtitleSize", "display.hideDetailsPoster", "ranking.newestReleaseFirst"} {
+	for _, path := range []string{"playback.subtitleSize", "display.hideDetailsPoster", "display.showDetailsRuntime", "ranking.newestReleaseFirst"} {
 		if jsonModelPathOverridden(settings, path) {
 			t.Fatalf("%s should be reported as inherited", path)
 		}
