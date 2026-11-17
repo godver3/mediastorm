@@ -2315,6 +2315,13 @@ func (s *Service) getMovieDetailsFromTMDB(ctx context.Context, req models.MovieD
 		if s.applyCachedTMDBImages(ctx, &cached, "movie", req.TMDBID) {
 			_ = s.cache.set(cacheID, cached)
 		}
+		// Fresh fetches always attach credits, so only re-read lists cut at the legacy cap.
+		if cached.Credits != nil && creditsNeedRefresh(cached.Credits) {
+			if credits, err := s.cachedFetchCredits(ctx, "movie", req.TMDBID); err == nil && creditsImprove(cached.Credits, credits) {
+				cached.Credits = credits
+				_ = s.cache.set(cacheID, cached)
+			}
+		}
 		s.hydrateTMDBRatings(ctx, &cached, req.IMDBID, "movie")
 		return &cached, nil
 	}
@@ -4339,8 +4346,8 @@ func (s *Service) tmdbSeriesDetailsFallback(ctx context.Context, req models.Seri
 		if s.backfillSeriesIMDBID(ctx, &cached.Title, req) {
 			cacheUpdated = true
 		}
-		if cached.Title.Credits == nil {
-			if credits, creditsErr := s.cachedFetchCredits(ctx, "series", req.TMDBID); creditsErr == nil && credits != nil && len(credits.Cast) > 0 {
+		if creditsNeedRefresh(cached.Title.Credits) {
+			if credits, creditsErr := s.cachedFetchCredits(ctx, "series", req.TMDBID); creditsErr == nil && creditsImprove(cached.Title.Credits, credits) {
 				cached.Title.Credits = credits
 				cacheUpdated = true
 			} else if creditsErr != nil {
@@ -4540,12 +4547,12 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		)
 
-		if cached.Title.Credits == nil && tmdbOK {
+		if creditsNeedRefresh(cached.Title.Credits) && tmdbOK {
 			enrichWg.Add(1)
 			go func() {
 				defer enrichWg.Done()
 				log.Printf("[metadata] cached series missing credits, fetching from TMDB tvdbId=%d tmdbId=%d", tvdbID, cachedTMDBID)
-				if c, err := s.cachedFetchCredits(ctx, "series", cachedTMDBID); err == nil && c != nil && len(c.Cast) > 0 {
+				if c, err := s.cachedFetchCredits(ctx, "series", cachedTMDBID); err == nil && creditsImprove(cached.Title.Credits, c) {
 					enrichCredits = c
 				} else if err != nil {
 					log.Printf("[metadata] failed to fetch credits for cached series tmdbId=%d err=%v", cachedTMDBID, err)
@@ -7602,8 +7609,8 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		if tmdbIDForCredits == 0 {
 			tmdbIDForCredits = req.TMDBID
 		}
-		if cached.Credits == nil && tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
-			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && credits != nil && len(credits.Cast) > 0 {
+		if creditsNeedRefresh(cached.Credits) && tmdbIDForCredits > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if credits, err := s.cachedFetchCredits(ctx, "movie", tmdbIDForCredits); err == nil && creditsImprove(cached.Credits, credits) {
 				cached.Credits = credits
 				metadataTracef("[metadata] credits added to cached movie: %d cast members tmdbId=%d", len(credits.Cast), tmdbIDForCredits)
 				_ = s.cache.set(cacheID, cached)
@@ -9144,12 +9151,28 @@ func (s *Service) cachedSeriesExtendedVariant(tvdbID int64, variant string) (tvd
 	return result, nil
 }
 
+// creditsNeedRefresh reports whether credits embedded in a cached title
+// should be re-attached: missing, or cut at the legacy cast cap. A title with
+// exactly that many cast members re-reads the (cached) credits on each hit.
+func creditsNeedRefresh(credits *models.Credits) bool {
+	return credits == nil || len(credits.Cast) == legacyTMDBCastLimit
+}
+
+// creditsImprove reports whether fresh credits should replace the cached ones:
+// they carry cast and differ in size, so an unchanged list skips the write.
+func creditsImprove(cached, fresh *models.Credits) bool {
+	if fresh == nil || len(fresh.Cast) == 0 {
+		return false
+	}
+	return cached == nil || len(cached.Cast) != len(fresh.Cast)
+}
+
 // cachedFetchCredits fetches TMDB cast credits with file caching.
 func (s *Service) cachedFetchCredits(ctx context.Context, mediaType string, tmdbID int64) (*models.Credits, error) {
 	if s.tmdb == nil || !s.tmdb.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
 	}
-	key := cacheKey("tmdb", "credits", "v1", mediaType, fmt.Sprintf("%d", tmdbID))
+	key := cacheKey("tmdb", "credits", "v2", mediaType, fmt.Sprintf("%d", tmdbID))
 	var cached models.Credits
 	if ok, _ := s.cache.get(key, &cached); ok {
 		return &cached, nil

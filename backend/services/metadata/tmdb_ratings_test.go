@@ -31,7 +31,7 @@ func TestTMDBSeriesFallbackHydratesRatings(t *testing.T) {
 				}
 			}
 			seed(cacheKey("tmdb", "images", "v10", "en", "series", "1396"), tmdbImagesResult{})
-			seed(cacheKey("tmdb", "credits", "v1", "series", "1396"), models.Credits{})
+			seed(cacheKey("tmdb", "credits", "v2", "series", "1396"), models.Credits{})
 			seed(cacheKey("tmdb", "tv", "content_rating", "v1", "1396"), "TV-MA")
 			if cached {
 				seed(cacheKey("tmdb", "series", "details-fallback", "v4", "en", "1396"), models.SeriesDetails{Title: models.Title{Name: "Breaking Bad", TMDBID: 1396, IMDBID: "tt0903747"}})

@@ -38,7 +38,7 @@ func TestTMDBSeriesFallbackClassifiesDateBasedReleases(t *testing.T) {
 			}
 			id := fmt.Sprint(tc.id)
 			seed(cacheKey("tmdb", "images", "v10", "en", "series", id), tmdbImagesResult{})
-			seed(cacheKey("tmdb", "credits", "v1", "series", id), models.Credits{})
+			seed(cacheKey("tmdb", "credits", "v2", "series", id), models.Credits{})
 			seed(cacheKey("tmdb", "tv", "content_rating", "v1", id), "TV-14")
 			key := cacheKey("tmdb", "series", "details-fallback", "v4", "en", id)
 			if tc.cached {

@@ -2518,8 +2518,16 @@ func (c *tmdbClient) fetchCollectionDetails(ctx context.Context, collectionID in
 	return details, nil
 }
 
-// fetchCredits retrieves cast information from TMDB for movies or TV shows
-// Returns top 8 billed cast members with profile images
+// tmdbCastLimit caps how many billed cast members a title carries. TMDB
+// returns the full (often 100+) list; details pages show a scrolling row.
+const tmdbCastLimit = 30
+
+// legacyTMDBCastLimit is the cap credits were cached under before
+// tmdbCastLimit was raised; entries holding exactly that many are refreshed.
+const legacyTMDBCastLimit = 8
+
+// fetchCredits retrieves cast information from TMDB for movies or TV shows,
+// returning the top tmdbCastLimit billed cast members with profile images.
 func (c *tmdbClient) fetchCredits(ctx context.Context, mediaType string, tmdbID int64) (*models.Credits, error) {
 	if !c.isConfigured() {
 		return nil, errors.New("tmdb api key not configured")
@@ -2554,8 +2562,7 @@ func (c *tmdbClient) fetchMovieCredits(ctx context.Context, tmdbID int64) (*mode
 		return nil, fmt.Errorf("tmdb credits for movie/%d failed: %w", tmdbID, err)
 	}
 
-	// Limit to top 8 cast members by order
-	maxCast := 8
+	maxCast := tmdbCastLimit
 	if len(payload.Cast) < maxCast {
 		maxCast = len(payload.Cast)
 	}
@@ -2594,8 +2601,7 @@ func (c *tmdbClient) fetchTVCredits(ctx context.Context, tmdbID int64) (*models.
 		return nil, fmt.Errorf("tmdb aggregate_credits for tv/%d failed: %w", tmdbID, err)
 	}
 
-	// Limit to top 8 cast members by order
-	maxCast := 8
+	maxCast := tmdbCastLimit
 	if len(payload.Cast) < maxCast {
 		maxCast = len(payload.Cast)
 	}

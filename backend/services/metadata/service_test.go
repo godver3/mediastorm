@@ -217,7 +217,7 @@ func TestBatchSeriesEndpointsAcceptTMDBOnlySeriesWithoutTVDBMapping(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.set(cacheKey("tmdb", "credits", "v1", "series", "230"), models.Credits{}); err != nil {
+	if err := cache.set(cacheKey("tmdb", "credits", "v2", "series", "230"), models.Credits{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := cache.set(cacheKey("tmdb", "tv", "content_rating", "v1", "230"), ""); err != nil {
@@ -265,7 +265,7 @@ func TestSeriesDetailsLiteReverseResolvesLegacyTVDBIdentityThroughTMDB(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.set(cacheKey("tmdb", "credits", "v1", "series", "1396"), models.Credits{}); err != nil {
+	if err := cache.set(cacheKey("tmdb", "credits", "v2", "series", "1396"), models.Credits{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := cache.set(cacheKey("tmdb", "tv", "content_rating", "v1", "1396"), "TV-MA"); err != nil {
@@ -608,7 +608,7 @@ func TestGetMovieDetailsFromTMDBHydratesLogoOnFreshResponse(t *testing.T) {
 		t.Fatalf("seed releases cache: %v", err)
 	}
 	if err := cache.set(
-		cacheKey("tmdb", "credits", "v1", "movie", strconv.FormatInt(tmdbID, 10)),
+		cacheKey("tmdb", "credits", "v2", "movie", strconv.FormatInt(tmdbID, 10)),
 		models.Credits{},
 	); err != nil {
 		t.Fatalf("seed credits cache: %v", err)
