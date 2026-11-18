@@ -1086,3 +1086,20 @@ func TestReadCombinedLogEntries_OrdersLocalBackendAgainstUTCFrontend(t *testing.
 		t.Fatalf("frontend line not shown in server zone: %q", entries[0].Line)
 	}
 }
+
+func TestRedactLogUploadContent_UnquotedWifiNames(t *testing.T) {
+	content := strings.Join([]string{
+		`[NetworkUrl] Settings valid - homeWifiSSID: Home Net, Home Net-5G`,
+		`[Connection] currentSSID=Upstairs Lounge`,
+		`{"homeWifiSSID":"Quoted Net, Other Net"}`,
+	}, "\n")
+	redacted := redactLogUploadContent(content)
+	for _, leaked := range []string{"Home Net", "Net-5G", "Upstairs", "Lounge", "Quoted", "Other Net"} {
+		if strings.Contains(redacted, leaked) {
+			t.Fatalf("redacted log leaked %q in:\n%s", leaked, redacted)
+		}
+	}
+	if !strings.Contains(redacted, `homeWifiSSID: `+logRedacted) {
+		t.Fatalf("expected unquoted homeWifiSSID to be redacted, got:\n%s", redacted)
+	}
+}

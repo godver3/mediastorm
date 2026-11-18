@@ -301,7 +301,7 @@ var SettingsSchema = map[string]interface{}{
 			"homeWifiSSID": map[string]interface{}{
 				"type":        "text",
 				"label":       "Home WiFi Name",
-				"description": "WiFi network name (SSID) to detect for home network. When connected, app uses Home URL.",
+				"description": "WiFi network name (SSID) to detect for home network. When connected, app uses Home URL. The native iOS and Android apps accept several names separated by commas.",
 				"placeholder": "MyHomeWiFi",
 				"order":       0,
 			},

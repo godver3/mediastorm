@@ -59,7 +59,13 @@ var logRedactionPatterns = []struct {
 		replacement: `${1}` + logRedacted + `${3}`,
 	},
 	{
-		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|x-account-password|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername|homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*)[^\s"',;}]+`),
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|x-account-password|homepageApiKey|tmdbApiKey|tvdbApiKey|aiApiKey|geminiApiKey|youtubeProxyUrl|fallbackApiKey|openSubtitlesPassword|subdlApiKey|subsourceApiKey|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|pass|secret|databaseURL|databaseUrl|DATABASE_URL|xtreamUsername)["']?\s*[:=]\s*)[^\s"',;}]+`),
+		replacement: `${1}` + logRedacted,
+	},
+	{
+		// Wi-Fi names contain spaces, and the home setting may list several separated by
+		// commas: an unquoted one is redacted to the end of the line.
+		pattern:     regexp.MustCompile(`(?i)(["']?(?:homeWifiSSID|currentSSID|ssid)["']?\s*[:=]\s*)[^\s"'}][^\r\n"'}]*`),
 		replacement: `${1}` + logRedacted,
 	},
 	{
