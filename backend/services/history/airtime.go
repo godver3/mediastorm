@@ -19,7 +19,11 @@ import (
 // TVmaze's public API requires no credentials. Enrichment belongs here rather
 // than in metadata: only the selected continue-watching episode needs a lookup.
 func (s *Service) enrichContinueWatchingAirtime(ctx context.Context, title models.Title, ids map[string]string, ep *models.EpisodeReference) {
-	if ep == nil || !ep.AirTimeEstimated {
+	if ep == nil {
+		return
+	}
+	if !ep.AirTimeEstimated {
+		s.applyStreamingRelease(ctx, title, ids, ep)
 		return
 	}
 	// Only TMDB-only installations may consult this fallback. A TMDB record
@@ -35,25 +39,37 @@ func (s *Service) enrichContinueWatchingAirtime(ctx context.Context, title model
 	if err != nil || date.Before(time.Now().Add(-48*time.Hour)) || date.After(time.Now().Add(7*24*time.Hour)) {
 		return
 	}
-	imdb := strings.TrimSpace(title.IMDBID)
+	imdb := continueWatchingIMDB(title, ids)
 	if imdb == "" {
-		imdb = strings.TrimSpace(ids["imdb"])
-	}
-	if !strings.HasPrefix(imdb, "tt") {
 		return
 	}
-	s.mu.Lock()
-	if s.airtimeClient == nil {
-		s.airtimeClient = &tvmazeAirtimeClient{baseURL: "https://api.tvmaze.com", http: &http.Client{Timeout: 15 * time.Second}}
-	}
-	client := s.airtimeClient
-	s.mu.Unlock()
+	client := s.tvmazeClient()
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	if stamp := s.resolveAirtime(ctx, client, imdb, *ep); stamp != "" {
 		ep.AirDateTimeUTC = stamp
 		ep.AirTimeEstimated = false
 	}
+}
+
+func continueWatchingIMDB(title models.Title, ids map[string]string) string {
+	imdb := strings.TrimSpace(title.IMDBID)
+	if imdb == "" {
+		imdb = strings.TrimSpace(ids["imdb"])
+	}
+	if !strings.HasPrefix(imdb, "tt") {
+		return ""
+	}
+	return imdb
+}
+
+func (s *Service) tvmazeClient() *tvmazeAirtimeClient {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.airtimeClient == nil {
+		s.airtimeClient = &tvmazeAirtimeClient{baseURL: "https://api.tvmaze.com", http: &http.Client{Timeout: 15 * time.Second}}
+	}
+	return s.airtimeClient
 }
 
 type tvmazeEpisode struct {
