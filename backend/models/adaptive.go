@@ -71,15 +71,25 @@ func (c AdaptiveCaps) ApplyTo(f *FilterSettings) {
 	if f == nil {
 		return
 	}
-	if c.MaxSizeMovieGB != nil {
-		f.MaxSizeMovieGB = c.MaxSizeMovieGB
-	}
-	if c.MaxSizeEpisodeGB != nil {
-		f.MaxSizeEpisodeGB = c.MaxSizeEpisodeGB
-	}
+	// Size caps only ever tighten the configured limit: a fast connection must
+	// not lift a stricter user/profile/client size limit (0 = unlimited).
+	f.MaxSizeMovieGB = tighterSizeLimit(f.MaxSizeMovieGB, c.MaxSizeMovieGB)
+	f.MaxSizeEpisodeGB = tighterSizeLimit(f.MaxSizeEpisodeGB, c.MaxSizeEpisodeGB)
 	if c.HDRDVPolicy != nil {
 		f.HDRDVPolicy = *c.HDRDVPolicy
 	}
+}
+
+// tighterSizeLimit returns the stricter of a configured size limit and an
+// adaptive cap. A nil or non-positive configured limit means unlimited.
+func tighterSizeLimit(configured, adaptive *float64) *float64 {
+	if adaptive == nil {
+		return configured
+	}
+	if configured != nil && *configured > 0 && *configured <= *adaptive {
+		return configured
+	}
+	return adaptive
 }
 
 // normalizeBufferFactor clamps the configured buffer factor to (0,1], falling back

@@ -183,4 +183,26 @@ func TestAdaptiveCaps_ApplyTo(t *testing.T) {
 	}
 }
 
+func TestAdaptiveCaps_ApplyToKeepsStricterConfiguredSize(t *testing.T) {
+	movie, episode := 14.3, 3.6
+	caps := AdaptiveCaps{MaxSizeMovieGB: &movie, MaxSizeEpisodeGB: &episode}
+
+	f := FilterSettings{MaxSizeMovieGB: FloatPtr(2), MaxSizeEpisodeGB: FloatPtr(0)}
+	caps.ApplyTo(&f)
+
+	if *f.MaxSizeMovieGB != 2 {
+		t.Fatalf("stricter configured movie limit lifted: %v", *f.MaxSizeMovieGB)
+	}
+	// 0 means unlimited, so the adaptive cap applies.
+	if *f.MaxSizeEpisodeGB != 3.6 {
+		t.Fatalf("unlimited episode limit should take adaptive cap: %v", *f.MaxSizeEpisodeGB)
+	}
+
+	unset := FilterSettings{}
+	caps.ApplyTo(&unset)
+	if unset.MaxSizeMovieGB == nil || *unset.MaxSizeMovieGB != 14.3 {
+		t.Fatalf("unset movie limit should take adaptive cap: %v", unset.MaxSizeMovieGB)
+	}
+}
+
 func policyPtr(p HDRDVPolicy) *HDRDVPolicy { return &p }
