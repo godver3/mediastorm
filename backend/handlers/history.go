@@ -288,6 +288,76 @@ func (h *HistoryHandler) HideFromContinueWatchingByBody(w http.ResponseWriter, r
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// continueWatchingHiddenService lists and reverses Continue Watching hides.
+// It is optional so lightweight history fakes need not implement it.
+type continueWatchingHiddenService interface {
+	ListHiddenFromContinueWatching(ctx context.Context, userID string) ([]models.HiddenItem, error)
+	UnhideFromContinueWatching(userID, seriesID string) error
+}
+
+var _ continueWatchingHiddenService = (*history.Service)(nil)
+
+// ListHiddenFromContinueWatching returns the titles this profile hid from Continue Watching.
+func (h *HistoryHandler) ListHiddenFromContinueWatching(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := h.Service.(continueWatchingHiddenService)
+	if !ok {
+		http.Error(w, "not supported", http.StatusNotImplemented)
+		return
+	}
+	items, err := svc.ListHiddenFromContinueWatching(r.Context(), userID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, history.ErrUserIDRequired) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if items == nil {
+		items = []models.HiddenItem{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// UnhideFromContinueWatching clears a title's Continue Watching hide (JSON body
+// {"seriesId": ...}, which also takes movie IDs). Unhiding a title that is not
+// hidden succeeds.
+func (h *HistoryHandler) UnhideFromContinueWatching(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := h.Service.(continueWatchingHiddenService)
+	if !ok {
+		http.Error(w, "not supported", http.StatusNotImplemented)
+		return
+	}
+	var req hideContinueWatchingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	seriesID := strings.TrimSpace(req.SeriesID)
+	if seriesID == "" {
+		http.Error(w, "series id is required", http.StatusBadRequest)
+		return
+	}
+	if err := svc.UnhideFromContinueWatching(userID, seriesID); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, history.ErrUserIDRequired) || errors.Is(err, history.ErrSeriesIDRequired) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *HistoryHandler) RecordEpisode(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.requireUser(w, r)
 	if !ok {

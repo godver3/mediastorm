@@ -31,6 +31,19 @@ type fakeHistoryService struct {
 	progressItems  []models.PlaybackProgress
 	lastProgress   models.PlaybackProgressUpdate
 	lastWatch      models.WatchHistoryUpdate
+	hiddenItems    []models.HiddenItem
+	unhideUserID   string
+	unhideSeriesID string
+}
+
+func (f *fakeHistoryService) ListHiddenFromContinueWatching(_ context.Context, userID string) ([]models.HiddenItem, error) {
+	return f.hiddenItems, f.err
+}
+
+func (f *fakeHistoryService) UnhideFromContinueWatching(userID, seriesID string) error {
+	f.unhideUserID = userID
+	f.unhideSeriesID = seriesID
+	return f.err
 }
 
 func (f *fakeHistoryService) RecordEpisode(userID string, payload models.EpisodeWatchPayload) (models.SeriesWatchState, error) {
@@ -349,6 +362,57 @@ func TestHistoryHandler_HideFromContinueWatchingByBody(t *testing.T) {
 	}
 	if svc.hideSeriesID != "localmedia:folder/file.mkv" {
 		t.Fatalf("unexpected series id %q", svc.hideSeriesID)
+	}
+}
+
+func TestHistoryHandler_ListHiddenFromContinueWatching(t *testing.T) {
+	svc := &fakeHistoryService{}
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/users/user/history/continue/hidden", nil)
+	req = mux.SetURLVars(req, map[string]string{"userID": "user"})
+	rec := httptest.NewRecorder()
+	handler.ListHiddenFromContinueWatching(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d", rec.Code)
+	}
+	if got := bytes.TrimSpace(rec.Body.Bytes()); string(got) != "[]" {
+		t.Fatalf("empty list should encode as [], got %s", got)
+	}
+
+	svc.hiddenItems = []models.HiddenItem{{ID: "tmdb:tv:68689", MediaType: "series", Name: "MasterChef"}}
+	rec = httptest.NewRecorder()
+	handler.ListHiddenFromContinueWatching(rec, req)
+	var items []models.HiddenItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "tmdb:tv:68689" || items[0].MediaType != "series" {
+		t.Fatalf("unexpected items %+v", items)
+	}
+}
+
+func TestHistoryHandler_UnhideFromContinueWatching(t *testing.T) {
+	svc := &fakeHistoryService{}
+	handler := handlers.NewHistoryHandler(svc, fakeUserService{}, false)
+
+	req := httptest.NewRequest(http.MethodPost, "/users/user/history/continue/unhide", bytes.NewBufferString(`{"seriesId":" tmdb:tv:68689 "}`))
+	req = mux.SetURLVars(req, map[string]string{"userID": "user"})
+	rec := httptest.NewRecorder()
+	handler.UnhideFromContinueWatching(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status %d", rec.Code)
+	}
+	if svc.unhideUserID != "user" || svc.unhideSeriesID != "tmdb:tv:68689" {
+		t.Fatalf("unexpected call user=%q series=%q", svc.unhideUserID, svc.unhideSeriesID)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/users/user/history/continue/unhide", bytes.NewBufferString(`{"seriesId":""}`))
+	req = mux.SetURLVars(req, map[string]string{"userID": "user"})
+	rec = httptest.NewRecorder()
+	handler.UnhideFromContinueWatching(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing series id: status %d, want 400", rec.Code)
 	}
 }
 
