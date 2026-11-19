@@ -774,6 +774,21 @@ func matchesRecordingRule(rule models.RecordingRule, compiled *regexp.Regexp, ti
 	}
 }
 
+// RuleMatchesTitle reports whether a rule's pattern matches a programme title
+// the way scheduling matches it (normalised titles, case-insensitive regex).
+// Channel and new-airing conditions are not checked.
+func RuleMatchesTitle(rule models.RecordingRule, title string) bool {
+	var compiled *regexp.Regexp
+	if rule.MatchType == models.RecordingRuleMatchRegex {
+		c, err := compileRecordingRegex(rule.Pattern)
+		if err != nil {
+			return false
+		}
+		compiled = c
+	}
+	return matchesRecordingRule(rule, compiled, title)
+}
+
 func normalizeRecordingTitle(value string) string {
 	var normalized strings.Builder
 	for _, r := range strings.ToLower(value) {

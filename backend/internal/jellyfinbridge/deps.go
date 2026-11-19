@@ -105,6 +105,16 @@ type Handlers struct {
 	IndexerSearch     http.HandlerFunc // GET /api/indexers/search (ranked releases)
 	PlaybackResolve   http.HandlerFunc // POST /api/playback/resolve
 	PlaybackQueue     http.HandlerFunc // GET /api/playback/queue/{queueID}
+	// Recordings (Live TV DVR, see dvr.go).
+	RecordingsList      http.HandlerFunc // GET    /api/live/recordings?profileId=
+	RecordingCreateEPG  http.HandlerFunc // POST   /api/live/recordings/epg
+	RecordingCancel     http.HandlerFunc // POST   /api/live/recordings/{recordingID}/cancel
+	RecordingDelete     http.HandlerFunc // DELETE /api/live/recordings/{recordingID}
+	RecordingRules      http.HandlerFunc // GET    /api/live/recording-rules?profileId=
+	RecordingRuleCreate http.HandlerFunc // POST   /api/live/recording-rules
+	RecordingRuleDelete http.HandlerFunc // DELETE /api/live/recording-rules/{ruleID}
+	RecordingRuleUpdate http.HandlerFunc // PUT    /api/live/recording-rules/{ruleID}
+	RecordingSettings   http.HandlerFunc // GET    /api/live/recording-settings?profileId=
 }
 
 // Deps wires the bridge to mediastorm.

@@ -239,14 +239,18 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"OpenAccess": false, "Shares": []any{}, "ItemIds": ids})
 }
 
-// handleDeleteItem deletes a list; other items cannot be deleted through
-// the bridge.
+// handleDeleteItem deletes a list or a recording; other items cannot be
+// deleted through the bridge.
 func (s *Server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
+	if ref, ok := s.ids.get(pathVar(r, "id")); ok && ref.Kind == refRecording && ref.Ctx.ProfileID == p.Profile.ID {
+		s.deleteRecording(w, r, p, ref.Source)
+		return
+	}
 	ed, ok := s.listEditor()
 	listID, own := s.ownList(p, pathVar(r, "id"))
 	if !ok || !own {
-		writeError(w, http.StatusForbidden, "Only lists can be deleted")
+		writeError(w, http.StatusForbidden, "Only lists and recordings can be deleted")
 		return
 	}
 	if _, err := ed.DeleteList(p.Profile.ID, listID); err != nil {

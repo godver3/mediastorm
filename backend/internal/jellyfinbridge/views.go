@@ -24,6 +24,7 @@ const (
 	viewTrendingShows  = "trending-shows"
 	viewLists          = "lists"
 	viewLiveTV         = "livetv"
+	viewRecordings     = "recordings"
 )
 
 type viewDef struct {
@@ -50,6 +51,14 @@ func (s *Server) viewDefs(profile models.User) []viewDef {
 	}
 	if s.deps.Handlers.LiveChannels != nil && !profile.IsKidsProfile {
 		defs = append(defs, viewDef{viewLiveTV, "Live TV", dto.CollectionLiveTV, dto.KindUserView})
+	}
+	// A Jellyfin server adds its recording folder as a library, and clients
+	// such as Plezy only show finished recordings there (/LiveTv/Recordings
+	// is jellyfin-web's). Home videos, not Jellyfin's mixed folder: Plezy
+	// browses a library without a type for movies and series only, while
+	// recordings are videos.
+	if s.dvrAvailable(profile) {
+		defs = append(defs, viewDef{viewRecordings, "Recordings", dto.CollectionHomeVideos, dto.KindCollectionFolder})
 	}
 	return defs
 }
@@ -79,9 +88,23 @@ func (s *Server) visibleViewDefs(r *http.Request, p *principal) []viewDef {
 	defs := s.viewDefs(p.Profile)
 	defs = append(defs, localViewDefs(s.localLibraries(r.Context(), p))...)
 	out := defs[:0]
+	hasChannels := -1 // looked up once, when a view needs it
+	channels := func() bool {
+		if hasChannels < 0 {
+			hasChannels = 0
+			if len(s.liveChannels(r.Context(), p)) > 0 {
+				hasChannels = 1
+			}
+		}
+		return hasChannels == 1
+	}
 	for _, def := range defs {
-		// Only show Live TV when the profile actually has a channel source.
-		if def.Key == viewLiveTV && len(s.liveChannels(r.Context(), p)) == 0 {
+		// Only show Live TV when the profile actually has a channel source,
+		// and Recordings when it can record or kept recordings.
+		if def.Key == viewLiveTV && !channels() {
+			continue
+		}
+		if def.Key == viewRecordings && !channels() && len(s.recordingItems(r.Context(), p, nil)) == 0 {
 			continue
 		}
 		out = append(out, def)

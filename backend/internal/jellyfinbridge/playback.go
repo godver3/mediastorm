@@ -251,6 +251,8 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 		s.localPlaybackInfo(w, r, p, itemID, ref, req)
 	case refChannel, refProgram:
 		s.livePlaybackInfo(w, r, p, itemID, ref)
+	case refRecording:
+		s.recordingPlaybackInfo(w, r, p, itemID, ref, req)
 	default:
 		writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{MediaSources: []dto.MediaSourceInfo{}, ErrorCode: "NoCompatibleStream"})
 	}

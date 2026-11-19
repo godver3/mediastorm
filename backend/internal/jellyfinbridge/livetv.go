@@ -450,7 +450,9 @@ func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool { return timeOf(items[i].StartDate).Before(timeOf(items[j].StartDate)) })
-	writeJSON(w, http.StatusOK, s.page(items, itemQuery{StartIndex: params.StartIndex, Limit: params.Limit}))
+	page := s.page(items, itemQuery{StartIndex: params.StartIndex, Limit: params.Limit})
+	s.withTimers(r.Context(), p, page.Items)
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Request) {
@@ -482,7 +484,9 @@ func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Reques
 		items = append(items, row.item)
 	}
 	limit := parseIntDefault(queryValue(r, "Limit"), 0)
-	writeJSON(w, http.StatusOK, s.page(items, itemQuery{Limit: limit}))
+	page := s.page(items, itemQuery{Limit: limit})
+	s.withTimers(r.Context(), p, page.Items)
+	writeJSON(w, http.StatusOK, page)
 }
 
 type programQueryParams struct {

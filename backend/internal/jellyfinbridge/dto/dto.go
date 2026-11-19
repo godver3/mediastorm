@@ -26,11 +26,12 @@ const (
 	KindProgram          = "Program"
 	KindVideo            = "Video"
 
-	CollectionMovies  = "movies"
-	CollectionTVShows = "tvshows"
-	CollectionLiveTV  = "livetv"
-	CollectionBoxSets = "boxsets"
-	CollectionFolders = "folders"
+	CollectionMovies     = "movies"
+	CollectionTVShows    = "tvshows"
+	CollectionLiveTV     = "livetv"
+	CollectionBoxSets    = "boxsets"
+	CollectionFolders    = "folders"
+	CollectionHomeVideos = "homevideos"
 
 	MediaTypeVideo   = "Video"
 	MediaTypeUnknown = "Unknown"
@@ -242,6 +243,8 @@ type BaseItemDto struct {
 	DateCreated             *time.Time                          `json:"DateCreated,omitempty"`
 	CanDelete               *bool                               `json:"CanDelete,omitempty"`
 	PlaylistItemID          string                              `json:"PlaylistItemId,omitempty"`
+	TimerID                 string                              `json:"TimerId,omitempty"`
+	SeriesTimerID           string                              `json:"SeriesTimerId,omitempty"`
 	CanDownload             *bool                               `json:"CanDownload,omitempty"`
 	SortName                string                              `json:"SortName,omitempty"`
 	PremiereDate            *time.Time                          `json:"PremiereDate,omitempty"`

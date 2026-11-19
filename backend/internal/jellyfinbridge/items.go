@@ -263,6 +263,11 @@ func (s *Server) childrenOf(ctx context.Context, p *principal, u *userState, q i
 			return s.listFolders(p.Profile)
 		case viewLiveTV:
 			return s.channelItems(ctx, p, true)
+		case viewRecordings:
+			term := strings.ToLower(strings.TrimSpace(q.SearchTerm))
+			return s.recordingItems(ctx, p, func(_ models.Recording, item dto.BaseItemDto) bool {
+				return term == "" || strings.Contains(strings.ToLower(item.Name), term)
+			})
 		default:
 			if libraryID, ok := strings.CutPrefix(ref.Ctx.ViewKey, localViewPrefix); ok {
 				items := s.localViewChildren(ctx, p, u, libraryID)
@@ -642,6 +647,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		s.itemVersions(p, &item, ref)
 	}
 	items := []dto.BaseItemDto{item}
+	s.withTimers(r.Context(), p, items)
 	s.withTrickplay(p, items)
 	s.withStreamDetails(p, items)
 	withPlayableSources(items)
@@ -739,6 +745,8 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		return s.channelByRef(ctx, p, ref)
 	case refProgram:
 		return s.programByRef(ctx, p, ref)
+	case refRecording:
+		return s.recordingByRef(ctx, p, ref)
 	case refPerson:
 		return s.personItem(ctx, id, ref, detailed), true
 	case refGenre:
@@ -1020,6 +1028,13 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 		}
 		switch ref.Ctx.ViewKey {
 		case viewLists, viewLiveTV:
+		case viewRecordings:
+			items := s.recordingItems(r.Context(), p, nil)
+			if len(items) > limit {
+				items = items[:limit]
+			}
+			writeJSON(w, http.StatusOK, items)
+			return
 		default:
 			titles = s.viewTitles(r.Context(), p.Profile, ref.Ctx.ViewKey)
 		}
