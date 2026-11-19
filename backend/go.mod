@@ -12,6 +12,7 @@ require (
 	github.com/acomagu/bufpipe v1.0.4
 	github.com/avast/retry-go/v4 v4.6.1
 	github.com/bodgit/sevenzip v1.6.1
+	github.com/dlclark/regexp2 v1.11.5
 	github.com/gabriel-vasile/mimetype v1.4.10
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/go-pkgz/auth/v2 v2.1.2
