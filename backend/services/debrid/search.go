@@ -71,6 +71,10 @@ type SearchOptions struct {
 	EpisodeReleased       bool                        // True only when metadata confirms the target episode has aired
 	SkipFilter            bool                        // When true, skip result filtering (used by SearchTest)
 	SeasonPacksOnly       bool                        // When true, keep only releases that cover the whole target season
+	// PreferenceFiltersOff drops preference filters (sizes, resolution, HDR,
+	// terms) because an active quality preset decides what is wanted.
+	// Adaptive device caps still apply.
+	PreferenceFiltersOff bool
 	// SkipIMDBScrapers skips scrapers that look up by IMDB ID and ignore the
 	// query text (AIOStreams, Torrentio, direct Stremio). Alternate-title
 	// searches set it so those scrapers run once, not once per title.
@@ -350,7 +354,7 @@ func isOnlyAIOStreamsEnabled(scrapers []config.TorrentScraperConfig) bool {
 
 // getEffectiveFilterSettings returns the filtering settings to use for a search.
 // Settings cascade: Global -> Profile -> Client (client settings win)
-func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings) (models.FilterSettings, bool) {
+func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, globalSettings config.Settings, preferenceFiltersOff ...bool) (models.FilterSettings, bool) {
 	bypassForAIO := globalSettings.Display.BypassFilteringForAIOStreamsOnly
 	// Start with global settings (as pointers)
 	filterSettings := models.FilterSettings{
@@ -482,6 +486,10 @@ func (s *SearchService) getEffectiveFilterSettings(userID, clientID string, glob
 		applyClientFilterOverrides(&filterSettings, clientDebridFilter)
 	}
 
+	if len(preferenceFiltersOff) > 0 && preferenceFiltersOff[0] {
+		filterSettings = filterSettings.WithoutPreferences()
+	}
+
 	// Adaptive playback overlays transient size/HDR caps derived from this
 	// device's reported throughput + display capability.
 	models.ComputeAdaptiveCaps(
@@ -507,7 +515,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	settings = config.FilterSettingsForProfile(settings, opts.UserID)
 
 	// Get effective filtering settings (cascade: global -> profile -> client)
-	filterSettings, bypassForAIO := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	filterSettings, bypassForAIO := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings, opts.PreferenceFiltersOff)
 
 	if !hasActiveDebridProviders(settings.Streaming.DebridProviders) && !hasActiveDirectStreamScrapers(settings.TorrentScrapers) {
 		return []models.NZBResult{}, nil
@@ -680,8 +688,10 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		}
 	}
 
-	// Check if filtering should be bypassed for AIOStreams-only mode
-	bypassFiltering := bypassForAIO &&
+	// Check if filtering should be bypassed for AIOStreams-only mode. A
+	// quality preset (PreferenceFiltersOff) ranks itself and keeps the
+	// identity filters, as the scored search does.
+	bypassFiltering := bypassForAIO && !opts.PreferenceFiltersOff &&
 		(!shouldUseUsenet(settings.Streaming.ServiceMode) || !hasEnabledUsenetIndexer(settings.Indexers)) &&
 		isOnlyAIOStreamsEnabled(settings.TorrentScrapers)
 	if bypassFiltering {

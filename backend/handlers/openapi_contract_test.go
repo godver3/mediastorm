@@ -878,6 +878,21 @@ func TestOpenAPIContract(t *testing.T) {
 		}, h.PatchSkipping, http.StatusOK)
 	})
 
+	t.Run("quality-presets", func(t *testing.T) {
+		h, _ := newPresetHandler(t)
+		h.ProfileOwner = func(string) string { return contractAccountID }
+		settings, _ := h.Config.Load()
+		settings.QualityPresets.PickerPresets = []string{"simple"}
+		if err := h.Config.Save(settings); err != nil {
+			t.Fatal(err)
+		}
+		exercise(t, v, contractCall{method: http.MethodGet, target: "/api/quality-presets?userId=p1&mediaType=series&name=Dark"}, h.ClientList, http.StatusOK)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/quality-presets/assign", body: map[string]any{"userId": "p1", "seriesPreset": "simple"}},
+			h.Assign, http.StatusOK)
+		exercise(t, v, contractCall{method: http.MethodPut, target: "/api/quality-presets/assign", body: map[string]any{"userId": "p1", "seriesPresets": "simple"}, invalid: true},
+			h.Assign, http.StatusBadRequest)
+	})
+
 	t.Run("coverage", func(t *testing.T) {
 		covered := v.Covered()
 		var missing []string

@@ -20,6 +20,17 @@ func MigrateRawSettings(raw map[string]interface{}) {
 	migratePrewarmFrequencyClear(raw)
 	migratePrewarmContinueWatchingOnly(raw)
 	migrateGeminiAISettings(raw)
+	migrateQualityPresetDefaults(raw)
+}
+
+// migrateQualityPresetDefaults adds the qualityPresets section to settings
+// written before quality presets existed, allowing per-search preset choice
+// by default (the same default new installs get).
+func migrateQualityPresetDefaults(raw map[string]interface{}) {
+	if _, ok := raw["qualityPresets"]; ok {
+		return
+	}
+	raw["qualityPresets"] = map[string]interface{}{"allowRequestOverride": true}
 }
 
 // migratePrewarmContinueWatchingOnly temporarily removes speculative home

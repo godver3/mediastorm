@@ -25,6 +25,7 @@ import (
 	"novastream/services/localmedia"
 	"novastream/services/plex"
 	"novastream/services/prewarm"
+	"novastream/services/qualityprofiles"
 	"novastream/services/scrob"
 	"novastream/services/simkl"
 	"novastream/services/trakt"
@@ -33,6 +34,7 @@ import (
 
 // Service manages scheduled task execution
 type Service struct {
+	qualityPresets     QualityPresetSyncer
 	configManager      *config.Manager
 	plexClient         *plex.Client
 	traktClient        *trakt.Client
@@ -366,6 +368,8 @@ func (s *Service) executeTask(task config.ScheduledTask) {
 		result, err = s.executeMDBListWatchlistSync(task)
 	case config.ScheduledTaskTypeMDBListHistorySync:
 		result, err = s.executeMDBListHistorySync(task)
+	case config.ScheduledTaskTypeQualityPresetSync:
+		result, err = s.executeQualityPresetSync(task)
 	default:
 		log.Printf("[scheduler] Unknown task type: %s", task.Type)
 		return
@@ -4252,6 +4256,42 @@ func (s *Service) traktHistoryItemToUpdate(item trakt.HistoryItem, watched *bool
 	}
 
 	return update
+}
+
+// QualityPresetSyncer checks quality presets for upstream updates.
+type QualityPresetSyncer interface {
+	SyncDue(ctx context.Context, force bool) (*qualityprofiles.SyncDueResult, error)
+}
+
+// SetQualityPresetSyncer sets the quality preset service for sync tasks.
+func (s *Service) SetQualityPresetSyncer(syncer QualityPresetSyncer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.qualityPresets = syncer
+}
+
+// executeQualityPresetSync checks every preset whose schedule is due; each
+// preset's sync mode decides whether updates are applied or staged.
+func (s *Service) executeQualityPresetSync(task config.ScheduledTask) (SyncResult, error) {
+	s.mu.RLock()
+	syncer := s.qualityPresets
+	ctx := s.ctx
+	s.mu.RUnlock()
+	if syncer == nil {
+		return SyncResult{}, errors.New("quality preset service not configured")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := syncer.SyncDue(ctx, task.Config["force"] == "true")
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("quality preset sync failed: %w", err)
+	}
+	msg := fmt.Sprintf("Checked %d preset(s): %d updated, %d waiting for approval", res.Checked, res.Applied, res.Staged)
+	if len(res.Errors) > 0 {
+		return SyncResult{Count: res.Applied, Message: msg}, fmt.Errorf("%s; %d failed: %s", msg, len(res.Errors), strings.Join(res.Errors, "; "))
+	}
+	return SyncResult{Count: res.Applied, Message: msg}, nil
 }
 
 // executePrewarm runs the prewarm task to pre-resolve configured home-shelf items.

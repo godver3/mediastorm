@@ -20,6 +20,7 @@ Features include multi-profile watch history and recommendations, kids profiles,
 ## Features
 
 - **On-demand streaming:** Search multiple Usenet and torrent sources, rank releases, and stream through built-in Usenet or supported debrid providers.
+- **Quality presets:** Rank and filter releases with Sonarr/Radarr quality profiles and custom formats, imported from TRaSH-Guides or a Sonarr/Radarr instance and kept in sync with upstream; see [backend/QUALITY_PRESETS.md](backend/QUALITY_PRESETS.md).
 - **Personal media libraries:** Browse and play local, Plex, and Jellyfin libraries alongside discovered content.
 - **Live TV and DVR:** Use M3U playlists, HDHomeRun tuners, Xtream Codes, Stalker Portal, or Stremio sources with EPG data and scheduled recordings. HDHomeRun automatically downloads its channel lineup and guide (2 days free, or 14 days with a DVR guide subscription).
 - **Profiles and activity:** Maintain per-profile watchlists, playback progress, history, calendars, custom lists, content preferences, and recommendations. Profiles can use PINs, kids restrictions, and source-level access controls.

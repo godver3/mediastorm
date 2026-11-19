@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -264,5 +265,135 @@ func TestReleaseVersionsSetting(t *testing.T) {
 		if tc.count == 0 && searches != 0 {
 			t.Fatalf("count 0 searched releases %d times", searches)
 		}
+	}
+}
+
+// A release list that is searched again (its ranking changed with a
+// remembered preset) is served until the new one is ready: a release version
+// picked from it still plays that release.
+func TestOutdatedReleaseListServesWhileSearching(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{ReleaseVersions: 5})
+	installFakePlayback(t, h)
+	var mu sync.Mutex
+	searches := 0
+	block := make(chan struct{})
+	defer close(block)
+	h.srv.deps.Handlers.IndexerSearch = func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		searches++
+		n := searches
+		mu.Unlock()
+		if n > 1 {
+			<-block // the search again does not finish during the test
+		}
+		results := []map[string]any{}
+		for i := 1; i <= 5; i++ {
+			results = append(results, map[string]any{"title": fmt.Sprintf("Movie.2024.1080p.WEB-DL.H264-GRP%02d", i), "guid": fmt.Sprintf("g%d", i), "sizeBytes": int64(i) << 30, "serviceType": "usenet", "indexer": "nzbgeek"})
+		}
+		writeJSON(w, http.StatusOK, results)
+	}
+	resolved := false
+	h.srv.deps.Handlers.PlaybackResolve = func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		resolved = true
+		mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"queueId": 7})
+	}
+	h.srv.deps.Handlers.PlaybackQueue = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"queueId": 7, "webdavPath": "/webdav/release02.mkv", "fileSize": 2 << 30})
+	}
+	tok := h.login("Living Room", "alice-pass")
+	item := movieID(t, h, tok)
+	got := versionsAfterPlay(t, item, func(method, path string, body any) *httptest.ResponseRecorder {
+		return h.do(method, path, tok, body)
+	}, func() int { mu.Lock(); defer mu.Unlock(); return searches })
+	if len(got.MediaSources) < 3 {
+		t.Fatalf("versions = %v", sourceNames(got))
+	}
+	pick := got.MediaSources[2]
+
+	h.srv.releases.mu.Lock()
+	for _, list := range h.srv.releases.lists {
+		list.outdated = true
+	}
+	h.srv.releases.mu.Unlock()
+
+	h.do(http.MethodPost, "/Items/"+pick.ID+"/PlaybackInfo", tok, map[string]any{"MediaSourceId": pick.ID})
+	mu.Lock()
+	defer mu.Unlock()
+	if searches != 2 {
+		t.Errorf("searches = %d, want the list searched again", searches)
+	}
+	if !resolved {
+		t.Error("the picked release did not play while its list was searched again")
+	}
+}
+
+// A release version picked from the list before it was searched again still
+// plays when the new search finds nothing, also with a dashed ID.
+func TestReleaseFromReplacedListPlaysAfterEmptySearch(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{ReleaseVersions: 5})
+	installFakePlayback(t, h)
+	var mu sync.Mutex
+	searches := 0
+	h.srv.deps.Handlers.IndexerSearch = func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		searches++
+		n := searches
+		mu.Unlock()
+		results := []map[string]any{}
+		for i := 1; n == 1 && i <= 5; i++ {
+			results = append(results, map[string]any{"title": fmt.Sprintf("Movie.2024.1080p.WEB-DL.H264-GRP%02d", i), "guid": fmt.Sprintf("g%d", i), "sizeBytes": int64(i) << 30, "serviceType": "usenet", "indexer": "nzbgeek"})
+		}
+		writeJSON(w, http.StatusOK, results)
+	}
+	resolved := false
+	h.srv.deps.Handlers.PlaybackResolve = func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		resolved = true
+		mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"queueId": 7})
+	}
+	h.srv.deps.Handlers.PlaybackQueue = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"queueId": 7, "webdavPath": "/webdav/release02.mkv", "fileSize": 2 << 30})
+	}
+	tok := h.login("Living Room", "alice-pass")
+	item := movieID(t, h, tok)
+	got := versionsAfterPlay(t, item, func(method, path string, body any) *httptest.ResponseRecorder {
+		return h.do(method, path, tok, body)
+	}, func() int { mu.Lock(); defer mu.Unlock(); return searches })
+	if len(got.MediaSources) < 3 {
+		t.Fatalf("versions = %v", sourceNames(got))
+	}
+	pick := got.MediaSources[2].ID
+
+	h.srv.releases.mu.Lock()
+	for _, list := range h.srv.releases.lists {
+		list.outdated = true
+	}
+	h.srv.releases.mu.Unlock()
+	// Auto plays: the list is searched again and comes back empty.
+	h.do(http.MethodPost, "/Items/"+item+"/PlaybackInfo", tok, map[string]any{"MediaSourceId": item})
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		h.srv.releases.mu.Lock()
+		ready := true
+		for _, list := range h.srv.releases.lists {
+			ready = ready && list.ready
+		}
+		h.srv.releases.mu.Unlock()
+		if ready || time.Now().After(deadline) {
+			break
+		}
+	}
+
+	dashed := pick[:8] + "-" + pick[8:12] + "-" + pick[12:16] + "-" + pick[16:20] + "-" + pick[20:]
+	h.do(http.MethodPost, "/Items/"+item+"/PlaybackInfo", tok, map[string]any{"MediaSourceId": dashed})
+	mu.Lock()
+	defer mu.Unlock()
+	if searches != 2 {
+		t.Errorf("searches = %d, want 2", searches)
+	}
+	if !resolved {
+		t.Error("the release picked from the replaced list did not play")
 	}
 }

@@ -149,7 +149,7 @@ func (s *Server) runUncopyableSwap(p *principal, sess *playSession, failedName s
 	}
 	var status *playback.PrequeueStatusResponse
 	attempts := 0
-	for _, r := range s.releasesWait(p, sess.ItemID, sess.Ref, autoReleaseWait) {
+	for _, r := range s.releasesWait(p, sess.ItemID, sess.Ref, autoReleaseWait, sess.PresetID) {
 		if attempts == autoPickAttempts || ctx.Err() != nil {
 			break
 		}

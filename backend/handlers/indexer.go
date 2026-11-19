@@ -37,6 +37,11 @@ type IndexerHandler struct {
 	SourceHealthSvc  *sourcehealth.Service
 }
 
+// requestedPresetChecker is implemented by the indexer service.
+type requestedPresetChecker interface {
+	CheckRequestedPreset(ctx context.Context, opts indexer.SearchOptions) error
+}
+
 func NewIndexerHandler(s indexerService, demoMode bool) *IndexerHandler {
 	return &IndexerHandler{Service: s, DemoMode: demoMode}
 }
@@ -94,12 +99,14 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var isAnime bool
 	var targetAirDate string
 	var episodeAirYear int
+	var episodeTitle string
 	var seasonPremiereYear int
 	var episodeReleased bool
 	var absoluteEpisodeNumber int
 	var countryCode string
 	var originalLanguage string
 	var tvdbID int64
+	var runtimeMinutes int
 	var alternateTitles []string
 	if mediaType == "series" && h.MetadataSvc != nil {
 		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year, imdbID, seriesNumberingContext{TitleID: titleID, Numbering: numbering})
@@ -113,12 +120,14 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
 			episodeAirYear = seriesMeta.EpisodeAirYear
+			episodeTitle = seriesMeta.EpisodeTitle
 			seasonPremiereYear = seriesMeta.SeasonPremiereYear
 			episodeReleased = seriesMeta.EpisodeReleased
 			absoluteEpisodeNumber = seriesMeta.AbsoluteEpisodeNumber
 			countryCode = seriesMeta.CountryCode
 			originalLanguage = seriesMeta.OriginalLanguage
 			tvdbID = seriesMeta.TVDBID
+			runtimeMinutes = seriesMeta.RuntimeMinutes
 			if year == 0 && seriesMeta.Year > 0 {
 				year = seriesMeta.Year
 				log.Printf("[indexer] Populated year %d from series metadata", year)
@@ -143,6 +152,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		if movieTitle, err := h.MovieMetadataSvc.MovieInfo(r.Context(), movieQuery); err == nil && movieTitle != nil {
 			countryCode = strings.TrimSpace(movieTitle.CountryCode)
 			originalLanguage = strings.TrimSpace(movieTitle.Language)
+			runtimeMinutes = movieTitle.RuntimeMinutes
 			// Keep the hydrated canonical title in the filter identity set because
 			// the incoming query may itself be an alternate title. Outbound alias
 			// queries are capped separately from the complete filter-title set.
@@ -150,7 +160,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 			if titleID == "" {
 				titleID = movieTitle.ID
 			}
-			if isAnimeTitle(movieTitle) {
+			if logAnimeDecision("", movieTitle) {
 				isAnime = true
 				log.Printf("[indexer] Movie %q is anime (genres=%v originalName=%q language=%q) - applying anime language preferences",
 					query, movieTitle.Genres, movieTitle.OriginalName, movieTitle.Language)
@@ -161,6 +171,7 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 	opts := indexer.SearchOptions{
 		Numbering:             numbering,
 		TitleID:               titleID,
+		PresetTitleID:         canonicalPrequeueTitleID(mediaType, titleID, imdbID, strings.TrimSpace(r.URL.Query().Get("tmdbId")), strings.TrimSpace(r.URL.Query().Get("tvdbId"))),
 		Query:                 query,
 		Categories:            categories,
 		MaxResults:            max,
@@ -179,9 +190,24 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		IsAnime:               isAnime,
 		TargetAirDate:         targetAirDate,
 		EpisodeAirYear:        episodeAirYear,
+		EpisodeTitle:          episodeTitle,
 		SeasonPremiereYear:    seasonPremiereYear,
 		EpisodeReleased:       episodeReleased,
 		AbsoluteEpisodeNumber: absoluteEpisodeNumber,
+		RuntimeMinutes:        runtimeMinutes,
+		QualityPreset:         strings.TrimSpace(r.URL.Query().Get("qualityPreset")),
+	}
+	// A preset the client names is checked up front, so it learns why the
+	// preset would not be used instead of getting another ranking.
+	if checker, ok := h.Service.(requestedPresetChecker); ok {
+		if err := checker.CheckRequestedPreset(r.Context(), opts); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, indexer.ErrQualityPresetNotAllowed) {
+				status = http.StatusForbidden
+			}
+			writeJSONError(w, err.Error(), status)
+			return
+		}
 	}
 
 	useDownloadRanking := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("downloadRanking")), "true")
@@ -401,12 +427,14 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 	var isAnime bool
 	var targetAirDate string
 	var episodeAirYear int
+	var episodeTitle string
 	var seasonPremiereYear int
 	var episodeReleased bool
 	var absoluteEpisodeNumber int
 	var countryCode string
 	var originalLanguage string
 	var tvdbID int64
+	var testRuntime int
 	var alternateTitles []string
 	if mediaType == "series" && h.MetadataSvc != nil {
 		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year, imdbID, seriesNumberingContext{TitleID: titleID, Numbering: numbering})
@@ -420,12 +448,14 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 			isAnime = seriesMeta.IsAnime
 			targetAirDate = seriesMeta.TargetAirDate
 			episodeAirYear = seriesMeta.EpisodeAirYear
+			episodeTitle = seriesMeta.EpisodeTitle
 			seasonPremiereYear = seriesMeta.SeasonPremiereYear
 			episodeReleased = seriesMeta.EpisodeReleased
 			absoluteEpisodeNumber = seriesMeta.AbsoluteEpisodeNumber
 			countryCode = seriesMeta.CountryCode
 			originalLanguage = seriesMeta.OriginalLanguage
 			tvdbID = seriesMeta.TVDBID
+			testRuntime = seriesMeta.RuntimeMinutes
 			if year == 0 && seriesMeta.Year > 0 {
 				year = seriesMeta.Year
 			}
@@ -442,11 +472,12 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 		if movieTitle, err := h.MovieMetadataSvc.MovieInfo(r.Context(), movieQuery); err == nil && movieTitle != nil {
 			countryCode = strings.TrimSpace(movieTitle.CountryCode)
 			originalLanguage = strings.TrimSpace(movieTitle.Language)
+			testRuntime = movieTitle.RuntimeMinutes
 			alternateTitles = hydratedMovieSearchTitles(movieTitle)
 			if titleID == "" {
 				titleID = movieTitle.ID
 			}
-			if isAnimeTitle(movieTitle) {
+			if logAnimeDecision("", movieTitle) {
 				isAnime = true
 				log.Printf("[indexer] Movie %q is anime (genres=%v originalName=%q language=%q) - applying anime language preferences",
 					query, movieTitle.Genres, movieTitle.OriginalName, movieTitle.Language)
@@ -457,6 +488,7 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 	opts := indexer.SearchOptions{
 		Numbering:             numbering,
 		TitleID:               titleID,
+		PresetTitleID:         canonicalPrequeueTitleID(mediaType, titleID, imdbID, strings.TrimSpace(r.URL.Query().Get("tmdbId")), strings.TrimSpace(r.URL.Query().Get("tvdbId"))),
 		Query:                 query,
 		Categories:            categories,
 		MaxResults:            max,
@@ -475,10 +507,13 @@ func (h *IndexerHandler) SearchTest(w http.ResponseWriter, r *http.Request) {
 		IsAnime:               isAnime,
 		TargetAirDate:         targetAirDate,
 		EpisodeAirYear:        episodeAirYear,
+		EpisodeTitle:          episodeTitle,
 		SeasonPremiereYear:    seasonPremiereYear,
 		EpisodeReleased:       episodeReleased,
 		AbsoluteEpisodeNumber: absoluteEpisodeNumber,
 		UseDownloadRanking:    useDownloadRanking,
+		RuntimeMinutes:        testRuntime,
+		QualityPreset:         strings.TrimSpace(r.URL.Query().Get("qualityPreset")),
 	}
 
 	results, err := h.Service.SearchTest(r.Context(), opts)
@@ -610,12 +645,16 @@ type seriesSearchMetadata struct {
 	TargetAirDate         string // YYYY-MM-DD format for daily shows
 	Year                  int    // Series premiere year from metadata
 	EpisodeAirYear        int    // Year the target episode actually aired (may differ from series premiere year)
+	EpisodeTitle          string // Name of the target episode: languages named in it are not the release's
 	SeasonPremiereYear    int    // Premiere year of the requested season only.
 	EpisodeReleased       bool   // True only when metadata confirms the target episode has aired
 	AbsoluteEpisodeNumber int
 	CountryCode           string
 	OriginalLanguage      string
 	TVDBID                int64
+	// RuntimeMinutes is the target episode's runtime, or a typical episode
+	// runtime when the episode is unknown (quality preset size limits).
+	RuntimeMinutes int
 }
 
 // getSeriesSearchMetadata fetches series metadata for search, including episode resolver
@@ -672,7 +711,7 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 		TVDBID:           details.Title.TVDBID,
 	}
 
-	result.IsAnime = isAnimeTitle(&details.Title)
+	result.IsAnime = logAnimeDecision("", &details.Title)
 	if numbering != nil && !models.SameEpisodeNumbering(numbering, details.Numbering) {
 		result.Numbering = numbering
 		return result
@@ -707,6 +746,10 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 			if season.Number == parsed.Season {
 				for _, ep := range season.Episodes {
 					if ep.EpisodeNumber == parsed.Episode {
+						result.EpisodeTitle = ep.Name
+						if ep.Runtime > 0 {
+							result.RuntimeMinutes = ep.Runtime
+						}
 						result.EpisodeReleased = models.SeriesEpisodeHasAired(ep, time.Now())
 						if releaseAbsolute := releaseAbsoluteEpisodeNumber(details.Seasons, ep); releaseAbsolute > 0 {
 							result.AbsoluteEpisodeNumber = releaseAbsolute
@@ -749,7 +792,27 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 		}
 	}
 
+	if result.RuntimeMinutes == 0 {
+		result.RuntimeMinutes = typicalEpisodeRuntime(details.Seasons, parsed.Season)
+	}
 	return result
+}
+
+// typicalEpisodeRuntime is the runtime of the first episode that has one in
+// the given season (any season when season is 0). Season searches and
+// episodes without a runtime use it for quality preset size limits.
+func typicalEpisodeRuntime(seasons []models.SeriesSeason, season int) int {
+	for _, s := range seasons {
+		if season > 0 && s.Number != season {
+			continue
+		}
+		for _, ep := range s.Episodes {
+			if ep.Runtime > 0 {
+				return ep.Runtime
+			}
+		}
+	}
+	return 0
 }
 
 // createEpisodeResolver is a convenience wrapper for backward compatibility

@@ -21,6 +21,8 @@ type ScoringContext struct {
 	PreferredLang          string
 	ExplicitAudioLanguage  string
 	PreferredScraper       string
+	// weightCache memoizes term weights per title for one search.
+	weightCache *termWeightCache
 }
 
 const (
@@ -61,27 +63,11 @@ func ScoreResult(result models.NZBResult, ctx ScoringContext) (int, []models.Sco
 
 	for rank, criterion := range enabled {
 		band := scoreBand * (n - rank)
-		var level int
-		var reason string
-
-		switch criterion.ID {
-		case config.RankingServicePriority:
-			level, reason = scoreServicePriority(result, ctx.ServicePriority)
-		case config.RankingPreferredTerms:
-			level, reason = scorePreferredTerms(result, ctx.PreferredTerms)
-		case config.RankingNonPreferredTerms:
-			level, reason = scoreNonPreferredTerms(result, ctx.NonPreferredTerms)
-		case config.RankingResolution:
-			level, reason = scoreResolution(result)
-		case config.RankingLanguage:
-			level, reason = scoreLanguage(result, ctx.PreferredLang)
-		case config.RankingSize:
-			level, reason = scoreSize(result)
-		case config.RankingPreferredScraper:
-			level, reason = scorePreferredScraper(result, ctx.PreferredScraper)
-		default:
+		def, ok := rankingRegistry[criterion.ID]
+		if !ok {
 			continue
 		}
+		level, reason := def.score(result, ctx)
 
 		points := level * band
 		breakdown = append(breakdown, models.ScoreBreakdownItem{
@@ -160,28 +146,10 @@ func boolRankingValue(value bool) int64 {
 // legacy display points, it is not clamped, rounded, or combined with values
 // from lower-priority criteria.
 func rankingValueForCriterion(result models.NZBResult, criterion config.RankingCriterionID, ctx ScoringContext) int64 {
-	switch criterion {
-	case config.RankingServicePriority:
-		preferred := (ctx.ServicePriority == config.StreamingServicePriorityUsenet && result.ServiceType == models.ServiceTypeUsenet) ||
-			(ctx.ServicePriority == config.StreamingServicePriorityDebrid && result.ServiceType == models.ServiceTypeDebrid)
-		return boolRankingValue(ctx.ServicePriority != config.StreamingServicePriorityNone && preferred)
-	case config.RankingPreferredTerms:
-		weight, _ := filter.SumMatchedWeights(result.Title, ctx.PreferredTerms)
-		return int64(weight)
-	case config.RankingNonPreferredTerms:
-		weight, _ := filter.SumMatchedWeights(result.Title, ctx.NonPreferredTerms)
-		return -int64(weight)
-	case config.RankingResolution:
-		return int64(extractResolutionFromResult(result))
-	case config.RankingLanguage:
-		return boolRankingValue(ctx.PreferredLang != "" && language.HasPreferredLanguage(result.Attributes["languages"], ctx.PreferredLang))
-	case config.RankingSize:
-		return result.EffectiveItemSizeBytes()
-	case config.RankingPreferredScraper:
-		return boolRankingValue(ctx.PreferredScraper != "" && strings.EqualFold(result.Indexer, ctx.PreferredScraper))
-	default:
-		return 0
+	if def, ok := rankingRegistry[criterion]; ok {
+		return def.value(result, ctx)
 	}
+	return 0
 }
 
 func rankingValueForDownloadTerms(result models.NZBResult, terms []filter.CompiledTerm) int64 {

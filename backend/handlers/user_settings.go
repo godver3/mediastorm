@@ -135,6 +135,7 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	restoreScopedLiveSettings(&settings, oldSettings, h.ConfigManager, userID, auth.GetAccountID(r), auth.IsMaster(r))
+	keepUserQualityPresets(&settings, oldSettings)
 
 	if err := h.Service.Update(userID, settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

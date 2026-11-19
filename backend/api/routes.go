@@ -102,8 +102,17 @@ func masterOnlySportsMutation(handler http.HandlerFunc) http.Handler {
 type RegisterOption func(*registerOptions)
 
 type registerOptions struct {
-	unlocks  *profileunlock.Service
-	security SecuritySettingsFunc
+	unlocks        *profileunlock.Service
+	security       SecuritySettingsFunc
+	qualityPresets *handlers.QualityPresetsHandler
+}
+
+// WithQualityPresets lets apps list quality presets (for a picker while
+// choosing a stream) and assign them to their profile or device.
+func WithQualityPresets(h *handlers.QualityPresetsHandler) RegisterOption {
+	return func(o *registerOptions) {
+		o.qualityPresets = h
+	}
 }
 
 // WithProfileUnlocks enables server-issued profile unlock tokens and, when the
@@ -248,6 +257,13 @@ func Register(
 	}
 	if options.unlocks != nil && usersSvc != nil && options.security != nil {
 		protected.Use(ProfilePinMiddleware(usersSvc, options.unlocks, options.security))
+	}
+
+	if options.qualityPresets != nil {
+		protected.HandleFunc("/quality-presets", options.qualityPresets.ClientList).Methods(http.MethodGet)
+		protected.HandleFunc("/quality-presets", handleOptions).Methods(http.MethodOptions)
+		protected.HandleFunc("/quality-presets/assign", options.qualityPresets.Assign).Methods(http.MethodPut)
+		protected.HandleFunc("/quality-presets/assign", handleOptions).Methods(http.MethodOptions)
 	}
 
 	// Logout requires a valid session to prevent unauthenticated session revocation

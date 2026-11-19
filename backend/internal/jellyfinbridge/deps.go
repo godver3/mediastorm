@@ -116,6 +116,7 @@ type Handlers struct {
 	RecordingRuleUpdate http.HandlerFunc // PUT    /api/live/recording-rules/{ruleID}
 	RecordingSettings   http.HandlerFunc // GET    /api/live/recording-settings?profileId=
 	RecordingStream     http.HandlerFunc // GET    /api/live/recordings/{recordingID}/stream
+	QualityPresets      http.HandlerFunc // GET /api/quality-presets (presets offered in version pickers)
 }
 
 // Deps wires the bridge to mediastorm.
@@ -155,12 +156,16 @@ type Deps struct {
 	// dashboard requested for a profile's playback of an item.
 	StopRequested func(profileID string, update models.PlaybackProgressUpdate) bool
 	// RankingGeneration changes whenever mediastorm's release ranking changes
-	// (ranking settings); cached picks and play sessions from an
+	// (ranking settings, quality presets); cached picks and play sessions from an
 	// older generation are not reused.
 	RankingGeneration func() uint64
 	// RecordingFrame returns a JPEG still from a recording's file (nil: no
 	// stills; recordings without a guide image show the channel logo).
 	RecordingFrame func(ctx context.Context, recordingID string, width int) ([]byte, error)
+	// QualityPresetsInUse reports whether quality presets exist and are
+	// offered in version pickers; otherwise items skip the preset lookup and
+	// keep the plain Auto version.
+	QualityPresetsInUse func() bool
 	// RecordingCommercials returns the commercial breaks comskip found in a
 	// recording file (nil: none known, or comskip is off).
 	RecordingCommercials func(outputPath string) []models.CommercialBreak

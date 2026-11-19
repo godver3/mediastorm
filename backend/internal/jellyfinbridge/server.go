@@ -69,6 +69,9 @@ type Server struct {
 	// because video transcoding is disabled and they cannot be copied
 	// (uncopyableReleases).
 	uncopyable sync.Map
+
+	// presetChoices caches the presets offered in version pickers.
+	presetChoices presetChoiceCache
 	// chapters holds the chapters of the stream last probed per profile
 	// and item (chapterSet).
 	chapters sync.Map

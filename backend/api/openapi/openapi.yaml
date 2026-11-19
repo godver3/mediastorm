@@ -1002,6 +1002,15 @@ paths:
           in: query
           schema:
             type: boolean
+        - name: qualityPreset
+          in: query
+          description: |
+            Rank this search with a quality preset (an ID from
+            `/api/quality-presets`) or `simple` for the simple ranking. Allowed
+            for presets offered in version pickers, or any preset when the
+            server allows per-search requests.
+          schema:
+            type: string
         - $ref: '#/components/parameters/ClientID'
         - $ref: '#/components/parameters/ProfileUnlock'
         - $ref: '#/components/parameters/AdaptiveThroughputMbps'
@@ -1017,6 +1026,8 @@ paths:
                     items:
                       $ref: '#/components/schemas/IndexerResult'
                   - $ref: '#/components/schemas/IndexerSearchEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Forbidden'
         '502':
@@ -1355,6 +1366,117 @@ paths:
               schema:
                 $ref: '#/components/schemas/ClientRegistrationResponse'
         '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/quality-presets:
+    get:
+      tags: [sources]
+      operationId: listQualityPresets
+      summary: Quality presets for a profile and device
+      description: |
+        The presets a search can use, the choices offered in version pickers
+        (narrowed by the profile's list) and the preset movies and series
+        use right now. With a title (`mediaType` plus `titleId` or `name`)
+        the answer says whether it is anime and offers only the presets that
+        fit it. `movie`/`series` include the preset remembered for the
+        title on the `clientId` device; `movieDefault`/`seriesDefault` leave
+        it out, and playing that default preset clears the memory. See
+        backend/QUALITY_PRESETS.md.
+      parameters:
+        - $ref: '#/components/parameters/UserIDQuery'
+        - name: clientId
+          in: query
+          description: A device the profile uses; other devices are ignored.
+          schema:
+            type: string
+        - name: mediaType
+          in: query
+          schema:
+            type: string
+            enum: [movie, series]
+        - name: titleId
+          in: query
+          schema:
+            type: string
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: year
+          in: query
+          schema:
+            type: integer
+        - name: imdbId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Presets, offered choices and the current selection.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/Error'
+
+  /api/quality-presets/assign:
+    put:
+      tags: [sources]
+      operationId: assignQualityPreset
+      summary: Choose a profile's or device's quality presets
+      description: |
+        Slots left out are kept; `inherit` clears a slot and `simple` forces
+        the simple ranking. Profiles may only choose presets offered to them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId]
+              properties:
+                userId:
+                  type: string
+                clientId:
+                  type: string
+                moviePreset:
+                  type: string
+                seriesPreset:
+                  type: string
+                animeMoviePreset:
+                  type: string
+                animeSeriesPreset:
+                  type: string
+                pickerPresets:
+                  type: [array, 'null']
+                  items:
+                    type: string
+                hiddenPresets:
+                  description: Offered presets the profile hides from its own version pickers (null or an empty list hides none).
+                  type: [array, 'null']
+                  items:
+                    type: string
+                shownPresets:
+                  description: Presets the administrator hides by default that the profile shows in its own version pickers (null or an empty list shows none of them).
+                  type: [array, 'null']
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: The stored choices.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'

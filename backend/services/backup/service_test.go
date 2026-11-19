@@ -12,6 +12,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
+	"novastream/services/qualityprofiles"
 )
 
 func ptr[T any](value T) *T { return &value }
@@ -691,6 +692,7 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 		"remoteMediaItems",
 		"libraryAccessPolicies",
 		"recordings",
+		"qualityPresets",
 	} {
 		if !required[want] {
 			t.Errorf("databaseExportSections missing required durable section %q", want)
@@ -763,6 +765,7 @@ func TestDatabaseExportSectionsCoverDurableTables(t *testing.T) {
 			Title: "Show", SourceURL: "http://example.invalid", StartAt: now, EndAt: now.Add(time.Hour),
 			CreatedAt: now, UpdatedAt: now,
 		}},
+		QualityPresets: []*qualityprofiles.Preset{{ID: "qp1", App: "sonarr", Name: "German HD", CreatedAt: now, UpdatedAt: now}},
 	}
 
 	raw, err := json.Marshal(export)

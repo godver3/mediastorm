@@ -843,8 +843,8 @@ func TestSharedShellUsesOneConsistentNavigationIconSystem(t *testing.T) {
 	if strings.Contains(source, `<span class="sidebar-nav-icon">`) {
 		t.Fatal("shared shell still uses mixed text-glyph navigation icons")
 	}
-	if got := strings.Count(source, `<svg class="sidebar-nav-icon"`); got != 40 {
-		t.Fatalf("shared shell navigation SVG count = %d, want 40", got)
+	if got := strings.Count(source, `<svg class="sidebar-nav-icon"`); got != 41 {
+		t.Fatalf("shared shell navigation SVG count = %d, want 41", got)
 	}
 	for _, marker := range []string{
 		`.sidebar-nav-icon {`,

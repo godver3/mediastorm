@@ -29,8 +29,9 @@ type playSession struct {
 	Ref           itemRef
 	Live          bool
 	ReleaseKey    string // a release the user picked as version ("" = automatic)
+	PresetID      string // a quality preset the user picked as version ("" = the profile's)
 	// rankGen is mediastorm's ranking generation the stream was chosen
-	// under; after a ranking settings change it is not reused.
+	// under; after a ranking settings or preset change it is not reused.
 	rankGen uint64
 
 	mu                sync.Mutex
@@ -261,20 +262,52 @@ func (s *Server) handlePlaybackInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *principal, itemID string, ref itemRef, req playbackInfoRequest) {
-	// Playing is the only request that shows a user wants this item (clients
-	// fetch items in bulk while browsing), so the release list for the
-	// version picker is searched here and shown on later details requests.
-	// Playing "Find releases…" plays the automatic version meanwhile.
-	if s.releaseVersionCount() > 0 {
+	// A version picked in the client: a quality preset (the automatic
+	// choice, ranked by that preset) or a specific release. Only a version ID
+	// names one (Auto and the item itself do not).
+	var preset presetChoice
+	autoSourceID := s.mediaSourceID(p.Profile.ID, p.Client.DeviceID, itemID)
+	requested := normalizeID(req.MediaSourceID)
+	versionAsked := requested != "" && requested != normalizeID(itemID) && requested != normalizeID(autoSourceID)
+	if versionAsked {
+		// A preset version this device was offered is known; otherwise the
+		// lookup decides, bounded: it may ask mediastorm.
+		found := false
+		if c, ok := s.presetVersion(itemID, requested); ok && s.presetMediaSourceID(p, itemID, c.ID) == requested {
+			preset, found = c, true
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), presetLookupWait)
+			preset, found = s.presetByMediaSource(ctx, p, itemID, ref, req.MediaSourceID)
+			cancel()
+		}
+		if !found {
+			// The lookup failed (or timed out): a track switch on a preset
+			// version keeps that version's session.
+			if prev, ok := s.plays.latestForItem(p.Profile.ID, itemID, p.Client.DeviceID, req.MediaSourceID); ok && prev.PresetID != "" && normalizeID(prev.MediaSourceID) == requested {
+				preset = presetChoice{ID: prev.PresetID}
+			}
+		}
+	}
+	var rel release
+	isRelease := false
+	switch {
+	case preset.ID != "":
+		autoSourceID = s.presetMediaSourceID(p, itemID, preset.ID)
+	case versionAsked:
+		// A release not (or no longer) known, such as "Find releases…",
+		// plays the automatic version.
+		rel, isRelease = s.releaseByMediaSource(p, itemID, ref, req.MediaSourceID)
+	case s.releaseVersionCount() > 0:
+		// Playing is the only request that shows a user wants this item
+		// (clients fetch items in bulk while browsing), so the release list
+		// for the version picker is searched here and shown on later details
+		// requests. A preset version does not search Auto's list.
 		s.releasesFor(p, itemID, ref)
 	}
-	// Reuse a resolved stream for the same item (clients call PlaybackInfo again
-	// when switching audio/subtitle tracks or after a seek).
-	// A version picked in the client: a specific release instead of the
-	// automatic choice.
-	rel, isRelease := s.releaseByMediaSource(p, itemID, ref, req.MediaSourceID)
+	// Reuse a resolved stream for the same item (clients call PlaybackInfo
+	// again when switching audio/subtitle tracks or after a seek).
 	var sess *playSession
-	if prev, ok := s.plays.latestForItem(p.Profile.ID, itemID, p.Client.DeviceID, ""); ok && time.Since(prev.created) < 2*time.Hour && prev.ReleaseKey == rel.Key &&
+	if prev, ok := s.plays.latestForItem(p.Profile.ID, itemID, p.Client.DeviceID, ""); ok && time.Since(prev.created) < 2*time.Hour && prev.ReleaseKey == rel.Key && prev.PresetID == preset.ID &&
 		(prev.ReleaseKey != "" || prev.rankGen == s.rankingGeneration() || prev.playing()) {
 		prev.mu.Lock()
 		failed := prev.status != nil && prev.status.Status == playback.PrequeueStatusFailed
@@ -318,11 +351,12 @@ func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *prin
 			// for it like for a prequeue.
 			sess = &playSession{
 				ID:            randomHex(16),
-				MediaSourceID: s.mediaSourceID(p.Profile.ID, p.Client.DeviceID, itemID),
+				MediaSourceID: autoSourceID,
 				ItemID:        itemID,
 				ProfileID:     p.Profile.ID,
 				DeviceID:      p.Client.DeviceID,
 				Ref:           ref,
+				PresetID:      preset.ID,
 				rankGen:       s.rankingGeneration(),
 				status:        &playback.PrequeueStatusResponse{Status: playback.PrequeueStatusSearching},
 				owner:         p,
@@ -335,7 +369,7 @@ func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *prin
 		}
 	}
 	if sess == nil {
-		prequeueID, err := s.startPrequeue(r.Context(), p, ref)
+		prequeueID, err := s.startPrequeue(r.Context(), p, ref, preset.ID)
 		if err != nil {
 			log.Printf("[jellyfin-bridge] prequeue for %s failed: %v", ref.Source, err)
 			writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{MediaSources: []dto.MediaSourceInfo{}, ErrorCode: "NoCompatibleStream"})
@@ -343,11 +377,12 @@ func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *prin
 		}
 		sess = &playSession{
 			ID:            randomHex(16),
-			MediaSourceID: s.mediaSourceID(p.Profile.ID, p.Client.DeviceID, itemID),
+			MediaSourceID: autoSourceID,
 			ItemID:        itemID,
 			ProfileID:     p.Profile.ID,
 			DeviceID:      p.Client.DeviceID,
 			Ref:           ref,
+			PresetID:      preset.ID,
 			rankGen:       s.rankingGeneration(),
 			prequeueID:    prequeueID,
 			owner:         p,
@@ -378,16 +413,19 @@ func (s *Server) vodPlaybackInfo(w http.ResponseWriter, r *http.Request, p *prin
 		// drops a source with another ID); the automatic version is the item.
 		source.ID = itemID
 	}
-	log.Printf("[jellyfin-bridge] playback info %s (%s): asked source=%q audio=%s subtitle=%s -> session %s, source %s %q, release=%t", itemID, p.Client.Client, req.MediaSourceID, intOrDash(req.AudioStreamIndex), intOrDash(req.SubtitleStreamIndex), sess.ID, source.ID, source.Name, sess.ReleaseKey != "")
+	log.Printf("[jellyfin-bridge] playback info %s (%s): asked source=%q audio=%s subtitle=%s -> session %s, source %s %q, release=%t preset=%q", itemID, p.Client.Client, req.MediaSourceID, intOrDash(req.AudioStreamIndex), intOrDash(req.SubtitleStreamIndex), sess.ID, source.ID, source.Name, sess.ReleaseKey != "", sess.PresetID)
 	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{MediaSources: []dto.MediaSourceInfo{source}, PlaySessionID: sess.ID})
 }
 
 // startPrequeue asks mediastorm to search for and resolve a stream.
-func (s *Server) startPrequeue(ctx context.Context, p *principal, ref itemRef) (string, error) {
+// presetID ("" for the profile's own) ranks the search with a quality preset
+// picked as version.
+func (s *Server) startPrequeue(ctx context.Context, p *principal, ref itemRef, presetID string) (string, error) {
 	req, err := s.prequeueRequest(ctx, p, ref)
 	if err != nil {
 		return "", err
 	}
+	req.QualityPreset = presetID
 	body, _ := json.Marshal(req)
 	var resp playback.PrequeueResponse
 	if _, err := callJSON(s.deps.Handlers.Prequeue, internalRequest(ctx, p, http.MethodPost, "/api/playback/prequeue", body, nil), &resp); err != nil {
@@ -395,6 +433,10 @@ func (s *Server) startPrequeue(ctx context.Context, p *principal, ref itemRef) (
 	}
 	if resp.PrequeueID == "" {
 		return "", fmt.Errorf("prequeue returned no id")
+	}
+	if presetID != "" {
+		// mediastorm now remembers the preset for the title on this device.
+		s.forgetAutoRankingAfterPick(deviceKey(p), ref)
 	}
 	return resp.PrequeueID, nil
 }
@@ -426,6 +468,14 @@ func (s *Server) prequeueRequest(ctx context.Context, p *principal, ref itemRef)
 	default:
 		return req, fmt.Errorf("item kind %s is not playable", ref.Kind)
 	}
+	// The canonical form mediastorm keys titles by (the prequeue converts
+	// to it too): a series known here by its TVDB ID is tmdb:tv:N there, so
+	// the preset remembered for it, the search and the playback all match.
+	if canonical := mediaidentity.CanonicalTitleID(req.MediaType, req.TitleID, map[string]string{
+		"imdb": req.ImdbID, "tmdb": req.TmdbID, "tvdb": req.TvdbID,
+	}); canonical != "" {
+		req.TitleID = canonical
+	}
 	if strings.TrimSpace(req.TitleID) == "" || strings.TrimSpace(req.TitleName) == "" {
 		return req, fmt.Errorf("missing title identity")
 	}
@@ -448,14 +498,14 @@ func (s *Server) prewarm(p *principal, itemID string) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), autoPrequeueWait+autoPickBudget)
 			defer cancel()
-			s.pickAuto(ctx, p, itemID, ref, caps)
+			s.pickAuto(ctx, p, itemID, ref, caps, "")
 		}()
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		prequeueID, err := s.startPrequeue(ctx, p, ref)
+		prequeueID, err := s.startPrequeue(ctx, p, ref, "")
 		if err != nil {
 			log.Printf("[jellyfin-bridge] prewarm %s: %v", ref.Source, err)
 			return
@@ -468,7 +518,7 @@ func (s *Server) prewarm(p *principal, itemID string) {
 func (s *Server) playAutoPick(p *principal, sess *playSession, caps *hlsClientCaps) {
 	ctx, cancel := context.WithTimeout(context.Background(), autoPrequeueWait+autoPickBudget+5*time.Second)
 	defer cancel()
-	status, probe := s.pickAuto(ctx, p, sess.ItemID, sess.Ref, caps)
+	status, probe := s.pickAuto(ctx, p, sess.ItemID, sess.Ref, caps, sess.PresetID)
 	if status == nil {
 		status = &playback.PrequeueStatusResponse{Status: playback.PrequeueStatusFailed, Error: "no stream found in time"}
 	}
