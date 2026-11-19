@@ -2041,7 +2041,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 			copyPlan = plan
 			log.Printf("[hls] session %s: stable copy plan codec=%s range=%s fmp4=%v tag=%q dv=%q colorfix=%q output=%s rebuildConfig=%v",
 				sessionID, plan.Codec, plan.RangeType, plan.FMP4, plan.Tag, plan.DV, plan.ColorFix, plan.OutputRange, plan.RebuildConfig)
-			starts, planErr := m.planStableCopySegments(ctx, path, originalPath, probeData, duration)
+			starts, planErr := m.planStableCopySegments(ctx, path, originalPath, probeData, duration, clientCaps.forceVideoCopy())
 			if planErr != nil && clientCaps.forceVideoCopy() {
 				cancel()
 				_ = os.RemoveAll(outputDir)
@@ -3871,6 +3871,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			// (by ~0.13s for video with B-frames, plus the container start time),
 			// so aim just past the keyframe to land exactly on it.
 			seekTarget := session.TranscodingOffset + stableCopySeekLead
+			if (session.ProbeData != nil && session.ProbeData.MPEGTS) || isMPEGTSPath(session.Path) || isMPEGTSPath(session.OriginalPath) {
+				seekTarget = math.Max(session.TranscodingOffset-stableCopyTSSeekBack, 0)
+			}
 			args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", seekTarget))
 			log.Printf("[hls] session %s: stable copy INPUT seek to keyframe %.3fs (target %.3fs)", session.ID, session.TranscodingOffset, seekTarget)
 		} else if useAccurateHLSInputSeek(session.PlaybackTarget, session.TranscodingOffset, videoWillTranscode, subtitleRenditionWanted, stableCastMode) {
@@ -3954,7 +3957,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	}
 
 	args = append(args,
-		"-map", "0:v:0", // Map primary video stream
+		"-map", session.ProbeData.videoMapSpec(), // Map primary video stream
 	)
 
 	// Audio track selection

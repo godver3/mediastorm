@@ -77,10 +77,19 @@ type UnifiedProbeResult struct {
 	// (hvcC) carries no VPS/SPS/PPS: they are only in the stream, and an
 	// fMP4 copy has to rebuild the hvcC from them.
 	VideoParamSetsMissing bool
-	AudioStreams          []audioStreamInfo
-	SubtitleStreams       []subtitleStreamInfo
-	HasTrueHD             bool
-	HasCompatibleAudio    bool
+	// VideoMap is the FFmpeg -map specifier of the primary video stream when
+	// it is not the first one ("" means 0:v:0); see parseUnifiedProbeOutput.
+	VideoMap string
+	// VideoStreamPID is the MPEG-TS PID of the primary video stream, -1 or 0
+	// when unknown or not a transport stream.
+	VideoStreamPID int
+	// MPEGTS reports that ffprobe found a transport stream (whatever the
+	// file is called).
+	MPEGTS             bool
+	AudioStreams       []audioStreamInfo
+	SubtitleStreams    []subtitleStreamInfo
+	HasTrueHD          bool
+	HasCompatibleAudio bool
 	// Extended fields for VideoFullResult compatibility
 	HasDolbyVision           bool
 	HasHDR10                 bool
@@ -288,11 +297,13 @@ func (m *HLSManager) probeAllMetadataFromURL(ctx context.Context, url string) (*
 func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult, error) {
 	var probeData struct {
 		Format struct {
-			Duration  string `json:"duration"`
-			StartTime string `json:"start_time"`
+			Duration   string `json:"duration"`
+			StartTime  string `json:"start_time"`
+			FormatName string `json:"format_name"`
 		} `json:"format"`
 		Streams []struct {
 			Index         int               `json:"index"`
+			ID            string            `json:"id"`
 			CodecType     string            `json:"codec_type"`
 			CodecName     string            `json:"codec_name"`
 			PixFmt        string            `json:"pix_fmt"`
@@ -350,26 +361,70 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 		"xsub": true,
 	}
 
+	// The primary video stream is the first one, except that a source carrying
+	// several renditions of one picture (IPTV recordings keep every variant of
+	// an adaptive stream: 360p, 1080p, 720p, ...) plays its largest. Cover art
+	// is never picked. Only transport streams are searched for the largest:
+	// a second video track in Matroska or MP4 is an angle or a preview, and
+	// their keyframe indexes are read for the first track.
+	result.MPEGTS = strings.Contains(probeData.Format.FormatName, "mpegts")
+	primaryVideo, firstVideo := -1, -1
+	for i, stream := range probeData.Streams {
+		if stream.CodecType != "video" || stream.Disposition["attached_pic"] > 0 {
+			continue
+		}
+		if firstVideo < 0 {
+			firstVideo, primaryVideo = i, i
+			continue
+		}
+		if !result.MPEGTS {
+			break
+		}
+		best := probeData.Streams[primaryVideo]
+		if stream.Width*stream.Height > best.Width*best.Height {
+			primaryVideo = i
+		}
+	}
+	if primaryVideo >= 0 {
+		stream := probeData.Streams[primaryVideo]
+		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
+		result.VideoCodec = codec
+		result.VideoPixFmt = strings.ToLower(strings.TrimSpace(stream.PixFmt))
+		result.VideoProfile = strings.ToLower(strings.TrimSpace(stream.Profile))
+		result.VideoWidth = stream.Width
+		result.VideoHeight = stream.Height
+		result.VideoLevel = stream.Level
+		result.AvgFrameRate = strings.TrimSpace(stream.AvgFrameRate)
+		// An hvcC without parameter set arrays is exactly its 23-byte header.
+		result.VideoParamSetsMissing = hevcParamSetsMissing(codec, stream.ExtradataSize)
+		result.ColorTransfer = stream.ColorTransfer
+		result.VideoStreamPID = -1
+		if pid, err := strconv.ParseInt(strings.TrimSpace(stream.ID), 0, 32); err == nil && pid > 0 && result.MPEGTS {
+			result.VideoStreamPID = int(pid) // MP4 reports track IDs here too
+		}
+		if primaryVideo != firstVideo {
+			if result.VideoStreamPID > 0 {
+				// MPEG-TS: address the stream by PID, which does not depend on
+				// how many streams FFmpeg's shorter input probe has found.
+				result.VideoMap = fmt.Sprintf("0:i:%d", result.VideoStreamPID)
+			} else {
+				result.VideoMap = fmt.Sprintf("0:%d", stream.Index)
+			}
+		}
+	}
+	if result.ColorTransfer == "" {
+		for _, stream := range probeData.Streams {
+			if stream.CodecType == "video" && stream.ColorTransfer != "" {
+				result.ColorTransfer = stream.ColorTransfer
+				break
+			}
+		}
+	}
+
 	for _, stream := range probeData.Streams {
 		codec := strings.ToLower(strings.TrimSpace(stream.CodecName))
 
 		switch stream.CodecType {
-		case "video":
-			// Get video codec and color transfer from first video stream
-			if result.VideoCodec == "" {
-				result.VideoCodec = codec
-				result.VideoPixFmt = strings.ToLower(strings.TrimSpace(stream.PixFmt))
-				result.VideoProfile = strings.ToLower(strings.TrimSpace(stream.Profile))
-				result.VideoWidth = stream.Width
-				result.VideoHeight = stream.Height
-				result.VideoLevel = stream.Level
-				result.AvgFrameRate = strings.TrimSpace(stream.AvgFrameRate)
-				// An hvcC without parameter set arrays is exactly its 23-byte header.
-				result.VideoParamSetsMissing = hevcParamSetsMissing(codec, stream.ExtradataSize)
-			}
-			if result.ColorTransfer == "" {
-				result.ColorTransfer = stream.ColorTransfer
-			}
 		case "audio":
 			lang := ""
 			title := ""
@@ -1130,4 +1185,12 @@ func (m *HLSManager) probeKeyframePositionFromURL(ctx context.Context, url strin
 	log.Printf("[hls] keyframe probe: requested=%.3fs actual=%.3fs delta=%.3fs", seekTime, keyframePTS, delta)
 
 	return keyframePTS
+}
+
+// videoMapSpec returns the -map specifier of the primary video stream.
+func (p *UnifiedProbeResult) videoMapSpec() string {
+	if p != nil && p.VideoMap != "" {
+		return p.VideoMap
+	}
+	return "0:v:0"
 }

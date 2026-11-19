@@ -29,7 +29,8 @@ import (
 // browser-playable H.264, re-encoding is wasted work: the same guarantee holds
 // if segments are cut exactly at the source's own keyframes. Those positions
 // are read up front from the container index (Matroska Cues, MP4 sync-sample
-// table) with a handful of range requests, grouped into ~4s segments, and the
+// table) with a handful of range requests (MPEG-TS has no index and is
+// sampled, see hls_keyframes_mpegts.go), grouped into ~4s segments, and the
 // playlist then carries each segment's real duration. FFmpeg copies the video
 // and cuts with the segment muxer at exactly those times; a far seek restarts
 // it at the requested segment's keyframe.
@@ -41,6 +42,9 @@ const (
 	stableCopyTargetSegment = 4.0
 	// stableCopyMaxSegment rejects indexes too sparse to seek with.
 	stableCopyMaxSegment = 20.0
+	// stableCopyMaxLongSegment bounds every segment when long segments are
+	// allowed (video transcoding disabled).
+	stableCopyMaxLongSegment = 120.0
 	// stableCopyMaxFinalSegment bounds the last segment instead: from the
 	// last keyframe to the end of the file it is often longer (a closing
 	// still, or audio that runs past the video), and nobody seeks into it.
@@ -51,8 +55,18 @@ const (
 	// stableCopySeekLead is added to a keyframe time when seeking so FFmpeg's
 	// backward keyframe search lands on that keyframe rather than the one before.
 	stableCopySeekLead = 0.25
+	// stableCopyTSSeekBack: an MPEG-TS seek lands on the first keyframe at or
+	// after the target, so a TS run seeks to just before its keyframe instead
+	// (past the keyframe it would start one GOP late).
+	stableCopyTSSeekBack = 0.1
 	// stableCopyIndexTimeout bounds how long playback start may wait on the index.
 	stableCopyIndexTimeout = 15 * time.Second
+)
+
+// errTSNotSampled: a remote transport stream is transcoded rather than sampled.
+var errTSNotSampled = fmt.Errorf("%w: remote MPEG-TS is not sampled while it can be transcoded", errNoKeyframeIndex)
+
+const (
 	// stableCopyMaxIndexBytes caps a Cues element or moov box download.
 	stableCopyMaxIndexBytes = 64 << 20
 )
@@ -68,8 +82,9 @@ type rangeSource interface {
 
 // planStableCopySegments reads the source's keyframe index and returns the
 // start time of every playlist segment (the first is always 0), on the same
-// clock FFmpeg's output uses with -copyts -start_at_zero.
-func (m *HLSManager) planStableCopySegments(ctx context.Context, path, originalPath string, probe *UnifiedProbeResult, duration float64) (starts []float64, err error) {
+// clock FFmpeg's output uses with -copyts -start_at_zero. allowLongSegments
+// accepts sparse indexes (see groupKeyframeSegments).
+func (m *HLSManager) planStableCopySegments(ctx context.Context, path, originalPath string, probe *UnifiedProbeResult, duration float64, allowLongSegments bool) (starts []float64, err error) {
 	// The index comes from untrusted files; a parser bug must cost a
 	// transcode fallback, never the request.
 	defer func() {
@@ -85,14 +100,45 @@ func (m *HLSManager) planStableCopySegments(ctx context.Context, path, originalP
 	}
 	defer src.Close()
 	var keyframes []float64
+	// Sampling a transport stream reads a good part of it: a local file is
+	// quick, but over HTTP it is only worth the wait when the stream cannot be
+	// transcoded instead.
+	_, local := src.(*fileRangeSource)
+	sampleTS := local || allowLongSegments
+	videoPID := 0
+	if probe != nil && probe.VideoMap != "" {
+		// The primary video is not the first stream: only an MPEG-TS index
+		// can be read for a chosen stream (by its PID).
+		if probe.VideoStreamPID <= 0 {
+			return nil, fmt.Errorf("%w: keyframe index of video stream %s not supported", errNoKeyframeIndex, probe.VideoMap)
+		}
+		videoPID = probe.VideoStreamPID
+		if !sampleTS {
+			return nil, errTSNotSampled
+		}
+		keyframes, err = mpegtsKeyframesForPID(ctx, src, duration, videoPID)
+		if err != nil {
+			return nil, err
+		}
+		startTime := 0.0
+		if probe.StartTime > 0 {
+			startTime = probe.StartTime
+		}
+		return groupKeyframeSegments(keyframes, startTime, duration, allowLongSegments)
+	}
 	switch {
 	case isMatroskaPath(path) || isMatroskaPath(originalPath):
 		keyframes, err = matroskaKeyframes(ctx, src)
 	case isMP4LikePath(path) || isMP4LikePath(originalPath):
 		keyframes, err = mp4Keyframes(ctx, src)
+	case isMPEGTSPath(path) || isMPEGTSPath(originalPath):
+		if !sampleTS {
+			return nil, errTSNotSampled
+		}
+		keyframes, err = mpegtsKeyframes(ctx, src, duration)
 	default:
 		// Extension unknown (e.g. debrid URLs): sniff the container.
-		keyframes, err = sniffKeyframes(ctx, src)
+		keyframes, err = sniffKeyframes(ctx, src, duration, sampleTS)
 	}
 	if err != nil {
 		return nil, err
@@ -101,7 +147,7 @@ func (m *HLSManager) planStableCopySegments(ctx context.Context, path, originalP
 	if probe != nil && probe.StartTime > 0 {
 		startTime = probe.StartTime
 	}
-	return groupKeyframeSegments(keyframes, startTime, duration)
+	return groupKeyframeSegments(keyframes, startTime, duration, allowLongSegments)
 }
 
 func isMP4LikePath(path string) bool {
@@ -117,8 +163,8 @@ func isMP4LikePath(path string) bool {
 	return false
 }
 
-func sniffKeyframes(ctx context.Context, src rangeSource) ([]float64, error) {
-	head, err := src.ReadRange(ctx, 0, 16)
+func sniffKeyframes(ctx context.Context, src rangeSource, duration float64, sampleTS bool) ([]float64, error) {
+	head, err := src.ReadRange(ctx, 0, 1024)
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +174,20 @@ func sniffKeyframes(ctx context.Context, src rangeSource) ([]float64, error) {
 	if len(head) >= 8 && (string(head[4:8]) == "ftyp" || string(head[4:8]) == "moov") {
 		return mp4Keyframes(ctx, src)
 	}
+	if looksLikeMPEGTS(head) {
+		if !sampleTS {
+			return nil, errTSNotSampled
+		}
+		return mpegtsKeyframes(ctx, src, duration)
+	}
 	return nil, fmt.Errorf("%w: unrecognised container", errNoKeyframeIndex)
 }
 
 // groupKeyframeSegments turns keyframe times into segment start times.
-func groupKeyframeSegments(keyframes []float64, startTime, duration float64) ([]float64, error) {
+// allowLongSegments drops the segment length limits: with transcoding
+// disabled, a long segment (a seek inside it lands on its start) beats not
+// playing at all. The index must still hold keyframes.
+func groupKeyframeSegments(keyframes []float64, startTime, duration float64, allowLongSegments bool) ([]float64, error) {
 	if duration <= 0 {
 		return nil, fmt.Errorf("%w: unknown duration", errNoKeyframeIndex)
 	}
@@ -163,6 +218,12 @@ func groupKeyframeSegments(keyframes []float64, startTime, duration float64) ([]
 		limit := stableCopyMaxSegment
 		if i == len(starts)-1 {
 			limit = stableCopyMaxFinalSegment
+		}
+		if allowLongSegments {
+			// Still bounded: FFmpeg writes a segment whole before it is
+			// served, and an index cut short (a scan that stopped early)
+			// would leave one segment for the rest of the file.
+			limit = max(limit, stableCopyMaxLongSegment)
 		}
 		if end-starts[i] > limit {
 			return nil, fmt.Errorf("%w: %.1fs between indexed keyframes at %.1fs", errNoKeyframeIndex, end-starts[i], starts[i])
