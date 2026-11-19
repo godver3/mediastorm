@@ -555,7 +555,10 @@ function renderRecordings(recordings) {
     }
     container.innerHTML = recordings.map((recording) => {
         const canCancel = ['pending', 'starting', 'running'].includes(recording.status);
-        const canDelete = !['starting', 'running'].includes(recording.status) && !(recording.ruleId && recording.status === 'pending');
+        // A rule's skipped airing stays (without a file) until it has aired,
+        // so the rule does not schedule it again; deleting it earlier is a no-op.
+        const skippedAiring = recording.ruleId && recording.status === 'cancelled' && !recording.outputPath && new Date(recording.endAt) > new Date();
+        const canDelete = !['starting', 'running'].includes(recording.status) && !(recording.ruleId && recording.status === 'pending') && !skippedAiring;
         const canPlay = ['completed', 'running', 'cancelled', 'failed'].includes(recording.status) && !!recording.outputPath;
         const playLabel = recording.status === 'running' ? 'Play In Progress' : 'Play';
         const visibleError = recording.error && recording.error !== 'recording rule paused' && !recording.error.startsWith('cancelled because the recording rule')

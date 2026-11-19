@@ -450,3 +450,130 @@ func writeFakeFFmpeg(t *testing.T, script string) string {
 	}
 	return path
 }
+
+// Deleting a rule's airing that is still on keeps the row as a tombstone
+// (without its file), so the rule does not schedule the airing again; a
+// past airing is deleted outright.
+func TestDeleteOngoingRuleAiringKeepsTombstone(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "airing.ts")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	ongoing := models.Recording{ID: "ongoing", UserID: "u", RuleID: "rule", Status: models.RecordingStatusCancelled,
+		StartAt: now.Add(-10 * time.Minute), EndAt: now.Add(20 * time.Minute), OutputPath: file, OutputSizeBytes: 1}
+	past := models.Recording{ID: "past", UserID: "u", RuleID: "rule", Status: models.RecordingStatusCompleted,
+		StartAt: now.Add(-2 * time.Hour), EndAt: now.Add(-time.Hour)}
+	repo := newFakeRecordingRepo(ongoing, past)
+	svc := newTestService(repo, "", dir)
+	if err := svc.Delete("ongoing"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get("ongoing")
+	if err != nil || got == nil || got.Status != models.RecordingStatusCancelled || got.OutputPath != "" || got.OutputSizeBytes != 0 {
+		t.Fatalf("ongoing airing after delete = %+v, %v", got, err)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("file kept: %v", err)
+	}
+	if err := svc.Delete("past"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.Get("past"); got != nil {
+		t.Fatalf("past airing kept: %+v", got)
+	}
+}
+
+// Deleting a stopped rule airing while its recording goroutine still
+// finalises it (the remux) must not let the goroutine restore the file or
+// its path afterwards.
+func TestDeleteWhileFinalisingLeavesTombstone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake binary shell script is POSIX-only")
+	}
+	script := writeFakeFFmpeg(t, `#!/bin/sh
+printf 'recorded-media-data'
+exec sleep 10
+`)
+	recording := newTestRecording(time.Now().UTC().Add(time.Minute))
+	recording.RuleID = "rule"
+	repo := newFakeRecordingRepo(recording)
+	svc := newTestService(repo, script, t.TempDir())
+	remuxing := make(chan struct{})
+	svc.remuxRecording = func(path string) error {
+		close(remuxing)
+		time.Sleep(200 * time.Millisecond)
+		return os.WriteFile(path, []byte("remuxed"), 0o644)
+	}
+	svc.ctx = context.Background()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.startRecording(recording)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var path string
+	for path == "" {
+		if current, err := svc.Get(recording.ID); err == nil && current.OutputPath != "" {
+			if info, statErr := os.Stat(current.OutputPath); statErr == nil && info.Size() > 0 {
+				path = current.OutputPath
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("recording did not write media")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := svc.Cancel(recording.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-remuxing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled recording was not finalised")
+	}
+	if err := svc.Delete(recording.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	got, err := svc.Get(recording.ID)
+	if err != nil || got.Status != models.RecordingStatusCancelled || got.OutputPath != "" || got.OutputSizeBytes != 0 {
+		t.Fatalf("after delete = %+v, %v", got, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("file restored: %v", err)
+	}
+}
+
+// A recording cancelled after it was listed as due is not started.
+func TestCancelledDueRecordingIsNotStarted(t *testing.T) {
+	recording := newTestRecording(time.Now().UTC().Add(time.Minute))
+	repo := newFakeRecordingRepo(recording)
+	svc := newTestService(repo, "/nonexistent/ffmpeg", t.TempDir())
+	svc.ctx = context.Background()
+	if err := svc.Cancel(recording.ID); err != nil {
+		t.Fatal(err)
+	}
+	svc.startRecording(recording) // the stale copy from the due list
+	got, err := svc.Get(recording.ID)
+	if err != nil || got.Status != models.RecordingStatusCancelled || got.ActualStartAt != nil {
+		t.Fatalf("after start = %+v, %v", got, err)
+	}
+}
+
+// Deleting an airing parked by a paused rule keeps it skipped once the rule
+// resumes (the datastore revives rows still marked as paused).
+func TestDeletePausedRuleAiringStaysSkipped(t *testing.T) {
+	now := time.Now().UTC()
+	paused := models.Recording{ID: "paused", UserID: "u", RuleID: "rule", Status: models.RecordingStatusCancelled,
+		Error: pausedRuleError, StartAt: now.Add(time.Hour), EndAt: now.Add(2 * time.Hour)}
+	svc := newTestService(newFakeRecordingRepo(paused), "", t.TempDir())
+	if err := svc.Delete("paused"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get("paused")
+	if err != nil || got.Status != models.RecordingStatusCancelled || got.Error != "" {
+		t.Fatalf("after delete = %+v, %v", got, err)
+	}
+}
