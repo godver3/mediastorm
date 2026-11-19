@@ -47,8 +47,8 @@ func TestActiveStreamsStopsDirectPlayback(t *testing.T) {
 		t.Fatalf("stream itemId = %q, want the progress item ID", got)
 	}
 
-	client := h.srv.sockets.add(h.alice.ID, "dev-Android TV", nil)
-	other := h.srv.sockets.add(h.alice.ID, "dev-phone", nil)
+	client := h.srv.sockets.add(h.alice.ID, "dev-Android TV", "", nil)
+	other := h.srv.sockets.add(h.alice.ID, "dev-phone", "", nil)
 	report := map[string]any{"ItemId": item, "PlaySessionId": info.PlaySessionID, "PositionTicks": int64(60) * ticksPerSecond}
 	h.doWithClient(http.MethodPost, "/Sessions/Playing/Progress", tok, "Android TV", report)
 	if code := stream(); code != http.StatusPartialContent {

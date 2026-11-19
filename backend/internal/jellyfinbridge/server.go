@@ -44,6 +44,9 @@ type Server struct {
 	serverID string
 	ids      *idStore
 	prefs    *prefsStore
+	// sync is SyncPlay's group membership (see syncplay.go).
+	sync     *syncPlay
+	syncOnce sync.Once
 	// tracks remembers the audio and subtitle picked per profile and series
 	// (audioChoice, subtitleChoice), for the next episode's defaults.
 	tracks    *prefsStore
@@ -260,6 +263,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	// Hijacked WebSockets are invisible to http.Server.Shutdown.
 	s.sockets.closeAll()
+	s.stopSyncPlay()
 	s.plays.closeAll(s)
 	s.ids.close()
 	s.prefs.close()

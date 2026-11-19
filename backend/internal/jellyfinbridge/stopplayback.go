@@ -33,7 +33,7 @@ func (s *Server) stopPlayback(ctx context.Context, p *principal, itemID string, 
 		s.plays.remove(sess.ID)
 		s.stopHLS(ctx, p, sess)
 	}
-	s.sockets.sendToDevice(p.Profile.ID, p.Client.DeviceID, "Playstate", map[string]any{"Command": "Stop"})
+	s.sockets.sendToDevice(p.Profile.ID, p.Client.DeviceID, p.Session.Token, "Playstate", map[string]any{"Command": "Stop"})
 	log.Printf("[jellyfin-bridge] stopped playback of %s on %s (requested from Active Streams)", itemID, firstNonEmpty(p.Client.Client, p.Client.DeviceID, "a device"))
 }
 

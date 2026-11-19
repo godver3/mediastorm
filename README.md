@@ -157,11 +157,12 @@ mediastorm can also act as a Jellyfin server, so stock Jellyfin clients (jellyfi
   - Progress, watched state and favorites (the watchlist) sync back to mediastorm, and from there to Trakt and the other scrobblers.
   - The player's playback info shows whether a stream is played directly, remuxed, direct-streamed or transcoded, and why.
 - **Extras:** skip prompts for intros, recaps and credits (from IntroDB, SkipDB and chapter names), *More like this* on detail pages, upcoming episodes of your shows from the release calendar, genre pages, and filmographies on person pages.
+  - **SyncPlay:** Jellyfin's *watch together* uses mediastorm's watch rooms, so Jellyfin apps and the mediastorm apps share one room. The group list shows the rooms the profile created or was invited to; a group started in a Jellyfin app becomes a room open to the creator's household (invite others from the mediastorm app). Pause, resume and seeking from either side reach everyone. A room plays one title: queue editing, next/previous, shuffle and repeat are ignored. Only the room's host starts a room from its lobby; members who join late catch up instead of pausing the others, and the host leaving the group ends the room.
   - Scrubbing previews (trickplay) appear when **Playback → Thumbnails** is enabled; they are built from mediastorm's seek thumbnails, so they are coarser than Jellyfin's (one frame per 30–60 s).
   - Watched state, favorites and resume positions changed on one device refresh on the profile's other devices.
   - Chapters of the file (seek bar markers, next/previous chapter) appear once the stream is resolved: the detail page resolves it in the background, and a movie's page waits up to 3 seconds for it on first open. Chapter images are not provided.
 - **Over the internet:** put an HTTPS reverse proxy in front of the bridge port (plain HTTP sends passwords and tokens in cleartext), set **Trusted Proxies** to the proxy and leave **Show Profile List** off. Keep the admin pages on port 7777 off the internet, or use a VPN instead.
-- **Not supported:** admin dashboard, SyncPlay, remote control, recordings and DVR, studios, music, Android TV's external-player mode.
+- **Not supported:** admin dashboard, remote control, recordings and DVR, studios, music, Android TV's external-player mode.
 
 Bridge tokens only work on the bridge port; the main API, admin and account pages reject them.
 

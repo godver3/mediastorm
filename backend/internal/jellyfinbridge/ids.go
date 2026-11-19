@@ -48,6 +48,13 @@ func formatN(u uuid.UUID) string {
 	return strings.ReplaceAll(u.String(), "-", "")
 }
 
+// compactID lowercases an ID and drops its dashes: mediastorm's UUIDs (watch
+// rooms, recordings, rules) as Jellyfin's N-format IDs, without a stored
+// mapping.
+func compactID(id string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(id), "-", ""))
+}
+
 // normalizeID accepts dashed or N-format GUIDs and returns the N form, or "".
 func normalizeID(raw string) string {
 	raw = strings.TrimSpace(raw)

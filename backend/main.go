@@ -1087,8 +1087,9 @@ func main() {
 	shareHandler.SetLibraryAccessService(libraryAccessService)
 	var watchRoomsHandler *handlers.WatchRoomsHandler
 	var watchPartyHandler *handlers.WatchPartyHandler
+	var watchRoomsService *watchrooms.Service
 	if store != nil {
-		watchRoomsService := watchrooms.New(store.WatchRooms(), userService, accountsService)
+		watchRoomsService = watchrooms.New(store.WatchRooms(), userService, accountsService)
 		sessionsService.SetWatchPartyPlaybackValidator(func(ctx context.Context, roomID, guestID, resource string) error {
 			err := watchRoomsService.ValidateExternalPlayback(ctx, roomID, guestID, resource)
 			if err == nil || watchrooms.IsExternalPlaybackDenied(err) {
@@ -1969,6 +1970,7 @@ func main() {
 			History:      historyService,
 			Watchlist:    watchlistService,
 			CustomLists:  customListsService,
+			WatchRooms:   bridgeWatchRooms(watchRoomsService),
 			EPG:          epgService,
 			Calendar:     calendarService,
 			SubtitleDone: videoHandler.SubtitleExtractionDone,
@@ -2543,4 +2545,13 @@ func (a jellyfinBridgeController) Apply(cfg config.JellyfinBridgeSettings) error
 func (a jellyfinBridgeController) Status() handlers.JellyfinBridgeStatus {
 	st := a.c.Status()
 	return handlers.JellyfinBridgeStatus{Running: st.Running, Port: st.Port, ServerID: st.ServerID, Error: st.Error}
+}
+
+// bridgeWatchRooms hands the watch rooms to the Jellyfin bridge (SyncPlay)
+// only when they exist: a nil *Service in the interface would look set.
+func bridgeWatchRooms(service *watchrooms.Service) jellyfinbridge.WatchRoomService {
+	if service == nil {
+		return nil
+	}
+	return service
 }
