@@ -2039,8 +2039,8 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		normalizedPlaybackTarget = "web"
 		if plan, ok := stableCopyEligible(probeData, hasDV, dvProfile, hasHDR, duration, clientCaps); ok {
 			copyPlan = plan
-			log.Printf("[hls] session %s: stable copy plan codec=%s range=%s fmp4=%v tag=%q dv=%q colorfix=%q output=%s",
-				sessionID, plan.Codec, plan.RangeType, plan.FMP4, plan.Tag, plan.DV, plan.ColorFix, plan.OutputRange)
+			log.Printf("[hls] session %s: stable copy plan codec=%s range=%s fmp4=%v tag=%q dv=%q colorfix=%q output=%s rebuildConfig=%v",
+				sessionID, plan.Codec, plan.RangeType, plan.FMP4, plan.Tag, plan.DV, plan.ColorFix, plan.OutputRange, plan.RebuildConfig)
 			starts, planErr := m.planStableCopySegments(ctx, path, originalPath, probeData, duration)
 			if planErr != nil && clientCaps.forceVideoCopy() {
 				cancel()
