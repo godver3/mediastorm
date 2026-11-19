@@ -270,20 +270,28 @@ func findAllowedAudioTrack(streams []AudioStreamInfo, allowedLanguages []string,
 // the single source of truth for external-URL staleness, shared by the prequeue
 // reuse path and the prequeue store's stream-path validator.
 func DefaultExternalURLValidator(ctx context.Context, streamURL string) error {
-	return validateExternalStreamURL(ctx, streamURL, nil)
+	return validateExternalStreamURL(ctx, streamURL, nil, nil)
 }
 
 func defaultExternalURLValidator(ctx context.Context, streamURL string) error {
-	return validateExternalStreamURL(ctx, streamURL, nil)
+	return validateExternalStreamURL(ctx, streamURL, nil, nil)
 }
 
 // ValidateExternalURL validates a cached stream URL using the same network
-// policy as playback, including explicitly configured private provider hosts.
+// policy and credentials as playback: explicitly configured private provider
+// hosts are allowed, and external Usenet engine WebDAV URLs carry the engine's
+// Basic auth (without it every engine answers 401 and each ready prequeue was
+// discarded as stale).
 func (h *PrequeueHandler) ValidateExternalURL(ctx context.Context, streamURL string) error {
-	return validateExternalStreamURL(ctx, streamURL, configuredProviderHostPolicy(h.configManager))
+	var authorize func(*http.Request)
+	if h.configManager != nil {
+		cfg := h.configManager
+		authorize = func(req *http.Request) { applyExternalUsenetWebDAVAuthFromConfig(cfg, req) }
+	}
+	return validateExternalStreamURL(ctx, streamURL, configuredProviderHostPolicy(h.configManager), authorize)
 }
 
-func validateExternalStreamURL(ctx context.Context, streamURL string, allowRestricted requestsecurity.RestrictedHostPolicy) error {
+func validateExternalStreamURL(ctx context.Context, streamURL string, allowRestricted requestsecurity.RestrictedHostPolicy, authorize func(*http.Request)) error {
 	if err := requestsecurity.ValidateOutboundURL(ctx, streamURL, allowRestricted); err != nil {
 		return err
 	}
@@ -293,6 +301,9 @@ func validateExternalStreamURL(ctx context.Context, streamURL string, allowRestr
 		return err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
+	if authorize != nil {
+		authorize(req)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -320,6 +331,9 @@ func validateExternalStreamURL(ctx context.Context, streamURL string, allowRestr
 	rangeReq.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mediastorm/1.0)")
 	rangeReq.Header.Set("Range", "bytes=0-4095")
 	rangeReq.Header.Set("Accept-Encoding", "identity")
+	if authorize != nil {
+		authorize(rangeReq)
+	}
 
 	rangeResp, err := client.Do(rangeReq)
 	if err != nil {

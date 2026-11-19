@@ -1632,25 +1632,10 @@ func (m *HLSManager) SetConfigManager(cfgManager ConfigProvider) {
 }
 
 func (m *HLSManager) applyExternalUsenetWebDAVAuth(req *http.Request) {
-	if m == nil || m.configManager == nil || req == nil || req.URL == nil {
+	if m == nil || m.configManager == nil {
 		return
 	}
-	settings, err := m.configManager.Load()
-	if err != nil {
-		return
-	}
-	for _, engine := range settings.UsenetEngines {
-		if !engine.Enabled || strings.TrimSpace(engine.WebDAVBaseURL) == "" {
-			continue
-		}
-		if !externalURLMatchesBase(req.URL, engine.WebDAVBaseURL) {
-			continue
-		}
-		if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
-			req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
-		}
-		return
-	}
+	applyExternalUsenetWebDAVAuthFromConfig(m.configManager, req)
 }
 
 func (m *HLSManager) externalFFmpegHeaders(rawURL string) []string {

@@ -6569,6 +6569,7 @@ func (h *VideoHandler) videoFullToUnifiedProbe(result *VideoFullResult) *Unified
 // It supports range requests for seeking and passes through the response from the remote server.
 func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, externalURL string) (bool, error) {
 	videoTracef("[video] proxying external URL")
+	streamPath := externalURL // the client's path: the key for release/prequeue lookups
 	externalURL, requestHeaders := streamheaders.Extract(externalURL)
 
 	// Handle URLs with unencoded query parameters (e.g., "?name=The Devil's Plan")
@@ -7037,6 +7038,10 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 
 	videoTracef("[video] starting external proxy stream: host=%q streamID=%s", parsedURL.Host, streamID)
 
+	// External Usenet engines pad missing articles with zeros instead of
+	// failing; spot that padding so the damaged release is not picked again.
+	zeroFill := h.newExternalUsenetZeroRunDetector(parsedURL)
+
 	reconnects := 0
 	for {
 		// Check if context is cancelled (client disconnected)
@@ -7073,6 +7078,9 @@ func (h *VideoHandler) proxyExternalURL(w http.ResponseWriter, r *http.Request, 
 		upstreamWindowRead += time.Since(readStart)
 		if n > 0 {
 			upstreamWindowBytes += int64(n)
+			if zeroFill.observe(buf[:n]) {
+				go h.reportZeroFilledExternalStream(streamPath, clientRangeStart+total)
+			}
 			if spoolPrefix {
 				h.externalPrefixSpool.append(cleanURL, spoolReadOffset, buf[:n], responseTotalSize, resp.Header)
 				spoolReadOffset += int64(n)
@@ -7298,25 +7306,10 @@ func (h *VideoHandler) requireAllowedExternalPath(w http.ResponseWriter, r *http
 }
 
 func (h *VideoHandler) applyExternalUsenetWebDAVAuth(req *http.Request) {
-	if h == nil || h.configManager == nil || req == nil || req.URL == nil {
+	if h == nil || h.configManager == nil {
 		return
 	}
-	settings, err := h.configManager.Load()
-	if err != nil {
-		return
-	}
-	for _, engine := range settings.UsenetEngines {
-		if !engine.Enabled || strings.TrimSpace(engine.WebDAVBaseURL) == "" {
-			continue
-		}
-		if !externalURLMatchesBase(req.URL, engine.WebDAVBaseURL) {
-			continue
-		}
-		if engine.WebDAVUsername != "" || engine.WebDAVPassword != "" {
-			req.SetBasicAuth(engine.WebDAVUsername, engine.WebDAVPassword)
-		}
-		return
-	}
+	applyExternalUsenetWebDAVAuthFromConfig(h.configManager, req)
 }
 
 func (h *VideoHandler) externalUsenetWebDAVAuthHeader(rawURL string) string {

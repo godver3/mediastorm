@@ -105,7 +105,7 @@ func (r *streamReleaseRegistry) markBad(path string, record streamFailureRecord)
 
 func isContentStreamFailure(reason string) bool {
 	switch reason {
-	case "article_not_found", "partial_content_missing_articles", "corrupted_missing_articles", "provider_blocked_content":
+	case "article_not_found", "partial_content_missing_articles", "corrupted_missing_articles", zeroFilledFailureReason, "provider_blocked_content":
 		return true
 	}
 	return false

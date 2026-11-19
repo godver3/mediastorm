@@ -106,6 +106,9 @@ func (r *streamFailureRegistry) pruneLocked(now time.Time) {
 }
 
 func missingArticleFailureReason(err error) (string, bool) {
+	if errors.Is(err, errExternalUsenetZeroFilled) {
+		return zeroFilledFailureReason, true
+	}
 	if errors.Is(err, streaming.ErrNotFound) {
 		return "stream_not_found", true
 	}
