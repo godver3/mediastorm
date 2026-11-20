@@ -2431,7 +2431,7 @@
             <button id="settingsBasicBtn" class="settings-level-btn" type="button" onclick="setSettingsLevel('basic')">Basic</button>
             <button id="settingsAdvancedBtn" class="settings-level-btn" type="button" onclick="setSettingsLevel('advanced')">Advanced</button>
         </div>
-        <button class="settings-context-trigger settings-context-trigger-desktop" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsScopePanel" onclick="openSettingsContextSheet()">
+        <button class="settings-context-trigger settings-context-trigger-desktop" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsScopePanel" onclick="openSettingsContextSheet(this)">
             <span><span class="settings-context-label">Current scope</span><span class="settings-context-summary" data-settings-context-summary>Server defaults</span></span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
         </button>
@@ -2442,7 +2442,7 @@
     </div>
 </header>
 
-<button id="settingsContextTrigger" class="settings-context-trigger settings-context-trigger-mobile" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsScopePanel" onclick="openSettingsContextSheet()">
+<button id="settingsContextTrigger" class="settings-context-trigger settings-context-trigger-mobile" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settingsScopePanel" onclick="openSettingsContextSheet(this)">
     <span>
         <span class="settings-context-label">Editing</span>
         <span id="settingsContextSummary" class="settings-context-summary" data-settings-context-summary>Server defaults</span>
@@ -3027,13 +3027,13 @@
         panel.style.top = Math.min((triggerRect?.bottom || 80) + 8, window.innerHeight - 240) + 'px';
     }
 
-    function openSettingsContextSheet() {
+    function openSettingsContextSheet(trigger) {
         const panel = document.getElementById('settingsScopePanel');
         const scrim = document.getElementById('settingsContextScrim');
         if (!panel) return;
         if (scrim?.parentElement !== document.body) document.body.appendChild(scrim);
         if (panel.parentElement !== document.body) document.body.appendChild(panel);
-        settingsContextReturnFocus = document.activeElement;
+        settingsContextReturnFocus = trigger || document.activeElement;
         settingsScopeServerExpanded = true;
         const households = settingsScopeHouseholds();
         if (!isAdmin || households.length === 1) expandedSettingsHouseholds.add(households[0]?.id || '__household__');
