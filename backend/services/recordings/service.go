@@ -662,6 +662,7 @@ func (s *Service) expandEnabledRules() {
 		now := time.Now().UTC()
 		horizonEnd := now.Add(7 * 24 * time.Hour)
 		schedules := s.epg.GetScheduleMultiple(epgIDs, now.Add(-offset), horizonEnd.Add(-offset))
+		taken := s.takenAirings(ctx, profileID)
 		for _, rule := range profileRules {
 			var compiled *regexp.Regexp
 			if rule.MatchType == models.RecordingRuleMatchRegex {
@@ -686,6 +687,11 @@ func (s *Service) expandEnabledRules() {
 					if !program.Stop.After(now) || !program.Start.Before(horizonEnd) || !matchesRecordingRule(rule, compiled, program.Title) {
 						continue
 					}
+					// The airing may already be recorded: a single recording of
+					// it, or another rule's airing.
+					if taken.covers(channel, program.Start, rule.ID) {
+						continue
+					}
 					scheduleKey := strings.ToLower(epgID) + ":" + program.Start.UTC().Format(time.RFC3339Nano)
 					job := models.Recording{
 						ID:                   uuid.NewString(),
@@ -707,8 +713,10 @@ func (s *Service) expandEnabledRules() {
 						CreatedAt:            now,
 						UpdatedAt:            now,
 					}
-					if _, err := s.rules.CreateScheduledRecordingIfAbsent(ctx, &job); err != nil {
+					if created, err := s.rules.CreateScheduledRecordingIfAbsent(ctx, &job); err != nil {
 						log.Printf("[recordings] materialize rule=%s channel=%s failed: %v", rule.ID, channel.ID, err)
+					} else if created {
+						taken.add(job)
 					}
 				}
 			}
@@ -1081,6 +1089,13 @@ func (s *Service) runRecordingAttempt(ctx context.Context, recording models.Reco
 	}
 	if waitErr != nil && errMsg == "" {
 		errMsg = waitErr.Error()
+	}
+	if ctx.Err() != nil {
+		// Cancelled, deleted or shutting down: FFmpeg was interrupted, and its
+		// last warning (often a harmless one about the source) is not why.
+		log.Printf("[recordings] attempt stopped id=%s attempt=%d elapsed=%s bytes=%d: recording cancelled or service stopping",
+			recording.ID, attempt, elapsed, written)
+		return recordingAttemptResult{err: waitErr, errMsg: errMsg, written: written}
 	}
 	exitCode := -1
 	if cmd.ProcessState != nil {
