@@ -149,7 +149,93 @@ func (s *Server) schedule(p *principal, ids []string, start, end time.Time) map[
 		return nil
 	}
 	offset := s.epgOffset(p)
-	return s.deps.EPG.GetScheduleMultiple(ids, start.Add(-offset), end.Add(-offset))
+	return s.cleanSchedule(ids, start.Add(-offset), end.Add(-offset))
+}
+
+// scheduleMargin widens a schedule read so that a duplicate just outside the
+// requested window is seen too: every request, whatever its window, then
+// keeps the same entry of a pair.
+const scheduleMargin = 3 * time.Hour
+
+// cleanSchedule reads the stored schedule for [start, end) without duplicate
+// or overlapping entries (see dedupePrograms).
+func (s *Server) cleanSchedule(ids []string, start, end time.Time) map[string][]models.EPGProgram {
+	sched := s.deps.EPG.GetScheduleMultiple(ids, start.Add(-scheduleMargin), end.Add(scheduleMargin))
+	for id, progs := range sched {
+		progs = dedupePrograms(progs)
+		kept := progs[:0]
+		for _, prog := range progs {
+			if prog.Stop.After(start) && prog.Start.Before(end) {
+				kept = append(kept, prog)
+			}
+		}
+		sched[id] = kept
+	}
+	return sched
+}
+
+// dedupePrograms turns a channel's programmes into one timeline. Some XMLTV
+// guides merge sources and list a programme twice: at the same time, or a
+// minute or two apart with a slightly different title. A programme's ID is
+// its channel and start, and jellyfin-web stacks overlapping programmes in
+// one guide cell, so:
+//   - two programmes starting together, or overlapping by more than half of
+//     the shorter one, cannot both air; the more complete entry stays (see
+//     programDetail);
+//   - a smaller overlap with the next programme (the sources disagree on a
+//     minute) ends the earlier one where the next starts.
+func dedupePrograms(progs []models.EPGProgram) []models.EPGProgram {
+	if len(progs) < 2 {
+		return progs
+	}
+	sorted := append([]models.EPGProgram(nil), progs...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start.Before(sorted[j].Start) })
+	out := make([]models.EPGProgram, 0, len(sorted))
+	for _, prog := range sorted {
+		if n := len(out); n > 0 {
+			last := &out[n-1]
+			overlap := minTime(last.Stop, prog.Stop).Sub(maxTime(last.Start, prog.Start))
+			shorter := min(last.Stop.Sub(last.Start), prog.Stop.Sub(prog.Start))
+			if prog.Start.Equal(last.Start) || (overlap > 0 && 2*overlap > shorter) {
+				if programDetail(prog) > programDetail(*last) {
+					*last = prog
+				}
+				continue
+			}
+			if overlap > 0 && prog.Start.After(last.Start) {
+				last.Stop = prog.Start
+			}
+		}
+		out = append(out, prog)
+	}
+	return out
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+// programDetail ranks duplicate entries: an episode number first, then the
+// longer description, then categories and artwork.
+func programDetail(prog models.EPGProgram) int {
+	score := len(prog.Description) + 10*len(prog.Categories)
+	if prog.Icon != "" {
+		score += 10
+	}
+	if prog.Episode != "" {
+		score += 1 << 20
+	}
+	return score
 }
 
 // programItem renders a stored programme; offset shifts it into display time.
@@ -228,7 +314,7 @@ func (s *Server) programByRef(ctx context.Context, p *principal, ref itemRef) (d
 	}
 	unix, _ := strconv.ParseInt(startUnix, 10, 64)
 	at := time.Unix(unix, 0) // stored (unshifted) start
-	for _, prog := range s.deps.EPG.GetScheduleMultiple([]string{ch.TvgID}, at.Add(-time.Second), at.Add(time.Second))[ch.TvgID] {
+	for _, prog := range s.cleanSchedule([]string{ch.TvgID}, at.Add(-time.Second), at.Add(time.Second))[ch.TvgID] {
 		if prog.Start.Unix() == unix {
 			return s.programItem(ch, number, prog, s.epgOffset(p)), true
 		}
