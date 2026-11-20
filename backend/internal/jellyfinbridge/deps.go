@@ -117,6 +117,7 @@ type Deps struct {
 	History     HistoryService
 	Watchlist   WatchlistService
 	CustomLists CustomListService
+	WatchRooms  WatchRoomService // backs SyncPlay (nil: no SyncPlay)
 	EPG         EPGService
 	Calendar    CalendarService
 	Handlers    Handlers

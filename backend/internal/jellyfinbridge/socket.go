@@ -53,7 +53,7 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := s.sockets.add(p.Profile.ID, p.Client.DeviceID, conn)
+	client := s.sockets.add(p.Profile.ID, p.Client.DeviceID, p.Session.Token, conn)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
@@ -115,8 +115,12 @@ var socketReauthInterval = time.Minute // var for tests
 type socketClient struct {
 	profileID string
 	deviceID  string
-	conn      io.Closer
-	out       chan socketFrame
+	// token is the session the socket signed in with: jellyfin-web's SDK
+	// socket sends only the token, no deviceId, so requests of the same
+	// session find it by token.
+	token string
+	conn  io.Closer
+	out   chan socketFrame
 }
 
 // send queues a frame; a client that stops reading loses frames rather than
@@ -136,8 +140,8 @@ type socketHub struct {
 
 func newSocketHub() *socketHub { return &socketHub{clients: map[*socketClient]bool{}} }
 
-func (h *socketHub) add(profileID, deviceID string, conn io.Closer) *socketClient {
-	c := &socketClient{profileID: profileID, deviceID: deviceID, conn: conn, out: make(chan socketFrame, 32)}
+func (h *socketHub) add(profileID, deviceID, token string, conn io.Closer) *socketClient {
+	c := &socketClient{profileID: profileID, deviceID: deviceID, token: token, conn: conn, out: make(chan socketFrame, 32)}
 	h.mu.Lock()
 	h.clients[c] = true
 	h.mu.Unlock()
@@ -165,6 +169,32 @@ func (h *socketHub) remove(c *socketClient) {
 	}
 }
 
+// reaches reports whether a socket belongs to a device of a profile: the
+// same device ID, or no device ID but the same session token.
+func (c *socketClient) reaches(profileID, deviceID, token string) bool {
+	if c.profileID != profileID {
+		return false
+	}
+	if deviceID == "" {
+		// No device named: the caller's own session when known, else
+		// every socket of the profile.
+		return token == "" || c.token == token
+	}
+	return c.deviceID == deviceID || (c.deviceID == "" && token != "" && c.token == token)
+}
+
+// has reports whether a device of a profile has an open socket.
+func (h *socketHub) has(profileID, deviceID, token string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.reaches(profileID, deviceID, token) {
+			return true
+		}
+	}
+	return false
+}
+
 // broadcast sends a message to every socket of a profile.
 func (h *socketHub) broadcast(profileID, messageType string, data any) {
 	msg, err := json.Marshal(map[string]any{"MessageType": messageType, "Data": data, "MessageId": randomHex(16)})
@@ -181,8 +211,9 @@ func (h *socketHub) broadcast(profileID, messageType string, data any) {
 }
 
 // sendToDevice sends a message to the sockets of one device of a profile
-// (every socket of the profile when the device is unknown).
-func (h *socketHub) sendToDevice(profileID, deviceID, messageType string, data any) {
+// (every socket of the profile when the device is unknown); token finds a
+// socket of the same session that did not name its device.
+func (h *socketHub) sendToDevice(profileID, deviceID, token, messageType string, data any) {
 	msg, err := json.Marshal(map[string]any{"MessageType": messageType, "Data": data, "MessageId": randomHex(16)})
 	if err != nil {
 		return
@@ -190,7 +221,7 @@ func (h *socketHub) sendToDevice(profileID, deviceID, messageType string, data a
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
-		if c.profileID == profileID && (deviceID == "" || c.deviceID == deviceID) {
+		if c.reaches(profileID, deviceID, token) {
 			c.send(0x1, msg)
 		}
 	}
