@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -792,6 +793,29 @@ func TestLiveTV(t *testing.T) {
 	}
 	if info.MediaSources[0].SupportsDirectPlay {
 		t.Fatal("web clients must not get direct play for live TS")
+	}
+
+	// The tune asks for mediastorm's timeshift window, so players can rewind.
+	var startQuery url.Values
+	h.srv.deps.Handlers.LiveHLSStart = func(w http.ResponseWriter, r *http.Request) {
+		startQuery = r.URL.Query()
+		writeJSON(w, http.StatusOK, map[string]any{"sessionId": "live1", "playlistUrl": "/video/hls/live1/stream.m3u8"})
+	}
+	if rec := h.do(http.MethodGet, info.MediaSources[0].TranscodingURL, "", nil); rec.Code != http.StatusFound {
+		t.Fatalf("live master playlist = %d", rec.Code)
+	}
+	if startQuery.Get("timeshift") != "1" || startQuery.Get("url") != "http://tv.example/1.ts" {
+		t.Fatalf("live HLS start query = %v", startQuery)
+	}
+	// Full pass-through keeps the channel's own audio: no timeshift.
+	h.srv.deps.Settings = func() (config.JellyfinBridgeSettings, error) {
+		return config.JellyfinBridgeSettings{DisableVideoTranscoding: true, DisableAudioTranscoding: true}, nil
+	}
+	h.srv.live.mu.Lock()
+	h.srv.live.loaded = time.Time{}
+	h.srv.live.mu.Unlock()
+	if h.srv.liveTimeshift() {
+		t.Fatal("timeshift requested with audio and video pass-through")
 	}
 }
 

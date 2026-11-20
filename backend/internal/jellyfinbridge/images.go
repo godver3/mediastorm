@@ -269,6 +269,9 @@ func fetchImage(r *http.Request, source string) externalImage {
 	if err != nil {
 		return failed
 	}
+	// Some logo hosts refuse Go's default User-Agent (Wikimedia, where many
+	// IPTV playlists take their channel logos, answers 403).
+	req.Header.Set("User-Agent", "mediastorm/1.0")
 	resp, err := externalImageClient.Do(req)
 	if err != nil {
 		return failed

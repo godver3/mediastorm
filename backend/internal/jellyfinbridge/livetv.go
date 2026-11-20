@@ -180,12 +180,12 @@ func (s *Server) programItem(ch liveChannel, number int, prog models.EPGProgram,
 		PlayAccess:     "Full",
 		UserData:       &dto.UserItemData{Key: "program:" + source, ItemID: id},
 	}
-	cats := strings.ToLower(strings.Join(prog.Categories, " "))
-	item.IsMovie = boolPtr(strings.Contains(cats, "movie") || strings.Contains(cats, "film"))
-	item.IsSports = boolPtr(strings.Contains(cats, "sport"))
-	item.IsNews = boolPtr(strings.Contains(cats, "news"))
-	item.IsKids = boolPtr(strings.Contains(cats, "kids") || strings.Contains(cats, "children"))
-	item.IsSeries = boolPtr(prog.Episode != "")
+	kind := classifyProgram(prog)
+	item.IsMovie = boolPtr(kind.movie)
+	item.IsSports = boolPtr(kind.sports)
+	item.IsNews = boolPtr(kind.news)
+	item.IsKids = boolPtr(kind.kids)
+	item.IsSeries = boolPtr(kind.series)
 	if logo := firstNonEmpty(prog.Icon, ch.Logo); logo != "" {
 		item.ImageTags = map[string]string{dto.ImagePrimary: imageTag(logo)}
 	}
@@ -354,6 +354,9 @@ func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 				if params.HasAired != nil && *params.HasAired != shownStop.Before(now) {
 					continue
 				}
+				if !classifyProgram(prog).matches(params) {
+					continue
+				}
 				for _, nc := range byTvg[tvg] {
 					items = append(items, s.programItem(nc.ch, nc.number, prog, offset))
 				}
@@ -366,6 +369,7 @@ func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
+	params := programParams(r)
 	byTvg := s.channelsByTvg(s.liveChannels(r.Context(), p), nil)
 	now := time.Now()
 	offset := s.epgOffset(p)
@@ -379,7 +383,7 @@ func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Reques
 		ids = append(ids, tvg)
 	}
 	for tvg, progs := range s.schedule(p, ids, now.Add(-time.Minute), now.Add(time.Minute)) {
-		if len(progs) == 0 {
+		if len(progs) == 0 || !classifyProgram(progs[0]).matches(params) {
 			continue
 		}
 		for _, nc := range byTvg[tvg] {
@@ -401,8 +405,10 @@ type programQueryParams struct {
 	MaxStartDate *time.Time
 	IsAiring     *bool
 	HasAired     *bool
-	StartIndex   int
-	Limit        int
+	// Programme kinds (the Live TV page's rows); nil = any.
+	IsMovie, IsSeries, IsSports, IsNews, IsKids *bool
+	StartIndex                                  int
+	Limit                                       int
 }
 
 func programParams(r *http.Request) programQueryParams {
@@ -412,6 +418,11 @@ func programParams(r *http.Request) programQueryParams {
 		MaxStartDate *time.Time `json:"MaxStartDate"`
 		IsAiring     *bool      `json:"IsAiring"`
 		HasAired     *bool      `json:"HasAired"`
+		IsMovie      *bool      `json:"IsMovie"`
+		IsSeries     *bool      `json:"IsSeries"`
+		IsSports     *bool      `json:"IsSports"`
+		IsNews       *bool      `json:"IsNews"`
+		IsKids       *bool      `json:"IsKids"`
 		StartIndex   int        `json:"StartIndex"`
 		Limit        int        `json:"Limit"`
 	}
@@ -421,6 +432,12 @@ func programParams(r *http.Request) programQueryParams {
 	out := programQueryParams{
 		ChannelIDs: body.ChannelIDs, MinEndDate: body.MinEndDate, MaxStartDate: body.MaxStartDate,
 		IsAiring: body.IsAiring, HasAired: body.HasAired, StartIndex: body.StartIndex, Limit: body.Limit,
+		IsMovie: body.IsMovie, IsSeries: body.IsSeries, IsSports: body.IsSports, IsNews: body.IsNews, IsKids: body.IsKids,
+	}
+	for key, dst := range map[string]**bool{"IsMovie": &out.IsMovie, "IsSeries": &out.IsSeries, "IsSports": &out.IsSports, "IsNews": &out.IsNews, "IsKids": &out.IsKids} {
+		if v, ok := queryBool(r, key); ok {
+			*dst = &v
+		}
 	}
 	if ids := queryList(r, "ChannelIds"); len(ids) > 0 {
 		out.ChannelIDs = ids
@@ -530,6 +547,9 @@ func (s *Server) ensureLiveHLS(ctx context.Context, p *principal, sess *playSess
 	}
 	if ch.PlaybackID != "" {
 		q.Set("channelId", ch.PlaybackID)
+	}
+	if s.liveTimeshift() {
+		q.Set("timeshift", "1")
 	}
 	var resp hlsStartResponse
 	if code, err := callJSON(s.deps.Handlers.LiveHLSStart, internalRequest(ctx, p, http.MethodGet, "/api/live/hls/start?"+q.Encode(), nil, nil), &resp); err != nil {
