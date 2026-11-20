@@ -3752,15 +3752,25 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	playlistPath := filepath.Join(session.OutputDir, "stream.m3u8")
 	segmentPattern := filepath.Join(session.OutputDir, "segment%d.ts")
 
+	// Reduce probe/analyze time for faster startup (default is 5MB/5s). A
+	// local file (recordings) is cheap to read further, and an IPTV recording
+	// can open with several seconds of audio from many tracks before the first
+	// video packet: within 1MB FFmpeg never learns the video's size and the
+	// muxer refuses to start ("dimensions not set"). Probing stops as soon as
+	// every stream is known, so ordinary files start as fast as before.
+	probeSize, analyzeDuration := "1000000", "500000" // 1MB, 0.5s
+	if directInputPath != "" && !isHTTPDirectURL(directInputPath) {
+		probeSize, analyzeDuration = "50000000", "20000000" // 50MB, 20s
+	}
+
 	// Build FFmpeg args for HLS output with Dolby Vision support
 	args := []string{
 		"-nostdin",
 		"-y", // Overwrite output files - prevents race condition with on-demand subtitle extraction
 		"-loglevel", "error",
 		"-protocol_whitelist", "file,http,https,pipe,tcp,tls,crypto",
-		// Reduce probe/analyze time for faster startup (default is 5MB/5s)
-		"-probesize", "1000000", // 1MB
-		"-analyzeduration", "500000", // 0.5s
+		"-probesize", probeSize,
+		"-analyzeduration", analyzeDuration,
 		// A/V sync flags: generate PTS if missing, discard corrupt packets
 		"-fflags", "+genpts+discardcorrupt",
 	}
