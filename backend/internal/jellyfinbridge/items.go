@@ -955,7 +955,7 @@ func (s *Server) resumeItems(_ context.Context, p *principal, parentID string) [
 		if row.HiddenFromContinueWatching || row.Position <= 0 || row.PercentWatched >= 90 {
 			continue
 		}
-		switch normalizeMediaType(row.MediaType) {
+		switch progressMediaType(row.MediaType) {
 		case "movie":
 			if !wantMovies {
 				continue

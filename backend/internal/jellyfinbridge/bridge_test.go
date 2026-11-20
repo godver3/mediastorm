@@ -115,7 +115,12 @@ func (*fakeHistory) ListContinueWatching(string) ([]models.SeriesWatchState, err
 	}}, nil
 }
 func (*fakeHistory) ListPlaybackProgress(string) ([]models.PlaybackProgress, error) {
-	return []models.PlaybackProgress{{ID: "movie:tmdb:movie:603", MediaType: "movie", ItemID: "tmdb:movie:603", MovieName: "The Matrix", Position: 600, Duration: 8160, PercentWatched: 7, ExternalIDs: map[string]string{"tmdb": "603"}, UpdatedAt: time.Now()}}, nil
+	return []models.PlaybackProgress{
+		{ID: "movie:tmdb:movie:603", MediaType: "movie", ItemID: "tmdb:movie:603", MovieName: "The Matrix", Position: 600, Duration: 8160, PercentWatched: 7, ExternalIDs: map[string]string{"tmdb": "603"}, UpdatedAt: time.Now()},
+		// mediastorm records progress for live HLS sessions too; a channel
+		// is not a title and must stay out of Resume and My Movies.
+		{ID: "live:daserste.de", MediaType: "live", ItemID: "DasErste.de", MovieName: "ARD", Position: 6, Duration: 86406, UpdatedAt: time.Now().Add(time.Minute)},
+	}, nil
 }
 func (h *fakeHistory) ListWatchHistory(string) ([]models.WatchHistoryItem, error) {
 	h.mu.Lock()
