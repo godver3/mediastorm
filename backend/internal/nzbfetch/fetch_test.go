@@ -139,7 +139,8 @@ func TestHTTPFailuresAndRetryAfterUseProviderBreaker(t *testing.T) {
 			}
 			allowed, until, _ := b.Allow("fixture")
 			limited := code == 429 || code == 503
-			if allowed == limited || (limited && time.Until(until) < 47*time.Hour) {
+			// A 48 h Retry-After is honoured up to the breaker's 24 h cap.
+			if allowed == limited || (limited && (time.Until(until) < 23*time.Hour || time.Until(until) > 25*time.Hour)) {
 				t.Fatalf("breaker state: allowed=%v until=%v", allowed, until)
 			}
 		})
@@ -192,5 +193,77 @@ func TestGzipResponsesReturnBodyReadErrors(t *testing.T) {
 				t.Fatalf("data=%q err=%v", data, err)
 			}
 		})
+	}
+}
+
+// Without a catalog identity (a query without SxxEyy, an IMDb-only movie) the
+// grab is budgeted per release instead of refused.
+func TestMissingIdentityBudgetsTheRelease(t *testing.T) {
+	var titles []string
+	f := New(budgetFunc(func(_ context.Context, title, _ string, _ time.Time) (time.Time, error) {
+		titles = append(titles, title)
+		return time.Time{}, nil
+	}))
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { return response(200, "<nzb/>"), nil })}
+	if _, _, err := f.Fetch(context.Background(), client, nil, "https://fixture/nzb", models.NZBResult{Indexer: "Fixture"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(titles) != 1 || !strings.HasPrefix(titles[0], "release:fixture|") {
+		t.Fatalf("title keys = %v", titles)
+	}
+}
+
+// The release limit is per download URL: another release from the same
+// indexer reserves under its own key, and a season pack fetched again for a
+// different episode is served from the cache.
+func TestBudgetIsPerReleaseAndCacheSpansEpisodes(t *testing.T) {
+	var releases []string
+	var downloads atomic.Int32
+	f := New(budgetFunc(func(_ context.Context, _, release string, _ time.Time) (time.Time, error) {
+		releases = append(releases, release)
+		return time.Time{}, nil
+	}))
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		downloads.Add(1)
+		return response(200, "<nzb/>"), nil
+	})}
+	ep := func(n int) models.NZBResult {
+		return models.NZBResult{Indexer: "Fixture"}.WithNZBIdentity(models.NZBIdentity{CatalogID: "tmdb:tv:1", MediaType: "series", Season: 2, Episode: n})
+	}
+	for _, step := range []struct {
+		url string
+		ep  int
+	}{{"https://fixture/a", 5}, {"https://fixture/b", 5}, {"https://fixture/a", 6}} {
+		if _, _, err := f.Fetch(context.Background(), client, nil, step.url, ep(step.ep), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if downloads.Load() != 2 || len(releases) != 2 || releases[0] == releases[1] {
+		t.Fatalf("downloads=%d releases=%v", downloads.Load(), releases)
+	}
+}
+
+func TestDownloadErrorsKeepDetailWithoutSecrets(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+		return response(403, "API key expired"), nil
+	})}
+	_, _, err := New(nil).Fetch(context.Background(), client, providerbreaker.New(), "https://user:pw@fixture/api?t=get&apikey=SECRET", candidate("tmdb:movie:78"), "")
+	if err == nil || !strings.Contains(err.Error(), "API key expired") || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("error lost detail: %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "pw") {
+		t.Fatalf("error leaks credentials: %v", err)
+	}
+	failing := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("connection refused") })}
+	_, _, err = New(nil).Fetch(context.Background(), failing, providerbreaker.New(), "https://fixture/api?apikey=SECRET", candidate("tmdb:movie:78"), "")
+	if err == nil || !strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("transport error: %v", err)
+	}
+}
+
+func TestAny2xxIsSuccess(t *testing.T) {
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { return response(203, "<nzb/>"), nil })}
+	if _, _, err := New(nil).Fetch(context.Background(), client, providerbreaker.New(), "https://fixture/nzb", candidate("tmdb:movie:78"), ""); err != nil {
+		t.Fatal(err)
 	}
 }

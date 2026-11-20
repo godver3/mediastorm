@@ -65,7 +65,11 @@ func (b *Breaker) Restore(ctx context.Context, store CooldownStore) error {
 	if err != nil {
 		return fmt.Errorf("load indexer cooldowns: %w", err)
 	}
+	limit := b.now().Add(maximumCooldown)
 	for key, c := range states {
+		if c.Until.After(limit) {
+			c.Until = limit
+		}
 		b.states[normalize(key)] = state{until: c.Until, failures: c.Failures}
 	}
 	b.store = store
@@ -125,6 +129,11 @@ func (b *Breaker) RecordRateLimit(provider string, retryHint time.Duration) time
 	}
 	if retryHint > delay {
 		delay = retryHint
+	}
+	// Capped: search shares this breaker, and an indexer's huge Retry-After
+	// must not switch it off for months (persisted pauses survive restarts).
+	if delay > maximumCooldown {
+		delay = maximumCooldown
 	}
 	until := b.now().Add(delay)
 	if until.After(current.until) {

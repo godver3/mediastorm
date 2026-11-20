@@ -68,15 +68,34 @@ func TestRestoreRefusesStorageFailure(t *testing.T) {
 	}
 }
 
-func TestLongRetryHintsAreNotCappedOrShortened(t *testing.T) {
+func TestLongRetryHintsAreCappedButNotShortened(t *testing.T) {
 	b := New()
 	now := time.Now()
 	b.now = func() time.Time { return now }
-	until := b.RecordRateLimit("fixture", 72*time.Hour)
-	if until.Sub(now) != 72*time.Hour {
-		t.Fatal("long hint capped")
+	if until := b.RecordRateLimit("fixture", 365*24*time.Hour); until.Sub(now) != maximumCooldown {
+		t.Fatalf("year-long hint not capped: %v", until.Sub(now))
+	}
+	until := b.RecordRateLimit("fixture", 12*time.Hour)
+	if until.Sub(now) != maximumCooldown {
+		t.Fatal("shorter hint shortened existing cooldown")
 	}
 	if got := b.RecordRateLimit("fixture", 0); got.Before(until) {
 		t.Fatal("later short hint shortened existing cooldown")
+	}
+}
+
+type longCooldownStore struct{ brokenCooldownStore }
+
+func (longCooldownStore) LoadCooldowns(context.Context) (map[string]Cooldown, error) {
+	return map[string]Cooldown{"fixture": {Until: time.Now().Add(365 * 24 * time.Hour), Failures: 1}}, nil
+}
+
+func TestRestoreCapsPersistedCooldowns(t *testing.T) {
+	b := New()
+	if err := b.Restore(t.Context(), longCooldownStore{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, until, _ := b.Allow("fixture"); time.Until(until) > maximumCooldown+time.Minute {
+		t.Fatalf("restored cooldown not capped: %v", time.Until(until))
 	}
 }

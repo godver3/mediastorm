@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,7 +62,8 @@ func TestNZBAcquisitionIdentityOnResolveHealthAndTrackProbe(t *testing.T) {
 		t.Fatalf("expected 3 paths, got %v", store.keys)
 	}
 	for _, key := range store.keys {
-		if key != "tmdb:movie:335984/fixture" {
+		// The second part is the release: indexer plus hashed download URL.
+		if !strings.HasPrefix(key, "tmdb:movie:335984/fixture|") || key != store.keys[0] {
 			t.Errorf("inconsistent identity: %s", key)
 		}
 	}

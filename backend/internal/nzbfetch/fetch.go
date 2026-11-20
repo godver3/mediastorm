@@ -5,9 +5,11 @@ package nzbfetch
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -19,10 +21,14 @@ import (
 )
 
 const (
-	Window          = 10 * time.Minute
-	Spacing         = 30 * time.Second
-	TitleLimit      = 3
-	IndexerLimit    = 1
+	Window     = 10 * time.Minute
+	Spacing    = 30 * time.Second
+	TitleLimit = 3
+	// ReleaseLimit bounds grabs of one release (indexer + download URL) per
+	// title and window. It is per release, not per indexer, so falling back to
+	// another release from the same indexer stays possible; TitleLimit still
+	// caps the total.
+	ReleaseLimit    = 1
 	maxNZBSize      = 50 << 20
 	maxCacheSize    = 64 << 20
 	maxCacheEntries = 256
@@ -71,18 +77,24 @@ func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *provi
 	}
 	provider := strings.ToLower(strings.TrimSpace(candidate.Indexer))
 	if f.store == nil {
-		p, err := f.download(ctx, client, breaker, downloadURL, provider, userAgent, "")
+		p, err := f.download(ctx, client, breaker, downloadURL, provider, "", userAgent, "")
 		return p.data, p.header, err
-	}
-	titleKey, err := candidate.NZBIdentity().Key()
-	if err != nil {
-		return nil, nil, err
 	}
 	if provider == "" {
 		return nil, nil, fmt.Errorf("NZB budget requires an indexer name")
 	}
 	// Never keep credentials from a download URL in cache keys or logs.
-	key := fmt.Sprintf("%s\x00%s\x00%x", titleKey, provider, sha256.Sum256([]byte(downloadURL)))
+	release := fmt.Sprintf("%s|%x", provider, sha256.Sum256([]byte(downloadURL)))
+	titleKey, err := candidate.NZBIdentity().Key()
+	if err != nil {
+		// No usable catalog identity (a query without SxxEyy, a movie known
+		// only by IMDb ID): budget the release itself rather than refusing
+		// the grab outright.
+		titleKey = "release:" + release
+	}
+	// The cache is per release, not per title: a season pack grabbed for one
+	// episode serves the next without another grab.
+	key := release
 	if p, ok := f.cached(key); ok {
 		return append([]byte(nil), p.data...), p.header.Clone(), nil
 	}
@@ -93,7 +105,7 @@ func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *provi
 		// Each waiter can cancel independently; the shared grab has its own bound.
 		callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		p, err := f.download(callCtx, client, breaker, downloadURL, provider, userAgent, titleKey)
+		p, err := f.download(callCtx, client, breaker, downloadURL, provider, release, userAgent, titleKey)
 		if err == nil {
 			f.remember(key, p)
 		}
@@ -126,17 +138,46 @@ func (f *Fetcher) cached(key string) (payload, bool) {
 func (f *Fetcher) remember(key string, p payload) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if old, ok := f.cache[key]; ok {
+		delete(f.cache, key)
+		f.cacheBytes -= len(old.data)
+	}
 	for k, old := range f.cache {
-		if time.Since(old.at) >= Window || f.cacheBytes+len(p.data) > maxCacheSize || len(f.cache) >= maxCacheEntries {
+		if time.Since(old.at) >= Window {
 			delete(f.cache, k)
 			f.cacheBytes -= len(old.data)
 		}
+	}
+	// Then evict oldest first until the new entry fits.
+	for len(f.cache) > 0 && (f.cacheBytes+len(p.data) > maxCacheSize || len(f.cache) >= maxCacheEntries) {
+		var oldestKey string
+		var oldest time.Time
+		for k, old := range f.cache {
+			if oldestKey == "" || old.at.Before(oldest) {
+				oldestKey, oldest = k, old.at
+			}
+		}
+		f.cacheBytes -= len(f.cache[oldestKey].data)
+		delete(f.cache, oldestKey)
 	}
 	f.cache[key] = p
 	f.cacheBytes += len(p.data)
 }
 
-func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *providerbreaker.Breaker, downloadURL, provider, userAgent, titleKey string) (payload, error) {
+// redactURL drops credentials and the query string (where indexer API keys
+// live) so a download URL can appear in errors and logs.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *providerbreaker.Breaker, downloadURL, provider, release, userAgent, titleKey string) (payload, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
@@ -149,7 +190,7 @@ func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *pr
 	}
 	defer breaker.ReleaseProbe(provider, probe)
 	if f.store != nil {
-		retryAt, err := f.store.ReserveNZB(ctx, titleKey, provider, time.Now())
+		retryAt, err := f.store.ReserveNZB(ctx, titleKey, release, time.Now())
 		if err != nil {
 			return payload{}, fmt.Errorf("reserve NZB title budget: %w", err)
 		}
@@ -163,15 +204,26 @@ func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *pr
 		if ctx.Err() != nil {
 			return payload{}, ctx.Err()
 		}
-		return payload{}, fmt.Errorf("NZB download request failed")
+		// The client error can quote the full URL (API key included).
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return payload{}, fmt.Errorf("NZB download from %s (%s) failed: %w", provider, redactURL(downloadURL), err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		hint := providerbreaker.RetryHint(resp.Header, time.Now())
 		if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusServiceUnavailable && hint > 0) {
 			breaker.RecordRateLimit(provider, hint)
 		}
-		return payload{}, fmt.Errorf("NZB download returned HTTP %d", resp.StatusCode)
+		// Indexers explain failures (expired API key, grab limit) in the body.
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		msg := strings.TrimSpace(string(snippet))
+		if msg != "" {
+			msg = ": " + msg
+		}
+		return payload{}, fmt.Errorf("NZB download from %s (%s) returned HTTP %d%s", provider, redactURL(downloadURL), resp.StatusCode, msg)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxNZBSize+1))
 	if err != nil {

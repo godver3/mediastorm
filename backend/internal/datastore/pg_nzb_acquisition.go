@@ -16,6 +16,8 @@ func (ds *DataStore) NZBAcquisition() *NZBAcquisitionRepository {
 
 // ReserveNZB holds a transaction lock only while accounting, never while doing
 // HTTP or NNTP work. Separate titles can reserve and download independently.
+// The provider column holds the release (indexer + hashed download URL), so
+// ReleaseLimit applies per release.
 func (r *NZBAcquisitionRepository) ReserveNZB(ctx context.Context, title, provider string, now time.Time) (time.Time, error) {
 	tx, err := r.store.pool.Begin(ctx)
 	if err != nil {
@@ -43,7 +45,7 @@ func (r *NZBAcquisitionRepository) ReserveNZB(ctx context.Context, title, provid
 	if count >= nzbfetch.TitleLimit && first != nil && first.Add(nzbfetch.Window).After(retryAt) {
 		retryAt = first.Add(nzbfetch.Window)
 	}
-	if perIndexer >= nzbfetch.IndexerLimit && firstIndexer != nil && firstIndexer.Add(nzbfetch.Window).After(retryAt) {
+	if perIndexer >= nzbfetch.ReleaseLimit && firstIndexer != nil && firstIndexer.Add(nzbfetch.Window).After(retryAt) {
 		retryAt = firstIndexer.Add(nzbfetch.Window)
 	}
 	if retryAt.After(now) {
