@@ -241,6 +241,7 @@ type BaseItemDto struct {
 	Etag                    string                              `json:"Etag,omitempty"`
 	DateCreated             *time.Time                          `json:"DateCreated,omitempty"`
 	CanDelete               *bool                               `json:"CanDelete,omitempty"`
+	PlaylistItemID          string                              `json:"PlaylistItemId,omitempty"`
 	CanDownload             *bool                               `json:"CanDownload,omitempty"`
 	SortName                string                              `json:"SortName,omitempty"`
 	PremiereDate            *time.Time                          `json:"PremiereDate,omitempty"`

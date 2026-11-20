@@ -421,6 +421,7 @@ func (s *Server) listFolders(profile models.User) []dto.BaseItemDto {
 	if err != nil {
 		return nil
 	}
+	_, editable := s.listEditor()
 	out := make([]dto.BaseItemDto, 0, len(lists))
 	for _, list := range lists {
 		items, _ := s.deps.CustomLists.ListItems(profile.ID, list.ID)
@@ -448,6 +449,7 @@ func (s *Server) listFolders(profile models.User) []dto.BaseItemDto {
 			PlayAccess:              "Full",
 			UserData:                &dto.UserItemData{Key: id, ItemID: id},
 			PrimaryImageAspectRatio: floatPtr(2.0 / 3.0),
+			CanDelete:               boolPtr(editable),
 		}
 		if poster != "" {
 			item.ImageTags = map[string]string{dto.ImagePrimary: imageTag(poster)}

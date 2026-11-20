@@ -194,6 +194,10 @@ func (s *Server) queryItems(ctx context.Context, p *principal, q itemQuery) []dt
 	if q.wants(dto.KindBoxSet) && len(q.IncludeTypes) > 0 {
 		out = append(out, s.listFolders(p.Profile)...)
 	}
+	// The clients' "Add to playlist" dialogs list playlists this way.
+	if containsFold(q.IncludeTypes, kindPlaylist) {
+		out = append(out, s.playlistFolders(p.Profile)...)
+	}
 	if q.IsFavorite != nil && *q.IsFavorite {
 		if s.deps.Watchlist != nil {
 			if wl, err := s.deps.Watchlist.List(p.Profile.ID); err == nil {
@@ -692,6 +696,7 @@ func (s *Server) itemByID(ctx context.Context, p *principal, u *userState, id st
 		item := s.titleItem(u, t)
 		if detailed {
 			item.People = s.people(ctx, t)
+			item.RemoteTrailers = s.remoteTrailers(ctx, t)
 		}
 		return item, true
 	case refSeason:

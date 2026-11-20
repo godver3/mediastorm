@@ -44,6 +44,8 @@ type Server struct {
 	serverID string
 	ids      *idStore
 	prefs    *prefsStore
+	// trailers caches RemoteTrailers per title (see trailers.go).
+	trailers trailerCache
 	// tracks remembers the audio and subtitle picked per profile and series
 	// (audioChoice, subtitleChoice), for the next episode's defaults.
 	tracks    *prefsStore
