@@ -871,3 +871,23 @@ func (s *Server) handleUpdateSeriesTimer(w http.ResponseWriter, r *http.Request)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// streamRunningRecording serves a direct player (Plezy, external players) a
+// recording that is still being written. Read as a file it would end where
+// the recording was when the player opened it, and streamed without a length
+// the player (mpv) shows only what it has buffered and cannot seek. So it
+// goes to mediastorm's recording stream in its "seekable=estimate" mode: a
+// seekable file of the size the recording will probably reach, whose reads
+// wait for the recording to catch up (handlers/recordings_growing_estimate.go).
+// It reports false for anything but a running recording.
+func (s *Server) streamRunningRecording(w http.ResponseWriter, r *http.Request, p *principal, sess *playSession) bool {
+	if s.deps.Handlers.RecordingStream == nil {
+		return false
+	}
+	rec, ok := s.recordingByCompactID(r.Context(), p, sess.Ref.Source)
+	if !ok || rec.Status != models.RecordingStatusRunning {
+		return false
+	}
+	forward(w, r, p, s.deps.Handlers.RecordingStream, "/api/live/recordings/"+url.PathEscape(rec.ID)+"/stream?seekable=estimate", map[string]string{"recordingID": rec.ID})
+	return true
+}

@@ -405,6 +405,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "Stream not resolved yet")
 		return
 	}
+	if sess.Ref.Kind == refRecording && s.streamRunningRecording(w, r, p, sess) {
+		return
+	}
 	// transmux=0: serve the original bytes with Range support; native
 	// players demux MKV/MP4 themselves.
 	q := url.Values{"path": {status.StreamPath}, "profileId": {p.Profile.ID}, "transmux": {"0"}}

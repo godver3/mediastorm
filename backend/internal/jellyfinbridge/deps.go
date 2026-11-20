@@ -115,6 +115,7 @@ type Handlers struct {
 	RecordingRuleDelete http.HandlerFunc // DELETE /api/live/recording-rules/{ruleID}
 	RecordingRuleUpdate http.HandlerFunc // PUT    /api/live/recording-rules/{ruleID}
 	RecordingSettings   http.HandlerFunc // GET    /api/live/recording-settings?profileId=
+	RecordingStream     http.HandlerFunc // GET    /api/live/recordings/{recordingID}/stream
 }
 
 // Deps wires the bridge to mediastorm.

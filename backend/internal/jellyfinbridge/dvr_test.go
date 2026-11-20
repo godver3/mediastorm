@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -423,5 +424,62 @@ func TestRuleRecordingTimerNotEdited(t *testing.T) {
 	}
 	if len(f.created) != 0 || f.recs[0].Status != models.RecordingStatusPending {
 		t.Fatalf("series airing changed: created %d, status %s", len(f.created), f.recs[0].Status)
+	}
+}
+
+// Direct players (Plezy's mpv) open a running recording's file with
+// "Range: bytes=0-". As a file it would end where the recording was then,
+// so it is served from mediastorm's recording stream as a seekable file of
+// the estimated final size, ranges passed on. A finished recording is an
+// ordinary file.
+func TestRunningRecordingDirectStreamFollowsFile(t *testing.T) {
+	h, f, tok := dvrHarness(t)
+	var followed []string
+	h.srv.deps.Handlers.RecordingStream = func(w http.ResponseWriter, r *http.Request) {
+		followed = append(followed, mux.Vars(r)["recordingID"]+"|"+r.URL.Query().Get("seekable")+"|"+r.Header.Get("Range"))
+		_, _ = w.Write([]byte("follow"))
+	}
+	h.srv.deps.Handlers.Stream = func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("file"))
+	}
+	start := time.Now().Add(-10 * time.Minute).UTC()
+	end := start.Add(5 * time.Minute)
+	f.recs = []models.Recording{
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000f1", UserID: h.alice.ID, Status: models.RecordingStatusRunning, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "Live Now", StartAt: start, EndAt: start.Add(time.Hour), ActualStartAt: &start, OutputPath: "/data/recordings/live.ts", OutputSizeBytes: 1000},
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000f2", UserID: h.alice.ID, Status: models.RecordingStatusCompleted, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "Done", StartAt: start, EndAt: end, ActualStartAt: &start, ActualEndAt: &end, OutputPath: "/data/recordings/done.ts", OutputSizeBytes: 1000},
+	}
+	list := decode[dto.QueryResult[dto.BaseItemDto]](t, h.do(http.MethodGet, "/LiveTv/Recordings", tok, nil))
+	get := func(item dto.BaseItemDto, rangeHeader string) string {
+		t.Helper()
+		info := decode[dto.PlaybackInfoResponse](t, h.doWithClient(http.MethodPost, "/Items/"+item.ID+"/PlaybackInfo", tok, "Plezy", map[string]any{}))
+		req := httptest.NewRequest(http.MethodGet, "/Videos/"+item.ID+"/stream?static=true&MediaSourceId="+info.MediaSources[0].ID, nil)
+		req.Header.Set("Authorization", `MediaBrowser Client="Plezy", Device="Android", DeviceId="dev1", Version="1.0", Token="`+tok+`"`)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		rr := httptest.NewRecorder()
+		h.handler.ServeHTTP(rr, req)
+		return rr.Body.String()
+	}
+	for _, item := range list.Items {
+		switch item.Name {
+		case "Live Now":
+			if body := get(item, "bytes=0-"); body != "follow" {
+				t.Fatalf("running recording served %q", body)
+			}
+			if body := get(item, "bytes=5000-"); body != "follow" {
+				t.Fatalf("running recording seek served %q", body)
+			}
+		case "Done":
+			if body := get(item, "bytes=0-"); body != "file" {
+				t.Fatalf("finished recording served %q", body)
+			}
+		}
+	}
+	want := []string{"aaaaaaaa-0000-0000-0000-0000000000f1|estimate|bytes=0-", "aaaaaaaa-0000-0000-0000-0000000000f1|estimate|bytes=5000-"}
+	if len(followed) != 2 || followed[0] != want[0] || followed[1] != want[1] {
+		t.Fatalf("recording stream requests = %v, want %v", followed, want)
 	}
 }

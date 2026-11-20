@@ -2087,6 +2087,7 @@ func main() {
 				RecordingRuleDelete: bridgeRecordings(recordingsService, recordingsHandler.DeleteRule),
 				RecordingRuleUpdate: bridgeRecordings(recordingsService, recordingsHandler.UpdateRule),
 				RecordingSettings:   bridgeRecordings(recordingsService, recordingsHandler.GetSettings),
+				RecordingStream:     bridgeRecordings(recordingsService, recordingsHandler.Stream),
 			},
 		}, func() (config.JellyfinBridgeSettings, error) {
 			return jellyfinbridge.EnsureServerID(cfgManager, settings.Cache.Directory)
