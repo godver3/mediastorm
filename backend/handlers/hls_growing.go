@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -55,6 +56,32 @@ func (m *HLSManager) sourceIsGrowing(ctx context.Context, path string) bool {
 	defer cancel()
 	growing, err := provider.IsGrowing(ctx, path)
 	return err == nil && growing
+}
+
+// sourceGrowingState is sourceIsGrowing with the doubt kept: known is false
+// when the source could not be asked (a passing error), gone when it no
+// longer exists.
+func (m *HLSManager) sourceGrowingState(ctx context.Context, path string) (growing, known, gone bool) {
+	if m == nil || m.streamer == nil || strings.TrimSpace(path) == "" {
+		return false, true, false
+	}
+	provider, ok := m.streamer.(streaming.GrowingSourceProvider)
+	if !ok {
+		return false, true, false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	growing, err := provider.IsGrowing(ctx, path)
+	switch {
+	case err == nil:
+		return growing, true, false
+	case errors.Is(err, streaming.ErrNotFound):
+		return false, true, true
+	}
+	return false, false, false
 }
 
 // growingFollowInputArgs are the FFmpeg input options (placed before -i) that

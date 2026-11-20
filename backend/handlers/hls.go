@@ -520,9 +520,21 @@ type HLSSession struct {
 	// at the source's own keyframes, so browsers can seek anywhere while the
 	// video is copied instead of re-encoded. CopySegmentStarts holds each
 	// segment's media start time; copyCompleted remembers closed segments.
+	// A running recording grows its timeline (hls_growing_copy.go):
+	// CopySegmentStarts is then replaced (never changed in place) under
+	// copyMu, copyIndex follows the file and copyRunSegments is the length
+	// of the cut list the current FFmpeg run was given.
 	StableCopy        bool
 	CopySegmentStarts []float64
 	copyCompleted     map[int]bool
+	copyMu            sync.RWMutex
+	copyIndex         *growingCopyIndex
+	copyRunSegments   int
+	// restartMu serialises deciding on and performing an FFmpeg restart:
+	// two requests for a growing timeline's open segment must not both
+	// restart (the second run would replace the first's cancel func and
+	// leave the first running).
+	restartMu sync.Mutex
 
 	// Compatibility Cast output ladder. Sessions start at 1080p; sustained slow
 	// segment delivery to the receiver drops the transcode to 720p for the rest
@@ -685,6 +697,21 @@ func castSegmentRestartPlan(session *HLSSession, requestedSegment, highestAvaila
 	lastServed := session.LastSegmentServed
 	completed := session.Completed
 	session.mu.RUnlock()
+	// On a growing copy timeline the run leaves the last segment of its cut
+	// list open. Once the index knows where that segment ends, it and every
+	// later segment need a run with the longer list: from that segment when
+	// the request is close to it, else from the requested one.
+	if tail, open := session.growingCopyTail(); open && requestedSegment >= tail {
+		restartAt := requestedSegment
+		if requestedSegment-tail <= castOnDemandLeadSegments {
+			restartAt = tail
+		}
+		start, ok := session.stableCopySegmentStart(restartAt)
+		if !ok {
+			return castSegmentRestart{}, false
+		}
+		return castSegmentRestart{SegmentStartNumber: restartAt, TranscodingOffset: start, OutputTimestampOffset: start}, true
+	}
 	// A stable copy run never goes backwards: a segment before the current
 	// run's start (e.g. one left half-written by a killed run) needs a
 	// restart, and so does one below the highest file on disk, which the run
@@ -2010,8 +2037,10 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// the duration unknown so the playlist stays EVENT and FFmpeg is not cut
 	// off with -t; the session follows the file instead (hls_growing.go).
 	growingSource := m.sourceIsGrowing(ctx, path)
+	writtenDuration := 0.0
 	if growingSource {
 		log.Printf("[hls] session %s: source is still being written (probed duration %.2fs); following it as it grows", sessionID, duration)
+		writtenDuration = duration
 		duration = 0
 	}
 
@@ -2030,11 +2059,23 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 	// falls back to the stable Cast-style compatibility transcode.
 	var copySegmentStarts []float64
 	var copyPlan stableCopyPlan
+	var growingIndex *growingCopyIndex
 	clientCaps := hlsClientCapsFrom(ctx)
 	if normalizedPlaybackTarget == "web-stable" && growingSource {
-		// A stable timeline needs the full duration up front; a growing
-		// recording plays as an ordinary web session that follows the file.
+		// A copyable recording still being written gets a copy timeline
+		// that grows with the file (hls_growing_copy.go). Otherwise it plays
+		// as an ordinary web session that follows the file.
 		normalizedPlaybackTarget = "web"
+		if plan, ok := stableCopyEligible(probeData, hasDV, dvProfile, hasHDR, writtenDuration, clientCaps); ok {
+			starts, index, planErr := m.planGrowingCopySegments(ctx, path, originalPath, probeData, writtenDuration)
+			if planErr != nil {
+				log.Printf("[hls] session %s: growing copy timeline unavailable (%v); following the file without one", sessionID, planErr)
+			} else {
+				copyPlan, copySegmentStarts, growingIndex = plan, starts, index
+				log.Printf("[hls] session %s: growing copy timeline with %d keyframe-aligned segments so far (up to %.1fs) codec=%s fmp4=%v",
+					sessionID, len(starts), starts[len(starts)-1], plan.Codec, plan.FMP4)
+			}
+		}
 	} else if normalizedPlaybackTarget == "web-stable" {
 		normalizedPlaybackTarget = "web"
 		if plan, ok := stableCopyEligible(probeData, hasDV, dvProfile, hasHDR, duration, clientCaps); ok {
@@ -2154,6 +2195,7 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 		CastReceiverHost:        castReceiverHost,
 		StableCopy:              copySegmentStarts != nil,
 		CopySegmentStarts:       copySegmentStarts,
+		copyIndex:               growingIndex,
 		ClientCaps:              clientCaps,
 		CopyPlan:                copyPlan,
 		GrowingSource:           growingSource,
@@ -3656,6 +3698,22 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		session.mu.Unlock()
 		log.Printf("[hls] session %s: growing source follow=%v (local input=%v)", session.ID, followInput, directInputPath != "")
 	}
+	// A growing copy timeline restarted further in begins reading at the
+	// segment's place in the file: a seek searches up to the end of the file,
+	// where a following input waits for more data on every probe
+	// (hls_growing_copy.go). Without a known place the run does not follow.
+	growingSkip, growingStart := int64(-1), 0.0
+	if followInput && stableCopyMode && session.TranscodingOffset > 0 {
+		if skip, start, ok := m.growingRestartOffset(ctx, session); ok {
+			growingSkip, growingStart = skip, start
+		} else {
+			followInput = false
+			session.mu.Lock()
+			session.SourceGrowing = false
+			session.mu.Unlock()
+			log.Printf("[hls] session %s: no file offset for segment %d; this run does not follow the file", session.ID, session.SegmentStartNumber)
+		}
+	}
 
 	if !hasDirectURL {
 		// Fall back to pipe streaming only if direct URL not available
@@ -3866,7 +3924,14 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// use accurate seek so A/V (and subs) share the requested content time — not the
 	// prior keyframe for one stream and the request time for the other.
 	if session.TranscodingOffset > 0 && !useOutputSeeking {
-		if stableCopyMode {
+		if growingSkip >= 0 {
+			// Read from the program tables before the segment's keyframe; the
+			// file's start time is taken off explicitly (-start_at_zero would
+			// take off this run's first timestamp), keeping the timeline.
+			args = append(args, "-skip_initial_bytes", strconv.FormatInt(growingSkip, 10),
+				"-itsoffset", strconv.FormatFloat(-growingStart, 'f', 6, 64))
+			log.Printf("[hls] session %s: growing copy run starts at byte %d (segment %d, %.3fs)", session.ID, growingSkip, session.SegmentStartNumber, session.TranscodingOffset)
+		} else if stableCopyMode {
 			// The offset is an indexed keyframe. FFmpeg pulls keyframe seeks back
 			// (by ~0.13s for video with B-frames, plus the container start time),
 			// so aim just past the keyframe to land exactly on it.
@@ -3923,7 +3988,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// Normalize all output stream timestamps to start at 0
 	// This ensures A/V sync when transcoding TrueHD/DTS audio (which have variable timing)
 	// and helps maintain subtitle sync across seek operations
-	args = append(args, "-start_at_zero")
+	if growingSkip < 0 {
+		args = append(args, "-start_at_zero")
+	}
 	if stableCopyMode {
 		// Keep source timestamps: every run, wherever it starts, then shares one
 		// timeline and the indexed keyframe times are the cut points.
@@ -4447,9 +4514,9 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// the playlist clients see is built from the plan, not from this file.
 		// Probed once per process (FFmpeg run): never while holding the lock.
 		absoluteCutTimes := m.segmentTimesAbsolute()
-		session.mu.RLock()
-		cutTimes := stableCopySegmentTimes(session.CopySegmentStarts, configuredSegmentStart, absoluteCutTimes)
-		session.mu.RUnlock()
+		runStarts := session.copyStarts()
+		cutTimes := stableCopySegmentTimes(runStarts, configuredSegmentStart, absoluteCutTimes)
+		session.setCopyRunSegments(len(runStarts))
 		if session.CopyPlan.FMP4 {
 			args = append(args, stableCopyFMP4MuxerArgs()...)
 		} else {
@@ -5259,7 +5326,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		expectedSegments = int(expectedDuration / hlsSegmentDuration)
 	}
 	if stableCopyMode {
-		expectedSegments = len(session.CopySegmentStarts)
+		expectedSegments = len(session.copyStarts())
 	}
 	actualSegments := highestSegment + 1
 	completionPercent := 0.0
@@ -5307,7 +5374,11 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	session.FinalSegmentCount = highestSegment // Track actual highest segment created
 	session.mu.Unlock()
 
-	if followInput {
+	if followInput && stableCopyMode {
+		// The copy timeline settles from its own index, not from what this
+		// run segmented.
+		m.extendGrowingCopy(context.Background(), session, true)
+	} else if followInput {
 		m.settleGrowingRun(session)
 	}
 
@@ -6089,7 +6160,17 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	sessionCompleted := session.Completed
 	session.mu.RUnlock()
 
-	if stableCopyMode && sessionDuration > 0 {
+	growingCopy := stableCopyMode && session.growingCopyOpen()
+	if growingCopy {
+		// A running recording's copy timeline follows the file; once the
+		// recording stops it gets its duration and an ENDLIST.
+		m.extendGrowingCopy(r.Context(), session, false)
+		session.mu.RLock()
+		sessionDuration = session.Duration
+		session.mu.RUnlock()
+		growingCopy = session.growingCopyOpen()
+	}
+	if stableCopyMode && (sessionDuration > 0 || growingCopy) {
 		playlistContent = buildStableCopyPlaylist(session)
 	} else if stableCastMode && sessionDuration > 0 {
 		playlistContent = buildStableCastPlaylist(session)
@@ -6134,7 +6215,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	// We pre-generate entries for all expected segments so the player knows the full duration
 	// Segment requests for not-yet-transcoded segments will block until ready
 	// A recording still being written stays EVENT (see hls_growing.go).
-	if sourceGrowing {
+	if sourceGrowing && !stableCopyMode {
 		playlistContent = growingPlaylistContent(playlistContent, sessionCompleted)
 	} else if sessionDuration > 0 && !strings.Contains(playlistContent, "#EXT-X-ENDLIST") {
 		playlistContent = strings.Replace(playlistContent, "#EXT-X-PLAYLIST-TYPE:EVENT", "#EXT-X-PLAYLIST-TYPE:VOD", 1)
@@ -6427,6 +6508,8 @@ func (m *HLSManager) ServeSubtitlePlaylist(w http.ResponseWriter, r *http.Reques
 }
 
 func (m *HLSManager) restartCastTranscodingForSegment(session *HLSSession, requestedSegment int) {
+	session.restartMu.Lock()
+	defer session.restartMu.Unlock()
 	highestAvailable := m.findHighestSegmentNumber(session)
 	plan, shouldRestart := castSegmentRestartPlan(session, requestedSegment, highestAvailable)
 	if !shouldRestart {
@@ -6501,6 +6584,9 @@ func (m *HLSManager) restartCastTranscodingAt(session *HLSSession, plan castSegm
 	// process writes the same stable playlist.
 	time.Sleep(25 * time.Millisecond)
 	if session.usesStableCopyTimeline() {
+		// The new run cuts at every start known now; concurrent requests
+		// for the old run's open segment must not restart it again.
+		session.setCopyRunSegments(len(session.copyStarts()))
 		m.resetStableCopyFrom(session, plan.SegmentStartNumber)
 	}
 
@@ -6588,6 +6674,8 @@ func (m *HLSManager) noteCastSegmentDelivery(session *HLSSession, r *http.Reques
 
 	log.Printf("[hls] session %s: Cast receiver cannot sustain 1080p (serve_time=%v for %d bytes); dropping to 720p from segment %d",
 		session.ID, serveDuration, segmentBytes, restartSegment)
+	session.restartMu.Lock()
+	defer session.restartMu.Unlock()
 	m.restartCastTranscodingAt(session, castSegmentRestart{
 		SegmentStartNumber:    restartSegment,
 		TranscodingOffset:     transcodingOffset,

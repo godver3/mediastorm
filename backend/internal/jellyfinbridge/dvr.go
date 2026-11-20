@@ -441,6 +441,20 @@ func (s *Server) recordingPlaybackInfo(w http.ResponseWriter, r *http.Request, p
 	}
 	s.plays.add(sess)
 	source := s.vodMediaSource(r, p, sess, status, req)
+	if rec.Status == models.RecordingStatusRunning {
+		// The file is still being written: played directly it ends where
+		// the recording is now. HLS follows it as it grows.
+		source.SupportsDirectPlay, source.SupportsDirectStream = false, false
+		// Its length is not known yet: what a probe of the partial file
+		// says would fix the client's seek bar at that length. Without one,
+		// jellyfin-web takes the player's duration, which grows with the
+		// EVENT playlist.
+		source.RunTimeTicks = nil
+		// Progress reports must not measure against it either.
+		sess.mu.Lock()
+		sess.duration = 0
+		sess.mu.Unlock()
+	}
 	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{MediaSources: []dto.MediaSourceInfo{source}, PlaySessionID: sess.ID})
 }
 
