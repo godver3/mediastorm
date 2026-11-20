@@ -1,8 +1,9 @@
 # NZB acquisition budget
 
-Set `NZB_TITLE_BUDGET_ENABLED=true` in the server environment to enable the
-optional download budget. The standard Compose file forwards this variable.
-The default is disabled. No companion service or extra datastore is required.
+Turn on **Settings → Streaming → NZB Download Budget** (`streaming.nzbDownloadBudget`,
+an advanced setting) to enable the optional download budget. It is global, off by
+default, and read on every download, so it takes effect without a restart. No
+companion service or extra datastore is required.
 
 With the budget enabled, playback, availability checks and track probes use one
 Go acquisition service. PostgreSQL records each outgoing attempt before HTTP
@@ -46,7 +47,7 @@ cooldown up to twenty-four hours (also applied to pauses restored at startup);
 subsequent shorter hints cannot reduce an existing pause. A 401, 404 or ordinary transport/body error does not pause the
 indexer. Successful cached NZBs remain usable during an indexer pause.
 
-When enabled, budget attempts and breaker cooldowns are stored in the existing
+When enabled, budget attempts and new breaker cooldowns are stored in the existing
 Postgres database and restored at startup. Only NZB bytes and in-flight requests
 are process-local: restarting can lose a cached payload but cannot reset its
 budget or a saved pause. Database reservation failures stop the grab; startup

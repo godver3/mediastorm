@@ -526,6 +526,9 @@ type StreamingSettings struct {
 	HealthCheckTimeoutSec     int     `json:"healthCheckTimeoutSec"`     // Timeout for manual debrid/usenet health checks in seconds (default: 15)
 	MaxAlternateTitleSearches int     `json:"maxAlternateTitleSearches"` // Max alternate/international titles to search per item (capped at 3; 0 means the cap)
 	MaxDailyUsenetQueries     int     `json:"maxDailyUsenetQueries"`     // Max query attempts per indexer for daily episodes (default: 5)
+	// NZBDownloadBudget limits NZB downloads per catalog title across all
+	// indexers and profiles (see internal/nzbfetch). Global, off by default.
+	NZBDownloadBudget bool `json:"nzbDownloadBudget"`
 }
 
 // SearchMode determines how scraper/indexer results are aggregated

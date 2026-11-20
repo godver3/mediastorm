@@ -54,6 +54,7 @@ type payload struct {
 
 type Fetcher struct {
 	store      BudgetStore
+	enabled    func() bool
 	group      singleflight.Group
 	mu         sync.Mutex
 	cache      map[string]payload
@@ -66,6 +67,14 @@ func New(store BudgetStore) *Fetcher {
 	return &Fetcher{store: store, cache: make(map[string]payload)}
 }
 
+// NewToggled budgets only while enabled reports true (the admin setting), so
+// the budget can be switched on and off without a restart.
+func NewToggled(store BudgetStore, enabled func() bool) *Fetcher {
+	f := New(store)
+	f.enabled = enabled
+	return f
+}
+
 var Shared = New(nil)
 
 func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *providerbreaker.Breaker, downloadURL string, candidate models.NZBResult, userAgent string) ([]byte, http.Header, error) {
@@ -76,7 +85,7 @@ func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *provi
 		breaker = providerbreaker.Shared()
 	}
 	provider := strings.ToLower(strings.TrimSpace(candidate.Indexer))
-	if f.store == nil {
+	if f.store == nil || (f.enabled != nil && !f.enabled()) {
 		p, err := f.download(ctx, client, breaker, downloadURL, provider, "", userAgent, "")
 		return p.data, p.header, err
 	}
@@ -189,7 +198,7 @@ func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *pr
 		return payload{}, fmt.Errorf("indexer %s is cooling down after rate limiting until %s", provider, until.UTC().Format(time.RFC3339))
 	}
 	defer breaker.ReleaseProbe(provider, probe)
-	if f.store != nil {
+	if f.store != nil && titleKey != "" {
 		retryAt, err := f.store.ReserveNZB(ctx, titleKey, release, time.Now())
 		if err != nil {
 			return payload{}, fmt.Errorf("reserve NZB title budget: %w", err)

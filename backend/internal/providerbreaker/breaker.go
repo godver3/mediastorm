@@ -40,6 +40,8 @@ type Breaker struct {
 	mu     sync.Mutex
 	states map[string]state
 	store  CooldownStore
+	// persist gates saving new pauses (the NZB budget setting); nil saves.
+	persist func() bool
 	now    func() time.Time
 }
 
@@ -74,6 +76,14 @@ func (b *Breaker) Restore(ctx context.Context, store CooldownStore) error {
 	}
 	b.store = store
 	return nil
+}
+
+// SetPersist makes saving new pauses conditional; clearing saved ones always
+// runs so a pause saved earlier can't outlive a later success.
+func (b *Breaker) SetPersist(fn func() bool) {
+	b.mu.Lock()
+	b.persist = fn
+	b.mu.Unlock()
 }
 
 func normalize(provider string) string {
@@ -141,8 +151,9 @@ func (b *Breaker) RecordRateLimit(provider string, retryHint time.Duration) time
 	}
 	current.probeInFlight = false
 	b.states[key] = current
+	persist := b.persist
 	b.mu.Unlock()
-	if b.store != nil {
+	if b.store != nil && (persist == nil || persist()) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := b.store.SaveCooldown(ctx, key, Cooldown{Until: current.until, Failures: current.failures}); err != nil {

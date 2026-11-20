@@ -267,3 +267,21 @@ func TestAny2xxIsSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The admin setting switches the budget per download, without a restart.
+func TestToggledBudgetFollowsSetting(t *testing.T) {
+	var on atomic.Bool
+	var reservations atomic.Int32
+	f := NewToggled(budgetFunc(func(context.Context, string, string, time.Time) (time.Time, error) {
+		reservations.Add(1)
+		return time.Time{}, nil
+	}), on.Load)
+	client := &http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { return response(200, "<nzb/>"), nil })}
+	if _, _, err := f.Fetch(context.Background(), client, providerbreaker.New(), "https://fixture/off", candidate("tmdb:movie:78"), ""); err != nil || reservations.Load() != 0 {
+		t.Fatalf("disabled: err=%v reservations=%d", err, reservations.Load())
+	}
+	on.Store(true)
+	if _, _, err := f.Fetch(context.Background(), client, providerbreaker.New(), "https://fixture/on", candidate("tmdb:movie:78"), ""); err != nil || reservations.Load() != 1 {
+		t.Fatalf("enabled: err=%v reservations=%d", err, reservations.Load())
+	}
+}

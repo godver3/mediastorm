@@ -99,3 +99,22 @@ func TestRestoreCapsPersistedCooldowns(t *testing.T) {
 		t.Fatalf("restored cooldown not capped: %v", time.Until(until))
 	}
 }
+
+func TestSetPersistGatesSavingPauses(t *testing.T) {
+	store := memoryCooldowns{}
+	b := New()
+	if err := b.Restore(t.Context(), store); err != nil {
+		t.Fatal(err)
+	}
+	on := false
+	b.SetPersist(func() bool { return on })
+	b.RecordRateLimit("off", time.Minute)
+	on = true
+	b.RecordRateLimit("on", time.Minute)
+	if _, ok := store["off"]; ok {
+		t.Fatal("pause saved while disabled")
+	}
+	if _, ok := store["on"]; !ok {
+		t.Fatal("pause not saved while enabled")
+	}
+}

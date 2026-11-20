@@ -32,7 +32,6 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - DATABASE_URL=postgres://mediastorm:${POSTGRES_PASSWORD:-mediastorm}@postgres:5432/mediastorm?sslmode=disable
-      - NZB_TITLE_BUDGET_ENABLED=${NZB_TITLE_BUDGET_ENABLED:-false}
     restart: unless-stopped
     # Leave enough time for the synchronous shutdown notification and the
     # backend's existing 30-second graceful cleanup before Docker sends SIGKILL.

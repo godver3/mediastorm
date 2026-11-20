@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -234,21 +233,25 @@ func main() {
 		fmt.Println("")
 		log.Fatal("DATABASE_URL is required. Set it as an environment variable or in settings.json under database.url")
 	}
-	if raw := strings.TrimSpace(os.Getenv("NZB_TITLE_BUDGET_ENABLED")); raw != "" {
-		enabled, err := strconv.ParseBool(raw)
+	// NZB download budget: Settings > Streaming > NZB Download Budget, read on
+	// every download so it switches without a restart.
+	{
+		nzbBudgetEnabled := func() bool {
+			s, err := cfgManager.Load()
+			return err == nil && s.Streaming.NZBDownloadBudget
+		}
+		repo := store.NZBAcquisition()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := providerbreaker.Shared().Restore(ctx, repo)
+		cancel()
 		if err != nil {
-			log.Fatal("NZB_TITLE_BUDGET_ENABLED must be a boolean")
-		}
-		if enabled {
-			repo := store.NZBAcquisition()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := providerbreaker.Shared().Restore(ctx, repo)
-			cancel()
-			if err != nil {
-				log.Fatalf("initialize NZB policy: %v", err)
+			if settings.Streaming.NZBDownloadBudget {
+				log.Fatalf("initialize NZB download budget: %v", err)
 			}
-			nzbfetch.Shared = nzbfetch.New(repo)
+			log.Printf("[nzb-budget] saved indexer pauses not restored: %v", err)
 		}
+		providerbreaker.Shared().SetPersist(nzbBudgetEnabled)
+		nzbfetch.Shared = nzbfetch.NewToggled(repo, nzbBudgetEnabled)
 	}
 	// Construct router
 	var r *mux.Router = utils.NewRouter()

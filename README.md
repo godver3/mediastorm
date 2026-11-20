@@ -231,7 +231,7 @@ See [Ollama setup](https://docs.ollama.com/faq) and [API compatibility](https://
 
 ### NZB Download Budget
 
-An optional NZB download budget can be enabled with `NZB_TITLE_BUDGET_ENABLED=true`.
+An optional NZB download budget can be enabled in **Settings → Streaming → NZB Download Budget** (advanced; off by default).
 It limits acquisitions per catalog movie or episode across profiles and keeps
 budgets and indexer cooldowns in PostgreSQL. See the [NZB acquisition guide](backend/internal/nzbfetch/README.md)
 for limits, required catalog context, and restart behavior.
