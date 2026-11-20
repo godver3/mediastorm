@@ -72,6 +72,10 @@ func (c *trailerCache) put(key string, urls []dto.MediaURL, now time.Time) {
 	c.entries[key] = trailerEntry{urls: urls, expires: now.Add(trailerTTL)}
 }
 
+// trailerLookupTimeout caps an uncached trailer lookup so a slow TMDB/TVDB
+// answer doesn't hold up the detail page; a timeout isn't cached.
+const trailerLookupTimeout = 3 * time.Second
+
 // remoteTrailers returns a title's trailers as Jellyfin RemoteTrailers (the
 // clients' trailer button plays them, YouTube links included).
 func (s *Server) remoteTrailers(ctx context.Context, t titleInfo) []dto.MediaURL {
@@ -92,6 +96,9 @@ func (s *Server) remoteTrailers(ctx context.Context, t titleInfo) []dto.MediaURL
 	q := models.TrailerQuery{MediaType: t.MediaType, TitleID: t.ID, Name: t.Name, Year: t.Year, IMDBID: t.ExternalIDs["imdb"]}
 	q.TMDBID, _ = strconv.ParseInt(t.ExternalIDs["tmdb"], 10, 64)
 	q.TVDBID, _ = strconv.ParseInt(t.ExternalIDs["tvdb"], 10, 64)
+	// Bounded: a cold lookup runs inline on the detail page's request.
+	ctx, cancel := context.WithTimeout(ctx, trailerLookupTimeout)
+	defer cancel()
 	resp, err := src.Trailers(ctx, q)
 	if err != nil {
 		// Not cached: a failed lookup is retried on the next open.

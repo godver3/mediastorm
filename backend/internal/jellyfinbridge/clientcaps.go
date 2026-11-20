@@ -279,10 +279,6 @@ func dvRangeType(status *playback.PrequeueStatusResponse) string {
 	return "DOVI"
 }
 
-// liveTarget is the mediastorm playback target for Live TV: browsers get the
-// H.264/AAC compatibility encode, unless video transcoding is disabled, in
-// which case channels are passed through as received (native transmux, the
-// audio included: the live pipeline converts both or neither).
 // liveTimeshift reports whether live channels tune with mediastorm's timeshift
 // window (Live TV setting), so Jellyfin players can pause and rewind inside
 // it: the HLS playlist then lists the window, which jellyfin-web, ExoPlayer
@@ -295,6 +291,10 @@ func (s *Server) liveTimeshift() bool {
 	return !(cfg.DisableVideoTranscoding && cfg.DisableAudioTranscoding)
 }
 
+// liveTarget is the mediastorm playback target for Live TV: browsers get the
+// H.264/AAC compatibility encode, unless video transcoding is disabled, in
+// which case channels are passed through as received (native transmux, the
+// audio included: the live pipeline converts both or neither).
 func (s *Server) liveTarget() string {
 	if s.settings().DisableVideoTranscoding {
 		return "native"

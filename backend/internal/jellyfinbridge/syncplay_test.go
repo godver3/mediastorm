@@ -647,3 +647,40 @@ func TestSyncPlayTakesOverLapsedAppMembership(t *testing.T) {
 		t.Fatalf("absent member left behind: %+v", got.Members)
 	}
 }
+
+// A member whose profile lost access to a room leaves alone: the room keeps
+// running for the members who can still see it, whichever is checked first.
+func TestSyncPlayLostAccessLeavesOnlyThatProfile(t *testing.T) {
+	h, rooms, tok, alice := syncHarness(t)
+	den, err := h.users.CreateForAccount(h.alice.AccountID, "Den")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rooms.names[den.ID] = "Den"
+	denTok := h.login("Den", "alice-pass")
+	denClient := &syncClient{t: t, c: h.srv.sockets.add(den.ID, "", denTok, nil)}
+	room := rooms.add("host", models.WatchRoom{Title: "The Matrix", MediaType: "movie", ItemID: "tmdb:movie:603",
+		Params: map[string]string{"tmdbId": "603"}, Status: models.WatchRoomStatusPlaying, Position: 10}, h.alice.ID, den.ID)
+	for _, tk := range []string{tok, denTok} {
+		if rec := h.do(http.MethodPost, "/SyncPlay/Join", tk, map[string]string{"GroupId": compactID(room.ID)}); rec.Code != http.StatusNoContent {
+			t.Fatalf("join: %d", rec.Code)
+		}
+	}
+	alice.drain()
+	denClient.drain()
+
+	rooms.mu.Lock()
+	rooms.invites[room.ID] = []string{h.alice.ID}
+	rooms.mu.Unlock()
+	h.srv.syncTick(context.Background())
+
+	if kinds, _, _ := denClient.expect(); !strings.Contains(fmt.Sprint(kinds), "GroupLeft") {
+		t.Fatalf("den after losing access: %v", kinds)
+	}
+	if kinds, _, _ := alice.expect(); strings.Contains(fmt.Sprint(kinds), "GroupLeft") {
+		t.Fatalf("alice dropped with den: %v", kinds)
+	}
+	if h.srv.syncPlayState().member(&principal{Profile: h.alice, Client: clientInfo{DeviceID: "dev1"}}) == nil {
+		t.Fatal("alice's membership dropped")
+	}
+}

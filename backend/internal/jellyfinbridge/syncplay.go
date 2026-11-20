@@ -3,6 +3,7 @@ package jellyfinbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"math"
 	"net/http"
@@ -743,9 +744,52 @@ func (s *Server) syncTick(ctx context.Context) {
 		if len(live) == 0 {
 			continue
 		}
-		room, err := s.deps.WatchRooms.Get(ctx, roomID, live[0].p.Profile.ID)
-		if err != nil && !strings.Contains(err.Error(), "not found") {
-			continue // transient: try again next tick
+		// Read the room as each member profile: a profile that lost access
+		// answers "not found" while the room still runs for the others, so
+		// only that profile's sessions leave.
+		var (
+			room      *models.WatchRoom
+			err       error
+			transient bool
+			lost      = map[string]bool{}
+			seen      = map[string]bool{}
+		)
+		for _, m := range live {
+			pid := m.p.Profile.ID
+			if seen[pid] {
+				continue
+			}
+			seen[pid] = true
+			r, gerr := s.deps.WatchRooms.Get(ctx, roomID, pid)
+			switch {
+			case gerr == nil:
+				room = r
+			case strings.Contains(gerr.Error(), "not found"):
+				lost[pid] = true
+			default:
+				transient = true
+			}
+			if transient {
+				break
+			}
+		}
+		if transient {
+			continue // try again next tick
+		}
+		if room == nil {
+			err = errors.New("watch room not found")
+		}
+		if err == nil && len(lost) > 0 {
+			kept := live[:0:0]
+			for _, m := range live {
+				if lost[m.p.Profile.ID] {
+					s.syncPlayState().dropMember(m)
+					s.pushGroup(m, "GroupLeft", m.groupID)
+					continue
+				}
+				kept = append(kept, m)
+			}
+			live = kept
 		}
 		if err == nil && room.Status != models.WatchRoomStatusEnded {
 			for _, m := range live {
