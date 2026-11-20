@@ -192,6 +192,10 @@ type VideoHandler struct {
 	// disabled globally (no manager exists) and a DLNA renderer forces the path.
 	dlnaCapsOnce sync.Once
 	dlnaCaps     HWAccelCaps
+
+	// recordingSegments returns a recording's commercial breaks for
+	// /video/segments (see SetRecordingSegments).
+	recordingSegments recordingSegmentsFunc
 }
 
 // LiveChannelProvider resolves the profile-filtered channels that the backend

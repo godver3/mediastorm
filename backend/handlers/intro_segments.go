@@ -6,7 +6,9 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"novastream/services/skipsegments"
@@ -54,6 +56,19 @@ type resolveSkipSegmentsRequest struct {
 	Episode  int                    `json:"episode"`
 	Duration float64                `json:"duration"`
 	Chapters []skipsegments.Chapter `json:"chapters"`
+	// RecordingID (a Live TV recording being played) adds the commercial
+	// breaks comskip found in it.
+	RecordingID string `json:"recordingId"`
+}
+
+// recordingSegmentsFunc returns the commercial breaks of a recording the
+// request may play (nil when it may not, or none are known).
+type recordingSegmentsFunc func(r *http.Request, recordingID string) []skipsegments.Segment
+
+// SetRecordingSegments lets /video/segments return recordings' commercial
+// breaks (see RecordingsHandler.CommercialSegments).
+func (h *VideoHandler) SetRecordingSegments(fn func(r *http.Request, recordingID string) []skipsegments.Segment) {
+	h.recordingSegments = fn
 }
 
 type resolveSkipSegmentsResponse struct {
@@ -176,9 +191,14 @@ func (h *VideoHandler) resolveSkipSegments(w http.ResponseWriter, r *http.Reques
 		cancel()
 	}
 	// Provider failures degrade to chapter-only results; this endpoint never fails playback.
-	writeSkipSegmentsJSON(w, resolveSkipSegmentsResponse{
-		Segments: skipsegments.Resolve(lookup.IntroDB, lookup.SkipDB, request.Chapters, duration),
-	})
+	segments := skipsegments.Resolve(lookup.IntroDB, lookup.SkipDB, request.Chapters, duration)
+	if recordingID := strings.TrimSpace(request.RecordingID); recordingID != "" && h.recordingSegments != nil {
+		if commercials := h.recordingSegments(r, recordingID); len(commercials) > 0 {
+			segments = append(segments, commercials...)
+			sort.SliceStable(segments, func(i, j int) bool { return segments[i].Start < segments[j].Start })
+		}
+	}
+	writeSkipSegmentsJSON(w, resolveSkipSegmentsResponse{Segments: segments})
 }
 
 func writeSkipSegmentsJSON(w http.ResponseWriter, response any) {

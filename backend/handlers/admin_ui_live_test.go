@@ -1,8 +1,11 @@
 package handlers
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
-func TestLiveSectionShowsOnlyTimeshift(t *testing.T) {
+func TestLiveSectionShowsOnlyServerWideFields(t *testing.T) {
 	section := SettingsSchema["live"].(map[string]interface{})
 	if section["group"] != "providers" {
 		t.Fatalf("live section group = %v, want providers (ungrouped sections are not drawn)", section["group"])
@@ -14,7 +17,14 @@ func TestLiveSectionShowsOnlyTimeshift(t *testing.T) {
 			visible = append(visible, key)
 		}
 	}
-	if len(visible) != 1 || visible[0] != "timeshiftMinutes" {
-		t.Fatalf("visible live fields = %v, want [timeshiftMinutes]", visible)
+	sort.Strings(visible)
+	want := []string{"comskip.enabled", "comskip.iniPath", "comskip.path", "timeshiftMinutes"}
+	if len(visible) != len(want) {
+		t.Fatalf("visible live fields = %v, want %v", visible, want)
+	}
+	for i := range want {
+		if visible[i] != want[i] {
+			t.Fatalf("visible live fields = %v, want %v", visible, want)
+		}
 	}
 }

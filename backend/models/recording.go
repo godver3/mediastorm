@@ -49,6 +49,13 @@ type Recording struct {
 	Guide *RecordingGuide `json:"guide,omitempty"`
 }
 
+// CommercialBreak is a commercial break comskip found in a recording, in
+// seconds from the start of the file.
+type CommercialBreak struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
 // RecordingGuide is the guide's description of a recorded programme, kept
 // with the recording because the guide moves on (XMLTV fields).
 type RecordingGuide struct {

@@ -5,6 +5,9 @@ package handlers
 // before live.sources: still read for older configs, but edited per source now.
 var liveVisibleFields = map[string]bool{
 	"timeshiftMinutes": true,
+	"comskip.enabled":  true,
+	"comskip.path":     true,
+	"comskip.iniPath":  true,
 }
 
 func init() { hideLegacyLiveFields(SettingsSchema) }

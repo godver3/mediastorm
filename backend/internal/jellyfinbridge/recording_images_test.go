@@ -148,3 +148,40 @@ func TestEpisodeNumbers(t *testing.T) {
 		}
 	}
 }
+
+// comskip's commercial breaks reach Jellyfin clients as Commercial segments,
+// announced in PlaybackInfo so jellyfin-web asks for them.
+func TestRecordingCommercialSegments(t *testing.T) {
+	h, f, tok := dvrHarness(t)
+	h.srv.deps.RecordingCommercials = func(outputPath string) []models.CommercialBreak {
+		if outputPath != "/rec/ads.ts" {
+			return nil
+		}
+		return []models.CommercialBreak{{Start: 0, End: 159.6}, {Start: 1395.36, End: 1609.6}}
+	}
+	start := time.Now().Add(-2 * time.Hour).UTC()
+	end := start.Add(30 * time.Minute)
+	f.recs = []models.Recording{
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000a1", UserID: h.alice.ID, Status: models.RecordingStatusCompleted, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "With Ads", StartAt: start, EndAt: end, ActualStartAt: &start, ActualEndAt: &end, OutputPath: "/rec/ads.ts", OutputSizeBytes: 1},
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000a2", UserID: h.alice.ID, Status: models.RecordingStatusCompleted, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "Without", StartAt: start, EndAt: end, ActualStartAt: &start, ActualEndAt: &end, OutputPath: "/rec/plain.ts", OutputSizeBytes: 1},
+	}
+	list := decode[dto.QueryResult[dto.BaseItemDto]](t, h.do(http.MethodGet, "/LiveTv/Recordings", tok, nil))
+	for _, item := range list.Items {
+		info := decode[dto.PlaybackInfoResponse](t, h.do(http.MethodPost, "/Items/"+item.ID+"/PlaybackInfo", tok, map[string]any{}))
+		src := info.MediaSources[0]
+		segs := decode[dto.QueryResult[dto.MediaSegmentDto]](t, h.do(http.MethodGet, "/MediaSegments/"+src.ID+"?includeSegmentTypes=Commercial", tok, nil))
+		switch item.Name {
+		case "With Ads":
+			if !src.HasSegments || len(segs.Items) != 2 || segs.Items[1].Type != "Commercial" ||
+				segs.Items[1].StartTicks != secondsToTicks(1395.36) || segs.Items[1].EndTicks != secondsToTicks(1609.6) {
+				t.Fatalf("segments = %v %+v", src.HasSegments, segs.Items)
+			}
+		case "Without":
+			if src.HasSegments || len(segs.Items) != 0 {
+				t.Fatalf("segments without breaks = %v %+v", src.HasSegments, segs.Items)
+			}
+		}
+	}
+}

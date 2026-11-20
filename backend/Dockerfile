@@ -179,6 +179,37 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 		echo "${JELLYFIN_FFMPEG_AMD64_SHA256}  ffmpeg-package.deb" | sha256sum -c -; \
 	fi
 
+# comskip finds commercial breaks in finished recordings (Live TV > Commercial
+# Detection, off by default). Linked statically against a minimal FFmpeg (the
+# decoders and parsers of broadcast MPEG-TS only), so the image needs no
+# second set of FFmpeg libraries next to jellyfin-ffmpeg.
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS comskip-builder
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget xz-utils git build-essential autoconf automake libtool pkg-config nasm libargtable2-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG COMSKIP_FFMPEG_VERSION=5.1.6
+ARG COMSKIP_FFMPEG_SHA256=f4fa066278f7a47feab316fef905f4db0d5e9b589451949740f83972b30901bd
+RUN wget -q "https://ffmpeg.org/releases/ffmpeg-${COMSKIP_FFMPEG_VERSION}.tar.xz" -O /tmp/ffmpeg.tar.xz \
+	&& echo "${COMSKIP_FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+	&& mkdir /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 \
+	&& cd /tmp/ffmpeg \
+	&& ./configure --prefix=/opt/comskip-ffmpeg --enable-static --disable-shared --disable-programs --disable-doc \
+		--disable-network --disable-autodetect --disable-everything \
+		--enable-avcodec --enable-avformat --enable-avutil --enable-swscale \
+		--enable-protocol=file --enable-demuxer=mpegts,mpegtsraw,mov,matroska \
+		--enable-decoder=h264,hevc,mpeg2video,mpeg1video,mp2,mp3,ac3,eac3,aac,aac_latm \
+		--enable-parser=h264,hevc,mpegvideo,mpegaudio,ac3,aac,aac_latm \
+	&& make -j"$(nproc)" && make install
+ARG COMSKIP_COMMIT=a140b6ac8bc8f596729e9052819affc779c3b377
+RUN git clone --filter=blob:none https://github.com/erikkaashoek/Comskip /tmp/comskip \
+	&& cd /tmp/comskip && git checkout "${COMSKIP_COMMIT}" \
+	&& ./autogen.sh \
+	&& PKG_CONFIG_PATH=/opt/comskip-ffmpeg/lib/pkgconfig PKG_CONFIG="pkg-config --static" ./configure \
+	&& make -j"$(nproc)" && strip comskip \
+	&& mkdir -p /out && cp comskip /out/comskip \
+	&& /out/comskip --help 2>&1 | grep -qi comskip
+
 # Final stage
 FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 ARG TARGETARCH
@@ -249,6 +280,12 @@ COPY --from=ccextractor-builder --chown=root:root --chmod=0755 /out/ccextractor 
 COPY --from=ccextractor-builder /out/libgpac.so* /usr/local/lib/
 RUN ldconfig \
 	&& ccextractor -V >/dev/null
+
+# Commercial detection (see comskip-builder); argtable2 is its one shared library.
+RUN apt-get update && apt-get install -y --no-install-recommends libargtable2-0 \
+	&& rm -rf /var/lib/apt/lists/*
+COPY --from=comskip-builder --chown=root:root --chmod=0755 /out/comskip /usr/local/bin/comskip
+RUN comskip --help 2>&1 | grep -qi comskip
 
 # The release build resolves latest stable once and passes the version/checksum
 # as build args. Keep verified defaults for direct Docker builds and rollback.
