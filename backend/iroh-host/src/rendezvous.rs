@@ -35,8 +35,11 @@
 //! verification string (SAS) bound to the iroh channel keys, shown on both ends at pairing
 //! time — the lighter equivalent of a full PAKE.
 
+use std::net::IpAddr;
+
 use anyhow::{anyhow, Context, Result};
-use iroh::SecretKey;
+use base64::prelude::*;
+use iroh::{EndpointAddr, SecretKey, TransportAddr};
 use iroh_dns::pkarr::{SignedPacket, Timestamp};
 use mainline::{Dht, MutableItem};
 use sha2::{Digest, Sha256};
@@ -101,6 +104,78 @@ fn build_packet(code: &str, invite: &str) -> Result<SignedPacket> {
         .map_err(|err| anyhow!("build signed packet: {err}"))
 }
 
+/// Build the packet for `invite`, trimming its direct IP addresses when the full invite
+/// doesn't fit a pkarr packet (1000 bytes). Hosts with many interfaces (Docker bridges,
+/// IPv6, VPNs) exceed that. The node ID and relay URL are always kept: they're enough to
+/// connect, and the client finds direct paths through the relay and address lookup.
+/// IPs are added back best-first (public before private) while the packet still fits.
+fn build_fitting_packet(code: &str, invite: &str) -> Result<SignedPacket> {
+    let full_err = match build_packet(code, invite) {
+        Ok(packet) => return Ok(packet),
+        Err(err) => err,
+    };
+    let Some(mut addr) = decode_endpoint_addr(invite.trim()) else {
+        return Err(full_err);
+    };
+    let mut ips: Vec<TransportAddr> = Vec::new();
+    addr.addrs.retain(|a| match a {
+        TransportAddr::Ip(_) => {
+            ips.push(a.clone());
+            false
+        }
+        _ => true,
+    });
+    ips.sort_by_key(|a| match a {
+        TransportAddr::Ip(sock) => ip_rank(&sock.ip()),
+        _ => u8::MAX,
+    });
+    let mut packet = build_packet(code, &encode_endpoint_addr(&addr)?)
+        .context("invite too large even without direct addresses")?;
+    for ip in ips {
+        addr.addrs.insert(ip.clone());
+        match build_packet(code, &encode_endpoint_addr(&addr)?) {
+            Ok(fits) => packet = fits,
+            Err(_) => {
+                addr.addrs.remove(&ip);
+            }
+        }
+    }
+    Ok(packet)
+}
+
+/// Lower is better: public IPv4, public IPv6, private/ULA, link-local/loopback.
+fn ip_rank(ip: &IpAddr) -> u8 {
+    match ip {
+        IpAddr::V4(v4) if v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() => 3,
+        IpAddr::V4(v4)
+            if v4.is_private() || v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64 =>
+        {
+            2
+        }
+        IpAddr::V4(_) => 0,
+        IpAddr::V6(v6)
+            if v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80 =>
+        {
+            3
+        }
+        IpAddr::V6(v6) if (v6.segments()[0] & 0xfe00) == 0xfc00 => 2,
+        IpAddr::V6(_) => 1,
+    }
+}
+
+fn decode_endpoint_addr(invite: &str) -> Option<EndpointAddr> {
+    let encoded = invite.strip_prefix(INVITE_PREFIX)?;
+    let json = BASE64_URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    serde_json::from_slice(&json).ok()
+}
+
+fn encode_endpoint_addr(addr: &EndpointAddr) -> Result<String> {
+    Ok(format!(
+        "{INVITE_PREFIX}{}",
+        BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(addr)?)
+    ))
+}
+
 /// Reassemble the invite blob from a packet's ordered TXT chunks.
 fn invite_from_packet(packet: &SignedPacket) -> Result<String> {
     let mut chunks: Vec<(usize, String)> = Vec::new();
@@ -160,7 +235,7 @@ fn packet_is_fresh_at(packet: &SignedPacket, now_micros: u64) -> bool {
 
 /// Publish (or refresh) the rendezvous record for `code` pointing at `invite`.
 pub async fn publish(dht: &Dht, code: &str, invite: &str) -> Result<()> {
-    let packet = build_packet(code, invite)?;
+    let packet = build_fitting_packet(code, invite)?;
     let item = signed_packet_to_mutable_item(&packet);
     dht.clone()
         .as_async()
@@ -223,6 +298,43 @@ mod tests {
         assert_eq!(packet.public_key(), derive_secret_key(code).public());
         let recovered = invite_from_packet(&packet).expect("reassemble");
         assert_eq!(recovered, invite);
+    }
+
+    #[test]
+    fn oversized_invite_is_trimmed_to_fit_keeping_relay_and_public_ips() {
+        let code = "mshost-424242-131313";
+        let id = SecretKey::from_bytes(&[7u8; 32]).public();
+        let mut addrs = std::collections::BTreeSet::new();
+        addrs.insert(TransportAddr::Relay(
+            "https://use1-1.relay.n0.iroh-canary.iroh.link./"
+                .parse()
+                .unwrap(),
+        ));
+        addrs.insert(TransportAddr::Ip("203.0.113.9:41064".parse().unwrap()));
+        for i in 0..40u16 {
+            addrs.insert(TransportAddr::Ip(
+                format!("172.17.{i}.1:41064").parse().unwrap(),
+            ));
+            addrs.insert(TransportAddr::Ip(
+                format!("[fd00::{i:x}]:41064").parse().unwrap(),
+            ));
+        }
+        let invite = encode_endpoint_addr(&EndpointAddr { id, addrs }).unwrap();
+        assert!(
+            build_packet(code, &invite).is_err(),
+            "fixture must exceed the packet limit"
+        );
+
+        let packet = build_fitting_packet(code, &invite).expect("trimmed packet");
+        let trimmed = decode_endpoint_addr(&invite_from_packet(&packet).unwrap()).unwrap();
+        assert_eq!(trimmed.id, id);
+        assert!(trimmed
+            .addrs
+            .iter()
+            .any(|a| matches!(a, TransportAddr::Relay(_))));
+        assert!(trimmed
+            .addrs
+            .contains(&TransportAddr::Ip("203.0.113.9:41064".parse().unwrap())));
     }
 
     #[test]
