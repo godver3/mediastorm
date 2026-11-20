@@ -72,4 +72,8 @@ type PlaybackResolution struct {
 	// TrackSelection is the server's audio/subtitle choice for this source.
 	// Only populated when the resolve request sets includeTrackSelection.
 	TrackSelection *TrackSelection `json:"trackSelection,omitempty"`
+	// FrameRate is the video's frame rate as ffprobe gives it ("24000/1001"),
+	// from the track selection's probe, so clients can match the display
+	// refresh rate before playback starts.
+	FrameRate string `json:"frameRate,omitempty"`
 }

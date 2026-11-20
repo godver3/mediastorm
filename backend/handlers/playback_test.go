@@ -401,6 +401,34 @@ func TestResolve_ReusesResolverProbeForTrackSelection(t *testing.T) {
 	}
 }
 
+func TestResolve_IncludesProbedFrameRate(t *testing.T) {
+	h := NewPlaybackHandler(&mockPlaybackService{
+		resolveFunc: func(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
+			return &models.PlaybackResolution{
+				WebDAVPath: "https://cdn.example/show.mkv",
+				Probe: &models.VideoFullResult{
+					AudioStreams: []models.AudioStreamInfo{{Index: 1, Codec: "ac3", Language: "fre"}},
+					AvgFrameRate: "25/1",
+				},
+			}, nil
+		},
+	})
+	h.SetVideoProber(&trackSelectionProber{})
+
+	body, _ := json.Marshal(map[string]interface{}{"result": models.NZBResult{Title: "Show"}, "includeTrackSelection": true})
+	req := httptest.NewRequest(http.MethodPost, "/api/playback/resolve", bytes.NewBuffer(body))
+	rec := httptest.NewRecorder()
+	h.Resolve(rec, req)
+
+	var resp models.PlaybackResolution
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.FrameRate != "25/1" {
+		t.Fatalf("frameRate = %q, want 25/1", resp.FrameRate)
+	}
+}
+
 func TestQueueStatus_IncludesTrackSelectionWhenRequested(t *testing.T) {
 	h := NewPlaybackHandler(&mockPlaybackService{
 		queueStatusFunc: func(ctx context.Context, queueID int64) (*models.PlaybackResolution, error) {

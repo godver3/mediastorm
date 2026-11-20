@@ -3219,6 +3219,9 @@ components:
             $ref: '#/components/schemas/SubtitleSessionInfo'
         trackSelection:
           $ref: '#/components/schemas/TrackSelection'
+        frameRate:
+          type: string
+          description: Video frame rate as ffprobe gives it (e.g. "24000/1001"), from the track selection probe.
 
     Chapter:
       type: object
