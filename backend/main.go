@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +28,9 @@ import (
 	"novastream/internal/integration"
 	"novastream/internal/jellyfinbridge"
 	"novastream/internal/mediaidentity"
+	"novastream/internal/nzbfetch"
 	"novastream/internal/pool"
+	"novastream/internal/providerbreaker"
 	"novastream/internal/slogutil"
 	internalusenet "novastream/internal/usenet"
 	"novastream/internal/webdav"
@@ -230,6 +233,22 @@ func main() {
 		fmt.Println("╚══════════════════════════════════════════════════════════════════════╝")
 		fmt.Println("")
 		log.Fatal("DATABASE_URL is required. Set it as an environment variable or in settings.json under database.url")
+	}
+	if raw := strings.TrimSpace(os.Getenv("NZB_TITLE_BUDGET_ENABLED")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatal("NZB_TITLE_BUDGET_ENABLED must be a boolean")
+		}
+		if enabled {
+			repo := store.NZBAcquisition()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := providerbreaker.Shared().Restore(ctx, repo)
+			cancel()
+			if err != nil {
+				log.Fatalf("initialize NZB policy: %v", err)
+			}
+			nzbfetch.Shared = nzbfetch.New(repo)
+		}
 	}
 	// Construct router
 	var r *mux.Router = utils.NewRouter()

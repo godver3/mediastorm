@@ -26,11 +26,11 @@ import (
 	"novastream/config"
 	"novastream/internal/database"
 	"novastream/internal/dnscache"
-	"novastream/internal/httpheaders"
 	"novastream/internal/importer"
 	"novastream/internal/integration"
 	"novastream/internal/mediaresolve"
 	metapb "novastream/internal/nzb/metadata/proto"
+	"novastream/internal/nzbfetch"
 	"novastream/internal/providerbreaker"
 	"novastream/internal/requestsecurity"
 	"novastream/models"
@@ -2253,86 +2253,12 @@ func externalUsenetEnabledForProfile(settings config.Settings, profileID string)
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
-	breaker := s.providerBreaker
-	if breaker == nil {
-		breaker = providerbreaker.Shared()
-	}
-	provider := strings.TrimSpace(candidate.Indexer)
-	allowed, blockedUntil, probe := breaker.Allow(provider)
-	if !allowed {
-		return nil, "", fmt.Errorf("indexer %s is cooling down after rate limiting until %s", provider, blockedUntil.Format(time.RFC3339))
-	}
-
-	fetchNum := s.nzbFetchCount.Add(1)
-	log.Printf("[search-stats] NZB fetch #%d started (title=%q, indexer=%q)", fetchNum, strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Indexer))
-	log.Printf("[playback] fetching nzb url=%q title=%q", safeURLForLog(downloadURL), strings.TrimSpace(candidate.Title))
-
-	// Large NZBs for full-disc releases can be 10+ MB and some indexers stream
-	// them slowly. Keep the bound finite, but avoid failing valid releases while
-	// reading the body.
-	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, downloadURL, nil)
+	s.nzbFetchCount.Add(1)
+	data, header, err := nzbfetch.Shared.Fetch(ctx, s.httpClient, s.providerBreaker, downloadURL, candidate, s.indexerUserAgent(candidate.Indexer))
 	if err != nil {
-		return nil, "", fmt.Errorf("build nzb request: %w", err)
+		return nil, "", err
 	}
-	httpheaders.SetNZBDownloadHeaders(req, s.indexerUserAgent(candidate.Indexer))
-
-	log.Printf("[playback] sending http request...")
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		breaker.ReleaseProbe(provider, probe)
-		return nil, "", fmt.Errorf("download nzb: %w", err)
-	}
-	defer resp.Body.Close()
-
-	log.Printf("[playback] nzb response status=%s contentLength=%d", resp.Status, resp.ContentLength)
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		if resp.StatusCode == http.StatusTooManyRequests {
-			until := breaker.RecordRateLimit(provider, providerbreaker.RetryHint(resp.Header, time.Now()))
-			log.Printf("[provider-breaker] opened provider=%q after NZB download 429 until=%s", provider, until.Format(time.RFC3339))
-		} else {
-			breaker.ReleaseProbe(provider, probe)
-		}
-		return nil, "", fmt.Errorf("download nzb failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	breaker.RecordSuccess(provider, probe)
-
-	log.Printf("[playback] reading nzb body...")
-
-	// Limit NZB file size to 50MB to prevent excessive memory usage
-	const maxNZBSize = 50 * 1024 * 1024
-	limitedReader := io.LimitReader(resp.Body, maxNZBSize)
-
-	// Create a channel to handle the read with timeout
-	type readResult struct {
-		data []byte
-		err  error
-	}
-	resultChan := make(chan readResult, 1)
-
-	go func() {
-		data, err := io.ReadAll(limitedReader)
-		resultChan <- readResult{data: data, err: err}
-	}()
-
-	select {
-	case <-fetchCtx.Done():
-		return nil, "", fmt.Errorf("nzb download timeout or cancelled: %w", fetchCtx.Err())
-	case result := <-resultChan:
-		if result.err != nil {
-			return nil, "", fmt.Errorf("read nzb body: %w", result.err)
-		}
-		if len(result.data) == maxNZBSize {
-			log.Printf("[playback] warning: nzb file may have been truncated at %d bytes", maxNZBSize)
-		}
-		log.Printf("[playback] nzb body read complete size=%d", len(result.data))
-		fileName := deriveFileName(resp, downloadURL, candidate)
-		return result.data, fileName, nil
-	}
+	return data, deriveFileName(&http.Response{Header: header}, downloadURL, candidate), nil
 }
 
 func deriveFileName(resp *http.Response, downloadURL string, candidate models.NZBResult) string {

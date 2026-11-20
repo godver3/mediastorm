@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -16,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"novastream/internal/httpheaders"
 	"novastream/internal/mediaresolve"
+	"novastream/internal/nzbfetch"
 	"novastream/models"
 	usenetsvc "novastream/services/usenet"
 )
@@ -82,12 +81,12 @@ func (p *usenetTrackProber) probe(ctx context.Context, candidate models.NZBResul
 		return nil, nil, "no download URL in candidate"
 	}
 
-	// Fetch NZB bytes (second fetch; health check already fetched internally)
+	// Reuse the shared acquisition cache when the title budget is enabled.
 	userAgent := ""
 	if p.userAgentFor != nil {
 		userAgent = p.userAgentFor(candidate.Indexer)
 	}
-	nzbBytes, fileName, err := p.fetchNZB(ctx, downloadURL, userAgent)
+	nzbBytes, fileName, err := p.fetchNZB(ctx, downloadURL, userAgent, candidate)
 	if err != nil {
 		return nil, nil, fmt.Sprintf("fetch NZB: %v", err)
 	}
@@ -281,26 +280,12 @@ func (p *usenetTrackProber) findBestProbeMediaFile(dirPath string, hints mediare
 	return candidates[0].path, nil
 }
 
-func (p *usenetTrackProber) fetchNZB(ctx context.Context, downloadURL, userAgent string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+func (p *usenetTrackProber) fetchNZB(ctx context.Context, downloadURL, userAgent string, candidate models.NZBResult) ([]byte, string, error) {
+	data, header, err := nzbfetch.Shared.Fetch(ctx, p.httpClient, nil, downloadURL, candidate, userAgent)
 	if err != nil {
 		return nil, "", err
 	}
-	httpheaders.SetNZBDownloadHeaders(req, userAgent)
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", err
-	}
-	return data, nzbFileNameFromResponse(resp, downloadURL), nil
+	return data, nzbFileNameFromResponse(&http.Response{Header: header}, downloadURL), nil
 }
 
 func (p *usenetTrackProber) buildProbeURL(storagePath string) string {

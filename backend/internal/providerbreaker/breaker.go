@@ -1,6 +1,9 @@
 package providerbreaker
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +15,17 @@ const (
 	defaultCooldown = time.Hour
 	maximumCooldown = 24 * time.Hour
 )
+
+type Cooldown struct {
+	Until    time.Time
+	Failures int
+}
+
+type CooldownStore interface {
+	LoadCooldowns(context.Context) (map[string]Cooldown, error)
+	SaveCooldown(context.Context, string, Cooldown) error
+	ClearCooldown(context.Context, string, time.Time) error
+}
 
 type state struct {
 	until         time.Time
@@ -25,6 +39,7 @@ type state struct {
 type Breaker struct {
 	mu     sync.Mutex
 	states map[string]state
+	store  CooldownStore
 	now    func() time.Time
 }
 
@@ -41,6 +56,20 @@ func New() *Breaker {
 // downloads so a 429 observed by either path protects both paths.
 func Shared() *Breaker {
 	return shared
+}
+
+// Restore is called once before serving requests. Refuse startup if persisted
+// pauses cannot be loaded rather than silently discarding quota protection.
+func (b *Breaker) Restore(ctx context.Context, store CooldownStore) error {
+	states, err := store.LoadCooldowns(ctx)
+	if err != nil {
+		return fmt.Errorf("load indexer cooldowns: %w", err)
+	}
+	for key, c := range states {
+		b.states[normalize(key)] = state{until: c.Until, failures: c.Failures}
+	}
+	b.store = store
+	return nil
 }
 
 func normalize(provider string) string {
@@ -84,7 +113,6 @@ func (b *Breaker) RecordRateLimit(provider string, retryHint time.Duration) time
 	}
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	current := b.states[key]
 	current.failures++
@@ -98,12 +126,20 @@ func (b *Breaker) RecordRateLimit(provider string, retryHint time.Duration) time
 	if retryHint > delay {
 		delay = retryHint
 	}
-	if delay > maximumCooldown {
-		delay = maximumCooldown
+	until := b.now().Add(delay)
+	if until.After(current.until) {
+		current.until = until
 	}
-	current.until = b.now().Add(delay)
 	current.probeInFlight = false
 	b.states[key] = current
+	b.mu.Unlock()
+	if b.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.store.SaveCooldown(ctx, key, Cooldown{Until: current.until, Failures: current.failures}); err != nil {
+			log.Printf("[provider-breaker] persist cooldown failed: %v", err)
+		}
+	}
 	return current.until
 }
 
@@ -118,8 +154,20 @@ func (b *Breaker) RecordSuccess(provider string, probe bool) {
 		return
 	}
 	b.mu.Lock()
+	current, ok := b.states[key]
+	if !ok || !current.probeInFlight || b.now().Before(current.until) {
+		b.mu.Unlock()
+		return
+	}
 	delete(b.states, key)
 	b.mu.Unlock()
+	if b.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := b.store.ClearCooldown(ctx, key, current.until); err != nil {
+			log.Printf("[provider-breaker] clear persisted cooldown failed: %v", err)
+		}
+	}
 }
 
 // ReleaseProbe allows another half-open probe after a non-rate-limit failure.
@@ -144,7 +192,7 @@ func RetryHint(header http.Header, now time.Time) time.Duration {
 	if value == "" {
 		return 0
 	}
-	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 && int64(seconds) <= int64((1<<63-1)/int64(time.Second)) {
 		return time.Duration(seconds) * time.Second
 	}
 	if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {

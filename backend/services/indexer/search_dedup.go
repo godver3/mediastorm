@@ -91,7 +91,12 @@ func sharedCallContext(ctx context.Context) (context.Context, context.CancelFunc
 
 // searchTorznab searches one Newznab/Torznab indexer, sharing identical calls
 // (see indexerCallDedup).
-func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) ([]models.NZBResult, error) {
+func (s *Service) searchTorznab(ctx context.Context, idx config.IndexerConfig, opts SearchOptions) (results []models.NZBResult, err error) {
+	defer func() {
+		for i := range results {
+			results[i] = results[i].WithNZBIdentity(opts.acquisitionIdentity)
+		}
+	}()
 	key := indexerCallKey(idx, opts)
 	if results, ok := s.indexerCalls.recent(key, time.Now()); ok {
 		return cloneNZBResults(results), nil

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"novastream/config"
-	"novastream/internal/httpheaders"
+	"novastream/internal/nzbfetch"
 	"novastream/internal/pool"
 	"novastream/internal/requestsecurity"
 	"novastream/models"
@@ -216,30 +216,11 @@ func externalEngineHealthCheck(candidate models.NZBResult, fileName string) (*mo
 }
 
 func (s *Service) fetchNZB(ctx context.Context, downloadURL string, candidate models.NZBResult) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	data, header, err := nzbfetch.Shared.Fetch(ctx, s.httpClient, nil, downloadURL, candidate, s.indexerUserAgent(candidate.Indexer))
 	if err != nil {
-		return nil, "", fmt.Errorf("build nzb request: %w", err)
+		return nil, "", err
 	}
-	httpheaders.SetNZBDownloadHeaders(req, s.indexerUserAgent(candidate.Indexer))
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("download nzb: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, "", fmt.Errorf("download nzb failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", fmt.Errorf("read nzb body: %w", err)
-	}
-
-	fileName := deriveNZBFileName(resp, downloadURL, candidate.Title)
-	return data, fileName, nil
+	return data, deriveNZBFileName(&http.Response{Header: header}, downloadURL, candidate.Title), nil
 }
 
 type nzbDocument struct {
