@@ -791,14 +791,20 @@ func (session *HLSSession) stableCopySegmentIndex(t float64) int {
 }
 
 // stableCopySegmentTimes lists the cut times FFmpeg needs for a run that
-// starts at segment startNumber. The segment muxer measures -segment_times
-// from the first packet it receives, not on the -copyts clock, so the times
-// are relative to the run's first segment.
-func stableCopySegmentTimes(starts []float64, startNumber int) string {
+// starts at segment startNumber. How the segment muxer reads -segment_times
+// depends on the FFmpeg version (see segmentTimesAbsolute): FFmpeg 5 compares
+// them with the packet timestamps, which with -copyts are the timeline
+// itself; FFmpeg 7 (the jellyfin-ffmpeg build mediastorm ships) measures them
+// from the run's first packet, so they are relative to the run's first
+// segment.
+func stableCopySegmentTimes(starts []float64, startNumber int, absolute bool) string {
 	if startNumber < 0 || startNumber >= len(starts) {
 		return ""
 	}
 	base := starts[startNumber]
+	if absolute {
+		base = 0
+	}
 	parts := make([]string, 0, len(starts))
 	for i := startNumber + 1; i < len(starts); i++ {
 		parts = append(parts, strconv.FormatFloat(starts[i]-base, 'f', 3, 64))
