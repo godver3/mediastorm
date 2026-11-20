@@ -325,6 +325,9 @@ func (s *Service) createRecording(kind models.RecordingType, userID, channelID, 
 	if recording.Title == "" {
 		recording.Title = recording.ChannelName
 	}
+	if kind == models.RecordingTypeEPG {
+		recording.Guide = s.guideFor(userID, recording.TvgID, recording.StartAt, recording.Title)
+	}
 	if err := s.authorizeSource(&recording); err != nil {
 		return models.Recording{}, err
 	}
@@ -705,6 +708,7 @@ func (s *Service) expandEnabledRules() {
 						ChannelName:          channel.Name,
 						Title:                program.Title,
 						Description:          program.Description,
+						Guide:                guideFromProgram(program),
 						SourceURL:            channel.SourceURL,
 						StartAt:              program.Start.UTC(),
 						EndAt:                program.Stop.UTC(),

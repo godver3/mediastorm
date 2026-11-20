@@ -30,6 +30,10 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Image not found")
 		return
 	}
+	if recordingID, ok := strings.CutPrefix(source, recordingFramePrefix); ok && ref.Kind == refRecording {
+		s.serveRecordingFrame(w, r, recordingID)
+		return
+	}
 	width := 0
 	for _, key := range []string{"fillWidth", "maxWidth", "width"} {
 		if n := parseIntDefault(queryValue(r, key), 0); n > 0 {

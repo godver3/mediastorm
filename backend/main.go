@@ -2003,6 +2003,7 @@ func main() {
 			ThumbnailsEnabled: videoHandler.ThumbnailsEnabled,
 			StopRequested:     handlers.GetStreamTracker().ShouldStopPlayback,
 			RankingGeneration: prequeueHandler.GetStore().Generation,
+			RecordingFrame:    bridgeRecordingFrame(recordingsService),
 			ThumbnailFrames: func(streamPath string) ([]jellyfinbridge.ThumbnailFrame, bool) {
 				frames, done := videoHandler.ThumbnailFrames(streamPath)
 				out := make([]jellyfinbridge.ThumbnailFrame, len(frames))
@@ -2587,6 +2588,15 @@ func bridgeWatchRooms(service *watchrooms.Service) jellyfinbridge.WatchRoomServi
 		return nil
 	}
 	return service
+}
+
+// bridgeRecordingFrame gives the Jellyfin bridge stills from recordings when
+// recording is available.
+func bridgeRecordingFrame(service *recordings.Service) func(context.Context, string, int) ([]byte, error) {
+	if service == nil {
+		return nil
+	}
+	return service.Frame
 }
 
 // bridgeRecordings hands a recordings handler to the Jellyfin bridge only

@@ -235,6 +235,9 @@ func programDetail(prog models.EPGProgram) int {
 	if prog.Episode != "" {
 		score += 1 << 20
 	}
+	if prog.SubTitle != "" {
+		score += 1 << 19
+	}
 	return score
 }
 
@@ -262,9 +265,13 @@ func (s *Server) programItem(ch liveChannel, number int, prog models.EPGProgram,
 		Genres:         prog.Categories,
 		OfficialRating: prog.Rating,
 		RunTimeTicks:   int64Ptr(secondsToTicks(end.Sub(start).Seconds())),
-		EpisodeTitle:   prog.Episode,
+		EpisodeTitle:   firstNonEmpty(prog.SubTitle, prog.Episode),
 		PlayAccess:     "Full",
 		UserData:       &dto.UserItemData{Key: "program:" + source, ItemID: id},
+	}
+	setEpisodeNumbers(&item, prog.Episode)
+	if prog.Year > 0 {
+		item.ProductionYear = intPtr(prog.Year)
 	}
 	kind := classifyProgram(prog)
 	item.IsMovie = boolPtr(kind.movie)

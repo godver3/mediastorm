@@ -158,6 +158,9 @@ type Deps struct {
 	// (ranking settings); cached picks and play sessions from an
 	// older generation are not reused.
 	RankingGeneration func() uint64
+	// RecordingFrame returns a JPEG still from a recording's file (nil: no
+	// stills; recordings without a guide image show the channel logo).
+	RecordingFrame func(ctx context.Context, recordingID string, width int) ([]byte, error)
 }
 
 // StreamPlan is the output plan of a mediastorm HLS session, as shown in the

@@ -352,7 +352,11 @@ func (s *Server) recordingItem(ctx context.Context, p *principal, rec models.Rec
 		end = rec.ActualEndAt.UTC()
 	}
 	ch, hasChannel := s.channelOf(ctx, p, rec.ChannelID, rec.TvgID)
-	id := s.ids.putTrusted(refRecording, rec.ID, refContext{Name: rec.Title, ProfileID: p.Profile.ID, Poster: ch.Logo})
+	image, tag := s.recordingImage(rec)
+	if image == "" {
+		image, tag = ch.Logo, imageTag(ch.Logo)
+	}
+	id := s.ids.putTrusted(refRecording, rec.ID, refContext{Name: rec.Title, ProfileID: p.Profile.ID, Poster: image, Thumb: image})
 	created := rec.CreatedAt.UTC()
 	item := dto.BaseItemDto{
 		Name: rec.Title, ServerID: s.serverID, ID: id, Type: dto.KindVideo, Overview: rec.Description,
@@ -369,10 +373,21 @@ func (s *Server) recordingItem(ctx context.Context, p *principal, rec models.Rec
 		// recordings have none.
 		item.TimerID = compactID(rec.ID)
 	}
+	applyRecordingGuide(&item, rec)
+	if source, ok := recordingSource(id, rec, item.RunTimeTicks); ok {
+		item.MediaSources = []dto.MediaSourceInfo{source}
+	}
+	if image != "" {
+		item.ImageTags = map[string]string{dto.ImagePrimary: tag}
+		if image != ch.Logo {
+			// A programme image or a still: a landscape picture.
+			item.ImageTags[dto.ImageThumb] = tag
+			item.PrimaryImageAspectRatio = floatPtr(16.0 / 9.0)
+		}
+	}
 	if hasChannel {
 		item.ChannelID = s.channelGUID(ch)
 		if ch.Logo != "" {
-			item.ImageTags = map[string]string{dto.ImagePrimary: imageTag(ch.Logo)}
 			item.ChannelPrimaryImageTag = imageTag(ch.Logo)
 		}
 	}
@@ -415,6 +430,9 @@ func (s *Server) recordingPlaybackInfo(w http.ResponseWriter, r *http.Request, p
 	status := &playback.PrequeueStatusResponse{
 		Status: playback.PrequeueStatusReady, StreamPath: recordingStreamPath(rec), DisplayName: rec.Title,
 		Duration: duration, SelectedAudioTrack: -1, SelectedSubtitleTrack: -1,
+	}
+	if source, ok := recordingSource(itemID, rec, nil); ok && source.Size != nil {
+		status.FileSize = *source.Size // the player's stats show it
 	}
 	sess := &playSession{
 		ID: randomHex(16), MediaSourceID: s.mediaSourceID(p.Profile.ID, p.Client.DeviceID, itemID), ItemID: itemID,

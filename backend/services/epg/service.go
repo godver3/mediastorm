@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -872,7 +873,9 @@ type xmltvProgramme struct {
 	Stop     string         `xml:"stop,attr"`
 	Channel  string         `xml:"channel,attr"`
 	Title    []xmltvLang    `xml:"title"`
+	SubTitle []xmltvLang    `xml:"sub-title"`
 	Desc     []xmltvLang    `xml:"desc"`
+	Date     string         `xml:"date"`
 	Category []xmltvLang    `xml:"category"`
 	EpNum    []xmltvEpisode `xml:"episode-num"`
 	Icon     []xmltvIcon    `xml:"icon"`
@@ -975,6 +978,8 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					ChannelID:   normalizedChannelID,
 					Title:       getFirstLangValue(prog.Title),
 					Description: getFirstLangValue(prog.Desc),
+					SubTitle:    getFirstLangValue(prog.SubTitle),
+					Year:        xmltvYear(prog.Date),
 					Start:       start,
 					Stop:        stop,
 				}
@@ -1086,6 +1091,19 @@ func parseXMLTVTime(s string) (time.Time, error) {
 	}
 
 	return t.UTC(), nil
+}
+
+// xmltvYear reads the year from an XMLTV <date> (YYYY, YYYYMM, YYYYMMDD...).
+func xmltvYear(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 4 {
+		return 0
+	}
+	year, err := strconv.Atoi(raw[:4])
+	if err != nil || year < 1900 || year > 2200 {
+		return 0
+	}
+	return year
 }
 
 // parseXMLTVNSEpisode parses xmltv_ns episode format (season.episode.part) to human readable.

@@ -13,7 +13,9 @@ type EPGProgram struct {
 	Stop        time.Time `json:"stop"`
 	Icon        string    `json:"icon,omitempty"`
 	Categories  []string  `json:"categories,omitempty"`
-	Episode     string    `json:"episode,omitempty"` // Episode number in standard format (e.g., "S01E05")
+	Episode     string    `json:"episode,omitempty"`  // Episode number in standard format (e.g., "S01E05")
+	SubTitle    string    `json:"subTitle,omitempty"` // Episode title (XMLTV <sub-title>)
+	Year        int       `json:"year,omitempty"`     // Production year (XMLTV <date>)
 	Rating      string    `json:"rating,omitempty"`
 	// Airing flags from XMLTV. New covers <new/>, <premiere> and <live/>;
 	// PreviouslyShown is <previously-shown>. Most guides set neither.

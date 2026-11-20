@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,7 +21,7 @@ func (r *pgRecordingRepo) Get(ctx context.Context, id string) (*models.Recording
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, user_id, COALESCE(rule_id, ''), schedule_key, type, status, channel_id, tvg_id, channel_name, title, description,
 		       source_url, start_at, end_at, padding_before_seconds, padding_after_seconds,
-		       output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at
+		       output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at, guide
 		FROM recordings WHERE id = $1`, id)
 	return scanRecording(row)
 }
@@ -52,7 +53,7 @@ func (r *pgRecordingRepo) List(ctx context.Context, filter models.RecordingListF
 	query := `
 		SELECT id, user_id, COALESCE(rule_id, ''), schedule_key, type, status, channel_id, tvg_id, channel_name, title, description,
 		       source_url, start_at, end_at, padding_before_seconds, padding_after_seconds,
-		       output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at
+		       output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at, guide
 		FROM recordings`
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
@@ -85,17 +86,17 @@ func (r *pgRecordingRepo) Create(ctx context.Context, recording *models.Recordin
 		INSERT INTO recordings (
 			id, user_id, rule_id, schedule_key, type, status, channel_id, tvg_id, channel_name, title, description, source_url,
 			start_at, end_at, padding_before_seconds, padding_after_seconds,
-			output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at
+			output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at, guide
 		) VALUES (
 			$1,$2,NULLIF($3, ''),$4,$5,$6,$7,$8,$9,$10,$11,$12,
 			$13,$14,$15,$16,
-			$17,$18,$19,$20,$21,$22,$23
+			$17,$18,$19,$20,$21,$22,$23,$24
 		)`,
 		recording.ID, recording.UserID, strings.TrimSpace(recording.RuleID), recording.ScheduleKey, string(recording.Type), string(recording.Status), recording.ChannelID, recording.TvgID,
 		recording.ChannelName, recording.Title, recording.Description, recording.SourceURL,
 		recording.StartAt, recording.EndAt, recording.PaddingBeforeSeconds, recording.PaddingAfterSeconds,
 		recording.OutputPath, recording.OutputSizeBytes, recording.ActualStartAt, recording.ActualEndAt, recording.Error,
-		recording.CreatedAt, recording.UpdatedAt)
+		recording.CreatedAt, recording.UpdatedAt, encodeRecordingGuide(recording.Guide))
 	if err != nil {
 		return fmt.Errorf("create recording: %w", err)
 	}
@@ -121,12 +122,13 @@ func (r *pgRecordingRepo) Update(ctx context.Context, recording *models.Recordin
 		    actual_start_at = $15,
 		    actual_end_at = $16,
 		    error = $17,
-		    updated_at = $18
+		    updated_at = $18,
+		    guide = $19
 		WHERE id = $1`,
 		recording.ID, string(recording.Status), recording.ChannelID, recording.TvgID, recording.ChannelName,
 		recording.Title, recording.Description, recording.SourceURL, recording.StartAt, recording.EndAt,
 		recording.PaddingBeforeSeconds, recording.PaddingAfterSeconds, recording.OutputPath, recording.OutputSizeBytes,
-		recording.ActualStartAt, recording.ActualEndAt, recording.Error, recording.UpdatedAt)
+		recording.ActualStartAt, recording.ActualEndAt, recording.Error, recording.UpdatedAt, encodeRecordingGuide(recording.Guide))
 	if err != nil {
 		return fmt.Errorf("update recording: %w", err)
 	}
@@ -169,6 +171,7 @@ func scanRecording(row interface {
 	var recording models.Recording
 	var typ string
 	var status string
+	var guide []byte
 	err := row.Scan(
 		&recording.ID,
 		&recording.UserID,
@@ -193,6 +196,7 @@ func scanRecording(row interface {
 		&recording.Error,
 		&recording.CreatedAt,
 		&recording.UpdatedAt,
+		&guide,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -202,6 +206,7 @@ func scanRecording(row interface {
 	}
 	recording.Type = models.RecordingType(typ)
 	recording.Status = models.RecordingStatus(status)
+	recording.Guide = decodeRecordingGuide(guide)
 	return &recording, nil
 }
 
@@ -333,14 +338,15 @@ func (r *pgRecordingRepo) CreateScheduledRecordingIfAbsent(ctx context.Context, 
 		INSERT INTO recordings (
 			id, user_id, rule_id, schedule_key, type, status, channel_id, tvg_id, channel_name, title, description, source_url,
 			start_at, end_at, padding_before_seconds, padding_after_seconds,
-			output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at
+			output_path, output_size_bytes, actual_start_at, actual_end_at, error, created_at, updated_at, guide
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
 			$13,$14,$15,$16,
-			$17,$18,$19,$20,$21,$22,$23
+			$17,$18,$19,$20,$21,$22,$23,$24
 		) ON CONFLICT (rule_id, schedule_key) WHERE rule_id IS NOT NULL DO UPDATE
 		SET title = EXCLUDED.title,
 		    description = EXCLUDED.description,
+		    guide = EXCLUDED.guide,
 		    source_url = EXCLUDED.source_url,
 		    end_at = EXCLUDED.end_at,
 		    padding_before_seconds = EXCLUDED.padding_before_seconds,
@@ -355,7 +361,7 @@ func (r *pgRecordingRepo) CreateScheduledRecordingIfAbsent(ctx context.Context, 
 		recording.ChannelID, recording.TvgID, recording.ChannelName, recording.Title, recording.Description, recording.SourceURL,
 		recording.StartAt, recording.EndAt, recording.PaddingBeforeSeconds, recording.PaddingAfterSeconds,
 		recording.OutputPath, recording.OutputSizeBytes, recording.ActualStartAt, recording.ActualEndAt, recording.Error,
-		recording.CreatedAt, recording.UpdatedAt)
+		recording.CreatedAt, recording.UpdatedAt, encodeRecordingGuide(recording.Guide))
 	if err != nil {
 		return false, fmt.Errorf("create scheduled recording: %w", err)
 	}
@@ -390,4 +396,30 @@ func scanRecordingRule(row interface {
 	}
 	rule.MatchType = models.RecordingRuleMatchType(matchType)
 	return &rule, nil
+}
+
+// encodeRecordingGuide stores a recording's guide details as JSON ("{}"
+// without any).
+func encodeRecordingGuide(guide *models.RecordingGuide) []byte {
+	if guide == nil {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(guide)
+	if err != nil {
+		return []byte("{}")
+	}
+	return raw
+}
+
+// decodeRecordingGuide reads stored guide details; empty or unreadable
+// details are nil.
+func decodeRecordingGuide(raw []byte) *models.RecordingGuide {
+	var guide models.RecordingGuide
+	if len(raw) == 0 || json.Unmarshal(raw, &guide) != nil {
+		return nil
+	}
+	if guide.Image == "" && guide.EpisodeTitle == "" && guide.Episode == "" && guide.Year == 0 && len(guide.Categories) == 0 && guide.Rating == "" {
+		return nil
+	}
+	return &guide
 }
