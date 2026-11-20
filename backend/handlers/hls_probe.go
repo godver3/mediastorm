@@ -63,20 +63,24 @@ func isHLSCommentaryTrack(title string) bool {
 
 // UnifiedProbeResult holds all data extracted from a single ffprobe call
 type UnifiedProbeResult struct {
-	Duration           float64
-	StartTime          float64
-	ColorTransfer      string // e.g., "smpte2084" for HDR, "bt709" for SDR
-	VideoCodec         string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
-	VideoPixFmt        string // e.g., "yuv420p", "yuv420p10le" - used for browser copy compatibility
-	VideoProfile       string // e.g., "High", "High 10" - used for browser copy compatibility
-	VideoWidth         int    // Primary video stream width in pixels
-	VideoHeight        int    // Primary video stream height in pixels
-	VideoLevel         int    // H.264 level as reported by ffprobe (for example, 41)
-	AvgFrameRate       string // e.g., "24000/1001" from primary video stream
-	AudioStreams       []audioStreamInfo
-	SubtitleStreams    []subtitleStreamInfo
-	HasTrueHD          bool
-	HasCompatibleAudio bool
+	Duration      float64
+	StartTime     float64
+	ColorTransfer string // e.g., "smpte2084" for HDR, "bt709" for SDR
+	VideoCodec    string // e.g., "h264", "hevc", "mpeg4" - used to detect incompatible codecs
+	VideoPixFmt   string // e.g., "yuv420p", "yuv420p10le" - used for browser copy compatibility
+	VideoProfile  string // e.g., "High", "High 10" - used for browser copy compatibility
+	VideoWidth    int    // Primary video stream width in pixels
+	VideoHeight   int    // Primary video stream height in pixels
+	VideoLevel    int    // H.264 level as reported by ffprobe (for example, 41)
+	AvgFrameRate  string // e.g., "24000/1001" from primary video stream
+	// VideoParamSetsMissing is set for HEVC whose decoder configuration
+	// (hvcC) carries no VPS/SPS/PPS: they are only in the stream, and an
+	// fMP4 copy has to rebuild the hvcC from them.
+	VideoParamSetsMissing bool
+	AudioStreams          []audioStreamInfo
+	SubtitleStreams       []subtitleStreamInfo
+	HasTrueHD             bool
+	HasCompatibleAudio    bool
 	// Extended fields for VideoFullResult compatibility
 	HasDolbyVision           bool
 	HasHDR10                 bool
@@ -297,6 +301,7 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 			Height        int               `json:"height"`
 			Level         int               `json:"level"`
 			AvgFrameRate  string            `json:"avg_frame_rate"`
+			ExtradataSize *int              `json:"extradata_size"`
 			ColorTransfer string            `json:"color_transfer"`
 			Tags          map[string]string `json:"tags"`
 			Disposition   map[string]int    `json:"disposition"`
@@ -359,6 +364,8 @@ func (m *HLSManager) parseUnifiedProbeOutput(output []byte) (*UnifiedProbeResult
 				result.VideoHeight = stream.Height
 				result.VideoLevel = stream.Level
 				result.AvgFrameRate = strings.TrimSpace(stream.AvgFrameRate)
+				// An hvcC without parameter set arrays is exactly its 23-byte header.
+				result.VideoParamSetsMissing = hevcParamSetsMissing(codec, stream.ExtradataSize)
 			}
 			if result.ColorTransfer == "" {
 				result.ColorTransfer = stream.ColorTransfer

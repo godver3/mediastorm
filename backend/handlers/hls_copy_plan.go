@@ -121,6 +121,11 @@ type stableCopyPlan struct {
 	ColorFix string
 	// OutputRange is what the client gets: SDR, PQ or HLG (HLS VIDEO-RANGE).
 	OutputRange string
+	// RebuildConfig converts HEVC to Annex B before muxing, so the fMP4
+	// muxer builds the hvcC from the in-band parameter sets: the source's
+	// own hvcC has none, and a copy would get an empty hvcC that browsers
+	// refuse (no codec string, no decoder configuration).
+	RebuildConfig bool
 }
 
 // sourceVideoCodec normalizes the probe's codec name.
@@ -243,7 +248,7 @@ func copyCompatiblePixFmt(codec string, probe *UnifiedProbeResult) bool {
 func planStableCopy(probe *UnifiedProbeResult, hasDV bool, dvProfile string, hasHDR bool, caps *HLSClientCaps) (stableCopyPlan, bool) {
 	codec := sourceVideoCodec(probe)
 	rangeType := sourceRangeType(probe, hasDV, dvProfile, hasHDR)
-	plan := stableCopyPlan{Codec: codec, RangeType: rangeType}
+	plan := stableCopyPlan{Codec: codec, RangeType: rangeType, RebuildConfig: codec == "hevc" && probe != nil && probe.VideoParamSetsMissing}
 	if caps.forceVideoCopy() {
 		return planForcedCopy(plan, caps), codec != ""
 	}
@@ -374,6 +379,10 @@ func planForcedCopy(plan stableCopyPlan, caps *HLSClientCaps) stableCopyPlan {
 func (p stableCopyPlan) videoCopyArgs(dvFilterFailed, colorFilterFailed bool) []string {
 	args := []string{"-c:v", "copy"}
 	var bsfs []string
+	if p.RebuildConfig && p.FMP4 {
+		// First, so the filters below see the parameter sets too.
+		bsfs = append(bsfs, "hevc_mp4toannexb")
+	}
 	if p.DV == dvStrip && !dvFilterFailed {
 		bsfs = append(bsfs, "dovi_rpu=strip=1")
 	}
@@ -437,3 +446,19 @@ func (session *HLSSession) audioTranscodingDisabled() bool {
 // errTranscodingDisabled marks a session refused because transcoding is
 // disabled and the source cannot be copied (no keyframe index, no video).
 var errTranscodingDisabled = errors.New("transcoding disabled")
+
+// hevcConfigHeaderSize is the size of an hvcC record without parameter set
+// arrays (ISO/IEC 14496-15): a decoder configuration that carries no
+// VPS/SPS/PPS.
+const hevcConfigHeaderSize = 23
+
+// hevcParamSetsMissing reports an HEVC stream whose decoder configuration
+// (ffprobe's extradata_size) carries no parameter sets. An unknown size
+// counts as complete.
+func hevcParamSetsMissing(codec string, extradataSize *int) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "hevc", "h265":
+		return extradataSize != nil && *extradataSize <= hevcConfigHeaderSize
+	}
+	return false
+}

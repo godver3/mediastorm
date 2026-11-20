@@ -32,9 +32,11 @@ type VideoFullResult struct {
 	VideoHeight              int
 	VideoLevel               int
 	AvgFrameRate             string
-	HasTrueHD                bool
-	HasCompatibleAudio       bool
-	AudioStreams             []AudioStreamInfo
-	SubtitleStreams          []SubtitleStreamInfo
-	Duration                 float64
+	// VideoParamSetsMissing: HEVC whose hvcC carries no VPS/SPS/PPS.
+	VideoParamSetsMissing bool
+	HasTrueHD             bool
+	HasCompatibleAudio    bool
+	AudioStreams          []AudioStreamInfo
+	SubtitleStreams       []SubtitleStreamInfo
+	Duration              float64
 }
