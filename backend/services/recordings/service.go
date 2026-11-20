@@ -38,6 +38,10 @@ var (
 
 const pollInterval = 15 * time.Second
 
+// pausedRuleError marks airings parked by a paused rule (the datastore sets
+// it and revives such rows when the rule resumes).
+const pausedRuleError = "recording rule paused"
+
 var (
 	recordingRetryDelay = 2 * time.Second
 	// recordingReadTimeout fails a stalled source read so the retry loop can
@@ -67,6 +71,50 @@ type Service struct {
 	active   map[string]context.CancelFunc
 	ruleWake chan struct{}
 	ruleMu   sync.Mutex
+
+	// rowLocks serialise the changes to one recording: Cancel and Delete
+	// against the recording goroutine's status changes and finalisation,
+	// which would otherwise write back a stale copy (a cancelled recording
+	// marked running again, a deleted file and path restored).
+	rowMu    sync.Mutex
+	rowLocks map[string]*rowLock
+}
+
+type rowLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockRecording locks one recording's row changes; call the returned func
+// to unlock.
+func (s *Service) lockRecording(id string) func() {
+	s.rowMu.Lock()
+	if s.rowLocks == nil {
+		s.rowLocks = make(map[string]*rowLock)
+	}
+	l := s.rowLocks[id]
+	if l == nil {
+		l = &rowLock{}
+		s.rowLocks[id] = l
+	}
+	l.refs++
+	s.rowMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		s.rowMu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(s.rowLocks, id)
+		}
+		s.rowMu.Unlock()
+	}
+}
+
+// statusIs tells whether the stored recording still has the status (the
+// caller holds its row lock).
+func (s *Service) statusIs(id string, status models.RecordingStatus) bool {
+	latest, err := s.Get(id)
+	return err == nil && latest.Status == status
 }
 
 func NewService(repo datastore.RecordingRepository, ffmpegPath, outputDir string) *Service {
@@ -310,10 +358,15 @@ func (s *Service) maybeStartRecordingImmediately(recording models.Recording) {
 }
 
 func (s *Service) Cancel(id string) error {
+	defer s.lockRecording(id)()
 	recording, err := s.Get(id)
 	if err != nil {
 		return err
 	}
+	return s.cancelLocked(recording)
+}
+
+func (s *Service) cancelLocked(recording *models.Recording) error {
 	now := time.Now().UTC()
 	switch recording.Status {
 	case models.RecordingStatusCompleted, models.RecordingStatusFailed, models.RecordingStatusCancelled:
@@ -343,6 +396,8 @@ func (s *Service) Cancel(id string) error {
 }
 
 func (s *Service) Delete(id string) error {
+	// Locked: a cancelled recording's goroutine may still be finalising it.
+	defer s.lockRecording(id)()
 	recording, err := s.Get(id)
 	if err != nil {
 		return err
@@ -350,10 +405,30 @@ func (s *Service) Delete(id string) error {
 	if recording.Status == models.RecordingStatusPending && strings.TrimSpace(recording.RuleID) != "" {
 		// Keep the schedule key as a tombstone so the rule expander does not
 		// recreate a single occurrence the user removed from the queue.
-		return s.Cancel(recording.ID)
+		return s.cancelLocked(recording)
 	}
 	if recording.Status == models.RecordingStatusRunning || recording.Status == models.RecordingStatusStarting {
 		return ErrCannotDeleteActive
+	}
+	if strings.TrimSpace(recording.RuleID) != "" && recording.EndAt.After(time.Now()) {
+		// A rule's airing that is still on (stopped early, then deleted)
+		// would be scheduled again by the rule: keep the row as the same
+		// tombstone as above, without its file.
+		if strings.TrimSpace(recording.OutputPath) != "" {
+			if err := os.Remove(recording.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("delete recording file: %w", err)
+			}
+		}
+		recording.Status = models.RecordingStatusCancelled
+		recording.OutputPath = ""
+		recording.OutputSizeBytes = 0
+		if recording.Error == pausedRuleError {
+			// A paused airing comes back when its rule resumes; a deleted
+			// one stays skipped.
+			recording.Error = ""
+		}
+		recording.UpdatedAt = time.Now().UTC()
+		return s.repo.Update(context.Background(), recording)
 	}
 	if strings.TrimSpace(recording.OutputPath) != "" {
 		if err := os.Remove(recording.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -734,6 +809,12 @@ func (s *Service) runDueRecordings() {
 func (s *Service) startRecording(recording models.Recording) {
 	now := time.Now().UTC()
 	stopAt := recording.EndAt.Add(time.Duration(recording.PaddingAfterSeconds) * time.Second)
+	unlock := s.lockRecording(recording.ID)
+	if !s.statusIs(recording.ID, models.RecordingStatusPending) {
+		// Cancelled, deleted or already started since it was listed.
+		unlock()
+		return
+	}
 	if !stopAt.After(now) {
 		recording.Status = models.RecordingStatusFailed
 		recording.Error = "recording window expired before start"
@@ -742,25 +823,35 @@ func (s *Service) startRecording(recording models.Recording) {
 		if err := s.repo.Update(context.Background(), &recording); err != nil {
 			log.Printf("[recordings] mark expired recording failed: %v", err)
 		}
+		unlock()
 		return
 	}
 	if err := s.authorizeSource(&recording); err != nil {
 		s.finalizeFailure(recording, now, err.Error())
+		unlock()
 		return
 	}
 	recording.Status = models.RecordingStatusStarting
 	recording.OutputPath = s.buildOutputPath(recording)
 	recording.UpdatedAt = now
-	if err := s.repo.Update(context.Background(), &recording); err != nil {
+	err := s.repo.Update(context.Background(), &recording)
+	unlock()
+	if err != nil {
 		log.Printf("[recordings] update starting status failed: %v", err)
 		return
 	}
+	failStarting := func(msg string) {
+		defer s.lockRecording(recording.ID)()
+		if s.statusIs(recording.ID, models.RecordingStatusStarting) {
+			s.finalizeFailure(recording, now, msg)
+		}
+	}
 	if strings.TrimSpace(s.ffmpegPath) == "" {
-		s.finalizeFailure(recording, now, "ffmpeg is not configured")
+		failStarting("ffmpeg is not configured")
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(recording.OutputPath), 0o755); err != nil {
-		s.finalizeFailure(recording, now, fmt.Sprintf("create output directory: %v", err))
+		failStarting(fmt.Sprintf("create output directory: %v", err))
 		return
 	}
 
@@ -768,15 +859,23 @@ func (s *Service) startRecording(recording models.Recording) {
 	recording.Status = models.RecordingStatusRunning
 	recording.ActualStartAt = &now
 	recording.UpdatedAt = now
+	unlock = s.lockRecording(recording.ID)
+	if !s.statusIs(recording.ID, models.RecordingStatusStarting) {
+		// Cancelled (or deleted) while starting.
+		unlock()
+		cancel()
+		return
+	}
 	if err := s.repo.Update(context.Background(), &recording); err != nil {
+		unlock()
 		cancel()
 		log.Printf("[recordings] update running status failed: %v", err)
 		return
 	}
-
 	s.mu.Lock()
 	s.active[recording.ID] = cancel
 	s.mu.Unlock()
+	unlock()
 	liveusage.GetTracker().StartRecording(recording.ID, recording.UserID)
 	defer func() {
 		s.mu.Lock()
@@ -831,6 +930,7 @@ func (s *Service) startRecording(recording models.Recording) {
 		}
 	}
 
+	defer s.lockRecording(recording.ID)()
 	latest, err := s.Get(recording.ID)
 	if err != nil {
 		log.Printf("[recordings] reload recording after ffmpeg exit failed: %v", err)
@@ -1002,6 +1102,7 @@ func redactSourceURL(raw string) string {
 }
 
 func (s *Service) handleInterruptedRecording(id string, ts time.Time) {
+	defer s.lockRecording(id)()
 	latest, err := s.Get(id)
 	if err != nil {
 		log.Printf("[recordings] reload interrupted recording failed: %v", err)
