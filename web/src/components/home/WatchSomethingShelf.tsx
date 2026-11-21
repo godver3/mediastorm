@@ -1,31 +1,12 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { apiRequest } from '@/api/client';
-import { getSurprise } from '@/api/home';
+import { getSurprise, type HomeMediaFilter } from '@/api/home';
+import { AskAIDialog, useHasAI } from '../browse/AskAIDialog';
 import { detailsLink } from '@/lib/links';
 import { Icon, type IconName } from '../icons';
 import { Shelf } from '../Shelf';
 import { Spinner } from '../Spinner';
-
-interface ServerSettings {
-  metadata?: { aiApiKey?: string; geminiApiKey?: string };
-}
-
-/** Whether the server has an AI key (masked in /api/settings); false when unreadable. */
-function useHasAI() {
-  return useQuery({
-    queryKey: ['home', 'server-ai'],
-    queryFn: async ({ signal }) => {
-      try {
-        const s = await apiRequest<ServerSettings>('/settings', { signal });
-        return [s?.metadata?.aiApiKey, s?.metadata?.geminiApiKey].some((k) => !!k);
-      } catch {
-        return false;
-      }
-    },
-    staleTime: 10 * 60_000,
-  }).data;
-}
 
 function ActionTile({
   title,
@@ -61,12 +42,22 @@ function ActionTile({
   );
 }
 
-/** Watch Something: Search, and Surprise Me when the server has an AI key. */
-export function WatchSomethingShelf({ title, profileId }: { title: string; profileId: string }) {
+/** Watch Something: Search, and Ask AI + Surprise Me when the server has an AI key. */
+export function WatchSomethingShelf({
+  title,
+  profileId,
+  filter = 'all',
+}: {
+  title: string;
+  profileId: string;
+  /** The Home view's media filter; Surprise Me picks from it. */
+  filter?: HomeMediaFilter;
+}) {
   const navigate = useNavigate();
   const hasAI = useHasAI();
+  const [asking, setAsking] = useState(false);
   const surprise = useMutation({
-    mutationFn: () => getSurprise(profileId),
+    mutationFn: () => getSurprise(profileId, undefined, filter),
     onSuccess: (t) => void navigate(detailsLink(t)),
   });
   return (
@@ -80,6 +71,15 @@ export function WatchSomethingShelf({ title, profileId }: { title: string; profi
       />
       {hasAI && (
         <ActionTile
+          title="Ask AI"
+          subtitle="Describe what you want"
+          icon="sparkle"
+          gradient="linear-gradient(135deg, #0f766e 0%, #0b1a1f 100%)"
+          onClick={() => setAsking(true)}
+        />
+      )}
+      {hasAI && (
+        <ActionTile
           title="Surprise Me"
           subtitle={
             surprise.isError ? 'Couldn’t pick one — try again' : 'A random pick for tonight'
@@ -90,6 +90,7 @@ export function WatchSomethingShelf({ title, profileId }: { title: string; profi
           onClick={() => surprise.mutate()}
         />
       )}
+      <AskAIDialog open={asking} onOpenChange={setAsking} />
     </Shelf>
   );
 }

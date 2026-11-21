@@ -15,6 +15,7 @@ import {
   listKey,
   listsKeys,
   listSorts,
+  RATING_SOURCES,
   removeFromCustomList,
   removeFromWatchlist,
   SORT_LABELS,
@@ -23,6 +24,7 @@ import {
   type BrowseList,
   type BrowsePage,
   type BrowseSort,
+  type RatingSource,
   type WatchFilter,
 } from '@/api/lists';
 import { Button } from '@/components/Button';
@@ -230,6 +232,14 @@ export function BrowseView({
                     })
                   }
                 />
+                {filters && sort === 'rating' && (
+                  <SelectPill<RatingSource>
+                    label="Rating source"
+                    value={search.rating ?? 'imdb'}
+                    options={RATING_SOURCES}
+                    onChange={(v) => set({ rating: v === 'imdb' ? undefined : v })}
+                  />
+                )}
                 <DirectionToggle
                   ascending={ascending}
                   disabled={sort === 'default'}

@@ -7,12 +7,24 @@ import { Skeleton } from '../Spinner';
 import { Button } from '../Button';
 import { useDetailsHref } from './useDetailsHref';
 import { useShelfCards } from './useShelfCards';
+import { CardMenu } from '../browse/CardMenu';
+import type { TileMenuItem } from '../browse/ListTile';
+import { useContinueWatchingActions } from './useContinueWatchingActions';
 
-export function ShelfCards({ cards, landscape }: { cards: HomeCardModel[]; landscape: boolean }) {
+export function ShelfCards({
+  cards,
+  landscape,
+  menuFor,
+}: {
+  cards: HomeCardModel[];
+  landscape: boolean;
+  /** Per-card actions (Continue Watching); cards without get none. */
+  menuFor?: (index: number) => TileMenuItem[] | undefined;
+}) {
   const linkFor = useDetailsHref();
   return (
     <>
-      {cards.map((card) => {
+      {cards.map((card, index) => {
         const common = {
           title: card.title,
           subtitle: card.subtitle,
@@ -20,7 +32,7 @@ export function ShelfCards({ cards, landscape }: { cards: HomeCardModel[]; lands
           badge: card.badge,
           ...linkFor(card),
         };
-        return landscape ? (
+        const el = landscape ? (
           <LandscapeCard
             key={card.id}
             {...common}
@@ -29,6 +41,14 @@ export function ShelfCards({ cards, landscape }: { cards: HomeCardModel[]; lands
           />
         ) : (
           <PosterCard key={card.id} {...common} imageUrl={artworkUrl(card.posterUrl, 'w342')} />
+        );
+        const menu = menuFor?.(index);
+        return menu ? (
+          <CardMenu key={card.id} label={card.title} items={menu} className="snap-start">
+            {el}
+          </CardMenu>
+        ) : (
+          el
         );
       })}
     </>
@@ -71,6 +91,7 @@ export function HomeShelfRow({
   profileId: string;
 }) {
   const data = useShelfCards(shelf, settings, profileId);
+  const cwMenu = useContinueWatchingActions(profileId);
   if (data.isLoading) return <ShelfSkeleton title={shelf.title} landscape={shelf.landscape} />;
   if (data.error && data.cards.length === 0) {
     return (
@@ -86,16 +107,41 @@ export function HomeShelfRow({
     );
   }
   if (data.cards.length === 0) return null;
+  const count = data.total && data.total > data.cards.length ? ` (${data.total})` : '';
+  const linkClass = 'text-sm text-muted transition hover:text-fg';
   const more =
-    shelf.source.kind === 'watchlist' ? (
-      <Link to="/watchlist" className="text-sm text-muted transition hover:text-fg">
-        See all
-        {data.total && data.total > data.cards.length ? ` (${data.total})` : ''}
+    shelf.source.kind === 'watchlist' && !shelf.limited ? (
+      <Link to="/watchlist" search={seeAllSearch(settings)} className={linkClass}>
+        See all{count}
+      </Link>
+    ) : shelf.seeAll ? (
+      <Link
+        to="/lists/$listKey"
+        params={{ listKey: shelf.seeAll }}
+        search={seeAllSearch(settings)}
+        className={linkClass}
+        aria-label={`See all ${shelf.title}`}
+      >
+        See all{count}
       </Link>
     ) : undefined;
+  const items = data.items;
   return (
     <Shelf title={shelf.title} action={more}>
-      <ShelfCards cards={data.cards} landscape={shelf.landscape} />
+      <ShelfCards
+        cards={data.cards}
+        landscape={shelf.landscape}
+        menuFor={items ? (i) => (items[i] ? cwMenu(items[i]) : undefined) : undefined}
+      />
     </Shelf>
   );
+}
+
+/** A Movies / Shows Home view opens its lists filtered to that kind. */
+function seeAllSearch(settings: HomeSettings) {
+  return settings.filter === 'movies'
+    ? { type: 'movie' as const }
+    : settings.filter === 'shows'
+      ? { type: 'series' as const }
+      : {};
 }

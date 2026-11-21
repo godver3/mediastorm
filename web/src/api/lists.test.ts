@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  askAIList,
   itemToTitle,
   listKey,
   listQuery,
@@ -78,7 +79,46 @@ describe('display-list query', () => {
     expect(optionsQuery({ kind: 'top-ten' }, { sort: 'year', type: 'movie' })).toEqual({});
     expect(
       optionsQuery({ kind: 'trending', mediaType: 'movie' }, { sort: 'rating', dir: 'asc' }),
-    ).toEqual({ sortBy: 'rating', sortDirection: 'asc', ratingSource: 'imdb' });
+    ).toEqual({ sortBy: 'rating', sortDirection: 'asc' });
+  });
+  it("sends the rating source for the profile's own lists only", () => {
+    expect(
+      optionsQuery({ kind: 'watchlist' }, { sort: 'rating', ratingSource: 'tomatoes' }),
+    ).toMatchObject({ sortBy: 'rating', ratingSource: 'tomatoes' });
+    expect(optionsQuery({ kind: 'watchlist' }, { sort: 'rating' })).toMatchObject({
+      ratingSource: 'imdb',
+    });
+  });
+  it('round-trips remote, Ask AI and special keys', () => {
+    expect(parseListKey('shelf.mdb-1')).toEqual({ kind: 'shelf', shelfId: 'mdb-1' });
+    const ai = askAIList('cozy 90s mysteries');
+    expect(listKey(ai)).toBe('ai.cozy 90s mysteries');
+    expect(parseListKey(listKey(ai))).toEqual(ai);
+    expect(listQuery(ai)).toMatchObject({ source: 'custom-ai', q: 'cozy 90s mysteries' });
+    expect(listKey({ kind: 'remote', id: 'x.y', name: 'X', query: {} })).toBe('shelf.x.y');
+    expect(parseListKey('continue-watching')).toEqual({ kind: 'continue-watching' });
+    expect(parseListKey('hidden')).toEqual({ kind: 'hidden' });
+    expect(parseListKey('ai.')).toBeNull();
+    const similar: BrowseList = {
+      kind: 'similar',
+      mediaType: 'series',
+      tmdbId: '1399',
+      seed: 'G.O.T',
+    };
+    expect(parseListKey(listKey(similar))).toEqual(similar);
+    expect(listQuery(similar)).toEqual({ source: 'similar', tmdbId: '1399', mediaType: 'series' });
+    expect(parseListKey('service.netflix.2')).toEqual({
+      kind: 'service',
+      serviceId: 'netflix',
+      part: 2,
+    });
+  });
+  it('reads plain-title pages (similar)', () => {
+    const page = toBrowsePage({ kind: 'similar', mediaType: 'movie', tmdbId: '1', seed: 'X' }, {
+      items: [{ id: 'tmdb:movie:2', name: 'Two', mediaType: 'movie' }],
+      total: 1,
+    } as never);
+    expect(page.entries.map((e) => e.title.name)).toEqual(['Two']);
   });
 });
 

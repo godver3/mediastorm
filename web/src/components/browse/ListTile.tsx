@@ -30,6 +30,10 @@ export interface ListTileProps {
   seed?: string;
   menu?: TileMenuItem[];
   size?: 'md' | 'sm';
+  /** Backdrop art behind the title (collection hub cards, Because You Watched). */
+  imageUrl?: string;
+  /** A logo centred on the tile (streaming services). */
+  logoUrl?: string;
 }
 
 /** A list in the Lists catalog: gradient tile with title and count; optional ⋯ menu. */
@@ -42,6 +46,8 @@ export function ListTile({
   seed,
   menu,
   size = 'md',
+  imageUrl,
+  logoUrl,
 }: ListTileProps) {
   const hue = hueFor(seed ?? title);
   return (
@@ -59,25 +65,46 @@ export function ListTile({
           backgroundImage: `radial-gradient(120% 120% at 100% 0%, hsl(${hue} 70% 45% / 0.55), transparent 60%), linear-gradient(135deg, hsl(${(hue + 40) % 360} 45% 22%), hsl(${hue} 35% 12%))`,
         }}
       >
+        {imageUrl && (
+          <>
+            <img
+              src={imageUrl}
+              alt=""
+              loading="lazy"
+              className="absolute inset-0 -z-0 h-full w-full object-cover"
+            />
+            <span className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
+          </>
+        )}
+        {logoUrl && (
+          <span className="absolute inset-x-5 top-4 bottom-[46%] flex items-center justify-center">
+            <img
+              src={logoUrl}
+              alt=""
+              loading="lazy"
+              className="max-h-full max-w-[75%] object-contain drop-shadow"
+            />
+          </span>
+        )}
         {icon && (
           <span className="absolute top-3.5 left-4 text-white/80" aria-hidden="true">
             {icon}
           </span>
         )}
         {kicker && (
-          <span className="text-[11px] font-semibold tracking-wider text-white/60 uppercase">
+          <span className="relative text-[11px] font-semibold tracking-wider text-white/60 uppercase">
             {kicker}
           </span>
         )}
         <span
           className={cn(
-            'line-clamp-2 font-semibold text-white',
+            'relative line-clamp-2 font-semibold text-white',
             size === 'md' ? 'text-lg leading-tight' : 'text-[15px] leading-snug',
           )}
         >
           {title}
         </span>
-        {subtitle && <span className="mt-0.5 text-xs text-white/70">{subtitle}</span>}
+        {subtitle && <span className="relative mt-0.5 text-xs text-white/70">{subtitle}</span>}
       </Link>
       {menu && menu.length > 0 && (
         <Menu.Root>
