@@ -241,8 +241,18 @@ function LibraryPage() {
                     .filter(Boolean)
                     .join(' · ')}
                   imageUrl={artworkUrl(groupPoster(g))}
-                  link={title ? detailsLink(title) : undefined}
-                  onClick={title ? undefined : () => setOpened(g)}
+                  link={
+                    title
+                      ? detailsLink(title)
+                      : isShow(g)
+                        ? {
+                            to: '/libraries/$libraryId/show/$groupId',
+                            params: { libraryId, groupId: g.id },
+                            search: { title: g.title },
+                          }
+                        : undefined
+                  }
+                  onClick={title || isShow(g) ? undefined : () => setOpened(g)}
                 />
               );
             })}

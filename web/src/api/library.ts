@@ -274,3 +274,36 @@ export const libraryPlayback = (profileId: string, itemId: string, profileName?:
   apiRequest<LibraryPlaybackInfo>(`/library/items/${seg(itemId)}/playback`, {
     query: { profileId, profileName },
   });
+
+/** `models.ResumeState` (the server decides whether a resume is worth offering). */
+export interface LibraryResume {
+  position: number;
+  duration: number;
+  percent: number;
+  eligible: boolean;
+}
+
+/**
+ * Where an unmatched library file was left. Its progress is keyed by its stream path (native
+ * LibraryFileStart). Stream paths carry a `/`, which the `history/progress/{type}/{id}` route
+ * can't match, so this reads the progress list and picks the row. Undefined when there is
+ * nothing worth resuming or it can't be read.
+ */
+export async function libraryResume(
+  profileId: string,
+  mediaType: 'movie' | 'episode',
+  streamPath: string,
+  signal?: AbortSignal,
+): Promise<LibraryResume | undefined> {
+  try {
+    const rows = await apiRequest<
+      { mediaType?: string; itemId?: string; resume?: LibraryResume }[] | null
+    >(`/users/${seg(profileId)}/history/progress`, { signal });
+    const r = (rows ?? []).find(
+      (p) => p.itemId === streamPath && p.mediaType === mediaType,
+    )?.resume;
+    return r && r.eligible && r.position > 0 ? r : undefined;
+  } catch {
+    return undefined;
+  }
+}
