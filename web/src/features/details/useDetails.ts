@@ -14,6 +14,7 @@ import {
   type DetailsTarget,
   type Episode,
 } from '@/api/details';
+import { invalidateWatchlist, invalidateWatchState } from '@/api/invalidate';
 import type { DetailsSearch } from '@/lib/links';
 
 export function targetFromSearch(s: DetailsSearch): DetailsTarget {
@@ -86,17 +87,13 @@ export function useDetails(profileId: string, search: DetailsSearch) {
     [episodeOverrides],
   );
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: bundleKey });
 
   const watchlist = useMutation({
     mutationFn: (add: boolean) =>
       add ? addToWatchlist(profileId, target) : removeFromWatchlist(profileId, target),
     onMutate: (add) => setWatchlistOverride(add),
     onError: () => setWatchlistOverride(null),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-      void refresh();
-    },
+    onSuccess: () => void invalidateWatchlist(queryClient, profileId),
   });
 
   const movieWatchedMutation = useMutation({
@@ -104,7 +101,7 @@ export function useDetails(profileId: string, search: DetailsSearch) {
       setWatchedBulk(profileId, [movieWatchedUpdate(target, watched)]),
     onMutate: (w) => setMovieWatchedOverride(w),
     onError: () => setMovieWatchedOverride(null),
-    onSuccess: () => void refresh(),
+    onSuccess: () => void invalidateWatchState(queryClient, profileId),
   });
 
   const episodesWatched = useMutation({
@@ -126,7 +123,7 @@ export function useDetails(profileId: string, search: DetailsSearch) {
         for (const e of episodes) delete next[e.id];
         return next;
       }),
-    onSuccess: () => void refresh(),
+    onSuccess: () => void invalidateWatchState(queryClient, profileId),
   });
 
   return {

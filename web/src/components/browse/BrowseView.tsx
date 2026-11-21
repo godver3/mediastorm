@@ -1,3 +1,4 @@
+import { invalidateWatchlist } from '@/api/invalidate';
 import {
   useInfiniteQuery,
   useMutation,
@@ -132,7 +133,8 @@ export function BrowseView({
       );
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: listsKeys.all });
+      if (list.kind === 'watchlist') void invalidateWatchlist(queryClient, profileId);
+      else void queryClient.invalidateQueries({ queryKey: listsKeys.all });
     },
   });
   const removable = list.kind === 'watchlist' || list.kind === 'custom';
