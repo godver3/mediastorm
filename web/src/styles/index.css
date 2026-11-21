@@ -3,8 +3,7 @@
 /*
  * Design tokens. Components use these via Tailwind theme colours
  * (bg-surface, text-muted, border-line, bg-accent, ...) — never raw hex.
- * Dark is the default; light follows prefers-color-scheme unless
- * <html data-theme="dark|light"> forces one.
+ * The web client is dark mode only.
  */
 :root {
   --accent: #f5b400;
@@ -25,38 +24,6 @@
   --shadow: 0 18px 40px -18px rgb(0 0 0 / 0.7);
   --radius: 14px;
   color-scheme: dark;
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) {
-    --bg: #f4f5f9;
-    --bg-elevated: #ffffff;
-    --surface: rgb(15 18 30 / 0.04);
-    --surface-strong: rgb(15 18 30 / 0.08);
-    --surface-glass: rgb(255 255 255 / 0.75);
-    --line: rgb(15 18 30 / 0.08);
-    --line-strong: rgb(15 18 30 / 0.16);
-    --text: #12131a;
-    --text-muted: #555a6e;
-    --text-faint: #8a8fa3;
-    --shadow: 0 18px 40px -20px rgb(15 18 30 / 0.35);
-    color-scheme: light;
-  }
-}
-
-:root[data-theme='light'] {
-  --bg: #f4f5f9;
-  --bg-elevated: #ffffff;
-  --surface: rgb(15 18 30 / 0.04);
-  --surface-strong: rgb(15 18 30 / 0.08);
-  --surface-glass: rgb(255 255 255 / 0.75);
-  --line: rgb(15 18 30 / 0.08);
-  --line-strong: rgb(15 18 30 / 0.16);
-  --text: #12131a;
-  --text-muted: #555a6e;
-  --text-faint: #8a8fa3;
-  --shadow: 0 18px 40px -20px rgb(15 18 30 / 0.35);
-  color-scheme: light;
 }
 
 @theme inline {
