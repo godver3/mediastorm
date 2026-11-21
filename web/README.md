@@ -86,10 +86,28 @@ Styling:
 
 Playback:
 
-- `openPlayback(params)` from `@/lib/playback` builds the `/watch/playback.html` URL. It adds
-  `token`, `clientId`, `profileId` and `profileUnlock`. `PlaybackParams` documents the
-  params the player reads.
-- playback.html only honours a `returnTo` that ends in `/watch/details`.
+- To play something from any page, use the hook in `src/features/playback/usePlayTitle.tsx`:
+
+  ```tsx
+  const { playTitle, overlay } = usePlayTitle();
+  <Button onClick={() => playTitle(title)}>Play</Button>              // movie, or series up next
+  <Button onClick={() => playTitle(title, { season: 1, episode: 4 })}>Play</Button>
+  <Button onClick={() => playTitle(title, { start: null })}>Start over</Button>
+  {overlay}                                                            // render once
+  ```
+
+  `playTitle` reads the details bundle for the resume point and episode metadata, plays a
+  library copy when the profile has one, otherwise resolves through `POST /api/playback/prequeue`
+  (polled like the native `PlaybackCoordinator`), then hands off to the player with `returnTo`
+  set to the title's details page. `play(PlayRequest)` takes a built request (manual source,
+  specific library version). The overlay shows progress with Cancel, and errors.
+
+- Lower level: `openPlayback(params)` from `@/lib/playback` builds the `/watch/playback.html`
+  URL and adds `token`, `clientId`, `profileId` and `profileUnlock`; `vodPlaybackParams()` maps
+  a resolved stream to the params the player reads (`PlaybackParams` documents them).
+- playback.html honours a same-origin, path-only `returnTo` under `/watch-next/…` or `/watch/…`
+  (details, live, recordings — see `detailsReturnPath()`); signed-out visits to the player are
+  redirected to that path too.
 
 Formatting: Prettier uses 2 spaces, single quotes, semicolons and trailing commas, with
 `printWidth` 100. Run `npm run format`.
