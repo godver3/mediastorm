@@ -2,6 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
 import { brandingKeys } from '@/api/branding';
+import { bindQueriesToProfile } from '@/auth/profileScope';
 import { createQueryClient } from '@/router';
 import { routeTree } from '@/routeTree.gen';
 
@@ -10,6 +11,7 @@ export function renderApp(path: string) {
   const queryClient = createQueryClient();
   queryClient.setDefaultOptions({ queries: { retry: false } });
   // Default (unbranded) server, so tests' fetch mocks needn't answer /api/branding.
+  bindQueriesToProfile(queryClient);
   queryClient.setQueryData(brandingKeys.all, { branding: {} });
   const router = createRouter({
     routeTree,

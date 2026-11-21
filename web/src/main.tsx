@@ -2,12 +2,14 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { bindQueriesToProfile } from '@/auth/profileScope';
 import { sessionStore } from '@/auth/sessionStore';
 import { createAppRouter, createQueryClient } from './router';
 import './styles/index.css';
 
 const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);
+bindQueriesToProfile(queryClient);
 
 // Re-run route guards whenever sign-in state or the selected profile changes
 // (e.g. a failed refresh signs out, a cancelled PIN prompt deselects the profile).

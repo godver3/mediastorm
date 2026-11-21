@@ -1,5 +1,4 @@
 import { useDocumentTitle } from '@/lib/documentTitle';
-import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import type { UserProfile } from '@/api/types';
@@ -27,17 +26,14 @@ export const Route = createFileRoute('/profiles')({
 export function ProfilesPage() {
   useDocumentTitle('Profiles');
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { redirect: redirectTo } = Route.useSearch();
   const profiles = useProfiles();
   const logout = useLogout();
   const [pinFor, setPinFor] = useState<UserProfile | null>(null);
 
   async function enter(profile: UserProfile) {
-    const previous = sessionStore.getState().profileId;
+    // bindQueriesToProfile (main.tsx) cancels and drops the old profile's queries.
     sessionStore.selectProfile(profile.id);
-    if (previous !== profile.id)
-      queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== 'users' });
     // Only follow same-app redirects; everything else lands on Home.
     if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
       await navigate({ to: redirectTo });
