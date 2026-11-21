@@ -18,6 +18,11 @@
         icon.rel = 'icon';
         icon.href = root.replace(/watch\/$/, 'favicon.ico');
         document.head.appendChild(icon);
+        // Both are served by the backend from the uploaded web-icon branding slot.
+        var touch = document.createElement('link');
+        touch.rel = 'apple-touch-icon';
+        touch.href = root.replace(/watch\/$/, 'apple-touch-icon.png');
+        document.head.appendChild(touch);
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

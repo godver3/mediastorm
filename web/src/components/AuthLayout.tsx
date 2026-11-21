@@ -1,4 +1,6 @@
 import { useId, type ReactNode } from 'react';
+import { useBranding } from '@/lib/branding';
+import { APP_NAME } from '@/lib/documentTitle';
 import { Brand } from './shell/Sidebar';
 
 /** Centered glass card used by login and the profile picker. */
@@ -13,10 +15,27 @@ export function AuthLayout({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const { logoUrl, profilePickerUrl, isLoading } = useBranding();
+  // Sign-in shows the wide logo; the profile picker (wide) the TV home art, as the Expo web did.
+  const art = wide ? (profilePickerUrl ?? logoUrl) : logoUrl;
   return (
     <div className="flex min-h-full flex-col items-center justify-center px-4 py-12">
       <div className="mb-8">
-        <Brand />
+        {isLoading ? (
+          <div className="h-20" aria-hidden />
+        ) : art ? (
+          <img
+            src={art}
+            alt={APP_NAME}
+            className={
+              wide
+                ? 'max-h-40 max-w-[min(90vw,520px)] object-contain'
+                : 'max-h-24 max-w-[min(80vw,320px)] object-contain'
+            }
+          />
+        ) : (
+          <Brand />
+        )}
       </div>
       <div
         className={
