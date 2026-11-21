@@ -47,8 +47,11 @@ export interface PrequeueStatus {
   /** ffprobe stream index; -1 = none. */
   selectedSubtitleTrack?: number;
   trackSelection?: TrackSelection;
-  subtitleTracks?: { index: number; absoluteIndex?: number; codec?: string; isBitmap?: boolean }[];
+  subtitleTracks?: PrequeueSubtitleTrack[];
+  audioTracks?: PrequeueAudioTrack[];
   passthroughName?: string;
+  resultAttributes?: Record<string, string>;
+  selectedResult?: { title?: string; attributes?: Record<string, string> };
   error?: string;
 }
 
@@ -250,3 +253,216 @@ export async function resolveSource(
 }
 
 export { sleep as abortableSleep };
+
+// ---------------------------------------------------------------- details warm-up + tracks
+
+/** A source audio stream (`index` is the ffprobe stream number). */
+export interface PrequeueAudioTrack {
+  index: number;
+  language?: string;
+  codec?: string;
+  /** Codec profile ("E-AC-3 + Atmos"), newer servers. */
+  profile?: string;
+  title?: string;
+}
+
+export interface PrequeueSubtitleTrack {
+  /** 0-based index among subtitle streams. */
+  index: number;
+  /** ffprobe stream number (what playback.html selects by). */
+  absoluteIndex?: number;
+  language?: string;
+  title?: string;
+  codec?: string;
+  forced?: boolean;
+  isBitmap?: boolean;
+}
+
+/** The picked release's name (native PrequeueStatus.releaseTitle). */
+export function releaseTitle(s: PrequeueStatus): string | undefined {
+  const attrs = s.resultAttributes ?? s.selectedResult?.attributes;
+  const passthrough =
+    s.passthroughName ?? (attrs?.passthrough_format === 'true' ? attrs?.raw_name : undefined);
+  const file = s.streamPath?.split('/').pop();
+  for (const c of [passthrough, attrs?.raw_title, s.selectedResult?.title, file, s.displayName]) {
+    const line = c?.split('\n')[0]?.trim();
+    if (line) return line;
+  }
+  return undefined;
+}
+
+/** Subtitle stream number the player selects by. */
+export const subtitleStream = (t: PrequeueSubtitleTrack) => t.absoluteIndex ?? t.index;
+
+/**
+ * What Play would pick for this stream (native trackDefaults): the server's selection,
+ * else the legacy indexes. Subtitle `undefined` = off.
+ */
+export function trackDefaults(s: PrequeueStatus): { audio?: number; subtitle?: number } {
+  const sel = s.trackSelection;
+  if (sel) {
+    const sub = sel.subtitleMode === 'off' ? undefined : (sel.subtitle ?? sel.textSubtitle);
+    return { audio: sel.audio?.streamIndex, subtitle: sub?.streamIndex };
+  }
+  const subIdx = s.selectedSubtitleTrack;
+  const sub =
+    subIdx !== undefined && subIdx >= 0
+      ? s.subtitleTracks?.find((t) => t.absoluteIndex === subIdx || t.index === subIdx)
+      : undefined;
+  const audio = s.selectedAudioTrack;
+  return {
+    audio: audio !== undefined && audio >= 0 ? audio : undefined,
+    subtitle: sub ? subtitleStream(sub) : undefined,
+  };
+}
+
+/** Picks made in Audio & Subtitles; `subtitle: 'off'` turns them off. */
+export interface TrackOverrides {
+  audio?: number;
+  subtitle?: number | 'off';
+}
+
+const LANGUAGES: Record<string, string> = {
+  en: 'English',
+  eng: 'English',
+  es: 'Spanish',
+  spa: 'Spanish',
+  fr: 'French',
+  fre: 'French',
+  fra: 'French',
+  de: 'German',
+  ger: 'German',
+  deu: 'German',
+  it: 'Italian',
+  ita: 'Italian',
+  ja: 'Japanese',
+  jpn: 'Japanese',
+  ko: 'Korean',
+  kor: 'Korean',
+  zh: 'Chinese',
+  chi: 'Chinese',
+  zho: 'Chinese',
+  pt: 'Portuguese',
+  por: 'Portuguese',
+  ru: 'Russian',
+  rus: 'Russian',
+  nl: 'Dutch',
+  dut: 'Dutch',
+  nld: 'Dutch',
+  sv: 'Swedish',
+  swe: 'Swedish',
+  da: 'Danish',
+  dan: 'Danish',
+  no: 'Norwegian',
+  nor: 'Norwegian',
+  fi: 'Finnish',
+  fin: 'Finnish',
+  pl: 'Polish',
+  pol: 'Polish',
+  hi: 'Hindi',
+  hin: 'Hindi',
+  ar: 'Arabic',
+  ara: 'Arabic',
+  tr: 'Turkish',
+  tur: 'Turkish',
+  und: 'Unknown',
+};
+
+/** "English" for "eng"; the code upper-cased when unknown (native TrackLabels.language). */
+export function languageLabel(code?: string): string {
+  const c = (code ?? '').trim().toLowerCase();
+  if (!c) return 'Unknown';
+  return LANGUAGES[c] ?? c.toUpperCase();
+}
+
+const CODECS: Record<string, string> = {
+  eac3: 'E-AC-3',
+  ac3: 'AC-3',
+  truehd: 'TrueHD',
+  dts: 'DTS',
+  aac: 'AAC',
+  flac: 'FLAC',
+  opus: 'Opus',
+  mp3: 'MP3',
+  subrip: 'SRT',
+  srt: 'SRT',
+  ass: 'ASS',
+  ssa: 'SSA',
+  mov_text: 'Text',
+  webvtt: 'WebVTT',
+  hdmv_pgs_subtitle: 'PGS',
+  dvd_subtitle: 'VobSub',
+};
+
+/** "E-AC-3" for "eac3" (native TrackLabels.format). */
+export const codecLabel = (codec?: string) => {
+  const c = (codec ?? '').toLowerCase();
+  return c ? (CODECS[c] ?? c.toUpperCase()) : '';
+};
+
+/** "English · E-AC-3" */
+export function audioLabel(t: PrequeueAudioTrack): string {
+  return [languageLabel(t.language), t.profile || codecLabel(t.codec)].filter(Boolean).join(' · ');
+}
+
+// ---------------------------------------------------------------- details playback settings
+
+/** The details page's playback settings, device override over profile (native layering). */
+export interface DetailsPlaybackSettings {
+  /** Streams start resolving as a details page opens (`playback.disablePrequeue` off). */
+  prequeueOnOpen: boolean;
+  /** Info line: the prequeued release's name (`display.showDetailsPrequeueFilename`). */
+  showFilename: boolean;
+  /** Info line: the tracks Play will use (`display.showDetailsSelectedTracks`). */
+  showSelectedTracks: boolean;
+}
+
+interface UserSettingsSlice {
+  playback?: { disablePrequeue?: boolean };
+  display?: { showDetailsPrequeueFilename?: boolean; showDetailsSelectedTracks?: boolean };
+}
+
+interface DeviceSettingsSlice {
+  disablePrequeue?: boolean;
+  showDetailsPrequeueFilename?: boolean;
+  showDetailsSelectedTracks?: boolean;
+}
+
+/**
+ * Pure layering (native APIClient.playbackSettings / detailsInfoLine). The server defaults
+ * `disablePrequeue` to true (uncached debrid upload churn), so warm-up is off unless the
+ * profile or device turns it on, and off when neither answers.
+ */
+export function layerDetailsSettings(
+  user: UserSettingsSlice | null,
+  device: DeviceSettingsSlice | null,
+): DetailsPlaybackSettings {
+  const disable = device?.disablePrequeue ?? user?.playback?.disablePrequeue ?? true;
+  return {
+    prequeueOnOpen: !disable,
+    showFilename:
+      device?.showDetailsPrequeueFilename ?? user?.display?.showDetailsPrequeueFilename ?? false,
+    showSelectedTracks:
+      device?.showDetailsSelectedTracks ?? user?.display?.showDetailsSelectedTracks ?? false,
+  };
+}
+
+export async function getDetailsPlaybackSettings(
+  profileId: string,
+  signal?: AbortSignal,
+): Promise<DetailsPlaybackSettings> {
+  const [user, device] = await Promise.all([
+    apiRequest<UserSettingsSlice>(`/users/${encodeURIComponent(profileId)}/settings`, {
+      signal,
+    }).catch(() => null),
+    apiRequest<DeviceSettingsSlice>(`/clients/${encodeURIComponent(getClientId())}/settings`, {
+      signal,
+      query: { userId: profileId },
+    }).catch(() => null),
+  ]);
+  return layerDetailsSettings(user, device);
+}
+
+export const playbackKeys = {
+  detailsSettings: (profileId: string) => ['playback', profileId, 'detailsSettings'] as const,
+};

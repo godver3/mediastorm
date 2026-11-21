@@ -16,6 +16,7 @@ import {
   type PrequeueBody,
   type PrequeueStatus,
   type SourceResult,
+  type TrackOverrides,
   type TrackSelection,
 } from '@/api/playback';
 import {
@@ -43,6 +44,13 @@ export interface PlayRequest {
   source?: SourceResult;
   /** The player's back/close target (`detailsReturnPath()`). */
   returnTo?: string;
+  /**
+   * The details page's warm-up prequeue (native PlaybackCoordinator.prewarm): reused when it
+   * resolves the episode asked for, else a fresh prequeue starts.
+   */
+  warmPrequeueId?: string;
+  /** Audio & Subtitles picks for the stream (by ffprobe stream number). */
+  tracks?: TrackOverrides;
 }
 
 export interface ResolveProgress {
@@ -147,6 +155,7 @@ export async function resolvePlayback(
 ): Promise<PlaybackParams> {
   const opts = { episode: req.episode, start: req.start, returnTo: req.returnTo };
   let params: PlaybackParams;
+  let tracks = req.library || req.source ? undefined : req.tracks;
   if (req.library) {
     ctx.onProgress?.({ stage: 'Preparing…' });
     const info = await libraryPlayback(req.library.item.id, ctx.profileId, ctx.profileName);
@@ -181,8 +190,15 @@ export async function resolvePlayback(
     );
   } else {
     ctx.onProgress?.({ stage: 'Searching…' });
-    const started = await startPrequeue(ctx.profileId, prequeueBody(req), ctx.signal);
-    const status = await awaitPrequeue(started.prequeueId, ctx);
+    const warm = req.warmPrequeueId ? await reuseWarm(req.warmPrequeueId, req, ctx) : undefined;
+    // The picks name the warm stream's tracks; another stream keeps its own defaults.
+    if (!warm) tracks = undefined;
+    const status =
+      warm ||
+      (await awaitPrequeue(
+        (await startPrequeue(ctx.profileId, prequeueBody(req), ctx.signal)).prequeueId,
+        ctx,
+      ));
     // The server picks the next-up episode when none was asked for.
     const target = status.targetEpisode;
     const episode =
@@ -192,6 +208,39 @@ export async function resolvePlayback(
         : undefined);
     params = vodPlaybackParams(req.title, streamFromPrequeue(status), { ...opts, episode });
   }
+  applyTrackOverrides(params, tracks);
   if (ctx.profileName) params.profileName = ctx.profileName;
   return params;
+}
+
+/** Puts Audio & Subtitles picks over the stream's defaults; '-1' = subtitles off. */
+export function applyTrackOverrides(params: PlaybackParams, tracks?: TrackOverrides) {
+  if (!tracks) return;
+  if (tracks.audio !== undefined) params.preselectedAudioTrack = String(tracks.audio);
+  if (tracks.subtitle === 'off') params.preselectedSubtitleTrack = '-1';
+  else if (tracks.subtitle !== undefined) params.preselectedSubtitleTrack = String(tracks.subtitle);
+}
+
+/**
+ * The warm-up prequeue's result, when it is for what `req` plays (the same episode, or the
+ * server's up next when none was asked for); undefined to start a fresh one.
+ */
+async function reuseWarm(
+  id: string,
+  req: PlayRequest,
+  ctx: ResolveContext,
+): Promise<PrequeueStatus | undefined> {
+  try {
+    const status = await awaitPrequeue(id, ctx);
+    const ep = req.episode;
+    const t = status.targetEpisode;
+    if (ep && req.title.mediaType === 'series') {
+      if (!t || t.seasonNumber !== ep.seasonNumber || t.episodeNumber !== ep.episodeNumber)
+        return undefined;
+    }
+    return status;
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    return undefined;
+  }
 }

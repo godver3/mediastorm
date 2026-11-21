@@ -51,10 +51,18 @@ export interface Season {
   episodes: Episode[];
 }
 
+/** `models.SeriesOrdering`: one TVDB season type (official, dvd, absolute, …). */
+export interface SeriesOrdering {
+  type: string;
+  name?: string;
+  seasonCount?: number;
+  isOfficial?: boolean;
+}
+
 export interface SeriesDetails {
   title: Title;
   seasons: Season[];
-  availableOrderings?: { type: string; name?: string }[];
+  availableOrderings?: SeriesOrdering[];
   activeOrdering?: string;
 }
 
@@ -136,11 +144,21 @@ const seg = encodeURIComponent;
 
 // ---------------------------------------------------------------- requests
 
-export function getDetailsBundle(profileId: string, t: DetailsTarget, signal?: AbortSignal) {
+/**
+ * `seasonType` asks for an episode ordering (the one just picked); without it the server
+ * applies the profile's saved one (native detailsBundle(_:seasonType:)).
+ */
+export function getDetailsBundle(
+  profileId: string,
+  t: DetailsTarget,
+  signal?: AbortSignal,
+  seasonType?: string,
+) {
   return apiRequest<DetailsBundle>(`/users/${seg(profileId)}/details-bundle`, {
     signal,
     query: {
       type: t.mediaType,
+      seasonType: seasonType || undefined,
       titleId: t.titleId,
       name: t.name,
       tmdbId: t.tmdbId,
@@ -417,3 +435,198 @@ export function versionQuality(v: LibraryVersion): string {
   if (parts.length) return parts.join(' · ');
   return v.item.versionLabel || v.item.fileName || 'Library file';
 }
+
+// ---------------------------------------------------------------- episode ordering
+
+/** "DVD", "Aired Order (Default)" (native orderingLabel). */
+export const orderingLabel = (o: SeriesOrdering) =>
+  `${o.name || o.type}${o.isOfficial ? ' (Default)' : ''}`;
+
+/**
+ * Saves the profile's ordering for a series (`PUT /users/{id}/series-ordering/{tvdbId}`,
+ * native APIClient+Ordering). The details bundle then applies it; a non-official one
+ * pauses Trakt / Simkl sync for the series on the server.
+ */
+export function setSeriesOrdering(profileId: string, tvdbId: number, seasonType: string) {
+  return apiRequest<{ seasonType?: string }>(
+    `/users/${seg(profileId)}/series-ordering/${seg(String(tvdbId))}`,
+    { method: 'PUT', body: { seasonType } },
+  );
+}
+
+// ---------------------------------------------------------------- hidden titles
+
+/** `models.HiddenItem` (native Models.swift HiddenItem). */
+export interface HiddenItem {
+  id: string;
+  mediaType: string;
+  name?: string;
+  year?: number;
+  posterUrl?: string;
+  backdropUrl?: string;
+  externalIds?: Record<string, string>;
+}
+
+export const hiddenKeys = {
+  list: (profileId: string) => ['hidden', profileId] as const,
+};
+
+export const listHiddenItems = (profileId: string, signal?: AbortSignal) =>
+  apiRequest<HiddenItem[] | null>(`/users/${seg(profileId)}/hidden-items`, { signal }).then(
+    (l) => l ?? [],
+  );
+
+/** Native APIClient+TitleState hide(_:). */
+export function hideTitle(profileId: string, t: DetailsTarget) {
+  const ids = externalIds(t);
+  return apiRequest<HiddenItem>(`/users/${seg(profileId)}/hidden-items`, {
+    method: 'POST',
+    body: {
+      id: t.titleId,
+      mediaType: t.mediaType,
+      name: t.name,
+      ...(t.year ? { year: t.year } : {}),
+      ...(t.posterUrl ? { posterUrl: t.posterUrl } : {}),
+      ...(t.backdropUrl ? { backdropUrl: t.backdropUrl } : {}),
+      ...(ids ? { externalIds: ids } : {}),
+    },
+  });
+}
+
+/** By the stored item's own media type and ID; a 404 counts as success. */
+export async function unhideTitle(profileId: string, item: Pick<HiddenItem, 'mediaType' | 'id'>) {
+  try {
+    await apiRequest<unknown>(
+      `/users/${seg(profileId)}/hidden-items/${seg(item.mediaType)}/${seg(item.id)}`,
+      { method: 'DELETE' },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return;
+    throw err;
+  }
+}
+
+/** Identity tokens for matching stored items (native TitleStateStore.tokens). */
+export function identityTokens(
+  mediaType: string,
+  id: string,
+  ids: Record<string, string | undefined> = {},
+): Set<string> {
+  const lowered = mediaType.trim().toLowerCase();
+  const type = lowered === 'tv' || lowered === 'show' ? 'series' : lowered;
+  const out = new Set<string>();
+  if (!type) return out;
+  const addProvider = (provider: string, v: string) => {
+    const x = v.trim().toLowerCase();
+    if (!provider || !x) return;
+    out.add(`${type}:${provider}:${x}`);
+    out.add(`${type}:${x}`);
+  };
+  const raw = id.trim().toLowerCase();
+  if (raw) {
+    out.add(`${type}:${raw}`);
+    const patterns: [RegExp, string][] = [
+      [/^tmdb:(?:movie|tv):(.+)$/, 'tmdb'],
+      [/^tvdb:(?:movie|series):(.+)$/, 'tvdb'],
+      [/^(?:imdb:)?(tt\d+)$/, 'imdb'],
+    ];
+    for (const [re, provider] of patterns) {
+      const m = raw.match(re);
+      if (m?.[1]) addProvider(provider, m[1]);
+    }
+  }
+  for (const [k, v] of Object.entries(ids)) if (v) addProvider(k.toLowerCase(), v);
+  return out;
+}
+
+/** The stored hidden item for `t`, if any (native TitleStateStore.hiddenItem). */
+export function findHidden(items: HiddenItem[], t: DetailsTarget): HiddenItem | undefined {
+  const mine = identityTokens(t.mediaType, t.titleId, externalIds(t) ?? {});
+  return items.find((item) =>
+    [...identityTokens(item.mediaType, item.id, item.externalIds ?? {})].some((tok) =>
+      mine.has(tok),
+    ),
+  );
+}
+
+// ---------------------------------------------------------------- custom list membership
+
+interface StoredListItem {
+  id: string;
+  mediaType: string;
+  externalIds?: Record<string, string>;
+}
+
+export const customListItems = (profileId: string, listId: string, signal?: AbortSignal) =>
+  apiRequest<StoredListItem[] | null>(
+    `/users/${seg(profileId)}/custom-lists/${seg(listId)}/items`,
+    { signal },
+  ).then((l) => l ?? []);
+
+/**
+ * The stored item for `t` in each list that holds it (native CustomListsStore.memberships):
+ * removal goes by the stored media type and ID, which may differ from the page's.
+ */
+export async function listMemberships(
+  profileId: string,
+  lists: { id: string; itemCount?: number }[],
+  t: DetailsTarget,
+  signal?: AbortSignal,
+): Promise<Record<string, StoredListItem>> {
+  const found: Record<string, StoredListItem> = {};
+  await Promise.all(
+    lists
+      .filter((l) => (l.itemCount ?? 1) > 0)
+      .map(async (l) => {
+        const items = await customListItems(profileId, l.id, signal).catch(() => []);
+        const hit = items.find((i) => listItemMatches(i, t));
+        if (hit) found[l.id] = hit;
+      }),
+  );
+  return found;
+}
+
+/** A stored list item is `t` (native WatchlistStore.matches). */
+export function listItemMatches(
+  item: { id: string; mediaType: string; externalIds?: Record<string, string> },
+  t: DetailsTarget,
+): boolean {
+  if ((item.mediaType === 'movie') !== (t.mediaType === 'movie')) return false;
+  if (item.id === t.titleId) return true;
+  const ids = item.externalIds ?? {};
+  return Object.entries(externalIds(t) ?? {}).some(([k, v]) => !!v && ids[k] === v);
+}
+
+// ---------------------------------------------------------------- trailer prequeue
+
+export interface TrailerPrequeueStatus {
+  id: string;
+  /** pending | downloading | ready | failed */
+  status: string;
+  error?: string;
+}
+
+/** Hosts the server's trailer prequeue accepts (native APIClient+Trailers isYouTube). */
+export function isYouTubeUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be'].includes(
+      host,
+    );
+  } catch {
+    return false;
+  }
+}
+
+export const startTrailerPrequeue = (url: string, signal?: AbortSignal) =>
+  apiRequest<TrailerPrequeueStatus>('/metadata/trailers/prequeue', {
+    method: 'POST',
+    body: { url },
+    signal,
+  });
+
+export const trailerPrequeueStatus = (id: string, signal?: AbortSignal) =>
+  apiRequest<TrailerPrequeueStatus>('/metadata/trailers/prequeue/status', {
+    query: { id },
+    signal,
+  });

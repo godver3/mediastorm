@@ -9,6 +9,7 @@ import {
   type DetailsBundle,
   type DetailsTarget,
   type Episode,
+  type LibraryVersion,
   type ResumeState,
 } from '@/api/details';
 import type { Title } from '@/api/titles';
@@ -22,6 +23,7 @@ import {
   type PlaybackTitleInfo,
   type StartPoint,
 } from '@/lib/playback';
+import { VersionsDialog } from '@/features/details/VersionsDialog';
 import { PlaybackOverlay, type PlaybackOverlayState } from './PlaybackOverlay';
 import { resolvePlayback, type PlayEpisode, type PlayRequest } from './resolve';
 
@@ -103,6 +105,9 @@ export function usePlayTitle() {
   const { profile } = useActiveProfile();
   const [state, setState] = useState<PlaybackOverlayState>({ kind: 'idle' });
   const abortRef = useRef<AbortController | null>(null);
+  const [choice, setChoice] = useState<{ req: PlayRequest; versions: LibraryVersion[] } | null>(
+    null,
+  );
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -116,7 +121,7 @@ export function usePlayTitle() {
     async (
       label: string,
       imageUrl: string | undefined,
-      build: (signal: AbortSignal) => Promise<PlayRequest>,
+      build: (signal: AbortSignal) => Promise<PlayRequest | null>,
     ) => {
       const profileId = sessionStore.getState().profileId;
       if (!profileId) return;
@@ -126,6 +131,11 @@ export function usePlayTitle() {
       setState({ kind: 'resolving', label, stage: 'Starting…', imageUrl });
       try {
         const req = await build(controller.signal);
+        if (!req) {
+          // The build asked the user something instead (several library copies).
+          if (!controller.signal.aborted) setState({ kind: 'idle' });
+          return;
+        }
         const params = await resolvePlayback(req, {
           profileId,
           profileName: profile?.name,
@@ -200,7 +210,6 @@ export function usePlayTitle() {
             : base.mediaType === 'movie'
               ? versions.movie
               : [];
-        if (copies[0]) req.library = copies[0];
         const search = detailsSearch(
           { ...req.title, id: req.title.titleId },
           req.episode
@@ -208,6 +217,12 @@ export function usePlayTitle() {
             : undefined,
         );
         req.returnTo = detailsReturnPath(search);
+        // Several copies: ask which (with Stream instead), as the details page does.
+        if (copies.length > 1) {
+          setChoice({ req, versions: copies });
+          return null;
+        }
+        if (copies[0]) req.library = copies[0];
         return req;
       });
     },
@@ -215,7 +230,28 @@ export function usePlayTitle() {
   );
 
   const overlay: ReactNode = (
-    <PlaybackOverlay state={state} onCancel={cancel} onDismiss={() => setState({ kind: 'idle' })} />
+    <>
+      <PlaybackOverlay
+        state={state}
+        onCancel={cancel}
+        onDismiss={() => setState({ kind: 'idle' })}
+      />
+      {choice && (
+        <VersionsDialog
+          versions={choice.versions}
+          open
+          onOpenChange={(o) => !o && setChoice(null)}
+          onPick={(v) => {
+            setChoice(null);
+            void play({ ...choice.req, library: v });
+          }}
+          onStreamInstead={() => {
+            setChoice(null);
+            void play(choice.req);
+          }}
+        />
+      )}
+    </>
   );
 
   return { play, playTitle, cancel, state, overlay, busy: state.kind === 'resolving' };

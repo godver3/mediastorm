@@ -2,10 +2,10 @@ import { useDocumentTitle } from '@/lib/documentTitle';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { episodeKey, primaryTrailer, type Episode, type LibraryVersion } from '@/api/details';
-import type { SourceResult } from '@/api/playback';
+import { releaseTitle, type SourceResult, type TrackOverrides } from '@/api/playback';
 import type { Title } from '@/api/titles';
 import { useSessionState } from '@/auth/sessionStore';
-import { Button, EmptyState, ErrorState, Icon, PosterCard, Shelf } from '@/components';
+import { Button, EmptyState, ErrorState, Icon, PosterCard, Shelf, Spinner } from '@/components';
 import {
   titleInfo,
   playEpisode,
@@ -20,10 +20,15 @@ import { CastRow } from './CastRow';
 import { DetailsHero } from './DetailsHero';
 import { EpisodeList } from './EpisodeList';
 import { airedRegularEpisodes, orderedSeasons, watchState } from './format';
+import { ListsDialog } from './ListsDialog';
+import { MoreMenu } from './MoreMenu';
+import { ResumePrompt } from './ResumePrompt';
 import { SourcePickerDialog } from './SourcePickerDialog';
+import { TracksDialog, tracksSummary } from './TracksDialog';
 import { TrailerDialog } from './TrailerDialog';
 import { useDetails } from './useDetails';
 import { VersionsDialog } from './VersionsDialog';
+import { useWarmPrequeue } from './useWarmPrequeue';
 
 /** "1:02:14" / "23:14". */
 export function clock(seconds: number): string {
@@ -41,6 +46,14 @@ type VersionsState = {
   fromPlay: boolean;
 };
 
+/** A version / source picked outside Play, waiting on Resume or Start over (native). */
+type PendingPick = {
+  episode?: Episode;
+  library?: LibraryVersion;
+  source?: SourceResult;
+  resumeAt: NonNullable<StartPoint>;
+};
+
 /**
  * Movie / series details (native Views/Details/DetailsView* and Mobile/MobileDetailsView*):
  * hero, Play / Resume (+ Start over), versions, manual source, trailer, watchlist and
@@ -55,6 +68,13 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [sourcesFor, setSourcesFor] = useState<{ episode?: Episode } | null>(null);
   const [versionsState, setVersionsState] = useState<VersionsState | null>(null);
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
+  const [listsOpen, setListsOpen] = useState(false);
+  const [tracksOpen, setTracksOpen] = useState(false);
+  // Audio & Subtitles picks, bound to the warm stream they were made for (native).
+  const [picks, setPicks] = useState<{ streamPath: string; overrides: TrackOverrides } | null>(
+    null,
+  );
 
   const bundle = d.bundle.data;
   useDocumentTitle(d.title?.name ?? search.name ?? 'Details');
@@ -105,6 +125,28 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           ? d.library.data.movie
           : [];
 
+  const primaryVersions = versionsFor(isMovie ? undefined : primaryEpisode);
+  const { warm: warmState, settings: playSettings } = useWarmPrequeue(profileId, info, {
+    ready: !!bundle && !d.library.isPending,
+    hasLibraryCopy: primaryVersions.length > 0,
+  });
+  // The warm-up, while it resolves or once it resolved the episode Play targets.
+  const warm =
+    warmState.phase === 'resolving'
+      ? warmState
+      : warmState.phase === 'ready' &&
+          (isMovie ||
+            (primaryEpisode &&
+              warmState.status.targetEpisode?.seasonNumber === primaryEpisode.seasonNumber &&
+              warmState.status.targetEpisode?.episodeNumber === primaryEpisode.episodeNumber))
+        ? warmState
+        : undefined;
+  const warmStatus = warm?.phase === 'ready' ? warm.status : undefined;
+  const currentPicks: TrackOverrides =
+    warmStatus && picks?.streamPath === warmStatus.streamPath && picks ? picks.overrides : {};
+  const warmId =
+    warmState.phase === 'ready' || warmState.phase === 'resolving' ? warmState.id : undefined;
+
   const start = (opts: {
     episode?: Episode;
     start?: StartPoint;
@@ -117,7 +159,20 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
       start: opts.start,
       library: opts.library,
       source: opts.source,
+      ...(opts.library || opts.source
+        ? {}
+        : {
+            warmPrequeueId: warmId,
+            tracks: Object.keys(currentPicks).length ? currentPicks : undefined,
+          }),
     });
+
+  /** A pick outside Play: ask Resume / Start over when there is a resume point (native). */
+  const pickThenAsk = (pick: Omit<PendingPick, 'resumeAt'>) => {
+    const resumeAt = pick.episode ? resumeStart(pick.episode.resume) : primaryStart;
+    if (resumeAt) setPendingPick({ ...pick, resumeAt });
+    else start({ ...pick, start: undefined });
+  };
 
   /** Play, preferring the library: one copy plays, several ask (native playPreferringLibrary). */
   const playPreferringLibrary = (episode: Episode | undefined, from: StartPoint) => {
@@ -132,7 +187,6 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   const onEpisodePlay = (ep: Episode) => playPreferringLibrary(ep, resumeStart(ep.resume));
 
   const trailer = primaryTrailer(bundle?.trailers);
-  const primaryVersions = versionsFor(isMovie ? undefined : primaryEpisode);
   const seriesWatch = watchState(airedRegularEpisodes(seasons), d.isEpisodeWatched);
 
   if (!search.titleId) {
@@ -218,6 +272,14 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         onClick={() => setSourcesFor({ episode: isMovie ? undefined : primaryEpisode })}
         icon={<Icon name="sources" />}
       />
+      {warm && (
+        <ActionButton
+          label={warmStatus ? 'Audio & Subtitles' : 'Finding a source…'}
+          disabled={!warmStatus}
+          onClick={() => setTracksOpen(true)}
+          icon={warmStatus ? <Icon name="audio" /> : <Spinner size={18} />}
+        />
+      )}
       {trailer && (
         <ActionButton
           label="Trailer"
@@ -231,6 +293,12 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         disabled={!bundle || d.watchlist.isPending}
         onClick={() => d.watchlist.mutate(!d.inWatchlist)}
         icon={<Icon name={d.inWatchlist ? 'check' : 'plus'} />}
+      />
+      <ActionButton
+        label="Lists"
+        disabled={!bundle}
+        onClick={() => setListsOpen(true)}
+        icon={<Icon name="list" />}
       />
       {isMovie ? (
         <ActionButton
@@ -257,12 +325,74 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           />
         )
       )}
+      <MoreMenu
+        hidden={d.isHidden}
+        hiddenBusy={d.hiddenMutation.isPending}
+        onToggleHidden={() =>
+          d.hiddenMutation.mutate(!d.isHidden, {
+            // Hiding leaves the page, as native does.
+            onSuccess: (_r, hide) => {
+              if (!hide) return;
+              if (window.history.length > 1) router.history.back();
+              else void navigate({ to: '/' });
+            },
+          })
+        }
+        orderings={isMovie ? undefined : bundle?.seriesDetails?.availableOrderings}
+        activeOrdering={d.pickedOrdering ?? bundle?.seriesDetails?.activeOrdering}
+        onPickOrdering={(type) => {
+          const current = d.pickedOrdering ?? bundle?.seriesDetails?.activeOrdering;
+          if (type === current) return;
+          // Season numbers mean something else in the new ordering: start from Up Next's.
+          void navigate({
+            to: '/details',
+            search: (prev) => ({
+              ...(prev as DetailsSearch),
+              season: undefined,
+              episode: undefined,
+            }),
+            replace: true,
+            resetScroll: false,
+          });
+          d.ordering.mutate(type);
+        }}
+      />
     </div>
   );
 
-  const errors = [d.watchlist.error, d.movieWatchedMutation.error, d.episodesWatched.error].filter(
-    Boolean,
+  const tracks =
+    warmStatus && playSettings?.showSelectedTracks
+      ? tracksSummary(warmStatus, currentPicks)
+      : undefined;
+  const fileName = warmStatus && playSettings?.showFilename ? releaseTitle(warmStatus) : undefined;
+  const infoLoading = !!warm && !warmStatus && !!playSettings?.showFilename;
+  const infoLine = (infoLoading || fileName || tracks) && (
+    <div className="mt-3 space-y-1 text-sm text-muted" data-testid="details-info-line">
+      {infoLoading && (
+        <div className="flex items-center gap-2">
+          <Spinner size={14} /> Finding a source…
+        </div>
+      )}
+      {fileName && (
+        <div className="truncate" title={fileName}>
+          {fileName}
+        </div>
+      )}
+      {tracks && (
+        <div className="flex flex-wrap gap-x-6 gap-y-1">
+          {tracks.audio && <span>Audio: {tracks.audio}</span>}
+          <span>Subtitles: {tracks.subtitle ?? 'Off'}</span>
+        </div>
+      )}
+    </div>
   );
+
+  const errors = [
+    d.watchlist.error,
+    d.movieWatchedMutation.error,
+    d.episodesWatched.error,
+    d.hiddenMutation.error,
+  ].filter(Boolean);
 
   const cardProps = (t: Title) => {
     const link = detailsLink(t);
@@ -288,11 +418,14 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         seasons={isMovie ? undefined : seasons.filter((s) => s.number > 0).length || undefined}
         actions={actions}
         below={
-          errors.length > 0 && (
-            <p role="alert" className="mt-3 text-sm text-danger">
-              {(errors[0] as Error).message}
-            </p>
-          )
+          <>
+            {infoLine}
+            {errors.length > 0 && (
+              <p role="alert" className="mt-3 text-sm text-danger">
+                {(errors[0] as Error).message}
+              </p>
+            )}
+          </>
         }
       />
 
@@ -385,12 +518,12 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           onPickSource={(r) => {
             const ep = sourcesFor.episode;
             setSourcesFor(null);
-            start({ episode: ep, source: r, start: ep ? resumeStart(ep.resume) : primaryStart });
+            pickThenAsk({ episode: ep, source: r });
           }}
           onPickVersion={(v) => {
             const ep = sourcesFor.episode;
             setSourcesFor(null);
-            start({ episode: ep, library: v, start: ep ? resumeStart(ep.resume) : primaryStart });
+            pickThenAsk({ episode: ep, library: v });
           }}
         />
       )}
@@ -403,7 +536,9 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           onPick={(v) => {
             const s = versionsState;
             setVersionsState(null);
-            start({ episode: s.episode, library: v, start: s.start });
+            // From Play: play from where Play would have; from Versions: ask (native pickVersion).
+            if (s.fromPlay) start({ episode: s.episode, library: v, start: s.start });
+            else pickThenAsk({ episode: s.episode, library: v });
           }}
           onStreamInstead={
             versionsState.fromPlay
@@ -414,6 +549,47 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
                 }
               : undefined
           }
+        />
+      )}
+
+      {pendingPick && (
+        <ResumePrompt
+          heading={
+            pendingPick.episode
+              ? `${info.name} · ${episodeCode(pendingPick.episode.seasonNumber, pendingPick.episode.episodeNumber)}`
+              : info.name
+          }
+          resumeAt={pendingPick.resumeAt}
+          clock={clock}
+          onCancel={() => setPendingPick(null)}
+          onChoose={(from) => {
+            const p = pendingPick;
+            setPendingPick(null);
+            start({ episode: p.episode, library: p.library, source: p.source, start: from });
+          }}
+        />
+      )}
+
+      {profileId && listsOpen && (
+        <ListsDialog
+          profileId={profileId}
+          target={d.target}
+          open={listsOpen}
+          onOpenChange={setListsOpen}
+        />
+      )}
+
+      {warmStatus && (
+        <TracksDialog
+          status={warmStatus}
+          picks={currentPicks}
+          onPicksChange={(o) => setPicks({ streamPath: warmStatus.streamPath ?? '', overrides: o })}
+          open={tracksOpen}
+          onOpenChange={setTracksOpen}
+          onPlay={() => {
+            setTracksOpen(false);
+            playPreferringLibrary(primaryEpisode, primaryStart);
+          }}
         />
       )}
 
