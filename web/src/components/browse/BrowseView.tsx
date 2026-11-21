@@ -1,3 +1,4 @@
+import { Icon } from '@/components/icons';
 import { invalidateWatchlist } from '@/api/invalidate';
 import {
   useInfiniteQuery,
@@ -31,7 +32,6 @@ import { artworkUrl } from '@/lib/artwork';
 import { searchToOptions, type BrowseSearch } from '@/lib/browseSearch';
 import { detailsLink } from '@/lib/links';
 import { Chip, DirectionToggle, LetterIndex, Segmented, SelectPill } from './Controls';
-import { Glyph } from './Glyph';
 import { GridPoster, LoadMoreSentinel, MediaGrid, MediaGridSkeleton } from './MediaGrid';
 
 export interface BrowseViewProps {
@@ -180,7 +180,7 @@ export function BrowseView({
               variant="secondary"
               size="sm"
               onClick={surprise}
-              leftIcon={<Glyph name="shuffle" size={16} />}
+              leftIcon={<Icon name="shuffle" size={16} />}
             >
               Surprise me
             </Button>

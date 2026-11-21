@@ -3,7 +3,6 @@ import type { Episode, Season } from '@/api/details';
 import { Button, Icon } from '@/components';
 import { cn } from '@/lib/cn';
 import { formatDate, formatRuntime, isUnaired, remainingLabel } from './format';
-import { DetailIcon } from './icons';
 
 export interface EpisodeListProps {
   seasons: Season[];
@@ -65,7 +64,7 @@ export function EpisodeList({
           size="sm"
           disabled={!aired.length || busy}
           onClick={() => onMarkSeason(!allWatched)}
-          leftIcon={<DetailIcon name={allWatched ? 'eye' : 'eyeCheck'} size={16} />}
+          leftIcon={<Icon name={allWatched ? 'eye' : 'eyeCheck'} size={16} />}
         >
           {allWatched ? 'Mark season unwatched' : 'Mark season watched'}
         </Button>
@@ -157,7 +156,7 @@ export function EpisodeList({
                 )}
                 {watched && (
                   <span className="glass absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-full text-success">
-                    <DetailIcon name="check" size={16} />
+                    <Icon name="check" size={16} />
                   </span>
                 )}
                 {pct > 0 && !watched && (
@@ -198,7 +197,7 @@ export function EpisodeList({
                           : 'text-faint hover:bg-surface hover:text-fg',
                       )}
                     >
-                      <DetailIcon name={watched ? 'eyeCheck' : 'eye'} size={18} />
+                      <Icon name={watched ? 'eyeCheck' : 'eye'} size={18} />
                     </button>
                   )}
                 </div>

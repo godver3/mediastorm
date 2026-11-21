@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { fromDateKey, toDateKey } from '@/api/calendar';
@@ -43,6 +44,7 @@ function CyclingPage() {
     staleTime: 5 * 60_000,
   });
   const race = feed.data?.data?.find((r) => r.id === raceId);
+  useDocumentTitle(race?.name ?? 'Race');
   const stages = race?.stages ?? [];
   const chosen = stages.find((s) => s.id === stageParam) ?? defaultStage(stages);
   const stage = useQuery({

@@ -38,7 +38,7 @@ function HomePage() {
 
   if (!profileId || settings.isPending) {
     return (
-      <Page bleed className="-mt-2">
+      <Page bleed className="-mt-2" documentTitle="Home">
         <HomeHeroSkeleton />
         <ShelfSkeleton title="" landscape />
         <ShelfSkeleton title="" landscape={false} />
@@ -65,7 +65,7 @@ function HomePage() {
   }
 
   return (
-    <Page bleed className="-mt-2">
+    <Page bleed className="-mt-2" documentTitle="Home">
       {hero && <Hero shelf={hero} settings={settings.data} profileId={profileId} />}
       <h1 className="sr-only">Home</h1>
       {plan

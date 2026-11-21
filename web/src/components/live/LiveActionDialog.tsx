@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { isAiring, type EPGProgram, type LiveChannel } from '@/api/live';
 import { recordingFor, seriesRuleFor, type Recording, type RecordingRule } from '@/api/recordings';
-import { Button, Dialog, Icon } from '@/components';
+import { Button, Dialog, Icon, type IconName } from '@/components';
 import { cn } from '@/lib/cn';
 import { formatDay, formatRange, HOUR } from '@/lib/guide';
-import { ChannelLogo, LiveIcon, type LiveIconName } from './LiveBits';
+import { ChannelLogo } from './LiveBits';
 import type { useRecordActions } from './useLiveActions';
 
 export interface LiveActionTarget {
@@ -37,7 +37,7 @@ function ActionRow({
   danger,
   disabled,
 }: {
-  icon: LiveIconName;
+  icon: IconName;
   label: ReactNode;
   onClick: () => void;
   danger?: boolean;
@@ -53,7 +53,7 @@ function ActionRow({
         danger ? 'text-danger' : 'text-fg',
       )}
     >
-      <LiveIcon name={icon} className={danger ? '' : 'text-muted'} />
+      <Icon size={18} name={icon} className={danger ? '' : 'text-muted'} />
       {label}
     </button>
   );

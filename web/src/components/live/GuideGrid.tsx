@@ -1,3 +1,4 @@
+import { Icon } from '@/components/icons';
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { guideKey, type EPGProgram, type LiveChannel } from '@/api/live';
 import { recordingFor, type Recording } from '@/api/recordings';
@@ -12,7 +13,7 @@ import {
   HOUR,
   xFor,
 } from '@/lib/guide';
-import { ChannelLogo, LiveIcon, RecordingBadge } from './LiveBits';
+import { ChannelLogo, RecordingBadge } from './LiveBits';
 
 const ROW_H = 68;
 
@@ -104,7 +105,7 @@ export function GuideGrid({
             onClick={() => page(-1)}
             className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-surface hover:text-fg"
           >
-            <LiveIcon name="chevronLeft" />
+            <Icon size={18} name="chevronLeft" />
           </button>
           <button
             type="button"
@@ -112,7 +113,7 @@ export function GuideGrid({
             onClick={() => page(1)}
             className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-surface hover:text-fg"
           >
-            <LiveIcon name="chevronRight" />
+            <Icon size={18} name="chevronRight" />
           </button>
         </div>
       </div>
@@ -166,12 +167,7 @@ export function GuideGrid({
                     <span className="hidden min-w-0 sm:block">
                       <span className="flex items-center gap-1 truncate text-sm font-medium">
                         {fav && (
-                          <LiveIcon
-                            name="star"
-                            size={12}
-                            filled
-                            className="shrink-0 text-warning"
-                          />
+                          <Icon name="star" size={12} filled className="shrink-0 text-warning" />
                         )}
                         <span className="truncate">{channel.name}</span>
                       </span>

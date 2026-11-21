@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import type { LiveSource } from '@/api/live';
 import { Icon } from '@/components';
 import { cn } from '@/lib/cn';
-import { LiveIcon } from './LiveBits';
 
 export type LiveView = 'guide' | 'channels';
 
@@ -101,7 +100,7 @@ export function LiveToolbar(p: LiveToolbarProps) {
                 p.view === v ? 'bg-surface-strong text-fg' : 'text-muted hover:text-fg',
               )}
             >
-              <LiveIcon name={icon} size={15} />
+              <Icon name={icon} size={15} />
               {label}
             </button>
           ))}
@@ -125,7 +124,7 @@ export function LiveToolbar(p: LiveToolbarProps) {
           onClick={() => p.onFavorites(!p.favoritesOnly)}
           className={cn(pill, p.favoritesOnly ? pillOn : pillOff)}
         >
-          <LiveIcon name="star" size={14} filled={p.favoritesOnly} className="text-warning" />
+          <Icon name="star" size={14} filled={p.favoritesOnly} className="text-warning" />
           Favorites
         </button>
         {p.categories.map((c) => (
@@ -146,7 +145,7 @@ export function LiveToolbar(p: LiveToolbarProps) {
             onClick={() => p.onShowHidden(!p.showHidden)}
             className={cn(pill, p.showHidden ? pillOn : pillOff, 'sm:ml-auto')}
           >
-            <LiveIcon name={p.showHidden ? 'eye' : 'eyeOff'} size={14} />
+            <Icon name={p.showHidden ? 'eye' : 'eyeOff'} size={14} />
             {p.showHidden ? 'Showing hidden' : `${p.hiddenCount} hidden`}
           </button>
         )}

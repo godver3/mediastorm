@@ -1,8 +1,9 @@
+import { Icon } from '@/components/icons';
 import { guideKey, programProgress, type EPGNowPlaying, type LiveChannel } from '@/api/live';
 import { recordingFor, type Recording } from '@/api/recordings';
 import { cn } from '@/lib/cn';
 import { formatClock } from '@/lib/guide';
-import { ChannelLogo, LiveIcon, ProgressLine, RecordingBadge } from './LiveBits';
+import { ChannelLogo, ProgressLine, RecordingBadge } from './LiveBits';
 
 export interface ChannelGridProps {
   channels: LiveChannel[];
@@ -95,7 +96,7 @@ export function ChannelGrid({
                     : 'text-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
                 )}
               >
-                <LiveIcon name="star" filled={fav} />
+                <Icon size={18} name="star" filled={fav} />
               </button>
               <button
                 type="button"

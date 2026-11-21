@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { login } from '@/api/auth';
@@ -32,6 +33,7 @@ function messageFor(err: unknown): string {
 }
 
 export function LoginPage() {
+  useDocumentTitle('Sign in');
   const navigate = useNavigate();
   const { redirect: redirectTo } = Route.useSearch();
   const [username, setUsername] = useState('');

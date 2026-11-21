@@ -1,8 +1,8 @@
+import { Icon } from '@/components/icons';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { Glyph } from './Glyph';
 import type { LinkTarget } from './MediaGrid';
 
 /** Stable hue from a string, so a list keeps its colour. */
@@ -89,7 +89,7 @@ export function ListTile({
               'focus-visible:ring-2 focus-visible:ring-accent',
             )}
           >
-            <Glyph name="more" size={16} />
+            <Icon name="more" size={16} />
           </Menu.Trigger>
           <Menu.Portal>
             <Menu.Content

@@ -22,7 +22,7 @@ function ListPage() {
   const go = useNavigate();
   if (!list) {
     return (
-      <Page>
+      <Page documentTitle="List not found">
         <EmptyState
           icon="list"
           title="List not found"

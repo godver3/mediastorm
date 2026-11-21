@@ -66,7 +66,7 @@ function PersonPage() {
   const movies = films.filter((t) => t.mediaType === 'movie').length;
 
   return (
-    <Page>
+    <Page documentTitle={displayName}>
       <header className="flex flex-col gap-6 pt-8 pb-8 sm:flex-row sm:items-end">
         <div className="h-40 w-40 shrink-0 overflow-hidden rounded-full bg-surface-strong ring-1 ring-line sm:h-48 sm:w-48">
           {q.isPending ? (

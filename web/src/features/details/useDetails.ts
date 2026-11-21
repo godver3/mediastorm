@@ -87,7 +87,6 @@ export function useDetails(profileId: string, search: DetailsSearch) {
     [episodeOverrides],
   );
 
-
   const watchlist = useMutation({
     mutationFn: (add: boolean) =>
       add ? addToWatchlist(profileId, target) : removeFromWatchlist(profileId, target),

@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { libraryKeys, listLibraries, sourceLabel, type LibraryInfo } from '@/api/library';
 import { useSessionState } from '@/auth/sessionStore';
-import { Glyph } from '@/components/browse/Glyph';
 import { ListTile, TileGrid } from '@/components/browse/ListTile';
 import { EmptyState, ErrorState } from '@/components/EmptyState';
 import { Icon } from '@/components/icons';
@@ -18,8 +17,8 @@ const typeLabel = (t: string) => (t === 'movie' ? 'Movies' : t === 'show' ? 'Sho
 
 function libraryIcon(lib: LibraryInfo) {
   if (lib.type === 'show') return <Icon name="tv" size={20} />;
-  if (lib.type === 'movie') return <Glyph name="film" size={20} />;
-  return <Glyph name="folder" size={20} />;
+  if (lib.type === 'movie') return <Icon name="film" size={20} />;
+  return <Icon name="folder" size={20} />;
 }
 
 function LibrariesPage() {

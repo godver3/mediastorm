@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -24,6 +25,7 @@ export const Route = createFileRoute('/profiles')({
 });
 
 export function ProfilesPage() {
+  useDocumentTitle('Profiles');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { redirect: redirectTo } = Route.useSearch();

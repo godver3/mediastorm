@@ -1,3 +1,4 @@
+import { Icon } from '@/components/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import {
@@ -13,7 +14,6 @@ import {
   type RuleUpdate,
 } from '@/api/recordings';
 import { Button, Dialog, EmptyState, ErrorState, errorMessage, Skeleton } from '@/components';
-import { LiveIcon } from '@/components/live/LiveBits';
 import { cn } from '@/lib/cn';
 
 const toMin = (s: number) => Math.round(s / 60);
@@ -231,7 +231,7 @@ export function RulesPanel({
                     aria-label={`Edit padding for ${rule.pattern}`}
                     className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-surface-strong hover:text-fg"
                   >
-                    <LiveIcon name="pencil" size={16} />
+                    <Icon name="edit" size={16} />
                   </button>
                   <button
                     type="button"
@@ -239,7 +239,7 @@ export function RulesPanel({
                     aria-label={`Delete ${rule.pattern}`}
                     className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-surface-strong hover:text-danger"
                   >
-                    <LiveIcon name="trash" size={16} />
+                    <Icon name="trash" size={16} />
                   </button>
                 </div>
               </li>
@@ -268,7 +268,7 @@ export function RulesPanel({
               type="submit"
               loading={create.isPending}
               disabled={!pattern.trim() || !!patternError}
-              leftIcon={<LiveIcon name="plus" size={16} />}
+              leftIcon={<Icon name="plus" size={16} />}
             >
               Add
             </Button>

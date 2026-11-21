@@ -1,6 +1,6 @@
+import { Icon } from '@/components/icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { Glyph } from './Glyph';
 
 /** Labelled native <select> styled as a glass pill (keyboard + screen-reader friendly). */
 export function SelectPill<T extends string>({
@@ -118,7 +118,7 @@ export function DirectionToggle({
         'disabled:pointer-events-none disabled:opacity-40',
       )}
     >
-      <Glyph name={ascending ? 'sortAsc' : 'sortDesc'} />
+      <Icon size={18} name={ascending ? 'sortAsc' : 'sortDesc'} />
     </button>
   );
 }

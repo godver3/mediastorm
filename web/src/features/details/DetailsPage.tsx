@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { episodeKey, primaryTrailer, type Episode, type LibraryVersion } from '@/api/details';
@@ -19,7 +20,6 @@ import { CastRow } from './CastRow';
 import { DetailsHero } from './DetailsHero';
 import { EpisodeList } from './EpisodeList';
 import { airedRegularEpisodes, orderedSeasons, watchState } from './format';
-import { DetailIcon } from './icons';
 import { SourcePickerDialog } from './SourcePickerDialog';
 import { TrailerDialog } from './TrailerDialog';
 import { useDetails } from './useDetails';
@@ -57,6 +57,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   const [versionsState, setVersionsState] = useState<VersionsState | null>(null);
 
   const bundle = d.bundle.data;
+  useDocumentTitle(d.title?.name ?? search.name ?? 'Details');
   const isMovie = search.mediaType === 'movie';
   const seasons = useMemo(() => orderedSeasons(bundle?.seriesDetails?.seasons ?? []), [bundle]);
   const allEpisodes = useMemo(() => seasons.flatMap((s) => s.episodes), [seasons]);
@@ -194,7 +195,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         <ActionButton
           label="Start over"
           onClick={() => playPreferringLibrary(primaryEpisode, undefined)}
-          icon={<DetailIcon name="restart" />}
+          icon={<Icon name="restart" />}
         />
       )}
       {primaryVersions.length > 0 && (
@@ -208,20 +209,20 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
               fromPlay: false,
             })
           }
-          icon={<DetailIcon name="drive" />}
+          icon={<Icon name="drive" />}
         />
       )}
       <ActionButton
         label="Choose source"
         disabled={!canPlay}
         onClick={() => setSourcesFor({ episode: isMovie ? undefined : primaryEpisode })}
-        icon={<DetailIcon name="sources" />}
+        icon={<Icon name="sources" />}
       />
       {trailer && (
         <ActionButton
           label="Trailer"
           onClick={() => setTrailerOpen(true)}
-          icon={<DetailIcon name="film" />}
+          icon={<Icon name="film" />}
         />
       )}
       <ActionButton
@@ -229,7 +230,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         pressed={d.inWatchlist}
         disabled={!bundle || d.watchlist.isPending}
         onClick={() => d.watchlist.mutate(!d.inWatchlist)}
-        icon={<DetailIcon name={d.inWatchlist ? 'check' : 'plus'} />}
+        icon={<Icon name={d.inWatchlist ? 'check' : 'plus'} />}
       />
       {isMovie ? (
         <ActionButton
@@ -237,7 +238,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           pressed={d.movieWatched}
           disabled={!bundle || d.movieWatchedMutation.isPending}
           onClick={() => d.movieWatchedMutation.mutate(!d.movieWatched)}
-          icon={<DetailIcon name={d.movieWatched ? 'eyeCheck' : 'eye'} />}
+          icon={<Icon name={d.movieWatched ? 'eyeCheck' : 'eye'} />}
         />
       ) : (
         seasons.length > 0 && (
@@ -252,7 +253,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
                 scope: 'show',
               })
             }
-            icon={<DetailIcon name={seriesWatch === 'complete' ? 'eyeCheck' : 'eye'} />}
+            icon={<Icon name={seriesWatch === 'complete' ? 'eyeCheck' : 'eye'} />}
           />
         )
       )}

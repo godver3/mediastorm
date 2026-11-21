@@ -12,7 +12,6 @@ import {
   type Recording,
 } from '@/api/recordings';
 import { Button, Icon } from '@/components';
-import { LiveIcon } from '@/components/live/LiveBits';
 import { cn } from '@/lib/cn';
 import { formatDay, formatRange } from '@/lib/guide';
 
@@ -113,7 +112,7 @@ export function RecordingRow({
           <StatusPill recording={r} />
           {r.ruleId && (
             <span title="From a recording rule" className="text-faint">
-              <LiveIcon name="repeat" size={14} />
+              <Icon name="repeat" size={14} />
             </span>
           )}
         </div>
@@ -142,7 +141,7 @@ export function RecordingRow({
             disabled={busy}
             aria-label={`Delete ${title}`}
             onClick={() => onDelete(r)}
-            leftIcon={<LiveIcon name="trash" size={15} />}
+            leftIcon={<Icon name="trash" size={15} />}
           >
             <span className="sm:sr-only">Delete</span>
           </Button>

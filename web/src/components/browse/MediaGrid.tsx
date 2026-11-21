@@ -1,9 +1,9 @@
+import { Icon } from '@/components/icons';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { PosterCard } from '@/components/MediaCard';
 import { Skeleton, Spinner } from '@/components/Spinner';
 import { cn } from '@/lib/cn';
-import { Glyph } from './Glyph';
 
 /** Responsive poster grid that fills the width (≈2 columns at 390px, 7–9 on desktop). */
 export function MediaGrid({ children, className }: { children: ReactNode; className?: string }) {
@@ -98,7 +98,7 @@ export function GridPoster({
           className="pointer-events-none absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-accent-contrast shadow"
           title="Watched"
         >
-          <Glyph name="check" size={14} strokeWidth={2.6} />
+          <Icon name="check" size={14} strokeWidth={2.6} />
           <span className="sr-only">Watched</span>
         </span>
       )}
@@ -114,7 +114,7 @@ export function GridPoster({
             'outline-none focus-visible:ring-2 focus-visible:ring-accent max-sm:opacity-100 max-sm:h-7 max-sm:w-7',
           )}
         >
-          <Glyph name="trash" size={15} />
+          <Icon name="trash" size={15} />
         </button>
       )}
       {busy && (

@@ -1,7 +1,7 @@
+import { Icon } from '@/components/icons';
 import { versionOrigin, versionQuality, type LibraryVersion } from '@/api/details';
 import { Button, Dialog } from '@/components';
 import { formatBytes } from './format';
-import { DetailIcon } from './icons';
 
 /**
  * A title's copies in the profile's local / Plex / Jellyfin libraries (native
@@ -44,7 +44,7 @@ export function VersionsDialog({
               className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition hover:bg-surface-strong focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
             >
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg accent-soft">
-                <DetailIcon name="drive" size={18} />
+                <Icon name="drive" size={18} />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">

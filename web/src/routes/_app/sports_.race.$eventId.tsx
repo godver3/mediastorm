@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
@@ -32,6 +33,7 @@ function RacePage() {
     refetchInterval: 60_000,
   });
   const event = board.data?.events.find((e) => e.id === eventId);
+  useDocumentTitle(event?.title ?? 'Race');
   const sessions = event ? raceSessions(event) : [];
   const chosen =
     sessions.find((s) => s.id === sessionParam) ?? (event ? defaultRaceSession(event) : undefined);

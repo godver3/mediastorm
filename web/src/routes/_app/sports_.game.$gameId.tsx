@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '@/lib/documentTitle';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import {
@@ -35,6 +36,13 @@ function GamePage() {
     refetchInterval: (q) =>
       q.state.data && lifecycle(q.state.data.status) === 'live' ? 20_000 : false,
   });
+
+  const g = game.data;
+  useDocumentTitle(
+    g
+      ? `${g.awayTeam.abbreviation ?? g.awayTeam.name} at ${g.homeTeam.abbreviation ?? g.homeTeam.name}`
+      : 'Game',
+  );
 
   return (
     <Page>

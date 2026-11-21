@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { useDocumentTitle } from '@/lib/documentTitle';
 
 export interface PageProps {
   title?: ReactNode;
@@ -9,11 +10,22 @@ export interface PageProps {
   /** Full-bleed pages (hero banners) skip the horizontal padding. */
   bleed?: boolean;
   className?: string;
+  /** Browser tab title. Defaults to `title` when that is a string. */
+  documentTitle?: string;
   children: ReactNode;
 }
 
 /** Standard page wrapper: consistent gutters, max width and header. */
-export function Page({ title, subtitle, actions, bleed, className, children }: PageProps) {
+export function Page({
+  title,
+  subtitle,
+  actions,
+  bleed,
+  className,
+  documentTitle,
+  children,
+}: PageProps) {
+  useDocumentTitle(documentTitle ?? (typeof title === 'string' ? title : undefined));
   return (
     <div
       className={cn(

@@ -15,7 +15,6 @@ import {
 } from '@/api/lists';
 import { useSessionState } from '@/auth/sessionStore';
 import { Segmented } from '@/components/browse/Controls';
-import { Glyph } from '@/components/browse/Glyph';
 import { DeleteListDialog, ListNameDialog } from '@/components/browse/ListDialogs';
 import { ListTile, Section, TileGrid, type ListTileProps } from '@/components/browse/ListTile';
 import { Button } from '@/components/Button';
@@ -77,7 +76,7 @@ function ListsPage() {
       title="Lists"
       subtitle="Your lists, charts and collections to browse."
       actions={
-        <Button onClick={() => setCreating(true)} leftIcon={<Glyph name="plus" size={16} />}>
+        <Button onClick={() => setCreating(true)} leftIcon={<Icon name="plus" size={16} />}>
           New list
         </Button>
       }
@@ -118,7 +117,7 @@ function ListsPage() {
               variant="ghost"
               size="sm"
               onClick={() => setCreating(true)}
-              leftIcon={<Glyph name="plus" size={15} />}
+              leftIcon={<Icon name="plus" size={15} />}
             >
               New
             </Button>

@@ -137,7 +137,7 @@ function SearchPage() {
   };
 
   return (
-    <Page>
+    <Page documentTitle={q ? `Search: ${q}` : 'Search'}>
       <h1 className="sr-only">Search</h1>
       <form
         role="search"
