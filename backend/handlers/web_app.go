@@ -219,11 +219,16 @@ type WebPlaybackHandler struct {
 	sessions       WebPlaybackSessionValidator
 	serverBasePath string
 	template       *template.Template
+	// Branding, when set, supplies the uploaded logo shown in the player header.
+	Branding *SettingsHandler
 }
 
 type WebPlaybackPageData struct {
 	Users          []models.User
 	ServerBasePath string
+	// BrandLogoURL is the server's custom wordmark (loading logo, else mobile
+	// logo); empty means the default text wordmark.
+	BrandLogoURL string
 }
 
 // NewWebPlaybackHandler creates the standalone web playback handler. The
@@ -277,10 +282,46 @@ func (h *WebPlaybackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data := WebPlaybackPageData{
 		Users:          h.scopedUsers(session, r.URL.Query().Get("profileId")),
 		ServerBasePath: h.serverBasePath,
+		BrandLogoURL:   h.brandLogoURL(),
 	}
 	if err := h.template.ExecuteTemplate(w, "playback", data); err != nil {
 		http.Error(w, "web playback template error", http.StatusInternalServerError)
 	}
+}
+
+// brandLogoURL resolves the custom wordmark the way the native clients do:
+// absolute http(s) URLs pass through; uploads (/branding/images/<slot>?v=…)
+// are served under the server's /api.
+func (h *WebPlaybackHandler) brandLogoURL() string {
+	if h.Branding == nil || h.Branding.Manager == nil {
+		return ""
+	}
+	s, err := h.Branding.Manager.Load()
+	if err != nil {
+		return ""
+	}
+	return resolveBrandingURL(h.serverBasePath, s.Display.Branding.LoadingLogoURL, s.Display.Branding.HomeMobileLogoURL)
+}
+
+func resolveBrandingURL(serverBasePath string, candidates ...string) string {
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		lower := strings.ToLower(c)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+			return c
+		}
+		if !strings.HasPrefix(c, "/") {
+			c = "/" + c
+		}
+		if !strings.HasPrefix(c, "/api/") {
+			c = "/api" + c
+		}
+		return serverBasePath + c
+	}
+	return ""
 }
 
 // resolveSession validates the request's session token. Browser navigations to

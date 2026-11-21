@@ -88,6 +88,12 @@
       text-transform: uppercase;
     }
 
+    .brand-logo {
+      max-height: 2.4rem;
+      max-width: 220px;
+      object-fit: contain;
+    }
+
     .brand-subtitle {
       color: var(--muted);
       font-size: 0.78rem;
@@ -1047,7 +1053,7 @@
         <div id="topSubtitle" class="brand-subtitle">Web player</div>
       </div>
       <div class="brand">
-        <div class="brand-title">mediastorm</div>
+        {{if .BrandLogoURL}}<img class="brand-logo" src="{{.BrandLogoURL}}" alt="mediastorm">{{else}}<div class="brand-title">mediastorm</div>{{end}}
       </div>
     </header>
 

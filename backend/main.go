@@ -1950,6 +1950,7 @@ func main() {
 
 	// Dedicated browser player handoff backed by the server-side HLS web player.
 	webPlaybackHandler := handlers.NewWebPlaybackHandler(userService, sessionsService, settings.Server.BasePath)
+	webPlaybackHandler.Branding = settingsHandler
 	r.Handle("/watch/playback.html", webPlaybackHandler).Methods(http.MethodGet, http.MethodHead)
 
 	// One-time share link consumption (public, no auth — opening mints a scoped session).
