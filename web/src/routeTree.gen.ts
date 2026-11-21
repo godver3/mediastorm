@@ -18,6 +18,7 @@ import { Route as AppDetailsRouteImport } from './routes/_app/details'
 import { Route as AppLibrariesRouteImport } from './routes/_app/libraries'
 import { Route as AppListsRouteImport } from './routes/_app/lists'
 import { Route as AppLiveRouteImport } from './routes/_app/live'
+import { Route as AppPersonRouteImport } from './routes/_app/person'
 import { Route as AppRecordingsRouteImport } from './routes/_app/recordings'
 import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
@@ -68,6 +69,11 @@ const AppLiveRoute = AppLiveRouteImport.update({
   path: '/live',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPersonRoute = AppPersonRouteImport.update({
+  id: '/person',
+  path: '/person',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppRecordingsRoute = AppRecordingsRouteImport.update({
   id: '/recordings',
   path: '/recordings',
@@ -103,6 +109,7 @@ export interface FileRoutesByFullPath {
   '/libraries': typeof AppLibrariesRoute
   '/lists': typeof AppListsRoute
   '/live': typeof AppLiveRoute
+  '/person': typeof AppPersonRoute
   '/recordings': typeof AppRecordingsRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/libraries': typeof AppLibrariesRoute
   '/lists': typeof AppListsRoute
   '/live': typeof AppLiveRoute
+  '/person': typeof AppPersonRoute
   '/recordings': typeof AppRecordingsRoute
   '/search': typeof AppSearchRoute
   '/settings': typeof AppSettingsRoute
@@ -134,6 +142,7 @@ export interface FileRoutesById {
   '/_app/libraries': typeof AppLibrariesRoute
   '/_app/lists': typeof AppListsRoute
   '/_app/live': typeof AppLiveRoute
+  '/_app/person': typeof AppPersonRoute
   '/_app/recordings': typeof AppRecordingsRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -152,6 +161,7 @@ export interface FileRouteTypes {
     | '/libraries'
     | '/lists'
     | '/live'
+    | '/person'
     | '/recordings'
     | '/search'
     | '/settings'
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | '/libraries'
     | '/lists'
     | '/live'
+    | '/person'
     | '/recordings'
     | '/search'
     | '/settings'
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | '/_app/libraries'
     | '/_app/lists'
     | '/_app/live'
+    | '/_app/person'
     | '/_app/recordings'
     | '/_app/search'
     | '/_app/settings'
@@ -261,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLiveRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/person': {
+      id: '/_app/person'
+      path: '/person'
+      fullPath: '/person'
+      preLoaderRoute: typeof AppPersonRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/recordings': {
       id: '/_app/recordings'
       path: '/recordings'
@@ -305,6 +324,7 @@ interface AppRouteChildren {
   AppLibrariesRoute: typeof AppLibrariesRoute
   AppListsRoute: typeof AppListsRoute
   AppLiveRoute: typeof AppLiveRoute
+  AppPersonRoute: typeof AppPersonRoute
   AppRecordingsRoute: typeof AppRecordingsRoute
   AppSearchRoute: typeof AppSearchRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -319,6 +339,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppLibrariesRoute: AppLibrariesRoute,
   AppListsRoute: AppListsRoute,
   AppLiveRoute: AppLiveRoute,
+  AppPersonRoute: AppPersonRoute,
   AppRecordingsRoute: AppRecordingsRoute,
   AppSearchRoute: AppSearchRoute,
   AppSettingsRoute: AppSettingsRoute,
