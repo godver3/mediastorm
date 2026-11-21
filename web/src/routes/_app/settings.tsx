@@ -9,16 +9,13 @@ import {
   clearProfilePin,
   getPath,
   getSettings,
-  moveShelf,
   putSettings,
   renameProfile,
   setPath,
   setProfileColor,
   setProfilePin,
   settingsKeys,
-  sortedShelves,
   type RawSettings,
-  type ShelfConfig,
 } from '@/api/settings';
 import { usersKeys } from '@/api/users';
 import { useActiveProfile } from '@/auth/hooks';
@@ -26,7 +23,6 @@ import { useSessionState } from '@/auth/sessionStore';
 import { Button } from '@/components/Button';
 import { ErrorState, errorMessage } from '@/components/EmptyState';
 import { Icon, type IconName } from '@/components/icons';
-import { IconButton } from '@/components/IconButton';
 import { Page } from '@/components/Page';
 import { Skeleton } from '@/components/Spinner';
 import {
@@ -36,13 +32,22 @@ import {
   Switch,
   ToggleRow,
 } from '@/components/settings/SettingsControls';
+import {
+  CalendarSourcesSection,
+  FilteringSection,
+  HomeShelvesEditor,
+  MenuSpoilersSection,
+  type SectionProps,
+} from '@/components/settings/MoreSections';
 import { cn } from '@/lib/cn';
 import { DEFAULT_ACCENT, applyAccent, normalizeHex } from '@/lib/theme';
 
-type Section = 'playback' | 'appearance' | 'home' | 'calendar' | 'profile';
+type Section = 'playback' | 'filtering' | 'appearance' | 'menu' | 'home' | 'calendar' | 'profile';
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: 'playback', label: 'Playback', icon: 'play' },
+  { id: 'filtering', label: 'Filtering', icon: 'sortDesc' },
   { id: 'appearance', label: 'Appearance', icon: 'settings' },
+  { id: 'menu', label: 'Menu & spoilers', icon: 'menu' },
   { id: 'home', label: 'Home shelves', icon: 'home' },
   { id: 'calendar', label: 'Calendar', icon: 'calendar' },
   { id: 'profile', label: 'Profile', icon: 'users' },
@@ -165,10 +170,14 @@ function SettingsPage() {
             <PlaybackSection data={settings.data} update={settings.update} />
           ) : section === 'appearance' ? (
             <AppearanceSection data={settings.data} update={settings.update} />
+          ) : section === 'filtering' ? (
+            <FilteringSection data={settings.data} update={settings.update} />
+          ) : section === 'menu' ? (
+            <MenuSpoilersSection data={settings.data} update={settings.update} />
           ) : section === 'home' ? (
-            <HomeSection data={settings.data} update={settings.update} />
+            <HomeShelvesEditor data={settings.data} update={settings.update} />
           ) : section === 'calendar' ? (
-            <CalendarSection data={settings.data} update={settings.update} />
+            <CalendarSourcesSection data={settings.data} update={settings.update} />
           ) : (
             <ProfileSection />
           )}
@@ -177,8 +186,6 @@ function SettingsPage() {
     </Page>
   );
 }
-
-type SectionProps = { data: RawSettings; update: (...pairs: [string, unknown][]) => void };
 
 const LANG_OPTIONS = [
   { value: '', label: 'Default (original)' },
@@ -347,92 +354,6 @@ function AppearanceSection({ data, update }: SectionProps) {
         ))}
       </SettingsCard>
     </div>
-  );
-}
-
-function HomeSection({ data, update }: SectionProps) {
-  const shelves = sortedShelves(getPath<ShelfConfig[]>(data, 'homeShelves.shelves'));
-  const save = (next: ShelfConfig[]) => update(['homeShelves.shelves', next]);
-  return (
-    <SettingsCard
-      title="Home shelves"
-      description="Choose which rows appear on Home and in what order."
-    >
-      {shelves.length === 0 && (
-        <p className="px-5 py-6 text-sm text-muted">This profile has no shelves configured.</p>
-      )}
-      <ol>
-        {shelves.map((s, i) => (
-          <li
-            key={s.id}
-            className={cn(
-              'flex items-center gap-3 border-t border-line px-5 py-3 first:border-t-0',
-              !s.enabled && 'opacity-60',
-            )}
-          >
-            <span className="w-6 text-xs text-faint tabular-nums">{i + 1}</span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{s.name || s.id}</span>
-              {s.type && s.type !== 'builtin' && (
-                <span className="block text-xs text-faint capitalize">{s.type}</span>
-              )}
-            </span>
-            <IconButton
-              icon="chevronDown"
-              label={`Move ${s.name} up`}
-              size="sm"
-              className="rotate-180"
-              disabled={i === 0}
-              onClick={() => save(moveShelf(shelves, i, -1))}
-            />
-            <IconButton
-              icon="chevronDown"
-              label={`Move ${s.name} down`}
-              size="sm"
-              disabled={i === shelves.length - 1}
-              onClick={() => save(moveShelf(shelves, i, 1))}
-            />
-            <Switch
-              label={`Show ${s.name}`}
-              checked={s.enabled}
-              onChange={(v) => save(shelves.map((x) => (x.id === s.id ? { ...x, enabled: v } : x)))}
-            />
-          </li>
-        ))}
-      </ol>
-    </SettingsCard>
-  );
-}
-
-const CAL_SOURCES: { key: string; label: string; description: string }[] = [
-  {
-    key: 'watchlist',
-    label: 'Watchlist',
-    description: 'Episodes and movie releases from your watchlist.',
-  },
-  { key: 'history', label: 'Watching', description: 'New episodes of series you are watching.' },
-  { key: 'topTrending', label: 'Top trending', description: 'The top 20 of the trending lists.' },
-  { key: 'trending', label: 'More trending', description: 'The rest of the trending lists.' },
-  {
-    key: 'mdblists',
-    label: 'MDBList shelves',
-    description: 'Titles from your MDBList home shelves.',
-  },
-];
-
-function CalendarSection({ data, update }: SectionProps) {
-  return (
-    <SettingsCard title="Calendar sources" description="What feeds the Calendar page.">
-      {CAL_SOURCES.map((s) => (
-        <ToggleRow
-          key={s.key}
-          label={s.label}
-          description={s.description}
-          checked={getPath<boolean>(data, `calendar.${s.key}`) !== false}
-          onChange={(v) => update([`calendar.${s.key}`, v])}
-        />
-      ))}
-    </SettingsCard>
   );
 }
 

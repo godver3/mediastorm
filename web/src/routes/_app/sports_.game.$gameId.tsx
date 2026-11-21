@@ -21,6 +21,13 @@ import {
   StatusPill,
   TeamLogo,
 } from '@/components/sports/SportsBits';
+import {
+  BoxScore,
+  FollowTeams,
+  Lineups,
+  PlaysFeed,
+  WinProbability,
+} from '@/components/sports/GameExtras';
 import { WatchPanel } from '@/components/sports/WatchPanel';
 import { cn } from '@/lib/cn';
 
@@ -54,7 +61,7 @@ function GamePage() {
           onRetry={() => game.refetch()}
         />
       ) : !game.data ? (
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <Skeleton className="h-56 rounded-2xl" />
           <Skeleton className="h-56 rounded-2xl" />
         </div>
@@ -69,9 +76,10 @@ function GameBody({ game }: { game: SportsGame }) {
   const d = game.detail;
   const title = gameTitle(game);
   return (
-    <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="flex min-w-0 flex-col gap-6">
         <Scoreboard game={game} />
+        <FollowTeams game={game} />
         {d?.periods && d.periods.length > 0 && <LineScore game={game} />}
         {d?.comparisons && d.comparisons.length > 0 && (
           <Card title="Team stats">
@@ -122,24 +130,15 @@ function GameBody({ game }: { game: SportsGame }) {
             </ul>
           </Card>
         )}
-        {d?.plays && d.plays.some((p) => p.scoring) && (
-          <Card title="Scoring">
-            <ol className="flex flex-col gap-3">
-              {d.plays
-                .filter((p) => p.scoring)
-                .map((p) => (
-                  <li key={p.id} className="flex gap-3 text-sm">
-                    <span className="w-16 shrink-0 text-xs text-faint">
-                      {[p.periodLabel, p.clock].filter(Boolean).join(' ')}
-                    </span>
-                    <span>
-                      <span className="font-medium">{p.title}</span>
-                      {p.description && <span className="block text-muted">{p.description}</span>}
-                    </span>
-                  </li>
-                ))}
-            </ol>
-          </Card>
+        {d?.winProbability && d.winProbability.length > 1 && (
+          <WinProbability game={game} points={d.winProbability} />
+        )}
+        {d?.plays && d.plays.length > 0 && <PlaysFeed game={game} plays={d.plays} />}
+        {d?.playerStats && d.playerStats.length > 0 && (
+          <BoxScore game={game} stats={d.playerStats} />
+        )}
+        {d?.lineups && d.lineups.some((l) => l.players?.length) && (
+          <Lineups game={game} lineups={d.lineups.filter((l) => l.players?.length)} />
         )}
         {!isMatchup(game) && game.participants && game.participants.length > 0 && (
           <Card title="Field">

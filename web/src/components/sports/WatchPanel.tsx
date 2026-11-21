@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   getSportsStreams,
@@ -6,6 +6,13 @@ import {
   sportsKeys,
   type SportsStreamMatch,
 } from '@/api/sports';
+import {
+  expandStreamRows,
+  getStremioStreams,
+  hasStremioSources,
+  streamIdentity,
+  stremioStreamsKey,
+} from '@/api/sportsStreamOptions';
 import { useActiveProfile } from '@/auth/hooks';
 import { Button } from '@/components/Button';
 import { errorMessage } from '@/components/EmptyState';
@@ -49,12 +56,30 @@ export function WatchPanel({
     onSuccess: (params) => openPlayback(params),
   });
 
-  if (kids) return null;
-
-  const matches = (streams.data ?? []).flatMap((g) => [
+  const channelMatches = (streams.data ?? []).flatMap((g) => [
     { ...g.primary, confidenceTier: g.primary.confidenceTier ?? g.confidenceTier, alt: false },
     ...(g.alternatives ?? []).map((a) => ({ ...a, alt: true })),
   ]);
+  // Stremio channels list several feeds; look each up so the user can pick one (native
+  // SportsStreamOptions). A failed or empty lookup keeps the plain row (the server picks).
+  const stremioUrls = [
+    ...new Set(channelMatches.map((m) => m.channelUrl).filter(hasStremioSources)),
+  ];
+  const lookups = useQueries({
+    queries: stremioUrls.map((url) => ({
+      queryKey: stremioStreamsKey(profileId ?? '', url),
+      queryFn: ({ signal }: { signal: AbortSignal }) => getStremioStreams(profileId!, url, signal),
+      enabled: !!profileId && !kids,
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
+  });
+  const byUrl = Object.fromEntries(stremioUrls.map((url, i) => [url, lookups[i]?.data]));
+  const loadingUrls = new Set(stremioUrls.filter((_, i) => lookups[i]?.isLoading));
+
+  if (kids) return null;
+
+  const matches = expandStreamRows(channelMatches, byUrl);
 
   return (
     <section
@@ -85,7 +110,7 @@ export function WatchPanel({
       ) : (
         <ul className="flex flex-col gap-2">
           {matches.map((m) => (
-            <li key={`${m.channelId}|${m.channelUrl}`}>
+            <li key={streamIdentity(m)}>
               <button
                 type="button"
                 disabled={play.isPending}
@@ -104,9 +129,14 @@ export function WatchPanel({
                   </span>
                 )}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{m.channelName}</span>
+                  <span className="block truncate text-sm font-medium">
+                    {m.channelName}
+                    {m.streamLabel && <span className="text-muted"> · {m.streamLabel}</span>}
+                  </span>
                   <span className="block truncate text-xs text-muted">
-                    {[m.programTitle, m.sourceName].filter(Boolean).join(' · ') || m.matchReason}
+                    {m.stremioStreamIndex === undefined && loadingUrls.has(m.channelUrl)
+                      ? 'Loading streams…'
+                      : [m.programTitle, m.sourceName].filter(Boolean).join(' · ') || m.matchReason}
                   </span>
                 </span>
                 {m.confidenceTier === 'strong' && !m.alt && (
