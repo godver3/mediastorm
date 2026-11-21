@@ -93,7 +93,7 @@ Styling:
 - Use the token colours only: `bg-bg`, `bg-surface`, `bg-surface-strong`, `glass`,
   `text-fg`, `text-muted`, `text-faint`, `border-line`, `bg-accent`, `accent-soft`,
   `text-danger`, `rounded-card`, `shadow-card`.
-- The UI is dark by default. Light mode follows `prefers-color-scheme`.
+- The UI is dark mode only (no light theme).
 - `--accent` comes from the profile's `display.appearance.accentColor`.
 
 Playback:
