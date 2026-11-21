@@ -177,3 +177,36 @@ func TestMotoGPRestartDefinesWeekendMainRace(t *testing.T) {
 		t.Fatal("race restart lost")
 	}
 }
+
+// A weather-cancelled session (Australia 2026) must not fail the whole MotoGP calendar.
+func TestMotoGPBoardToleratesCancelledSessions(t *testing.T) {
+	const (
+		season   = "11111111-1111-4111-8111-111111111111"
+		category = "22222222-2222-4222-8222-222222222222"
+		event    = "33333333-3333-4333-8333-333333333333"
+	)
+	year := time.Now().UTC().Year()
+	bodies := map[string]string{
+		"/motogp/v1/results/seasons":    fmt.Sprintf(`[{"id":%q,"year":%d}]`, season, year),
+		"/motogp/v1/results/categories": fmt.Sprintf(`[{"id":%q,"legacy_id":3}]`, category),
+		"/motogp/v1/results/events":     fmt.Sprintf(`[{"id":%q,"name":"Grand Prix of Australia"}]`, event),
+		"/motogp/v1/results/sessions": `[
+			{"id":"44444444-4444-4444-8444-444444444441","type":"RAC","date":"2026-10-25T05:00:00+00:00","status":"FINISHED"},
+			{"id":"44444444-4444-4444-8444-444444444442","type":"SPR","date":"2026-10-24T05:00:00+00:00","status":"CANCELLED"}]`,
+	}
+	s := NewService(t.TempDir())
+	s.client = &http.Client{Transport: detailTransport(func(r *http.Request) (*http.Response, error) {
+		body, ok := bodies[r.URL.Path]
+		if !ok {
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	events, err := s.fetchMotoGPBoard(context.Background())
+	if err != nil {
+		t.Fatalf("cancelled session failed the board: %v", err)
+	}
+	if len(events) != 1 || len(events[0].SubEvents) != 1 || events[0].SubEvents[0].SessionType != "Race" {
+		t.Fatalf("unexpected board: %+v", events)
+	}
+}

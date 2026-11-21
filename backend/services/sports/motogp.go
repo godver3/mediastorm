@@ -79,6 +79,10 @@ func motoGPStatus(raw string) (models.SportsGameStatus, bool) {
 		return "", false
 	}
 }
+func motoGPCancelled(raw string) bool {
+	return strings.EqualFold(raw, "CANCELLED") || strings.EqualFold(raw, "CANCELED")
+}
+
 func normalizeMotoGPSessions(event motoGPEvent, raw []motoGPSession, now time.Time) models.SportsEvent {
 	title := event.Name
 	if title == "" {
@@ -174,7 +178,14 @@ func (s *Service) fetchMotoGPBoard(ctx context.Context) ([]models.SportsEvent, e
 				return
 			}
 			result[i] = normalizeMotoGPSessions(event, sessions, time.Now())
-			if len(sessions) == 0 || len(result[i].SubEvents) != len(sessions) {
+			// A cancelled session (e.g. weather) is dropped, not treated as an unknown lifecycle.
+			expected := 0
+			for _, session := range sessions {
+				if !motoGPCancelled(session.Status) {
+					expected++
+				}
+			}
+			if len(sessions) == 0 || len(result[i].SubEvents) != expected {
 				failures[i] = fmt.Errorf("MotoGP session schedule incomplete or lifecycle unsupported")
 			}
 		}(i, event)
