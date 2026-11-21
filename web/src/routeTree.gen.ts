@@ -26,6 +26,9 @@ import { Route as AppSportsRouteImport } from './routes/_app/sports'
 import { Route as AppWatchlistRouteImport } from './routes/_app/watchlist'
 import { Route as AppLibrariesLibraryIdRouteImport } from './routes/_app/libraries_.$libraryId'
 import { Route as AppListsListKeyRouteImport } from './routes/_app/lists_.$listKey'
+import { Route as AppSportsCyclingRaceIdRouteImport } from './routes/_app/sports_.cycling.$raceId'
+import { Route as AppSportsGameGameIdRouteImport } from './routes/_app/sports_.game.$gameId'
+import { Route as AppSportsRaceEventIdRouteImport } from './routes/_app/sports_.race.$eventId'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -111,6 +114,21 @@ const AppListsListKeyRoute = AppListsListKeyRouteImport.update({
   path: '/lists/$listKey',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSportsCyclingRaceIdRoute = AppSportsCyclingRaceIdRouteImport.update({
+  id: '/sports_/cycling/$raceId',
+  path: '/sports/cycling/$raceId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSportsGameGameIdRoute = AppSportsGameGameIdRouteImport.update({
+  id: '/sports_/game/$gameId',
+  path: '/sports/game/$gameId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSportsRaceEventIdRoute = AppSportsRaceEventIdRouteImport.update({
+  id: '/sports_/race/$eventId',
+  path: '/sports/race/$eventId',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -129,6 +147,9 @@ export interface FileRoutesByFullPath {
   '/watchlist': typeof AppWatchlistRoute
   '/libraries/$libraryId': typeof AppLibrariesLibraryIdRoute
   '/lists/$listKey': typeof AppListsListKeyRoute
+  '/sports/cycling/$raceId': typeof AppSportsCyclingRaceIdRoute
+  '/sports/game/$gameId': typeof AppSportsGameGameIdRoute
+  '/sports/race/$eventId': typeof AppSportsRaceEventIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -147,6 +168,9 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/libraries/$libraryId': typeof AppLibrariesLibraryIdRoute
   '/lists/$listKey': typeof AppListsListKeyRoute
+  '/sports/cycling/$raceId': typeof AppSportsCyclingRaceIdRoute
+  '/sports/game/$gameId': typeof AppSportsGameGameIdRoute
+  '/sports/race/$eventId': typeof AppSportsRaceEventIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -167,6 +191,9 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/libraries_/$libraryId': typeof AppLibrariesLibraryIdRoute
   '/_app/lists_/$listKey': typeof AppListsListKeyRoute
+  '/_app/sports_/cycling/$raceId': typeof AppSportsCyclingRaceIdRoute
+  '/_app/sports_/game/$gameId': typeof AppSportsGameGameIdRoute
+  '/_app/sports_/race/$eventId': typeof AppSportsRaceEventIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -187,6 +214,9 @@ export interface FileRouteTypes {
     | '/watchlist'
     | '/libraries/$libraryId'
     | '/lists/$listKey'
+    | '/sports/cycling/$raceId'
+    | '/sports/game/$gameId'
+    | '/sports/race/$eventId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -205,6 +235,9 @@ export interface FileRouteTypes {
     | '/'
     | '/libraries/$libraryId'
     | '/lists/$listKey'
+    | '/sports/cycling/$raceId'
+    | '/sports/game/$gameId'
+    | '/sports/race/$eventId'
   id:
     | '__root__'
     | '/_app'
@@ -224,6 +257,9 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/libraries_/$libraryId'
     | '/_app/lists_/$listKey'
+    | '/_app/sports_/cycling/$raceId'
+    | '/_app/sports_/game/$gameId'
+    | '/_app/sports_/race/$eventId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -353,6 +389,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppListsListKeyRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/sports_/cycling/$raceId': {
+      id: '/_app/sports_/cycling/$raceId'
+      path: '/sports/cycling/$raceId'
+      fullPath: '/sports/cycling/$raceId'
+      preLoaderRoute: typeof AppSportsCyclingRaceIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/sports_/game/$gameId': {
+      id: '/_app/sports_/game/$gameId'
+      path: '/sports/game/$gameId'
+      fullPath: '/sports/game/$gameId'
+      preLoaderRoute: typeof AppSportsGameGameIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/sports_/race/$eventId': {
+      id: '/_app/sports_/race/$eventId'
+      path: '/sports/race/$eventId'
+      fullPath: '/sports/race/$eventId'
+      preLoaderRoute: typeof AppSportsRaceEventIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -371,6 +428,9 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesLibraryIdRoute: typeof AppLibrariesLibraryIdRoute
   AppListsListKeyRoute: typeof AppListsListKeyRoute
+  AppSportsCyclingRaceIdRoute: typeof AppSportsCyclingRaceIdRoute
+  AppSportsGameGameIdRoute: typeof AppSportsGameGameIdRoute
+  AppSportsRaceEventIdRoute: typeof AppSportsRaceEventIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -388,6 +448,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppLibrariesLibraryIdRoute: AppLibrariesLibraryIdRoute,
   AppListsListKeyRoute: AppListsListKeyRoute,
+  AppSportsCyclingRaceIdRoute: AppSportsCyclingRaceIdRoute,
+  AppSportsGameGameIdRoute: AppSportsGameGameIdRoute,
+  AppSportsRaceEventIdRoute: AppSportsRaceEventIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
