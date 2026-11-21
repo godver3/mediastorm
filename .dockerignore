@@ -2,6 +2,16 @@
 !backend/
 !backend/**
 
+# Standalone web client source (built in the web-next-builder stage). Its
+# local install and build output are excluded; the image runs npm ci itself.
+!web/
+!web/**
+web/node_modules
+web/node_modules/**
+web/dist
+web/dist/**
+web/*.tsbuildinfo
+
 # Expo web export source. Keep this list narrow because frontend/ is a separate
 # repo with large native build artifacts and vendored player code.
 !frontend/

@@ -36,6 +36,17 @@ COPY frontend/utils ./utils
 COPY frontend/web_icons ./web_icons
 RUN npm run web:export
 
+# Standalone web client (web/), served at /watch-next until it replaces the
+# Expo export at /watch. Static output, so build once on the builder platform.
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS web-next-builder
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+COPY web/ ./
+RUN npm run build
+
 # Build stage
 FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS builder
 
@@ -315,6 +326,10 @@ COPY --from=builder --chown=root:root --chmod=0755 /app/mediastorm .
 # Copy the exported Expo web app. The backend serves it from /watch.
 COPY --from=web-builder /frontend/dist /opt/strmr-web
 ENV STRMR_WEB_APP_DIR=/opt/strmr-web
+
+# Copy the standalone web client. The backend serves it from /watch-next.
+COPY --from=web-next-builder /web/dist /opt/strmr-web-next
+ENV STRMR_WEB_NEXT_DIR=/opt/strmr-web-next
 
 # Copy the iroh remote-access bridge binary. MEDIASTORM_IROH_DIRECT_DIR points the
 # host manager at this dir; it runs <dir>/iroh-direct-spike directly (no cargo needed).

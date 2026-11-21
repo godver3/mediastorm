@@ -39,6 +39,7 @@ src/
 ## Conventions
 
 API modules: one per area, in `src/api/<area>.ts`.
+
 - Call `apiRequest<T>(endpoint, { method, body, query, signal })`. The endpoint is relative
   to `/api`, for example `'/users/${id}/watchlist'`. The client adds `X-Client-ID`, the
   Bearer token, and `X-Profile-Unlock` for the profiles a request names. It also handles
@@ -54,6 +55,7 @@ API modules: one per area, in `src/api/<area>.ts`.
 - Pass the Query `signal` through to `apiRequest`.
 
 Routes:
+
 - Signed-in pages live in `src/routes/_app/<name>.tsx` (one file per route). `_app.tsx`
   guards them and renders the shell. Use `<Page title=…>` as the page wrapper.
 - Read search params through `validateSearch` (see `_app/search.tsx`). Nested routes use
@@ -61,6 +63,7 @@ Routes:
 - Sidebar entries are in `components/shell/nav.ts`.
 
 Components (`@/components`):
+
 - `Button` (variant primary/secondary/ghost/danger, size, loading, leftIcon/rightIcon)
 - `IconButton` (icon, label, variant ghost/glass/solid)
 - `Spinner`, `Skeleton`, `PageSpinner`
@@ -74,6 +77,7 @@ Components (`@/components`):
 - `Icon` (inline SVG set in `components/icons.tsx`; add icons there)
 
 Styling:
+
 - Use the token colours only: `bg-bg`, `bg-surface`, `bg-surface-strong`, `glass`,
   `text-fg`, `text-muted`, `text-faint`, `border-line`, `bg-accent`, `accent-soft`,
   `text-danger`, `rounded-card`, `shadow-card`.
@@ -81,6 +85,7 @@ Styling:
 - `--accent` comes from the profile's `display.appearance.accentColor`.
 
 Playback:
+
 - `openPlayback(params)` from `@/lib/playback` builds the `/watch/playback.html` URL. It adds
   `token`, `clientId`, `profileId` and `profileUnlock`. `PlaybackParams` documents the
   params the player reads.
