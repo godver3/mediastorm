@@ -23,6 +23,8 @@ import { Route as AppSearchRouteImport } from './routes/_app/search'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSportsRouteImport } from './routes/_app/sports'
 import { Route as AppWatchlistRouteImport } from './routes/_app/watchlist'
+import { Route as AppLibrariesLibraryIdRouteImport } from './routes/_app/libraries_.$libraryId'
+import { Route as AppListsListKeyRouteImport } from './routes/_app/lists_.$listKey'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -93,6 +95,16 @@ const AppWatchlistRoute = AppWatchlistRouteImport.update({
   path: '/watchlist',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLibrariesLibraryIdRoute = AppLibrariesLibraryIdRouteImport.update({
+  id: '/libraries_/$libraryId',
+  path: '/libraries/$libraryId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppListsListKeyRoute = AppListsListKeyRouteImport.update({
+  id: '/lists_/$listKey',
+  path: '/lists/$listKey',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -108,6 +120,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/sports': typeof AppSportsRoute
   '/watchlist': typeof AppWatchlistRoute
+  '/libraries/$libraryId': typeof AppLibrariesLibraryIdRoute
+  '/lists/$listKey': typeof AppListsListKeyRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -123,6 +137,8 @@ export interface FileRoutesByTo {
   '/sports': typeof AppSportsRoute
   '/watchlist': typeof AppWatchlistRoute
   '/': typeof AppIndexRoute
+  '/libraries/$libraryId': typeof AppLibrariesLibraryIdRoute
+  '/lists/$listKey': typeof AppListsListKeyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -140,6 +156,8 @@ export interface FileRoutesById {
   '/_app/sports': typeof AppSportsRoute
   '/_app/watchlist': typeof AppWatchlistRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/libraries_/$libraryId': typeof AppLibrariesLibraryIdRoute
+  '/_app/lists_/$listKey': typeof AppListsListKeyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -157,6 +175,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/sports'
     | '/watchlist'
+    | '/libraries/$libraryId'
+    | '/lists/$listKey'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -172,6 +192,8 @@ export interface FileRouteTypes {
     | '/sports'
     | '/watchlist'
     | '/'
+    | '/libraries/$libraryId'
+    | '/lists/$listKey'
   id:
     | '__root__'
     | '/_app'
@@ -188,6 +210,8 @@ export interface FileRouteTypes {
     | '/_app/sports'
     | '/_app/watchlist'
     | '/_app/'
+    | '/_app/libraries_/$libraryId'
+    | '/_app/lists_/$listKey'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -296,6 +320,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWatchlistRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/libraries_/$libraryId': {
+      id: '/_app/libraries_/$libraryId'
+      path: '/libraries/$libraryId'
+      fullPath: '/libraries/$libraryId'
+      preLoaderRoute: typeof AppLibrariesLibraryIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/lists_/$listKey': {
+      id: '/_app/lists_/$listKey'
+      path: '/lists/$listKey'
+      fullPath: '/lists/$listKey'
+      preLoaderRoute: typeof AppListsListKeyRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -311,6 +349,8 @@ interface AppRouteChildren {
   AppSportsRoute: typeof AppSportsRoute
   AppWatchlistRoute: typeof AppWatchlistRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppLibrariesLibraryIdRoute: typeof AppLibrariesLibraryIdRoute
+  AppListsListKeyRoute: typeof AppListsListKeyRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -325,6 +365,8 @@ const AppRouteChildren: AppRouteChildren = {
   AppSportsRoute: AppSportsRoute,
   AppWatchlistRoute: AppWatchlistRoute,
   AppIndexRoute: AppIndexRoute,
+  AppLibrariesLibraryIdRoute: AppLibrariesLibraryIdRoute,
+  AppListsListKeyRoute: AppListsListKeyRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
