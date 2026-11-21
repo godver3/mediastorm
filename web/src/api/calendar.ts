@@ -236,7 +236,7 @@ export interface CalendarEnrichment {
   cast: string[];
 }
 
-interface DetailsTitle extends Title {
+interface DetailsTitle extends Omit<Title, 'credits'> {
   credits?: { cast?: { name: string; order?: number }[] };
 }
 interface SeriesDetailsResponse {
