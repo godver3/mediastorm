@@ -166,7 +166,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   const canPlay = isMovie ? !!bundle : !!primaryEpisode;
 
   const actions = (
-    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+    <div className="flex flex-wrap items-start gap-2 sm:gap-3">
       <div className="flex flex-col gap-1.5">
         <Button
           size="lg"
@@ -179,8 +179,8 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           {label}
         </Button>
         {primaryStart && resumeFraction > 0 && (
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <span className="h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-surface-strong">
+          <div className="flex items-center gap-2 text-xs whitespace-nowrap text-muted">
+            <span className="h-1 w-full max-w-[90px] overflow-hidden rounded-full bg-surface-strong">
               <span
                 className="block h-full rounded-full bg-accent"
                 style={{ width: `${resumeFraction * 100}%` }}

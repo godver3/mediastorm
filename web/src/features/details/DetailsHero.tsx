@@ -47,7 +47,7 @@ export function DetailsHero({
       </div>
 
       <div className="relative -mt-24 px-4 pb-8 sm:px-6 md:mt-0 md:flex md:min-h-[min(78vh,760px)] md:items-end md:pt-32 lg:px-10">
-        <div className="max-w-2xl">
+        <div className="max-w-3xl">
           {logo ? (
             <h1 className="mb-5">
               <img
