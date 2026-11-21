@@ -23,24 +23,33 @@ import { Page } from '@/components/Page';
 import { Segmented } from '@/components/Segmented';
 import { Skeleton } from '@/components/Spinner';
 import { formatStart, GameCard, StatusPill } from '@/components/sports/SportsBits';
+import { StandingsTab } from '@/components/sports/StandingsTab';
+import { useSportsFollows } from '@/components/sports/useSportsFollows';
+import { isFollowedGame } from '@/api/sportsFollows';
 import { cn } from '@/lib/cn';
 
-type SportsTab = 'games' | 'racing' | 'cycling';
+type SportsTab = 'games' | 'standings' | 'racing' | 'cycling';
 
 interface SportsSearch {
   tab?: SportsTab;
   league?: string;
   date?: string;
   q?: string;
+  /** Only games of followed teams / competitions. */
+  following?: boolean;
 }
 
 export const Route = createFileRoute('/_app/sports')({
   validateSearch: (raw: Record<string, unknown>): SportsSearch => ({
-    tab: raw.tab === 'racing' || raw.tab === 'cycling' ? raw.tab : undefined,
+    tab:
+      raw.tab === 'racing' || raw.tab === 'cycling' || raw.tab === 'standings'
+        ? raw.tab
+        : undefined,
     league: typeof raw.league === 'string' && raw.league ? raw.league : undefined,
     date:
       typeof raw.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : undefined,
     q: typeof raw.q === 'string' && raw.q ? raw.q : undefined,
+    following: raw.following === true || raw.following === '1' ? true : undefined,
   }),
   component: SportsPage,
 });
@@ -81,6 +90,7 @@ function SportsPage() {
           }
           options={[
             { value: 'games', label: 'Games' },
+            { value: 'standings', label: 'Standings' },
             { value: 'racing', label: 'Racing' },
             { value: 'cycling', label: 'Cycling' },
           ]}
@@ -89,6 +99,9 @@ function SportsPage() {
     >
       {(search.tab ?? 'games') === 'games' && (
         <GamesTab search={search} set={set} dateQueries={status.data?.dateQueries ?? false} />
+      )}
+      {search.tab === 'standings' && (
+        <StandingsTab league={search.league} onLeague={(league) => set({ league })} />
       )}
       {search.tab === 'racing' && <RacingTab />}
       {search.tab === 'cycling' && <CyclingTab />}
@@ -119,12 +132,18 @@ function GamesTab({
     () => new Map((leagues.data ?? []).map((l) => [l.id, l.name ?? l.id.toUpperCase()])),
     [leagues.data],
   );
+  const { preferences } = useSportsFollows();
+  const hasFollows =
+    !!preferences && (preferences.teamIds.length > 0 || preferences.competitionIds.length > 0);
   const games = useMemo(
     () =>
       (board.data?.games ?? []).filter(
-        (g) => (!search.league || g.league === search.league) && matchesQuery(g, search.q ?? ''),
+        (g) =>
+          (!search.league || g.league === search.league) &&
+          (!search.following || isFollowedGame(g, preferences)) &&
+          matchesQuery(g, search.q ?? ''),
       ),
-    [board.data, search.league, search.q],
+    [board.data, search.league, search.q, search.following, preferences],
   );
   const groups = groupGames(games);
   const boardLeagues = useMemo(() => {
@@ -184,6 +203,20 @@ function GamesTab({
             />
           </div>
           <div className="flex max-w-full gap-1.5 overflow-x-auto no-scrollbar">
+            {hasFollows && (
+              <Chip
+                active={!!search.following}
+                onClick={() => set({ following: search.following ? undefined : true })}
+              >
+                <Icon
+                  name="star"
+                  size={14}
+                  filled={!!search.following}
+                  className="-mt-0.5 mr-1 inline"
+                />
+                Following
+              </Chip>
+            )}
             <Chip active={!search.league} onClick={() => set({ league: undefined })}>
               All leagues
             </Chip>
@@ -209,7 +242,7 @@ function GamesTab({
           icon="trophy"
           title="No games"
           description={
-            search.league || search.q
+            search.league || search.q || search.following
               ? 'Nothing matches these filters.'
               : 'There is nothing on the board for this day.'
           }

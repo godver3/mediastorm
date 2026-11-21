@@ -24,6 +24,7 @@ export interface SportsLeague {
   eventKind?: string;
   implementationStatus?: string;
   capabilities?: string[];
+  supportsTeams?: boolean;
 }
 
 export interface SportsTeam {
@@ -87,6 +88,46 @@ export interface SportsGameDetail {
   plays?: SportsPlay[];
   comparisons?: SportsComparison[];
   leaders?: SportsLeader[];
+  playerStats?: SportsPlayerStats[];
+  lineups?: SportsLineup[];
+  /** ESPN's home win probability after each play (basketball), 0..1. */
+  winProbability?: SportsWinProbabilityPoint[];
+}
+
+export interface SportsStat {
+  label: string;
+  value: string;
+}
+/** A box-score line (native SportsPlayerStats). */
+export interface SportsPlayerStats {
+  id: string;
+  teamId: string;
+  name: string;
+  category: string;
+  jersey?: string;
+  headshotUrl?: string;
+  stats: SportsStat[];
+}
+export interface SportsLineupPlayer {
+  id: string;
+  name: string;
+  number?: string;
+  position?: string;
+  starter?: boolean;
+  subbedIn?: boolean;
+  subbedOut?: boolean;
+}
+export interface SportsLineup {
+  teamId: string;
+  formation?: string;
+  players: SportsLineupPlayer[];
+}
+export interface SportsWinProbabilityPoint {
+  playId?: string;
+  period: number;
+  periodLabel?: string;
+  clock: string;
+  home: number;
 }
 
 export interface SportsGame {
@@ -130,6 +171,9 @@ export interface SportsStreamMatch {
   confidence?: number;
   confidenceTier?: string;
   matchReason?: string;
+  /** One stream of a Stremio channel (picked from /live/stremio/streams). */
+  stremioStreamIndex?: number;
+  streamLabel?: string;
 }
 export interface SportsStreamGroup {
   confidenceTier: string;
@@ -469,6 +513,7 @@ export async function prepareSportsPlayback(
       channelName: match.channelName,
       liveSourceUrl: match.channelUrl,
       liveChannelLogo: match.channelLogo,
+      stremioStreamIndex: match.stremioStreamIndex,
     },
   });
   const path = session.isDirect && session.streamUrl ? session.streamUrl : session.playlistUrl;

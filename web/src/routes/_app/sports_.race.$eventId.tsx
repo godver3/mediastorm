@@ -13,6 +13,7 @@ import { EmptyState, ErrorState } from '@/components/EmptyState';
 import { Page } from '@/components/Page';
 import { Skeleton } from '@/components/Spinner';
 import { BackToSports, formatStart, StatusPill } from '@/components/sports/SportsBits';
+import { MotoGPPanels } from '@/components/sports/MotoGPPanels';
 import { WatchPanel } from '@/components/sports/WatchPanel';
 import { cn } from '@/lib/cn';
 
@@ -85,7 +86,7 @@ function RacePage() {
   return (
     <Page>
       <BackToSports tab="racing" />
-      <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex min-w-0 flex-col gap-6">
           <section className="rounded-2xl border border-line bg-[linear-gradient(135deg,color-mix(in_srgb,var(--accent)_22%,transparent),transparent_70%)] p-6">
             <p className="text-xs font-semibold tracking-wide text-faint uppercase">
@@ -164,6 +165,7 @@ function RacePage() {
               </table>
             )}
           </section>
+          {event.league === 'motogp' && <MotoGPPanels providerEventId={event.providerEventId} />}
         </div>
         <div className="lg:sticky lg:top-20 lg:self-start">
           <WatchPanel
