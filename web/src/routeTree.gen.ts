@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ProfilesRouteImport } from './routes/profiles'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppCalendarRouteImport } from './routes/_app/calendar'
+import { Route as AppDetailsRouteImport } from './routes/_app/details'
 import { Route as AppLibrariesRouteImport } from './routes/_app/libraries'
 import { Route as AppListsRouteImport } from './routes/_app/lists'
 import { Route as AppLiveRouteImport } from './routes/_app/live'
@@ -45,6 +46,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppCalendarRoute = AppCalendarRouteImport.update({
   id: '/calendar',
   path: '/calendar',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDetailsRoute = AppDetailsRouteImport.update({
+  id: '/details',
+  path: '/details',
   getParentRoute: () => AppRoute,
 } as any)
 const AppLibrariesRoute = AppLibrariesRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/profiles': typeof ProfilesRoute
   '/calendar': typeof AppCalendarRoute
+  '/details': typeof AppDetailsRoute
   '/libraries': typeof AppLibrariesRoute
   '/lists': typeof AppListsRoute
   '/live': typeof AppLiveRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/profiles': typeof ProfilesRoute
   '/calendar': typeof AppCalendarRoute
+  '/details': typeof AppDetailsRoute
   '/libraries': typeof AppLibrariesRoute
   '/lists': typeof AppListsRoute
   '/live': typeof AppLiveRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/profiles': typeof ProfilesRoute
   '/_app/calendar': typeof AppCalendarRoute
+  '/_app/details': typeof AppDetailsRoute
   '/_app/libraries': typeof AppLibrariesRoute
   '/_app/lists': typeof AppListsRoute
   '/_app/live': typeof AppLiveRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/profiles'
     | '/calendar'
+    | '/details'
     | '/libraries'
     | '/lists'
     | '/live'
@@ -152,6 +162,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/profiles'
     | '/calendar'
+    | '/details'
     | '/libraries'
     | '/lists'
     | '/live'
@@ -167,6 +178,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/profiles'
     | '/_app/calendar'
+    | '/_app/details'
     | '/_app/libraries'
     | '/_app/lists'
     | '/_app/live'
@@ -219,6 +231,13 @@ declare module '@tanstack/react-router' {
       path: '/calendar'
       fullPath: '/calendar'
       preLoaderRoute: typeof AppCalendarRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/details': {
+      id: '/_app/details'
+      path: '/details'
+      fullPath: '/details'
+      preLoaderRoute: typeof AppDetailsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/libraries': {
@@ -282,6 +301,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppCalendarRoute: typeof AppCalendarRoute
+  AppDetailsRoute: typeof AppDetailsRoute
   AppLibrariesRoute: typeof AppLibrariesRoute
   AppListsRoute: typeof AppListsRoute
   AppLiveRoute: typeof AppLiveRoute
@@ -295,6 +315,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppCalendarRoute: AppCalendarRoute,
+  AppDetailsRoute: AppDetailsRoute,
   AppLibrariesRoute: AppLibrariesRoute,
   AppListsRoute: AppListsRoute,
   AppLiveRoute: AppLiveRoute,
