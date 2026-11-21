@@ -1,0 +1,187 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
+import { useState, type FormEvent } from 'react';
+import { isWrongPinError } from '@/api/client';
+import type { UserProfile } from '@/api/types';
+import { verifyPin } from '@/api/users';
+import { useLogout, useProfiles } from '@/auth/hooks';
+import { sessionStore } from '@/auth/sessionStore';
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  ErrorState,
+  errorMessage,
+  Icon,
+  ProfileAvatar,
+  Skeleton,
+} from '@/components';
+import { AuthLayout, Field } from '@/components/AuthLayout';
+
+interface ProfilesSearch {
+  redirect?: string;
+}
+
+export const Route = createFileRoute('/profiles')({
+  validateSearch: (s: Record<string, unknown>): ProfilesSearch => ({
+    redirect: typeof s.redirect === 'string' ? s.redirect : undefined,
+  }),
+  beforeLoad: ({ location }) => {
+    if (!sessionStore.getState().session)
+      throw redirect({ to: '/login', search: { redirect: location.href } });
+  },
+  component: ProfilesPage,
+});
+
+export function ProfilesPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { redirect: redirectTo } = Route.useSearch();
+  const profiles = useProfiles();
+  const logout = useLogout();
+  const [pinFor, setPinFor] = useState<UserProfile | null>(null);
+
+  async function enter(profile: UserProfile) {
+    const previous = sessionStore.getState().profileId;
+    sessionStore.selectProfile(profile.id);
+    if (previous !== profile.id)
+      queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== 'users' });
+    // Only follow same-app redirects; everything else lands on Home.
+    if (redirectTo && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+      await navigate({ to: redirectTo });
+    } else {
+      await navigate({ to: '/' });
+    }
+  }
+
+  function choose(profile: UserProfile) {
+    if (profile.hasPin && !sessionStore.hasValidUnlock(profile.id)) setPinFor(profile);
+    else void enter(profile);
+  }
+
+  return (
+    <AuthLayout title="Who's watching?" subtitle="Choose a profile." wide>
+      {profiles.isPending ? (
+        <div className="flex flex-wrap justify-center gap-6">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-32 w-32 rounded-full" />
+          ))}
+        </div>
+      ) : profiles.isError ? (
+        <ErrorState error={profiles.error} onRetry={() => void profiles.refetch()} />
+      ) : profiles.data.length === 0 ? (
+        <EmptyState
+          icon="users"
+          title="No profiles yet"
+          description="Create a profile in the account settings first."
+        />
+      ) : (
+        <ul className="flex flex-wrap justify-center gap-6 sm:gap-8">
+          {profiles.data.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                onClick={() => choose(p)}
+                className="group flex w-28 cursor-pointer flex-col items-center gap-3 outline-none sm:w-32"
+              >
+                <span className="relative rounded-full ring-2 ring-transparent ring-offset-4 ring-offset-bg transition group-hover:scale-105 group-hover:ring-accent group-focus-visible:ring-accent">
+                  <ProfileAvatar profile={p} size={112} />
+                  {p.hasPin && (
+                    <span className="glass absolute right-0 bottom-0 flex h-8 w-8 items-center justify-center rounded-full">
+                      <Icon name="lock" size={15} />
+                    </span>
+                  )}
+                </span>
+                <span className="max-w-full truncate text-sm font-medium text-muted group-hover:text-fg">
+                  {p.name}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-12">
+        <Button
+          variant="ghost"
+          leftIcon={<Icon name="logout" size={18} />}
+          onClick={() => void logout()}
+        >
+          Sign out
+        </Button>
+      </div>
+      {pinFor && (
+        <PinDialog
+          profile={pinFor}
+          onClose={() => setPinFor(null)}
+          onUnlocked={() => {
+            const p = pinFor;
+            setPinFor(null);
+            void enter(p);
+          }}
+        />
+      )}
+    </AuthLayout>
+  );
+}
+
+function PinDialog({
+  profile,
+  onClose,
+  onUnlocked,
+}: {
+  profile: UserProfile;
+  onClose: () => void;
+  onUnlocked: () => void;
+}) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await verifyPin(profile.id, pin);
+      if (!result.valid) throw new Error('Incorrect PIN.');
+      if (result.unlockToken)
+        sessionStore.setUnlock(profile.id, result.unlockToken, result.expiresAt);
+      onUnlocked();
+    } catch (err) {
+      setError(isWrongPinError(err) ? 'Incorrect PIN.' : errorMessage(err));
+      setPin('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`Enter PIN for ${profile.name}`}
+      size="sm"
+    >
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <Field
+          label="PIN"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          autoFocus
+          value={pin}
+          maxLength={profile.pinLength || 12}
+          onChange={(v) => setPin(v.replace(/\D/g, ''))}
+        />
+        {error && (
+          <p role="alert" className="text-sm text-danger">
+            {error}
+          </p>
+        )}
+        <Button type="submit" loading={busy} disabled={!pin}>
+          Unlock
+        </Button>
+      </form>
+    </Dialog>
+  );
+}

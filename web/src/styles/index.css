@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Components use these via Tailwind theme colours
+ * (bg-surface, text-muted, border-line, bg-accent, ...) — never raw hex.
+ * Dark is the default; light follows prefers-color-scheme unless
+ * <html data-theme="dark|light"> forces one.
+ */
+:root {
+  --accent: #3f66ff;
+  --accent-contrast: #ffffff;
+  --bg: #0b0b0f;
+  --bg-elevated: #13131a;
+  --surface: rgb(255 255 255 / 0.05);
+  --surface-strong: rgb(255 255 255 / 0.09);
+  --surface-glass: rgb(22 22 31 / 0.72);
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.16);
+  --text: #f5f6fa;
+  --text-muted: #a3a7ba;
+  --text-faint: #6c7085;
+  --danger: #ef5350;
+  --success: #2ecc71;
+  --warning: #f1c40f;
+  --shadow: 0 18px 40px -18px rgb(0 0 0 / 0.7);
+  --radius: 14px;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: #f4f5f9;
+    --bg-elevated: #ffffff;
+    --surface: rgb(15 18 30 / 0.04);
+    --surface-strong: rgb(15 18 30 / 0.08);
+    --surface-glass: rgb(255 255 255 / 0.75);
+    --line: rgb(15 18 30 / 0.08);
+    --line-strong: rgb(15 18 30 / 0.16);
+    --text: #12131a;
+    --text-muted: #555a6e;
+    --text-faint: #8a8fa3;
+    --shadow: 0 18px 40px -20px rgb(15 18 30 / 0.35);
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f5f9;
+  --bg-elevated: #ffffff;
+  --surface: rgb(15 18 30 / 0.04);
+  --surface-strong: rgb(15 18 30 / 0.08);
+  --surface-glass: rgb(255 255 255 / 0.75);
+  --line: rgb(15 18 30 / 0.08);
+  --line-strong: rgb(15 18 30 / 0.16);
+  --text: #12131a;
+  --text-muted: #555a6e;
+  --text-faint: #8a8fa3;
+  --shadow: 0 18px 40px -20px rgb(15 18 30 / 0.35);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-glass: var(--surface-glass);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --shadow-card: var(--shadow);
+  --radius-card: var(--radius);
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(
+        1200px 600px at 10% -10%,
+        color-mix(in srgb, var(--accent) 14%, transparent),
+        transparent 60%
+      ),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+}
+
+@utility glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--line);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility accent-soft {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
+}
