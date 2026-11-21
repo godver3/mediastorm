@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -204,8 +205,14 @@ func (h *WebPlaybackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	session := h.resolveSession(r)
 	if session == nil {
-		// Not authenticated — bounce to the web app so the user can log in.
-		http.Redirect(w, r, h.serverBasePath+"/watch", http.StatusSeeOther)
+		// Not authenticated — bounce to the web app so the user can log in. A
+		// returnTo inside one of the web apps lands there instead (the app's own
+		// guard sends the user through sign-in and back to that page).
+		target := h.serverBasePath + "/watch"
+		if ret := h.signedOutReturnPath(r.URL.Query().Get("returnTo")); ret != "" {
+			target = ret
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
 	}
 
@@ -271,4 +278,37 @@ func (h *WebPlaybackHandler) scopedUsers(session *models.Session, requestedProfi
 		}
 	}
 	return scoped
+}
+
+// webAppReturnRoots are the app roots, under the server base path, a signed-out
+// playback request may be sent back to: the Expo web app (/watch) and the
+// standalone web client (/watch-next, which moves to /watch at cutover).
+var webAppReturnRoots = []string{"/watch-next", "/watch"}
+
+// signedOutReturnPath returns returnTo when it is a same-origin path inside one
+// of the web apps (never the player itself), else "". Absolute and
+// scheme-relative URLs are rejected so the redirect can't leave the server.
+func (h *WebPlaybackHandler) signedOutReturnPath(returnTo string) string {
+	raw := strings.TrimSpace(returnTo)
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n") {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return ""
+	}
+	cleaned := path.Clean(u.Path)
+	rest, ok := strings.CutPrefix(cleaned, h.serverBasePath)
+	if !ok || strings.HasSuffix(rest, "/playback.html") {
+		return ""
+	}
+	for _, root := range webAppReturnRoots {
+		if rest == root || strings.HasPrefix(rest, root+"/") {
+			if u.RawQuery != "" {
+				return cleaned + "?" + u.RawQuery
+			}
+			return cleaned
+		}
+	}
+	return ""
 }
