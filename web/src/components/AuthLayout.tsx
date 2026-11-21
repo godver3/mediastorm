@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
-import { useBranding } from '@/lib/branding';
+import { DEFAULT_LOGO_URL, useBranding } from '@/lib/branding';
 import { APP_NAME } from '@/lib/documentTitle';
-import { Brand } from './shell/Sidebar';
+import { cn } from '@/lib/cn';
 
 /** Centered glass card used by login and the profile picker. */
 export function AuthLayout({
@@ -17,24 +17,29 @@ export function AuthLayout({
 }) {
   const { logoUrl, profilePickerUrl, isLoading } = useBranding();
   // Sign-in shows the wide logo; the profile picker (wide) the TV home art, as the Expo web did.
-  const art = wide ? (profilePickerUrl ?? logoUrl) : logoUrl;
+  // Without custom branding, the bundled MediaStorm logo (the natives' BrandLogo).
+  const art = (wide ? (profilePickerUrl ?? logoUrl) : logoUrl) ?? DEFAULT_LOGO_URL;
+  const isDefault = art === DEFAULT_LOGO_URL;
   return (
     <div className="flex min-h-full flex-col items-center justify-center px-4 py-12">
       <div className="mb-8">
         {isLoading ? (
           <div className="h-20" aria-hidden />
-        ) : art ? (
+        ) : (
           <img
             src={art}
             alt={APP_NAME}
-            className={
+            className={cn(
+              'object-contain',
               wide
-                ? 'max-h-40 max-w-[min(90vw,520px)] object-contain'
-                : 'max-h-24 max-w-[min(80vw,320px)] object-contain'
-            }
+                ? 'max-h-40 max-w-[min(90vw,520px)]'
+                : isDefault
+                  ? 'max-h-36 max-w-[min(80vw,320px)]'
+                  : 'max-h-24 max-w-[min(80vw,320px)]',
+              // The bundled logo sits on its own dark background.
+              isDefault && 'rounded-2xl shadow-card',
+            )}
           />
-        ) : (
-          <Brand />
         )}
       </div>
       <div

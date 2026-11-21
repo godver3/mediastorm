@@ -131,6 +131,7 @@ export const TRACK_LANGUAGES: { code: string; name: string }[] = [
 ].map(([code, name]) => ({ code: code!, name: name! }));
 
 export const ACCENT_PRESETS = [
+  '#f5b400',
   '#3f66ff',
   '#7c4dff',
   '#e0567a',

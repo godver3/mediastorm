@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { cn } from '@/lib/cn';
-import { useBranding } from '@/lib/branding';
+import { DEFAULT_ICON_URL, useBranding } from '@/lib/branding';
 import { APP_NAME } from '@/lib/documentTitle';
 import { Icon } from '../icons';
 import { NAV_ITEMS, SETTINGS_ITEM, type NavItem } from './nav';
@@ -34,19 +34,18 @@ function NavLink({
 }
 
 function BrandMark({ iconUrl }: { iconUrl?: string }) {
-  if (iconUrl) {
-    return <img src={iconUrl} alt="" className="h-8 w-8 shrink-0 rounded-xl object-cover" />;
-  }
   return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-contrast shadow-[0_6px_20px_-8px_var(--accent)]">
-      <Icon name="play" size={15} fill="currentColor" />
-    </span>
+    <img
+      src={iconUrl ?? DEFAULT_ICON_URL}
+      alt=""
+      className="h-8 w-8 shrink-0 rounded-xl object-cover"
+    />
   );
 }
 
 /**
  * The server's custom branding (uploaded logo / web icon) when set, else the
- * default mark + wordmark. Renders nothing until branding has loaded so a
+ * MediaStorm icon + wordmark (as the native clients do). Renders nothing until branding has loaded so a
  * configured logo doesn't flash the default first.
  */
 export function Brand({ collapsed }: { collapsed?: boolean }) {

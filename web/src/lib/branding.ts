@@ -31,6 +31,10 @@ export interface ResolvedBranding {
   iconUrl?: string;
 }
 
+/** Bundled MediaStorm artwork (copied from backend/handlers/static), relative to <base>. */
+export const DEFAULT_LOGO_URL = 'brand/app-logo-wide.png';
+export const DEFAULT_ICON_URL = 'brand/icon-80.png';
+
 export function resolveBranding(branding: Branding | undefined): ResolvedBranding {
   if (!branding) return {};
   return {

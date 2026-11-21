@@ -9,5 +9,8 @@ describe('theme', () => {
   it('falls back to the default accent', () => {
     applyAccent('nope');
     expect(document.documentElement.style.getPropertyValue('--accent')).toBe(DEFAULT_ACCENT);
+    expect(document.documentElement.style.getPropertyValue('--accent-contrast')).toBe('#111111');
+    applyAccent('#3f66ff');
+    expect(document.documentElement.style.getPropertyValue('--accent-contrast')).toBe('#ffffff');
   });
 });
