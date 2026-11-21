@@ -19,6 +19,29 @@ export interface LiveChannel {
   sourceName?: string;
   /** Provider-local id, sent as `channelId` when tuning. */
   playbackId?: string;
+  /** The provider's catch-up: it replays `days` of past programmes (native LiveCatchup). */
+  catchup?: LiveCatchup;
+}
+
+export interface LiveCatchup {
+  days: number;
+  mode?: string;
+}
+
+/** One stream a Stremio channel's addon lists (GET /api/live/stremio/streams). */
+export interface LiveStremioStream {
+  index: number;
+  label: string;
+  name?: string;
+  title?: string;
+  description?: string;
+}
+
+/** GET /api/live/catchup: the provider archive URL for a programme. */
+export interface LiveCatchupStart {
+  url: string;
+  offsetSeconds: number;
+  durationSeconds: number;
 }
 
 export interface LiveSource {
@@ -101,7 +124,51 @@ export function mapChannel(raw: unknown): LiveChannel | null {
     sourceId: str(r.sourceId),
     sourceName: str(r.sourceName),
     playbackId: str(r.playbackId),
+    catchup: mapCatchup(r.catchup),
   };
+}
+
+function mapCatchup(raw: unknown): LiveCatchup | undefined {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const days = typeof r.days === 'number' ? Math.floor(r.days) : 0;
+  return days > 0 ? { days, mode: str(r.mode) } : undefined;
+}
+
+/**
+ * A Stremio addon stream resource (`…/stream/….json`), which can list several streams
+ * to choose from (native hasStremioSources / Expo isStremioStreamResourceUrl).
+ */
+export function hasStremioSources(c: Pick<LiveChannel, 'url'>): boolean {
+  const path = c.url.split('?')[0] ?? '';
+  return c.url.startsWith('http') && path.includes('/stream/') && path.endsWith('.json');
+}
+
+const DAY = 86_400_000;
+
+/** How far back the provider replays this channel, ms; 0 without catch-up. */
+export const catchupWindow = (c: Pick<LiveChannel, 'catchup'>) =>
+  c.catchup && c.catchup.days > 0 ? c.catchup.days * DAY : 0;
+
+/** The provider can replay `p` from its start: it has started and is in the archive (native canReplay). */
+export function canReplay(
+  c: Pick<LiveChannel, 'catchup'>,
+  p: Pick<EPGProgram, 'start'> | undefined,
+  now = Date.now(),
+): boolean {
+  const window = catchupWindow(c);
+  if (!p || !window) return false;
+  return p.start < now - 60_000 && p.start >= now - window;
+}
+
+/**
+ * How far back the guide pages: the longest archive among the channels shown, capped at
+ * a week (the server's default EPG retention), else the half hour it always kept
+ * (native LiveStore.guideHistory).
+ */
+export function guideHistory(channels: Pick<LiveChannel, 'catchup'>[]): number {
+  let longest = 0;
+  for (const c of channels) longest = Math.max(longest, catchupWindow(c));
+  return Math.min(Math.max(longest, 30 * 60_000), 7 * DAY);
 }
 
 /** The key EPG data is filed under: tvgId, else the channel id (native guideKey). */
@@ -171,6 +238,8 @@ export const liveKeys = {
   schedule: (profileId: string, keys: string[], startOffset: number, hours: number) =>
     [...liveKeys.all(profileId), 'schedule', keys, startOffset, hours] as const,
   lists: (profileId: string) => [...liveKeys.all(profileId), 'lists'] as const,
+  stremioStreams: (profileId: string, url: string) =>
+    [...liveKeys.all(profileId), 'stremio-streams', url] as const,
 };
 
 // ---------- requests ----------
@@ -329,7 +398,7 @@ export async function saveChannelLists(profileId: string, lists: LiveChannelList
 export function liveStartQuery(
   channel: LiveChannel,
   profileId: string,
-  opts: { programTitle?: string; profileName?: string } = {},
+  opts: { programTitle?: string; profileName?: string; stremioStreamIndex?: number } = {},
 ): Record<string, string> {
   const q: Record<string, string> = {
     url: channel.url,
@@ -351,6 +420,78 @@ export function liveStartQuery(
   if (channel.tvgName) q.tvgName = channel.tvgName;
   if (channel.group) q.category = channel.group;
   if (channel.logo) q.liveChannelLogo = channel.logo;
+  if (opts.stremioStreamIndex !== undefined && opts.stremioStreamIndex >= 0) {
+    q.stremioStreamIndex = String(opts.stremioStreamIndex);
+  }
+  return q;
+}
+
+/** The streams a Stremio channel's addon lists for it, for Choose Source. */
+export async function fetchStremioStreams(
+  profileId: string,
+  channel: Pick<LiveChannel, 'url'>,
+  signal?: AbortSignal,
+): Promise<LiveStremioStream[]> {
+  const raw = await apiRequest<{ streams?: unknown[] } | null>('/live/stremio/streams', {
+    query: { url: channel.url, profileId },
+    signal,
+  });
+  return mapStremioStreams(raw?.streams);
+}
+
+export function mapStremioStreams(raw: unknown): LiveStremioStream[] {
+  return (Array.isArray(raw) ? raw : []).flatMap((item) => {
+    const r = (item ?? {}) as Record<string, unknown>;
+    if (typeof r.index !== 'number') return [];
+    const name = str(r.name);
+    const title = str(r.title);
+    return [
+      {
+        index: r.index,
+        label: str(r.label) ?? title ?? name ?? `Stream ${r.index + 1}`,
+        name,
+        title,
+        description: str(r.description),
+      },
+    ];
+  });
+}
+
+/** The provider's archive URL for `program` on `channel`, from `offsetSeconds` in. */
+export function fetchCatchup(
+  profileId: string,
+  channel: LiveChannel,
+  program: Pick<EPGProgram, 'start' | 'stop'>,
+  offsetSeconds = 0,
+): Promise<LiveCatchupStart> {
+  const query: Record<string, string> = {
+    channelId: channel.id,
+    profileId,
+    start: new Date(program.start).toISOString(),
+    stop: new Date(program.stop).toISOString(),
+    offset: String(Math.max(0, Math.floor(offsetSeconds))),
+  };
+  if (channel.sourceId) query.sourceId = channel.sourceId;
+  return apiRequest<LiveCatchupStart>('/live/catchup', { query });
+}
+
+/**
+ * The /api/live/hls/start query for a catch-up archive: the archive URL is tuned like a
+ * channel (the server accepts URLs it issued from /api/live/catchup to this profile).
+ */
+export function catchupStartQuery(
+  channel: LiveChannel,
+  archive: LiveCatchupStart,
+  program: Pick<EPGProgram, 'title'>,
+  profileId: string,
+  profileName?: string,
+): Record<string, string> {
+  const q = liveStartQuery({ ...channel, url: archive.url }, profileId, {
+    programTitle: program.title,
+    profileName,
+  });
+  // The archive is a recording of the channel, not the channel's live URL.
+  q.liveSourceUrl = archive.url;
   return q;
 }
 

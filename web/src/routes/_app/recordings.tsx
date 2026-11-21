@@ -32,6 +32,7 @@ import { useNow } from '@/components/live/useLiveData';
 import { RecordingRow } from '@/components/recordings/RecordingRow';
 import { RulesPanel } from '@/components/recordings/RulesPanel';
 import { cn } from '@/lib/cn';
+import { hereReturnPath } from '@/components/live/useLiveActions';
 import { openPlayback } from '@/lib/playback';
 
 type Tab = RecordingFilter | 'rules';
@@ -118,7 +119,8 @@ function RecordingsScreen({ profileId, profileName }: { profileId: string; profi
     [list.data, tab],
   );
 
-  const play = (r: Recording) => openPlayback({ ...recordingPlaybackParams(r), profileName });
+  const play = (r: Recording) =>
+    openPlayback({ ...recordingPlaybackParams(r), profileName, returnTo: hereReturnPath() });
 
   return (
     <Page

@@ -59,3 +59,21 @@ export function chunk<T>(items: T[], size: number): T[][] {
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
+
+/** Hours one Earlier / Later page moves the guide window by. */
+export const GUIDE_PAGE_HOURS = 6;
+
+/**
+ * The guide start one page earlier (dir -1) or later (dir 1), kept between the earliest
+ * catch-up reaches (`now - history`, on a half hour) and the live window's start.
+ */
+export function shiftGuideStart(start: number, dir: 1 | -1, now: number, history: number): number {
+  const earliest = floorHalfHour(now - history);
+  const live = guideStart(now);
+  const next = start + dir * GUIDE_PAGE_HOURS * HOUR;
+  return Math.min(Math.max(next, earliest), live);
+}
+
+/** The guide can page back from `start` (the channels shown keep catch-up that far). */
+export const canPageEarlier = (start: number, now: number, history: number) =>
+  start > floorHalfHour(now - history);

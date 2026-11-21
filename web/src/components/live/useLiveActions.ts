@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
+  catchupStartQuery,
+  fetchCatchup,
   liveStartErrorMessage,
   livePlaybackParams,
   liveStartQuery,
@@ -27,24 +29,62 @@ export interface Notice {
   text: string;
 }
 
-/** Tune a channel and hand off to playback.html. */
+/**
+ * The current page (base path, /watch, view and filters) as the player's `returnTo`, so
+ * Back from playback.html lands on the same Live TV / Recordings view.
+ */
+export const hereReturnPath = () => window.location.pathname + window.location.search;
+
+/** Tune a channel (or replay a past programme) and hand off to playback.html. */
 export function useTuneChannel(profileId: string, profileName?: string) {
   const [tuning, setTuning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tune = async (channel: LiveChannel, programTitle?: string) => {
+  const tune = async (
+    channel: LiveChannel,
+    programTitle?: string,
+    opts: { stremioStreamIndex?: number } = {},
+  ) => {
     setTuning(channel.id);
     setError(null);
     try {
       const start = await startLive(
-        liveStartQuery(channel, profileId, { programTitle, profileName }),
+        liveStartQuery(channel, profileId, {
+          programTitle,
+          profileName,
+          stremioStreamIndex: opts.stremioStreamIndex,
+        }),
       );
-      openPlayback({ ...livePlaybackParams(channel, start), profileName });
+      openPlayback({
+        ...livePlaybackParams(channel, start),
+        profileName,
+        returnTo: hereReturnPath(),
+      });
     } catch (err) {
       setError(liveStartErrorMessage(err));
       setTuning(null);
     }
   };
-  return { tune, tuning, error, clearError: () => setError(null) };
+  /** Catch-up: the provider's archive of `program` from its start (native liveCatchup). */
+  const replay = async (channel: LiveChannel, program: EPGProgram) => {
+    setTuning(channel.id);
+    setError(null);
+    try {
+      const archive = await fetchCatchup(profileId, channel, program);
+      const start = await startLive(
+        catchupStartQuery(channel, archive, program, profileId, profileName),
+      );
+      openPlayback({
+        ...livePlaybackParams({ ...channel, url: archive.url }, start),
+        title: `${program.title} · ${channel.name}`,
+        profileName,
+        returnTo: hereReturnPath(),
+      });
+    } catch (err) {
+      setError(liveStartErrorMessage(err));
+      setTuning(null);
+    }
+  };
+  return { tune, replay, tuning, error, clearError: () => setError(null) };
 }
 
 type Action =

@@ -135,8 +135,9 @@ export function useSchedules(
   enabled: boolean,
 ) {
   const batches = useMemo(() => chunk(uniqueKeys(channels), 40), [channels]);
-  // Minutes from now; fixed per guide start so the key stays stable while time passes.
-  const [offset] = useState(() => Math.floor((start - Date.now()) / 60_000));
+  // Minutes from now (negative pages back into catch-up); fixed per guide start so the key
+  // stays stable while time passes.
+  const offset = useMemo(() => Math.floor((start - Date.now()) / 60_000), [start]);
   const results = useQueries({
     queries: batches.map((keys) => ({
       queryKey: liveKeys.schedule(profileId, keys, start, hours),

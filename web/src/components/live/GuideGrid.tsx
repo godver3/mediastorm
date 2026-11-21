@@ -1,6 +1,6 @@
 import { Icon } from '@/components/icons';
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
-import { guideKey, type EPGProgram, type LiveChannel } from '@/api/live';
+import { canReplay, guideKey, type EPGProgram, type LiveChannel } from '@/api/live';
 import { recordingFor, type Recording } from '@/api/recordings';
 import { Skeleton } from '@/components';
 import { cn } from '@/lib/cn';
@@ -29,6 +29,14 @@ export interface GuideGridProps {
   onTune: (channel: LiveChannel) => void;
   onProgram: (channel: LiveChannel, program: EPGProgram) => void;
   onChannelMenu: (channel: LiveChannel) => void;
+  /** Time scrolled into view when the guide start changes (default: just before now). */
+  anchor?: number;
+  /** The window can move back (catch-up) / forward from `start`. */
+  canEarlier?: boolean;
+  canLater?: boolean;
+  /** Move the guide window by one page of hours; `onNow` returns to the live window. */
+  onShift?: (dir: 1 | -1) => void;
+  onNow?: () => void;
   footer?: ReactNode;
 }
 
@@ -45,6 +53,11 @@ export function GuideGrid({
   onTune,
   onProgram,
   onChannelMenu,
+  anchor,
+  canEarlier,
+  canLater,
+  onShift,
+  onNow,
   footer,
 }: GuideGridProps) {
   const end = start + GUIDE_HOURS * HOUR;
@@ -63,7 +76,7 @@ export function GuideGrid({
   };
 
   useLayoutEffect(() => {
-    scrollToTime(now - 30 * 60_000, false);
+    scrollToTime(anchor ?? now - 30 * 60_000, false);
     // Only on mount / when the guide start changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [start]);
@@ -81,8 +94,20 @@ export function GuideGrid({
     return () => el.removeEventListener('keydown', onKey);
   }, []);
 
-  const page = (dir: 1 | -1) =>
-    scroller.current?.scrollBy?.({ left: dir * xFor(start + 2 * HOUR, start), behavior: 'smooth' });
+  const page = (dir: 1 | -1) => {
+    const el = scroller.current;
+    // At an edge of the loaded window, move the window (back into catch-up, or forward).
+    if (el && onShift) {
+      const atStart = el.scrollLeft <= 4;
+      const atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 4;
+      if ((dir < 0 && atStart && canEarlier) || (dir > 0 && atEnd && canLater)) {
+        onShift(dir);
+        return;
+      }
+    }
+    el?.scrollBy?.({ left: dir * xFor(start + 2 * HOUR, start), behavior: 'smooth' });
+  };
+  const live = start <= now && now < end;
 
   return (
     <section
@@ -90,11 +115,18 @@ export function GuideGrid({
       className="overflow-hidden rounded-2xl border border-line bg-elevated [--chan-w:104px] sm:[--chan-w:232px]"
     >
       <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-        <span className="text-sm font-medium">{formatDay(now, now)}</span>
+        <span className="text-sm font-medium">
+          {formatDay(anchor ?? now, now)}
+          {!live && (
+            <span className="ml-2 text-xs font-normal text-muted">
+              {formatClock(start)} – {formatClock(end)}
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => scrollToTime(now - 30 * 60_000)}
+            onClick={() => (live || !onNow ? scrollToTime(now - 30 * 60_000) : onNow())}
             className="h-8 cursor-pointer rounded-lg px-3 text-sm font-medium text-accent hover:bg-surface"
           >
             Now
@@ -195,6 +227,7 @@ export function GuideGrid({
                       const airing = p.start <= now && now < p.stop;
                       const past = p.stop <= now;
                       const rec = recordingFor(recordings, channel, p, now);
+                      const replay = past && canReplay(channel, p, now);
                       return (
                         <button
                           key={p.start}
@@ -206,13 +239,22 @@ export function GuideGrid({
                             airing
                               ? 'border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_24%,transparent)]'
                               : 'border-line bg-surface hover:bg-surface-strong',
-                            past && 'opacity-55',
+                            past && !replay && 'opacity-55',
+                            replay && 'border-dashed',
                           )}
                           style={{ left: g.left + 2, width: Math.max(g.width - 4, 4) }}
-                          title={`${p.title} · ${formatClock(p.start)}`}
+                          title={`${p.title} · ${formatClock(p.start)}${replay ? ' · catch-up' : ''}`}
                         >
                           <span className="flex items-center gap-1.5">
                             {rec && <RecordingBadge recording={rec} />}
+                            {replay && (
+                              <Icon
+                                name="restart"
+                                size={12}
+                                className="shrink-0 text-accent"
+                                aria-label="Catch-up available"
+                              />
+                            )}
                             <span className="truncate text-sm font-medium">{p.title}</span>
                             {p.isNew && (
                               <span className="shrink-0 rounded bg-accent px-1 text-[9px] font-bold text-accent-contrast">

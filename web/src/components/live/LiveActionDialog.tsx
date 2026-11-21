@@ -1,5 +1,11 @@
 import type { ReactNode } from 'react';
-import { isAiring, type EPGProgram, type LiveChannel } from '@/api/live';
+import {
+  canReplay,
+  hasStremioSources,
+  isAiring,
+  type EPGProgram,
+  type LiveChannel,
+} from '@/api/live';
 import { recordingFor, seriesRuleFor, type Recording, type RecordingRule } from '@/api/recordings';
 import { Button, Dialog, Icon, type IconName } from '@/components';
 import { cn } from '@/lib/cn';
@@ -27,6 +33,10 @@ export interface LiveActionDialogProps {
   onTune: (channel: LiveChannel, programTitle?: string) => void;
   onToggleFavorite: (channel: LiveChannel) => void;
   onToggleHidden: (channel: LiveChannel) => void;
+  /** Choose Source for a Stremio-backed channel. */
+  onChooseSource?: (channel: LiveChannel) => void;
+  /** Catch-up: play `program` from its start from the provider's archive. */
+  onReplay?: (channel: LiveChannel, program: EPGProgram) => void;
   actions: ReturnType<typeof useRecordActions>;
 }
 
@@ -73,6 +83,8 @@ export function LiveActionDialog({
   onTune,
   onToggleFavorite,
   onToggleHidden,
+  onChooseSource,
+  onReplay,
   actions,
 }: LiveActionDialogProps) {
   if (!target) return null;
@@ -81,6 +93,8 @@ export function LiveActionDialog({
   const isMenu = !target.program;
   const ended = program ? program.stop <= now : false;
   const airing = program ? isAiring(program, now) : false;
+  const replayable = !!onReplay && !!program && canReplay(channel, program, now);
+  const choosable = !!onChooseSource && hasStremioSources(channel);
   const recording = program ? recordingFor(recordings, channel, program, now) : undefined;
   const rule = program ? seriesRuleFor(rules, program.title, channel) : undefined;
   const busy = actions.isPending;
@@ -142,6 +156,32 @@ export function LiveActionDialog({
               Watch {channel.name}
             </Button>
           </div>
+        )}
+        {replayable && program && (
+          <div className="mb-2">
+            <Button
+              className="w-full"
+              variant={ended ? 'primary' : 'secondary'}
+              leftIcon={<Icon name="restart" size={16} />}
+              onClick={() => onReplay?.(channel, program)}
+            >
+              {ended ? 'Watch from catch-up' : 'Watch from the start'}
+            </Button>
+          </div>
+        )}
+        {ended && program && !replayable && (
+          <p className="mb-2 rounded-xl bg-surface px-3 py-2 text-sm text-muted">
+            {channel.catchup
+              ? `This programme is older than the ${channel.catchup.days}-day catch-up window.`
+              : 'This programme has ended. The channel has no catch-up.'}
+          </p>
+        )}
+        {choosable && isMenu && (
+          <ActionRow
+            icon="sources"
+            label="Choose source"
+            onClick={() => onChooseSource?.(channel)}
+          />
         )}
 
         {program && !ended && epgEnabled && (

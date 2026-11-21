@@ -1,13 +1,15 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { guideKey, type ChannelQuery, type LiveChannel } from '@/api/live';
+import { guideHistory, guideKey, type ChannelQuery, type LiveChannel } from '@/api/live';
 import { useActiveProfile } from '@/auth/hooks';
 import { Button, EmptyState, ErrorState, Page, PageSpinner, Skeleton } from '@/components';
 import { ChannelGrid } from '@/components/live/ChannelGrid';
 import { GuideGrid } from '@/components/live/GuideGrid';
 import { LiveActionDialog, type LiveActionTarget } from '@/components/live/LiveActionDialog';
 import { KidsLiveUnavailable, Notice } from '@/components/live/LiveBits';
+import { readLiveMemory, writeLiveMemory, type LiveMemory } from '@/components/live/liveMemory';
 import { LiveToolbar, type LiveView } from '@/components/live/LiveToolbar';
+import { StremioSourcePicker } from '@/components/live/StremioSourcePicker';
 import {
   useRecordActions,
   useTuneChannel,
@@ -26,7 +28,7 @@ import {
   useSchedules,
   useToggleChannelList,
 } from '@/components/live/useLiveData';
-import { GUIDE_HOURS, guideStart } from '@/lib/guide';
+import { canPageEarlier, GUIDE_HOURS, guideStart, HOUR, shiftGuideStart } from '@/lib/guide';
 
 export interface LiveSearch {
   view?: LiveView;
@@ -69,11 +71,49 @@ function LivePage() {
 function LiveScreen({ profileId, profileName }: { profileId: string; profileName?: string }) {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: '/live' });
-  const setSearch = (patch: Partial<LiveSearch>) =>
+  // Opening /live without filters restores this profile's last categories and view (as the
+  // natives do on device). Until the URL carries them, the remembered values are used so
+  // the first channel request is already the filtered one.
+  const [restore, setRestore] = useState<LiveMemory | null>(() => {
+    if (search.cats || search.view) return null;
+    const m = readLiveMemory(profileId);
+    return m.categories.length || m.view ? m : null;
+  });
+  useEffect(() => {
+    if (!restore) return;
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        cats: restore.categories.length ? restore.categories.join(',') : prev.cats,
+        view: restore.view ?? prev.view,
+      }),
+      replace: true,
+    });
+    // Once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setSearch = (patch: Partial<LiveSearch>) => {
+    setRestore(null);
     void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
+  };
+  const catsParam =
+    search.cats ?? (restore?.categories.length ? restore.categories.join(',') : undefined);
+  const viewParam = search.view ?? restore?.view;
+  useEffect(() => {
+    if (restore && !search.cats && !search.view) return; // not applied yet
+    writeLiveMemory(profileId, {
+      categories: search.cats ? search.cats.split(',').filter(Boolean) : [],
+      view: search.view,
+    });
+  }, [profileId, restore, search.cats, search.view]);
 
   const now = useNow();
-  const [start] = useState(() => guideStart(Date.now()));
+  // The guide window: from `start` for GUIDE_HOURS; pages back into catch-up.
+  const [guide, setGuide] = useState<{ start: number; anchor?: number }>(() => ({
+    start: guideStart(Date.now()),
+  }));
+  const start = guide.start;
+  const [sourceFor, setSourceFor] = useState<LiveChannel | null>(null);
   const [target, setTarget] = useState<LiveActionTarget | null>(null);
   const [notice, setNotice] = useState<NoticeT | null>(null);
   useEffect(() => {
@@ -88,11 +128,11 @@ function LiveScreen({ profileId, profileName }: { profileId: string; profileName
   const saveLists = useToggleChannelList(profileId);
   const epg = useEpgStatus(profileId);
   const epgEnabled = epg.data?.enabled === true;
-  const view: LiveView = !epgEnabled && epg.isSuccess ? 'channels' : (search.view ?? 'guide');
+  const view: LiveView = !epgEnabled && epg.isSuccess ? 'channels' : (viewParam ?? 'guide');
 
   const selectedCats = useMemo(
-    () => (search.cats ? search.cats.split(',').filter(Boolean) : []),
-    [search.cats],
+    () => (catsParam ? catsParam.split(',').filter(Boolean) : []),
+    [catsParam],
   );
   const query: ChannelQuery = {
     sourceId: search.source,
@@ -125,7 +165,28 @@ function LiveScreen({ profileId, profileName }: { profileId: string; profileName
     epgEnabled && view === 'guide',
   );
 
-  const { tune, tuning, error: tuneError, clearError } = useTuneChannel(profileId, profileName);
+  const history = useMemo(() => guideHistory(channels), [channels]);
+  const shiftGuide = (dir: 1 | -1) =>
+    setGuide((g) => {
+      const next = shiftGuideStart(g.start, dir, Date.now(), history);
+      if (next === g.start) return g;
+      const live = next === guideStart(Date.now());
+      // Keep the edge that was in view on screen after the window moves.
+      const anchor = live
+        ? undefined
+        : dir < 0
+          ? Math.max(next, g.start - 2 * HOUR)
+          : Math.min(next + GUIDE_HOURS * HOUR - 3 * HOUR, g.start + GUIDE_HOURS * HOUR - 2 * HOUR);
+      return { start: next, anchor };
+    });
+
+  const {
+    tune,
+    replay,
+    tuning,
+    error: tuneError,
+    clearError,
+  } = useTuneChannel(profileId, profileName);
   useEffect(() => {
     if (tuneError) {
       setNotice({ tone: 'danger', text: tuneError });
@@ -141,6 +202,14 @@ function LiveScreen({ profileId, profileName }: { profileId: string; profileName
   const tuneChannel = (c: LiveChannel, programTitle?: string) => {
     setTarget(null);
     void tune(c, programTitle ?? currentIn(schedules[guideKey(c)], now)?.title);
+  };
+  const replayProgram = (c: LiveChannel, p: Parameters<typeof replay>[1]) => {
+    setTarget(null);
+    void replay(c, p);
+  };
+  const chooseSource = (c: LiveChannel) => {
+    setTarget(null);
+    setSourceFor(c);
   };
 
   // Infinite paging: a sentinel at the end loads the next page.
@@ -212,6 +281,11 @@ function LiveScreen({ profileId, profileName }: { profileId: string; profileName
         onTune={(c) => tuneChannel(c)}
         onProgram={(channel, program) => setTarget({ channel, program })}
         onChannelMenu={(channel) => setTarget({ channel })}
+        anchor={guide.anchor}
+        canEarlier={canPageEarlier(start, now, history)}
+        canLater={start < guideStart(now)}
+        onShift={shiftGuide}
+        onNow={() => setGuide({ start: guideStart(Date.now()) })}
         footer={footer}
       />
     );
@@ -281,7 +355,20 @@ function LiveScreen({ profileId, profileName }: { profileId: string; profileName
         onTune={tuneChannel}
         onToggleFavorite={toggleFavorite}
         onToggleHidden={toggleHidden}
+        onChooseSource={chooseSource}
+        onReplay={replayProgram}
         actions={actions}
+      />
+      <StremioSourcePicker
+        profileId={profileId}
+        channel={sourceFor}
+        onClose={() => setSourceFor(null)}
+        onPick={(c, stream) => {
+          setSourceFor(null);
+          void tune(c, currentIn(schedules[guideKey(c)], now)?.title, {
+            stremioStreamIndex: stream.index,
+          });
+        }}
       />
       {notice && <Notice {...notice} onClose={() => setNotice(null)} />}
     </Page>
