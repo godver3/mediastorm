@@ -1,3 +1,4 @@
+import { pinPrompt } from '@/auth/pinPrompt';
 import { sessionStore } from '@/auth/sessionStore';
 import { apiPath } from './basePath';
 import { getClientId } from './storage';
@@ -229,8 +230,9 @@ export function refreshSession(): Promise<AuthSession | null> {
  * Typed JSON request against /api. Like the native clients it refreshes ahead
  * of expiry (inside REFRESH_WINDOW_MS), and when the server says the session is
  * gone it refreshes once and retries once; a rejected refresh signs out. On a
- * 403 profile_locked for the active profile the stale unlock is dropped and the
- * profile deselected, so the route guard sends the user back to the picker.
+ * 403 profile_locked the stale unlock is dropped and the user is asked for the PIN
+ * in place (auth/pinPrompt); on success the request is retried once. Cancelling
+ * deselects the active profile, so the route guard sends the user to the picker.
  */
 export async function apiRequest<T>(endpoint: string, opts: RequestOptions = {}): Promise<T> {
   if (!opts.noAuthRecovery && sessionNeedsRefresh(sessionStore.getState().session?.expiresAt)) {
@@ -252,8 +254,13 @@ export async function apiRequest<T>(endpoint: string, opts: RequestOptions = {})
     if (isProfileLockedError(err)) {
       const { profileId } = sessionStore.getState();
       const locked = err.profileId ?? profileId;
-      if (locked) sessionStore.clearUnlock(locked);
-      if (locked && locked === profileId) sessionStore.selectProfile(null);
+      if (locked) {
+        sessionStore.clearUnlock(locked);
+        // Prompt for the PIN in place and retry once (native behaviour). Cancelling
+        // (or no prompt UI mounted) falls back to deselecting the active profile.
+        if (await pinPrompt.request(locked)) return performRequest<T>(endpoint, opts);
+        if (locked === profileId) sessionStore.selectProfile(null);
+      }
     }
     throw err;
   }

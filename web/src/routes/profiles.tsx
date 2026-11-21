@@ -1,22 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
-import { isWrongPinError } from '@/api/client';
+import { useState } from 'react';
 import type { UserProfile } from '@/api/types';
-import { verifyPin } from '@/api/users';
 import { useLogout, useProfiles } from '@/auth/hooks';
 import { sessionStore } from '@/auth/sessionStore';
-import {
-  Button,
-  Dialog,
-  EmptyState,
-  ErrorState,
-  errorMessage,
-  Icon,
-  ProfileAvatar,
-  Skeleton,
-} from '@/components';
-import { AuthLayout, Field } from '@/components/AuthLayout';
+import { Button, EmptyState, ErrorState, Icon, ProfileAvatar, Skeleton } from '@/components';
+import { AuthLayout } from '@/components/AuthLayout';
+import { PinDialog } from '@/components/auth/PinDialog';
 
 interface ProfilesSearch {
   redirect?: string;
@@ -111,7 +101,9 @@ export function ProfilesPage() {
       </div>
       {pinFor && (
         <PinDialog
-          profile={pinFor}
+          profileId={pinFor.id}
+          profileName={pinFor.name}
+          pinLength={pinFor.pinLength}
           onClose={() => setPinFor(null)}
           onUnlocked={() => {
             const p = pinFor;
@@ -121,67 +113,5 @@ export function ProfilesPage() {
         />
       )}
     </AuthLayout>
-  );
-}
-
-function PinDialog({
-  profile,
-  onClose,
-  onUnlocked,
-}: {
-  profile: UserProfile;
-  onClose: () => void;
-  onUnlocked: () => void;
-}) {
-  const [pin, setPin] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await verifyPin(profile.id, pin);
-      if (!result.valid) throw new Error('Incorrect PIN.');
-      if (result.unlockToken)
-        sessionStore.setUnlock(profile.id, result.unlockToken, result.expiresAt);
-      onUnlocked();
-    } catch (err) {
-      setError(isWrongPinError(err) ? 'Incorrect PIN.' : errorMessage(err));
-      setPin('');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => !o && onClose()}
-      title={`Enter PIN for ${profile.name}`}
-      size="sm"
-    >
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <Field
-          label="PIN"
-          type="password"
-          inputMode="numeric"
-          autoComplete="off"
-          autoFocus
-          value={pin}
-          maxLength={profile.pinLength || 12}
-          onChange={(v) => setPin(v.replace(/\D/g, ''))}
-        />
-        {error && (
-          <p role="alert" className="text-sm text-danger">
-            {error}
-          </p>
-        )}
-        <Button type="submit" loading={busy} disabled={!pin}>
-          Unlock
-        </Button>
-      </form>
-    </Dialog>
   );
 }

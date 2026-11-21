@@ -1,3 +1,4 @@
+import { pinPrompt } from '@/auth/pinPrompt';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionStore } from '@/auth/sessionStore';
 import { ApiError, apiRequest, invalidatesSession, profileIdsForRequest } from './client';
@@ -116,6 +117,48 @@ describe('apiRequest', () => {
     await expect(apiRequest('/users/p1/settings')).rejects.toBeInstanceOf(ApiError);
     expect(sessionStore.getState().profileId).toBeNull();
     expect(sessionStore.hasValidUnlock('p1')).toBe(false);
+  });
+
+  it('prompts for the PIN on profile_locked and retries with the new unlock', async () => {
+    sessionStore.login(session('tok'));
+    sessionStore.selectProfile('p1');
+    const unregister = pinPrompt.registerHost();
+    const unsubscribe = pinPrompt.subscribe(() => {
+      const pending = pinPrompt.current();
+      if (!pending) return;
+      sessionStore.setUnlock('p1', 'pu_new');
+      pending.settle(true);
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        json(403, { error: 'locked', code: 'profile_locked', profileId: 'p1' }),
+      )
+      .mockResolvedValueOnce(json(200, { ok: true }));
+    try {
+      await expect(apiRequest('/users/p1/settings')).resolves.toEqual({ ok: true });
+      expect(headersOf(1).get('X-Profile-Unlock')).toContain('pu_new');
+      expect(sessionStore.getState().profileId).toBe('p1');
+    } finally {
+      unsubscribe();
+      unregister();
+    }
+  });
+
+  it('deselects the profile when the PIN prompt is cancelled', async () => {
+    sessionStore.login(session('tok'));
+    sessionStore.selectProfile('p1');
+    const unregister = pinPrompt.registerHost();
+    const unsubscribe = pinPrompt.subscribe(() => pinPrompt.current()?.settle(false));
+    fetchMock.mockResolvedValueOnce(
+      json(403, { error: 'locked', code: 'profile_locked', profileId: 'p1' }),
+    );
+    try {
+      await expect(apiRequest('/users/p1/settings')).rejects.toBeInstanceOf(ApiError);
+      expect(sessionStore.getState().profileId).toBeNull();
+    } finally {
+      unsubscribe();
+      unregister();
+    }
   });
 });
 

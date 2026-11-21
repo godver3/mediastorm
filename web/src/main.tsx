@@ -10,7 +10,7 @@ const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);
 
 // Re-run route guards whenever sign-in state or the selected profile changes
-// (e.g. a failed refresh signs out, a profile_locked deselects the profile).
+// (e.g. a failed refresh signs out, a cancelled PIN prompt deselects the profile).
 let last = sessionStore.getState();
 sessionStore.subscribe(() => {
   const next = sessionStore.getState();
