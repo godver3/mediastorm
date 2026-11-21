@@ -359,6 +359,7 @@ type xtreamChannelsFetch struct {
 // individual live channel streams into browser-friendly MP4 fragments.
 type LiveHandler struct {
 	catchupGrants      catchupGrants
+	parsedPlaylists    parsedPlaylistCache
 	discoveryOnce      sync.Once
 	discovery          *liveDiscovery
 	client             *http.Client
@@ -2738,43 +2739,56 @@ func (h *LiveHandler) getChannels(w http.ResponseWriter, r *http.Request, admin 
 	totalBeforeFilter := 0
 	successfulSources := 0
 	failedSources := 0
-	for _, liveSource := range selectedSources {
-		if request.FavoritesOnly && !liveSourceMayContainFavorites(liveSource.ID, request.FavoriteIDs, includeSourceInID) {
+	// Sources are fetched concurrently: a cold load used to wait for each provider in
+	// turn (on a 5-source lineup ~14 s Stremio + ~2 s Xtream + ...). Results are then
+	// combined in configured order, so output is unchanged.
+	fetched := fetchLiveSourcesConcurrently(r.Context(), selectedSources, func(liveSource resolvedM3USource) bool {
+		return request.FavoritesOnly && !liveSourceMayContainFavorites(liveSource.ID, request.FavoriteIDs, includeSourceInID)
+	}, func(ctx context.Context, liveSource resolvedM3USource) liveSourceFetch {
+		result := liveSourceFetch{errorMessage: "failed to fetch channels", stalkerTotal: -1}
+		switch liveSource.Mode {
+		case "xtream":
+			result.channels, result.err = h.fetchXtreamChannels(ctx, liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
+		case "stremio":
+			result.channels, result.err = h.fetchStremioChannels(ctx, liveSource.ManifestURL, liveSource.ProxyURL)
+		case "stalker":
+			if paginated && request.Filter == "" && !request.FavoritesOnly && len(selectedSources) == 1 {
+				result.channels, result.stalkerTotal, result.stalkerCategories, result.err = fetchStalkerCategoryChannels(
+					ctx, stalkerConfigFromResolvedSource(liveSource), request.Categories, offset+limit,
+				)
+			} else {
+				result.channels, result.err = fetchStalkerChannels(ctx, stalkerConfigFromResolvedSource(liveSource))
+			}
+		default:
+			var contents string
+			contents, result.err = h.fetchPlaylistContents(ctx, liveSource.PlaylistURL, liveSource.ProxyURL)
+			if result.err == nil {
+				result.channels = h.parsedPlaylists.parse(contents)
+			}
+			result.errorMessage = "failed to fetch playlist"
+		}
+		return result
+	})
+	for index, liveSource := range selectedSources {
+		result := fetched[index]
+		if result.skipped {
 			continue
 		}
 		sourceFilter := filter
 		if liveSource.HasFilterOverride {
 			sourceFilter = liveSource.Filter
 		}
-		var sourceChannels []LiveChannel
+		sourceChannels := result.channels
 		var availabilityChannels []LiveChannel
-		var sourceErr error
-		sourceErrorMessage := "failed to fetch channels"
-		if liveSource.Mode == "xtream" {
-			sourceChannels, sourceErr = h.fetchXtreamChannels(r.Context(), liveSource.XtreamHost, liveSource.XtreamUsername, liveSource.XtreamPassword, liveSource.ProxyURL)
-		} else if liveSource.Mode == "stremio" {
-			sourceChannels, sourceErr = h.fetchStremioChannels(r.Context(), liveSource.ManifestURL, liveSource.ProxyURL)
-		} else if liveSource.Mode == "stalker" {
-			if paginated && request.Filter == "" && !request.FavoritesOnly && len(selectedSources) == 1 {
-				sourceChannels, stalkerCategoryTotal, stalkerAvailableCategories, sourceErr = fetchStalkerCategoryChannels(
-					r.Context(), stalkerConfigFromResolvedSource(liveSource), request.Categories, offset+limit,
-				)
-			} else {
-				sourceChannels, sourceErr = fetchStalkerChannels(r.Context(), stalkerConfigFromResolvedSource(liveSource))
+		sourceErr := result.err
+		sourceErrorMessage := result.errorMessage
+		if result.stalkerTotal >= 0 {
+			stalkerCategoryTotal = result.stalkerTotal
+			stalkerAvailableCategories = result.stalkerCategories
+			availabilityChannels = make([]LiveChannel, 0, len(stalkerAvailableCategories))
+			for _, category := range stalkerAvailableCategories {
+				availabilityChannels = append(availabilityChannels, LiveChannel{Group: category})
 			}
-			if stalkerCategoryTotal >= 0 {
-				availabilityChannels = make([]LiveChannel, 0, len(stalkerAvailableCategories))
-				for _, category := range stalkerAvailableCategories {
-					availabilityChannels = append(availabilityChannels, LiveChannel{Group: category})
-				}
-			}
-		} else {
-			var contents string
-			contents, sourceErr = h.fetchPlaylistContents(r.Context(), liveSource.PlaylistURL, liveSource.ProxyURL)
-			if sourceErr == nil {
-				sourceChannels = parseM3UPlaylist(contents)
-			}
-			sourceErrorMessage = "failed to fetch playlist"
 		}
 		if sourceErr != nil {
 			log.Printf("[live] GetChannels %s error for source %q: %v", liveSource.Mode, liveSource.ID, sourceErr)
