@@ -26,13 +26,17 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-full">
+      {/* The column (and its glass background) stretches to the full page height;
+          the nav inside sticks to the viewport while the page scrolls. */}
       <aside
         className={cn(
-          'glass sticky top-0 z-30 hidden h-screen shrink-0 border-y-0 border-l-0 transition-[width] duration-200 lg:block',
+          'glass relative z-30 hidden shrink-0 self-stretch border-y-0 border-l-0 transition-[width] duration-200 lg:block',
           collapsed ? 'w-[72px]' : 'w-[232px]',
         )}
       >
-        <Sidebar collapsed={collapsed} />
+        <div className="sticky top-0 h-dvh">
+          <Sidebar collapsed={collapsed} />
+        </div>
       </aside>
 
       <RadixDialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>

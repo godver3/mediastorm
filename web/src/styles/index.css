@@ -83,10 +83,24 @@
 }
 
 @layer base {
-  html,
-  body,
-  #root {
+  /* Only <html> has a fixed height. A fixed 100% body/#root let long pages overflow
+     them, so full-height children (the sidebar column) stopped at the first viewport.
+     body/#root grow with the content instead, and their children fill at least it. */
+  html {
     height: 100%;
+  }
+  body {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  #root,
+  #root > * {
+    flex: 1 0 auto;
+  }
+  #root {
+    display: flex;
+    flex-direction: column;
   }
   body {
     margin: 0;
