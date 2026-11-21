@@ -1962,6 +1962,14 @@ func main() {
 	r.Handle("/watch", webAppHandler).Methods(http.MethodGet, http.MethodHead)
 	r.PathPrefix("/watch/").Handler(webAppHandler).Methods(http.MethodGet, http.MethodHead)
 	fmt.Println("🎬 Web app available at /watch")
+
+	// Standalone web client built from web/ (phase 1 of the /watch rebuild).
+	// Served alongside the Expo export until cutover.
+	webNextHandler := handlers.NewWebAppHandler(handlers.ResolveNewWebAppDir(), "/watch-next")
+	webNextHandler.Branding = settingsHandler
+	r.Handle("/watch-next", webNextHandler).Methods(http.MethodGet, http.MethodHead)
+	r.PathPrefix("/watch-next/").Handler(webNextHandler).Methods(http.MethodGet, http.MethodHead)
+	fmt.Println("🎬 New web client available at /watch-next")
 	fmt.Println("🎬 Web playback handoff available at /watch/playback.html")
 
 	r.HandleFunc("/favicon.ico", settingsHandler.ServeWebIcon).Methods(http.MethodGet, http.MethodHead)

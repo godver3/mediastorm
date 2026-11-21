@@ -58,6 +58,26 @@ func ResolveWebAppDir() string {
 	return filepath.Join("..", "frontend", "dist")
 }
 
+// ResolveNewWebAppDir returns the directory of the standalone web client built
+// from web/ (served at /watch-next until it replaces /watch). STRMR_WEB_NEXT_DIR
+// wins; otherwise the first existing web/dist relative to the working directory.
+func ResolveNewWebAppDir() string {
+	if dir := strings.TrimSpace(os.Getenv("STRMR_WEB_NEXT_DIR")); dir != "" {
+		return dir
+	}
+
+	candidates := []string{
+		filepath.Join("web", "dist"),
+		filepath.Join("..", "web", "dist"),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return filepath.Join("..", "web", "dist")
+}
+
 func (h *WebAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
