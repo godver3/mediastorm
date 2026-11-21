@@ -1,7 +1,10 @@
 import { Icon } from '@/components/icons';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import type { LiveChannel } from '@/api/live';
 import type { Recording } from '@/api/recordings';
+import { EmptyState } from '@/components/EmptyState';
+import { Page } from '@/components/Page';
 import { cn } from '@/lib/cn';
 
 export function ChannelLogo({
@@ -97,5 +100,23 @@ export function Notice({
         </button>
       )}
     </div>
+  );
+}
+
+/** Shown when a kids profile reaches a Live TV page by URL (the sidebar hides them). */
+export function KidsLiveUnavailable({ title }: { title: string }) {
+  return (
+    <Page title={title}>
+      <EmptyState
+        icon="tv"
+        title="Not available on kids profiles"
+        description="Live TV and recordings aren't available on kids profiles. Switch to another profile to watch them."
+        action={
+          <Link to="/profiles" className="text-sm font-medium text-accent hover:underline">
+            Switch profile
+          </Link>
+        }
+      />
+    </Page>
   );
 }

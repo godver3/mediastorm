@@ -34,11 +34,13 @@ export function WatchPanel({
 }) {
   const { profileId, profile } = useActiveProfile();
   const [broad, setBroad] = useState(false);
+  // Kids profiles get no Live TV, and these matches are Live TV channels.
+  const kids = profile?.isKidsProfile === true;
   const streams = useQuery({
     queryKey: [...sportsKeys.streams(profileId ?? '', eventId, broad), kind ?? '', parentId ?? ''],
     queryFn: ({ signal }) =>
       getSportsStreams(profileId!, eventId, { broad, kind, parentId }, signal),
-    enabled: !!profileId,
+    enabled: !!profileId && !kids,
     staleTime: 60_000,
   });
   const play = useMutation({
@@ -46,6 +48,8 @@ export function WatchPanel({
       prepareSportsPlayback(match, { profileId: profileId!, profileName: profile?.name, title }),
     onSuccess: (params) => openPlayback(params),
   });
+
+  if (kids) return null;
 
   const matches = (streams.data ?? []).flatMap((g) => [
     { ...g.primary, confidenceTier: g.primary.confidenceTier ?? g.confidenceTier, alt: false },

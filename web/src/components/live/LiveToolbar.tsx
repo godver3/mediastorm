@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { LiveSource } from '@/api/live';
 import { Icon } from '@/components';
 import { cn } from '@/lib/cn';
+import { CategoryPicker } from './CategoryPicker';
+
+/** Categories shown as quick pills before the rest go behind the Categories dialog. */
+export const QUICK_CATEGORIES = 8;
 
 export type LiveView = 'guide' | 'channels';
 
@@ -40,8 +44,19 @@ export function LiveToolbar(p: LiveToolbarProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
   const toggleCat = (c: string) =>
     p.onCategories(p.selected.includes(c) ? p.selected.filter((x) => x !== c) : [...p.selected, c]);
+  // One scrolling row: the selected categories first, then the first few others (server
+  // order); everything else is in the dialog, so 150+ categories never wall the page.
+  const quick = useMemo(
+    () => [
+      ...p.selected,
+      ...p.categories.filter((c) => !p.selected.includes(c)).slice(0, QUICK_CATEGORIES),
+    ],
+    [p.categories, p.selected],
+  );
+  const more = p.categories.length > QUICK_CATEGORIES;
 
   return (
     <div className="mb-4 flex flex-col gap-3">
@@ -106,7 +121,7 @@ export function LiveToolbar(p: LiveToolbarProps) {
           ))}
         </div>
       </div>
-      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+      <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
         <button
           type="button"
           aria-pressed={!p.favoritesOnly && p.selected.length === 0}
@@ -127,7 +142,19 @@ export function LiveToolbar(p: LiveToolbarProps) {
           <Icon name="star" size={14} filled={p.favoritesOnly} className="text-warning" />
           Favorites
         </button>
-        {p.categories.map((c) => (
+        {more && (
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            onClick={() => setPickerOpen(true)}
+            className={cn(pill, p.selected.length ? pillOn : pillOff)}
+          >
+            <Icon name="list" size={14} />
+            {p.selected.length ? `Categories · ${p.selected.length}` : 'Categories'}
+            <span className="text-faint">{p.categories.length}</span>
+          </button>
+        )}
+        {quick.map((c) => (
           <button
             key={c}
             type="button"
@@ -143,13 +170,20 @@ export function LiveToolbar(p: LiveToolbarProps) {
             type="button"
             aria-pressed={p.showHidden}
             onClick={() => p.onShowHidden(!p.showHidden)}
-            className={cn(pill, p.showHidden ? pillOn : pillOff, 'sm:ml-auto')}
+            className={cn(pill, p.showHidden ? pillOn : pillOff, 'ml-auto')}
           >
             <Icon name={p.showHidden ? 'eye' : 'eyeOff'} size={14} />
             {p.showHidden ? 'Showing hidden' : `${p.hiddenCount} hidden`}
           </button>
         )}
       </div>
+      <CategoryPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        categories={p.categories}
+        selected={p.selected}
+        onChange={p.onCategories}
+      />
     </div>
   );
 }

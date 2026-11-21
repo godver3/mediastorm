@@ -2,11 +2,11 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { guideKey, type ChannelQuery, type LiveChannel } from '@/api/live';
 import { useActiveProfile } from '@/auth/hooks';
-import { Button, EmptyState, ErrorState, Page, Skeleton } from '@/components';
+import { Button, EmptyState, ErrorState, Page, PageSpinner, Skeleton } from '@/components';
 import { ChannelGrid } from '@/components/live/ChannelGrid';
 import { GuideGrid } from '@/components/live/GuideGrid';
 import { LiveActionDialog, type LiveActionTarget } from '@/components/live/LiveActionDialog';
-import { Notice } from '@/components/live/LiveBits';
+import { KidsLiveUnavailable, Notice } from '@/components/live/LiveBits';
 import { LiveToolbar, type LiveView } from '@/components/live/LiveToolbar';
 import {
   useRecordActions,
@@ -57,9 +57,13 @@ export const Route = createFileRoute('/_app/live')({
 });
 
 function LivePage() {
-  const { profileId, profile } = useActiveProfile();
+  const { profileId, profile, query } = useActiveProfile();
   if (!profileId) return null;
-  return <LiveScreen profileId={profileId} profileName={profile?.name} />;
+  // Wait for the profile so a kids profile never sends a Live TV request.
+  if (!profile) return query.isPending ? <PageSpinner /> : null;
+  if (profile.isKidsProfile) return <KidsLiveUnavailable title="Live TV" />;
+  // Keyed by profile: a switch starts from fresh local state.
+  return <LiveScreen key={profileId} profileId={profileId} profileName={profile.name} />;
 }
 
 function LiveScreen({ profileId, profileName }: { profileId: string; profileName?: string }) {

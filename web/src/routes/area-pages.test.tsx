@@ -107,3 +107,50 @@ describe('calendar', () => {
     expect(link.getAttribute('href')).toContain('titleId=tmdb%3Atv%3A95396');
   });
 });
+
+describe('kids profiles', () => {
+  it('hides Live TV and Recordings and never calls the Live TV API', async () => {
+    route({
+      '/api/users': () => json(200, [{ ...profile, isKidsProfile: true }]),
+      'GET /api/users/p1/settings': () => json(200, {}),
+    });
+    renderApp('/live');
+    expect(await screen.findByText('Not available on kids profiles')).toBeInTheDocument();
+    const nav = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    await waitFor(() => expect(nav).toHaveTextContent('Home'));
+    expect(nav).not.toHaveTextContent('Live TV');
+    expect(nav).not.toHaveTextContent('Recordings');
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/api/live/'))).toBe(false);
+  });
+});
+
+describe('live categories', () => {
+  it('keeps 150 categories behind a searchable multi-select dialog', async () => {
+    const cats = Array.from({ length: 150 }, (_, i) => `Category ${i + 1}`);
+    const bodies: Record<string, unknown>[] = [];
+    route({
+      '/api/users': () => json(200, [profile]),
+      'GET /api/users/p1/settings': () => json(200, {}),
+      'POST /api/live/channels': (init) => {
+        bodies.push(JSON.parse(String(init!.body)));
+        return json(200, {
+          channels: [{ id: 'c1', name: 'One', url: 'u' }],
+          total: 1,
+          hasMore: false,
+          availableCategories: cats,
+        });
+      },
+      '/api/live/epg/status': () => json(200, { enabled: false }),
+    });
+    renderApp('/live');
+    const open = await screen.findByRole('button', { name: /^Categories/ });
+    // Only the quick pills are in the row.
+    expect(screen.getByRole('button', { name: 'Category 8' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Category 9' })).toBeNull();
+    await userEvent.click(open);
+    await userEvent.type(screen.getByPlaceholderText('Search categories'), '120');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Category 120' }));
+    await waitFor(() => expect(bodies.at(-1)?.categories).toEqual(['Category 120']));
+    expect(bodies[0]).toMatchObject({ profileId: 'p1', offset: 0, limit: 250 });
+  });
+});

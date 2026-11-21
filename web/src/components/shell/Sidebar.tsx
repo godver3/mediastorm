@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn';
 import { DEFAULT_ICON_URL, useBranding } from '@/lib/branding';
 import { APP_NAME } from '@/lib/documentTitle';
 import { Icon } from '../icons';
-import { NAV_ITEMS, SETTINGS_ITEM, type NavItem } from './nav';
+import { SETTINGS_ITEM, useNavItems, type NavItem } from './nav';
 
 function NavLink({
   item,
@@ -77,13 +77,14 @@ export interface SidebarProps {
 }
 
 export function Sidebar({ collapsed, onNavigate, className }: SidebarProps) {
+  const navItems = useNavItems();
   return (
     <nav aria-label="Main" className={cn('flex h-full flex-col gap-1 p-3', className)}>
       <div className="mb-4 flex h-12 items-center">
         <Brand collapsed={collapsed} />
       </div>
       <div className="flex flex-1 flex-col gap-1">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <NavLink key={item.to} item={item} collapsed={collapsed} onNavigate={onNavigate} />
         ))}
       </div>

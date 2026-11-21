@@ -17,8 +17,17 @@ import {
   type RecordingFilter,
 } from '@/api/recordings';
 import { useActiveProfile } from '@/auth/hooks';
-import { Button, Dialog, EmptyState, ErrorState, errorMessage, Page, Skeleton } from '@/components';
-import { Notice } from '@/components/live/LiveBits';
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  ErrorState,
+  errorMessage,
+  Page,
+  PageSpinner,
+  Skeleton,
+} from '@/components';
+import { KidsLiveUnavailable, Notice } from '@/components/live/LiveBits';
 import { useNow } from '@/components/live/useLiveData';
 import { RecordingRow } from '@/components/recordings/RecordingRow';
 import { RulesPanel } from '@/components/recordings/RulesPanel';
@@ -42,9 +51,13 @@ export const Route = createFileRoute('/_app/recordings')({
 });
 
 function RecordingsPage() {
-  const { profileId, profile } = useActiveProfile();
+  const { profileId, profile, query } = useActiveProfile();
   if (!profileId) return null;
-  return <RecordingsScreen profileId={profileId} profileName={profile?.name} />;
+  // Wait for the profile so a kids profile never sends a Live TV request.
+  if (!profile) return query.isPending ? <PageSpinner /> : null;
+  if (profile.isKidsProfile) return <KidsLiveUnavailable title="Recordings" />;
+  // Keyed by profile: a switch starts from fresh local state.
+  return <RecordingsScreen key={profileId} profileId={profileId} profileName={profile.name} />;
 }
 
 function RecordingsScreen({ profileId, profileName }: { profileId: string; profileName?: string }) {
