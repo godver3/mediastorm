@@ -61,7 +61,7 @@ func TestWebPlaybackHandlerUsesBrandingLogo(t *testing.T) {
 	}
 
 	body = render(newHandler(""))
-	if !strings.Contains(body, `<div class="brand-title">mediastorm</div>`) || strings.Contains(body, "brand-logo\" src") {
+	if !strings.Contains(body, `<img class="brand-icon" src="/media/api/static/icon-80.png"`) || strings.Contains(body, "brand-logo\" src") {
 		t.Fatalf("expected default wordmark without branding")
 	}
 }

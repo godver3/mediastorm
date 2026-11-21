@@ -88,6 +88,18 @@
       text-transform: uppercase;
     }
 
+    .brand-default {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .brand-icon {
+      width: 2.2rem;
+      height: 2.2rem;
+      border-radius: 0.6rem;
+    }
+
     .brand-logo {
       max-height: 2.4rem;
       max-width: 220px;
@@ -1053,7 +1065,7 @@
         <div id="topSubtitle" class="brand-subtitle">Web player</div>
       </div>
       <div class="brand">
-        {{if .BrandLogoURL}}<img class="brand-logo" src="{{.BrandLogoURL}}" alt="mediastorm">{{else}}<div class="brand-title">mediastorm</div>{{end}}
+        {{if .BrandLogoURL}}<img class="brand-logo" src="{{.BrandLogoURL}}" alt="mediastorm">{{else}}<div class="brand-default"><img class="brand-icon" src="{{.ServerBasePath}}/api/static/icon-80.png" alt=""><div class="brand-title">mediastorm</div></div>{{end}}
       </div>
     </header>
 
