@@ -1,44 +1,10 @@
 # syntax=docker/dockerfile:1.7
 # mediastorm Backend Dockerfile
 
-# Web app build stage. The exported Expo bundle is static and architecture
-# independent, so build it once on the native builder platform instead of
-# running npm ci separately for each target platform in multi-arch buildx jobs.
+# Web client (web/), served at /watch. Its output is static and architecture
+# independent, so build it once on the native builder platform instead of per
+# target platform in multi-arch buildx jobs.
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS web-builder
-
-WORKDIR /frontend
-
-# Install JavaScript dependencies first so Docker can cache npm ci across app
-# source changes. Local file: modules are limited by .dockerignore to package
-# metadata plus src/, which is enough for the web export.
-COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
-COPY frontend/patches ./patches
-COPY frontend/modules ./modules
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
-
-COPY frontend/app.config.js frontend/babel.config.js frontend/metro.config.js frontend/tsconfig.json frontend/version.ts frontend/wdyr.ts frontend/index.ts ./
-COPY frontend/app ./app
-COPY frontend/assets ./assets
-COPY frontend/components ./components
-COPY frontend/config ./config
-COPY frontend/constants ./constants
-COPY frontend/features ./features
-COPY frontend/hooks ./hooks
-COPY frontend/locales ./locales
-COPY frontend/plugins ./plugins
-COPY frontend/public ./public
-COPY frontend/services ./services
-COPY frontend/styles ./styles
-COPY frontend/theme ./theme
-COPY frontend/types ./types
-COPY frontend/utils ./utils
-COPY frontend/web_icons ./web_icons
-RUN npm run web:export
-
-# Standalone web client (web/), served at /watch-next until it replaces the
-# Expo export at /watch. Static output, so build once on the builder platform.
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS web-next-builder
 
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
@@ -323,13 +289,9 @@ WORKDIR /app
 # Copy the binary from builder stage
 COPY --from=builder --chown=root:root --chmod=0755 /app/mediastorm .
 
-# Copy the exported Expo web app. The backend serves it from /watch.
-COPY --from=web-builder /frontend/dist /opt/strmr-web
+# Copy the web client. The backend serves it from /watch.
+COPY --from=web-builder /web/dist /opt/strmr-web
 ENV STRMR_WEB_APP_DIR=/opt/strmr-web
-
-# Copy the standalone web client. The backend serves it from /watch-next.
-COPY --from=web-next-builder /web/dist /opt/strmr-web-next
-ENV STRMR_WEB_NEXT_DIR=/opt/strmr-web-next
 
 # Copy the iroh remote-access bridge binary. MEDIASTORM_IROH_DIRECT_DIR points the
 # host manager at this dir; it runs <dir>/iroh-direct-spike directly (no cargo needed).

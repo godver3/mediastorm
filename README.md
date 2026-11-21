@@ -121,6 +121,8 @@ The server provides three browser entry points:
 - `http://localhost:7777/account` — account management
 - `http://localhost:7777/watch` — consumer web app and browser playback
 
+The web app is the React + TypeScript project in [`web/`](web/README.md). The Docker image builds it and serves it at `/watch` (under the server base path when one is set); playback hands off to the server-rendered player at `/watch/playback.html`. Old `/watch-next` links redirect to `/watch`.
+
 ### Native Apps
 
 The native apps are the supported mediastorm clients going forward: SwiftUI on iOS and tvOS, and Compose on Android and Android TV.
@@ -258,17 +260,27 @@ make test
 make check
 make build
 
+# Web client (served by the backend at /watch from web/dist)
+cd web
+npm ci
+npm run dev        # http://localhost:5180/watch/, proxies /api to the backend on :7777
+npm run typecheck && npm run lint && npm run test
+npm run build      # -> web/dist; reload /watch on the backend, no restart needed
+
 # Full local stack, from the repository root
 ./dev.sh start
 ./dev.sh restart backend
 ./dev.sh stop
 ```
 
+`STRMR_WEB_APP_DIR` points the backend at another web client build (the image sets it to `/opt/strmr-web`). For a side-by-side comparison with the retired Expo web export, set `STRMR_WEB_LEGACY_DIR` (or keep a local `frontend/dist`) and open `/watch-legacy`; without one that path returns 404.
+
 The main backend layout is:
 
 - `backend/handlers/` — HTTP and web handlers
 - `backend/services/` — business logic and integrations
 - `backend/internal/` — core infrastructure and datastore packages
+- `web/` — the browser client (Vite, React, TanStack Router and Query, Tailwind)
 
 Native clients:
 

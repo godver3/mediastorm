@@ -18,17 +18,18 @@ func TestWebPlaybackHandlerSignedOutHonoursWebAppReturnTo(t *testing.T) {
 		returnTo string
 		want     string
 	}{
-		{"new app details", "/mediastorm/watch-next/details?mediaType=movie&titleId=tmdb:movie:1", "/mediastorm/watch-next/details?mediaType=movie&titleId=tmdb:movie:1"},
-		{"new app live", "/mediastorm/watch-next/live?channel=1", "/mediastorm/watch-next/live?channel=1"},
-		{"new app recordings", "/mediastorm/watch-next/recordings", "/mediastorm/watch-next/recordings"},
-		{"expo details", "/mediastorm/watch/details?titleId=x", "/mediastorm/watch/details?titleId=x"},
-		{"absolute url", "https://evil.example/watch-next/details", "/mediastorm/watch"},
-		{"scheme relative", "//evil.example/mediastorm/watch-next/details", "/mediastorm/watch"},
-		{"outside base path", "/watch-next/details", "/mediastorm/watch"},
+		{"app details", "/mediastorm/watch/details?mediaType=movie&titleId=tmdb:movie:1", "/mediastorm/watch/details?mediaType=movie&titleId=tmdb:movie:1"},
+		{"app live", "/mediastorm/watch/live?channel=1", "/mediastorm/watch/live?channel=1"},
+		{"app recordings", "/mediastorm/watch/recordings", "/mediastorm/watch/recordings"},
+		{"legacy details", "/mediastorm/watch-legacy/details?titleId=x", "/mediastorm/watch-legacy/details?titleId=x"},
+		{"old preview prefix", "/mediastorm/watch-next/details", "/mediastorm/watch"},
+		{"absolute url", "https://evil.example/watch/details", "/mediastorm/watch"},
+		{"scheme relative", "//evil.example/mediastorm/watch/details", "/mediastorm/watch"},
+		{"outside base path", "/watch/details", "/mediastorm/watch"},
 		{"other area", "/mediastorm/admin", "/mediastorm/watch"},
-		{"traversal", "/mediastorm/watch-next/../admin", "/mediastorm/watch"},
+		{"traversal", "/mediastorm/watch/../admin", "/mediastorm/watch"},
 		{"player itself", "/mediastorm/watch/playback.html?x=1", "/mediastorm/watch"},
-		{"lookalike prefix", "/mediastorm/watch-nextx/details", "/mediastorm/watch"},
+		{"lookalike prefix", "/mediastorm/watchx/details", "/mediastorm/watch"},
 		{"empty", "", "/mediastorm/watch"},
 	}
 	for _, tc := range cases {
@@ -52,10 +53,10 @@ func TestWebPlaybackHandlerSignedOutHonoursWebAppReturnTo(t *testing.T) {
 func TestWebPlaybackHandlerSignedOutReturnWithoutBasePath(t *testing.T) {
 	handler := NewWebPlaybackHandler(fakeWebPlaybackUsers{}, fakeWebPlaybackSessions{}, "")
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/watch/playback.html?returnTo="+url.QueryEscape("/watch-next/details?name=Heat"), nil)
+	req := httptest.NewRequest(http.MethodGet, "/watch/playback.html?returnTo="+url.QueryEscape("/watch/details?name=Heat"), nil)
 	handler.ServeHTTP(rec, req)
-	if got := rec.Header().Get("Location"); got != "/watch-next/details?name=Heat" {
-		t.Fatalf("Location = %q, want /watch-next/details?name=Heat", got)
+	if got := rec.Header().Get("Location"); got != "/watch/details?name=Heat" {
+		t.Fatalf("Location = %q, want /watch/details?name=Heat", got)
 	}
 }
 
@@ -63,7 +64,7 @@ func TestWebPlaybackHandlerSignedInIgnoresReturnTo(t *testing.T) {
 	handler := NewWebPlaybackHandler(fakeWebPlaybackUsers{users: []models.User{{ID: "p1"}}},
 		fakeWebPlaybackSessions{token: "tok", session: models.Session{IsMaster: true}}, "")
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/watch/playback.html?token=tok&returnTo="+url.QueryEscape("/watch-next/details"), nil)
+	req := httptest.NewRequest(http.MethodGet, "/watch/playback.html?token=tok&returnTo="+url.QueryEscape("/watch/details"), nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -79,7 +80,8 @@ func TestWebPlaybackTemplateAcceptsNewAppDetailsReturn(t *testing.T) {
 	for _, want := range []string{
 		"function isDetailsReturnPath(pathname)",
 		"function isAppReturnPath(pathname)",
-		`/\/watch(-next)?(\/|$)/`,
+		`/\/watch(-legacy)?(\/|$)/`,
+		`/\/watch(-legacy)?\/details\/?$/`,
 		"!isAppReturnPath(parsed.pathname)",
 		"raw.startsWith('//')",
 		"isDetailsReturnPath(referrer.pathname)",

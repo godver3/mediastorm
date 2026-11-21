@@ -1420,18 +1420,17 @@
       return '';
     }
 
-    // Details pages a player may return to: the Expo web app's /watch/details and the
-    // standalone web client's /watch-next/details (served at /watch/details after cutover).
+    // Details pages a player may return to: the web client's /watch/details (and the
+    // retired Expo export's, when a local copy is served at /watch-legacy).
     function isDetailsReturnPath(pathname) {
-      return /\/watch(-next)?\/details\/?$/.test(String(pathname || ''));
+      return /\/watch(-legacy)?\/details\/?$/.test(String(pathname || ''));
     }
 
-    // An explicit returnTo may be any same-origin page of a web app: the Expo app's
-    // /watch/details, or anything under the standalone client (/watch-next/..., and
-    // /watch/... after cutover: details, live, recordings). Never the player itself.
+    // An explicit returnTo may be any same-origin page of the web client (/watch/...:
+    // details, live, recordings) or of /watch-legacy. Never the player itself.
     function isAppReturnPath(pathname) {
       const p = String(pathname || '');
-      return /\/watch(-next)?(\/|$)/.test(p) && !/\/playback\.html$/.test(p);
+      return /\/watch(-legacy)?(\/|$)/.test(p) && !/\/playback\.html$/.test(p);
     }
 
     function normalizePlaybackReturnPath(value) {
