@@ -70,10 +70,39 @@ export interface ShelfConfig {
   letterboxdListUrl?: string;
   hideUnreleased?: boolean;
   streamingServices?: StreamingService[];
+  /** collection-hub shelves: cards that open another shelf's list. */
+  collectionItems?: CollectionLink[];
 }
+
+/** A card of a collection hub shelf (native CollectionLink). */
+export interface CollectionLink {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  order?: number;
+  sourceShelfId?: string;
+  logoUrl?: string;
+  heroArtUrl?: string;
+}
+
+/** One `homeShelves.views` entry (`config.HomeViewSettings`; native HomeViewDefinition). */
+export interface HomeViewDefinition {
+  name?: string;
+  icon?: string;
+  /** all | movies | shows */
+  mediaFilter?: string;
+  deleted?: boolean;
+  /** custom: the page has its own layout; otherwise it follows Home. */
+  mode?: string;
+  shelves?: ShelfConfig[];
+  itemCap?: number;
+}
+
+export type HomeMediaFilter = 'all' | 'movies' | 'shows';
 
 export interface HomeShelvesConfig {
   shelves?: ShelfConfig[];
+  views?: Record<string, HomeViewDefinition>;
   itemCap?: number;
   exploreCardPosition?: string;
   excludeUpcomingFromContinue?: boolean;
@@ -88,6 +117,11 @@ export interface HomeSettings {
   excludeUpcomingFromContinue: boolean;
   topShelfMode: 'default' | 'disabled' | 'shelf';
   topShelfSourceId?: string;
+  /** The profile's Home view definitions (server's merged in). */
+  views: Record<string, HomeViewDefinition>;
+  /** The Home view these settings are resolved for (`all` = Home itself). */
+  view: string;
+  filter: HomeMediaFilter;
 }
 
 export interface ResumeState {
@@ -224,8 +258,98 @@ export function toHomeSettings(raw: SettingsResponse | null | undefined): HomeSe
     excludeUpcomingFromContinue: home.excludeUpcomingFromContinue ?? true,
     topShelfMode: mode === 'disabled' || mode === 'shelf' ? mode : 'default',
     topShelfSourceId: home.tvTopShelfSourceId || undefined,
+    views: home.views ?? {},
+    view: 'all',
+    filter: 'all',
   };
 }
+
+// ---------------------------------------------------------------------------
+// Home views (native Home/HomeViews.swift, Expo utils/home-views.ts)
+// ---------------------------------------------------------------------------
+
+export const isCustomHomeView = (id: string) => /^page-[a-zA-Z0-9-]{1,80}$/.test(id);
+
+export function homeViewLabel(view: string, views?: Record<string, HomeViewDefinition>) {
+  if (view === 'all') return 'Home';
+  if (view === 'movies') return 'Movies';
+  if (view === 'shows') return 'Shows';
+  return views?.[view]?.name || 'Home page';
+}
+
+export function homeViewFilter(
+  view: string,
+  views?: Record<string, HomeViewDefinition>,
+): HomeMediaFilter {
+  if (view === 'movies') return 'movies';
+  if (view === 'shows') return 'shows';
+  const d = views?.[view];
+  if (!d || d.deleted) return 'all';
+  return d.mediaFilter === 'movies' ? 'movies' : d.mediaFilter === 'shows' ? 'shows' : 'all';
+}
+
+/** All, Movies, Shows, then the custom pages not deleted, by name (`homeViewIds`). */
+export function homeViewIds(views?: Record<string, HomeViewDefinition>): string[] {
+  const pages = Object.entries(views ?? {})
+    .filter(([id, d]) => isCustomHomeView(id) && !d.deleted)
+    .map(([id]) => id)
+    .sort(
+      (a, b) => homeViewLabel(a, views).localeCompare(homeViewLabel(b, views)) || (a < b ? -1 : 1),
+    );
+  return ['all', 'movies', 'shows', ...pages];
+}
+
+/** Whether an item of `mediaType` belongs on a view showing `filter` (`matchesHomeView`). */
+export function matchesHomeFilter(mediaType: string | undefined, filter: HomeMediaFilter) {
+  const t = mediaType?.toLowerCase() ?? '';
+  if (filter === 'all') return true;
+  if (filter === 'movies') return ['movie', 'movies', 'film', 'films'].includes(t);
+  return ['tv', 'series', 'show', 'shows', 'episode'].includes(t);
+}
+
+/** Whether a shelf can show on a view (`homeViewShelfAllowed`). */
+export function homeShelfAllowed(c: ShelfConfig, filter: HomeMediaFilter) {
+  if (filter === 'all') return true;
+  if (['live-favorites', 'dashboard', 'tonight'].includes(c.id)) return false;
+  if (filter === 'movies' && ['trending-tv', 'my-upcoming', 'my-recently-aired'].includes(c.id))
+    return false;
+  if (filter === 'shows' && c.id === 'trending-movies') return false;
+  const type =
+    [c.addonCatalogType, c.tmdbMediaType, c.simklMediaType].find((t) => t && t !== '') ??
+    /(?:genre-\d+|decade-\d+)-(movie|tv)$/.exec(c.id)?.[1];
+  if (!type || type === 'all') return true;
+  return matchesHomeFilter(type, filter);
+}
+
+/**
+ * Home as `view` lays it out (`HomeViews.resolve`, simplified to what the web shows): All is
+ * Home as configured; a custom page with its own shelves uses them; then shelves the view's
+ * media filter can't show are dropped.
+ */
+export function resolveHomeView(settings: HomeSettings, view: string): HomeSettings {
+  const ids = homeViewIds(settings.views);
+  const v = ids.includes(view) ? view : 'all';
+  if (v === 'all') return { ...settings, view: 'all', filter: 'all' };
+  const filter = homeViewFilter(v, settings.views);
+  const d = settings.views[v];
+  const own = d && !d.deleted && d.mode === 'custom' && d.shelves ? d.shelves : undefined;
+  const shelves = [...(own ?? settings.shelves)]
+    .filter((c) => homeShelfAllowed(c, filter))
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  return {
+    ...settings,
+    shelves,
+    itemCap: own && d?.itemCap && d.itemCap > 0 ? d.itemCap : settings.itemCap,
+    // An intentionally empty custom page has no top shelf either.
+    topShelfMode: own && own.length === 0 ? 'disabled' : settings.topShelfMode,
+    view: v,
+    filter,
+  };
+}
+
+/** The `mediaType` the server's surprise / list filters take. */
+export const filterMediaType = (f: HomeMediaFilter) =>
+  f === 'movies' ? 'movie' : f === 'shows' ? 'series' : undefined;
 
 /** GET /users/{id}/settings (server shelves already merged in). */
 export async function getHomeSettings(profileId: string, signal?: AbortSignal) {
@@ -326,12 +450,84 @@ export async function getDashboardStreams(signal?: AbortSignal) {
 }
 
 /** Random pick for Watch Something's Surprise Me (needs an AI key on the server). */
-export async function getSurprise(profileId: string, signal?: AbortSignal) {
+export async function getSurprise(
+  profileId: string,
+  signal?: AbortSignal,
+  filter: HomeMediaFilter = 'all',
+) {
+  const mediaType = filterMediaType(filter);
   const res = await apiRequest<{ title: Title }>('/recommendations/surprise', {
-    query: { userId: profileId },
+    query: { userId: profileId, ...(mediaType ? { mediaType } : {}) },
     signal,
   });
   return res.title;
+}
+
+// ---------------------------------------------------------------------------
+// Continue Watching / hidden titles (native APIClient+ContinueWatching, +TitleState)
+// ---------------------------------------------------------------------------
+
+/** A title hidden from the profile (`/users/{id}/hidden-items`). */
+export interface HiddenItem {
+  id: string;
+  mediaType: string;
+  name?: string;
+  year?: number;
+  posterUrl?: string;
+  backdropUrl?: string;
+  externalIds?: Record<string, string>;
+}
+
+export const hiddenKeys = {
+  all: ['hidden'] as const,
+  list: (profileId: string) => [...hiddenKeys.all, profileId] as const,
+};
+
+/** Drops a title from Continue Watching until it is played again. */
+export const hideFromContinueWatching = (profileId: string, seriesId: string) =>
+  apiRequest<unknown>(`${profilePath(profileId)}/history/continue/hide`, {
+    method: 'POST',
+    body: { seriesId },
+  });
+
+export const unhideFromContinueWatching = (profileId: string, seriesId: string) =>
+  apiRequest<unknown>(`${profilePath(profileId)}/history/continue/unhide`, {
+    method: 'POST',
+    body: { seriesId },
+  });
+
+export async function getHiddenItems(profileId: string, signal?: AbortSignal) {
+  const rows = await apiRequest<HiddenItem[] | null>(`${profilePath(profileId)}/hidden-items`, {
+    signal,
+  });
+  return (rows ?? []).filter((r) => r && r.id);
+}
+
+/** Hides a title from the profile; the server drops it from Home rows and lists. */
+export const hideTitle = (profileId: string, item: HiddenItem) =>
+  apiRequest<HiddenItem>(`${profilePath(profileId)}/hidden-items`, {
+    method: 'POST',
+    body: item,
+  });
+
+export const unhideTitle = (profileId: string, mediaType: string, id: string) =>
+  apiRequest<unknown>(`${profilePath(profileId)}/hidden-items/${seg(mediaType)}/${seg(id)}`, {
+    method: 'DELETE',
+  });
+
+/** The hidden-items body for a Continue Watching item (native APIClient.hide). */
+export function hiddenItemFor(item: ContinueWatchingItem): HiddenItem {
+  return {
+    id: item.seriesId,
+    mediaType: isMovieId(item.seriesId) ? 'movie' : 'series',
+    name: item.seriesTitle,
+    ...(item.year ? { year: item.year } : {}),
+    ...(item.posterUrl ? { posterUrl: item.posterUrl } : {}),
+    ...(item.backdropUrl ? { backdropUrl: item.backdropUrl } : {}),
+    ...(item.externalIds && Object.keys(item.externalIds).length
+      ? { externalIds: item.externalIds }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +551,34 @@ export interface PlannedShelf {
   source: ShelfSource;
   cap: number;
   landscape: boolean;
+  /** A per-shelf limit below the item cap: the row is the whole thing, no See all. */
+  limited: boolean;
+  /** `/lists/$listKey` key of the full list behind the row (native HomeShelf.list). */
+  seeAll?: string;
+}
+
+/** The list a row's See all opens (native ShelfConfig.browseList + HomeSource). */
+export function shelfListKey(c: ShelfConfig, source: ShelfSource): string | undefined {
+  if (source.kind === 'continueWatching') return 'continue-watching';
+  if (source.kind !== 'list') return undefined;
+  switch (c.id) {
+    case 'top-ten':
+      return 'top-ten';
+    case 'my-recommended':
+    case 'gemini-recs':
+      return 'personalized';
+    case 'trending-movies':
+      return 'trending.movie';
+    case 'trending-tv':
+      return 'trending.series';
+    case 'permanent-prequeue':
+      return 'permanent-prequeue';
+  }
+  const q = source.query;
+  if (q.source === 'genre') return `genre.${q.mediaType}.${q.genreId}`;
+  if (q.source === 'decade') return `decade.${q.mediaType}.${q.decade}`;
+  // Remote lists and the server's activity rows keep their own query.
+  return `shelf.${c.id}`;
 }
 
 /** Shelves the native/Expo home draws 16:9 (ShelfStyle.isLandscapeByDefault). */
@@ -579,12 +803,15 @@ export function planShelves(
     if (!source) continue;
     seen.add(c.id);
     const limit = c.limit ?? 0;
+    const limited = limit > 0 && limit < settings.itemCap;
     out.push({
       id: c.id,
       title: shelfTitle(c),
       source,
-      cap: limit > 0 && limit < settings.itemCap ? limit : settings.itemCap,
+      cap: limited ? limit : settings.itemCap,
       landscape: LANDSCAPE_IDS.has(c.id) || c.type === 'collection-hub',
+      limited,
+      seeAll: limited ? undefined : shelfListKey(c, source),
     });
   }
   return out;
@@ -1004,11 +1231,13 @@ export function dashboardCard(s: DashboardStream): HomeCardModel | undefined {
 /** Query for a list shelf, with Home's filters (PlannedShelf.load). */
 export function listShelfQuery(
   shelf: PlannedShelf,
-  settings: Pick<HomeSettings, 'hideWatched'>,
+  settings: Pick<HomeSettings, 'hideWatched'> & Partial<Pick<HomeSettings, 'view'>>,
 ): Record<string, string> {
   if (shelf.source.kind !== 'list') return {};
   const q: Record<string, string> = { name: shelf.title, ...shelf.source.query };
   if (settings.hideWatched) q.hideWatched = 'true';
+  // The server filters the list to the Home view's media type.
+  if (settings.view && settings.view !== 'all') q.homeView = settings.view;
   q.limit = String(shelf.cap);
   q.offset = '0';
   return q;

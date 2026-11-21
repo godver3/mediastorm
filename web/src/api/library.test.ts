@@ -68,5 +68,20 @@ describe('artworkUrl', () => {
     expect(url.searchParams.get('w')).toBe('300');
     expect(url.searchParams.get('token')).toBe('tok');
     expect(url.searchParams.get('profileId')).toBe('p1');
+    expect(url.searchParams.has('profileUnlock')).toBe(false);
+  });
+  it('adds a PIN-locked profile’s unlock to server artwork', () => {
+    sessionStore.login({
+      token: 'tok',
+      expiresAt: '2099-01-01T00:00:00Z',
+      accountId: 'a',
+      username: 'u',
+      isMaster: false,
+    });
+    sessionStore.selectProfile('p1');
+    sessionStore.setUnlock('p1', 'unl', '2099-01-01T00:00:00Z');
+    const url = new URL(artworkUrl('/api/library/items/i1/artwork/poster')!, 'http://x');
+    expect(url.searchParams.get('profileUnlock')).toBe('unl');
+    expect(artworkUrl('https://image.tmdb.org/t/p/w342/a.jpg')).not.toContain('profileUnlock');
   });
 });

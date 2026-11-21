@@ -101,7 +101,40 @@ export type BrowseList =
   | { kind: 'popular-on-server' }
   | { kind: 'personalized' }
   | { kind: 'genre'; mediaType: BrowseKind; genreId: number }
-  | { kind: 'decade'; mediaType: BrowseKind; decade: number };
+  | { kind: 'decade'; mediaType: BrowseKind; decade: number }
+  /** A list configured as a Home shelf (MDBList, Trakt, Simkl, Stremio, TMDB…) or Ask AI. */
+  | { kind: 'remote'; id: string; name: string; query: Record<string, string> }
+  /** Titles like one the profile is watching ("Because You Watched …"). */
+  | { kind: 'similar'; mediaType: BrowseKind; tmdbId: string; seed: string };
+
+/** Lists with their own pages rather than a `display-list` grid (BrowseList.continueWatching / .hidden). */
+export type SpecialList = { kind: 'continue-watching' } | { kind: 'hidden' };
+
+/** What a `/lists/$listKey` URL names; a `shelf` is resolved against Home's shelves. */
+export type ParsedListKey =
+  | BrowseList
+  | SpecialList
+  | { kind: 'shelf'; shelfId: string }
+  | { kind: 'service'; serviceId: string; part: number };
+
+/** The server's AI picks for a description, cached server-side per prompt (BrowseList.askAI). */
+export function askAIList(prompt: string): BrowseList {
+  const name = `Ask AI: ${prompt}`;
+  return { kind: 'remote', id: 'custom-ai', name, query: { source: 'custom-ai', q: prompt, name } };
+}
+
+export type RatingSource =
+  'imdb' | 'tmdb' | 'trakt' | 'letterboxd' | 'tomatoes' | 'audience' | 'metacritic';
+
+export const RATING_SOURCES: { value: RatingSource; label: string }[] = [
+  { value: 'imdb', label: 'IMDb' },
+  { value: 'tmdb', label: 'TMDB' },
+  { value: 'trakt', label: 'Trakt' },
+  { value: 'letterboxd', label: 'Letterboxd' },
+  { value: 'tomatoes', label: 'Rotten Tomatoes' },
+  { value: 'audience', label: 'RT Audience' },
+  { value: 'metacritic', label: 'Metacritic' },
+];
 
 export interface Genre {
   id: number;
@@ -178,6 +211,10 @@ export function listTitle(list: BrowseList): string {
     }
     case 'decade':
       return `${list.decade}s ${noun(list.mediaType)}`;
+    case 'remote':
+      return list.name;
+    case 'similar':
+      return `Because You Watched ${list.seed}`;
   }
 }
 
@@ -188,7 +225,12 @@ export const isItemList = (list: BrowseList) =>
 /** The sorts the server applies for a source (BrowseList.sorts). */
 export function listSorts(list: BrowseList): BrowseSort[] {
   if (isItemList(list)) return ['default', 'added', 'name', 'year', 'duration', 'rating'];
-  if (list.kind === 'genre' || list.kind === 'decade' || list.kind === 'trending')
+  if (
+    list.kind === 'genre' ||
+    list.kind === 'decade' ||
+    list.kind === 'trending' ||
+    list.kind === 'remote'
+  )
     return ['default', 'name', 'year', 'rating'];
   return [];
 }
@@ -213,8 +255,12 @@ export const WATCH_LABELS: Record<WatchFilter, string> = {
 };
 
 /** URL key for a list (`/lists/$listKey`): custom.<id>, top-ten.movie, genre.series.18 … */
-export function listKey(list: BrowseList): string {
+export function listKey(list: BrowseList | SpecialList): string {
   switch (list.kind) {
+    case 'remote':
+      return list.id === 'custom-ai' ? `ai.${list.query.q ?? ''}` : `shelf.${list.id}`;
+    case 'similar':
+      return `similar.${list.mediaType}.${list.tmdbId}.${list.seed}`;
     case 'custom':
       return `custom.${list.id}`;
     case 'top-ten':
@@ -233,10 +279,29 @@ export function listKey(list: BrowseList): string {
 const asKind = (v: string | undefined): BrowseKind | undefined =>
   v === 'movie' || v === 'series' ? v : undefined;
 
-export function parseListKey(key: string): BrowseList | null {
+export function parseListKey(key: string): ParsedListKey | null {
   const [kind, a, b] = key.split('.');
   const n = Number(b);
   switch (kind) {
+    case 'continue-watching':
+    case 'hidden':
+      return { kind };
+    case 'shelf':
+      return a ? { kind, shelfId: key.slice('shelf.'.length) } : null;
+    case 'similar': {
+      const seed = key.split('.').slice(3).join('.');
+      return asKind(a) && b && /^\d+$/.test(b) && seed
+        ? { kind, mediaType: asKind(a)!, tmdbId: b, seed }
+        : null;
+    }
+    case 'service': {
+      const part = Number(b ?? 0);
+      return a && Number.isInteger(part) && part >= 0 ? { kind, serviceId: a, part } : null;
+    }
+    case 'ai': {
+      const prompt = key.slice('ai.'.length).trim();
+      return prompt ? askAIList(prompt) : null;
+    }
     case 'watchlist':
     case 'permanent-prequeue':
     case 'popular-on-server':
@@ -284,6 +349,10 @@ export function listQuery(list: BrowseList): Record<string, string> {
       return { source: 'genre', genreId: String(list.genreId), mediaType: list.mediaType };
     case 'decade':
       return { source: 'decade', decade: String(list.decade), mediaType: list.mediaType };
+    case 'remote':
+      return { ...list.query };
+    case 'similar':
+      return { source: 'similar', tmdbId: list.tmdbId, mediaType: list.mediaType };
   }
 }
 
@@ -294,6 +363,7 @@ export interface BrowseOptions {
   status?: WatchFilter;
   genres?: string[];
   letter?: string;
+  ratingSource?: RatingSource;
 }
 
 /** Options → query params (BrowseOptions.query(for:)). */
@@ -303,7 +373,7 @@ export function optionsQuery(list: BrowseList, o: BrowseOptions): Record<string,
   if (sort !== 'default' && listSorts(list).includes(sort)) {
     q.sortBy = sort;
     q.sortDirection = o.dir ?? (sort === 'name' ? 'asc' : 'desc');
-    if (sort === 'rating') q.ratingSource = 'imdb';
+    if (sort === 'rating' && listFilters(list)) q.ratingSource = o.ratingSource ?? 'imdb';
   }
   if (!listFilters(list)) return q;
   q.includeFacets = 'true';
@@ -360,8 +430,13 @@ export function toBrowsePage(list: BrowseList, raw: DisplayListPage<unknown>): B
         title: itemToTitle(item),
         item,
       }))
-    : (items as RankedItem[])
-        .filter((r) => r && r.title)
+    : (items as (RankedItem | Title)[])
+        .map((r) =>
+          r && 'title' in r && r.title && typeof r.title === 'object'
+            ? { title: r.title, rank: list.kind === 'similar' ? undefined : r.rank }
+            : { title: r as Title, rank: undefined },
+        )
+        .filter((r) => r.title && r.title.id && r.title.name)
         .map((r) => ({ key: `${r.title.mediaType}:${r.title.id}`, title: r.title, rank: r.rank }));
   return {
     entries,

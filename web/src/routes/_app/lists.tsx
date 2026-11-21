@@ -13,7 +13,23 @@ import {
   type BrowseList,
   type CustomList,
 } from '@/api/lists';
+import {
+  getContinueWatching,
+  getHiddenItems,
+  getHomeSettings,
+  hiddenKeys,
+  homeKeys,
+} from '@/api/home';
+import {
+  becauseYouWatched,
+  connectedTiles,
+  hubSections,
+  serviceTiles,
+  type CatalogTile,
+} from '@/api/homeLists';
 import { useSessionState } from '@/auth/sessionStore';
+import { AskAIDialog, useHasAI } from '@/components/browse/AskAIDialog';
+import { artworkUrl } from '@/lib/artwork';
 import { Segmented } from '@/components/browse/Controls';
 import { DeleteListDialog, ListNameDialog } from '@/components/browse/ListDialogs';
 import { ListTile, Section, TileGrid, type ListTileProps } from '@/components/browse/ListTile';
@@ -67,6 +83,32 @@ function ListsPage() {
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<CustomList | null>(null);
   const [deleting, setDeleting] = useState<CustomList | null>(null);
+  const [asking, setAsking] = useState(false);
+  const hasAI = useHasAI();
+  const home = useQuery({
+    queryKey: homeKeys.settings(pid),
+    queryFn: ({ signal }) => getHomeSettings(pid, signal),
+    enabled: !!pid,
+    staleTime: 60_000,
+  });
+  const cw = useQuery({
+    queryKey: homeKeys.continueWatching(pid),
+    queryFn: ({ signal }) => getContinueWatching(pid, signal),
+    enabled: !!pid,
+    staleTime: 30_000,
+  });
+  const hidden = useQuery({
+    queryKey: hiddenKeys.list(pid),
+    queryFn: ({ signal }) => getHiddenItems(pid, signal),
+    enabled: !!pid,
+  });
+  const shelves = home.data?.shelves ?? [];
+  const connected = connectedTiles(shelves);
+  const services = home.data ? serviceTiles(shelves) : [];
+  const hubs = hubSections(shelves);
+  const seeds = becauseYouWatched(cw.data ?? []);
+  const cwCount = cw.data?.length ?? 0;
+  const hiddenCount = hidden.data?.length ?? 0;
 
   const setAside = lists.data?.find(isSetAside);
   const own = (lists.data ?? []).filter((l) => !isSetAside(l));
@@ -76,13 +118,34 @@ function ListsPage() {
       title="Lists"
       subtitle="Your lists, charts and collections to browse."
       actions={
-        <Button onClick={() => setCreating(true)} leftIcon={<Icon name="plus" size={16} />}>
-          New list
-        </Button>
+        <>
+          {hasAI && (
+            <Button
+              variant="secondary"
+              onClick={() => setAsking(true)}
+              leftIcon={<Icon name="sparkle" size={16} />}
+            >
+              Ask AI
+            </Button>
+          )}
+          <Button onClick={() => setCreating(true)} leftIcon={<Icon name="plus" size={16} />}>
+            New list
+          </Button>
+        </>
       }
     >
       <Section title="Personal">
         <TileGrid>
+          {cwCount > 0 && (
+            <ListTile
+              title="Continue Watching"
+              kicker="Personal"
+              subtitle={count(cwCount)}
+              icon={<Icon name="play" size={18} />}
+              link={{ to: '/lists/$listKey', params: { listKey: 'continue-watching' } }}
+              seed="continue-watching-tile"
+            />
+          )}
           <ListTile
             title="Watchlist"
             kicker="Personal"
@@ -106,6 +169,16 @@ function ListsPage() {
             link={tileLink({ kind: 'permanent-prequeue' })}
             seed="prequeue-tile"
           />
+          {hiddenCount > 0 && (
+            <ListTile
+              title="Hidden"
+              kicker="Personal"
+              subtitle={count(hiddenCount)}
+              icon={<Icon name="eyeOff" size={18} />}
+              link={{ to: '/lists/$listKey', params: { listKey: 'hidden' } }}
+              seed="hidden-tile"
+            />
+          )}
         </TileGrid>
       </Section>
 
@@ -158,6 +231,53 @@ function ListsPage() {
           </TileGrid>
         )}
       </Section>
+
+      {seeds.length > 0 && (
+        <Section title="Because you watched">
+          <TileGrid>
+            {seeds.map((seed) => (
+              <ListTile
+                key={listKey(seed)}
+                title={seed.seed}
+                kicker="Because you watched"
+                imageUrl={artworkUrl(seed.backdrop, 'w780')}
+                link={tileLink(seed)}
+                seed={listKey(seed)}
+              />
+            ))}
+          </TileGrid>
+        </Section>
+      )}
+
+      {services.length > 0 && (
+        <Section title="Streaming services">
+          <TileGrid>
+            {services.map((t) => (
+              <CatalogListTile key={t.key} tile={t} />
+            ))}
+          </TileGrid>
+        </Section>
+      )}
+
+      {connected.length > 0 && (
+        <Section title="Connected lists">
+          <TileGrid>
+            {connected.map((t) => (
+              <CatalogListTile key={t.key} tile={t} />
+            ))}
+          </TileGrid>
+        </Section>
+      )}
+
+      {hubs.map((hub) => (
+        <Section key={hub.title} title={hub.title}>
+          <TileGrid>
+            {hub.tiles.map((t) => (
+              <CatalogListTile key={t.key} tile={t} />
+            ))}
+          </TileGrid>
+        </Section>
+      ))}
 
       <Section title="Charts">
         <TileGrid>
@@ -237,6 +357,7 @@ function ListsPage() {
         open={!!renaming}
         onOpenChange={(o) => !o && setRenaming(null)}
       />
+      <AskAIDialog open={asking} onOpenChange={setAsking} />
       <DeleteListDialog
         profileId={pid}
         list={deleting}
@@ -244,5 +365,19 @@ function ListsPage() {
         onOpenChange={(o) => !o && setDeleting(null)}
       />
     </Page>
+  );
+}
+
+function CatalogListTile({ tile, size }: { tile: CatalogTile; size?: 'md' | 'sm' }) {
+  return (
+    <ListTile
+      title={tile.title}
+      kicker={tile.kicker}
+      size={size}
+      imageUrl={tile.imageUrl ? artworkUrl(tile.imageUrl, 'w780') : undefined}
+      logoUrl={tile.logoUrl}
+      link={{ to: '/lists/$listKey', params: { listKey: tile.key } }}
+      seed={tile.key}
+    />
   );
 }

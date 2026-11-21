@@ -1,8 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
-import { listCustomLists, listsKeys, listTitle, parseListKey, type BrowseList } from '@/api/lists';
+import { getHomeSettings, homeKeys } from '@/api/home';
+import { resolveListKey } from '@/api/homeLists';
+import {
+  listCustomLists,
+  listsKeys,
+  listTitle,
+  parseListKey,
+  type BrowseList,
+  type ParsedListKey,
+} from '@/api/lists';
+import { useActiveProfile } from '@/auth/hooks';
 import { useSessionState } from '@/auth/sessionStore';
+import { ContinueWatchingGrid, HiddenGrid } from '@/components/browse/SpecialGrids';
+import { PageSpinner } from '@/components/Spinner';
 import { BrowseView } from '@/components/browse/BrowseView';
 import { DeleteListDialog, ListNameDialog } from '@/components/browse/ListDialogs';
 import { Button } from '@/components/Button';
@@ -10,7 +22,11 @@ import { EmptyState } from '@/components/EmptyState';
 import { Page } from '@/components/Page';
 import { validateBrowseSearch } from '@/lib/browseSearch';
 
-/** One list as a grid (native BrowseGridView): custom lists, charts, genres, decades. */
+/**
+ * One list as a grid (native BrowseGridView): custom lists, charts, genres, decades, Home
+ * shelves' lists (See all), streaming services, Ask AI, Because You Watched; Continue
+ * Watching and Hidden have their own grids.
+ */
 export const Route = createFileRoute('/_app/lists_/$listKey')({
   validateSearch: validateBrowseSearch,
   component: ListPage,
@@ -18,23 +34,43 @@ export const Route = createFileRoute('/_app/lists_/$listKey')({
 
 function ListPage() {
   const { listKey } = Route.useParams();
-  const list = parseListKey(listKey);
+  const parsed = parseListKey(listKey);
+  if (!parsed) return <NotFound />;
+  return <ResolvedList parsed={parsed} />;
+}
+
+function NotFound() {
   const go = useNavigate();
-  if (!list) {
-    return (
-      <Page documentTitle="List not found">
-        <EmptyState
-          icon="list"
-          title="List not found"
-          action={
-            <Button variant="secondary" onClick={() => void go({ to: '/lists' })}>
-              Back to Lists
-            </Button>
-          }
-        />
-      </Page>
-    );
-  }
+  return (
+    <Page documentTitle="List not found">
+      <EmptyState
+        icon="list"
+        title="List not found"
+        action={
+          <Button variant="secondary" onClick={() => void go({ to: '/lists' })}>
+            Back to Lists
+          </Button>
+        }
+      />
+    </Page>
+  );
+}
+
+function ResolvedList({ parsed }: { parsed: ParsedListKey }) {
+  const { profileId, profile } = useActiveProfile();
+  const pid = profileId ?? '';
+  const needsHome = parsed.kind === 'shelf' || parsed.kind === 'service';
+  const settings = useQuery({
+    queryKey: homeKeys.settings(pid),
+    queryFn: ({ signal }) => getHomeSettings(pid, signal),
+    enabled: !!pid && needsHome,
+    staleTime: 60_000,
+  });
+  const list = resolveListKey(parsed, settings.data, profile);
+  if (list === undefined) return settings.isError ? <NotFound /> : <PageSpinner />;
+  if (list === null) return <NotFound />;
+  if (list.kind === 'continue-watching') return <ContinueWatchingGrid profileId={pid} />;
+  if (list.kind === 'hidden') return <HiddenGrid profileId={pid} />;
   return <ListBrowse list={list} />;
 }
 

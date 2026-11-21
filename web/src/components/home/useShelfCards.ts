@@ -13,17 +13,22 @@ import {
   recentlyAired,
   titleCard,
   watchlistCard,
+  type ContinueWatchingItem,
   type HomeCardModel,
   type HomeSettings,
   type PlannedShelf,
   type TrendingItem,
   type WatchlistItem,
   airsAt,
+  isMovieId,
+  matchesHomeFilter,
 } from '@/api/home';
 
 export interface ShelfData {
   cards: HomeCardModel[];
   total?: number;
+  /** Continue Watching rows: the items behind `cards`, same order (for the card menu). */
+  items?: ContinueWatchingItem[];
   isLoading: boolean;
   error: unknown;
   refetch: () => void;
@@ -62,6 +67,7 @@ export function useShelfCards(
           limit: String(shelf.cap),
           offset: '0',
           ...(settings.hideWatched ? { hideWatched: 'true' } : {}),
+          ...(settings.view !== 'all' ? { homeView: settings.view } : {}),
         }
       : listShelfQuery(shelf, settings);
   const list = useQuery({
@@ -93,9 +99,12 @@ export function useShelfCards(
   });
 
   const now = new Date();
+  const inView = (mediaType: string) => matchesHomeFilter(mediaType, settings.filter);
+  const cwItems = (cw.data ?? []).filter((i) => inView(isMovieId(i.seriesId) ? 'movie' : 'series'));
+  const calendarItems = (calendar.data ?? []).filter((i) => inView(i.mediaType));
   switch (shelf.source.kind) {
     case 'continueWatching': {
-      const items = (cw.data ?? []).filter(
+      const items = cwItems.filter(
         (i) =>
           !isUpcoming(i, now) ||
           (!settings.excludeUpcomingFromContinue &&
@@ -103,13 +112,15 @@ export function useShelfCards(
       );
       return {
         cards: items.slice(0, shelf.cap).map(continueWatchingCard),
+        items: items.slice(0, shelf.cap),
+        total: items.length,
         isLoading: cw.isPending,
         error: cw.error,
         refetch: () => void cw.refetch(),
       };
     }
     case 'upcoming': {
-      const items = (cw.data ?? []).filter((i) => isUpcoming(i, now));
+      const items = cwItems.filter((i) => isUpcoming(i, now));
       const at = (i: (typeof items)[number]) => airsAt(i.nextEpisode!)?.getTime() ?? 0;
       items.sort((a, b) => at(a) - at(b));
       return {
@@ -121,7 +132,7 @@ export function useShelfCards(
     }
     case 'calendar':
     case 'recentlyAired': {
-      const items = calendar.data ?? [];
+      const items = calendarItems;
       const cards =
         shelf.source.kind === 'calendar'
           ? comingUp(items, shelf.cap, now)

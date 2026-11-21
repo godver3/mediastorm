@@ -26,6 +26,11 @@ export function artworkUrl(
   if (profileId && !params.has('profileId')) params.set('profileId', profileId);
   const token = sessionStore.getToken();
   if (token) params.set('token', token);
+  // A PIN-locked profile's artwork needs its unlock too; the PIN middleware reads it from
+  // `profileUnlock` like the X-Profile-Unlock header (as openPlayback does for the player).
+  const pid = params.get('profileId') ?? params.get('userId');
+  const unlock = pid ? sessionStore.getUnlockHeader([pid]) : undefined;
+  if (unlock && !params.has('profileUnlock')) params.set('profileUnlock', unlock);
   const qs = params.toString();
   return `${apiPath(path)}${qs ? `?${qs}` : ''}`;
 }
