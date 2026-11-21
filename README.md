@@ -14,7 +14,7 @@ Features include multi-profile watch history and recommendations, kids profiles,
 
 - `backend/`: Go server and supporting production services.
 - `backend/iroh-host/`: Rust host for encrypted Iroh remote access.
-- Native clients live in separate repositories: [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) (SwiftUI, iOS and tvOS) and [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) (Compose, Android and Android TV).
+- Native clients live in separate repositories: [mediastorm-native-apple](https://github.com/godver3/mediastorm-native-apple) (SwiftUI, iOS and tvOS) and [mediastorm-native-android](https://github.com/godver3/mediastorm-native-android) (Compose, Android and Android TV).
 - `archive/iroh-ios-bridge/`: historical iOS linking scaffold, retained for reference.
 
 ## Features
@@ -272,8 +272,8 @@ The main backend layout is:
 
 Native clients:
 
-- [mediastorm-tvos](https://github.com/godver3/mediastorm-tvos) — iOS and tvOS (SwiftUI). Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen): `xcodegen generate`, then open `StrmrTV.xcodeproj`.
-- [mediastorm-androidtv](https://github.com/godver3/mediastorm-androidtv) — Android and Android TV (Jetpack Compose). Requires JDK 17 and the Android SDK: `./gradlew :mobile:assembleDebug` (phone and tablet) or `./gradlew :app:assembleDebug` (Android TV).
+- [mediastorm-native-apple](https://github.com/godver3/mediastorm-native-apple) — iOS and tvOS (SwiftUI). Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen): `xcodegen generate`, then open `StrmrTV.xcodeproj`.
+- [mediastorm-native-android](https://github.com/godver3/mediastorm-native-android) — Android and Android TV (Jetpack Compose). Requires JDK 17 and the Android SDK: `./gradlew :mobile:assembleDebug` (phone and tablet) or `./gradlew :app:assembleDebug` (Android TV).
 
 ## Acknowledgments
 
