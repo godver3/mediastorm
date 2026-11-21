@@ -1,12 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   addToWatchlist,
   detailsKeys,
   episodeWatchedUpdate,
   getCollection,
+  findHidden,
   getDetailsBundle,
+  hiddenKeys,
+  hideTitle,
   libraryMatches,
+  listHiddenItems,
+  setSeriesOrdering,
+  unhideTitle,
   movieWatchedUpdate,
   removeFromWatchlist,
   setWatchedBulk,
@@ -15,6 +21,8 @@ import {
   type Episode,
 } from '@/api/details';
 import { invalidateWatchlist, invalidateWatchState } from '@/api/invalidate';
+import { homeKeys } from '@/api/home';
+import { listsKeys } from '@/api/lists';
 import type { DetailsSearch } from '@/lib/links';
 
 export function targetFromSearch(s: DetailsSearch): DetailsTarget {
@@ -35,9 +43,12 @@ export function useDetails(profileId: string, search: DetailsSearch) {
   const baseTarget = useMemo(() => targetFromSearch(search), [search]);
   const bundleKey = detailsKeys.bundle(profileId, baseTarget.mediaType, baseTarget.titleId);
 
+  // An ordering picked this visit applies even if saving it failed (native pickedOrdering).
+  const [pickedOrdering, setPickedOrdering] = useState<string>();
+  const pickedRef = useRef<string | undefined>(undefined);
   const bundle = useQuery({
     queryKey: bundleKey,
-    queryFn: ({ signal }) => getDetailsBundle(profileId, baseTarget, signal),
+    queryFn: ({ signal }) => getDetailsBundle(profileId, baseTarget, signal, pickedRef.current),
     enabled: !!profileId && !!baseTarget.titleId,
     staleTime: 15_000,
   });
@@ -125,8 +136,54 @@ export function useDetails(profileId: string, search: DetailsSearch) {
     onSuccess: () => void invalidateWatchState(queryClient, profileId),
   });
 
+  const hidden = useQuery({
+    queryKey: hiddenKeys.list(profileId),
+    queryFn: ({ signal }) => listHiddenItems(profileId, signal),
+    enabled: !!profileId,
+    staleTime: 60_000,
+  });
+  const hiddenItem = hidden.data ? findHidden(hidden.data, target) : undefined;
+
+  const titleStateChanged = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: hiddenKeys.list(profileId) }),
+      queryClient.invalidateQueries({ queryKey: [...homeKeys.all, profileId] }),
+      queryClient.invalidateQueries({ queryKey: [...listsKeys.all, profileId] }),
+    ]);
+
+  /** Hide from this profile, or unhide (native TitleStateStore.hide / unhide). */
+  const hiddenMutation = useMutation({
+    mutationFn: async (hide: boolean): Promise<void> => {
+      if (hide) await hideTitle(profileId, target);
+      else
+        await unhideTitle(
+          profileId,
+          hiddenItem ?? { mediaType: target.mediaType, id: target.titleId },
+        );
+    },
+    onSuccess: () => void titleStateChanged(),
+  });
+
+  const ordering = useMutation({
+    mutationFn: async (seasonType: string) => {
+      pickedRef.current = seasonType;
+      setPickedOrdering(seasonType);
+      const tvdbId = title?.tvdbId ?? target.tvdbId;
+      try {
+        if (tvdbId) await setSeriesOrdering(profileId, tvdbId, seasonType);
+      } finally {
+        await queryClient.invalidateQueries({ queryKey: bundleKey });
+      }
+    },
+  });
+
   return {
     bundle,
+    hiddenItem,
+    isHidden: !!hiddenItem,
+    hiddenMutation,
+    ordering,
+    pickedOrdering,
     title,
     target,
     library,

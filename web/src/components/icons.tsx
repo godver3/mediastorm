@@ -41,6 +41,7 @@ const paths = {
   restart: 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5',
   drive: 'M3 13h18v6H3zM5 13l2-8h10l2 8M7 16h.01',
   sources: 'M4 6h16M4 12h10M4 18h6M18 14l3 3-3 3',
+  audio: 'M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2',
   sortAsc: 'M7 4v16M3 16l4 4 4-4M14 6h7M14 12h5M14 18h3',
   sortDesc: 'M7 4v16M3 8l4-4 4 4M14 6h3M14 12h5M14 18h7',
   shuffle: 'M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5',

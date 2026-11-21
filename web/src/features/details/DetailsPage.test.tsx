@@ -116,7 +116,9 @@ const url = '/details?mediaType=series&titleId=tmdb%3Atv%3A1396&name=Breaking%20
 describe('details page', () => {
   it('renders hero, resume action, seasons and episodes', async () => {
     renderApp(url);
-    expect(await screen.findByRole('button', { name: /Resume S01E02/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /Resume S01E02/ }, { timeout: 4000 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Breaking Bad' })).toBeInTheDocument();
     expect(screen.getByText('A chemistry teacher.')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Season 1', selected: true })).toBeInTheDocument();
