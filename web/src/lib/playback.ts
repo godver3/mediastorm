@@ -1,6 +1,7 @@
 import { serverBasePath } from '@/api/basePath';
 import { getClientId } from '@/api/storage';
 import { sessionStore } from '@/auth/sessionStore';
+import type { DetailsSearch } from './links';
 
 /**
  * Query parameters read by the server-rendered player at /watch/playback.html
@@ -61,9 +62,9 @@ export interface PlaybackParams {
   shareMode?: string;
   sharedSource?: string;
   /**
-   * Where the player's back/close returns. NOTE: playback.html currently only
-   * honours same-origin paths ending in `/watch/details`; anything else falls back to
-   * the referrer / history. Phase 3 needs to widen that check for /watch-next.
+   * Where the player's back/close returns: a same-origin path ending in `/watch/details`
+   * or `/watch-next/details` (see `detailsReturnPath()`). Signed-out visits to the
+   * player are also redirected there by the backend.
    */
   returnTo?: string;
   /** Any other param the Expo app passes through (e.g. stremioStreamIndex). */
@@ -92,4 +93,118 @@ export function buildPlaybackUrl(params: PlaybackParams, origin = window.locatio
 /** Hand off to the server-rendered player (full page navigation). */
 export function openPlayback(params: PlaybackParams): void {
   window.location.assign(buildPlaybackUrl(params));
+}
+
+/**
+ * The app's details URL path (with server base path and app base), used as the
+ * player's `returnTo`. playback.html strips nothing we use and adds `_playbackReturn`.
+ */
+export function detailsReturnPath(
+  search: DetailsSearch,
+  pathname: string = window.location.pathname,
+): string {
+  const appBase = import.meta.env.BASE_URL.replace(/\/+$/, '');
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) {
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  return `${serverBasePath(pathname)}${appBase}/details?${params.toString()}`;
+}
+
+/** What is being played, for the player's metadata params. */
+export interface PlaybackTitleInfo {
+  mediaType: 'movie' | 'series';
+  titleId: string;
+  name: string;
+  year?: number;
+  tmdbId?: number;
+  tvdbId?: number;
+  imdbId?: string;
+  posterUrl?: string;
+  backdropUrl?: string;
+  logoUrl?: string;
+}
+
+export interface PlaybackEpisodeInfo {
+  seasonNumber: number;
+  episodeNumber: number;
+  name?: string;
+  imageUrl?: string;
+  airedDate?: string;
+}
+
+/** The resolved stream (prequeue status, manual resolve or library file). */
+export interface ResolvedStream {
+  streamPath: string;
+  prequeueId?: string;
+  displayName?: string;
+  serviceType?: string;
+  debridProvider?: string;
+  passthroughName?: string;
+  dv?: boolean;
+  dvProfile?: string;
+  hdr10?: boolean;
+  forceAAC?: boolean;
+  durationSeconds?: number;
+  /** ffprobe stream indexes (what playback.html expects), -1/undefined = default. */
+  audioTrack?: number;
+  subtitleTrack?: number;
+}
+
+/** Where to start: seconds, or a percentage when only that is known. */
+export type StartPoint = { seconds: number } | { percent: number } | undefined;
+
+/**
+ * PlaybackParams for a VOD hand-off, as the Expo web app builds them
+ * (frontend/features/details/hooks/usePlayback.ts web branch): display metadata,
+ * IDs for progress / next-episode lookup, the stream path (encoded once more, as
+ * playback.html decodes route values twice), track preselection and resume point.
+ */
+export function vodPlaybackParams(
+  title: PlaybackTitleInfo,
+  stream: ResolvedStream,
+  opts: { episode?: PlaybackEpisodeInfo; start?: StartPoint; returnTo?: string } = {},
+): PlaybackParams {
+  const { episode, start } = opts;
+  const isEpisode = title.mediaType === 'series' && !!episode;
+  const params: PlaybackParams = {
+    title: title.name,
+    mediaType: isEpisode ? 'episode' : 'movie',
+    headerImage: episode?.imageUrl || title.backdropUrl || title.posterUrl,
+    posterUrl: title.posterUrl,
+    logoUrl: title.logoUrl,
+    year: title.year,
+    titleId: title.titleId,
+    imdbId: title.imdbId,
+    tmdbId: title.tmdbId ? String(title.tmdbId) : undefined,
+    tvdbId: title.tvdbId ? String(title.tvdbId) : undefined,
+    sourcePath: encodeURIComponent(stream.streamPath),
+    displayName: stream.displayName,
+    sourceServiceType: stream.serviceType,
+    debridProvider: stream.debridProvider,
+    passthroughName: stream.passthroughName,
+    prequeueId: stream.prequeueId,
+    dv: stream.dv ? '1' : undefined,
+    dvProfile: stream.dvProfile,
+    hdr10: stream.hdr10 ? '1' : undefined,
+    forceAAC: stream.forceAAC ? '1' : undefined,
+    durationHint: stream.durationSeconds || undefined,
+    returnTo: opts.returnTo,
+  };
+  if (isEpisode && episode) {
+    params.seriesTitle = title.name;
+    params.seasonNumber = episode.seasonNumber;
+    params.episodeNumber = episode.episodeNumber;
+    params.episodeName = episode.name;
+    params.seriesIdentifier = title.titleId;
+    if (episode.airedDate) params.releaseDate = episode.airedDate;
+  }
+  if (typeof stream.audioTrack === 'number' && stream.audioTrack >= 0)
+    params.preselectedAudioTrack = String(stream.audioTrack);
+  if (typeof stream.subtitleTrack === 'number' && stream.subtitleTrack >= 0)
+    params.preselectedSubtitleTrack = String(stream.subtitleTrack);
+  if (start && 'seconds' in start && start.seconds > 0) params.startOffset = start.seconds;
+  else if (start && 'percent' in start && start.percent > 0) params.startPercent = start.percent;
+  return params;
 }

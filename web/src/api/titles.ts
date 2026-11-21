@@ -10,6 +10,8 @@ export interface ImageRef {
 export interface Rating {
   source: string;
   value?: number;
+  /** Scale of `value` (10 for IMDb, 100 for Rotten Tomatoes, ...). */
+  max?: number;
   score?: string;
   url?: string;
 }
@@ -41,4 +43,16 @@ export interface Title {
   cardSubtitle?: string;
   cardImage?: ImageRef;
   forceTitleOverlay?: boolean;
+  /** Top-billed cast (details only). */
+  credits?: { cast: CastMember[] };
+  /** Movies: the collection the movie belongs to (details only). */
+  collection?: { id: number; name: string };
+}
+
+/** One cast member (`models.CastMember`); `id` is the TMDB person id. */
+export interface CastMember {
+  id: number;
+  name: string;
+  character?: string;
+  profileUrl?: string;
 }
