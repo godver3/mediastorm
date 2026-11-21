@@ -2,9 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // The server may sit under a base path (/media/watch/...). Everything up to and
+      // including the first /watch segment is the app root; the built assets are
+      // relative, so <base> makes them (and the favicon) resolve from there on any
+      // deep link.
+      (function () {
+        var p = location.pathname;
+        var i = p.indexOf('/watch');
+        var root = (i >= 0 ? p.slice(0, i) : '') + '/watch/';
+        var base = document.createElement('base');
+        base.href = root;
+        document.head.appendChild(base);
+        var icon = document.createElement('link');
+        icon.rel = 'icon';
+        icon.href = root.replace(/watch\/$/, 'favicon.ico');
+        document.head.appendChild(icon);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <link rel="icon" href="/favicon.ico" />
     <title>MediaStorm</title>
   </head>
   <body>

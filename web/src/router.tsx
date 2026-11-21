@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createRouter } from '@tanstack/react-router';
+import { serverBasePath } from '@/api/basePath';
 import { PageSpinner } from '@/components';
+import { APP_PATH } from '@/lib/appPath';
 import { routeTree } from './routeTree.gen';
 
 export interface RouterContext {
@@ -23,11 +25,9 @@ export function createQueryClient() {
   });
 }
 
-/** Router basepath = Vite base without the trailing slash (e.g. '/watch-next'), plus any server base path. */
+/** Router basepath: the server base path (if any) + the app path, e.g. '/media/watch'. */
 export function routerBasepath(pathname = window.location.pathname): string {
-  const base = import.meta.env.BASE_URL.replace(/\/+$/, '');
-  const idx = pathname.indexOf(base);
-  return idx > 0 ? pathname.slice(0, idx) + base : base;
+  return `${serverBasePath(pathname)}${APP_PATH}`;
 }
 
 export function createAppRouter(queryClient: QueryClient) {

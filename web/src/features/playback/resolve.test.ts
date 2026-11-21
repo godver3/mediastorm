@@ -70,7 +70,7 @@ describe('vod playback params', () => {
     const p = vodPlaybackParams(series, stream, {
       episode: { seasonNumber: 1, episodeNumber: 2, name: 'Cat’s in the Bag' },
       start: { seconds: 90 },
-      returnTo: '/watch-next/details?x=1',
+      returnTo: '/watch/details?x=1',
     });
     expect(p).toMatchObject({
       mediaType: 'episode',
@@ -84,7 +84,7 @@ describe('vod playback params', () => {
       preselectedAudioTrack: '1',
       startOffset: 90,
       tmdbId: '1396',
-      returnTo: '/watch-next/details?x=1',
+      returnTo: '/watch/details?x=1',
     });
     expect(p.preselectedSubtitleTrack).toBeUndefined();
   });
@@ -104,11 +104,9 @@ describe('vod playback params', () => {
     expect(
       detailsReturnPath(
         { mediaType: 'movie', titleId: 'tmdb:movie:949', name: 'Heat', year: 1995 },
-        '/media/watch-next/details',
+        '/media/watch/details',
       ),
-    ).toBe(
-      '/media/watch-next/details?mediaType=movie&titleId=tmdb%3Amovie%3A949&name=Heat&year=1995',
-    );
+    ).toBe('/media/watch/details?mediaType=movie&titleId=tmdb%3Amovie%3A949&name=Heat&year=1995');
   });
 });
 

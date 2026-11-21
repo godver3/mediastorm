@@ -2,6 +2,7 @@ import { serverBasePath } from '@/api/basePath';
 import { getClientId } from '@/api/storage';
 import { sessionStore } from '@/auth/sessionStore';
 import type { DetailsSearch } from './links';
+import { APP_PATH } from './appPath';
 
 /**
  * Query parameters read by the server-rendered player at /watch/playback.html
@@ -62,8 +63,8 @@ export interface PlaybackParams {
   shareMode?: string;
   sharedSource?: string;
   /**
-   * Where the player's back/close returns: a same-origin path ending in `/watch/details`
-   * or `/watch-next/details` (see `detailsReturnPath()`). Signed-out visits to the
+   * Where the player's back/close returns: a same-origin path under `/watch/`
+   * (details, live, recordings; see `detailsReturnPath()`). Signed-out visits to the
    * player are also redirected there by the backend.
    */
   returnTo?: string;
@@ -103,13 +104,12 @@ export function detailsReturnPath(
   search: DetailsSearch,
   pathname: string = window.location.pathname,
 ): string {
-  const appBase = import.meta.env.BASE_URL.replace(/\/+$/, '');
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(search)) {
     if (value === undefined || value === null || value === '') continue;
     params.set(key, String(value));
   }
-  return `${serverBasePath(pathname)}${appBase}/details?${params.toString()}`;
+  return `${serverBasePath(pathname)}${APP_PATH}/details?${params.toString()}`;
 }
 
 /** What is being played, for the player's metadata params. */

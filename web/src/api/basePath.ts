@@ -1,6 +1,6 @@
 /**
  * The backend can be mounted under a base path (settings.Server.BasePath), e.g.
- * `https://host/media/watch-next/`. Everything before the first `/watch` segment of
+ * `https://host/media/watch/`. Everything before the first `/watch` segment of
  * the current pathname is that base path — same rule the Expo web app and
  * playback.html use.
  */

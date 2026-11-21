@@ -1,8 +1,8 @@
 # MediaStorm web client
 
 The browser app for MediaStorm. It's a standalone Vite + React 19 + TypeScript project that
-talks to the backend only over `/api`. The backend serves the built output at `/watch-next`.
-At cutover this moves to `/watch`. Playback hands off to the server-rendered
+talks to the backend only over `/api`. The backend serves the built output at `/watch`
+(old `/watch-next` links redirect there). Playback hands off to the server-rendered
 `/watch/playback.html` player. This app doesn't rebuild the player.
 
 Stack: TanStack Router (file-based) + TanStack Query, Tailwind CSS v4 (tokens as CSS
@@ -12,16 +12,21 @@ variables), Radix UI primitives, Vitest + Testing Library, ESLint + Prettier.
 
 ```sh
 npm ci
-npm run dev        # http://localhost:5180/watch-next/ — proxies /api and /watch/playback.html to :7777
+npm run dev        # http://localhost:5180/watch/ — proxies /api and /watch/playback.html to :7777
 npm run typecheck
 npm run lint
 npm run test
-npm run build      # -> dist/, served by the backend (handlers.ResolveNewWebAppDir: STRMR_WEB_NEXT_DIR, web/dist, ../web/dist)
+npm run build      # -> dist/, served by the backend (handlers.ResolveWebAppDir: STRMR_WEB_APP_DIR, web/dist, ../web/dist)
 ```
 
-`WEB_BACKEND=http://host:7777 npm run dev` points the proxy at another server. The base path
-lives in `base.config.ts` (`APP_BASE`, or `WEB_BASE` at build time). That one line changes at
-cutover.
+`WEB_BACKEND=http://host:7777 npm run dev` points the proxy at another server.
+
+Base path: the app path is `APP_PATH` (`/watch`) in `src/lib/appPath.ts`. Builds use relative
+asset URLs, and an inline script in `index.html` sets `<base href>` to everything up to the
+first `/watch` segment, so the same build works when the server runs under
+`settings.Server.BasePath` (`/media/watch/`). The router basepath and the API base
+(`src/api/basePath.ts`) derive from the same location. Never hard-code `/watch` or `/api`
+URLs; use `apiPath()`, `serverBasePath()` and router links.
 
 ## Structure
 
@@ -74,7 +79,14 @@ Components (`@/components`):
 - `PosterCard` / `LandscapeCard` (title, subtitle, imageUrl, progress 0..1, badge,
   href | onClick; LandscapeCard also takes overlayText)
 - `ProfileAvatar`
-- `Icon` (inline SVG set in `components/icons.tsx`; add icons there)
+- `Icon` (inline SVG set in `components/icons.tsx`, `filled` for solid shapes; add icons
+  there rather than per-area sets)
+- `Page` sets the tab title from a string `title`, or pass `documentTitle`; pages without
+  `Page` call `useDocumentTitle()` from `@/lib/documentTitle`
+- `PinDialog` (`components/auth`) — profile PIN entry. A 403 `profile_locked` opens it in place
+  through `auth/pinPrompt` and retries the request; cancelling deselects the profile.
+- Cross-page cache updates: after watchlist or watch-state changes call
+  `invalidateWatchlist` / `invalidateWatchState` from `api/invalidate.ts`
 
 Styling:
 
@@ -105,9 +117,9 @@ Playback:
 - Lower level: `openPlayback(params)` from `@/lib/playback` builds the `/watch/playback.html`
   URL and adds `token`, `clientId`, `profileId` and `profileUnlock`; `vodPlaybackParams()` maps
   a resolved stream to the params the player reads (`PlaybackParams` documents them).
-- playback.html honours a same-origin, path-only `returnTo` under `/watch-next/…` or `/watch/…`
-  (details, live, recordings — see `detailsReturnPath()`); signed-out visits to the player are
-  redirected to that path too.
+- playback.html honours a same-origin, path-only `returnTo` under `/watch/…` (details, live,
+  recordings — see `detailsReturnPath()`) or `/watch-legacy/…`; signed-out visits to the
+  player are redirected to that path too.
 
 Formatting: Prettier uses 2 spaces, single quotes, semicolons and trailing commas, with
 `printWidth` 100. Run `npm run format`.
