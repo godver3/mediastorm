@@ -21,15 +21,42 @@ export type WarmPrequeue =
 const started = new Map<string, { id: Promise<string | undefined>; at: number }>();
 const WARM_TTL = 10 * 60_000;
 
-/** Test hook. */
-export const resetWarmPrequeues = () => started.clear();
+/**
+ * Quality presets picked on details pages, per profile and title, until the app reloads: the
+ * server remembers a pick only once a prequeue or playback sends it, so a page opened again
+ * must keep sending it rather than show the server's (older) choice.
+ */
+const pickedPresets = new Map<string, string>();
 
-function startOnce(profileId: string, title: PlaybackTitleInfo) {
-  const key = `${profileId}|${title.titleId}`;
+export const pickedPresetFor = (profileId: string, titleId: string) =>
+  pickedPresets.get(`${profileId}|${titleId}`);
+
+export function setPickedPreset(profileId: string, titleId: string, presetId: string) {
+  pickedPresets.set(`${profileId}|${titleId}`, presetId);
+}
+
+/** Test hook. */
+export const resetWarmPrequeues = () => {
+  started.clear();
+  pickedPresets.clear();
+};
+
+/**
+ * Forgets a title's warm-ups after a quality preset was picked for it: the server then
+ * remembers that preset, so a warm-up without one (ranked with the old) must not be reused.
+ */
+export function forgetWarmPrequeues(profileId: string, titleId: string) {
+  const prefix = `${profileId}|${titleId}|`;
+  for (const key of started.keys()) if (key.startsWith(prefix)) started.delete(key);
+}
+
+function startOnce(profileId: string, title: PlaybackTitleInfo, qualityPreset?: string) {
+  // Per preset: picking another one warms up its own pick.
+  const key = `${profileId}|${title.titleId}|${qualityPreset ?? ''}`;
   const prev = started.get(key);
   if (prev && Date.now() - prev.at < WARM_TTL) return prev.id;
   // No episode or start: the server targets the series' next-up episode.
-  const id = startPrequeue(profileId, prequeueBody({ title }))
+  const id = startPrequeue(profileId, prequeueBody({ title, qualityPreset }))
     .then((r) => r.prequeueId)
     .catch(() => undefined);
   started.set(key, { id, at: Date.now() });
@@ -47,7 +74,7 @@ function startOnce(profileId: string, title: PlaybackTitleInfo) {
 export function useWarmPrequeue(
   profileId: string | null,
   title: PlaybackTitleInfo,
-  opts: { ready: boolean; hasLibraryCopy: boolean },
+  opts: { ready: boolean; hasLibraryCopy: boolean; qualityPreset?: string },
 ) {
   const settings = useQuery({
     queryKey: playbackKeys.detailsSettings(profileId ?? ''),
@@ -62,7 +89,7 @@ export function useWarmPrequeue(
     !opts.hasLibraryCopy &&
     settings.data?.prequeueOnOpen === true;
   const [warm, setWarm] = useState<WarmPrequeue>({ phase: 'off' });
-  const titleRef = JSON.stringify([title.titleId, title.mediaType]);
+  const titleRef = JSON.stringify([title.titleId, title.mediaType, opts.qualityPreset ?? '']);
 
   useEffect(() => {
     if (!enabled || !profileId) {
@@ -73,7 +100,7 @@ export function useWarmPrequeue(
     const { signal } = controller;
     setWarm({ phase: 'resolving' });
     void (async () => {
-      const id = await startOnce(profileId, title);
+      const id = await startOnce(profileId, title, opts.qualityPreset);
       if (signal.aborted) return;
       if (!id) return setWarm({ phase: 'unavailable' });
       setWarm({ phase: 'resolving', id });

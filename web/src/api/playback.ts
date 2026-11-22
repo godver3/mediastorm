@@ -69,6 +69,8 @@ export interface PrequeueBody {
   absoluteEpisodeNumber?: number;
   numbering?: EpisodeNumbering;
   startOffset?: number;
+  /** A quality preset picked for this title ("simple" for the simple ranking); remembered. */
+  qualityPreset?: string;
 }
 
 export function startPrequeue(profileId: string, body: PrequeueBody, signal?: AbortSignal) {
@@ -173,6 +175,8 @@ export async function searchSources(
     imdbId?: string;
     year?: number;
     numbering?: EpisodeNumbering;
+    /** Rank with this quality preset instead of the one Play would use. */
+    qualityPreset?: string;
   },
   signal?: AbortSignal,
 ): Promise<SourceResult[]> {
@@ -189,6 +193,7 @@ export async function searchSources(
       year: args.year,
       episodeNumberingId: args.numbering?.seriesId,
       episodeOrdering: args.numbering?.ordering || undefined,
+      qualityPreset: args.qualityPreset || undefined,
     },
   });
   return (list ?? [])

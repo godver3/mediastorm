@@ -51,6 +51,8 @@ export interface PlayRequest {
   warmPrequeueId?: string;
   /** Audio & Subtitles picks for the stream (by ffprobe stream number). */
   tracks?: TrackOverrides;
+  /** A quality preset picked on the details page for the automatic pick. */
+  qualityPreset?: string;
 }
 
 export interface ResolveProgress {
@@ -89,6 +91,7 @@ export function prequeueBody(req: PlayRequest): PrequeueBody {
   }
   const s = startSeconds(req.start);
   if (s) body.startOffset = s;
+  if (req.qualityPreset) body.qualityPreset = req.qualityPreset;
   return body;
 }
 
