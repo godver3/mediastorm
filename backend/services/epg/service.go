@@ -467,7 +467,12 @@ func (s *Service) Refresh(ctx context.Context) error {
 	for _, source := range xtreamSources {
 		sourceSettings := source.settings
 		log.Printf("[epg] fetching Xtream EPG source name=%q proxyConfigured=%v", source.name, strings.TrimSpace(sourceSettings.Live.ProxyURL) != "")
-		if err := s.fetchXtreamEPG(ctx, &sourceSettings, newSchedule); err != nil {
+		guide := newGuidePart()
+		err := s.fetchXtreamEPG(ctx, &sourceSettings, guide)
+		if _, skipped := mergeGuide(newSchedule, guide); skipped > 0 {
+			log.Printf("[epg] Xtream EPG source name=%q: %d programmes left out, already covered by an earlier source", source.name, skipped)
+		}
+		if err != nil {
 			log.Printf("[epg] Xtream EPG fetch failed for source name=%q: %v", source.name, err)
 			refreshErrors = append(refreshErrors, fmt.Sprintf("%s Xtream EPG: %v", source.name, err))
 		} else {
@@ -504,7 +509,10 @@ func (s *Service) Refresh(ctx context.Context) error {
 		if source.inferred {
 			userAgents = xtreamUserAgents
 		}
-		if err := s.fetchXMLTVWithProxyAndUserAgents(ctx, source.url, source.proxyURL, newSchedule, userAgents); err != nil {
+		guide := newGuidePart()
+		err := s.fetchXMLTVWithProxyAndUserAgents(ctx, source.url, source.proxyURL, guide, userAgents)
+		_, skippedPrograms := mergeGuide(newSchedule, guide)
+		if err != nil {
 			if source.inferred {
 				err = errors.New("discovered guide fetch failed")
 			}
@@ -517,10 +525,11 @@ func (s *Service) Refresh(ctx context.Context) error {
 		for _, programs := range newSchedule.Programs {
 			afterPrograms += len(programs)
 		}
-		log.Printf("[epg] XMLTV source parsed name=%q addedChannels=%d addedPrograms=%d totalChannels=%d totalPrograms=%d",
+		log.Printf("[epg] XMLTV source parsed name=%q addedChannels=%d addedPrograms=%d coveredPrograms=%d totalChannels=%d totalPrograms=%d",
 			source.name,
 			len(newSchedule.Channels)-beforeChannels,
 			afterPrograms-beforePrograms,
+			skippedPrograms,
 			len(newSchedule.Channels),
 			afterPrograms,
 		)
@@ -620,6 +629,58 @@ func (s *Service) Refresh(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// newGuidePart is an empty schedule one guide source is read into before
+// mergeGuide adds it to the refresh's schedule.
+func newGuidePart() *models.EPGSchedule {
+	return &models.EPGSchedule{
+		Channels: make(map[string]models.EPGChannel),
+		Programs: make(map[string][]models.EPGProgram),
+	}
+}
+
+// mergeGuide adds one guide source to dst. Sources are merged in priority
+// order, and a channel's programmes belong to the sources before: a later
+// source only fills time the channel has no programme for yet (a guide that
+// reaches further ahead, say). Taking every source's programmes listed a
+// channel covered by two guides twice, a few minutes apart where the guides
+// disagree. Channel metadata is replaced as before. It returns how many
+// programmes were added and how many were left out as already covered.
+func mergeGuide(dst, src *models.EPGSchedule) (added, covered int) {
+	for id, ch := range src.Channels {
+		dst.Channels[id] = ch
+	}
+	for id, progs := range src.Programs {
+		earlier := dst.Programs[id]
+		if len(earlier) == 0 {
+			dst.Programs[id] = progs
+			added += len(progs)
+			continue
+		}
+		merged := earlier
+		for _, prog := range progs {
+			if overlapsAny(earlier, prog) {
+				covered++
+				continue
+			}
+			merged = append(merged, prog)
+			added++
+		}
+		sort.SliceStable(merged, func(i, j int) bool { return merged[i].Start.Before(merged[j].Start) })
+		dst.Programs[id] = merged
+	}
+	return added, covered
+}
+
+// overlapsAny reports whether prog's time overlaps one of progs.
+func overlapsAny(progs []models.EPGProgram, prog models.EPGProgram) bool {
+	for _, p := range progs {
+		if p.Start.Before(prog.Stop) && prog.Start.Before(p.Stop) {
+			return true
+		}
+	}
+	return false
 }
 
 // fetchXtreamEPG fetches EPG data from the Xtream Codes xmltv.php endpoint.
