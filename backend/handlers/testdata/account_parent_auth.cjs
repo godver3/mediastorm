@@ -22,7 +22,7 @@ function app(expectedPassword = 'fixture password') {
         if (request.url.endsWith('/unrelated')) return new Response('plain forbidden', { status: 403 });
         const header = request.headers.get('X-Account-Password') || '';
         const password = header.startsWith('base64:') ? Buffer.from(header.slice(7), 'base64').toString('utf8') : header;
-        const accepted = password === expectedPassword;
+        const accepted = password === (typeof expectedPassword === 'function' ? expectedPassword() : expectedPassword);
         return new Response(JSON.stringify(accepted ? { updated: true } : { code: 'parent_authorization_required' }), { status: accepted ? 200 : 403, headers: { 'Content-Type': 'application/json' } });
     } };
     const context = vm.createContext({ window, document: { body: new Element('body'), createElement: tag => new Element(tag) }, Request, Response, Headers, URL, Promise, TextEncoder, btoa });
@@ -37,10 +37,11 @@ function app(expectedPassword = 'fixture password') {
         throw new Error('parent confirmation was not opened');
     }
     async function respond(password) {
-        const d = await dialog(), form = d.children[0];
-        const input = form.children.find(e => e.tagName === 'label').children[0];
+        const d = await dialog(), form = d.children.find(e => e.tagName === 'form');
+        const find = (el, pred) => pred(el) ? el : el.children?.reduce((hit, c) => hit || find(c, pred), null);
+        const input = find(form, e => e.tagName === 'input');
         assert.equal(input.type, 'password');
-        if (password === null) form.children.find(e => e.textContent === 'Cancel').events.click();
+        if (password === null) find(form, e => e.textContent === 'Cancel').events.click();
         else { input.value = password; form.events.submit({ preventDefault() {} }); }
         assert.equal(input.value, '', 'password input must be cleared');
         assert.equal(d.removed, true, 'prompt must be removed');
@@ -56,10 +57,30 @@ test('confirmed retry retains the original method and body', async () => {
     assert.equal(p.calls[0].password, null);
     assert.equal(p.calls[1].method, 'PUT');
     assert.equal(p.calls[1].body, '{"isKidsProfile":false}');
+    assert.equal((await p.fetch()).status, 200, 'confirmed password is reused within the grace period');
+    assert.equal(p.dialogs.length, 1);
+});
+
+test('a rejected remembered password is dropped and the user is prompted again', async () => {
+    let expected = 'fixture password';
+    const p = app(() => expected), first = p.fetch();
+    await p.respond('fixture password');
+    assert.equal((await first).status, 200);
+    expected = 'changed';
     const again = p.fetch();
     await p.respond(null);
-    assert.equal((await again).status, 403, 'prior confirmation must not authorize a later action');
+    assert.equal((await again).status, 403);
     assert.equal(p.dialogs.length, 2);
+});
+
+test('a wrong password is never remembered', async () => {
+    const p = app(), first = p.fetch();
+    await p.respond('incorrect');
+    assert.equal((await first).status, 403);
+    const again = p.fetch();
+    await p.respond(null);
+    assert.equal(p.dialogs.length, 2);
+    assert.equal((await again).status, 403);
 });
 
 test('cancel does not send a password or retry the mutation', async () => {
