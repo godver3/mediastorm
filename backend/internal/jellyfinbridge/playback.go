@@ -52,6 +52,8 @@ type playSession struct {
 	thumbnailsStarted bool
 	caps              *hlsClientCaps // what the client plays inside HLS (DeviceProfile)
 	copyFailed        bool           // a stream copy failed or was refused: transcode
+	swapping          bool           // looking for a release to replace an uncopyable one
+	swaps             int            // releases replaced because they could not be copied
 	segmentsDone      bool
 	state             *playState // last playback report; nil until playback starts
 	reissued          time.Time  // last time PlaybackInfo handed this session out again

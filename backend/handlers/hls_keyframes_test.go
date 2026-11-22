@@ -178,14 +178,14 @@ func TestMP4KeyframesFromSampleTables(t *testing.T) {
 		}
 	}
 	// Sniffing routes an unknown extension to the MP4 parser.
-	if sniffed, err := sniffKeyframes(context.Background(), memRangeSource(file)); err != nil || len(sniffed) != len(want) {
+	if sniffed, err := sniffKeyframes(context.Background(), memRangeSource(file), 0, true); err != nil || len(sniffed) != len(want) {
 		t.Fatalf("sniffed = %v, %v", sniffed, err)
 	}
 }
 
 func TestGroupKeyframeSegments(t *testing.T) {
 	keyframes := []float64{0, 1.5, 3.0, 4.2, 5.0, 9.1, 12.0, 13.5, 30.0, 33.0}
-	starts, err := groupKeyframeSegments(keyframes, 0, 40)
+	starts, err := groupKeyframeSegments(keyframes, 0, 40, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,12 +200,12 @@ func TestGroupKeyframeSegments(t *testing.T) {
 		}
 	}
 	// Probe start time shifts the index onto FFmpeg's -start_at_zero clock.
-	shifted, _ := groupKeyframeSegments([]float64{1, 6, 11}, 1, 20)
+	shifted, _ := groupKeyframeSegments([]float64{1, 6, 11}, 1, 20, false)
 	if len(shifted) != 3 || shifted[1] != 5 || shifted[2] != 10 {
 		t.Fatalf("shifted = %v", shifted)
 	}
 	// A 25s gap is too sparse to seek with.
-	if _, err := groupKeyframeSegments([]float64{0, 25}, 0, 30); err == nil {
+	if _, err := groupKeyframeSegments([]float64{0, 25}, 0, 30, false); err == nil {
 		t.Fatal("expected sparse index to be rejected")
 	}
 	// The last segment may run longer: a 2160p WEB release of a film had
@@ -215,11 +215,20 @@ func TestGroupKeyframeSegments(t *testing.T) {
 		film = append(film, t)
 	}
 	film = append(film, 5992.2)
-	if starts, err := groupKeyframeSegments(film, 0, 6015.6); err != nil || starts[len(starts)-1] != 5992.2 {
+	if starts, err := groupKeyframeSegments(film, 0, 6015.6, false); err != nil || starts[len(starts)-1] != 5992.2 {
 		t.Fatalf("long final segment rejected: %v", err)
 	}
-	if _, err := groupKeyframeSegments([]float64{0, 4, 8}, 0, 8+stableCopyMaxFinalSegment+1); err == nil {
+	if _, err := groupKeyframeSegments([]float64{0, 4, 8}, 0, 8+stableCopyMaxFinalSegment+1, false); err == nil {
 		t.Fatal("expected an over-long final segment to be rejected")
+	}
+	// With transcoding disabled the gaps are accepted (an episode whose index
+	// ended 104s before the end failed to play otherwise).
+	if starts, err := groupKeyframeSegments([]float64{0, 25, 30}, 0, 30+104, true); err != nil || len(starts) != 3 || starts[1] != 25 {
+		t.Fatalf("long segments with transcoding disabled = %v, %v", starts, err)
+	}
+	// An index without keyframes stays unusable.
+	if _, err := groupKeyframeSegments(nil, 0, 120, true); err == nil {
+		t.Fatal("expected an empty index to be rejected")
 	}
 }
 

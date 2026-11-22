@@ -65,6 +65,10 @@ type Server struct {
 	// copyFailures remembers, per profile, device and item, a stream copy
 	// that failed to play, so the next attempt transcodes.
 	copyFailures sync.Map
+	// uncopyable remembers, per profile and item, the releases refused
+	// because video transcoding is disabled and they cannot be copied
+	// (uncopyableReleases).
+	uncopyable sync.Map
 	// chapters holds the chapters of the stream last probed per profile
 	// and item (chapterSet).
 	chapters sync.Map

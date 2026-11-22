@@ -4416,6 +4416,9 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		} else if errors.Is(err, errExternalStreamPlaceholder) {
 			h.invalidatePrequeuesForFailedPath(path)
 			http.Error(w, "external stream expired — please re-resolve", http.StatusGone)
+		} else if errors.Is(err, errTranscodingDisabled) {
+			// Definitive for this stream: retrying cannot copy it either.
+			http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusUnprocessableEntity)
 		} else {
 			http.Error(w, fmt.Sprintf("failed to create HLS session: %v", err), http.StatusInternalServerError)
 		}

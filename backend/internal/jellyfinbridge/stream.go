@@ -46,6 +46,13 @@ func (s *Server) handleMasterPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audio := parseIntDefault(queryValue(r, "AudioStreamIndex"), -1)
+	sess.mu.Lock()
+	if sess.swaps > 0 && sess.status != nil && sess.status.Status == playback.PrequeueStatusReady {
+		// The client's track indexes describe the release it was handed;
+		// another release plays with its own default pick.
+		audio = sess.status.SelectedAudioTrack
+	}
+	sess.mu.Unlock()
 
 	var hlsID, playlist string
 	var err error
@@ -56,6 +63,12 @@ func (s *Server) handleMasterPlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("[jellyfin-bridge] HLS for %s: %v", sess.ItemID, err)
+		// Video transcoding is disabled and this release cannot be copied:
+		// the session moves on to the next release, the client retries.
+		if errors.Is(err, errUncopyable) && r.Context().Err() == nil && s.swapUncopyableRelease(p, sess) {
+			writeError(w, http.StatusServiceUnavailable, "Stream not resolved yet")
+			return
+		}
 		// A definitively dead stream is forgotten so the next PlaybackInfo
 		// resolves a fresh one. Aborted requests (hls.js gives up after 20s
 		// and retries) and still-resolving streams keep their session.
@@ -526,6 +539,9 @@ var errStreamFailed = errors.New("stream failed")
 // resolved stream cannot fix (bad/expired source: 4xx other than rate
 // limits) as definitive; server errors and cancellations stay transient.
 func classifyStartError(code int, err error) error {
+	if code == http.StatusUnprocessableEntity {
+		return fmt.Errorf("%w: %w: %v", errStreamFailed, errUncopyable, err)
+	}
 	if code >= 400 && code < 500 && code != http.StatusTooManyRequests && code != http.StatusRequestTimeout {
 		return fmt.Errorf("%w: %v", errStreamFailed, err)
 	}
