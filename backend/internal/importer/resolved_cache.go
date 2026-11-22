@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"novastream/internal/nzbfetch"
 )
 
 const resolvedNZBIndexFile = ".resolved_nzbs.json"
@@ -119,7 +121,9 @@ func (c *resolvedNZBCache) findByDownloadURL(ctx context.Context, downloadURL st
 	if c == nil {
 		return nil, false, nil
 	}
-	urlHash := resolvedURLHash(downloadURL)
+	urlHash := nzbfetch.ReleaseURLHash(downloadURL)
+	// Entries written before credential stripping hold the raw-URL hash.
+	legacyHash := resolvedURLHash(downloadURL)
 	if urlHash == "" {
 		return nil, false, nil
 	}
@@ -136,7 +140,7 @@ func (c *resolvedNZBCache) findByDownloadURL(ctx context.Context, downloadURL st
 			return nil, false, ctx.Err()
 		default:
 		}
-		if entry.DownloadURLHash != urlHash {
+		if entry.DownloadURLHash != urlHash && entry.DownloadURLHash != legacyHash {
 			continue
 		}
 		if !c.entryExists(entry) {
@@ -174,7 +178,7 @@ func (c *resolvedNZBCache) put(ctx context.Context, nzbHash string, fileName str
 	}
 	entry.Key = nzbHash
 	entry.NZBHash = nzbHash
-	entry.DownloadURLHash = resolvedURLHash(source.DownloadURL)
+	entry.DownloadURLHash = nzbfetch.ReleaseURLHash(source.DownloadURL)
 	entry.FileName = strings.TrimSpace(fileName)
 	entry.Title = strings.TrimSpace(source.Title)
 	entry.Indexer = strings.TrimSpace(source.Indexer)

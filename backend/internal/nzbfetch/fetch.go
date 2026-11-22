@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,6 +60,7 @@ type Fetcher struct {
 	mu         sync.Mutex
 	cache      map[string]payload
 	cacheBytes int
+	disk       *diskCache
 }
 
 // New is configured once at startup. A nil store disables title budgets and
@@ -85,9 +87,34 @@ func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *provi
 		breaker = providerbreaker.Shared()
 	}
 	provider := strings.ToLower(strings.TrimSpace(candidate.Indexer))
+	// A release grabbed before (by any path, before any restart) is served
+	// from disk without contacting the indexer.
+	diskKey := ReleaseURLHash(downloadURL)
+	if p, ok := f.disk.get(diskKey); ok {
+		log.Printf("[nzbfetch] disk cache hit indexer=%q url=%q age=%s", provider, redactURL(downloadURL), time.Since(p.at).Round(time.Second))
+		return p.data, p.header, nil
+	}
 	if f.store == nil || (f.enabled != nil && !f.enabled()) {
-		p, err := f.download(ctx, client, breaker, downloadURL, provider, "", userAgent, "")
-		return p.data, p.header, err
+		ch := f.group.DoChan("disk|"+diskKey, func() (any, error) {
+			if p, ok := f.disk.get(diskKey); ok {
+				return p, nil
+			}
+			p, err := f.download(context.WithoutCancel(ctx), client, breaker, downloadURL, provider, "", userAgent, "")
+			if err == nil {
+				f.disk.put(diskKey, provider, candidate.Title, p)
+			}
+			return p, err
+		})
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case result := <-ch:
+			if result.Err != nil {
+				return nil, nil, result.Err
+			}
+			p := result.Val.(payload)
+			return append([]byte(nil), p.data...), p.header.Clone(), nil
+		}
 	}
 	if provider == "" {
 		return nil, nil, fmt.Errorf("NZB budget requires an indexer name")
@@ -117,6 +144,7 @@ func (f *Fetcher) Fetch(ctx context.Context, client *http.Client, breaker *provi
 		p, err := f.download(callCtx, client, breaker, downloadURL, provider, release, userAgent, titleKey)
 		if err == nil {
 			f.remember(key, p)
+			f.disk.put(diskKey, provider, candidate.Title, p)
 		}
 		return p, err
 	})
@@ -183,6 +211,11 @@ func redactURL(raw string) string {
 	u.User = nil
 	u.RawQuery = ""
 	u.Fragment = ""
+	// Some indexers (Ninja) carry the API key as "&r=..." inside the path.
+	if i := strings.Index(u.Path, "&"); i >= 0 {
+		u.Path = u.Path[:i]
+		u.RawPath = ""
+	}
 	return u.String()
 }
 
@@ -198,6 +231,7 @@ func (f *Fetcher) download(ctx context.Context, client *http.Client, breaker *pr
 		return payload{}, fmt.Errorf("indexer %s is cooling down after rate limiting until %s", provider, until.UTC().Format(time.RFC3339))
 	}
 	defer breaker.ReleaseProbe(provider, probe)
+	log.Printf("[nzbfetch] indexer grab indexer=%q url=%q", provider, redactURL(downloadURL))
 	if f.store != nil && titleKey != "" {
 		retryAt, err := f.store.ReserveNZB(ctx, titleKey, release, time.Now())
 		if err != nil {

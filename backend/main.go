@@ -253,6 +253,7 @@ func main() {
 		providerbreaker.Shared().SetPersist(nzbBudgetEnabled)
 		nzbfetch.Shared = nzbfetch.NewToggled(repo, nzbBudgetEnabled)
 	}
+	nzbfetch.Shared.SetDiskCache(filepath.Join(settings.Cache.Directory, "nzbs"))
 	// Construct router
 	var r *mux.Router = utils.NewRouter()
 
