@@ -88,6 +88,24 @@
       text-transform: uppercase;
     }
 
+    .brand-default {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .brand-icon {
+      width: 2.2rem;
+      height: 2.2rem;
+      border-radius: 0.6rem;
+    }
+
+    .brand-logo {
+      max-height: 2.4rem;
+      max-width: 220px;
+      object-fit: contain;
+    }
+
     .brand-subtitle {
       color: var(--muted);
       font-size: 0.78rem;
@@ -1047,7 +1065,7 @@
         <div id="topSubtitle" class="brand-subtitle">Web player</div>
       </div>
       <div class="brand">
-        <div class="brand-title">mediastorm</div>
+        {{if .BrandLogoURL}}<img class="brand-logo" src="{{.BrandLogoURL}}" alt="mediastorm">{{else}}<div class="brand-default"><img class="brand-icon" src="{{.ServerBasePath}}/api/static/icon-80.png" alt=""><div class="brand-title">mediastorm</div></div>{{end}}
       </div>
     </header>
 
@@ -1389,6 +1407,11 @@
     }
 
     function resolvePlaybackReturnUrl() {
+      const explicitReturn = normalizePlaybackReturnPath(routeParam('returnTo'));
+      if (explicitReturn) {
+        return explicitReturn;
+      }
+
       if (playbackMeta.isLive) {
         try {
           const referrer = document.referrer ? new URL(document.referrer) : null;
@@ -1402,14 +1425,9 @@
         return `${basePath || ''}/watch/live`;
       }
 
-      const explicitReturn = normalizePlaybackReturnPath(routeParam('returnTo'));
-      if (explicitReturn) {
-        return explicitReturn;
-      }
-
       try {
         const referrer = document.referrer ? new URL(document.referrer) : null;
-        if (referrer && referrer.origin === window.location.origin && referrer.pathname.endsWith('/watch/details')) {
+        if (referrer && referrer.origin === window.location.origin && isDetailsReturnPath(referrer.pathname)) {
           referrer.searchParams.delete('initialSeason');
           referrer.searchParams.delete('initialEpisode');
           referrer.searchParams.set('_playbackReturn', String(Date.now()));
@@ -1420,12 +1438,26 @@
       return '';
     }
 
+    // Details pages a player may return to: the web client's /watch/details (and the
+    // retired Expo export's, when a local copy is served at /watch-legacy).
+    function isDetailsReturnPath(pathname) {
+      return /\/watch(-legacy)?\/details\/?$/.test(String(pathname || ''));
+    }
+
+    // An explicit returnTo may be any same-origin page of the web client (/watch/...:
+    // details, live, recordings) or of /watch-legacy. Never the player itself.
+    function isAppReturnPath(pathname) {
+      const p = String(pathname || '');
+      return /\/watch(-legacy)?(\/|$)/.test(p) && !/\/playback\.html$/.test(p);
+    }
+
     function normalizePlaybackReturnPath(value) {
       const raw = String(value || '').trim();
-      if (!raw) return '';
+      // Path-only: no scheme, no host, no scheme-relative or backslash tricks.
+      if (!raw || raw[0] !== '/' || raw.startsWith('//') || /[\\\r\n]/.test(raw)) return '';
       try {
         const parsed = new URL(raw, window.location.origin);
-        if (parsed.origin !== window.location.origin || !parsed.pathname.endsWith('/watch/details')) return '';
+        if (parsed.origin !== window.location.origin || !isAppReturnPath(parsed.pathname)) return '';
         parsed.searchParams.delete('initialSeason');
         parsed.searchParams.delete('initialEpisode');
         parsed.searchParams.set('_playbackReturn', String(Date.now()));

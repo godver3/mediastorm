@@ -1950,18 +1950,42 @@ func main() {
 
 	// Dedicated browser player handoff backed by the server-side HLS web player.
 	webPlaybackHandler := handlers.NewWebPlaybackHandler(userService, sessionsService, settings.Server.BasePath)
+	webPlaybackHandler.Branding = settingsHandler
 	r.Handle("/watch/playback.html", webPlaybackHandler).Methods(http.MethodGet, http.MethodHead)
 
 	// One-time share link consumption (public, no auth — opening mints a scoped session).
 	r.HandleFunc("/share/{token}", shareHandler.Open).Methods(http.MethodGet)
 	api.RegisterWatchPartyPageRoutes(r, watchPartyHandler)
 
-	// Dedicated consumer web app served from the frontend Expo web export.
+	// Retired Expo web export, for local side-by-side comparison only. Registered
+	// before /watch/ so its /watch/_expo/ chunk route wins. Not in the
+	// image; served only when STRMR_WEB_LEGACY_DIR or a local frontend/dist exists.
+	if legacyDir := handlers.ResolveLegacyWebAppDir(); legacyDir != "" {
+		legacyHandler := handlers.NewWebAppHandler(legacyDir, "/watch-legacy")
+		legacyHandler.Branding = settingsHandler
+		legacyHandler.IndexPathRewrite = &handlers.PathRewrite{From: "/watch/", To: "/watch-legacy/"}
+		r.Handle("/watch-legacy", legacyHandler).Methods(http.MethodGet, http.MethodHead)
+		r.PathPrefix("/watch-legacy/").Handler(legacyHandler).Methods(http.MethodGet, http.MethodHead)
+		// The export's JS still requests lazy chunks under /watch/_expo/ (its build-time base).
+		r.PathPrefix("/watch/_expo/").Handler(handlers.NewWebAppHandler(legacyDir, "/watch")).Methods(http.MethodGet, http.MethodHead)
+		fmt.Printf("🎬 Legacy Expo web app available at /watch-legacy (%s)\n", legacyDir)
+	} else {
+		r.Handle("/watch-legacy", http.NotFoundHandler())
+		r.PathPrefix("/watch-legacy/").Handler(http.NotFoundHandler())
+	}
+
+	// Consumer web client built from web/ (STRMR_WEB_APP_DIR, else web/dist).
 	webAppHandler := handlers.NewWebAppHandler(handlers.ResolveWebAppDir(), "/watch")
 	webAppHandler.Branding = settingsHandler
 	r.Handle("/watch", webAppHandler).Methods(http.MethodGet, http.MethodHead)
 	r.PathPrefix("/watch/").Handler(webAppHandler).Methods(http.MethodGet, http.MethodHead)
 	fmt.Println("🎬 Web app available at /watch")
+
+	// The web client was previewed at /watch-next before the cutover; keep old links working.
+	webNextRedirect := handlers.NewWebAppRedirectHandler("/watch-next", "/watch")
+	r.Handle("/watch-next", webNextRedirect).Methods(http.MethodGet, http.MethodHead)
+	r.PathPrefix("/watch-next/").Handler(webNextRedirect).Methods(http.MethodGet, http.MethodHead)
+
 	fmt.Println("🎬 Web playback handoff available at /watch/playback.html")
 
 	r.HandleFunc("/favicon.ico", settingsHandler.ServeWebIcon).Methods(http.MethodGet, http.MethodHead)

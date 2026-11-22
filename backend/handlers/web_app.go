@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"novastream/models"
 )
@@ -22,6 +24,16 @@ type WebAppHandler struct {
 	root     string
 	prefix   string
 	Branding *SettingsHandler
+	// IndexPathRewrite, when set, rewrites quoted absolute URLs starting with
+	// From to To in index.html. Used to serve the Expo export (built for /watch)
+	// at /watch-legacy.
+	IndexPathRewrite *PathRewrite
+}
+
+// PathRewrite replaces one absolute URL prefix with another (e.g. "/watch/" -> "/watch-legacy/").
+type PathRewrite struct {
+	From string
+	To   string
 }
 
 // NewWebAppHandler creates a handler for a static SPA hosted under prefix.
@@ -36,26 +48,74 @@ func NewWebAppHandler(root, prefix string) *WebAppHandler {
 	}
 }
 
-// ResolveWebAppDir returns the first usable web app directory. The environment
-// override is intentionally explicit so packaged deployments can place the
-// exported bundle anywhere.
+// ResolveWebAppDir returns the directory of the web client built from web/
+// (served at /watch). STRMR_WEB_APP_DIR wins, so packaged deployments can place
+// the build anywhere; otherwise the first existing web/dist relative to the
+// working directory (repo root or backend/).
 func ResolveWebAppDir() string {
 	if dir := strings.TrimSpace(os.Getenv("STRMR_WEB_APP_DIR")); dir != "" {
 		return dir
 	}
-
-	candidates := []string{
-		filepath.Join("frontend", "dist"),
-		filepath.Join("..", "frontend", "dist"),
-		filepath.Join("frontend", "web-build"),
-		filepath.Join("..", "frontend", "web-build"),
+	if dir := firstExistingDir(filepath.Join("web", "dist"), filepath.Join("..", "web", "dist")); dir != "" {
+		return dir
 	}
+	return filepath.Join("..", "web", "dist")
+}
+
+// ResolveLegacyWebAppDir returns the retired Expo web export, served at
+// /watch-legacy for local comparison only: STRMR_WEB_LEGACY_DIR, else a local
+// frontend/dist checkout. "" means none (the image doesn't ship it) and
+// /watch-legacy answers 404.
+func ResolveLegacyWebAppDir() string {
+	if dir := strings.TrimSpace(os.Getenv("STRMR_WEB_LEGACY_DIR")); dir != "" {
+		return dir
+	}
+	return firstExistingDir(filepath.Join("frontend", "dist"), filepath.Join("..", "frontend", "dist"))
+}
+
+func firstExistingDir(candidates ...string) string {
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
 	}
-	return filepath.Join("..", "frontend", "dist")
+	return ""
+}
+
+// WebAppRedirectHandler permanently redirects an old app prefix (/watch-next)
+// to the same path, query included, under a new one (/watch). The Location is
+// relative so it stays correct whether or not the request came in under the
+// server base path (utils.BasePathHandler strips it before routing).
+type WebAppRedirectHandler struct {
+	from string
+	to   string
+}
+
+// NewWebAppRedirectHandler redirects from -> to (both app prefixes, e.g. "/watch-next", "/watch").
+func NewWebAppRedirectHandler(from, to string) *WebAppRedirectHandler {
+	return &WebAppRedirectHandler{from: "/" + strings.Trim(from, "/"), to: "/" + strings.Trim(to, "/")}
+}
+
+func (h *WebAppRedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	escaped := r.URL.EscapedPath()
+	rest, ok := strings.CutPrefix(escaped, h.from)
+	if !ok || (rest != "" && !strings.HasPrefix(rest, "/")) {
+		http.NotFound(w, r)
+		return
+	}
+	// From the request's directory back up to the root: one "../" per directory
+	// level below it ("/watch-next" has none, "/watch-next/a/b" has two).
+	up := strings.Repeat("../", strings.Count(escaped, "/")-1)
+	target := up + strings.TrimPrefix(h.to, "/") + rest
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	if !strings.HasPrefix(target, ".") {
+		target = "./" + target
+	}
+	w.Header().Set("Location", target)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusMovedPermanently)
 }
 
 func (h *WebAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -69,20 +129,20 @@ func (h *WebAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if info, err := os.Stat(indexPath); err != nil || info.IsDir() {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "web app bundle not found at %s; run `npm run web:export` in frontend or set STRMR_WEB_APP_DIR", h.root)
+		fmt.Fprintf(w, "web app bundle not found at %s; run `npm run build` in web/ or set STRMR_WEB_APP_DIR", h.root)
 		return
 	}
 
 	requestPath := strings.TrimPrefix(r.URL.Path, h.prefix)
 	requestPath = strings.TrimPrefix(requestPath, "/")
 	if requestPath == "" {
-		serveWebAppIndex(w, r, indexPath)
+		h.serveIndex(w, r, indexPath)
 		return
 	}
 
 	cleanPath := path.Clean("/" + requestPath)
 	if cleanPath == "/" {
-		serveWebAppIndex(w, r, indexPath)
+		h.serveIndex(w, r, indexPath)
 		return
 	}
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
@@ -106,7 +166,24 @@ func (h *WebAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	serveWebAppIndex(w, r, indexPath)
+	h.serveIndex(w, r, indexPath)
+}
+
+func (h *WebAppHandler) serveIndex(w http.ResponseWriter, r *http.Request, indexPath string) {
+	if h.IndexPathRewrite == nil {
+		serveWebAppIndex(w, r, indexPath)
+		return
+	}
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	from, to := h.IndexPathRewrite.From, h.IndexPathRewrite.To
+	html := strings.NewReplacer(`"`+from, `"`+to, `'`+from, `'`+to).Replace(string(data))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, "index.html", time.Time{}, strings.NewReader(html))
 }
 
 func serveWebAppIndex(w http.ResponseWriter, r *http.Request, indexPath string) {
@@ -142,11 +219,16 @@ type WebPlaybackHandler struct {
 	sessions       WebPlaybackSessionValidator
 	serverBasePath string
 	template       *template.Template
+	// Branding, when set, supplies the uploaded logo shown in the player header.
+	Branding *SettingsHandler
 }
 
 type WebPlaybackPageData struct {
 	Users          []models.User
 	ServerBasePath string
+	// BrandLogoURL is the server's custom wordmark (loading logo, else mobile
+	// logo); empty means the default text wordmark.
+	BrandLogoURL string
 }
 
 // NewWebPlaybackHandler creates the standalone web playback handler. The
@@ -184,8 +266,14 @@ func (h *WebPlaybackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	session := h.resolveSession(r)
 	if session == nil {
-		// Not authenticated — bounce to the web app so the user can log in.
-		http.Redirect(w, r, h.serverBasePath+"/watch", http.StatusSeeOther)
+		// Not authenticated — bounce to the web app so the user can log in. A
+		// returnTo inside one of the web apps lands there instead (the app's own
+		// guard sends the user through sign-in and back to that page).
+		target := h.serverBasePath + "/watch"
+		if ret := h.signedOutReturnPath(r.URL.Query().Get("returnTo")); ret != "" {
+			target = ret
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
 	}
 
@@ -194,10 +282,46 @@ func (h *WebPlaybackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	data := WebPlaybackPageData{
 		Users:          h.scopedUsers(session, r.URL.Query().Get("profileId")),
 		ServerBasePath: h.serverBasePath,
+		BrandLogoURL:   h.brandLogoURL(),
 	}
 	if err := h.template.ExecuteTemplate(w, "playback", data); err != nil {
 		http.Error(w, "web playback template error", http.StatusInternalServerError)
 	}
+}
+
+// brandLogoURL resolves the custom wordmark the way the native clients do:
+// absolute http(s) URLs pass through; uploads (/branding/images/<slot>?v=…)
+// are served under the server's /api.
+func (h *WebPlaybackHandler) brandLogoURL() string {
+	if h.Branding == nil || h.Branding.Manager == nil {
+		return ""
+	}
+	s, err := h.Branding.Manager.Load()
+	if err != nil {
+		return ""
+	}
+	return resolveBrandingURL(h.serverBasePath, s.Display.Branding.LoadingLogoURL, s.Display.Branding.HomeMobileLogoURL)
+}
+
+func resolveBrandingURL(serverBasePath string, candidates ...string) string {
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		lower := strings.ToLower(c)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+			return c
+		}
+		if !strings.HasPrefix(c, "/") {
+			c = "/" + c
+		}
+		if !strings.HasPrefix(c, "/api/") {
+			c = "/api" + c
+		}
+		return serverBasePath + c
+	}
+	return ""
 }
 
 // resolveSession validates the request's session token. Browser navigations to
@@ -251,4 +375,37 @@ func (h *WebPlaybackHandler) scopedUsers(session *models.Session, requestedProfi
 		}
 	}
 	return scoped
+}
+
+// webAppReturnRoots are the app roots, under the server base path, a signed-out
+// playback request may be sent back to: the web client (/watch) and the retired
+// Expo export when a local copy is served (/watch-legacy).
+var webAppReturnRoots = []string{"/watch", "/watch-legacy"}
+
+// signedOutReturnPath returns returnTo when it is a same-origin path inside one
+// of the web apps (never the player itself), else "". Absolute and
+// scheme-relative URLs are rejected so the redirect can't leave the server.
+func (h *WebPlaybackHandler) signedOutReturnPath(returnTo string) string {
+	raw := strings.TrimSpace(returnTo)
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n") {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return ""
+	}
+	cleaned := path.Clean(u.Path)
+	rest, ok := strings.CutPrefix(cleaned, h.serverBasePath)
+	if !ok || strings.HasSuffix(rest, "/playback.html") {
+		return ""
+	}
+	for _, root := range webAppReturnRoots {
+		if rest == root || strings.HasPrefix(rest, root+"/") {
+			if u.RawQuery != "" {
+				return cleaned + "?" + u.RawQuery
+			}
+			return cleaned
+		}
+	}
+	return ""
 }

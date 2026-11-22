@@ -3,6 +3,8 @@ node_modules/
 vendor/
 
 # Build outputs
+web/node_modules/
+web/dist/
 dist/
 backend/bin/
 backend/novastream
