@@ -824,7 +824,7 @@ func mp4TrackKeyframes(trak []byte) ([]float64, error) {
 // usesStableCopyTimeline reports whether the session serves a keyframe-cut,
 // video-copy stable timeline.
 func (session *HLSSession) usesStableCopyTimeline() bool {
-	return session != nil && session.StableCopy && len(session.CopySegmentStarts) > 0
+	return session != nil && session.StableCopy && len(session.copyStarts()) > 0
 }
 
 // usesStableTimeline covers both stable timelines (Cast transcode and copy):
@@ -835,15 +835,16 @@ func (session *HLSSession) usesStableTimeline() bool {
 
 // stableCopySegmentStart returns the media start time of segment n.
 func (session *HLSSession) stableCopySegmentStart(n int) (float64, bool) {
-	if n < 0 || n >= len(session.CopySegmentStarts) {
+	starts := session.copyStarts()
+	if n < 0 || n >= len(starts) {
 		return 0, false
 	}
-	return session.CopySegmentStarts[n], true
+	return starts[n], true
 }
 
 // stableCopySegmentIndex returns the segment containing media time t.
 func (session *HLSSession) stableCopySegmentIndex(t float64) int {
-	starts := session.CopySegmentStarts
+	starts := session.copyStarts()
 	i := sort.Search(len(starts), func(i int) bool { return starts[i] > t }) - 1
 	if i < 0 {
 		return 0
@@ -874,10 +875,17 @@ func stableCopySegmentTimes(starts []float64, startNumber int, absolute bool) st
 }
 
 func buildStableCopyPlaylist(session *HLSSession) string {
+	// One snapshot: an extension that finishes the timeline sets the
+	// duration first, then the starts and finished flag together.
+	starts, growing := session.copyTimeline()
 	session.mu.RLock()
-	starts := append([]float64(nil), session.CopySegmentStarts...)
 	duration := session.Duration
 	session.mu.RUnlock()
+	if growing {
+		// The last segment has no known end yet: it is listed once the next
+		// keyframe has been written (see hls_growing_copy.go).
+		duration = starts[len(starts)-1]
+	}
 
 	durations := make([]float64, len(starts))
 	maxDuration := 0.0
@@ -899,9 +907,16 @@ func buildStableCopyPlaylist(session *HLSSession) string {
 	} else {
 		b.WriteString("#EXT-X-VERSION:3\n")
 	}
-	b.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(math.Ceil(maxDuration))))
+	target := int(math.Ceil(maxDuration))
+	playlistType := "VOD"
+	if growing {
+		// An EVENT playlist keeps its target duration while it grows.
+		target = max(target, int(stableCopyMaxSegment))
+		playlistType = "EVENT"
+	}
+	b.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", target))
 	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
-	b.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
+	b.WriteString("#EXT-X-PLAYLIST-TYPE:" + playlistType + "\n")
 	b.WriteString("#EXT-X-INDEPENDENT-SEGMENTS\n")
 	ext := ".ts"
 	if fmp4 {
@@ -914,7 +929,9 @@ func buildStableCopyPlaylist(session *HLSSession) string {
 		}
 		b.WriteString(fmt.Sprintf("#EXTINF:%.6f,\nsegment%d%s\n", d, i, ext))
 	}
-	b.WriteString("#EXT-X-ENDLIST\n")
+	if !growing {
+		b.WriteString("#EXT-X-ENDLIST\n")
+	}
 	return b.String()
 }
 
@@ -933,6 +950,9 @@ func (m *HLSManager) stableCopySegmentComplete(session *HLSSession, n int) bool 
 	if err != nil {
 		return false
 	}
+	// A run on a growing timeline closes its last segment wherever it stopped
+	// reading, which is not that segment's end once the index knows more.
+	tail, tailOpen := session.growingCopyTail()
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if session.copyCompleted == nil {
@@ -941,7 +961,7 @@ func (m *HLSManager) stableCopySegmentComplete(session *HLSSession, n int) bool 
 	for _, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		var num int
-		if _, scanErr := fmt.Sscanf(line, "segment%d.", &num); scanErr == nil {
+		if _, scanErr := fmt.Sscanf(line, "segment%d.", &num); scanErr == nil && (!tailOpen || num < tail) {
 			session.copyCompleted[num] = true
 		}
 	}
@@ -971,7 +991,7 @@ func (m *HLSManager) recoveryResumePoint(session *HLSSession, highestSegment int
 		session.mu.RLock()
 		next := session.SegmentStartNumber
 		session.mu.RUnlock()
-		for next < len(session.CopySegmentStarts) && m.stableCopySegmentComplete(session, next) {
+		for next < len(session.copyStarts()) && m.stableCopySegmentComplete(session, next) {
 			next++
 		}
 		start, ok := session.stableCopySegmentStart(next)

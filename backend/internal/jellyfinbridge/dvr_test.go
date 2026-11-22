@@ -483,3 +483,46 @@ func TestRunningRecordingDirectStreamFollowsFile(t *testing.T) {
 		t.Fatalf("recording stream requests = %v, want %v", followed, want)
 	}
 }
+
+// A running recording is never offered for direct play: the file ends where
+// the recording is now. HLS follows it as it grows; a finished one plays
+// directly as before.
+func TestRunningRecordingPlaysThroughHLS(t *testing.T) {
+	h, f, tok := dvrHarness(t)
+	start := time.Now().Add(-10 * time.Minute).UTC()
+	end := start.Add(5 * time.Minute)
+	f.recs = []models.Recording{
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000b1", UserID: h.alice.ID, Status: models.RecordingStatusRunning, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "Live Now", StartAt: start, EndAt: start.Add(time.Hour), ActualStartAt: &start, OutputPath: "/data/recordings/live.ts", OutputSizeBytes: 1000},
+		{ID: "aaaaaaaa-0000-0000-0000-0000000000b2", UserID: h.alice.ID, Status: models.RecordingStatusCompleted, ChannelID: "ch-1", ChannelName: "Channel One",
+			Title: "Done", StartAt: start, EndAt: end, ActualStartAt: &start, ActualEndAt: &end, OutputPath: "/data/recordings/done.ts", OutputSizeBytes: 1000},
+	}
+	// The probe measures the partial file, as it does on a real server.
+	h.srv.deps.Handlers.ProbeVideo = func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"durationSeconds": 300})
+	}
+	list := decode[dto.QueryResult[dto.BaseItemDto]](t, h.do(http.MethodGet, "/LiveTv/Recordings", tok, nil))
+	direct := map[string]bool{}
+	for _, item := range list.Items {
+		info := decode[dto.PlaybackInfoResponse](t, h.doWithClient(http.MethodPost, "/Items/"+item.ID+"/PlaybackInfo", tok, "Findroid", map[string]any{}))
+		if len(info.MediaSources) != 1 || info.MediaSources[0].TranscodingURL == "" {
+			t.Fatalf("%s: sources = %+v", item.Name, info.MediaSources)
+		}
+		src := info.MediaSources[0]
+		direct[item.Name] = src.SupportsDirectPlay || src.SupportsDirectStream
+		// A running recording has no length yet: a fixed one would stop the
+		// client's seek bar from growing (jellyfin-web prefers it over the
+		// player's growing duration).
+		sess, _ := h.srv.plays.get(info.PlaySessionID)
+		running := item.Name == "Live Now"
+		if running && (src.RunTimeTicks != nil || sess == nil || sess.duration != 0) {
+			t.Fatalf("running recording has a length: source %v, session %+v", src.RunTimeTicks, sess)
+		}
+		if !running && (src.RunTimeTicks == nil || *src.RunTimeTicks <= 0) {
+			t.Fatalf("finished recording without a length: %v", src.RunTimeTicks)
+		}
+	}
+	if len(direct) != 2 || direct["Live Now"] || !direct["Done"] {
+		t.Fatalf("direct play offered = %v, want only the finished recording", direct)
+	}
+}

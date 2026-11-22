@@ -253,10 +253,11 @@ type tsScanner struct {
 	codec    tsVideoCodec
 }
 
-// walk calls fn with each transport packet from offset (aligned up to the
-// packet grid) until fn returns true, maxBytes have been read or the file
-// ends. It returns the offset after the last packet handed to fn.
-func (s *tsScanner) walk(ctx context.Context, offset, maxBytes int64, fn func(mpegtsPacket) bool) (int64, error) {
+// walk calls fn with each transport packet and the file offset it starts at,
+// from offset (aligned up to the packet grid) until fn returns true,
+// maxBytes have been read or the file ends. It returns the offset after the
+// last packet handed to fn.
+func (s *tsScanner) walk(ctx context.Context, offset, maxBytes int64, fn func(pkt mpegtsPacket, at int64) bool) (int64, error) {
 	size := int64(s.pktSize)
 	if offset < s.syncOff {
 		offset = s.syncOff
@@ -300,8 +301,9 @@ func (s *tsScanner) walk(ctx context.Context, offset, maxBytes int64, fn func(mp
 				i = next
 				continue
 			}
+			at := offset + int64(i)
 			i += s.pktSize
-			if fn(pkt) {
+			if fn(pkt, at) {
 				return offset + int64(i), nil
 			}
 		}
@@ -341,7 +343,7 @@ func (s *tsScanner) findVideoPID(ctx context.Context, wantPID int) error {
 		return false
 	}
 	s.videoPID = -1
-	_, err := s.walk(ctx, 0, tsHeadScanBytes, func(pkt mpegtsPacket) bool {
+	_, err := s.walk(ctx, 0, tsHeadScanBytes, func(pkt mpegtsPacket, _ int64) bool {
 		if !pkt.pusi {
 			return false
 		}
@@ -407,11 +409,20 @@ func (s *tsScanner) findVideoPID(ctx context.Context, wantPID int) error {
 // nextKeyframe reads forward from offset to the first video keyframe and
 // returns its PTS and the offset to continue from.
 func (s *tsScanner) nextKeyframe(ctx context.Context, offset, maxBytes int64) (pts int64, found bool, end int64, err error) {
+	pts, found, _, end, err = s.nextKeyframeAt(ctx, offset, maxBytes)
+	return pts, found, end, err
+}
+
+// nextKeyframeAt is nextKeyframe that also returns where the keyframe's PES
+// starts in the file.
+func (s *tsScanner) nextKeyframeAt(ctx context.Context, offset, maxBytes int64) (pts int64, found bool, at, end int64, err error) {
 	var (
 		pending  bool
 		curPTS   int64
+		curAt    int64
 		es       []byte
 		foundPTS int64 = -1
+		foundAt  int64
 	)
 	decide := func(complete bool) {
 		if !pending {
@@ -421,11 +432,11 @@ func (s *tsScanner) nextKeyframe(ctx context.Context, offset, maxBytes int64) (p
 		if decided {
 			pending = false
 			if key {
-				foundPTS = curPTS
+				foundPTS, foundAt = curPTS, curAt
 			}
 		}
 	}
-	end, err = s.walk(ctx, offset, maxBytes, func(pkt mpegtsPacket) bool {
+	end, err = s.walk(ctx, offset, maxBytes, func(pkt mpegtsPacket, pktAt int64) bool {
 		if pkt.pid != s.videoPID {
 			return false
 		}
@@ -444,12 +455,12 @@ func (s *tsScanner) nextKeyframe(ctx context.Context, offset, maxBytes int64) (p
 				// indicator. H.264/HEVC are checked on the slice itself, as
 				// some muxers set the indicator on every PES.
 				if pkt.rai {
-					foundPTS = p
+					foundPTS, foundAt = p, pktAt
 					return true
 				}
 				return false
 			}
-			curPTS, pending, es = p, true, append(es[:0], pkt.payload[esStart:]...)
+			curPTS, curAt, pending, es = p, pktAt, true, append(es[:0], pkt.payload[esStart:]...)
 		} else if pending && len(es) < tsMaxPESProbe {
 			es = append(es, pkt.payload...)
 		}
@@ -457,12 +468,12 @@ func (s *tsScanner) nextKeyframe(ctx context.Context, offset, maxBytes int64) (p
 		return foundPTS >= 0
 	})
 	if err != nil {
-		return 0, false, end, err
+		return 0, false, 0, end, err
 	}
 	if foundPTS >= 0 {
-		return foundPTS, true, end, nil
+		return foundPTS, true, foundAt, end, nil
 	}
-	return 0, false, end, nil
+	return 0, false, 0, end, nil
 }
 
 // mpegtsKeyframes samples video keyframe times (seconds, on the PTS clock)
