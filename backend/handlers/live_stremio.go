@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"novastream/internal/requestsecurity"
@@ -28,9 +29,21 @@ import (
 // concrete playable URL at tune-in time by StreamChannel.
 
 const (
-	// stremioChannelsTTL bounds how long a fetched catalog (channel list) is
-	// cached in memory. Kept short because live/event catalogs change often.
+	// stremioChannelsTTL is how long a fetched catalog (channel list) counts as
+	// fresh. Kept short because live/event catalogs change often. An older list
+	// is still served while a background refresh replaces it, so the Live tab
+	// never waits on an addon's catalogs once it has loaded them.
 	stremioChannelsTTL = 5 * time.Minute
+	// stremioChannelsMaxStale is the oldest list served while refreshing; past it
+	// (an addon down for a long time) the caller waits for a fresh fetch.
+	stremioChannelsMaxStale = time.Hour
+	// stremioRefreshTimeout bounds a background refresh, which has no request.
+	stremioRefreshTimeout = 2 * time.Minute
+	// stremioCatalogHostSlots is how many catalog requests run at once against an
+	// addon host. Measured on 2026-11-22 against the Highfly sports addon
+	// (Cloudflare-fronted): 17 concurrent and ~26 requests/s drew no 429 and no
+	// rate-limit headers; this stays well under that.
+	stremioCatalogHostSlots = 8
 	// stremioMaxCatalogPages caps catalog pagination to avoid unbounded fetches.
 	stremioMaxCatalogPages = 10
 	// stremioCatalogPageSize matches the Stremio default skip increment.
@@ -115,8 +128,9 @@ type StremioStreamOptionsResponse struct {
 }
 
 type stremioChannelsCacheEntry struct {
-	channels []LiveChannel
-	fetched  time.Time
+	channels   []LiveChannel
+	fetched    time.Time
+	refreshing bool
 }
 
 type resolvedStremioStream struct {
@@ -485,31 +499,81 @@ func (h *LiveHandler) fetchStremioChannels(ctx context.Context, manifestURL, pro
 
 	cacheKey := manifestURL + "|" + strings.TrimSpace(proxyURL)
 	h.stremioMu.Lock()
-	if entry, ok := h.stremioCache[cacheKey]; ok && time.Since(entry.fetched) < stremioChannelsTTL {
-		channels := entry.channels
-		h.stremioMu.Unlock()
-		return channels, nil
+	if entry, ok := h.stremioCache[cacheKey]; ok {
+		age := time.Since(entry.fetched)
+		if age < stremioChannelsTTL {
+			h.stremioMu.Unlock()
+			return entry.channels, nil
+		}
+		if age < stremioChannelsMaxStale {
+			if !entry.refreshing {
+				entry.refreshing = true
+				h.stremioCache[cacheKey] = entry
+				go h.refreshStremioChannels(cacheKey, manifestURL, proxyURL)
+			}
+			h.stremioMu.Unlock()
+			return entry.channels, nil
+		}
 	}
 	h.stremioMu.Unlock()
+	return h.loadStremioChannels(ctx, cacheKey, manifestURL, proxyURL)
+}
 
+// refreshStremioChannels replaces a stale list in the background. A failure
+// keeps the stale list and lets the next request try again.
+func (h *LiveHandler) refreshStremioChannels(cacheKey, manifestURL, proxyURL string) {
+	ctx, cancel := context.WithTimeout(context.Background(), stremioRefreshTimeout)
+	defer cancel()
+	started := time.Now()
+	channels, err := h.loadStremioChannels(ctx, cacheKey, manifestURL, proxyURL)
+	if err != nil {
+		h.stremioMu.Lock()
+		if entry, ok := h.stremioCache[cacheKey]; ok {
+			entry.refreshing = false
+			h.stremioCache[cacheKey] = entry
+		}
+		h.stremioMu.Unlock()
+		log.Printf("[live][stremio] background refresh failed after %s, keeping the stale list: %v", time.Since(started).Round(time.Millisecond), err)
+		return
+	}
+	log.Printf("[live][stremio] background refresh: %d channels in %s", len(channels), time.Since(started).Round(time.Millisecond))
+}
+
+// loadStremioChannels fetches the manifest and its catalogs (several at once)
+// and caches the merged list.
+func (h *LiveHandler) loadStremioChannels(ctx context.Context, cacheKey, manifestURL, proxyURL string) ([]LiveChannel, error) {
 	baseURL := normalizeStremioBaseURL(manifestURL)
-	client := h.discoveryClient(h.livePlaylistScanHTTPClient(proxyURL), proxyURL, stremioChannelsTTL)
+	client := h.discoveryClientWide(h.livePlaylistScanHTTPClient(proxyURL), proxyURL, stremioChannelsTTL, stremioCatalogHostSlots)
 
 	manifest, err := fetchStremioManifest(ctx, client, baseURL)
 	if err != nil {
 		return nil, err
 	}
 
+	// Catalogs are fetched concurrently and merged in manifest order, so the
+	// channel order and which duplicate wins match a sequential fetch. The
+	// discovery transport paces them (stremioCatalogHostSlots per host).
+	results := make([][]stremioMeta, len(manifest.Catalogs))
+	var wg sync.WaitGroup
+	for i, catalog := range manifest.Catalogs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			metas, err := fetchStremioCatalog(ctx, client, baseURL, catalog)
+			if err != nil {
+				// A single failing catalog shouldn't sink the whole source.
+				log.Printf("[live][stremio] catalog %q (%s) failed: %v", catalog.ID, catalog.Type, err)
+				return
+			}
+			results[i] = metas
+		}()
+	}
+	wg.Wait()
+
 	var channels []LiveChannel
 	seen := make(map[string]bool)
-	for _, catalog := range manifest.Catalogs {
-		metas, err := fetchStremioCatalog(ctx, client, baseURL, catalog)
-		if err != nil {
-			// A single failing catalog shouldn't sink the whole source.
-			log.Printf("[live][stremio] catalog %q (%s) failed: %v", catalog.ID, catalog.Type, err)
-			continue
-		}
-		for _, meta := range metas {
+	for i, catalog := range manifest.Catalogs {
+		for _, meta := range results[i] {
 			id := strings.TrimSpace(meta.ID)
 			if id == "" || seen[id] {
 				continue

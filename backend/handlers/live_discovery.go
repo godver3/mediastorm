@@ -25,6 +25,9 @@ type liveDiscovery struct {
 }
 type discoveryHost struct {
 	slots chan struct{}
+	// wide is the host's pool for a client that asked for more than the default
+	// two slots (discoveryClientWide); it shares the host's cooldown.
+	wide  chan struct{}
 	until time.Time
 	code  int
 }
@@ -45,7 +48,14 @@ type discoveryTransport struct {
 	next  http.RoundTripper
 	proxy string
 	ttl   time.Duration
+	// hostSlots, when above the default two, gives this client's requests the
+	// host's wide pool and exempts them from the global slots it already bounds.
+	hostSlots int
 }
+
+// discoveryDefaultHostSlots is the per-host concurrency for ordinary discovery
+// traffic: IPTV providers commonly ban accounts for parallel connections.
+const discoveryDefaultHostSlots = 2
 
 func (h *LiveHandler) discoveryClient(client *http.Client, proxy string, ttl time.Duration) *http.Client {
 	h.discoveryOnce.Do(func() {
@@ -61,6 +71,14 @@ func (h *LiveHandler) discoveryClient(client *http.Client, proxy string, ttl tim
 	}
 	copyClient.Transport = &discoveryTransport{owner: h.discovery, next: next, proxy: proxy, ttl: ttl}
 	return &copyClient
+}
+
+// discoveryClientWide is discoveryClient with hostSlots concurrent requests per
+// host, for hosts measured to take them (see stremioCatalogHostSlots).
+func (h *LiveHandler) discoveryClientWide(client *http.Client, proxy string, ttl time.Duration, hostSlots int) *http.Client {
+	wide := h.discoveryClient(client, proxy, ttl)
+	wide.Transport.(*discoveryTransport).hostSlots = hostSlots
+	return wide
 }
 func discoveryResponse(req *http.Request, e *discoveryEntry) *http.Response {
 	return &http.Response{StatusCode: e.code, Status: http.StatusText(e.code), Header: e.header.Clone(), Body: io.NopCloser(bytes.NewReader(e.body)), ContentLength: int64(len(e.body)), Request: req}
@@ -95,7 +113,7 @@ func (t *discoveryTransport) RoundTrip(req *http.Request) (*http.Response, error
 	d.mu.Lock()
 	host := d.hosts[hostKey]
 	if host == nil {
-		host = &discoveryHost{slots: make(chan struct{}, 2)}
+		host = &discoveryHost{slots: make(chan struct{}, discoveryDefaultHostSlots)}
 		d.hosts[hostKey] = host
 	}
 	old := d.entries[key]
@@ -131,19 +149,30 @@ func (t *discoveryTransport) fetch(original *http.Request, key string, host *dis
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(original.Context()), 30*time.Second)
 	defer cancel()
 	defer func() { d.mu.Lock(); delete(d.flights, key); close(flight.done); d.mu.Unlock() }()
+	hostSlots, global := host.slots, d.slots
+	if t.hostSlots > discoveryDefaultHostSlots {
+		d.mu.Lock()
+		if host.wide == nil {
+			host.wide = make(chan struct{}, t.hostSlots)
+		}
+		hostSlots, global = host.wide, nil
+		d.mu.Unlock()
+	}
 	select {
-	case host.slots <- struct{}{}:
-		defer func() { <-host.slots }()
+	case hostSlots <- struct{}{}:
+		defer func() { <-hostSlots }()
 	case <-ctx.Done():
 		flight.err = ctx.Err()
 		return
 	}
-	select {
-	case d.slots <- struct{}{}:
-		defer func() { <-d.slots }()
-	case <-ctx.Done():
-		flight.err = ctx.Err()
-		return
+	if global != nil {
+		select {
+		case global <- struct{}{}:
+			defer func() { <-global }()
+		case <-ctx.Done():
+			flight.err = ctx.Err()
+			return
+		}
 	}
 	d.mu.Lock()
 	until, code := host.until, host.code
