@@ -16,6 +16,7 @@ export function TitleLogo({
   imgClassName,
   placeholderClassName,
   text,
+  className,
 }: {
   logoUrl?: string;
   name: string;
@@ -26,6 +27,8 @@ export function TitleLogo({
   placeholderClassName: string;
   /** Renders the text fallback. */
   text: (name: string) => ReactNode;
+  /** Classes for the logo's wrapper (e.g. letting it shrink in a flex column). */
+  className?: string;
 }) {
   const [loaded, setLoaded] = useState<string>();
   const [failed, setFailed] = useState<string>();
@@ -47,7 +50,7 @@ export function TitleLogo({
   if (showText) return <>{text(name)}</>;
 
   return (
-    <div className={cn('relative', loaded !== logoUrl && placeholderClassName)}>
+    <div className={cn('relative', className, loaded !== logoUrl && placeholderClassName)}>
       {logoUrl && (
         <img
           key={logoUrl}

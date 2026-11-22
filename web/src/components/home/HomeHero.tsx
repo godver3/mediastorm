@@ -77,8 +77,9 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
         <TitleLogo
           logoUrl={slide.logoUrl ? artworkUrl(slide.logoUrl, 'w500') : undefined}
           name={slide.title}
+          className="flex min-h-12 !shrink flex-col"
           placeholderClassName="h-24 sm:h-32"
-          imgClassName="min-h-12 max-h-24 w-auto max-w-[min(420px,80%)] object-contain object-left drop-shadow-[0_4px_24px_rgba(0,0,0,.6)] sm:max-h-32"
+          imgClassName="min-h-0 max-h-24 w-auto max-w-[min(420px,80%)] object-contain object-left drop-shadow-[0_4px_24px_rgba(0,0,0,.6)] sm:max-h-32"
           text={(n) => (
             <h2 className="text-4xl font-bold tracking-tight text-balance sm:text-5xl">{n}</h2>
           )}
