@@ -34,6 +34,10 @@ const (
 	// growingCopyRescanInterval limits how often a playlist fetch reads the
 	// new part of the file.
 	growingCopyRescanInterval = 2 * time.Second
+	// growingCopyTailBatch is how many segments past the running FFmpeg
+	// run's open segment must be known before the playlist lists it (see
+	// holdGrowingCopyTail).
+	growingCopyTailBatch = 3
 	// growingCopyMinSegments is how many segments the file must already
 	// hold: the first one must close (the session waits for that) and the
 	// playlist must list something.
@@ -383,6 +387,25 @@ func (session *HLSSession) growingCopyTail() (int, bool) {
 	return session.copyRunSegments - 1, true
 }
 
+// holdGrowingCopyTail trims a growing timeline's starts so the playlist does
+// not list the running FFmpeg run's open segment until growingCopyTailBatch
+// segments past it are known. A request for that segment restarts the run, so
+// listing it as soon as its end is known would restart FFmpeg for every new
+// segment at the live edge; held back, one restart covers the whole batch.
+func (session *HLSSession) holdGrowingCopyTail(starts []float64) []float64 {
+	session.copyMu.RLock()
+	run := session.copyRunSegments
+	session.copyMu.RUnlock()
+	if run <= 0 || run >= len(starts) {
+		return starts
+	}
+	// starts[:run] lists segments 0..run-2, all closed by the current run.
+	if len(starts)-run < growingCopyTailBatch {
+		return starts[:run]
+	}
+	return starts
+}
+
 // setCopyRunSegments records how many segments the starting FFmpeg run cuts.
 func (session *HLSSession) setCopyRunSegments(n int) {
 	session.copyMu.Lock()
@@ -400,7 +423,13 @@ func (m *HLSManager) extendGrowingCopy(ctx context.Context, session *HLSSession,
 	if x == nil {
 		return
 	}
-	x.mu.Lock()
+	if force {
+		x.mu.Lock()
+	} else if !x.mu.TryLock() {
+		// Another fetch is scanning (possibly a long catch-up after a
+		// pause): serve the timeline known now rather than wait on it.
+		return
+	}
 	defer x.mu.Unlock()
 	if x.finished || (!force && time.Since(x.checked) < growingCopyRescanInterval) {
 		return

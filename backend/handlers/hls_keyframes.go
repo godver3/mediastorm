@@ -882,6 +882,7 @@ func buildStableCopyPlaylist(session *HLSSession) string {
 	duration := session.Duration
 	session.mu.RUnlock()
 	if growing {
+		starts = session.holdGrowingCopyTail(starts)
 		// The last segment has no known end yet: it is listed once the next
 		// keyframe has been written (see hls_growing_copy.go).
 		duration = starts[len(starts)-1]

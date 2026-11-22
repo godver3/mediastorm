@@ -533,3 +533,21 @@ func TestGrowingCopyRestartsAfterAPTSWrapSeek(t *testing.T) {
 		t.Fatalf("restart offsets: %d before the wrap, %d after: %v", before, after, session.copyStarts())
 	}
 }
+
+func TestHoldGrowingCopyTailBatchesLiveEdgeRestarts(t *testing.T) {
+	session := &HLSSession{copyIndex: &growingCopyIndex{}}
+	starts := []float64{0, 6, 12, 18, 24, 30, 36}
+	cases := []struct{ run, want int }{
+		{0, 7}, // no run yet: everything known is listed
+		{7, 7}, // the run cuts every start
+		{6, 6}, // 1 past the open segment: held at the run's closed segments
+		{5, 5}, // 2 past: still held
+		{4, 7}, // 3 past: listed, one restart covers them
+	}
+	for _, c := range cases {
+		session.setCopyRunSegments(c.run)
+		if got := len(session.holdGrowingCopyTail(starts)); got != c.want {
+			t.Errorf("run=%d: listed starts %d, want %d", c.run, got, c.want)
+		}
+	}
+}
