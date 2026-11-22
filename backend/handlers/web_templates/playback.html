@@ -1103,7 +1103,9 @@
         margin: 0.15rem 0 0;
         font-size: clamp(1.25rem, 2vw, 1.75rem);
         font-weight: 700;
-        line-height: 1.15;
+        /* Room for descenders (g, y, p): overflow:hidden clips at the line box. */
+        line-height: 1.35;
+        padding-bottom: 0.1em;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1113,6 +1115,7 @@
         margin-top: 0.25rem;
         color: rgba(255, 255, 255, 0.78);
         font-size: 0.95rem;
+        line-height: 1.4;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
