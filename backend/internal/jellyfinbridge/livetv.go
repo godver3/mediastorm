@@ -93,7 +93,7 @@ func (s *Server) channelItem(ch liveChannel, number int, current *dto.BaseItemDt
 	}
 	if ch.Logo != "" {
 		item.ImageTags = map[string]string{dto.ImagePrimary: imageTag(ch.Logo)}
-		item.PrimaryImageAspectRatio = floatPtr(1)
+		item.PrimaryImageAspectRatio = floatPtr(logoAspectRatio(ch.Logo))
 	}
 	return item
 }
