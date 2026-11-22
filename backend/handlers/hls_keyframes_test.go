@@ -237,11 +237,18 @@ func TestStableCopyPlaylistAndCuts(t *testing.T) {
 			t.Fatalf("playlist missing %q:\n%s", want, playlist)
 		}
 	}
-	if got := stableCopySegmentTimes(session.CopySegmentStarts, 0); got != "4.200,9.100,13.500" {
-		t.Fatalf("cut times from 0 = %q", got)
+	for _, absolute := range []bool{false, true} {
+		if got := stableCopySegmentTimes(session.CopySegmentStarts, 0, absolute); got != "4.200,9.100,13.500" {
+			t.Fatalf("cut times from 0 (absolute %v) = %q", absolute, got)
+		}
 	}
-	if got := stableCopySegmentTimes(session.CopySegmentStarts, 2); got != "4.400" {
-		t.Fatalf("cut times from 2 = %q", got)
+	// A restarted run: relative to its first segment (FFmpeg 7), or the
+	// timeline times themselves (FFmpeg 5).
+	if got := stableCopySegmentTimes(session.CopySegmentStarts, 2, false); got != "4.400" {
+		t.Fatalf("relative cut times from 2 = %q", got)
+	}
+	if got := stableCopySegmentTimes(session.CopySegmentStarts, 2, true); got != "13.500" {
+		t.Fatalf("absolute cut times from 2 = %q", got)
 	}
 	if session.stableCopySegmentIndex(10) != 2 || session.stableCopySegmentIndex(0) != 0 || session.stableCopySegmentIndex(19) != 3 {
 		t.Fatal("segment index lookup wrong")

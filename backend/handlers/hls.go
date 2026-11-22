@@ -4431,7 +4431,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// ServeSegment knows a file is complete (see stableCopySegmentComplete);
 		// the playlist clients see is built from the plan, not from this file.
 		session.mu.RLock()
-		cutTimes := stableCopySegmentTimes(session.CopySegmentStarts, configuredSegmentStart)
+		cutTimes := stableCopySegmentTimes(session.CopySegmentStarts, configuredSegmentStart, m.segmentTimesAbsolute())
 		session.mu.RUnlock()
 		if session.CopyPlan.FMP4 {
 			args = append(args, stableCopyFMP4MuxerArgs()...)
