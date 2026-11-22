@@ -35,7 +35,7 @@ export function MoreMenu({
         aria-label="More options"
         title="More options"
         className={cn(
-          'glass inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl border border-line px-3.5 text-sm font-medium text-fg transition hover:bg-surface-strong',
+          'glass inline-flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border border-line text-fg transition hover:bg-surface-strong',
           'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
         )}
       >

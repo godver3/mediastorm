@@ -13,3 +13,4 @@ export {
 } from './MediaCard';
 export { ProfileAvatar } from './Avatar';
 export { Icon, type IconName } from './icons';
+export { TitleLogo } from './TitleLogo';

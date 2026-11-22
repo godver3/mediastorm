@@ -4,6 +4,7 @@ import { artworkUrl } from '@/lib/artwork';
 import { cn } from '@/lib/cn';
 import { Icon } from '../icons';
 import { IconButton } from '../IconButton';
+import { TitleLogo } from '../TitleLogo';
 import { Skeleton } from '../Spinner';
 import { useDetailsHref } from './useDetailsHref';
 
@@ -65,7 +66,7 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
 
       <div
         key={slide.id}
-        className="flex h-full max-w-2xl flex-col justify-end gap-4 px-4 pb-14 sm:px-6 lg:px-10 lg:pb-20"
+        className="flex h-full max-w-2xl flex-col justify-end gap-3 px-4 pt-24 pb-14 sm:px-6 md:pl-20 lg:pr-10 lg:pb-20 [&>*]:shrink-0"
         aria-live={paused ? 'polite' : 'off'}
       >
         {slide.badge && (
@@ -73,22 +74,22 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
             {slide.badge} in {label}
           </span>
         )}
-        {slide.logoUrl ? (
-          <img
-            src={artworkUrl(slide.logoUrl, 'w500')}
-            alt={slide.title}
-            className="max-h-28 w-auto max-w-[min(420px,80%)] object-contain object-left drop-shadow-[0_4px_24px_rgba(0,0,0,.6)] sm:max-h-36"
-          />
-        ) : (
-          <h2 className="text-4xl font-bold tracking-tight text-balance sm:text-5xl">
-            {slide.title}
-          </h2>
-        )}
+        <TitleLogo
+          logoUrl={slide.logoUrl ? artworkUrl(slide.logoUrl, 'w500') : undefined}
+          name={slide.title}
+          placeholderClassName="h-24 sm:h-32"
+          imgClassName="min-h-12 max-h-24 w-auto max-w-[min(420px,80%)] object-contain object-left drop-shadow-[0_4px_24px_rgba(0,0,0,.6)] sm:max-h-32"
+          text={(n) => (
+            <h2 className="text-4xl font-bold tracking-tight text-balance sm:text-5xl">{n}</h2>
+          )}
+        />
         {slide.subtitle && <p className="text-sm font-medium text-muted">{slide.subtitle}</p>}
         {slide.overview && (
-          <p className="line-clamp-3 max-w-xl text-sm text-fg/85 sm:text-base">{slide.overview}</p>
+          <p className="line-clamp-3 max-w-xl text-sm leading-relaxed text-fg/85 sm:text-base">
+            {slide.overview}
+          </p>
         )}
-        <div className="flex flex-wrap gap-3 pt-1">
+        <div className="flex flex-wrap gap-3 pt-2">
           {link.href && (
             <a
               href={link.href}
@@ -143,7 +144,7 @@ export function HomeHeroSkeleton() {
   return (
     <div className="relative mb-2 h-[min(72vh,640px)] min-h-[420px] w-full">
       <Skeleton className="absolute inset-0 rounded-none" />
-      <div className="absolute bottom-14 left-4 flex w-full max-w-xl flex-col gap-4 sm:left-6 lg:left-10 lg:bottom-20">
+      <div className="absolute bottom-14 left-4 flex w-full max-w-xl flex-col gap-4 sm:left-6 md:left-20 lg:bottom-20">
         <Skeleton className="h-20 w-72 rounded-lg" />
         <Skeleton className="h-4 w-40 rounded" />
         <Skeleton className="h-16 w-full rounded" />

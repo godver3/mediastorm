@@ -35,7 +35,11 @@ export function useAccent() {
     staleTime: 5 * 60_000,
   });
   const accent = settings.data?.display?.appearance?.accentColor;
-  useEffect(() => applyAccent(accent), [accent]);
+  const loaded = settings.isSuccess;
+  // Until settings arrive keep the accent index.html restored from storage.
+  useEffect(() => {
+    if (loaded) applyAccent(accent);
+  }, [loaded, accent]);
 }
 
 /** Revoke the session (best effort), clear local state and caches, go to /login. */

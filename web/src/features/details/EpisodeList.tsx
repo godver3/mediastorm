@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useRef, type KeyboardEvent } from 'react';
 import type { Episode, Season } from '@/api/details';
 import { Button, Icon } from '@/components';
 import { cn } from '@/lib/cn';
@@ -31,13 +31,7 @@ export function EpisodeList({
 }: EpisodeListProps) {
   const current = seasons.find((s) => s.number === season) ?? seasons[0];
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const highlightRef = useRef<HTMLLIElement | null>(null);
 
-  useEffect(() => {
-    if (highlight && highlight.season === current?.number && highlightRef.current) {
-      highlightRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-    }
-  }, [highlight, current?.number]);
 
   if (!current) return null;
   const aired = current.episodes.filter((e) => !isUnaired(e.airedDate));
@@ -121,7 +115,6 @@ export function EpisodeList({
           return (
             <li
               key={ep.id}
-              ref={isHighlight ? highlightRef : undefined}
               className={cn(
                 'group/ep flex flex-col gap-3 rounded-card p-2 transition sm:flex-row sm:gap-5 sm:p-3',
                 'hover:bg-surface',

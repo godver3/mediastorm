@@ -5,17 +5,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mediastorm player</title>
+  <script>try{var a=localStorage.getItem('mediastorm.accent');if(/^#[0-9a-f]{6}$/i.test(a||'')){document.documentElement.style.setProperty('--accent',a);document.documentElement.style.setProperty('--accent-contrast',localStorage.getItem('mediastorm.accentContrast')||'#111111');}}catch(e){}</script>
   <style>
     :root {
-      --bg: #08090d;
-      --panel: #0d0f15;
-      --panel-2: #181b24;
-      --border: rgba(255, 255, 255, 0.12);
-      --text: #f4f7fb;
-      --muted: #9aa4b2;
-      --accent: #4f8cff;
-      --danger: #f87171;
-      --radius: 8px;
+      --bg: #0b0b0f;
+      --panel: #13131a;
+      --panel-2: rgba(22, 22, 31, 0.72);
+      --border: rgba(255, 255, 255, 0.16);
+      --text: #f5f6fa;
+      --muted: #a3a7ba;
+      --accent: #f5b400;
+      --accent-contrast: #111111;
+      --danger: #ef5350;
+      --radius: 14px;
     }
 
     * { box-sizing: border-box; }
@@ -1052,6 +1054,172 @@
     .share-chip.is-active { background: rgba(122, 162, 255, 0.18); border-color: rgba(122, 162, 255, 0.7); }
     #shareResult { display: none; }
     #shareResult.is-visible { display: block; }
+    /* ---- Immersive desktop player (matches the /watch design language) ---- */
+    .player-top { display: none; }
+    @media (min-width: 761px) {
+      html, body { overflow: hidden; }
+      body { background: #000; }
+      .topbar { display: none; }
+      .shell { width: 100%; padding: 0; gap: 0; }
+      .meta { display: none; }
+      .player-panel { border: 0; border-radius: 0; box-shadow: none; }
+      #videoHost {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        padding: 0;
+        display: grid;
+        place-items: center;
+      }
+      #videoHost .video-frame,
+      #videoHost.is-fullscreen .video-frame {
+        position: absolute;
+        inset: 0;
+        aspect-ratio: auto;
+        border-radius: 0;
+      }
+      .player-top {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 105;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        padding: 1.5rem 2.5rem 4rem;
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.35) 60%, transparent);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+      body:has(#videoHost.controls-hidden) .player-top {
+        opacity: 0;
+        transform: translateY(-0.5rem);
+        pointer-events: none;
+      }
+      body:has(#videoHost.controls-hidden) { cursor: none; }
+      .player-top-copy { min-width: 0; flex: 1; padding-top: 0.15rem; }
+      .player-top .eyebrow { color: var(--accent); }
+      .player-top-title {
+        margin: 0.15rem 0 0;
+        font-size: clamp(1.25rem, 2vw, 1.75rem);
+        font-weight: 700;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+      }
+      .player-top-sub {
+        margin-top: 0.25rem;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 0.95rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .info-pop {
+        position: absolute;
+        top: calc(100% - 3rem);
+        right: 2.5rem;
+        width: min(460px, calc(100vw - 5rem));
+        padding: 1rem 1.1rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: var(--radius);
+        background: rgba(22, 22, 31, 0.9);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+        font-size: 0.85rem;
+        display: none;
+      }
+      body.info-open .info-pop { display: grid; gap: 0.75rem; }
+      .info-pop dt { color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+      .info-pop dd { margin: 0.2rem 0 0; word-break: break-all; line-height: 1.4; }
+      .info-pop dl { margin: 0; display: grid; gap: 0.75rem; }
+
+      /* Controls: no boxed panel — a bottom scrim with the seek bar on its own row. */
+      .controls {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        padding: 4rem 2.5rem 1.75rem;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        backdrop-filter: none;
+        background: linear-gradient(0deg, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.45) 55%, transparent);
+      }
+      .controls .seek { order: -2; flex: 1 1 calc(100% - 10rem); height: 1.25rem; cursor: pointer; }
+      .controls .time { order: -1; flex: 0 0 auto; min-width: 8rem; text-align: right; font-size: 0.9rem; }
+      .controls .seek-spacer { order: -2; flex: 1 1 calc(100% - 10rem); justify-content: flex-start; }
+      .controls .live-indicator { order: -1; }
+      .controls .nav-back { display: none; }
+      .watch-party-panel { top: 6.5rem; right: 2.5rem; }
+      .controls .tracks-btn { margin-left: auto; }
+      #videoHost:not(.controls-hidden) .subtitle-overlay { bottom: 9rem; }
+      #videoHost:not(.controls-hidden).skip-segment-visible .skip-segment-prompt,
+      #videoHost:not(.controls-hidden).up-next-visible .up-next-card { bottom: 9.5rem; }
+      .status { bottom: 8rem; left: 2.5rem; right: 2.5rem; }
+      .manual.is-visible {
+        position: fixed;
+        left: 50%;
+        bottom: 2rem;
+        transform: translateX(-50%);
+        z-index: 110;
+        width: min(640px, calc(100vw - 4rem));
+      }
+    }
+    .icon-btn {
+      width: 2.75rem;
+      min-width: 2.75rem;
+      height: 2.75rem;
+      border-radius: 999px;
+      border-color: rgba(255, 255, 255, 0.14);
+      background: rgba(22, 22, 31, 0.6);
+      backdrop-filter: blur(12px);
+    }
+    .icon-btn .icon { width: 1.25rem; height: 1.25rem; }
+    .icon-btn:hover { background: rgba(255, 255, 255, 0.14); }
+    .play-btn {
+      width: 3.25rem;
+      min-width: 3.25rem;
+      height: 3.25rem;
+      background: var(--accent);
+      border-color: transparent;
+      color: var(--accent-contrast);
+    }
+    .play-btn:hover { background: var(--accent); filter: brightness(1.1); }
+    .btn-primary { color: var(--accent-contrast); }
+    .pause-chip { width: 5rem; height: 5rem; }
+    .spinner { border-top-color: var(--accent); }
+    .seek, .volume-slider { accent-color: var(--accent); }
+    @media (min-width: 761px) {
+      .controls input[type=range] {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 1.25rem;
+        background: transparent;
+        --fill: 0%;
+      }
+      .controls input[type=range]::-webkit-slider-runnable-track {
+        height: 4px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--accent) var(--fill), rgba(255, 255, 255, 0.25) var(--fill));
+      }
+      .controls input[type=range]::-moz-range-track { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.25); }
+      .controls input[type=range]::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+      .controls input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        margin-top: -5px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+      }
+      .controls input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; }
+    }
   </style>
 </head>
 <body>
@@ -1069,6 +1237,20 @@
       </div>
     </header>
 
+    <div class="player-top">
+      <button class="btn icon-btn" type="button" onclick="goBackToWatch()" aria-label="Back" title="Back">
+        <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg></span>
+      </button>
+      <div class="player-top-copy">
+        <div id="topEyebrow" class="eyebrow"></div>
+        <div id="topTitle" class="player-top-title">Loading…</div>
+        <div id="topSub" class="player-top-sub"></div>
+      </div>
+      <button id="infoButton" class="btn icon-btn" type="button" onclick="toggleInfo()" aria-label="Info" title="Info" aria-expanded="false">
+        <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor"/></svg></span>
+      </button>
+      <div id="infoPop" class="info-pop" role="dialog" aria-label="Playback info"><dl id="infoList"></dl></div>
+    </div>
     <main class="shell">
       <section class="meta">
         <div id="mediaTypeLabel" class="eyebrow">Playback</div>
@@ -1867,10 +2049,50 @@
       document.getElementById('details').textContent = [episode, playbackMeta.episodeName, sourceDetail]
         .filter(Boolean)
         .join(' - ');
+      document.getElementById('topEyebrow').textContent = document.getElementById('mediaTypeLabel').textContent;
+      document.getElementById('topTitle').textContent = title;
+      document.title = title;
+      document.getElementById('topSub').textContent = [episode, playbackMeta.episodeName].filter(Boolean).join(' · ');
+      renderInfo(sourceDetail);
       document.getElementById('topSubtitle').textContent = SHARE_MODE
         ? 'Shared stream'
         : activeProfileName ? `Playing as ${activeProfileName}` : 'Web player';
     }
+
+    function renderInfo(sourceDetail) {
+      const q = new URLSearchParams(window.location.search);
+      const detail = String(sourceDetail || '');
+      const fileName = detail.split('/').filter(Boolean).pop() || detail;
+      const provider = q.get('debridProvider') || q.get('sourceServiceType') || '';
+      const rows = [
+        ['File', fileName],
+        ['Source', provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : ''],
+        ['Profile', SHARE_MODE ? '' : activeProfileName],
+      ].filter(([, v]) => v);
+      document.getElementById('infoList').innerHTML = rows
+        .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
+        .join('') || '<div><dd>No details available</dd></div>';
+      document.getElementById('infoButton').hidden = rows.length === 0;
+    }
+
+    function toggleInfo(force) {
+      const open = typeof force === 'boolean' ? force : !document.body.classList.contains('info-open');
+      document.body.classList.toggle('info-open', open);
+      document.getElementById('infoButton').setAttribute('aria-expanded', String(open));
+      if (open) showControls();
+    }
+
+    document.addEventListener('mousemove', () => showControls());
+    // Fill the left of the custom range tracks (WebKit has no ::range-progress).
+    function syncRangeFill(el) {
+      const min = Number(el.min) || 0;
+      const max = Number(el.max) || 1;
+      const pct = max > min ? ((Number(el.value) - min) / (max - min)) * 100 : 0;
+      el.style.setProperty('--fill', `${Math.max(0, Math.min(100, pct))}%`);
+    }
+    document.addEventListener('input', (e) => { if (e.target.matches?.('.controls input[type=range]')) syncRangeFill(e.target); });
+    setInterval(() => document.querySelectorAll('.controls input[type=range]').forEach(syncRangeFill), 500);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleInfo(false); });
 
     async function startManualPath() {
       const value = document.getElementById('manualPath').value.trim();
@@ -3253,7 +3475,7 @@
       if (webPlayerControlsHideTimer) clearTimeout(webPlayerControlsHideTimer);
       webPlayerControlsHideTimer = window.setTimeout(() => {
         const video = document.getElementById('webPlayer');
-        if (!host.classList.contains('tracks-open') && video && !video.paused) {
+        if (!host.classList.contains('tracks-open') && !document.body.classList.contains('info-open') && video && !video.paused) {
           host.classList.add('controls-hidden');
         }
       }, 3000);

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { Title } from '@/api/titles';
-import { Skeleton } from '@/components';
+import { Skeleton, TitleLogo } from '@/components';
 import { cn } from '@/lib/cn';
 import { infoLine, ratingChips } from './format';
 
@@ -21,13 +21,11 @@ export function DetailsHero({
   actions?: ReactNode;
   below?: ReactNode;
 }) {
-  const [logoFailed, setLogoFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const backdrop = title?.backdrop?.url ?? title?.backdrops?.[0]?.url;
   const name = title?.name || fallbackName;
   const info = title ? infoLine(title, { seasons }) : [];
   const ratings = ratingChips(title?.ratings);
-  const logo = !logoFailed ? title?.logo?.url : undefined;
 
   return (
     <section className="relative isolate overflow-hidden">
@@ -46,22 +44,20 @@ export function DetailsHero({
         <div className="absolute inset-0 hidden bg-gradient-to-r from-bg via-bg/75 to-transparent md:block" />
       </div>
 
-      <div className="relative -mt-24 px-4 pb-8 sm:px-6 md:mt-0 md:flex md:min-h-[min(78vh,760px)] md:items-end md:pt-32 lg:px-10">
+      <div className="relative -mt-24 px-4 pb-8 sm:px-6 md:mt-0 md:flex md:min-h-[calc(100dvh-4rem)] md:items-end md:pt-8 md:pb-12 lg:px-10">
         <div className="max-w-3xl">
-          {logo ? (
-            <h1 className="mb-5">
-              <img
-                src={logo}
-                alt={name}
-                onError={() => setLogoFailed(true)}
-                className="max-h-24 max-w-[75%] object-contain object-left drop-shadow-[0_4px_24px_rgb(0_0_0/0.5)] sm:max-h-32 md:max-w-[440px]"
-              />
-            </h1>
-          ) : (
-            <h1 className="mb-3 text-3xl font-bold tracking-tight text-balance sm:text-4xl lg:text-5xl">
-              {name}
-            </h1>
-          )}
+          <TitleLogo
+            logoUrl={title?.logo?.url}
+            name={name}
+            pending={!title}
+            placeholderClassName="mb-5 h-24 sm:h-32"
+            imgClassName="mb-5 max-h-24 max-w-[75%] object-contain object-left drop-shadow-[0_4px_24px_rgb(0_0_0/0.5)] sm:max-h-32 md:max-w-[440px]"
+            text={(n) => (
+              <h1 className="mb-3 text-3xl font-bold tracking-tight text-balance sm:text-4xl lg:text-5xl">
+                {n}
+              </h1>
+            )}
+          />
 
           {title ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted">

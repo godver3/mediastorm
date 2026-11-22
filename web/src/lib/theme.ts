@@ -15,6 +15,13 @@ export function applyAccent(value: string | undefined | null): void {
   const style = document.documentElement.style;
   style.setProperty('--accent', hex);
   style.setProperty('--accent-contrast', accentContrast(hex));
+  // The server-rendered player (playback.html) reads these to match.
+  try {
+    localStorage.setItem('mediastorm.accent', hex);
+    localStorage.setItem('mediastorm.accentContrast', accentContrast(hex));
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /** Black text on light accents (the default amber), white on dark ones. */

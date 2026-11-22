@@ -222,19 +222,19 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
 
   const actions = (
     <div className="flex flex-wrap items-start gap-2 sm:gap-3">
-      <div className="flex flex-col gap-1.5">
+      <div className="relative max-sm:flex-1">
         <Button
           size="lg"
           disabled={!canPlay}
           loading={d.bundle.isPending || busy}
           onClick={() => playPreferringLibrary(primaryEpisode, primaryStart)}
           leftIcon={<Icon name="play" size={18} />}
-          className="min-w-[160px] max-sm:flex-1"
+          className="min-w-[160px] max-sm:w-full"
         >
           {label}
         </Button>
         {primaryStart && resumeFraction > 0 && (
-          <div className="flex items-center gap-2 text-xs whitespace-nowrap text-muted">
+          <div className="absolute top-full left-0 mt-1.5 flex items-center gap-2 text-xs whitespace-nowrap text-muted">
             <span className="h-1 w-full max-w-[90px] overflow-hidden rounded-full bg-surface-strong">
               <span
                 className="block h-full rounded-full bg-accent"
@@ -620,7 +620,7 @@ function ActionButton({
       aria-label={label}
       title={label}
       className={cn(
-        'group/act inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl border px-3.5 text-sm font-medium transition',
+        'group/act inline-flex h-12 w-12 cursor-pointer items-center justify-center rounded-full border transition',
         'focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
         pressed
           ? 'border-transparent accent-soft'
@@ -628,7 +628,6 @@ function ActionButton({
       )}
     >
       {icon}
-      <span className="hidden xl:inline">{label}</span>
     </button>
   );
 }
