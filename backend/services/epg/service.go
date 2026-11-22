@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	defaultHTTPTimeout = 120 * time.Second // XMLTV files can be large
-	maxEPGFileSize     = 100 * 1024 * 1024 // 100 MB max
+	defaultHTTPTimeout = 120 * time.Second  // XMLTV files can be large
+	maxEPGFileSize     = 1024 * 1024 * 1024 // 1 GB uncompressed; parsing streams, so this only guards runaway inputs
 	epgCacheDir        = "cache/epg"
 	epgCacheFile       = "epg.json"
 )
@@ -714,9 +714,12 @@ func (s *Service) fetchXMLTVWithProxyAndUserAgents(ctx context.Context, xmltvURL
 	}
 
 	// Limit reader size
-	limited := io.LimitReader(reader, maxEPGFileSize+1)
+	limited := &io.LimitedReader{R: reader, N: maxEPGFileSize + 1}
 
 	if err := s.parseXMLTV(limited, schedule); err != nil {
+		if limited.N <= 0 {
+			err = fmt.Errorf("guide exceeds %d MB uncompressed size limit: %w", maxEPGFileSize/(1024*1024), err)
+		}
 		log.Printf("[epg] XMLTV parse failed host=%q elapsed=%s error=%v", hostLabel, time.Since(started).Round(time.Millisecond), err)
 		return err
 	}
