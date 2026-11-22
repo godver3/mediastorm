@@ -1,6 +1,7 @@
 package jellyfinbridge
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -166,6 +167,9 @@ type externalImage struct {
 	at          time.Time
 	contentType string
 	data        []byte // nil: the fetch failed (negative entry)
+	// width and height are the image's size, 0 when its format is not
+	// known (SVG, say).
+	width, height int
 }
 
 const (
@@ -208,7 +212,7 @@ func (s *Server) fetchExternalImage(w http.ResponseWriter, r *http.Request, sour
 	fresh := ok && ((cached.data != nil && time.Since(cached.at) < externalImageCacheTTL) ||
 		(cached.data == nil && time.Since(cached.at) < externalImageFailTTL))
 	if !fresh {
-		cached = fetchImage(r, source)
+		cached = fetchImage(r.Context(), source)
 		cacheExternalImage(source, cached)
 	}
 	if cached.data == nil {
@@ -263,9 +267,9 @@ func (p *passthroughRecorder) Write(b []byte) (int, error) {
 }
 
 // fetchImage downloads an external image; failures yield a negative entry.
-func fetchImage(r *http.Request, source string) externalImage {
+func fetchImage(ctx context.Context, source string) externalImage {
 	failed := externalImage{at: time.Now()}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, source, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
 		return failed
 	}
@@ -282,5 +286,7 @@ func fetchImage(r *http.Request, source string) externalImage {
 	if err != nil || resp.StatusCode != http.StatusOK || len(data) > externalImageMaxBytes || !strings.HasPrefix(contentType, "image/") {
 		return failed
 	}
-	return externalImage{at: time.Now(), contentType: contentType, data: data}
+	img := externalImage{at: time.Now(), contentType: contentType, data: data}
+	img.width, img.height = imageSize(data)
+	return img
 }
