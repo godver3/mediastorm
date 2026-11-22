@@ -266,7 +266,7 @@ func (s *Server) curatedTitles(profile models.User, mediaType string) []titleInf
 		if mediaType == "movie" {
 			if rows, err := s.deps.History.ListPlaybackProgress(profile.ID); err == nil {
 				for _, p := range rows {
-					if normalizeMediaType(p.MediaType) != "movie" || p.HiddenFromContinueWatching {
+					if progressMediaType(p.MediaType) != "movie" || p.HiddenFromContinueWatching {
 						continue
 					}
 					add(titleInfo{MediaType: "movie", ID: p.ItemID, Name: p.MovieName, Year: p.Year, ExternalIDs: p.ExternalIDs, AddedAt: p.UpdatedAt})

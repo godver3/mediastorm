@@ -119,6 +119,17 @@ func normalizeMediaType(mt string) string {
 	}
 }
 
+// progressMediaType is normalizeMediaType for playback progress rows, or ""
+// for a live channel: mediastorm records progress for live HLS sessions too
+// (media type "live"), and a channel is no movie to resume.
+func progressMediaType(mt string) string {
+	switch strings.ToLower(strings.TrimSpace(mt)) {
+	case "live", "livetv", "live-tv", "channel", "channels":
+		return ""
+	}
+	return normalizeMediaType(mt)
+}
+
 // source returns the canonical mediastorm ID the bridge keys this title by.
 func (t titleInfo) source() string {
 	if t.MediaType == "series" {
