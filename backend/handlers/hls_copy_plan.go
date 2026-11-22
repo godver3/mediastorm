@@ -31,9 +31,14 @@ type HLSClientCaps struct {
 	// Transcoding"), also when the video is transcoded.
 	ForceVideoCopy bool `json:"forceVideoCopy,omitempty"`
 	ForceAudioCopy bool `json:"forceAudioCopy,omitempty"`
+	// WebFallback (the /watch web player): a web-stable session whose video
+	// cannot be copied plays as an ordinary web session (its own transcode,
+	// seeks by new sessions) instead of the stable compatibility transcode.
+	WebFallback bool `json:"webFallback,omitempty"`
 }
 
 func (c *HLSClientCaps) forceVideoCopy() bool { return c != nil && c.ForceVideoCopy }
+func (c *HLSClientCaps) webFallback() bool    { return c != nil && c.WebFallback }
 func (c *HLSClientCaps) forceAudioCopy() bool { return c != nil && c.ForceAudioCopy }
 
 type hlsClientCapsKey struct{}
