@@ -375,3 +375,20 @@ func TestMergeGuideFillsGapsOnly(t *testing.T) {
 		t.Fatalf("channel metadata = %+v, want the later source's (unchanged behaviour)", dst.Channels["c"])
 	}
 }
+
+func TestMergeGuideReplacesPlaceholderBlocks(t *testing.T) {
+	at := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	h := func(n int) time.Time { return at.Add(time.Duration(n) * time.Hour) }
+	dst := newGuidePart()
+	mergeGuide(dst, &models.EPGSchedule{Channels: map[string]models.EPGChannel{"c": {ID: "c"}}, Programs: map[string][]models.EPGProgram{
+		"c": {{Title: "No information", Start: h(0), Stop: h(24)}, {Title: "No information", Start: h(24), Stop: h(48)}},
+	}})
+	added, covered := mergeGuide(dst, &models.EPGSchedule{Channels: map[string]models.EPGChannel{"c": {ID: "c"}}, Programs: map[string][]models.EPGProgram{
+		"c": {{Title: "News", Start: h(20), Stop: h(21)}, {Title: "Film", Start: h(21), Stop: h(23)}},
+	}})
+	got := dst.Programs["c"]
+	// Day one's filler is replaced by the real schedule; day two's is kept.
+	if added != 2 || covered != 0 || len(got) != 3 || got[0].Title != "News" || got[1].Title != "Film" || got[2].Start != h(24) {
+		t.Fatalf("added %d covered %d, programmes %+v", added, covered, got)
+	}
+}

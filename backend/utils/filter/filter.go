@@ -1561,9 +1561,11 @@ func isStrongTitleIdentity(parsedTitle, matchedTitle string, titleSimilarity flo
 	}
 	// Catalog names such as "Treasure Island (2026)" carry a disambiguating
 	// year that release parsers strip from the release title. The year itself
-	// is verified separately, so compare the names without it.
-	if p, e := stripTrailingTitleYear(parsed), stripTrailingTitleYear(expected); p != "" && e != "" &&
-		(p != parsed || e != expected) && stripLeadingTitleArticle(p) == stripLeadingTitleArticle(e) {
+	// is verified separately, so compare the names without it. Only the catalog
+	// side is stripped: a year in the release title ("Godzilla 2000",
+	// "Blade Runner 2049") is part of that release's name.
+	if e := stripTrailingTitleYear(expected); e != "" && e != expected &&
+		stripLeadingTitleArticle(parsed) == stripLeadingTitleArticle(e) {
 		return true
 	}
 	if formulaOneTitleIdentity(parsed) != "" && formulaOneTitleIdentity(parsed) == formulaOneTitleIdentity(expected) {

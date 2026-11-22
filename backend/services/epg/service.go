@@ -658,14 +658,37 @@ func mergeGuide(dst, src *models.EPGSchedule) (added, covered int) {
 			added += len(progs)
 			continue
 		}
-		merged := earlier
+		// Placeholder blocks ("No information", one entry per day) don't count
+		// as coverage: a later guide's real schedule replaces them.
+		var real, filler []models.EPGProgram
+		for _, p := range earlier {
+			if isPlaceholderProgram(p) {
+				filler = append(filler, p)
+			} else {
+				real = append(real, p)
+			}
+		}
+		cov := newCoverage(real)
+		var fresh []models.EPGProgram
 		for _, prog := range progs {
-			if overlapsAny(earlier, prog) {
+			if cov.overlaps(prog) {
 				covered++
 				continue
 			}
-			merged = append(merged, prog)
+			fresh = append(fresh, prog)
 			added++
+		}
+		merged := real
+		if len(fresh) == 0 {
+			merged = append(merged, filler...)
+		} else {
+			freshCov := newCoverage(fresh)
+			for _, p := range filler {
+				if !freshCov.overlaps(p) {
+					merged = append(merged, p)
+				}
+			}
+			merged = append(merged, fresh...)
 		}
 		sort.SliceStable(merged, func(i, j int) bool { return merged[i].Start.Before(merged[j].Start) })
 		dst.Programs[id] = merged
@@ -673,14 +696,37 @@ func mergeGuide(dst, src *models.EPGSchedule) (added, covered int) {
 	return added, covered
 }
 
-// overlapsAny reports whether prog's time overlaps one of progs.
-func overlapsAny(progs []models.EPGProgram, prog models.EPGProgram) bool {
-	for _, p := range progs {
-		if p.Start.Before(prog.Stop) && prog.Start.Before(p.Stop) {
-			return true
+// maxRealProgramDuration separates real programmes from placeholder blocks.
+const maxRealProgramDuration = 6 * time.Hour
+
+func isPlaceholderProgram(p models.EPGProgram) bool {
+	return p.Stop.Sub(p.Start) > maxRealProgramDuration
+}
+
+// coverage answers "does this programme overlap any of these" in O(log n).
+type coverage struct {
+	starts  []time.Time
+	maxStop []time.Time // maxStop[i] is the latest Stop among the first i+1 by start
+}
+
+func newCoverage(progs []models.EPGProgram) coverage {
+	sorted := append([]models.EPGProgram(nil), progs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start.Before(sorted[j].Start) })
+	c := coverage{starts: make([]time.Time, len(sorted)), maxStop: make([]time.Time, len(sorted))}
+	for i, p := range sorted {
+		c.starts[i] = p.Start
+		c.maxStop[i] = p.Stop
+		if i > 0 && c.maxStop[i-1].After(p.Stop) {
+			c.maxStop[i] = c.maxStop[i-1]
 		}
 	}
-	return false
+	return c
+}
+
+func (c coverage) overlaps(prog models.EPGProgram) bool {
+	// Programmes starting before prog ends overlap it iff one of them stops after it starts.
+	n := sort.Search(len(c.starts), func(i int) bool { return !c.starts[i].Before(prog.Stop) })
+	return n > 0 && c.maxStop[n-1].After(prog.Start)
 }
 
 // fetchXtreamEPG fetches EPG data from the Xtream Codes xmltv.php endpoint.

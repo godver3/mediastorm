@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"runtime/debug"
 	"sync"
 )
 
@@ -38,8 +41,22 @@ func fetchLiveSourcesConcurrently(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			slots <- struct{}{}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				results[index] = liveSourceFetch{err: ctx.Err(), errorMessage: ctx.Err().Error(), stalkerTotal: -1}
+				return
+			}
 			defer func() { <-slots }()
+			// These goroutines are outside net/http's per-request recover, so a
+			// panic in one provider's fetch would otherwise kill the process.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[live] source fetch panicked: %v\n%s", r, debug.Stack())
+					err := fmt.Errorf("source fetch failed: %v", r)
+					results[index] = liveSourceFetch{err: err, errorMessage: err.Error(), stalkerTotal: -1}
+				}
+			}()
 			results[index] = fetch(ctx, source)
 		}()
 	}

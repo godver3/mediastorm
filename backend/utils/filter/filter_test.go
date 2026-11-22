@@ -2140,3 +2140,12 @@ func TestFormulaOnePreSeasonEventTitleFiltering(t *testing.T) {
 		t.Fatalf("expected 2 target-episode Bahrain pre-season testing results, got %d: %#v", len(tvdbStylePassed), tvdbStylePassed)
 	}
 }
+
+func TestStrongTitleIdentityKeepsYearInReleaseTitle(t *testing.T) {
+	if isStrongTitleIdentity("Godzilla 2000", "Godzilla", 0.8) {
+		t.Fatal(`"Godzilla 2000" must not be a strong match for "Godzilla"`)
+	}
+	if !isStrongTitleIdentity("Treasure Island", "Treasure Island (2026)", 0.8) {
+		t.Fatal("catalog year suffix should still be ignored")
+	}
+}

@@ -18,16 +18,25 @@ import (
 // FFmpeg uses is found once, with a three-second test stream.
 
 var segmentTimesMode struct {
-	once     sync.Once
+	mu       sync.Mutex
+	known    bool
 	absolute bool
 }
 
 // segmentTimesAbsolute reports whether this FFmpeg compares -segment_times
 // with packet timestamps (true) or measures them from the first packet.
 func (m *HLSManager) segmentTimesAbsolute() bool {
-	segmentTimesMode.once.Do(func() {
-		segmentTimesMode.absolute = probeSegmentTimesAbsolute(m.ffmpegPath)
-	})
+	segmentTimesMode.mu.Lock()
+	defer segmentTimesMode.mu.Unlock()
+	if !segmentTimesMode.known {
+		// Only a successful probe is cached; a failed or timed-out one is
+		// retried on the next stable-copy start.
+		absolute, ok := probeSegmentTimesAbsolute(m.ffmpegPath)
+		if !ok {
+			return absolute
+		}
+		segmentTimesMode.absolute, segmentTimesMode.known = absolute, true
+	}
 	return segmentTimesMode.absolute
 }
 
@@ -36,13 +45,13 @@ func (m *HLSManager) segmentTimesAbsolute() bool {
 // second (two files); measured from the first packet it would cut at 21,
 // after the stream has ended (one file). Without a usable answer the
 // first-packet reading (current FFmpeg) is assumed.
-func probeSegmentTimesAbsolute(ffmpegPath string) bool {
+func probeSegmentTimesAbsolute(ffmpegPath string) (absolute, ok bool) {
 	if ffmpegPath == "" {
-		return false
+		return false, false
 	}
 	dir, err := os.MkdirTemp("", "mediastorm-segment-times-")
 	if err != nil {
-		return false
+		return false, false
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -54,10 +63,10 @@ func probeSegmentTimesAbsolute(ffmpegPath string) bool {
 		filepath.Join(dir, "s%d.ts"))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("[hls] segment time probe failed (%v: %s); assuming cut times from the first packet", err, out)
-		return false
+		return false, false
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, "s*.ts"))
-	absolute := len(files) >= 2
+	absolute = len(files) >= 2
 	log.Printf("[hls] FFmpeg reads -segment_times as %s", map[bool]string{true: "packet timestamps", false: "time since the first packet"}[absolute])
-	return absolute
+	return absolute, true
 }
