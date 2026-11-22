@@ -113,6 +113,9 @@ type trackingWriter struct {
 	activityCounter *int64
 }
 
+// Unwrap lets http.ResponseController reach the underlying writer (Flush).
+func (tw *trackingWriter) Unwrap() http.ResponseWriter { return tw.ResponseWriter }
+
 func (tw *trackingWriter) Write(b []byte) (int, error) {
 	n, err := tw.ResponseWriter.Write(b)
 	if n > 0 {

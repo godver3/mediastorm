@@ -370,6 +370,13 @@ func (h *RecordingsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 				info.Size(), diagnosticWriter.bytesWritten)
 		}()
 	}
+	if recording.Status == models.RecordingStatusRunning && streamRequest.URL.Query().Get("seekable") == "estimate" {
+		log.Printf("[recordings] streaming running recording id=%s mode=estimate range=%q path=%s", recordingID, strings.TrimSpace(streamRequest.Header.Get("Range")), outputPath)
+		if err := h.streamGrowingRecordingEstimated(trackedWriter, streamRequest, *recording, outputPath); err != nil && !errors.Is(err, streamRequest.Context().Err()) {
+			log.Printf("[recordings] estimated stream id=%s: %v", recordingID, err)
+		}
+		return
+	}
 	if recording.Status == models.RecordingStatusRunning {
 		rangeHeader := strings.TrimSpace(streamRequest.Header.Get("Range"))
 		log.Printf("[recordings] streaming running recording id=%s mode=growing range=%q path=%s", recordingID, rangeHeader, outputPath)

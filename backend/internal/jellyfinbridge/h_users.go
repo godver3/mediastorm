@@ -277,6 +277,7 @@ func (s *Server) userPolicy(profile models.User) *dto.UserPolicy {
 		BlockUnratedItems:                []string{},
 		EnableRemoteAccess:               true,
 		EnableLiveTvAccess:               !profile.IsKidsProfile,
+		EnableLiveTvManagement:           !profile.IsKidsProfile && s.deps.Handlers.RecordingCreateEPG != nil,
 		EnableCollectionManagement:       s.listsEditable(), // collections are the profile's custom lists
 		EnableMediaPlayback:              true,
 		EnableAudioPlaybackTranscoding:   true,

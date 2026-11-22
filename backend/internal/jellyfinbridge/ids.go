@@ -34,6 +34,8 @@ const (
 	refLocal    = "local"
 	refChannel  = "channel"
 	refProgram  = "program"
+	// refRecording is a profile's recording (source: recording UUID).
+	refRecording = "recording"
 )
 
 var idNamespace = uuid.MustParse("8f0c8b8e-6a55-4e0e-9c0a-6d5c1f6a7b21")

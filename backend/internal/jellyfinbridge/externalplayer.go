@@ -27,7 +27,7 @@ const externalStreamWait = 90 * time.Second
 func withPlayableSources(items []dto.BaseItemDto) {
 	for i := range items {
 		item := &items[i]
-		if item.MediaSources != nil || (item.Type != dto.KindMovie && item.Type != dto.KindEpisode) {
+		if item.MediaSources != nil || (item.Type != dto.KindMovie && item.Type != dto.KindEpisode && item.Type != dto.KindVideo) {
 			continue
 		}
 		item.MediaSources = []dto.MediaSourceInfo{versionStub(item.ID, "mediastorm", item.RunTimeTicks)}
@@ -49,7 +49,7 @@ func (b *bufferWriter) Write(p []byte) (int, error) { return b.body.Write(p) }
 // without PlaybackInfo, by running PlaybackInfo in-process for the caller.
 func (s *Server) openStreamSession(r *http.Request, p *principal, itemID, mediaSourceID string) (*playSession, bool) {
 	ref, ok := s.ids.get(itemID)
-	if !ok || !playableVOD(ref.Kind) {
+	if !ok || (!playableVOD(ref.Kind) && ref.Kind != refRecording) {
 		return nil, false
 	}
 	body, _ := json.Marshal(map[string]string{"MediaSourceId": strings.TrimSpace(mediaSourceID)})

@@ -325,6 +325,9 @@ func (s *Service) createRecording(kind models.RecordingType, userID, channelID, 
 	if recording.Title == "" {
 		recording.Title = recording.ChannelName
 	}
+	if kind == models.RecordingTypeEPG {
+		recording.Guide = s.guideFor(userID, recording.TvgID, recording.StartAt, recording.Title)
+	}
 	if err := s.authorizeSource(&recording); err != nil {
 		return models.Recording{}, err
 	}
@@ -705,6 +708,7 @@ func (s *Service) expandEnabledRules() {
 						ChannelName:          channel.Name,
 						Title:                program.Title,
 						Description:          program.Description,
+						Guide:                guideFromProgram(program),
 						SourceURL:            channel.SourceURL,
 						StartAt:              program.Start.UTC(),
 						EndAt:                program.Stop.UTC(),
@@ -772,6 +776,21 @@ func matchesRecordingRule(rule models.RecordingRule, compiled *regexp.Regexp, ti
 	default:
 		return false
 	}
+}
+
+// RuleMatchesTitle reports whether a rule's pattern matches a programme title
+// the way scheduling matches it (normalised titles, case-insensitive regex).
+// Channel and new-airing conditions are not checked.
+func RuleMatchesTitle(rule models.RecordingRule, title string) bool {
+	var compiled *regexp.Regexp
+	if rule.MatchType == models.RecordingRuleMatchRegex {
+		c, err := compileRecordingRegex(rule.Pattern)
+		if err != nil {
+			return false
+		}
+		compiled = c
+	}
+	return matchesRecordingRule(rule, compiled, title)
 }
 
 func normalizeRecordingTitle(value string) string {

@@ -2028,6 +2028,7 @@ func main() {
 			ThumbnailsEnabled: videoHandler.ThumbnailsEnabled,
 			StopRequested:     handlers.GetStreamTracker().ShouldStopPlayback,
 			RankingGeneration: prequeueHandler.GetStore().Generation,
+			RecordingFrame:    bridgeRecordingFrame(recordingsService),
 			ThumbnailFrames: func(streamPath string) ([]jellyfinbridge.ThumbnailFrame, bool) {
 				frames, done := videoHandler.ThumbnailFrames(streamPath)
 				out := make([]jellyfinbridge.ThumbnailFrame, len(frames))
@@ -2102,6 +2103,17 @@ func main() {
 				IndexerSearch:     indexerHandler.Search,
 				PlaybackResolve:   playbackHandler.Resolve,
 				PlaybackQueue:     playbackHandler.QueueStatus,
+				// Without a recordings service the bridge offers no DVR.
+				RecordingsList:      bridgeRecordings(recordingsService, recordingsHandler.List),
+				RecordingCreateEPG:  bridgeRecordings(recordingsService, recordingsHandler.CreateEPG),
+				RecordingCancel:     bridgeRecordings(recordingsService, recordingsHandler.Cancel),
+				RecordingDelete:     bridgeRecordings(recordingsService, recordingsHandler.Delete),
+				RecordingRules:      bridgeRecordings(recordingsService, recordingsHandler.ListRules),
+				RecordingRuleCreate: bridgeRecordings(recordingsService, recordingsHandler.CreateRule),
+				RecordingRuleDelete: bridgeRecordings(recordingsService, recordingsHandler.DeleteRule),
+				RecordingRuleUpdate: bridgeRecordings(recordingsService, recordingsHandler.UpdateRule),
+				RecordingSettings:   bridgeRecordings(recordingsService, recordingsHandler.GetSettings),
+				RecordingStream:     bridgeRecordings(recordingsService, recordingsHandler.Stream),
 			},
 		}, func() (config.JellyfinBridgeSettings, error) {
 			return jellyfinbridge.EnsureServerID(cfgManager, settings.Cache.Directory)
@@ -2601,4 +2613,22 @@ func bridgeWatchRooms(service *watchrooms.Service) jellyfinbridge.WatchRoomServi
 		return nil
 	}
 	return service
+}
+
+// bridgeRecordingFrame gives the Jellyfin bridge stills from recordings when
+// recording is available.
+func bridgeRecordingFrame(service *recordings.Service) func(context.Context, string, int) ([]byte, error) {
+	if service == nil {
+		return nil
+	}
+	return service.Frame
+}
+
+// bridgeRecordings hands a recordings handler to the Jellyfin bridge only
+// when recording is available.
+func bridgeRecordings(service *recordings.Service, h http.HandlerFunc) http.HandlerFunc {
+	if service == nil {
+		return nil
+	}
+	return h
 }

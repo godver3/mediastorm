@@ -105,6 +105,17 @@ type Handlers struct {
 	IndexerSearch     http.HandlerFunc // GET /api/indexers/search (ranked releases)
 	PlaybackResolve   http.HandlerFunc // POST /api/playback/resolve
 	PlaybackQueue     http.HandlerFunc // GET /api/playback/queue/{queueID}
+	// Recordings (Live TV DVR, see dvr.go).
+	RecordingsList      http.HandlerFunc // GET    /api/live/recordings?profileId=
+	RecordingCreateEPG  http.HandlerFunc // POST   /api/live/recordings/epg
+	RecordingCancel     http.HandlerFunc // POST   /api/live/recordings/{recordingID}/cancel
+	RecordingDelete     http.HandlerFunc // DELETE /api/live/recordings/{recordingID}
+	RecordingRules      http.HandlerFunc // GET    /api/live/recording-rules?profileId=
+	RecordingRuleCreate http.HandlerFunc // POST   /api/live/recording-rules
+	RecordingRuleDelete http.HandlerFunc // DELETE /api/live/recording-rules/{ruleID}
+	RecordingRuleUpdate http.HandlerFunc // PUT    /api/live/recording-rules/{ruleID}
+	RecordingSettings   http.HandlerFunc // GET    /api/live/recording-settings?profileId=
+	RecordingStream     http.HandlerFunc // GET    /api/live/recordings/{recordingID}/stream
 }
 
 // Deps wires the bridge to mediastorm.
@@ -147,6 +158,9 @@ type Deps struct {
 	// (ranking settings); cached picks and play sessions from an
 	// older generation are not reused.
 	RankingGeneration func() uint64
+	// RecordingFrame returns a JPEG still from a recording's file (nil: no
+	// stills; recordings without a guide image show the channel logo).
+	RecordingFrame func(ctx context.Context, recordingID string, width int) ([]byte, error)
 }
 
 // StreamPlan is the output plan of a mediastorm HLS session, as shown in the

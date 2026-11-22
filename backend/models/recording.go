@@ -44,6 +44,20 @@ type Recording struct {
 	CreatedAt            time.Time       `json:"createdAt"`
 	UpdatedAt            time.Time       `json:"updatedAt"`
 	ScheduleKey          string          `json:"-"`
+	// Guide holds what the guide said about the programme when the
+	// recording was scheduled (nil for time blocks and unknown programmes).
+	Guide *RecordingGuide `json:"guide,omitempty"`
+}
+
+// RecordingGuide is the guide's description of a recorded programme, kept
+// with the recording because the guide moves on (XMLTV fields).
+type RecordingGuide struct {
+	Image        string   `json:"image,omitempty"`        // <icon>, http(s) only
+	EpisodeTitle string   `json:"episodeTitle,omitempty"` // <sub-title>
+	Episode      string   `json:"episode,omitempty"`      // <episode-num>, e.g. "S12 E2/8"
+	Year         int      `json:"year,omitempty"`         // <date>
+	Categories   []string `json:"categories,omitempty"`
+	Rating       string   `json:"rating,omitempty"`
 }
 
 type RecordingRuleMatchType string

@@ -235,6 +235,9 @@ func programDetail(prog models.EPGProgram) int {
 	if prog.Episode != "" {
 		score += 1 << 20
 	}
+	if prog.SubTitle != "" {
+		score += 1 << 19
+	}
 	return score
 }
 
@@ -262,9 +265,13 @@ func (s *Server) programItem(ch liveChannel, number int, prog models.EPGProgram,
 		Genres:         prog.Categories,
 		OfficialRating: prog.Rating,
 		RunTimeTicks:   int64Ptr(secondsToTicks(end.Sub(start).Seconds())),
-		EpisodeTitle:   prog.Episode,
+		EpisodeTitle:   firstNonEmpty(prog.SubTitle, prog.Episode),
 		PlayAccess:     "Full",
 		UserData:       &dto.UserItemData{Key: "program:" + source, ItemID: id},
+	}
+	setEpisodeNumbers(&item, prog.Episode)
+	if prog.Year > 0 {
+		item.ProductionYear = intPtr(prog.Year)
 	}
 	kind := classifyProgram(prog)
 	item.IsMovie = boolPtr(kind.movie)
@@ -450,7 +457,9 @@ func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool { return timeOf(items[i].StartDate).Before(timeOf(items[j].StartDate)) })
-	writeJSON(w, http.StatusOK, s.page(items, itemQuery{StartIndex: params.StartIndex, Limit: params.Limit}))
+	page := s.page(items, itemQuery{StartIndex: params.StartIndex, Limit: params.Limit})
+	s.withTimers(r.Context(), p, page.Items)
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Request) {
@@ -482,7 +491,9 @@ func (s *Server) handleRecommendedPrograms(w http.ResponseWriter, r *http.Reques
 		items = append(items, row.item)
 	}
 	limit := parseIntDefault(queryValue(r, "Limit"), 0)
-	writeJSON(w, http.StatusOK, s.page(items, itemQuery{Limit: limit}))
+	page := s.page(items, itemQuery{Limit: limit})
+	s.withTimers(r.Context(), p, page.Items)
+	writeJSON(w, http.StatusOK, page)
 }
 
 type programQueryParams struct {
