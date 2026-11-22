@@ -3758,8 +3758,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// video packet: within 1MB FFmpeg never learns the video's size and the
 	// muxer refuses to start ("dimensions not set"). Probing stops as soon as
 	// every stream is known, so ordinary files start as fast as before.
+	// Only recordings: other local inputs can be library files on NFS/SMB,
+	// where a late stream (sparse subtitles) would make FFmpeg read far ahead.
 	probeSize, analyzeDuration := "1000000", "500000" // 1MB, 0.5s
-	if directInputPath != "" && !isHTTPDirectURL(directInputPath) {
+	if directInputPath != "" && !isHTTPDirectURL(directInputPath) && isRecordingSessionPath(session) {
 		probeSize, analyzeDuration = "50000000", "20000000" // 50MB, 20s
 	}
 
@@ -4440,8 +4442,10 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 		// segment in stream.m3u8 only once it is closed, which is how
 		// ServeSegment knows a file is complete (see stableCopySegmentComplete);
 		// the playlist clients see is built from the plan, not from this file.
+		// Probed once per process (FFmpeg run): never while holding the lock.
+		absoluteCutTimes := m.segmentTimesAbsolute()
 		session.mu.RLock()
-		cutTimes := stableCopySegmentTimes(session.CopySegmentStarts, configuredSegmentStart, m.segmentTimesAbsolute())
+		cutTimes := stableCopySegmentTimes(session.CopySegmentStarts, configuredSegmentStart, absoluteCutTimes)
 		session.mu.RUnlock()
 		if session.CopyPlan.FMP4 {
 			args = append(args, stableCopyFMP4MuxerArgs()...)
@@ -8407,4 +8411,15 @@ func (m *HLSManager) gradeCastSession(session *HLSSession, now time.Time) {
 		log.Printf("[hls] session %s: receiver %s recorded %s=%s (%s)",
 			sessionID, host, variant, verdict, evidence)
 	}
+}
+
+// isRecordingSessionPath reports whether the session plays a mediastorm
+// recording (the recording: provider).
+func isRecordingSessionPath(session *HLSSession) bool {
+	for _, p := range []string{session.Path, session.OriginalPath} {
+		if strings.HasPrefix(strings.TrimSpace(p), "recording:") {
+			return true
+		}
+	}
+	return false
 }

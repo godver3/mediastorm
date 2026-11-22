@@ -288,5 +288,6 @@ func fetchImage(ctx context.Context, source string) externalImage {
 	}
 	img := externalImage{at: time.Now(), contentType: contentType, data: data}
 	img.width, img.height = imageSize(data)
+	rememberLogoSize(source, img.width, img.height, false)
 	return img
 }

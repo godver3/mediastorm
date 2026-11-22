@@ -25,25 +25,69 @@ import (
 const (
 	logoAspectFetches = 4 // background logo fetches at a time
 	logoAspectTimeout = 15 * time.Second
+	// logoAspectQueue bounds logos waiting to be measured; a lineup larger
+	// than this measures the rest on later listings.
+	logoAspectQueue = 1024
+	// logoSizesMax bounds remembered sizes (a few bytes each, no image data),
+	// well above IPTV lineups, so sizes never compete with cached images.
+	logoSizesMax = 20000
 	// logoAspectMin and logoAspectMax bound what is reported, so a broken
 	// image cannot make a card a sliver.
 	logoAspectMin = 0.25
 	logoAspectMax = 8.0
 )
 
+// logoSize is a measured logo: width and height, both 0 when the format has
+// no known size (SVG) or, with failed, when the fetch failed at at.
+type logoSize struct {
+	width, height int
+	failed        bool
+	at            time.Time
+}
+
 var (
-	logoAspectSlots   = make(chan struct{}, logoAspectFetches)
+	logoSizes = struct {
+		sync.Mutex
+		m map[string]logoSize
+	}{m: map[string]logoSize{}}
 	logoAspectPending = struct {
 		sync.Mutex
 		m map[string]bool
 	}{m: map[string]bool{}}
-	// fetchLogo fetches a logo in the background (replaced in tests).
+	logoAspectJobs  = make(chan string, logoAspectQueue)
+	logoAspectStart sync.Once
+	// fetchLogo measures a logo in the background (replaced in tests). It
+	// keeps only the size: logos do not take image-cache slots from posters.
 	fetchLogo = func(source string) {
 		ctx, cancel := context.WithTimeout(context.Background(), logoAspectTimeout)
 		defer cancel()
-		cacheExternalImage(source, fetchImage(ctx, source))
+		img := fetchImage(ctx, source)
+		rememberLogoSize(source, img.width, img.height, img.data == nil)
 	}
 )
+
+// rememberLogoSize records a logo's size (fetchImage calls it for every image
+// it measures, so logos served to clients are measured too).
+func rememberLogoSize(source string, width, height int, failed bool) {
+	logoSizes.Lock()
+	defer logoSizes.Unlock()
+	if _, ok := logoSizes.m[source]; !ok && len(logoSizes.m) >= logoSizesMax {
+		// Full: drop failures first, else any one entry.
+		for k, v := range logoSizes.m {
+			if v.failed {
+				delete(logoSizes.m, k)
+				break
+			}
+		}
+		if len(logoSizes.m) >= logoSizesMax {
+			for k := range logoSizes.m {
+				delete(logoSizes.m, k)
+				break
+			}
+		}
+	}
+	logoSizes.m[source] = logoSize{width: width, height: height, failed: failed, at: time.Now()}
+}
 
 // imageSize returns an image's width and height, 0 and 0 when its format is
 // not one Go decodes (SVG).
@@ -59,45 +103,47 @@ func imageSize(data []byte) (int, int) {
 // when the logo has been fetched, else 1 while it is fetched in the
 // background.
 func logoAspectRatio(source string) float64 {
-	externalImages.Lock()
-	cached, ok := externalImages.entries[source]
-	externalImages.Unlock()
+	logoSizes.Lock()
+	size, ok := logoSizes.m[source]
+	logoSizes.Unlock()
 	if ok {
-		if cached.width > 0 && cached.height > 0 {
-			return min(max(float64(cached.width)/float64(cached.height), logoAspectMin), logoAspectMax)
+		if size.width > 0 && size.height > 0 {
+			return min(max(float64(size.width)/float64(size.height), logoAspectMin), logoAspectMax)
 		}
-		if cached.data == nil && time.Since(cached.at) < externalImageFailTTL {
-			return 1 // failed a moment ago: not fetched again yet
-		}
-		if cached.data != nil {
-			return 1 // a format without a known size
+		if !size.failed || time.Since(size.at) < externalImageFailTTL {
+			return 1 // no known size, or failed a moment ago
 		}
 	}
 	queueLogoFetch(source)
 	return 1
 }
 
-// queueLogoFetch fetches a logo in the background, once at a time per logo
-// and logoAspectFetches logos at once.
+// queueLogoFetch measures a logo in the background: once at a time per logo,
+// logoAspectFetches at once, at most logoAspectQueue waiting.
 func queueLogoFetch(source string) {
 	if u, err := url.Parse(source); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return
 	}
+	logoAspectStart.Do(func() {
+		for range logoAspectFetches {
+			go func() {
+				for src := range logoAspectJobs {
+					fetchLogo(src)
+					logoAspectPending.Lock()
+					delete(logoAspectPending.m, src)
+					logoAspectPending.Unlock()
+				}
+			}()
+		}
+	})
 	logoAspectPending.Lock()
+	defer logoAspectPending.Unlock()
 	if logoAspectPending.m[source] {
-		logoAspectPending.Unlock()
 		return
 	}
-	logoAspectPending.m[source] = true
-	logoAspectPending.Unlock()
-	go func() {
-		defer func() {
-			logoAspectPending.Lock()
-			delete(logoAspectPending.m, source)
-			logoAspectPending.Unlock()
-		}()
-		logoAspectSlots <- struct{}{}
-		defer func() { <-logoAspectSlots }()
-		fetchLogo(source)
-	}()
+	select {
+	case logoAspectJobs <- source:
+		logoAspectPending.m[source] = true
+	default: // queue full: measured on a later listing
+	}
 }

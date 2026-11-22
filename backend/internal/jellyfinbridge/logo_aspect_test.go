@@ -2,8 +2,10 @@ package jellyfinbridge
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/png"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,15 +36,14 @@ func TestLogoAspectRatio(t *testing.T) {
 	old := fetchLogo
 	fetchLogo = func(s string) {
 		fetched <- s
-		data := testPNG(t, 512, 72)
-		cacheExternalImage(s, externalImage{at: time.Now(), contentType: "image/png", data: data, width: 512, height: 72})
+		rememberLogoSize(s, 512, 72, false)
 	}
 	t.Cleanup(func() {
 		fetchLogo = old
-		externalImages.Lock()
-		delete(externalImages.entries, source)
-		delete(externalImages.entries, "https://logos.example/line.png")
-		externalImages.Unlock()
+		logoSizes.Lock()
+		delete(logoSizes.m, source)
+		delete(logoSizes.m, "https://logos.example/line.png")
+		logoSizes.Unlock()
 	})
 
 	if got := logoAspectRatio(source); got != 1 {
@@ -70,7 +71,7 @@ func TestLogoAspectRatio(t *testing.T) {
 	}
 
 	// Extremes are bounded; logos that are not URLs are not fetched.
-	cacheExternalImage("https://logos.example/line.png", externalImage{at: time.Now(), data: []byte{1}, width: 1000, height: 10})
+	rememberLogoSize("https://logos.example/line.png", 1000, 10, false)
 	if got := logoAspectRatio("https://logos.example/line.png"); got != logoAspectMax {
 		t.Fatalf("bounded ratio = %v", got)
 	}
@@ -81,5 +82,30 @@ func TestLogoAspectRatio(t *testing.T) {
 	case s := <-fetched:
 		t.Fatalf("non-URL logo fetched: %q", s)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// Measuring logos never touches the image cache, so a lineup larger than it
+// can't evict posters; sizes stay bounded.
+func TestLogoSizesStayOutOfImageCache(t *testing.T) {
+	externalImages.Lock()
+	before := len(externalImages.entries)
+	externalImages.Unlock()
+	for i := range logoSizesMax + 50 {
+		rememberLogoSize(fmt.Sprintf("https://logos.example/%d.png", i), 100, 50, false)
+	}
+	logoSizes.Lock()
+	n := len(logoSizes.m)
+	for k := range logoSizes.m {
+		if strings.HasPrefix(k, "https://logos.example/") {
+			delete(logoSizes.m, k)
+		}
+	}
+	logoSizes.Unlock()
+	externalImages.Lock()
+	after := len(externalImages.entries)
+	externalImages.Unlock()
+	if n > logoSizesMax || after != before {
+		t.Fatalf("sizes=%d (max %d), image cache %d -> %d", n, logoSizesMax, before, after)
 	}
 }

@@ -20,6 +20,9 @@ type takenAiring struct {
 	ruleID           string
 }
 
+// takenAiringsLookback bounds how far back takenAirings looks.
+const takenAiringsLookback = 24 * time.Hour
+
 type takenAirings []takenAiring
 
 // takenAirings lists the profile's recordings that are scheduled, running or
@@ -27,8 +30,12 @@ type takenAirings []takenAiring
 // created after a single recording of the current episode (Jellyfin's
 // record, then record series) would otherwise record it in parallel.
 func (s *Service) takenAirings(ctx context.Context, profileID string) takenAirings {
+	// Rules only schedule airings from about now on: older recordings can't
+	// collide, and the profile's whole history would grow every pass.
+	since := time.Now().Add(-takenAiringsLookback)
 	recs, err := s.repo.List(ctx, models.RecordingListFilter{
-		UserID: profileID,
+		UserID:         profileID,
+		OnlyStartAfter: &since,
 		Statuses: []models.RecordingStatus{
 			models.RecordingStatusPending, models.RecordingStatusStarting,
 			models.RecordingStatusRunning, models.RecordingStatusCompleted,

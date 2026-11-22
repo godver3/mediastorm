@@ -44,6 +44,10 @@ func (r *pgRecordingRepo) List(ctx context.Context, filter models.RecordingListF
 		args = append(args, *filter.OnlyStartBefore)
 		clauses = append(clauses, fmt.Sprintf("(start_at - make_interval(secs => padding_before_seconds)) <= $%d", len(args)))
 	}
+	if filter.OnlyStartAfter != nil {
+		args = append(args, *filter.OnlyStartAfter)
+		clauses = append(clauses, fmt.Sprintf("start_at >= $%d", len(args)))
+	}
 
 	query := `
 		SELECT id, user_id, COALESCE(rule_id, ''), schedule_key, type, status, channel_id, tvg_id, channel_name, title, description,

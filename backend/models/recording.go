@@ -110,6 +110,8 @@ type RecordingListFilter struct {
 	IncludeAll      bool
 	Limit           int
 	OnlyStartBefore *time.Time
+	// OnlyStartAfter keeps recordings starting at or after this time.
+	OnlyStartAfter *time.Time
 }
 
 type CreateEPGRecordingRequest struct {
