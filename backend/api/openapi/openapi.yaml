@@ -1308,6 +1308,10 @@ paths:
         the lowest-priority source. Re-post when chapters or duration become
         known. `outro` doubles as movie end credits. Provider failures degrade
         to chapter-only results; this endpoint does not fail playback.
+        With `recordingId` (a Live TV recording) the commercial breaks comskip
+        found in it are added as `commercial` segments, when the caller may
+        play that recording and commercial detection is on. Clients decide
+        whether to skip them.
       parameters:
         - $ref: '#/components/parameters/ClientID'
       requestBody:
@@ -3254,6 +3258,9 @@ components:
           maxItems: 500
           items:
             $ref: '#/components/schemas/Chapter'
+        recordingId:
+          type: string
+          description: A recording being played; adds its commercial breaks.
 
     Segment:
       type: object
@@ -3261,8 +3268,8 @@ components:
       properties:
         type:
           type: string
-          enum: [intro, recap, outro, preview]
-          description: '`outro` is the end-credits range (also movie credits); `preview` comes only from SkipDB.'
+          enum: [intro, recap, outro, preview, commercial]
+          description: '`outro` is the end-credits range (also movie credits); `preview` comes only from SkipDB; `commercial` only for recordings (comskip).'
         start:
           type: number
           description: Seconds from the start of the media.
@@ -3271,7 +3278,7 @@ components:
           description: Seconds from the start of the media.
         source:
           type: string
-          enum: [introdb, skipdb, chapter-explicit, chapter-heuristic]
+          enum: [introdb, skipdb, chapter-explicit, chapter-heuristic, comskip]
 
     SkipSegmentsResponse:
       type: object

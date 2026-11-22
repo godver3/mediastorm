@@ -441,6 +441,9 @@ func (s *Server) recordingPlaybackInfo(w http.ResponseWriter, r *http.Request, p
 	}
 	s.plays.add(sess)
 	source := s.vodMediaSource(r, p, sess, status, req)
+	if s.deps.RecordingCommercials != nil && len(s.deps.RecordingCommercials(rec.OutputPath)) > 0 {
+		source.HasSegments = true // jellyfin-web asks for segments only then
+	}
 	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{MediaSources: []dto.MediaSourceInfo{source}, PlaySessionID: sess.ID})
 }
 
@@ -908,4 +911,28 @@ func (s *Server) streamRunningRecording(w http.ResponseWriter, r *http.Request, 
 	}
 	forward(w, r, p, s.deps.Handlers.RecordingStream, "/api/live/recordings/"+url.PathEscape(rec.ID)+"/stream?seekable=estimate", map[string]string{"recordingID": rec.ID})
 	return true
+}
+
+// recordingSegments are a recording's commercial breaks, found by comskip
+// after the recording finished, as Jellyfin "Commercial" segments (clients
+// offer to skip them, or skip them, per their segment settings).
+func (s *Server) recordingSegments(ctx context.Context, p *principal, sess *playSession) (segments []dto.MediaSegmentDto, found bool) {
+	segments = []dto.MediaSegmentDto{}
+	if s.deps.RecordingCommercials == nil {
+		return segments, true
+	}
+	rec, ok := s.recordingByCompactID(ctx, p, sess.Ref.Source)
+	if !ok {
+		return segments, false // maybe a passing lookup failure: not cached
+	}
+	for _, b := range s.deps.RecordingCommercials(rec.OutputPath) {
+		segments = append(segments, dto.MediaSegmentDto{
+			ID:         deriveID("segment", sess.ItemID+"/Commercial/"+strconv.FormatFloat(b.Start, 'f', 3, 64)),
+			ItemID:     sess.ItemID,
+			Type:       "Commercial",
+			StartTicks: secondsToTicks(b.Start),
+			EndTicks:   secondsToTicks(b.End),
+		})
+	}
+	return segments, true
 }

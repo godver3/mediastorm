@@ -72,6 +72,17 @@ type Service struct {
 	ruleWake chan struct{}
 	ruleMu   sync.Mutex
 
+	// Commercial detection (comskip.go).
+	comskipConfig   func() ComskipConfig
+	comskipCached   ComskipConfig
+	comskipCachedAt time.Time
+	comskipQueue    chan string
+	comskipQueued   map[string]bool    // in comskipQueue
+	comskipFailures map[string]int     // failed analyses per recording since start
+	comskipMissing  string             // the missing binary last reported
+	comskipRunning  string             // the recording being analysed
+	comskipStop     context.CancelFunc // stops that analysis
+
 	// rowLocks serialise the changes to one recording: Cancel and Delete
 	// against the recording goroutine's status changes and finalisation,
 	// which would otherwise write back a stale copy (a cancelled recording
@@ -176,6 +187,10 @@ func (s *Service) Start(ctx context.Context) error {
 	if s.rules != nil {
 		s.wg.Add(1)
 		go s.ruleLoop()
+	}
+	if s.comskipQueue != nil {
+		s.wg.Add(1)
+		go s.comskipLoop(s.ctx)
 	}
 	return nil
 }
@@ -399,6 +414,7 @@ func (s *Service) cancelLocked(recording *models.Recording) error {
 }
 
 func (s *Service) Delete(id string) error {
+	s.cancelComskip(id)
 	// Locked: a cancelled recording's goroutine may still be finalising it.
 	defer s.lockRecording(id)()
 	recording, err := s.Get(id)
@@ -421,6 +437,9 @@ func (s *Service) Delete(id string) error {
 			if err := os.Remove(recording.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("delete recording file: %w", err)
 			}
+			if err := removeEDL(recording.OutputPath); err != nil {
+				return err
+			}
 		}
 		recording.Status = models.RecordingStatusCancelled
 		recording.OutputPath = ""
@@ -436,6 +455,9 @@ func (s *Service) Delete(id string) error {
 	if strings.TrimSpace(recording.OutputPath) != "" {
 		if err := os.Remove(recording.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("delete recording file: %w", err)
+		}
+		if err := removeEDL(recording.OutputPath); err != nil {
+			return err
 		}
 	}
 	return s.repo.Delete(context.Background(), recording.ID)
@@ -992,6 +1014,8 @@ func (s *Service) startRecording(recording models.Recording) {
 		latest.ID, latest.Status, attempt, latest.OutputSizeBytes, latest.Error)
 	if err := s.repo.Update(context.Background(), latest); err != nil {
 		log.Printf("[recordings] finalize recording update failed: %v", err)
+	} else if latest.Status == models.RecordingStatusCompleted {
+		s.queueComskip(latest.ID)
 	}
 }
 

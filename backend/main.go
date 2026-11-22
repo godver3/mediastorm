@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"novastream/api"
@@ -857,6 +858,21 @@ func main() {
 	if store != nil {
 		recordingsService = recordings.NewService(store.Recordings(), settings.Transmux.FFmpegPath, filepath.Join(settings.Cache.Directory, "recordings"))
 		recordingsService.SetRuleRepository(store.RecordingRules())
+		var lastComskip atomic.Pointer[recordings.ComskipConfig] // kept when the settings cannot be read
+		recordingsService.SetComskip(func() recordings.ComskipConfig {
+			current, err := cfgManager.Load()
+			if err != nil {
+				// A passing read error must not stop a long analysis.
+				if last := lastComskip.Load(); last != nil {
+					return *last
+				}
+				return recordings.ComskipConfig{}
+			}
+			c := current.Live.Comskip
+			cfg := recordings.ComskipConfig{Enabled: c.Enabled, Path: c.Path, IniPath: c.IniPath}
+			lastComskip.Store(&cfg)
+			return cfg
+		})
 	}
 	var recordingsStreamProvider streaming.Provider
 	if recordingsService != nil {
@@ -1097,6 +1113,9 @@ func main() {
 	}
 	recordingsHandler.SetUserSettingsService(userSettingsService)
 	recordingsHandler.SetLiveAccessProvider(cfgManager, liveHandler)
+	// Commercial breaks of recordings in /video/segments (comskip).
+	recordingsHandler.SetCommercials(bridgeRecordingCommercials(recordingsService))
+	videoHandler.SetRecordingSegments(recordingsHandler.CommercialSegments)
 
 	// Shareable playback links: capture current stream + tracks, mint a
 	// short-lived stream-scoped session on open. Persisted to Postgres so links
@@ -2025,10 +2044,11 @@ func main() {
 				current, err := cfgManager.Load()
 				return current.JellyfinBridge, err
 			},
-			ThumbnailsEnabled: videoHandler.ThumbnailsEnabled,
-			StopRequested:     handlers.GetStreamTracker().ShouldStopPlayback,
-			RankingGeneration: prequeueHandler.GetStore().Generation,
-			RecordingFrame:    bridgeRecordingFrame(recordingsService),
+			ThumbnailsEnabled:    videoHandler.ThumbnailsEnabled,
+			StopRequested:        handlers.GetStreamTracker().ShouldStopPlayback,
+			RankingGeneration:    prequeueHandler.GetStore().Generation,
+			RecordingFrame:       bridgeRecordingFrame(recordingsService),
+			RecordingCommercials: bridgeRecordingCommercials(recordingsService),
 			ThumbnailFrames: func(streamPath string) ([]jellyfinbridge.ThumbnailFrame, bool) {
 				frames, done := videoHandler.ThumbnailFrames(streamPath)
 				out := make([]jellyfinbridge.ThumbnailFrame, len(frames))
@@ -2613,6 +2633,15 @@ func bridgeWatchRooms(service *watchrooms.Service) jellyfinbridge.WatchRoomServi
 		return nil
 	}
 	return service
+}
+
+// bridgeRecordingCommercials gives the Jellyfin bridge comskip's commercial
+// breaks when recording is available.
+func bridgeRecordingCommercials(service *recordings.Service) func(string) []models.CommercialBreak {
+	if service == nil {
+		return nil
+	}
+	return service.Commercials
 }
 
 // bridgeRecordingFrame gives the Jellyfin bridge stills from recordings when

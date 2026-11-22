@@ -824,6 +824,18 @@ type LiveSettings struct {
 	TimeshiftMinutes int                  `json:"timeshiftMinutes"`
 	Filtering        LiveTVFilterSettings `json:"filtering"` // Backend-side channel filtering
 	EPG              EPGSettings          `json:"epg"`       // Electronic Program Guide settings
+	// Comskip finds commercial breaks in finished recordings (off by default).
+	Comskip ComskipSettings `json:"comskip"`
+}
+
+// ComskipSettings runs comskip (https://github.com/erikkaashoek/Comskip) on
+// finished recordings and keeps its commercial breaks as an EDL file next to
+// the recording, which the Jellyfin bridge offers as skippable segments.
+// Off by default; switching it off also stops offering the breaks.
+type ComskipSettings struct {
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path,omitempty"`    // comskip binary (default "comskip" on PATH)
+	IniPath string `json:"iniPath,omitempty"` // comskip.ini to use (default: EDL output only)
 }
 
 // MaxLiveTimeshiftMinutes bounds the window: the server keeps every segment inside it on disk.

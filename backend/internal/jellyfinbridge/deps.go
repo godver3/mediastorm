@@ -161,6 +161,9 @@ type Deps struct {
 	// RecordingFrame returns a JPEG still from a recording's file (nil: no
 	// stills; recordings without a guide image show the channel logo).
 	RecordingFrame func(ctx context.Context, recordingID string, width int) ([]byte, error)
+	// RecordingCommercials returns the commercial breaks comskip found in a
+	// recording file (nil: none known, or comskip is off).
+	RecordingCommercials func(outputPath string) []models.CommercialBreak
 }
 
 // StreamPlan is the output plan of a mediastorm HLS session, as shown in the

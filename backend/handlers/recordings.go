@@ -55,6 +55,10 @@ type RecordingsHandler struct {
 	userSettings recordingUserSettingsService
 	cfgManager   *config.Manager
 	liveChannels LiveChannelProvider
+
+	// commercials returns comskip's breaks for a recording file (see
+	// SetCommercials).
+	commercials func(outputPath string) []models.CommercialBreak
 }
 
 func NewRecordingsHandler(service recordingService, users recordingUsersProvider) *RecordingsHandler {
