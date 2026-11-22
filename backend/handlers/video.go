@@ -5451,7 +5451,9 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		RequestHeaders:     stremioRequestHeaders,
 		ForceHLSInput:      stremioHLSInput,
 		HDHomeRunInput:     hdHomeRunInput,
-		TimeshiftWindow:    timeshiftWindow,
+		// Multiscreen and the HLS fallback ask for format=hls and play it in AVPlayer.
+		EncodeMPEG2Video: hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls"),
+		TimeshiftWindow:  timeshiftWindow,
 	}
 	playbackTarget := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	clientID := requestClientID(r)

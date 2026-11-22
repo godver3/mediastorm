@@ -598,6 +598,9 @@ type LiveTuningSettings struct {
 	// HDHomeRunInput is set only after catalog authorization. The tuner stream
 	// is fetched in Go with redirects denied and decoded as MPEG-TS from stdin.
 	HDHomeRunInput bool
+	// EncodeMPEG2Video, on a tuner session the client asked to be HLS, encodes
+	// MPEG-2 video to H.264 instead of copying it (hls_live_mpeg2.go).
+	EncodeMPEG2Video bool
 	// ProxyURL, when set, routes the upstream live fetch through this proxy.
 	// SOCKS5 proxies (which ffmpeg cannot use natively) are honored by fetching
 	// the stream with the Go HTTP client and piping it into ffmpeg's stdin.
@@ -2828,6 +2831,13 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		defer proxyBody.Close()
 		inputArg = "pipe:0"
 	}
+	encodeVideo := false
+	if session.LiveTuning.EncodeMPEG2Video && proxyBody != nil && isNativeLivePlaybackTarget(session.PlaybackTarget) {
+		var codec string
+		codec, proxyBody = peekLiveTSVideoCodec(proxyBody, liveCodecPeekLimit, liveCodecPeekTimeout)
+		encodeVideo = codec == "mpeg2"
+		log.Printf("[hls] live session %s: tuner video=%q encode=%v", session.ID, codec, encodeVideo)
+	}
 	if session.LiveProvider == "stremio" && (session.LiveTuning.ForceHLSInput || inputLooksLikeHLS(session.Path)) {
 		relay, err := startLiveHLSInputRelay(ctx, session.Path, session.LiveTuning.ProxyURL, inputHeaders)
 		if err != nil {
@@ -2938,7 +2948,11 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	}
 	args = append(args, "-i", inputArg)
 	session.mu.Lock()
-	if isNativeLivePlaybackTarget(session.PlaybackTarget) {
+	if isNativeLivePlaybackTarget(session.PlaybackTarget) && encodeVideo {
+		session.VideoEncoder = "libx264"
+		session.outputPlan = &HLSOutputPlan{Live: true, Encoder: "libx264", VideoCodec: "h264", AudioCodec: "aac"}
+		log.Printf("[hls] live session %s: MPEG-2 tuner video for an HLS client (video=libx264 audio=aac)", session.ID)
+	} else if isNativeLivePlaybackTarget(session.PlaybackTarget) {
 		session.VideoEncoder = "copy"
 		recordLiveOutputPlan(session, true)
 		audioMode := "copy"
@@ -2955,6 +2969,9 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	}
 	session.mu.Unlock()
 	outputArgs := liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom)
+	if encodeVideo {
+		outputArgs = liveVideoEncodeArgs(outputArgs)
+	}
 	outputArgs = applyTimeshiftAudio(applyTimeshiftListSize(outputArgs, session.LiveTuning.TimeshiftWindow), session.LiveTuning.TimeshiftWindow)
 	args = append(args, outputArgs...)
 
