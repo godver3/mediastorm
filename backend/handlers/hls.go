@@ -3871,7 +3871,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 			// (by ~0.13s for video with B-frames, plus the container start time),
 			// so aim just past the keyframe to land exactly on it.
 			seekTarget := session.TranscodingOffset + stableCopySeekLead
-			if (session.ProbeData != nil && session.ProbeData.MPEGTS) || isMPEGTSPath(session.Path) || isMPEGTSPath(session.OriginalPath) {
+			if session.ProbeData != nil && session.ProbeData.MPEGTS || session.ProbeData == nil && (isMPEGTSPath(session.Path) || isMPEGTSPath(session.OriginalPath)) {
 				seekTarget = math.Max(session.TranscodingOffset-stableCopyTSSeekBack, 0)
 			}
 			args = append(args, "-noaccurate_seek", "-ss", fmt.Sprintf("%.3f", seekTarget))

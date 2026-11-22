@@ -69,6 +69,12 @@ func (s *Server) noteUncopyable(profileID, itemID, name, streamPath string) unco
 		entry.paths = append(slices.Clip(entry.paths), streamPath)
 	}
 	entry.at = time.Now()
+	s.uncopyable.Range(func(k, v any) bool { // prune expired items so the map stays bounded
+		if time.Since(v.(uncopyableReleases).at) > copyFailureTTL {
+			s.uncopyable.Delete(k)
+		}
+		return true
+	})
 	s.uncopyable.Store(uncopyableKey(profileID, itemID), entry)
 	return entry
 }
@@ -120,7 +126,7 @@ func (s *Server) swapUncopyableRelease(p *principal, sess *playSession) bool {
 	}
 	failedName := uncopyableReleaseName(failed)
 	entry := s.noteUncopyable(sess.ProfileID, sess.ItemID, failedName, failed.StreamPath)
-	if refused := max(len(entry.names), len(entry.paths)); entry.exhausted || refused > maxUncopyableReleases {
+	if refused := max(len(entry.names), len(entry.paths)); entry.exhausted || refused >= maxUncopyableReleases {
 		log.Printf("[jellyfin-bridge] %s: %d releases cannot be copied and no other is left", sess.ItemID, refused)
 		return false
 	}
