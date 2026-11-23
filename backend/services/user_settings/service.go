@@ -802,7 +802,8 @@ func isSettingsEmpty(s models.UserSettings) bool {
 		return false
 	}
 	if s.Playback.PrerollMode != "" || s.Playback.PrerollAssetID != "" ||
-		s.Playback.PrerollMediaScope != "" || s.Playback.PrerollSkipIfPrequeueReady != nil {
+		s.Playback.PrerollMediaScope != "" || s.Playback.PrerollSkipIfPrequeueReady != nil ||
+		s.Playback.WatchlistAutoRemoveMovies != "" || s.Playback.WatchlistAutoRemoveShows != "" {
 		return false
 	}
 

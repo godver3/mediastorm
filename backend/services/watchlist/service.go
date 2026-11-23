@@ -1105,3 +1105,36 @@ func watchlistIdentityTokens(mediaType, id string, externalIDs map[string]string
 	}
 	return tokens
 }
+
+// RemoveMatching removes every stored item equivalent to the title (same
+// identity rules as Contains) and records user-removal tombstones. It returns
+// whether anything was removed.
+func (s *Service) RemoveMatching(userID, mediaType, id string, externalIDs map[string]string) (bool, error) {
+	userID = strings.TrimSpace(userID)
+	mediaType = mediaidentity.NormalizeMediaType(mediaType)
+	externalIDs = normaliseExternalIDs(externalIDs)
+	if userID == "" || mediaType == "" || (strings.TrimSpace(id) == "" && len(externalIDs) == 0) {
+		return false, nil
+	}
+	canonicalID := canonicalWatchlistID(mediaType, id, externalIDs)
+
+	s.mu.RLock()
+	var matches []models.WatchlistItem
+	for _, existing := range s.items[userID] {
+		if watchlistItemsEquivalent(mediaType, canonicalID, externalIDs, existing) ||
+			(strings.TrimSpace(id) != "" && watchlistItemMatchesIdentifier(existing, mediaType, id)) {
+			matches = append(matches, existing)
+		}
+	}
+	s.mu.RUnlock()
+
+	removed := false
+	for _, item := range matches {
+		ok, err := s.Remove(userID, item.MediaType, item.ID)
+		if err != nil {
+			return removed, err
+		}
+		removed = removed || ok
+	}
+	return removed, nil
+}

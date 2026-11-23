@@ -1482,6 +1482,8 @@ func (h *StartupHandler) getDefaultsFromGlobal() models.UserSettings {
 			PrerollMode:                   globalSettings.Playback.PrerollMode,
 			PrerollAssetID:                globalSettings.Playback.PrerollAssetID,
 			PrerollMediaScope:             globalSettings.Playback.PrerollMediaScope,
+			WatchlistAutoRemoveMovies:     globalSettings.Playback.WatchlistAutoRemoveMovies,
+			WatchlistAutoRemoveShows:      globalSettings.Playback.WatchlistAutoRemoveShows,
 			PrerollSkipIfPrequeueReady:    models.BoolPtr(globalSettings.Playback.PrerollSkipIfPrequeueReady),
 			StreamMigrationEnabled:        models.BoolPtr(globalSettings.Playback.StreamMigrationEnabled),
 			IgnoreDVCompatibilityCheck:    models.BoolPtr(globalSettings.Playback.IgnoreDVCompatibilityCheck),

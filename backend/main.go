@@ -789,6 +789,22 @@ func main() {
 		}
 		return toScrobbleStartDelay(globalSettings.Playback.ScrobbleStartDelaySeconds)
 	})
+	watchlistAutoRemover := watchlist.NewAutoRemover(watchlistService, func(userID string) (string, string) {
+		var movies, shows string
+		if globalSettings, err := cfgManager.Load(); err == nil {
+			movies, shows = globalSettings.Playback.WatchlistAutoRemoveMovies, globalSettings.Playback.WatchlistAutoRemoveShows
+		}
+		if profileSettings, err := userSettingsService.Get(userID); err == nil && profileSettings != nil {
+			if v := profileSettings.Playback.WatchlistAutoRemoveMovies; v != "" {
+				movies = v
+			}
+			if v := profileSettings.Playback.WatchlistAutoRemoveShows; v != "" {
+				shows = v
+			}
+		}
+		return movies, shows
+	}, historyService.IsSeriesFullyWatched)
+	historyService.SetWatchEventObserver(watchlistAutoRemover.HandleWatchEvent)
 	remoteMediaProvider := remotemedia.NewProvider(remoteMediaService)
 
 	// Startup handler bundles multiple API calls for low-power devices

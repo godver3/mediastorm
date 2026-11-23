@@ -187,6 +187,7 @@ type Service struct {
 	seriesStatesBuilds   singleflight.Group             // one in-flight rebuild per user+revision
 	changeMu             sync.RWMutex
 	watchStateChanged    func(userID string)
+	watchEventObserver   WatchEventObserver
 	playbackProgressGate chan struct{}
 	playbackProgressOnce sync.Once
 }
@@ -3687,6 +3688,7 @@ func (s *Service) ToggleWatched(userID string, update models.WatchHistoryUpdate)
 	// Note: doScrobble is safe to call while holding lock since it spawns goroutines
 	if item.Watched {
 		s.doScrobble(scrobbler, userID, item)
+		s.emitWatchEvent(userID, watchEventFromItem(WatchEventWatched, item))
 	} else if wasAlreadyWatched {
 		s.doUnscrobble(scrobbler, userID, item)
 	}
@@ -3834,6 +3836,7 @@ func (s *Service) UpdateWatchHistory(userID string, update models.WatchHistoryUp
 	// is updated again (e.g. metadata refresh, redundant API calls).
 	if update.Watched != nil && *update.Watched && !wasAlreadyWatched {
 		s.doScrobble(scrobbler, userID, item)
+		s.emitWatchEvent(userID, watchEventFromItem(WatchEventWatched, item))
 	} else if update.Watched != nil && !*update.Watched && wasAlreadyWatched {
 		s.doUnscrobble(scrobbler, userID, item)
 	}
@@ -4086,6 +4089,11 @@ func (s *Service) BulkUpdateScopedWatchHistory(userID string, updates []models.W
 		}
 	}
 	s.doBulkScrobble(scrobbler, userID, changed, scope)
+	for _, item := range changed {
+		if item.Watched {
+			s.emitWatchEvent(userID, watchEventFromItem(WatchEventWatched, item))
+		}
+	}
 
 	return results, nil
 }
@@ -5770,6 +5778,10 @@ func (s *Service) UpdatePlaybackProgressContext(ctx context.Context, userID stri
 		realtimeScrobbleStarted = s.shouldEmitRealtimeScrobbleLocked(userID, update, scrobbleStartDelay, time.Now())
 	} else if update.PlaybackEnded {
 		s.clearScrobbleStartDelaySessionLocked(userID, update)
+	}
+
+	if !excludeFromHistoryShelves && !hadExistingProgress && percentWatched < 90 {
+		s.emitWatchEvent(userID, watchEventFromProgress(WatchEventStarted, update))
 	}
 
 	// Auto-mark as watched if >= 90% complete

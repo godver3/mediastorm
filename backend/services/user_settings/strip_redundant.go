@@ -155,6 +155,8 @@ func globalToUserSettings(g config.Settings) models.UserSettings {
 			PrerollMode:                   g.Playback.PrerollMode,
 			PrerollAssetID:                g.Playback.PrerollAssetID,
 			PrerollMediaScope:             g.Playback.PrerollMediaScope,
+			WatchlistAutoRemoveMovies:     g.Playback.WatchlistAutoRemoveMovies,
+			WatchlistAutoRemoveShows:      g.Playback.WatchlistAutoRemoveShows,
 			PrerollSkipIfPrequeueReady:    models.BoolPtr(g.Playback.PrerollSkipIfPrequeueReady),
 			StreamMigrationEnabled:        models.BoolPtr(g.Playback.StreamMigrationEnabled),
 			IgnoreDVCompatibilityCheck:    models.BoolPtr(g.Playback.IgnoreDVCompatibilityCheck),
@@ -446,6 +448,12 @@ func mergeWithGlobal(us models.UserSettings, g config.Settings) models.UserSetti
 	}
 	if eff.Playback.PrerollMediaScope == "" {
 		eff.Playback.PrerollMediaScope = g.Playback.PrerollMediaScope
+	}
+	if eff.Playback.WatchlistAutoRemoveMovies == "" {
+		eff.Playback.WatchlistAutoRemoveMovies = g.Playback.WatchlistAutoRemoveMovies
+	}
+	if eff.Playback.WatchlistAutoRemoveShows == "" {
+		eff.Playback.WatchlistAutoRemoveShows = g.Playback.WatchlistAutoRemoveShows
 	}
 	if eff.Playback.PrerollSkipIfPrequeueReady == nil {
 		eff.Playback.PrerollSkipIfPrequeueReady = models.BoolPtr(g.Playback.PrerollSkipIfPrequeueReady)
@@ -857,6 +865,14 @@ func stripPlayback(p *models.PlaybackSettings, g config.PlaybackSettings) bool {
 	}
 	if p.PrerollMediaScope != "" && p.PrerollMediaScope == g.PrerollMediaScope {
 		p.PrerollMediaScope = ""
+		changed = true
+	}
+	if p.WatchlistAutoRemoveMovies != "" && p.WatchlistAutoRemoveMovies == g.WatchlistAutoRemoveMovies {
+		p.WatchlistAutoRemoveMovies = ""
+		changed = true
+	}
+	if p.WatchlistAutoRemoveShows != "" && p.WatchlistAutoRemoveShows == g.WatchlistAutoRemoveShows {
+		p.WatchlistAutoRemoveShows = ""
 		changed = true
 	}
 	if p.PrerollSkipIfPrequeueReady != nil && *p.PrerollSkipIfPrequeueReady == g.PrerollSkipIfPrequeueReady {

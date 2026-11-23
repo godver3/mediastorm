@@ -518,6 +518,8 @@ type PlaybackSettings struct {
 	RecapAutoSkip                 *bool     `json:"recapAutoSkip,omitempty"`                       // Automatically skip known recap segments
 	CreditsAutoSkip               *bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
 	ScrobbleStartDelaySeconds     *int      `json:"scrobbleStartDelaySeconds,omitempty"`           // Active playback time before real-time scrobble events begin
+	WatchlistAutoRemoveMovies     string    `json:"watchlistAutoRemoveMovies,omitempty"`           // Empty inherits; off, watched, or started
+	WatchlistAutoRemoveShows      string    `json:"watchlistAutoRemoveShows,omitempty"`            // Empty inherits; off, watched, or started
 	CreditsDetection              bool      `json:"creditsDetection,omitempty"`                    // Legacy name for creditsAutoSkip
 	MatchFrameRate                *bool     `json:"matchFrameRate,omitempty"`                      // Request TV display refresh rate matching during playback
 	LiveClosedCaptionExtraction   *bool     `json:"liveClosedCaptionExtraction,omitempty"`         // Extract EIA-608 closed captions from live TV (server-side)

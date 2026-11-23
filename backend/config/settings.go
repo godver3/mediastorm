@@ -641,6 +641,8 @@ type PlaybackSettings struct {
 	MatchFrameRate                bool                      `json:"matchFrameRate"`                      // Request TV display refresh rate matching during playback
 	LiveClosedCaptionExtraction   bool                      `json:"liveClosedCaptionExtraction"`         // Extract EIA-608 closed captions from live TV (server-side, default on)
 	ScrobbleStartDelaySeconds     int                       `json:"scrobbleStartDelaySeconds"`           // Active playback time before real-time scrobble events begin (0 = immediately)
+	WatchlistAutoRemoveMovies     string                    `json:"watchlistAutoRemoveMovies,omitempty"` // off (default), watched, or started: drop movies from the watchlist automatically
+	WatchlistAutoRemoveShows      string                    `json:"watchlistAutoRemoveShows,omitempty"`  // off (default), watched (all aired non-special episodes), or started
 	MaxConcurrentStreams          int                       `json:"maxConcurrentStreams"`                // Global max concurrent VOD streams across all accounts (0 = unlimited)
 	MaxResultsPerResolution       int                       `json:"maxResultsPerResolution"`             // Maximum number of results per resolution tier (0 = no limit)
 	YouTubeProxyURL               string                    `json:"youtubeProxyUrl,omitempty"`           // Optional proxy URL passed to yt-dlp for YouTube extraction/downloads
