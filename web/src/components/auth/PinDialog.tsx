@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useState, type FormEvent } from 'react';
 import { isWrongPinError } from '@/api/client';
 import { verifyPin } from '@/api/users';
@@ -56,7 +57,14 @@ export function PinDialog({
       <form onSubmit={submit} className="flex flex-col gap-4">
         <Field
           label="PIN"
-          type="password"
+          // Masked text, not type="password": keeps password managers / iOS
+          // AutoFill from treating the PIN as a credential.
+          type="text"
+          style={{ WebkitTextSecurity: 'disc' } as React.CSSProperties}
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
           inputMode="numeric"
           autoComplete="off"
           autoFocus

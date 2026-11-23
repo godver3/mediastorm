@@ -941,6 +941,8 @@ export interface HomeCardModel {
   subtitle?: string;
   overview?: string;
   posterUrl?: string;
+  /** Poster without title text, when the backend found one (hero on phones). */
+  textlessPosterUrl?: string;
   /** 16:9 art for landscape cards (episode still or backdrop). */
   landscapeUrl?: string;
   backdropUrl?: string;
@@ -1032,6 +1034,7 @@ export function continueWatchingCard(item: ContinueWatchingItem): HomeCardModel 
         : 'Series',
     overview: ep?.overview ?? item.overview,
     posterUrl: item.textPosterUrl ?? item.posterUrl,
+    textlessPosterUrl: item.textPosterUrl ? item.posterUrl : undefined,
     landscapeUrl: ep?.image?.url ?? item.backdropUrl,
     backdropUrl: item.backdropUrl,
     logoUrl: item.logoUrl,
@@ -1060,6 +1063,7 @@ export function titleCard(t: Title, rank?: number): HomeCardModel {
     subtitle: titleSubtitle(t),
     overview: t.overview,
     posterUrl: t.textPoster?.url ?? t.poster?.url,
+    textlessPosterUrl: t.textPoster ? t.poster?.url : undefined,
     landscapeUrl: t.cardImage?.url ?? t.backdrop?.url,
     backdropUrl: t.backdrop?.url,
     logoUrl: t.logo?.url,
@@ -1077,6 +1081,7 @@ export function watchlistCard(item: WatchlistItem): HomeCardModel {
       .join(' · '),
     overview: item.overview,
     posterUrl: item.textPosterUrl ?? item.posterUrl,
+    textlessPosterUrl: item.textPosterUrl ? item.posterUrl : undefined,
     landscapeUrl: item.backdropUrl,
     backdropUrl: item.backdropUrl,
     logoUrl: item.logoUrl,
@@ -1126,6 +1131,7 @@ export function calendarCard(item: CalendarItem, now = new Date()): HomeCardMode
       .join(' · '),
     overview: item.episodeOverview ?? item.overview,
     posterUrl: item.textPosterUrl ?? item.posterUrl,
+    textlessPosterUrl: item.textPosterUrl ? item.posterUrl : undefined,
     landscapeUrl: item.backdropUrl,
     backdropUrl: item.backdropUrl,
     logoUrl: item.logo?.url,

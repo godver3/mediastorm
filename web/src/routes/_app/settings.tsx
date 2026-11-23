@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -461,8 +462,15 @@ function ProfileSection() {
             <input
               id="profile-pin"
               inputMode="numeric"
-              autoComplete="new-password"
-              type="password"
+              // Masked text, not type="password": keeps password managers / iOS
+              // AutoFill from treating the PIN as a credential.
+              type="text"
+              autoComplete="off"
+              style={{ WebkitTextSecurity: 'disc' } as React.CSSProperties}
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore
+              data-form-type="other"
               placeholder={profile.hasPin ? 'New PIN' : '4–8 digits'}
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}

@@ -55,6 +55,8 @@
      body/#root grow with the content instead, and their children fill at least it. */
   html {
     height: 100%;
+    /* No double-tap zoom on mobile; pinch-zoom still works. */
+    touch-action: manipulation;
   }
   body {
     min-height: 100%;

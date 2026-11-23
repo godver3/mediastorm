@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import type { HomeCardModel } from '@/api/home';
 import { artworkUrl } from '@/lib/artwork';
 import { cn } from '@/lib/cn';
@@ -19,6 +19,7 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
   const slides = cards.filter((c) => c.backdropUrl);
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const touch = useRef<{ x: number; y: number } | null>(null);
   const linkFor = useDetailsHref();
   const count = slides.length;
   const i = count ? index % count : 0;
@@ -33,6 +34,20 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
   const slide = slides[i]!;
   const link = linkFor(slide);
   const go = (d: number) => setIndex((n) => (n + d + count) % count);
+  // Horizontal swipe on touch screens; vertical drags still scroll the page.
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    touch.current = t ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    const start = touch.current;
+    touch.current = null;
+    const t = e.changedTouches[0];
+    if (!start || !t || count < 2) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+  };
 
   return (
     <section
@@ -43,23 +58,33 @@ export function HomeHero({ cards, label }: { cards: HomeCardModel[]; label: stri
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
       onKeyDown={(e) => {
         if (e.key === 'ArrowRight') go(1);
         if (e.key === 'ArrowLeft') go(-1);
       }}
     >
       {slides.map((s, n) => (
-        <img
-          key={s.id}
-          src={artworkUrl(s.backdropUrl, 'w1280')}
-          alt=""
-          aria-hidden
-          loading={n === 0 ? 'eager' : 'lazy'}
-          className={cn(
-            'absolute inset-0 -z-10 h-full w-full object-cover object-[center_20%] transition-opacity duration-700',
-            n === i ? 'opacity-100' : 'opacity-0',
+        // Phones get the textless portrait poster (a 16:9 backdrop cover-cropped into
+        // a tall box shows only a sliver), framed around its top third. Posters with
+        // title text would clash with the logo, so those keep the backdrop.
+        <picture key={s.id}>
+          {s.textlessPosterUrl && (
+            <source media="(max-width: 639px)" srcSet={artworkUrl(s.textlessPosterUrl, 'w780')} />
           )}
-        />
+          <img
+            src={artworkUrl(s.backdropUrl, 'w1280')}
+            alt=""
+            aria-hidden
+            loading={n === 0 ? 'eager' : 'lazy'}
+            className={cn(
+              'absolute inset-0 -z-10 h-full w-full object-cover object-[center_20%] transition-opacity duration-700',
+              s.textlessPosterUrl && 'max-sm:object-[center_33%]',
+              n === i ? 'opacity-100' : 'opacity-0',
+            )}
+          />
+        </picture>
       ))}
       <div className="absolute inset-0 -z-10 bg-gradient-to-r from-bg via-bg/70 to-transparent max-md:via-bg/40" />
       <div className="absolute inset-0 -z-10 bg-gradient-to-t from-bg via-transparent to-bg/30" />

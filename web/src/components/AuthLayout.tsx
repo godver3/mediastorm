@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 import { DEFAULT_LOGO_URL, useBranding } from '@/lib/branding';
 import { APP_NAME } from '@/lib/documentTitle';
 import { cn } from '@/lib/cn';
@@ -66,6 +66,7 @@ export interface FieldProps {
   autoFocus?: boolean;
   required?: boolean;
   inputMode?: 'numeric' | 'text';
+  style?: CSSProperties;
   maxLength?: number;
 }
 
