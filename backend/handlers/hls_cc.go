@@ -33,8 +33,9 @@ var segmentNumRe = regexp.MustCompile(`segment(\d+)\.ts$`)
 // a long-lived concat file. ~12 MB is roughly several live segments.
 const maxFallbackWindowBytes = 12 * 1024 * 1024
 
-// listLiveSegments returns sorted segment paths currently on disk.
-func listLiveSegments(outputDir string) []string {
+// listLiveSegments returns sorted segment paths currently on disk, numbered from firstLive on
+// (a timeshift backlog's segments, below it, are made on demand from the source; hls_live_backlog.go).
+func listLiveSegments(outputDir string, firstLive int) []string {
 	entries, err := os.ReadDir(outputDir)
 	if err != nil {
 		return nil
@@ -53,6 +54,9 @@ func listLiveSegments(outputDir string) []string {
 			continue
 		}
 		num, _ := strconv.Atoi(m[1])
+		if num < firstLive {
+			continue
+		}
 		segments = append(segments, segInfo{num: num, path: filepath.Join(outputDir, entry.Name())})
 	}
 	sort.Slice(segments, func(i, j int) bool {
@@ -70,7 +74,7 @@ func waitForLiveSegment(ctx context.Context, outputDir string) string {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if segs := listLiveSegments(outputDir); len(segs) > 0 {
+		if segs := listLiveSegments(outputDir, 0); len(segs) > 0 {
 			return segs[len(segs)-1]
 		}
 		select {
@@ -165,11 +169,14 @@ type ccExtractor struct {
 	running     bool
 	seenSegs    map[int]bool
 	lastMaxSeen int
-	mode        string // "ccextractor" or "ffmpeg"
+	// firstLive is the first live segment number; a timeshift backlog's segments below it are
+	// not fed (they are made out of order, on the source's timeline).
+	firstLive int
+	mode      string // "ccextractor" or "ffmpeg"
 }
 
 // startCCExtraction starts background CC extraction for a live session directory.
-func startCCExtraction(ctx context.Context, outputDir string) (*ccExtractor, error) {
+func startCCExtraction(ctx context.Context, outputDir string, firstLive int) (*ccExtractor, error) {
 	srtPath := filepath.Join(outputDir, "captions.srt")
 	extractCtx, cancel := context.WithCancel(ctx)
 
@@ -180,6 +187,7 @@ func startCCExtraction(ctx context.Context, outputDir string) (*ccExtractor, err
 		running:     true,
 		seenSegs:    make(map[int]bool),
 		lastMaxSeen: -1,
+		firstLive:   firstLive,
 	}
 
 	if ccPath, err := exec.LookPath("ccextractor"); err == nil {
@@ -294,6 +302,9 @@ func (e *ccExtractor) feedNewSegmentsToCCExtractor() {
 			continue
 		}
 		num, _ := strconv.Atoi(m[1])
+		if num < e.firstLive {
+			continue
+		}
 		segments = append(segments, segInfo{num: num, path: filepath.Join(e.outputDir, entry.Name())})
 	}
 	if len(segments) == 0 {
@@ -350,7 +361,7 @@ func (e *ccExtractor) feedNewSegmentsToCCExtractor() {
 // processFallbackWindow re-extracts CC from a small trailing window of segments
 // using ffmpeg. Cost stays O(window), not O(session length).
 func (e *ccExtractor) processFallbackWindow(ctx context.Context) {
-	paths := listLiveSegments(e.outputDir)
+	paths := listLiveSegments(e.outputDir, e.firstLive)
 	if len(paths) == 0 {
 		return
 	}
@@ -609,7 +620,11 @@ func (m *HLSManager) ServeLiveCaptions(w http.ResponseWriter, r *http.Request, s
 	// Lazy start: only run ccextractor/ffmpeg once the player asks for captions.
 	session.mu.Lock()
 	if session.ccExtractor == nil {
-		ext, err := startCCExtraction(context.Background(), outputDir)
+		firstLive := 0
+		if session.liveBacklog != nil {
+			firstLive = len(session.liveBacklog.segments)
+		}
+		ext, err := startCCExtraction(context.Background(), outputDir, firstLive)
 		if err != nil {
 			session.mu.Unlock()
 			log.Printf("[hls-cc] failed to start CC extraction for session %s: %v", sessionID, err)

@@ -500,6 +500,7 @@ type HLSSession struct {
 	LiveTuning                      LiveTuningSettings // FFmpeg tuning settings for live sessions
 	LiveUpstreamKey                 string             // Provider connection shared with same-channel sessions ("" = private)
 	livePlaylistWindow              []livePlaylistEntry
+	liveBacklog                     *liveBacklog // timeshift backlog from the source's window (hls_live_backlog.go)
 	livePlaylistTargetDuration      int
 	liveDiscontinuitySequence       int
 	livePlaylistIndependentSegments bool
@@ -2950,6 +2951,18 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	if session.LiveTuning.HDHomeRunInput || sharedInput {
 		args = append(args, "-f", "mpegts")
 	}
+	startNumber := resumeFrom
+	if resumeFrom == 0 && session.isTimeshiftSession() && isNativeLivePlaybackTarget(session.PlaybackTarget) && !encodeVideo &&
+		hlsInput && proxyBody == nil && !session.LiveTuning.HDHomeRunInput && session.LiveProvider != "stremio" &&
+		strings.TrimSpace(session.LiveTuning.ProxyURL) == "" {
+		// The part of the source's own DVR window the timeshift window covers (hls_live_backlog.go);
+		// the live encode then starts with the source segment after it.
+		var liveStartIndex int
+		startNumber, liveStartIndex = m.prepareLiveBacklog(ctx, session, session.Path, inputArg, inputHeaders)
+		if liveStartIndex < 0 {
+			args = append(args, "-live_start_index", strconv.Itoa(liveStartIndex))
+		}
+	}
 	args = append(args, "-i", inputArg)
 	session.mu.Lock()
 	if isNativeLivePlaybackTarget(session.PlaybackTarget) && encodeVideo {
@@ -2972,7 +2985,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		log.Printf("[hls] live session %s: using compatibility transcode mode (video=libx264 audio=aac target=%q)", session.ID, session.PlaybackTarget)
 	}
 	session.mu.Unlock()
-	outputArgs := liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, resumeFrom)
+	outputArgs := liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, startNumber)
 	if encodeVideo {
 		outputArgs = liveVideoEncodeArgs(outputArgs)
 	}
@@ -3213,7 +3226,8 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 			session.FatalError = ""
 			session.IdleTimeoutTriggered = false
 			session.mu.Unlock()
-			resumeFrom = nextLiveSegmentNumber(session.OutputDir)
+			// Never into the backlog's media sequences, even before the live part wrote any.
+			resumeFrom = max(nextLiveSegmentNumber(session.OutputDir), session.liveBacklogEnd())
 		}
 		err := m.startLiveTranscoding(ctx, session, resumeFrom)
 		if ctx.Err() != nil {
@@ -6211,7 +6225,7 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	var headerTags []string
 
 	if session.IsLive && !strings.Contains(playlistContent, "#EXT-X-START") {
-		if startTag := livePlaylistStartTag(playlistContent); startTag != "" {
+		if startTag := livePlaylistStartTagAfterBacklog(playlistContent, session.liveBacklogEnd()); startTag != "" {
 			headerTags = append(headerTags, startTag)
 		}
 	}
@@ -6781,6 +6795,26 @@ func (m *HLSManager) ServeSegment(w http.ResponseWriter, r *http.Request, sessio
 	}
 
 	// Wait for segment to be created.
+	// A timeshift backlog segment is made from the source when a player first asks for it.
+	if session.IsLive && parsedSegmentOK && segmentNum < session.liveBacklogEnd() {
+		// The player is here now (queued work elsewhere is dropped) and most likely wants the next
+		// segments too.
+		session.noteLiveBacklogRequest(segmentNum)
+		m.prefetchLiveBacklog(session, segmentNum)
+		if err := m.ensureLiveBacklogSegment(r.Context(), session, segmentNum, false); err != nil {
+			if r.Context().Err() != nil {
+				return // the player gave up on it (a seek)
+			}
+			log.Printf("[hls] live session %s: %s", sessionID, requestsecurity.TextForLog(err.Error()))
+			status := http.StatusBadGateway
+			if errors.Is(err, errLiveBacklogGone) || errors.Is(err, errLiveBacklogStopped) {
+				status = http.StatusNotFound
+			}
+			http.Error(w, "segment not available", status)
+			return
+		}
+	}
+
 	// Live native transmux: ~15s for first temp_file rename.
 	// VOD re-encode: ~30s. Stable Cast jumps may need a fresh FFmpeg start: ~30s.
 	maxWaitIters := 1200 // ~30s
@@ -7461,6 +7495,7 @@ func (m *HLSManager) CleanupSession(sessionID string) {
 	session.mu.Lock()
 	session.Stopped = true
 	session.mu.Unlock()
+	session.stopLiveBacklog()
 
 	// Log session summary
 	session.mu.RLock()
@@ -7870,6 +7905,43 @@ func (m *HLSManager) buildSeamlessLivePlaylist(session *HLSSession, onDiskConten
 }
 
 const liveMinimumStartOffsetSeconds = 14
+
+// livePlaylistStartTagAfterBacklog is livePlaylistStartTag for a playlist whose media sequences
+// below backlogEnd are a timeshift backlog (hls_live_backlog.go): a player starts in the live
+// encode, at its first segment while it is still shorter than the usual start offset, never in the
+// backlog (which players would otherwise reach counting back from the edge).
+func livePlaylistStartTagAfterBacklog(content string, backlogEnd int) string {
+	if backlogEnd <= 0 {
+		return livePlaylistStartTag(content)
+	}
+	snapshot := parseLivePlaylist(content)
+	if len(snapshot.Entries) == 0 || snapshot.TargetDuration <= 0 {
+		return ""
+	}
+	// The live encode's own target duration: the backlog's longer source segments raise the
+	// playlist's, which would push the start deep into the backlog.
+	live, liveTarget, firstLive := 0.0, 0, 0.0
+	for _, entry := range snapshot.Entries {
+		if entry.MediaSequence >= backlogEnd {
+			if live == 0 {
+				firstLive = entry.Duration
+			}
+			live += entry.Duration
+			liveTarget = max(liveTarget, int(math.Ceil(entry.Duration)))
+		}
+	}
+	if live <= 0 {
+		return ""
+	}
+	offset := max(liveMinimumStartOffsetSeconds, liveTarget*liveStallTargetDurations)
+	if live >= float64(offset) {
+		return fmt.Sprintf("#EXT-X-START:TIME-OFFSET=-%d,PRECISE=YES", offset)
+	}
+	// Inside the first live segment, never on its boundary: rounded up, the offset would pick the
+	// last backlog segment.
+	start := math.Floor((live-min(0.1, firstLive/2))*1000) / 1000
+	return fmt.Sprintf("#EXT-X-START:TIME-OFFSET=-%.3f,PRECISE=YES", start)
+}
 
 // RFC 8216 recommends starting an open live playlist at least three target durations behind its
 // edge. Keep the historical 14-second latency for two-second Cast transcodes, but derive a deeper

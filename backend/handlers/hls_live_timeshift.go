@@ -97,6 +97,8 @@ func trimLivePlaylistWindow(session *HLSSession) {
 			keep++
 		}
 		trimCount = len(session.livePlaylistWindow) - keep
+		// Backlog segments also leave before their source drops them (hls_live_backlog.go).
+		trimCount = max(trimCount, expiredLiveBacklogEntries(session, time.Now()))
 	}
 	if trimCount <= 0 {
 		return
