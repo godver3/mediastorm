@@ -48,6 +48,12 @@ const num = (v: unknown) => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
+const nonNeg = (v: unknown) => {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+};
+
 export function validateDetailsSearch(raw: Record<string, unknown>): DetailsSearch {
   return {
     mediaType: raw.mediaType === 'movie' ? 'movie' : 'series',
@@ -57,7 +63,7 @@ export function validateDetailsSearch(raw: Record<string, unknown>): DetailsSear
     tmdbId: num(raw.tmdbId),
     tvdbId: num(raw.tvdbId),
     imdbId: typeof raw.imdbId === 'string' ? raw.imdbId : undefined,
-    season: num(raw.season),
+    season: nonNeg(raw.season), // 0 = Specials
     episode: num(raw.episode),
   };
 }

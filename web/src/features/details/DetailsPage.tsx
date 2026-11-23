@@ -222,19 +222,19 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
 
   const actions = (
     <div className="flex flex-wrap items-start gap-2 sm:gap-3">
-      <div className="relative max-sm:flex-1">
+      <div className="relative max-sm:basis-full">
         <Button
           size="lg"
           disabled={!canPlay}
           loading={d.bundle.isPending || busy}
           onClick={() => playPreferringLibrary(primaryEpisode, primaryStart)}
           leftIcon={<Icon name="play" size={18} />}
-          className="min-w-[160px] max-sm:w-full"
+          className="min-w-[160px] whitespace-nowrap max-sm:w-full"
         >
           {label}
         </Button>
         {primaryStart && resumeFraction > 0 && (
-          <div className="absolute top-full left-0 mt-1.5 flex items-center gap-2 text-xs whitespace-nowrap text-muted">
+          <div className="absolute top-full left-0 mt-1.5 flex items-center gap-2 text-xs whitespace-nowrap text-muted max-sm:static max-sm:mb-1">
             <span className="h-1 w-full max-w-[90px] overflow-hidden rounded-full bg-surface-strong">
               <span
                 className="block h-full rounded-full bg-accent"
