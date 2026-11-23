@@ -3443,10 +3443,11 @@
         video.addEventListener('canplay', () => {
           setStatus('');
           releaseRecoveryState();
-          // A seek asked for while a stable copy was being replaced.
+          // A seek asked for while a stable copy was being replaced. Replay it
+          // whatever timeline the replacement has: seekWebPlayer handles both.
           const queued = webPlayerQueuedSeekTarget;
           webPlayerQueuedSeekTarget = null;
-          if (webPlayerStableTimeline && queued !== null && queued !== undefined && Number.isFinite(Number(queued))) {
+          if (queued !== null && queued !== undefined && Number.isFinite(Number(queued))) {
             seekWebPlayer(Number(queued));
           }
           if (wasPlaying) video.play().catch(() => {});
