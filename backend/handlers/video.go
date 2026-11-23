@@ -4398,7 +4398,7 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 	// reaching canplay (MSE stuck). Match the working seek path for web warm starts.
 	transcodingOffset := startSeconds
 	if startSeconds > 0 {
-		if isWebBrowserPlaybackTarget(playbackTarget) {
+		if isWebBrowserPlaybackTarget(playbackTarget) || playbackTarget == "web-stable" {
 			videoTracef("[video] web warm start: skipping keyframe probe (match seek path) start=%.3fs", startSeconds)
 		} else {
 			keyframePos := h.hlsManager.probeKeyframePosition(r.Context(), cleanPath, startSeconds)
@@ -4455,6 +4455,9 @@ func (h *VideoHandler) StartHLSSession(w http.ResponseWriter, r *http.Request) {
 		"actualStartOffset":  actualStartOffset,
 		"keyframeDelta":      keyframeDelta,
 		"stableCastTimeline": session.usesStableCastTimeline() && session.Duration > 0,
+		// The whole title in one playlist with the video copied: the client
+		// seeks inside it (the /watch player opts in with clientCaps).
+		"stableCopy": session.StableCopy,
 	}
 
 	// Include duration if it was successfully probed

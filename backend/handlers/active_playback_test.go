@@ -242,3 +242,29 @@ func TestStreamTrackerObservePlaybackActivityRejectsExpiredEndedStream(t *testin
 	case <-time.After(25 * time.Millisecond):
 	}
 }
+
+// The /watch player reports title time on a stable copy, whose keyframe-cut
+// segments are numbered over the whole title: the throttle follows that
+// segment, not hlsSegmentDuration-long ones from the start offset.
+func TestKeepAliveOnStableCopyCountsItsSegments(t *testing.T) {
+	manager := &HLSManager{
+		sessions: map[string]*HLSSession{
+			"stable": {
+				ID:                 "stable",
+				Duration:           3600,
+				StartOffset:        1000,
+				StableCopy:         true,
+				CopySegmentStarts:  []float64{0, 6, 12, 1000, 1010, 1020},
+				LastSegmentRequest: time.Now(),
+			},
+		},
+	}
+	response := httptest.NewRecorder()
+	manager.KeepAlive(response, httptest.NewRequest(http.MethodPost, "/keepalive?time=1015", nil), "stable")
+	if response.Code != http.StatusOK {
+		t.Fatalf("KeepAlive() status = %d", response.Code)
+	}
+	if got := manager.sessions["stable"].MaxSegmentRequested; got != 4 {
+		t.Fatalf("MaxSegmentRequested = %d, want 4 (the segment holding 1015s)", got)
+	}
+}

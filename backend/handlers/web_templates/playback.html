@@ -1366,6 +1366,13 @@
     let hlsInstance = null;
     let hlsSessionId = '';
     let hlsPlaybackOffset = 0;
+    // True while the session is a stable copy: one playlist over the whole
+    // title, media time = title time, seeks stay inside it (no new session).
+    let webPlayerStableTimeline = false;
+    let webPlayerClientCapsCache;
+    // The source whose copied video failed to decode: its sessions ask the
+    // server to transcode instead (noVideoCopy).
+    let webPlayerNoVideoCopyFor = '';
     let webPlayerUserSubtitleOffset = 0;
     let nextEpisodeInfo = null;
     let upNextDismissed = false;
@@ -2127,7 +2134,7 @@
         hlsSessionId = session.sessionId || '';
         const requestedOffset = Number(session.startOffset ?? options.startOffset ?? 0);
         const actualOffset = Number(session.actualStartOffset ?? requestedOffset);
-        syncSubtitleOffset(requestedOffset, actualOffset);
+        const startPosition = applySessionTimeline(session, options.startOffset);
         hlsDuration = Number(session.duration || hlsDuration || numericRouteParam('durationHint') || 0);
         hlsPlaylistUrl = apiUrl(session.playlistUrl || '');
         webPlayerDebugLog('info', 'created hls session', {
@@ -2137,6 +2144,8 @@
           duration: hlsDuration,
           requestedOffset,
           actualOffset,
+          stableCopy: webPlayerStableTimeline,
+          clientCaps: playbackMeta.isLive ? null : webPlayerClientCaps(),
         });
 
         renderPlayerShell();
@@ -2144,7 +2153,7 @@
         if (video && actualOffset > 1) {
           video.autoplay = true;
         }
-        attachWebPlayer(video, hlsPlaylistUrl);
+        attachWebPlayer(video, hlsPlaylistUrl, { startPosition });
         // Start the playback request while the Watch Now click still carries a
         // user activation. Countdown handoffs fall back to muted autoplay.
         attemptAutoplay(video);
@@ -2205,11 +2214,85 @@
       }
     }
 
+    // What this browser plays inside HLS, for the server's copy plan
+    // (HLSClientCaps): with it the server copies the video (HEVC, AV1, HDR
+    // included) on a stable timeline instead of transcoding to H.264, and
+    // falls back to an ordinary web session when it cannot (webFallback).
+    function webPlayerClientCaps() {
+      if (webPlayerClientCapsCache !== undefined) return webPlayerClientCapsCache;
+      const probe = document.createElement('video');
+      const supports = (type) => {
+        try {
+          if (window.MediaSource && typeof window.MediaSource.isTypeSupported === 'function') {
+            return window.MediaSource.isTypeSupported(type);
+          }
+          return probe.canPlayType(type) === 'probably';
+        } catch {
+          return false;
+        }
+      };
+      const fmp4Video = [];
+      if (supports('video/mp4; codecs="avc1.640028"')) fmp4Video.push('h264');
+      // HEVC only with Main 10: most HEVC releases are 10-bit.
+      if (supports('video/mp4; codecs="hvc1.1.6.L153.B0"') && supports('video/mp4; codecs="hvc1.2.4.L153.B0"')) {
+        fmp4Video.push('hevc');
+      }
+      if (supports('video/mp4; codecs="av01.0.08M.10"')) fmp4Video.push('av1');
+      if (!fmp4Video.length) {
+        webPlayerClientCapsCache = null;
+        return null;
+      }
+      const hdrDisplay = ['(dynamic-range: high)', '(video-dynamic-range: high)']
+        .some((query) => { try { return window.matchMedia(query).matches; } catch { return false; } });
+      // HDR video is offered to browsers that render it: desktop Chromium tone
+      // maps it itself on an SDR display, Safari on an HDR one. Firefox does
+      // not tone map, and on mobile it depends on the device: SDR only there.
+      // (userAgentData exists only in secure contexts; servers are often http.)
+      const ua = navigator.userAgent || '';
+      const brands = navigator.userAgentData?.brands || [];
+      const chromium = brands.some((entry) => /chromium/i.test(String(entry?.brand || '')))
+        || /\b(Chrome|Chromium|Edg)\//.test(ua);
+      const mobile = navigator.userAgentData?.mobile === true || /Android|Mobile|iPhone|iPad/i.test(ua);
+      const firefox = /\bFirefox\//.test(ua);
+      const safari = !chromium && !firefox && /Safari\//.test(ua);
+      const hdr = !firefox && ((chromium && !mobile) || (hdrDisplay && (chromium || safari)));
+      const hdrRanges = hdr ? ['SDR', 'HDR10', 'HDR10Plus', 'HLG'] : ['SDR'];
+      const videoRanges = {};
+      for (const codec of fmp4Video) videoRanges[codec] = codec === 'h264' ? ['SDR'] : hdrRanges;
+      webPlayerClientCapsCache = {
+        tsVideo: fmp4Video.includes('h264') ? ['h264'] : [],
+        tsAudio: ['aac', 'mp3'],
+        fmp4Video,
+        fmp4Audio: ['aac', 'mp3'],
+        videoRanges,
+        maxAudioChannels: 2,
+        webFallback: true,
+      };
+      return webPlayerClientCapsCache;
+    }
+
+    // Takes over a new session's timeline and returns where playback starts
+    // in its media: a stable copy covers the whole title (the start is a
+    // position inside it), anything else starts at its offset (media time 0
+    // is hlsPlaybackOffset).
+    function applySessionTimeline(session, fallbackOffset) {
+      const requested = Number(session?.startOffset ?? fallbackOffset ?? 0);
+      webPlayerStableTimeline = Boolean(session?.stableCopy);
+      if (webPlayerStableTimeline) {
+        syncSubtitleOffset(0, 0);
+        return Number.isFinite(requested) ? Math.max(0, requested) : 0;
+      }
+      const actual = Number(session?.actualStartOffset ?? requested);
+      syncSubtitleOffset(requested, actual);
+      return 0;
+    }
+
     async function createHlsSession(options = {}) {
+      const caps = playbackMeta.isLive ? null : webPlayerClientCaps();
       const params = new URLSearchParams({
         path: sourcePath,
         forceAAC: playbackMeta.forceAAC ? 'true' : 'true',
-        target: 'web',
+        target: caps ? 'web-stable' : 'web',
         profileId: activeProfileId,
         profileName: activeProfileName,
         mediaType: playbackMeta.mediaType || 'movie',
@@ -2218,6 +2301,9 @@
         startOffset: String(Math.max(0, Number(options.startOffset || 0)).toFixed(2)),
       });
 
+      if (caps) {
+        params.set('clientCaps', JSON.stringify(webPlayerNoVideoCopyFor === sourcePath ? { ...caps, noVideoCopy: true } : caps));
+      }
       if (!options.startOffset && Number(options.startPercent) > 0) params.set('startPercent', String(options.startPercent));
       if (playbackMeta.dv) params.set('dv', 'true');
       if (playbackMeta.hdr10) params.set('hdr', 'true');
@@ -2422,7 +2508,9 @@
       `;
     }
 
-    function attachWebPlayer(video, playlistUrl) {
+    function attachWebPlayer(video, playlistUrl, attachOptions = {}) {
+      // Where to start in the playlist's media (a stable copy's resume point).
+      const startPosition = Number(attachOptions.startPosition) > 0 ? Number(attachOptions.startPosition) : 0;
       if (WATCH_PARTY_MODE && watchPartyEndMessage) {
         finishWatchPartyPlayback(watchPartyEndMessage);
         return;
@@ -2443,7 +2531,7 @@
       }
 
       if (window.Hls && window.Hls.isSupported()) {
-        hlsInstance = new Hls({ lowLatencyMode: false, startPosition: 0, backBufferLength: 30 });
+        hlsInstance = new Hls({ lowLatencyMode: false, startPosition, backBufferLength: 30 });
         webPlayerMediaRecoverAttempts = 0;
         hlsInstance.loadSource(playlistUrl);
         hlsInstance.attachMedia(video);
@@ -2529,6 +2617,12 @@
               setStatus('Recovering playback…', true);
               hlsInstance.swapAudioCodec();
               hlsInstance.recoverMediaError();
+            } else if (webPlayerStableTimeline && webPlayerNoVideoCopyFor !== sourcePath) {
+              // The browser said it plays this video but cannot decode the
+              // copy (a level or profile its decoder rejects): transcode it.
+              webPlayerNoVideoCopyFor = sourcePath;
+              setStatus('Switching to a compatible stream…', true);
+              startWebPlayerFromSource({ startOffset: currentAbsoluteTime() });
             } else {
               migrateWebStream('hls-media-error').then((migrated) => { if (!migrated) setStatus('Playback error. Try switching channel or track.', true); });
             }
@@ -2544,6 +2638,11 @@
         video.src = playlistUrl;
       } else {
         video.src = playlistUrl;
+      }
+      if (startPosition > 0 && !hlsInstance) {
+        video.addEventListener('loadedmetadata', () => {
+          video.currentTime = startPosition;
+        }, { once: true });
       }
 
       video.addEventListener('canplay', () => {
@@ -2821,10 +2920,22 @@
       const absoluteTarget = clampSeekTarget(target);
       if (!Number.isFinite(absoluteTarget)) return false;
 
-      if (!hlsSessionId) {
+      if (webPlayerStableTimeline && webPlayerSessionRecovering) {
+        // The session is being replaced: seek once the new one plays.
+        webPlayerQueuedSeekTarget = absoluteTarget;
+        webPlayerDisplayedSeekTarget = absoluteTarget;
+        updateControls();
+        return false;
+      }
+      if (!hlsSessionId || webPlayerStableTimeline) {
+        // A stable copy holds the whole title: the player seeks inside it and
+        // the server cuts from the segment it asks for next.
         video.currentTime = absoluteTarget;
         webPlayerDisplayedSeekTarget = null;
         updateControls();
+        if (webPlayerStableTimeline) {
+          sendWebPlayerProgress({ force: true, isPaused: video.paused, position: absoluteTarget });
+        }
         return true;
       }
       if (webPlayerSeekInProgress) {
@@ -3290,7 +3401,8 @@
 
       try {
         let session;
-        if (options.forceNewSession) {
+        // A stable copy session is replaced, not seeked (its timeline is fixed).
+        if (options.forceNewSession || webPlayerStableTimeline) {
           session = await createHlsSession({ startOffset: target, includeSubtitleTrack: false });
         } else {
           try {
@@ -3316,9 +3428,7 @@
         }
 
         hlsSessionId = session.sessionId || '';
-        const requestedOffset = Number(session.startOffset ?? target);
-        const actualOffset = Number(session.actualStartOffset ?? requestedOffset);
-        syncSubtitleOffset(requestedOffset, actualOffset);
+        const startPosition = applySessionTimeline(session, target);
         hlsDuration = Number(session.duration || hlsDuration || 0);
         hlsPlaylistUrl = apiUrl(session.playlistUrl || '');
         webPlayerSubtitleCues = [];
@@ -3333,11 +3443,17 @@
         video.addEventListener('canplay', () => {
           setStatus('');
           releaseRecoveryState();
+          // A seek asked for while a stable copy was being replaced.
+          const queued = webPlayerQueuedSeekTarget;
+          webPlayerQueuedSeekTarget = null;
+          if (webPlayerStableTimeline && queued !== null && queued !== undefined && Number.isFinite(Number(queued))) {
+            seekWebPlayer(Number(queued));
+          }
           if (wasPlaying) video.play().catch(() => {});
         }, { once: true });
-        attachWebPlayer(video, hlsPlaylistUrl);
+        attachWebPlayer(video, hlsPlaylistUrl, { startPosition });
         startKeepalive();
-        sendWebPlayerProgress({ force: true, isPaused: !wasPlaying, position: hlsPlaybackOffset });
+        sendWebPlayerProgress({ force: true, isPaused: !wasPlaying, position: webPlayerStableTimeline ? target : hlsPlaybackOffset });
         window.setTimeout(() => {
           if (recoveryStateReleased || recoveryGeneration !== webPlayerSeekGeneration) return;
           releaseRecoveryState();
@@ -3573,7 +3689,7 @@
             const cueCount = (text.match(/-->/g) || []).length;
             const looksLikePlaceholderStart = hlsPlaybackOffset > 5 && subtitleStart <= 0.05 && cueCount < 2;
             if (!looksLikePlaceholderStart) {
-              const keyframeAlignedStart =
+              const keyframeAlignedStart = !webPlayerStableTimeline &&
                 Math.abs(subtitleStart - webPlayerActualStartOffset) < 0.25 &&
                 Math.abs(webPlayerActualStartOffset - hlsPlaybackOffset) >= 0.05;
               webPlayerSubtitleStartOffset = keyframeAlignedStart ? hlsPlaybackOffset : subtitleStart;
@@ -3646,7 +3762,9 @@
     }
 
     function applyActualStartOffsetCorrection(data) {
-      if (!data || webPlayerSeekInProgress) return;
+      // A stable copy's media time is title time: its subtitles need no
+      // start-offset correction (the server reports the run's segment start).
+      if (!data || webPlayerSeekInProgress || webPlayerStableTimeline) return;
       const actualOffset = Number(data.actualStartOffset);
       if (!Number.isFinite(actualOffset) || actualOffset < 0) return;
       if (Math.abs(actualOffset - webPlayerActualStartOffset) < 0.05) return;
@@ -5071,6 +5189,7 @@
         hlsInstance.destroy();
         hlsInstance = null;
       }
+      webPlayerStableTimeline = false;
       if (hlsSessionId) {
         const id = hlsSessionId;
         hlsSessionId = '';

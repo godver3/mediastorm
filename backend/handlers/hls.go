@@ -2109,7 +2109,11 @@ func (m *HLSManager) CreateSession(ctx context.Context, path string, originalPat
 			log.Printf("[hls] session %s: stable copy not possible (codec=%q dv=%v hdr=%v duration=%.1f); using stable transcode",
 				sessionID, codec, hasDV, hasHDR, duration)
 		}
-		castMode = copySegmentStarts == nil
+		if copySegmentStarts == nil && clientCaps.webFallback() {
+			log.Printf("[hls] session %s: no stable copy; playing as a web session (client fallback)", sessionID)
+		} else {
+			castMode = copySegmentStarts == nil
+		}
 	}
 
 	requestedDirectCastMode := castMode && isDirectCastTarget(normalizedPlaybackTarget, "")
@@ -4137,7 +4141,7 @@ func (m *HLSManager) startTranscoding(ctx context.Context, session *HLSSession, 
 	// the web overlay renders with a zero offset. Gated to PlaybackTarget=="web".
 	webSubtitleRendition := false
 	webSubtitleAbsIndex := -1
-	if session.PlaybackTarget == "web" && session.SubtitleTrackIndex >= 0 {
+	if session.PlaybackTarget == "web" && session.SubtitleTrackIndex >= 0 && !stableCopyMode {
 		if stream, ok := selectedTextSubtitleStream(subtitleStreams, session.SubtitleTrackIndex); ok {
 			webSubtitleRendition = true
 			webSubtitleAbsIndex = stream.Index
@@ -5600,6 +5604,12 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 			}
 			// Calculate segment number from HLS stream time
 			segmentNum := int(hlsTime / hlsSegmentDuration)
+			if session.StableCopy {
+				// A stable copy numbers its keyframe-cut segments over the
+				// whole title, and the time reported is title time.
+				segmentNum = session.stableCopySegmentIndex(playbackTime)
+				hlsTime = playbackTime
+			}
 			if segmentNum > session.MaxSegmentRequested {
 				session.MaxSegmentRequested = segmentNum
 				log.Printf("[hls] session %s: keepalive updated MaxSegmentRequested to %d (mediaTime=%.1fs, hlsTime=%.1fs, startOffset=%.1fs)",
@@ -7288,6 +7298,11 @@ func (m *HLSManager) extractSubtitleTrackToVTT(ctx context.Context, session *HLS
 	seekOffset := session.TranscodingOffset
 	if seekOffset <= 0 {
 		seekOffset = session.StartOffset
+	}
+	if session.StableCopy {
+		// A stable copy's player seeks anywhere in the title within the
+		// session: its subtitles cover the whole title, on the title clock.
+		seekOffset = 0
 	}
 	mediaLeadIn := 0.0
 	if session.ProbeData != nil && session.ProbeData.StartTime > 0 {

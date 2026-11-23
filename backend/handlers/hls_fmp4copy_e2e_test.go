@@ -300,3 +300,77 @@ func TestForcedCopyEndToEnd(t *testing.T) {
 		t.Fatalf("forced copy segment: %s", streams)
 	}
 }
+
+// TestWebPlayerStableCopyOrFallback covers the /watch web player's request:
+// web-stable with its capabilities and webFallback. A browser that plays
+// HEVC HDR gets a stable copy that starts at the resume point's segment; one
+// that does not gets an ordinary web session, not the stable Cast transcode.
+func TestWebPlayerStableCopyOrFallback(t *testing.T) {
+	if os.Getenv("MEDIASTORM_FFMPEG_E2E") != "1" {
+		t.Skip("set MEDIASTORM_FFMPEG_E2E=1 to run against ffmpeg")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mkv")
+	srt := filepath.Join(dir, "subs.srt")
+	if err := os.WriteFile(srt, []byte("1\n00:00:05,000 --> 00:00:07,000\nearly\n\n2\n00:00:40,000 --> 00:00:42,000\nlate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gen := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-i", srt,
+		"-t", "60", "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:s", "srt",
+		"-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+		"-x265-params", "log-level=error:keyint=48:min-keyint=48:hdr10=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+		"-c:a", "aac", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate source: %v %s", err, out)
+	}
+	files := httptest.NewServer(http.FileServer(http.Dir(dir)))
+	defer files.Close()
+	sourceURL := files.URL + "/src.mkv"
+	m := NewHLSManager(filepath.Join(dir, "hls"), "ffmpeg", "ffprobe", nil)
+
+	hevc := &HLSClientCaps{ // Chrome with HEVC Main 10
+		TSVideo: []string{"h264"}, TSAudio: []string{"aac"},
+		FMP4Video: []string{"h264", "hevc"}, FMP4Audio: []string{"aac"},
+		VideoRanges: map[string][]string{"h264": {"SDR"}, "hevc": {"SDR", "HDR10", "HDR10Plus", "HLG"}},
+		WebFallback: true,
+	}
+	session, err := m.CreateSession(withHLSClientCaps(context.Background(), hevc), sourceURL, sourceURL, false, "", true, true, 30, 30, -1, -1, "p", "p", "127.0.0.1", false, "", "web-stable", 60, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !session.usesStableCopyTimeline() || session.CopyPlan.Tag != "hvc1" || session.CastMode || session.SegmentStartNumber == 0 {
+		t.Fatalf("hevc browser: stable=%v plan=%+v cast=%v start segment=%d", session.usesStableCopyTimeline(), session.CopyPlan, session.CastMode, session.SegmentStartNumber)
+	}
+	// The player seeks anywhere inside a stable copy: its subtitles cover
+	// the whole title on the title clock, though the session started at 30s.
+	vtt := filepath.Join(dir, "subs.vtt")
+	if err := m.extractSubtitleTrackToVTT(context.Background(), session, 2, vtt); err != nil {
+		t.Fatal(err)
+	}
+	cues, _ := os.ReadFile(vtt)
+	// (Cues keep the container's start time, a few ms.)
+	if !strings.Contains(string(cues), "00:05.0") || !strings.Contains(string(cues), "00:40.0") {
+		t.Fatalf("stable copy subtitles:\n%s", cues)
+	}
+	if offset, ok := session.subtitleExtractionOffset(2); !ok || offset != 0 {
+		t.Fatalf("subtitle extraction offset = %v %v, want 0", offset, ok)
+	}
+	m.CleanupSession(session.ID)
+
+	h264Only := &HLSClientCaps{
+		TSVideo: []string{"h264"}, TSAudio: []string{"aac"},
+		FMP4Video: []string{"h264"}, FMP4Audio: []string{"aac"},
+		VideoRanges: map[string][]string{"h264": {"SDR"}},
+		WebFallback: true,
+	}
+	session, err = m.CreateSession(withHLSClientCaps(context.Background(), h264Only), sourceURL, sourceURL, false, "", true, true, 30, 30, -1, -1, "p", "p", "127.0.0.1", false, "", "web-stable", 60, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.CleanupSession(session.ID)
+	if session.usesStableCopyTimeline() || session.CastMode || session.PlaybackTarget != "web" || session.StartOffset != 30 {
+		t.Fatalf("h264-only browser: stable=%v cast=%v target=%q start=%v", session.usesStableCopyTimeline(), session.CastMode, session.PlaybackTarget, session.StartOffset)
+	}
+}
