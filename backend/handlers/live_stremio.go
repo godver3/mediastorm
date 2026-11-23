@@ -82,6 +82,7 @@ type stremioMeta struct {
 	Genres      []string    `json:"genres"`
 	Description string      `json:"description"`
 	ReleaseInfo string      `json:"releaseInfo"`
+	Released    string      `json:"released"`
 	IMDBRating  interface{} `json:"imdbRating"`
 	Rank        int         `json:"rank"`
 }
@@ -569,6 +570,12 @@ func (h *LiveHandler) loadStremioChannels(ctx context.Context, cacheKey, manifes
 		}()
 	}
 	wg.Wait()
+
+	var allMetas []stremioMeta
+	for _, metas := range results {
+		allMetas = append(allMetas, metas...)
+	}
+	h.recordStremioEvents(client, baseURL, allMetas)
 
 	var channels []LiveChannel
 	seen := make(map[string]bool)

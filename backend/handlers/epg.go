@@ -148,7 +148,8 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
 		return
 	}
-	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+	xmltvOn := h.resolveEPGEnabled(r, h.epgService.IsEnabled())
+	if !xmltvOn && !h.stremioEventsOn(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`[]`))
 		return
@@ -169,8 +170,19 @@ func (h *EPGHandler) GetNowPlaying(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not available", http.StatusNotFound)
 		return
 	}
-	result := h.epgService.GetNowPlaying(channelIDs, -offset)
-	h.epgService.RefreshIfExhausted("now query")
+	var result []models.EPGNowPlaying
+	if xmltvOn {
+		result = h.epgService.GetNowPlaying(channelIDs, -offset)
+	} else {
+		result = make([]models.EPGNowPlaying, 0, len(channelIDs))
+		for _, id := range channelIDs {
+			result = append(result, models.EPGNowPlaying{ChannelID: id})
+		}
+	}
+	h.fillNowPlayingFromStremioEvents(result, time.Now().UTC().Add(-offset))
+	if xmltvOn {
+		h.epgService.RefreshIfExhausted("now query")
+	}
 	currentCount := 0
 	nextCount := 0
 	var missingCurrentIDs []string
@@ -222,7 +234,8 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
 		return
 	}
-	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+	xmltvOn := h.resolveEPGEnabled(r, h.epgService.IsEnabled())
+	if !xmltvOn && !h.stremioEventsOn(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"channelId":"","programs":[]}`))
 		return
@@ -253,7 +266,13 @@ func (h *EPGHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not available", http.StatusNotFound)
 		return
 	}
-	programs := h.epgService.GetSchedule(channelID, start, end)
+	var programs []models.EPGProgram
+	if xmltvOn {
+		programs = h.epgService.GetSchedule(channelID, start, end)
+	}
+	if len(programs) == 0 {
+		programs = h.stremioEventPrograms([]string{channelID}, start, end)[channelID]
+	}
 	log.Printf("[epg] schedule query profileId=%q channelConfigured=%v programs=%d offsetMinutes=%d",
 		r.URL.Query().Get("profileId"),
 		channelID != "",
@@ -291,7 +310,8 @@ func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
 		return
 	}
-	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+	xmltvOn := h.resolveEPGEnabled(r, h.epgService.IsEnabled())
+	if !xmltvOn && !h.stremioEventsOn(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{}`))
 		return
@@ -338,8 +358,14 @@ func (h *EPGHandler) GetScheduleMultiple(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	channelIDs = allowedIDs
-	schedules := h.epgService.GetScheduleMultiple(channelIDs, start, end)
-	h.epgService.RefreshIfExhausted("schedule batch")
+	schedules := map[string][]models.EPGProgram{}
+	if xmltvOn {
+		schedules = h.epgService.GetScheduleMultiple(channelIDs, start, end)
+	}
+	h.fillSchedulesFromStremioEvents(schedules, channelIDs, start, end)
+	if xmltvOn {
+		h.epgService.RefreshIfExhausted("schedule batch")
+	}
 	matchedChannels := 0
 	totalPrograms := 0
 	var emptyIDs []string
@@ -389,7 +415,8 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"EPG service not available"}`, http.StatusServiceUnavailable)
 		return
 	}
-	if !h.resolveEPGEnabled(r, h.epgService.IsEnabled()) {
+	xmltvOn := h.resolveEPGEnabled(r, h.epgService.IsEnabled())
+	if !xmltvOn && !h.stremioEventsOn(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"channelId":"","programs":[]}`))
 		return
@@ -422,7 +449,13 @@ func (h *EPGHandler) GetChannelSchedule(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "channel not available", http.StatusNotFound)
 		return
 	}
-	programs := h.epgService.GetSchedule(channelID, queryStart, queryEnd)
+	var programs []models.EPGProgram
+	if xmltvOn {
+		programs = h.epgService.GetSchedule(channelID, queryStart, queryEnd)
+	}
+	if len(programs) == 0 {
+		programs = h.stremioEventPrograms([]string{channelID}, queryStart, queryEnd)[channelID]
+	}
 
 	if offset != 0 {
 		for i := range programs {
@@ -458,7 +491,7 @@ func (h *EPGHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := h.epgService.GetStatus()
-	status.Enabled = h.resolveEPGEnabled(r, status.Enabled)
+	status.Enabled = h.resolveEPGEnabled(r, status.Enabled) || h.stremioEventsOn(r)
 	profileID := r.URL.Query().Get("profileId")
 	if h.cfgManager != nil {
 		if settings, err := h.cfgManager.Load(); err == nil {
@@ -524,4 +557,72 @@ func parseIntParam(s string, out *int) (string, error) {
 	}
 	*out = v
 	return s, nil
+}
+
+// stremioEventPrograms returns synthetic guide entries for Stremio sports
+// event channels (see live_stremio_events.go); nil when unavailable.
+func (h *EPGHandler) stremioEventPrograms(ids []string, start, end time.Time) map[string][]models.EPGProgram {
+	provider, ok := h.liveChannels.(stremioEventProgramProvider)
+	if !ok || len(ids) == 0 {
+		return nil
+	}
+	return provider.StremioEventPrograms(ids, start, end)
+}
+
+// fillSchedulesFromStremioEvents adds event entries for channels the guide
+// has nothing for.
+func (h *EPGHandler) fillSchedulesFromStremioEvents(schedules map[string][]models.EPGProgram, ids []string, start, end time.Time) {
+	var missing []string
+	for _, id := range ids {
+		if len(schedules[id]) == 0 {
+			missing = append(missing, id)
+		}
+	}
+	for id, programs := range h.stremioEventPrograms(missing, start, end) {
+		schedules[id] = programs
+	}
+}
+
+// fillNowPlayingFromStremioEvents fills current/next for channels the guide
+// has nothing for. now is already shifted into stored (UTC) time.
+func (h *EPGHandler) fillNowPlayingFromStremioEvents(result []models.EPGNowPlaying, now time.Time) {
+	var missing []string
+	for _, item := range result {
+		if item.Current == nil && item.Next == nil {
+			missing = append(missing, item.ChannelID)
+		}
+	}
+	events := h.stremioEventPrograms(missing, now, now.Add(24*time.Hour))
+	if len(events) == 0 {
+		return
+	}
+	for i := range result {
+		programs := events[result[i].ChannelID]
+		if len(programs) == 0 {
+			continue
+		}
+		p := programs[0]
+		if p.Start.After(now) {
+			result[i].Next = &p
+		} else {
+			result[i].Current = &p
+		}
+	}
+}
+
+// stremioEventsOn reports whether Stremio event entries should be served even
+// with no XMLTV guide configured. A profile that explicitly turned its guide
+// off still gets none.
+func (h *EPGHandler) stremioEventsOn(r *http.Request) bool {
+	provider, ok := h.liveChannels.(stremioEventProgramProvider)
+	if !ok || !provider.HasStremioEvents() {
+		return false
+	}
+	profileID := r.URL.Query().Get("profileId")
+	if profileID != "" && h.userSettingsSvc != nil {
+		if us, err := h.userSettingsSvc.Get(profileID); err == nil && us != nil && us.LiveTV.EPG != nil && us.LiveTV.EPG.Enabled != nil {
+			return *us.LiveTV.EPG.Enabled
+		}
+	}
+	return true
 }

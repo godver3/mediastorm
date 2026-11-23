@@ -378,6 +378,8 @@ type LiveHandler struct {
 
 	stremioMu    sync.Mutex
 	stremioCache map[string]stremioChannelsCacheEntry
+	// stremioEvents holds match start times from Stremio sports addons.
+	stremioEvents stremioEventIndex
 
 	xtreamMu       sync.Mutex
 	xtreamCache    map[string]xtreamChannelsCacheEntry
