@@ -192,7 +192,11 @@ func (h *QualityPresetsHandler) ClientList(w http.ResponseWriter, r *http.Reques
 			resp.Disabled = s.QualityPresets.Disabled
 			resp.AllowRequestOverride = s.QualityPresets.AllowRequestOverride && !s.QualityPresets.Disabled
 			animeOnly = s.QualityPresets.AnimeOnlyInPickers
-			for _, id := range s.QualityPresets.PickerPresets {
+			offered := s.QualityPresets.PickerPresets
+			if s.QualityPresets.Disabled {
+				offered = nil // switched off: apps show no picker
+			}
+			for _, id := range offered {
 				item, ok := byID[id]
 				if id == config.QualityPresetSimple {
 					item, ok = clientPreset{ID: id, Name: "Simple ranking"}, true
