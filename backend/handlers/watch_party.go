@@ -113,8 +113,9 @@ var watchPartySourceAllowedParams = map[string]bool{
 
 func (h *WatchPartyHandler) BindSource(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Source string            `json:"source"`
-		Params map[string]string `json:"params"`
+		Source  string                   `json:"source"`
+		Params  map[string]string        `json:"params"`
+		Episode *models.WatchRoomEpisode `json:"episode,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeJSONError(w, "invalid request body", http.StatusBadRequest)
@@ -145,7 +146,7 @@ func (h *WatchPartyHandler) BindSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	params["profileId"] = profileID
-	_, err := h.service.BindExternalSource(r.Context(), auth.GetAccountID(r), profileID, mux.Vars(r)["roomID"], source, params)
+	_, err := h.service.BindExternalSource(r.Context(), auth.GetAccountID(r), profileID, mux.Vars(r)["roomID"], source, params, body.Episode)
 	if err != nil {
 		h.writeError(w, err)
 		return
@@ -320,6 +321,10 @@ type watchPartyRoomView struct {
 	Members           []models.WatchRoomMember `json:"members"`
 	CurrentGuestReady bool                     `json:"currentGuestReady"`
 	PlaybackReady     bool                     `json:"playbackReady"`
+	Episode           *models.WatchRoomEpisode `json:"episode,omitempty"`
+	// SourceBoundAt changes whenever the host binds a new source (a new
+	// episode); a guest already playing reloads when it changes.
+	SourceBoundAt *time.Time `json:"sourceBoundAt,omitempty"`
 }
 
 func externalRoomView(room *models.WatchRoom, guestID string) watchPartyRoomView {
@@ -338,7 +343,7 @@ func externalRoomView(room *models.WatchRoom, guestID string) watchPartyRoomView
 	}
 	return watchPartyRoomView{ID: room.ID, Title: room.Title, CreatorName: room.CreatorName, Status: room.Status,
 		WaitingForReady: room.WaitingForReady, Position: room.Position, Revision: room.Revision, Members: members,
-		CurrentGuestReady: currentGuestReady}
+		CurrentGuestReady: currentGuestReady, Episode: room.Episode}
 }
 
 func (h *WatchPartyHandler) RoomPage(w http.ResponseWriter, r *http.Request) {
@@ -433,8 +438,10 @@ func (h *WatchPartyHandler) RoomSnapshot(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	view := externalRoomView(room, guestID)
-	if _, err := h.service.ExternalSourceForGuest(r.Context(), roomID, guestID); err == nil {
+	if source, err := h.service.ExternalSourceForGuest(r.Context(), roomID, guestID); err == nil {
 		view.PlaybackReady = true
+		boundAt := source.BoundAt
+		view.SourceBoundAt = &boundAt
 	}
 	writeWatchRoomJSON(w, http.StatusOK, view)
 }
@@ -470,7 +477,9 @@ func (h *WatchPartyHandler) PlaybackGrant(w http.ResponseWriter, r *http.Request
 		h.writeError(w, err)
 		return
 	}
-	if room.Status != models.WatchRoomStatusPlaying {
+	// Paused is allowed so a guest following an episode change while the
+	// host is paused can load the new source.
+	if room.Status != models.WatchRoomStatusPlaying && room.Status != models.WatchRoomStatusPaused {
 		writeJSONError(w, "watch party has not started", http.StatusConflict)
 		return
 	}
@@ -524,7 +533,7 @@ func (h *WatchPartyHandler) writeError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case errors.Is(err, watchrooms.ErrInviteUnavailable), errors.Is(err, watchrooms.ErrRoomEnded):
 		status = http.StatusGone
-	case errors.Is(err, watchrooms.ErrIncompatibleClient):
+	case errors.Is(err, watchrooms.ErrIncompatibleClient), errors.Is(err, watchrooms.ErrInvalidState), errors.Is(err, watchrooms.ErrInvalidMedia):
 		status = http.StatusBadRequest
 	case errors.Is(err, watchrooms.ErrShareLinksDisabled):
 		status = http.StatusForbidden

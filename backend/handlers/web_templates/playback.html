@@ -1476,6 +1476,10 @@
     let watchPartyEndMessage = '';
     let watchPartyEstimatedSeekStartupSeconds = 3;
     let watchPartyHardSyncCooldownUntil = 0;
+    // The host's bound source; a change means the host moved to another
+    // episode and this guest reloads onto the new source.
+    let watchPartySourceBoundAt = null;
+    let watchPartySourceReloading = false;
 
     document.addEventListener('DOMContentLoaded', safeInit);
     window.addEventListener('beforeunload', () => {
@@ -3285,8 +3289,6 @@
       try {
         const video = document.getElementById('webPlayer');
         if (!video) return;
-        if (!watchPartyReadySent && video.readyState >= 2) await reportWatchPartyReady();
-
         const response = await fetch(watchPartyApiPath(`?buffering=${encodeURIComponent(String(Boolean(webPlayerBuffering)))}`), { credentials: 'same-origin', cache: 'no-store' });
         if ([401, 403, 404, 410].includes(response.status)) {
           finishWatchPartyPlayback('This Watch Together session is no longer available.');
@@ -3299,6 +3301,22 @@
           finishWatchPartyPlayback('The Watch Together room has ended.');
           return;
         }
+        if (room.sourceBoundAt) {
+          if (watchPartySourceBoundAt === null) {
+            watchPartySourceBoundAt = room.sourceBoundAt;
+          } else if (room.sourceBoundAt !== watchPartySourceBoundAt) {
+            watchPartyPlaybackAllowed = false;
+            if (!video.paused) video.pause();
+            await reloadWatchPartySource(room.sourceBoundAt);
+            return;
+          }
+        }
+        // An episode change resets every member's readiness; report again
+        // once this guest has the room's current source loaded. While the
+        // host's new source is not bound yet (playbackReady false) the loaded
+        // media is the previous episode, so readiness is withheld.
+        if (room.waitingForReady && room.currentGuestReady === false) watchPartyReadySent = false;
+        if (!watchPartyReadySent && video.readyState >= 2 && room.playbackReady !== false) await reportWatchPartyReady();
         if (room.status !== 'playing' || room.waitingForReady) {
           watchPartyPlaybackAllowed = false;
           setWatchPartyPlaybackRate(video, 0);
@@ -3325,6 +3343,26 @@
         webPlayerDebugLog('warn', 'watch party sync failed', { message: error?.message || String(error) });
       } finally {
         watchPartySyncInFlight = false;
+      }
+    }
+
+    async function reloadWatchPartySource(boundAt) {
+      if (watchPartySourceReloading) return;
+      watchPartySourceReloading = true;
+      webPlayerDebugLog('info', 'watch party source changed; reloading', { boundAt });
+      setStatus('The host changed episode. Loading…');
+      try {
+        const response = await fetch(watchPartyApiPath('/playback-grant'), { method: 'POST', credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`playback grant failed (${response.status})`);
+        const payload = await response.json();
+        if (!payload?.url) throw new Error('playback grant missing url');
+        watchPartySourceBoundAt = boundAt;
+        stopHlsSession({ skipProgress: true, localOnly: true });
+        window.location.replace(payload.url);
+      } catch (error) {
+        // Retried on the next sync tick.
+        watchPartySourceReloading = false;
+        webPlayerDebugLog('warn', 'watch party source reload failed', { message: error?.message || String(error) });
       }
     }
 

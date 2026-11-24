@@ -12,8 +12,8 @@ function player({response = {ok:false,status:403}, fetcher} = {}) {
     play(){this.paused=false;return Promise.resolve();}};
   let destroyed=0;
   const context = vm.createContext({URL,URLSearchParams,Promise,console:{info(){},warn(){},error(){}},
-    setTimeout(){return 81;},clearTimeout(id){cleared.push(id);},clearInterval(id){cleared.push(id);},
-    window:{location:{search:'?watchPartyRoomId=room&shareMode=1'},addEventListener(){},localStorage:{getItem(){return null;}},setTimeout(){return 81;},setInterval(){return 91;},clearInterval(id){cleared.push(id);}},
+    setTimeout(){return 81;},setInterval(){return 92;},clearTimeout(id){cleared.push(id);},clearInterval(id){cleared.push(id);},
+    window:{location:{search:'?watchPartyRoomId=room&shareMode=1',replace(url){calls.push('replace:'+url);}},addEventListener(){},localStorage:{getItem(){return null;}},setTimeout(){return 81;},setInterval(){return 91;},clearInterval(id){cleared.push(id);}},
     document:{addEventListener(){},getElementById(id){return id==='webPlayer'?video:id==='status'?status:null;}},
     fetch:async(url,options)=>{calls.push(String(url));return fetcher?fetcher(url,options):response;}});
   vm.runInContext(script,context);
@@ -85,4 +85,30 @@ test('metadata finishing after termination cannot allocate a new HLS session',as
   const starting=p.run('startWebPlayerFromSource()');await requested;
   await p.run('syncWatchPartyState()');release({});await starting;
   assert.equal(p.video.paused,true);assert.equal(p.video.src,'');assert.equal(p.run('hlsSessionId'),'');
+});
+
+test('a host episode change (new bound source) reloads the guest onto the new grant',async()=>{
+  let boundAt='2026-11-23T12:00:00Z';
+  const p=player({fetcher:async(url,options)=>{
+    if(String(url).endsWith('/playback-grant'))return {ok:true,status:200,json:async()=>({url:'/watch/playback.html?next=1'})};
+    return {ok:true,status:200,json:async()=>({status:'playing',position:37,members:[],playbackReady:true,sourceBoundAt:boundAt})};
+  }});
+  await p.run('syncWatchPartyState()');
+  assert.equal(p.calls.some(c=>c.startsWith('replace:')),false,'first snapshot only records the source');
+  boundAt='2026-11-23T12:20:00Z';
+  await p.run('syncWatchPartyState()');
+  assert.ok(p.calls.some(c=>c.endsWith('/playback-grant')));
+  assert.ok(p.calls.includes('replace:/watch/playback.html?next=1'));
+  assert.equal(p.video.paused,true);
+});
+
+test('readiness is re-reported after an episode change only once the new source is bound',async()=>{
+  let snapshot={status:'playing',waitingForReady:true,currentGuestReady:false,playbackReady:false,members:[]};
+  const p=player({fetcher:async(url)=>String(url).endsWith('/ready')?{ok:true,status:204}:{ok:true,status:200,json:async()=>snapshot}});
+  await p.run('syncWatchPartyState()');
+  assert.equal(p.calls.filter(c=>c.endsWith('/ready')).length,0,'stale source must not report ready');
+  assert.equal(p.video.paused,true);
+  snapshot={...snapshot,playbackReady:true};
+  await p.run('syncWatchPartyState()');
+  assert.equal(p.calls.filter(c=>c.endsWith('/ready')).length,1);
 });
