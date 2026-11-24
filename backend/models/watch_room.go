@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 const (
 	WatchRoomStatusLobby   = "lobby"
@@ -22,6 +25,7 @@ type WatchRoom struct {
 	PosterURL        string            `json:"posterUrl,omitempty"`
 	BackdropURL      string            `json:"backdropUrl,omitempty"`
 	Params           map[string]string `json:"params"`
+	Episode          *WatchRoomEpisode `json:"episode,omitempty"`
 	Status           string            `json:"status"`
 	WaitingForReady  bool              `json:"waitingForReady"`
 	Position         float64           `json:"position"`
@@ -109,7 +113,27 @@ type WatchRoomExternalSource struct {
 	RoomID   string            `json:"roomId"`
 	Resource string            `json:"-"`
 	Params   map[string]string `json:"-"`
-	BoundAt  time.Time         `json:"boundAt"`
+	// EpisodeKey is WatchRoomEpisode.Key() of the episode this source plays.
+	EpisodeKey string    `json:"-"`
+	BoundAt    time.Time `json:"boundAt"`
+}
+
+// WatchRoomEpisode pins a series room to one episode. Only the room creator
+// may change it; every member plays this episode rather than their own next-up.
+type WatchRoomEpisode struct {
+	SeasonNumber  int    `json:"seasonNumber"`
+	EpisodeNumber int    `json:"episodeNumber"`
+	EpisodeID     string `json:"episodeId,omitempty"`
+	Title         string `json:"title,omitempty"`
+}
+
+// Key identifies the episode by season/episode number; metadata such as the
+// title does not make it a different episode. A nil episode has key "".
+func (e *WatchRoomEpisode) Key() string {
+	if e == nil {
+		return ""
+	}
+	return "s" + strconv.Itoa(e.SeasonNumber) + "e" + strconv.Itoa(e.EpisodeNumber)
 }
 
 type WatchRoomCreate struct {
@@ -119,6 +143,7 @@ type WatchRoomCreate struct {
 	PosterURL         string                      `json:"posterUrl,omitempty"`
 	BackdropURL       string                      `json:"backdropUrl,omitempty"`
 	Params            map[string]string           `json:"params"`
+	Episode           *WatchRoomEpisode           `json:"episode,omitempty"`
 	InviteeProfileIDs []string                    `json:"inviteeProfileIds"`
 	ClientID          string                      `json:"clientId,omitempty"`
 	Capabilities      WatchRoomClientCapabilities `json:"capabilities"`
@@ -129,4 +154,8 @@ type WatchRoomStateUpdate struct {
 	Position         float64 `json:"position"`
 	Duration         float64 `json:"duration,omitempty"`
 	ExpectedRevision *int64  `json:"expectedRevision,omitempty"`
+	// Episode, when sent by the host and different from the stored one,
+	// switches the room to that episode and holds playback until every
+	// member reports ready again.
+	Episode *WatchRoomEpisode `json:"episode,omitempty"`
 }

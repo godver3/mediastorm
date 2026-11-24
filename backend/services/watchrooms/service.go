@@ -34,6 +34,7 @@ var (
 	ErrShareLinksDisabled = errors.New("share links are not enabled for this profile")
 	ErrSourceConflict     = errors.New("watch party source is already bound")
 	ErrSourceUnavailable  = errors.New("watch party source is not ready")
+	ErrEpisodeHostOnly    = errors.New("only the room creator can change the episode")
 )
 
 const (
@@ -111,6 +112,10 @@ func (s *Service) Create(ctx context.Context, actorAccountID, creatorID string, 
 	if in.Title == "" || in.MediaType == "" || in.ItemID == "" {
 		return nil, ErrInvalidMedia
 	}
+	episode, err := normalizeEpisode(in.Episode)
+	if err != nil {
+		return nil, err
+	}
 	creator, ok := s.profiles.Get(creatorID)
 	if !ok || creator.AccountID != actorAccountID {
 		return nil, ErrNotFound
@@ -140,7 +145,7 @@ func (s *Service) Create(ctx context.Context, actorAccountID, creatorID string, 
 	room := &models.WatchRoom{
 		ID: uuid.NewString(), CreatorProfileID: creatorID, Title: in.Title,
 		MediaType: in.MediaType, ItemID: in.ItemID, PosterURL: strings.TrimSpace(in.PosterURL),
-		BackdropURL: strings.TrimSpace(in.BackdropURL), Params: in.Params,
+		BackdropURL: strings.TrimSpace(in.BackdropURL), Params: in.Params, Episode: episode,
 		Status: models.WatchRoomStatusLobby, AnchorUpdatedAt: now, CreatedAt: now,
 		ExpiresAt: now.Add(roomLifetime),
 	}
@@ -151,6 +156,21 @@ func (s *Service) Create(ctx context.Context, actorAccountID, creatorID string, 
 		return nil, err
 	}
 	return s.Get(ctx, room.ID, creatorID)
+}
+
+// normalizeEpisode validates an optional episode: season 0 (specials) is
+// allowed, episode numbers start at 1.
+func normalizeEpisode(episode *models.WatchRoomEpisode) (*models.WatchRoomEpisode, error) {
+	if episode == nil {
+		return nil, nil
+	}
+	if episode.SeasonNumber < 0 || episode.EpisodeNumber < 1 {
+		return nil, ErrInvalidState
+	}
+	copy := *episode
+	copy.EpisodeID = strings.TrimSpace(copy.EpisodeID)
+	copy.Title = strings.TrimSpace(copy.Title)
+	return &copy, nil
 }
 
 func (s *Service) InviteAccount(ctx context.Context, actorAccountID, creatorProfileID, roomID, username string) (*models.WatchRoomAccountInvite, error) {
@@ -390,13 +410,29 @@ func (s *Service) LeaveExternalGuest(ctx context.Context, roomID, guestID string
 }
 
 func (s *Service) SetExternalGuestReady(ctx context.Context, roomID, guestID string, ready bool) error {
-	if _, err := s.GetForExternalGuest(ctx, roomID, guestID); err != nil {
+	room, err := s.GetForExternalGuest(ctx, roomID, guestID)
+	if err != nil {
 		return err
+	}
+	if ready && room.Status != models.WatchRoomStatusLobby {
+		// A guest can only be ready for the episode the room is on; while the
+		// host's new source is unbound the guest is still on the old one.
+		source, err := s.repo.GetExternalSource(ctx, roomID)
+		if err != nil {
+			return err
+		}
+		if source != nil && source.EpisodeKey != room.Episode.Key() {
+			return ErrSourceUnavailable
+		}
 	}
 	return s.repo.SetExternalGuestReady(ctx, roomID, guestID, ready, s.now().UTC())
 }
 
-func (s *Service) BindExternalSource(ctx context.Context, actorAccountID, creatorProfileID, roomID, resource string, params map[string]string) (*models.WatchRoomExternalSource, error) {
+// BindExternalSource binds the source external guests play. episode names the
+// episode the source plays; nil means the room's current episode. A source is
+// immutable per episode, so a host moving to a new episode rebinds and web
+// guests reload onto it.
+func (s *Service) BindExternalSource(ctx context.Context, actorAccountID, creatorProfileID, roomID, resource string, params map[string]string, episode *models.WatchRoomEpisode) (*models.WatchRoomExternalSource, error) {
 	creator, ok := s.profiles.Get(creatorProfileID)
 	if !ok || creator.AccountID != actorAccountID {
 		return nil, ErrNotFound
@@ -418,10 +454,17 @@ func (s *Service) BindExternalSource(ctx context.Context, actorAccountID, creato
 	if room.Status == models.WatchRoomStatusEnded {
 		return nil, ErrRoomEnded
 	}
+	episode, err = normalizeEpisode(episode)
+	if err != nil {
+		return nil, err
+	}
+	if episode == nil {
+		episode = room.Episode
+	}
 	// The source is bound whether or not a share link exists yet: it is only
 	// ever handed to external guests, who must join through an active invite,
 	// and binding up front lets a link created mid-playback start immediately.
-	bound, err := s.repo.BindExternalSource(ctx, roomID, creatorProfileID, resource, params, s.now().UTC())
+	bound, err := s.repo.BindExternalSource(ctx, roomID, creatorProfileID, resource, params, episode.Key(), s.now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -440,6 +483,12 @@ func (s *Service) ExternalSourceForGuest(ctx context.Context, roomID, guestID st
 		return nil, err
 	}
 	if source == nil || strings.TrimSpace(source.Resource) == "" {
+		return nil, ErrSourceUnavailable
+	}
+	if room, err := s.repo.Get(ctx, roomID); err != nil {
+		return nil, err
+	} else if room != nil && room.Episode.Key() != source.EpisodeKey {
+		// The host changed episode but has not bound its source yet.
 		return nil, ErrSourceUnavailable
 	}
 	return source, nil
@@ -554,7 +603,27 @@ func (s *Service) UpdateState(ctx context.Context, roomID, profileID string, upd
 	if math.IsNaN(update.Duration) || math.IsInf(update.Duration, 0) || update.Duration < 0 {
 		return nil, ErrInvalidState
 	}
-	updated, err := s.repo.UpdateState(ctx, roomID, profileID, update.Status, update.Position, update.Duration, update.ExpectedRevision, s.now().UTC())
+	episode, err := normalizeEpisode(update.Episode)
+	if err != nil {
+		return nil, err
+	}
+	var episodeChange *models.WatchRoomEpisode
+	if episode != nil {
+		room, err := s.repo.Get(ctx, roomID)
+		if err != nil {
+			return nil, err
+		}
+		if room == nil {
+			return nil, ErrNotFound
+		}
+		if room.Episode.Key() != episode.Key() {
+			if room.CreatorProfileID != profileID {
+				return nil, ErrEpisodeHostOnly
+			}
+			episodeChange = episode
+		}
+	}
+	updated, err := s.repo.UpdateState(ctx, roomID, profileID, update.Status, update.Position, update.Duration, update.ExpectedRevision, episodeChange, s.now().UTC())
 	if err != nil {
 		return nil, err
 	}

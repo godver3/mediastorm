@@ -15,12 +15,16 @@ type pgWatchRoomRepo struct{ pool DB }
 
 const watchRoomCols = `r.id, r.creator_profile_id, creator.name, r.title, r.media_type, r.item_id,
 	r.poster_url, r.backdrop_url, r.params, r.status, r.waiting_for_ready, r.position, r.duration, r.revision,
-	r.updated_by, r.anchor_updated_at, r.created_at, r.expires_at, r.ended_at, r.end_reason`
+	r.updated_by, r.anchor_updated_at, r.created_at, r.expires_at, r.ended_at, r.end_reason, r.episode`
 
 func (r *pgWatchRoomRepo) Create(ctx context.Context, room *models.WatchRoom, invitees []string, clientID string, capabilities models.WatchRoomClientCapabilities) error {
 	params, err := json.Marshal(room.Params)
 	if err != nil {
 		return fmt.Errorf("marshal watch room params: %w", err)
+	}
+	episode, err := marshalWatchRoomEpisode(room.Episode)
+	if err != nil {
+		return err
 	}
 	tx, err := beginDBTx(ctx, r.pool)
 	if err != nil {
@@ -29,11 +33,11 @@ func (r *pgWatchRoomRepo) Create(ctx context.Context, room *models.WatchRoom, in
 	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, `INSERT INTO watch_rooms
 		(id, creator_profile_id, title, media_type, item_id, poster_url, backdrop_url, params, status,
-		 position, duration, revision, updated_by, anchor_updated_at, created_at, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		 position, duration, revision, updated_by, anchor_updated_at, created_at, expires_at, episode)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		room.ID, room.CreatorProfileID, room.Title, room.MediaType, room.ItemID, room.PosterURL,
 		room.BackdropURL, params, room.Status, room.Position, room.Duration, room.Revision,
-		room.CreatorProfileID, room.AnchorUpdatedAt, room.CreatedAt, room.ExpiresAt)
+		room.CreatorProfileID, room.AnchorUpdatedAt, room.CreatedAt, room.ExpiresAt, episode)
 	if err != nil {
 		return fmt.Errorf("create watch room: %w", err)
 	}
@@ -143,15 +147,23 @@ func (r *pgWatchRoomRepo) SetReady(ctx context.Context, roomID, profileID string
 	return err
 }
 
-func (r *pgWatchRoomRepo) UpdateState(ctx context.Context, roomID, profileID, status string, position, duration float64, expectedRevision *int64, now time.Time) (bool, error) {
+// UpdateState applies a playback anchor. A non-nil episode switches the room
+// to it (creator only, enforced here as well as in the service) and, like the
+// lobby start, re-enters the readiness wait in the same revision.
+func (r *pgWatchRoomRepo) UpdateState(ctx context.Context, roomID, profileID, status string, position, duration float64, expectedRevision *int64, episode *models.WatchRoomEpisode, now time.Time) (bool, error) {
+	episodeJSON, err := marshalWatchRoomEpisode(episode)
+	if err != nil {
+		return false, err
+	}
 	var updated bool
-	err := r.pool.QueryRow(ctx, `WITH candidate AS MATERIALIZED (
-		SELECT id, status='lobby' AND $3='playing' AS starting
+	err = r.pool.QueryRow(ctx, `WITH candidate AS MATERIALIZED (
+		SELECT id, (status='lobby' AND $3='playing') OR $8::jsonb IS NOT NULL AS starting
 		FROM watch_rooms
 		WHERE id=$1 AND status<>'ended' AND ($7::bigint IS NULL OR revision=$7)
+			AND ($8::jsonb IS NULL OR creator_profile_id=$2)
 		FOR UPDATE
 	), room_update AS (
-		UPDATE watch_rooms r SET status=$3,
+		UPDATE watch_rooms r SET status=$3,episode=COALESCE($8::jsonb,r.episode),
 			waiting_for_ready=CASE WHEN candidate.starting THEN true ELSE r.waiting_for_ready END,position=$4,
 			duration=GREATEST(r.duration,$5),revision=r.revision+1,updated_by=$2,anchor_updated_at=$6
 		FROM candidate WHERE r.id=candidate.id
@@ -163,7 +175,7 @@ func (r *pgWatchRoomRepo) UpdateState(ctx context.Context, roomID, profileID, st
 		UPDATE watch_room_guest_members g SET ready=false
 		FROM room_update WHERE room_update.starting AND g.room_id=room_update.id
 	)
-	SELECT EXISTS(SELECT 1 FROM room_update)`, roomID, profileID, status, position, duration, now, expectedRevision).Scan(&updated)
+	SELECT EXISTS(SELECT 1 FROM room_update)`, roomID, profileID, status, position, duration, now, expectedRevision, episodeJSON).Scan(&updated)
 	return updated, err
 }
 
@@ -414,15 +426,19 @@ func (r *pgWatchRoomRepo) SetExternalGuestReady(ctx context.Context, roomID, gue
 	return err
 }
 
-func (r *pgWatchRoomRepo) BindExternalSource(ctx context.Context, roomID, creatorProfileID, resource string, params map[string]string, now time.Time) (bool, error) {
+// BindExternalSource records the source external guests play. A bound source
+// is immutable for its episode; binding for a different episode replaces it.
+func (r *pgWatchRoomRepo) BindExternalSource(ctx context.Context, roomID, creatorProfileID, resource string, params map[string]string, episodeKey string, now time.Time) (bool, error) {
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return false, fmt.Errorf("marshal external watch source params: %w", err)
 	}
-	tag, err := r.pool.Exec(ctx, `INSERT INTO watch_room_external_sources (room_id,resource,params,bound_at)
-		SELECT r.id,$3,$4,$5 FROM watch_rooms r
+	tag, err := r.pool.Exec(ctx, `INSERT INTO watch_room_external_sources (room_id,resource,params,bound_at,episode_key)
+		SELECT r.id,$3,$4,$5,$6 FROM watch_rooms r
 		WHERE r.id=$1 AND r.creator_profile_id=$2 AND r.status<>'ended'
-		ON CONFLICT (room_id) DO NOTHING`, roomID, creatorProfileID, resource, paramsJSON, now)
+		ON CONFLICT (room_id) DO UPDATE SET resource=EXCLUDED.resource,params=EXCLUDED.params,
+			bound_at=EXCLUDED.bound_at,episode_key=EXCLUDED.episode_key
+		WHERE watch_room_external_sources.episode_key<>EXCLUDED.episode_key`, roomID, creatorProfileID, resource, paramsJSON, now, episodeKey)
 	if err != nil {
 		return false, err
 	}
@@ -430,14 +446,14 @@ func (r *pgWatchRoomRepo) BindExternalSource(ctx context.Context, roomID, creato
 		return true, nil
 	}
 	existing, err := r.GetExternalSource(ctx, roomID)
-	return err == nil && existing != nil && existing.Resource == resource, err
+	return err == nil && existing != nil && existing.Resource == resource && existing.EpisodeKey == episodeKey, err
 }
 
 func (r *pgWatchRoomRepo) GetExternalSource(ctx context.Context, roomID string) (*models.WatchRoomExternalSource, error) {
-	row := r.pool.QueryRow(ctx, `SELECT room_id,resource,params,bound_at FROM watch_room_external_sources WHERE room_id=$1`, roomID)
+	row := r.pool.QueryRow(ctx, `SELECT room_id,resource,params,bound_at,episode_key FROM watch_room_external_sources WHERE room_id=$1`, roomID)
 	var source models.WatchRoomExternalSource
 	var params []byte
-	if err := row.Scan(&source.RoomID, &source.Resource, &params, &source.BoundAt); err != nil {
+	if err := row.Scan(&source.RoomID, &source.Resource, &params, &source.BoundAt, &source.EpisodeKey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -517,11 +533,17 @@ func scanWatchRoom(row pgx.Row) (*models.WatchRoom, error) {
 
 func scanWatchRoomRow(row pgx.Row) (*models.WatchRoom, error) {
 	var room models.WatchRoom
-	var params []byte
+	var params, episode []byte
 	if err := row.Scan(&room.ID, &room.CreatorProfileID, &room.CreatorName, &room.Title, &room.MediaType, &room.ItemID,
 		&room.PosterURL, &room.BackdropURL, &params, &room.Status, &room.WaitingForReady, &room.Position, &room.Duration, &room.Revision,
-		&room.UpdatedBy, &room.AnchorUpdatedAt, &room.CreatedAt, &room.ExpiresAt, &room.EndedAt, &room.EndReason); err != nil {
+		&room.UpdatedBy, &room.AnchorUpdatedAt, &room.CreatedAt, &room.ExpiresAt, &room.EndedAt, &room.EndReason, &episode); err != nil {
 		return nil, err
+	}
+	if len(episode) > 0 {
+		room.Episode = &models.WatchRoomEpisode{}
+		if err := json.Unmarshal(episode, room.Episode); err != nil {
+			return nil, err
+		}
 	}
 	if err := json.Unmarshal(params, &room.Params); err != nil {
 		return nil, err
@@ -530,4 +552,16 @@ func scanWatchRoomRow(row pgx.Row) (*models.WatchRoom, error) {
 		room.Params = map[string]string{}
 	}
 	return &room, nil
+}
+
+// marshalWatchRoomEpisode returns nil (SQL NULL) for a nil episode.
+func marshalWatchRoomEpisode(episode *models.WatchRoomEpisode) ([]byte, error) {
+	if episode == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(episode)
+	if err != nil {
+		return nil, fmt.Errorf("marshal watch room episode: %w", err)
+	}
+	return b, nil
 }

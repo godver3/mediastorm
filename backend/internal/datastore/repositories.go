@@ -130,7 +130,7 @@ type WatchRoomRepository interface {
 	IsInvited(ctx context.Context, roomID, profileID string) (bool, error)
 	Join(ctx context.Context, roomID, profileID, clientID string, capabilities models.WatchRoomClientCapabilities, now time.Time) error
 	SetReady(ctx context.Context, roomID, profileID string, ready bool, now time.Time) error
-	UpdateState(ctx context.Context, roomID, profileID, status string, position, duration float64, expectedRevision *int64, now time.Time) (bool, error)
+	UpdateState(ctx context.Context, roomID, profileID, status string, position, duration float64, expectedRevision *int64, episode *models.WatchRoomEpisode, now time.Time) (bool, error)
 	Heartbeat(ctx context.Context, roomID, profileID, clientID string, buffering bool, now time.Time) error
 	Leave(ctx context.Context, roomID, profileID string) error
 	End(ctx context.Context, roomID, profileID string, now time.Time) (bool, error)
@@ -151,7 +151,7 @@ type WatchRoomRepository interface {
 	HeartbeatExternalGuest(ctx context.Context, roomID, guestID, clientID string, buffering bool, now time.Time) error
 	LeaveExternalGuest(ctx context.Context, roomID, guestID string) error
 	SetExternalGuestReady(ctx context.Context, roomID, guestID string, ready bool, now time.Time) error
-	BindExternalSource(ctx context.Context, roomID, creatorProfileID, resource string, params map[string]string, now time.Time) (bool, error)
+	BindExternalSource(ctx context.Context, roomID, creatorProfileID, resource string, params map[string]string, episodeKey string, now time.Time) (bool, error)
 	GetExternalSource(ctx context.Context, roomID string) (*models.WatchRoomExternalSource, error)
 }
 

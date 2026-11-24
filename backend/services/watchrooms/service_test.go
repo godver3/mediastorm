@@ -89,14 +89,14 @@ func (r *fakeRoomRepo) SetExternalGuestReady(_ context.Context, _, guestID strin
 	r.guestMembers[guestID] = m
 	return nil
 }
-func (r *fakeRoomRepo) BindExternalSource(_ context.Context, roomID, creatorProfileID, resource string, params map[string]string, now time.Time) (bool, error) {
+func (r *fakeRoomRepo) BindExternalSource(_ context.Context, roomID, creatorProfileID, resource string, params map[string]string, episodeKey string, now time.Time) (bool, error) {
 	if r.room == nil || r.room.ID != roomID || r.room.CreatorProfileID != creatorProfileID || r.room.Status == models.WatchRoomStatusEnded {
 		return false, nil
 	}
-	if r.externalSource != nil {
+	if r.externalSource != nil && r.externalSource.EpisodeKey == episodeKey {
 		return r.externalSource.Resource == resource, nil
 	}
-	r.externalSource = &models.WatchRoomExternalSource{RoomID: roomID, Resource: resource, Params: params, BoundAt: now}
+	r.externalSource = &models.WatchRoomExternalSource{RoomID: roomID, Resource: resource, Params: params, EpisodeKey: episodeKey, BoundAt: now}
 	return true, nil
 }
 func (r *fakeRoomRepo) GetExternalSource(_ context.Context, roomID string) (*models.WatchRoomExternalSource, error) {
@@ -223,9 +223,25 @@ func (r *fakeRoomRepo) SetReady(_ context.Context, _, profileID string, ready bo
 	r.members[profileID] = m
 	return nil
 }
-func (r *fakeRoomRepo) UpdateState(_ context.Context, _, profileID, status string, position, duration float64, expectedRevision *int64, now time.Time) (bool, error) {
+func (r *fakeRoomRepo) UpdateState(_ context.Context, _, profileID, status string, position, duration float64, expectedRevision *int64, episode *models.WatchRoomEpisode, now time.Time) (bool, error) {
 	if expectedRevision != nil && r.room.Revision != *expectedRevision {
 		return false, nil
+	}
+	if episode != nil {
+		if profileID != r.room.CreatorProfileID {
+			return false, nil
+		}
+		copy := *episode
+		r.room.Episode = &copy
+		r.room.WaitingForReady = true
+		for id, m := range r.members {
+			m.Ready = false
+			r.members[id] = m
+		}
+		for id, m := range r.guestMembers {
+			m.Ready = false
+			r.guestMembers[id] = m
+		}
 	}
 	r.room.Status, r.room.Position, r.room.Duration = status, position, duration
 	r.room.Revision++
@@ -422,11 +438,11 @@ func TestExternalInvitationCoexistsWithLocalProfileInvite(t *testing.T) {
 	if !found {
 		t.Fatalf("external guest missing from room: %#v", guestRoom.Members)
 	}
-	source, err := svc.BindExternalSource(context.Background(), "home", "host", room.ID, "/movies/movie.mkv", map[string]string{"title": "Movie"})
+	source, err := svc.BindExternalSource(context.Background(), "home", "host", room.ID, "/movies/movie.mkv", map[string]string{"title": "Movie"}, nil)
 	if err != nil || source.Resource != "/movies/movie.mkv" {
 		t.Fatalf("BindExternalSource() = %#v, %v", source, err)
 	}
-	if _, err := svc.BindExternalSource(context.Background(), "home", "host", room.ID, "/movies/other.mkv", nil); !errors.Is(err, ErrSourceConflict) {
+	if _, err := svc.BindExternalSource(context.Background(), "home", "host", room.ID, "/movies/other.mkv", nil, nil); !errors.Is(err, ErrSourceConflict) {
 		t.Fatalf("second source bind err = %v, want %v", err, ErrSourceConflict)
 	}
 	if err := svc.RevokeExternalInvitation(context.Background(), "home", "host", room.ID); err != nil {
@@ -456,12 +472,12 @@ func TestBindExternalSourceDoesNotRequireShareLink(t *testing.T) {
 	// A household-only room has no share link; the host's bind must still
 	// succeed (and stay idempotent) rather than reporting a conflict.
 	for i := 0; i < 2; i++ {
-		source, err := svc.BindExternalSource(ctx, "home", "host", room.ID, "/movies/movie.mkv", nil)
+		source, err := svc.BindExternalSource(ctx, "home", "host", room.ID, "/movies/movie.mkv", nil, nil)
 		if err != nil || source == nil || source.Resource != "/movies/movie.mkv" {
 			t.Fatalf("BindExternalSource() attempt %d = %#v, %v", i+1, source, err)
 		}
 	}
-	if _, err := svc.BindExternalSource(ctx, "home", "local", room.ID, "/movies/movie.mkv", nil); !errors.Is(err, ErrNotCreator) {
+	if _, err := svc.BindExternalSource(ctx, "home", "local", room.ID, "/movies/movie.mkv", nil, nil); !errors.Is(err, ErrNotCreator) {
 		t.Fatalf("invitee bind err = %v, want %v", err, ErrNotCreator)
 	}
 
@@ -481,7 +497,7 @@ func TestBindExternalSourceDoesNotRequireShareLink(t *testing.T) {
 	if err := svc.End(ctx, room.ID, "host"); err != nil {
 		t.Fatalf("End() error = %v", err)
 	}
-	if _, err := svc.BindExternalSource(ctx, "home", "host", room.ID, "/movies/movie.mkv", nil); !errors.Is(err, ErrRoomEnded) {
+	if _, err := svc.BindExternalSource(ctx, "home", "host", room.ID, "/movies/movie.mkv", nil, nil); !errors.Is(err, ErrRoomEnded) {
 		t.Fatalf("ended room bind err = %v, want %v", err, ErrRoomEnded)
 	}
 }

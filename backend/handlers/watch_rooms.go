@@ -194,7 +194,7 @@ func (h *WatchRoomsHandler) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, watchrooms.ErrNotFound), errors.Is(err, watchrooms.ErrNotInvited):
 		status = http.StatusNotFound
-	case errors.Is(err, watchrooms.ErrNotMember), errors.Is(err, watchrooms.ErrNotCreator), errors.Is(err, watchrooms.ErrForeignProfile):
+	case errors.Is(err, watchrooms.ErrNotMember), errors.Is(err, watchrooms.ErrNotCreator), errors.Is(err, watchrooms.ErrForeignProfile), errors.Is(err, watchrooms.ErrEpisodeHostOnly):
 		status = http.StatusForbidden
 	case errors.Is(err, watchrooms.ErrInvalidMedia), errors.Is(err, watchrooms.ErrInvalidState), errors.Is(err, watchrooms.ErrIncompatibleClient), errors.Is(err, watchrooms.ErrSameAccount):
 		status = http.StatusBadRequest
