@@ -11,7 +11,7 @@ function player({ profile = 'profile-a', query = '', media = {}, preferences = n
   const restarts = [];
   const warnings = [];
   const context = vm.createContext({
-    URL, URLSearchParams, setTimeout, clearTimeout,
+    URL, URLSearchParams, setTimeout, clearTimeout, setInterval: () => 0,
     window: { location: { search: query }, addEventListener() {}, localStorage: { getItem() { return null; } } },
     document: { addEventListener() {}, getElementById() { return null; } },
     console: { info() {}, warn(...args) { warnings.push(args); }, error() {} },

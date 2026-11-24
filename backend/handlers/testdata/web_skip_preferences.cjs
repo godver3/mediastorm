@@ -7,7 +7,7 @@ const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
 
 function player(store, profile='adult', query='', api) {
   const calls=[], warnings=[];
-  const context=vm.createContext({URL,URLSearchParams,setTimeout,clearTimeout,
+  const context=vm.createContext({URL,URLSearchParams,setTimeout,clearTimeout,setInterval:()=>0,
     window:{location:{search:query},addEventListener(){},localStorage:{getItem(){return 'true';},setItem(){throw Error('must not write browser preferences');}}},
     document:{addEventListener(){},getElementById(){return null;},querySelector(){return null;}},
     console:{info(){},warn(){},error(){}}});
