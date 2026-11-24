@@ -4283,6 +4283,11 @@ func (s *Service) executeQualityPresetSync(task config.ScheduledTask) (SyncResul
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if s.configManager != nil {
+		if settings, err := s.configManager.Load(); err == nil && settings.QualityPresets.Disabled {
+			return SyncResult{Message: "Quality presets are switched off; nothing checked"}, nil
+		}
+	}
 	res, err := syncer.SyncDue(ctx, task.Config["force"] == "true")
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("quality preset sync failed: %w", err)

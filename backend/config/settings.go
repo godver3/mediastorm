@@ -2157,6 +2157,10 @@ type QualityPresetSource struct {
 
 // QualityPresetsSettings controls quality presets.
 type QualityPresetsSettings struct {
+	// Disabled switches quality presets off server-wide: every search uses
+	// the simple ranking, apps offer no picker and presets are not synced.
+	// The presets and all selections are kept for when it is switched on.
+	Disabled bool `json:"disabled,omitempty"`
 	// MoviePreset and SeriesPreset are preset IDs; "" or "simple" use the
 	// simple filtering and ranking settings.
 	MoviePreset  string `json:"moviePreset,omitempty"`
@@ -2188,6 +2192,9 @@ type QualityPresetsSettings struct {
 // OffersInPicker reports whether id (a preset ID or QualityPresetSimple) is
 // offered in version pickers.
 func (q QualityPresetsSettings) OffersInPicker(id string) bool {
+	if q.Disabled {
+		return false
+	}
 	id = strings.TrimSpace(id)
 	for _, offered := range q.PickerPresets {
 		if strings.EqualFold(offered, id) {
@@ -2212,7 +2219,7 @@ func (q QualityPresetsSettings) HidesByDefault(id string) bool {
 // AllowsRequestPreset reports whether a single search may ask for id
 // instead of the preset its profile and device would use.
 func (q QualityPresetsSettings) AllowsRequestPreset(id string) bool {
-	return strings.TrimSpace(id) != "" && (q.AllowRequestOverride || q.OffersInPicker(id))
+	return !q.Disabled && strings.TrimSpace(id) != "" && (q.AllowRequestOverride || q.OffersInPicker(id))
 }
 
 // RankingCriterionID identifies a ranking criterion.

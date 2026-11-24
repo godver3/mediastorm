@@ -109,6 +109,9 @@ type QualityPresetSelection struct {
 // and the server for the media type. An empty PresetID means the simple
 // ranking settings.
 func (s *Service) SelectQualityPreset(opts SearchOptions, settings config.Settings) QualityPresetSelection {
+	if settings.QualityPresets.Disabled {
+		return QualityPresetSelection{Source: "disabled"}
+	}
 	if req := strings.TrimSpace(opts.QualityPreset); settings.QualityPresets.AllowsRequestPreset(req) && s.profileAllowsPreset(opts.UserID, req, settings) {
 		return QualityPresetSelection{PresetID: normalizePresetID(req), Source: "request"}
 	}
@@ -146,6 +149,9 @@ func (s *Service) CheckRequestedPreset(ctx context.Context, opts SearchOptions) 
 	settings, err := s.cfg.Load()
 	if err != nil {
 		return nil // the search itself will report it
+	}
+	if settings.QualityPresets.Disabled {
+		return nil // switched off: the search ignores it and ranks simply
 	}
 	if !strings.EqualFold(req, config.QualityPresetSimple) {
 		if s.presets == nil {

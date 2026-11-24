@@ -2391,6 +2391,11 @@
         scroll-margin-top: 5.5rem;
     }
 }
+.quality-preset-override { margin: 0 0 1rem; padding: 0.9rem 1.1rem; border: 1px solid rgba(240, 208, 32, 0.55); background: rgba(240, 208, 32, 0.08); border-radius: 10px; font-size: 0.88rem; line-height: 1.45; }
+.quality-preset-override .qpo-title { font-weight: 600; margin-bottom: 0.25rem; }
+.quality-preset-override .qpo-muted { color: var(--text-muted); margin: 0.35rem 0; font-size: 0.82rem; }
+.quality-preset-override a { font-weight: 600; color: #f0d020; }
+.qpo-tag { display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; color: #f0d020; border: 1px solid rgba(240, 208, 32, 0.55); vertical-align: middle; }
 </style>
 {{end}}
 
@@ -2524,6 +2529,7 @@
             </div>
             <div id="settingsCategorySummary" class="settings-category-summary"></div>
         </header>
+        <div id="qualityPresetOverride" class="quality-preset-override" role="note" hidden></div>
         <div id="settingsContainer">
             <div style="display: flex; align-items: center; justify-content: center; padding: 2rem;">
                 <div class="spinner"></div>
@@ -3297,7 +3303,47 @@
         }
     }
 
+    // Quality presets replace the filtering and ranking sections of Search &
+    // Quality for the media types they are selected for; say so above them.
+    const qualityPresetOverrideSections = new Set(['filtering', 'animeFiltering', 'ranking']);
+    let qualityPresetNames = null;
+    async function loadQualityPresetNames() {
+        try {
+            const res = await fetch('{{.ServerBasePath}}/admin/api/quality-presets', { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const data = await res.json();
+            qualityPresetNames = Object.fromEntries((data.presets || []).map(p => [p.id, p.name]));
+            renderQualityPresetOverride();
+        } catch (e) { /* the note is informational */ }
+    }
+    function activeQualityPresetSlots() {
+        const q = currentSettings.qualityPresets || {};
+        if (q.disabled || !qualityPresetNames) return [];
+        const name = id => id && id !== 'simple' ? qualityPresetNames[id] : '';
+        return [['Movies', q.moviePreset], ['Series', q.seriesPreset], ['Anime movies', q.animeMoviePreset], ['Anime series', q.animeSeriesPreset]]
+            .map(([label, id]) => [label, name(id)]).filter(([, n]) => n);
+    }
+    function renderQualityPresetOverride() {
+        const el = document.getElementById('qualityPresetOverride');
+        if (!el) return;
+        const slots = activeSettingsGroup === 'search' && !searchTerm ? activeQualityPresetSlots() : [];
+        el.hidden = slots.length === 0;
+        document.querySelectorAll('[data-quality-preset-tag]').forEach(t => t.remove());
+        if (el.hidden) return;
+        const list = slots.map(([label, n]) => '<strong>' + escapeHtml(label) + '</strong>: ' + escapeHtml(n)).join(' · ');
+        el.innerHTML = '<div class="qpo-title">Quality presets are overriding these settings</div>'
+            + '<div>' + list + '</div>'
+            + '<div class="qpo-muted">For those media types the preset decides what passes and how results rank, so Filtering, Anime filtering and Ranking below do not apply. Still applied: service priority (as a tie-breaker), device bandwidth caps, the unknown-track policy, the Real-Debrid restricted-terms filter and the title/year checks. Profiles, devices or a viewer\'s pick can choose another preset.</div>'
+            + '<a href="{{.ServerBasePath}}/admin/quality-presets">Manage quality presets</a>';
+        // The sections render after the header: tag them once they exist.
+        requestAnimationFrame(() => qualityPresetOverrideSections.forEach(key => {
+            const label = document.querySelector('#section-' + key + ' .settings-section-label');
+            if (label && !label.querySelector('[data-quality-preset-tag]')) label.insertAdjacentHTML('beforeend', ' <span class="qpo-tag" data-quality-preset-tag>Overridden by quality preset</span>');
+        }));
+    }
+
     function renderSettingsCategoryHeader() {
+        renderQualityPresetOverride();
         const group = settingsLandingGroups.find(candidate => candidate.id === activeSettingsGroup);
         const title = document.getElementById('settingsCategoryTitle');
         const description = document.getElementById('settingsCategoryDescription');
@@ -15316,6 +15362,7 @@
         }
     }
     document.addEventListener('DOMContentLoaded', async () => {
+        loadQualityPresetNames();
         // Check for ?profileId= query param to pre-select a profile
         const urlProfileId = new URLSearchParams(window.location.search).get('profileId');
 

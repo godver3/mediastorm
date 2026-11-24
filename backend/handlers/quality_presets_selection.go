@@ -16,6 +16,7 @@ import (
 )
 
 type presetListResponse struct {
+	Disabled             bool                      `json:"disabled"`
 	Presets              []qualityprofiles.Summary `json:"presets"`
 	MoviePreset          string                    `json:"moviePreset"`
 	SeriesPreset         string                    `json:"seriesPreset"`
@@ -71,6 +72,7 @@ func (h *QualityPresetsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Config != nil {
 		if s, err := h.Config.Load(); err == nil {
+			resp.Disabled = s.QualityPresets.Disabled
 			resp.MoviePreset = s.QualityPresets.MoviePreset
 			resp.SeriesPreset = s.QualityPresets.SeriesPreset
 			resp.AllowRequestOverride = s.QualityPresets.AllowRequestOverride
@@ -115,6 +117,8 @@ type clientPresetSelection struct {
 }
 
 type clientPresetList struct {
+	// Disabled: presets are switched off server-wide; nothing is offered.
+	Disabled             bool           `json:"disabled,omitempty"`
 	AllowRequestOverride bool           `json:"allowRequestOverride"`
 	Presets              []clientPreset `json:"presets"`
 	// Offered are the choices for version pickers, in the admin's order.
@@ -185,7 +189,8 @@ func (h *QualityPresetsHandler) ClientList(w http.ResponseWriter, r *http.Reques
 	}
 	if h.Config != nil {
 		if s, err := h.Config.Load(); err == nil {
-			resp.AllowRequestOverride = s.QualityPresets.AllowRequestOverride
+			resp.Disabled = s.QualityPresets.Disabled
+			resp.AllowRequestOverride = s.QualityPresets.AllowRequestOverride && !s.QualityPresets.Disabled
 			animeOnly = s.QualityPresets.AnimeOnlyInPickers
 			for _, id := range s.QualityPresets.PickerPresets {
 				item, ok := byID[id]
@@ -249,13 +254,15 @@ func offeredFor(item clientPreset, anime, animeOnly bool) bool {
 // Selection updates the global preset selection.
 func (h *QualityPresetsHandler) Selection(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		MoviePreset          *string   `json:"moviePreset"`
-		SeriesPreset         *string   `json:"seriesPreset"`
-		AllowRequestOverride *bool     `json:"allowRequestOverride"`
-		PickerPresets        *[]string `json:"pickerPresets"`
-		AnimeMoviePreset     *string   `json:"animeMoviePreset"`
-		AnimeSeriesPreset    *string   `json:"animeSeriesPreset"`
-		AnimeOnlyInPickers   *bool     `json:"animeOnlyInPickers"`
+		MoviePreset          *string `json:"moviePreset"`
+		SeriesPreset         *string `json:"seriesPreset"`
+		AllowRequestOverride *bool   `json:"allowRequestOverride"`
+		// Enabled switches quality presets on or off server-wide.
+		Enabled            *bool     `json:"enabled"`
+		PickerPresets      *[]string `json:"pickerPresets"`
+		AnimeMoviePreset   *string   `json:"animeMoviePreset"`
+		AnimeSeriesPreset  *string   `json:"animeSeriesPreset"`
+		AnimeOnlyInPickers *bool     `json:"animeOnlyInPickers"`
 		// HiddenByDefault: offered presets profiles see only when they show
 		// them themselves; entries that are not offered are dropped.
 		HiddenByDefault *[]string `json:"hiddenByDefault"`
@@ -312,6 +319,9 @@ func (h *QualityPresetsHandler) Selection(w http.ResponseWriter, r *http.Request
 	}
 	if in.AllowRequestOverride != nil {
 		settings.QualityPresets.AllowRequestOverride = *in.AllowRequestOverride
+	}
+	if in.Enabled != nil {
+		settings.QualityPresets.Disabled = !*in.Enabled
 	}
 	if in.PickerPresets != nil {
 		settings.QualityPresets.PickerPresets = picker

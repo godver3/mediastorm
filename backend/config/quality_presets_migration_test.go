@@ -31,3 +31,14 @@ func TestQualityPresetDefaultsMigration(t *testing.T) {
 		t.Errorf("explicit settings overwritten: %+v", s.QualityPresets)
 	}
 }
+
+func TestQualityPresetsDisabledOffersNothing(t *testing.T) {
+	q := QualityPresetsSettings{AllowRequestOverride: true, PickerPresets: []string{"a", QualityPresetSimple}}
+	if !q.OffersInPicker("a") || !q.AllowsRequestPreset("b") {
+		t.Fatal("enabled: offered and requestable")
+	}
+	q.Disabled = true
+	if q.OffersInPicker("a") || q.OffersInPicker(QualityPresetSimple) || q.AllowsRequestPreset("a") {
+		t.Error("disabled: nothing offered or requestable")
+	}
+}
