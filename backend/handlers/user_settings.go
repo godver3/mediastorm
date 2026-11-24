@@ -146,6 +146,7 @@ func (h *UserSettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request
 	if saved, err := h.Service.Get(userID); err == nil && saved != nil {
 		settings.Playback.IntroAutoSkip = saved.Playback.IntroAutoSkip
 		settings.Playback.RecapAutoSkip = saved.Playback.RecapAutoSkip
+		settings.Playback.CommercialAutoSkip = saved.Playback.CommercialAutoSkip
 	}
 
 	var previous models.UserSettings
@@ -312,6 +313,7 @@ func (h *UserSettingsHandler) getDefaultsFromGlobal() models.UserSettings {
 			CreditsDetectionEnabled:    models.BoolPtr(globalSettings.Playback.CreditsDetectionEnabled),
 			IntroAutoSkip:              models.BoolPtr(false),
 			RecapAutoSkip:              models.BoolPtr(false),
+			CommercialAutoSkip:         models.BoolPtr(false),
 			CreditsAutoSkip:            models.BoolPtr(globalSettings.Playback.CreditsAutoSkip || globalSettings.Playback.CreditsDetection),
 			ScrobbleStartDelaySeconds:  models.IntPtr(globalSettings.Playback.ScrobbleStartDelaySeconds),
 			MatchFrameRate:             models.BoolPtr(globalSettings.Playback.MatchFrameRate),

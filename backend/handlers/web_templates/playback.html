@@ -1431,6 +1431,8 @@
     let webPlayerMetadataResolved = false;
     let webPlayerChapters = [];
     let webPlayerSegments = { recap: null, intro: null, outro: null };
+    // A recording's commercial breaks (comskip), each skipped on its own.
+    let webPlayerCommercials = [];
     let webPlayerSegmentGeneration = 0;
     let webPlayerSkipDismissed = new Set();
     let webPlayerCreditsPollTimer = null;
@@ -1441,11 +1443,12 @@
     let webPlayerAutoSkipRecapPreference = false;
     let webPlayerAutoSkipIntroPreference = false;
     let webPlayerAutoSkipCreditsPreference = false;
+    let webPlayerAutoSkipCommercialPreference = false;
     let webPlayerAutoSkipInProgress = false;
     let webPlayerSkipPreferenceSave = Promise.resolve();
     // One counter per segment type, so toggling one type while settings load
     // only discards the loaded value for that type.
-    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0 };
+    const webPlayerSkipPreferenceGeneration = { intro: 0, recap: 0, credits: 0, commercial: 0 };
     let nextEpisodeLookupComplete = false;
     let webPlayerAudioPreferenceSave = Promise.resolve();
     let webPlayerAudioPreferenceGeneration = 0;
@@ -1988,6 +1991,7 @@
         if (unchanged('intro')) webPlayerAutoSkipIntroPreference = Boolean(base.introAutoSkip);
         if (unchanged('recap')) webPlayerAutoSkipRecapPreference = Boolean(base.recapAutoSkip);
         if (unchanged('credits')) webPlayerAutoSkipCreditsPreference = Boolean(base.creditsAutoSkip ?? legacyCredits);
+        if (unchanged('commercial')) webPlayerAutoSkipCommercialPreference = Boolean(base.commercialAutoSkip);
       }
       return webPlayerPreferences;
     }
@@ -1995,7 +1999,7 @@
     function saveWebSkipPreference(type, value) {
       if (!activeProfileId || SHARE_MODE || WATCH_PARTY_MODE) return;
       const profileId = activeProfileId;
-      const field = { intro: 'intro', recap: 'recap', credits: 'credits' }[type];
+      const field = { intro: 'intro', recap: 'recap', credits: 'credits', commercial: 'commercial' }[type];
       if (!field) return;
       webPlayerSkipPreferenceSave = webPlayerSkipPreferenceSave.then(() => apiCall(
         '/users/' + encodeURIComponent(profileId) + '/settings/skipping', {
@@ -2013,6 +2017,7 @@
       recap: () => webPlayerAutoSkipRecapPreference,
       intro: () => webPlayerAutoSkipIntroPreference,
       credits: () => webPlayerAutoSkipCreditsPreference,
+      commercial: () => webPlayerAutoSkipCommercialPreference,
     };
 
     function webAutoSkipEnabled(type) {
@@ -2033,10 +2038,12 @@
 
     function setWebAutoSkipPreference(enabled, type) {
       const value = Boolean(enabled);
-      const skipType = type === 'recap' || type === 'credits' ? type : 'intro';
+      const skipType = type === 'recap' || type === 'credits' || type === 'commercial' ? type : 'intro';
       webPlayerSkipPreferenceGeneration[skipType] += 1;
       if (type === 'recap') {
         webPlayerAutoSkipRecapPreference = value;
+      } else if (type === 'commercial') {
+        webPlayerAutoSkipCommercialPreference = value;
       } else if (type === 'credits') {
         webPlayerAutoSkipCreditsPreference = value;
         if (value) webPlayerWatchNextAutoAdvanceBlocked = false;
@@ -3968,8 +3975,40 @@
       } else {
         webPlayerSegments = chapterSegments;
       }
+      webPlayerCommercials = [];
+      const recordingId = webPlayerRecordingId();
+      if (recordingId) {
+        const duration = Number(metadata?.durationSeconds || hlsDuration);
+        const response = await apiCall('/video/segments', {
+          method: 'POST',
+          body: JSON.stringify({ recordingId, duration: Number.isFinite(duration) && duration > 0 ? duration : 0 }),
+        }).catch(() => null);
+        if (generation !== webPlayerSegmentGeneration) return;
+        webPlayerCommercials = webCommercialBreaks(response?.segments, duration);
+      }
       maybeStartWebCreditsDetection(generation);
       updateWebSegmentPrompts();
+    }
+
+    // The recording a recording:<id>/… source plays ('' for anything else).
+    function webPlayerRecordingId() {
+      if (!sourcePath.startsWith('recording:')) return '';
+      return sourcePath.slice('recording:'.length).split('/')[0].trim();
+    }
+
+    // The commercial breaks among /video/segments results, in order, each with its own key so
+    // dismissing one leaves the others.
+    function webCommercialBreaks(segments, duration) {
+      if (!Array.isArray(segments)) return [];
+      return segments
+        .filter((segment) => segment?.type === 'commercial')
+        .map((segment) => ({ start: Number(segment.start), end: Number(segment.end) }))
+        .filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && (!(duration > 0) || start < duration))
+        .sort((a, b) => a.start - b.start)
+        .map(({ start, end }) => ({
+          type: 'commercial', key: 'commercial:' + start, start,
+          end: duration > 0 ? Math.min(end, duration) : end, source: 'comskip', confirmed: true,
+        }));
     }
 
     function clearWebSegmentTimers() {
@@ -4008,7 +4047,12 @@
         const segment = webPlayerSegments[type];
         if (segment && position >= segment.start && position < segment.end) return segment;
       }
-      return null;
+      return webPlayerCommercials.find((segment) => position >= segment.start && position < segment.end) || null;
+    }
+
+    // Each commercial break is dismissed on its own; the other kinds once per playback.
+    function webSegmentKey(segment) {
+      return segment.key || segment.type;
     }
 
     function updateWebSegmentPrompts() {
@@ -4025,15 +4069,18 @@
         return;
       }
       const segment = activeWebSegmentAt(currentAbsoluteTime());
-      const preferenceType = segment?.type === 'outro' ? 'credits' : segment?.type === 'recap' ? 'recap' : 'intro';
+      const preferenceType = segment?.type === 'outro' ? 'credits'
+        : segment?.type === 'recap' || segment?.type === 'commercial' ? segment.type : 'intro';
       syncWebAutoSkipControls(preferenceType);
-      const skippable = segment && !webPlayerSkipDismissed.has(segment.type) && (segment.type !== 'outro' || !nextEpisodeInfo);
+      const skippable = segment && !webPlayerSkipDismissed.has(webSegmentKey(segment)) && (segment.type !== 'outro' || !nextEpisodeInfo);
       host.classList.toggle('skip-segment-visible', Boolean(skippable));
       if (!skippable) return;
-      button.textContent = segment.type === 'recap' ? 'Skip Recap' : segment.type === 'intro' ? 'Skip Intro' : 'Skip Credits';
-      const autoSkipRecapOrIntro = (segment.type === 'recap' || segment.type === 'intro') && webAutoSkipEnabled(segment.type);
+      button.textContent = {
+        recap: 'Skip Recap', intro: 'Skip Intro', commercial: 'Skip Commercial',
+      }[segment.type] || 'Skip Credits';
+      const autoSkipSegment = (segment.type === 'recap' || segment.type === 'intro' || segment.type === 'commercial') && webAutoSkipEnabled(segment.type);
       const autoSkipFinalCredits = webAutoSkipEnabled('credits') && segment.type === 'outro' && nextEpisodeLookupComplete && !nextEpisodeInfo;
-      if ((autoSkipRecapOrIntro || autoSkipFinalCredits) && !webPlayerAutoSkipInProgress) autoSkipWebSegment(segment);
+      if ((autoSkipSegment || autoSkipFinalCredits) && !webPlayerAutoSkipInProgress) autoSkipWebSegment(segment);
     }
 
     async function performWebSegmentSkip(segment) {
@@ -4042,7 +4089,7 @@
       try {
         const succeeded = await seekWebPlayer(segment.end);
         if (!succeeded) return false;
-        webPlayerSkipDismissed.add(segment.type);
+        webPlayerSkipDismissed.add(webSegmentKey(segment));
         updateWebSegmentPrompts();
         return true;
       } finally {
@@ -4271,6 +4318,7 @@
       clearWebSegmentTimers();
       webPlayerSegmentGeneration += 1;
       webPlayerSegments = { recap: null, intro: null, outro: null };
+      webPlayerCommercials = [];
       webPlayerPromptConfirmed = false;
       webPlayerPlaybackEnded = false;
       webPlayerAutoSkipInProgress = false;

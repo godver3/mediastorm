@@ -23,7 +23,7 @@ func (h *UserSettingsHandler) PatchSkipping(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid skip preferences", http.StatusBadRequest)
 		return
 	}
-	if decoder.Decode(new(interface{})) != io.EOF || (patch.Intro == nil && patch.Recap == nil && patch.Credits == nil) {
+	if decoder.Decode(new(interface{})) != io.EOF || (patch.Intro == nil && patch.Recap == nil && patch.Credits == nil && patch.Commercial == nil) {
 		http.Error(w, "provide at least one skip preference", http.StatusBadRequest)
 		return
 	}

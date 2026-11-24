@@ -595,6 +595,7 @@ type PlaybackSettings struct {
 	IntroAutoSkip                 *bool     `json:"introAutoSkip,omitempty"`                       // Automatically skip known intro segments
 	RecapAutoSkip                 *bool     `json:"recapAutoSkip,omitempty"`                       // Automatically skip known recap segments
 	CreditsAutoSkip               *bool     `json:"creditsAutoSkip,omitempty"`                     // Automatically play the next episode after credits are detected
+	CommercialAutoSkip            *bool     `json:"commercialAutoSkip,omitempty"`                  // Automatically skip a recording's commercial breaks (comskip)
 	ScrobbleStartDelaySeconds     *int      `json:"scrobbleStartDelaySeconds,omitempty"`           // Active playback time before real-time scrobble events begin
 	WatchlistAutoRemoveMovies     string    `json:"watchlistAutoRemoveMovies,omitempty"`           // Empty inherits; off, watched, or started
 	WatchlistAutoRemoveShows      string    `json:"watchlistAutoRemoveShows,omitempty"`            // Empty inherits; off, watched, or started
@@ -1248,6 +1249,7 @@ func DefaultUserSettings() UserSettings {
 			IntroAutoSkip:                 BoolPtr(false),
 			RecapAutoSkip:                 BoolPtr(false),
 			CreditsAutoSkip:               BoolPtr(false),
+			CommercialAutoSkip:            BoolPtr(false),
 			StreamMigrationEnabled:        BoolPtr(true),
 			IgnoreDVCompatibilityCheck:    BoolPtr(false),
 			CreditsDetectionEnabled:       BoolPtr(false),
