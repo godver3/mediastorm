@@ -5457,6 +5457,7 @@ func (h *VideoHandler) StartLiveHLSSession(w http.ResponseWriter, r *http.Reques
 		// Multiscreen and the HLS fallback ask for format=hls and play it in AVPlayer.
 		EncodeMPEG2Video: hdHomeRunInput && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "hls"),
 		TimeshiftWindow:  timeshiftWindow,
+		WebVideoCopy:     parseOptionalBool(r.URL.Query().Get("videoCopy")),
 	}
 	playbackTarget := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
 	clientID := requestClientID(r)
@@ -5776,6 +5777,35 @@ func (h *VideoHandler) KeepAliveHLSSession(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.hlsManager.KeepAlive(w, r, sessionID)
+}
+
+// ForceLiveEncodeHLSSession switches a web live session from copying the channel's video to
+// encoding it (POST /video/hls/{sessionID}/live-encode), for a browser that cannot decode the copy.
+func (h *VideoHandler) ForceLiveEncodeHLSSession(w http.ResponseWriter, r *http.Request) {
+	if h.hlsManager == nil {
+		http.Error(w, "HLS not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	sessionID := mux.Vars(r)["sessionID"]
+	if sessionID == "" {
+		http.Error(w, "missing session ID", http.StatusBadRequest)
+		return
+	}
+	if !h.requireHLSSessionAccess(w, r, sessionID) {
+		return
+	}
+	switched, encodedFrom, err := h.hlsManager.ForceLiveVideoEncode(sessionID)
+	switch {
+	case errors.Is(err, errLiveEncodeNoSession):
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// encodedFrom: a playlist whose media sequence starts here or later lists only encoded segments.
+	_ = json.NewEncoder(w).Encode(map[string]any{"switched": switched, "encodedFrom": encodedFrom})
 }
 
 // StopHLSSession explicitly stops and cleans up an HLS session.

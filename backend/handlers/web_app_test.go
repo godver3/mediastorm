@@ -263,8 +263,8 @@ func TestWebPlaybackTemplateShowsStreamDetailsOnlyForLivePlayback(t *testing.T) 
 
 	rendered := string(body)
 	for _, want := range []string{
-		"${isLive ? `<div class=\"seek-spacer\"><span id=\"liveStreamInfo\" class=\"live-stream-info\"></span></div>",
-		"if (playbackMeta.isLive) startLiveStreamInfoTracking(video);",
+		"<div id=\"liveSpacer\" class=\"seek-spacer\"><span id=\"liveStreamInfo\" class=\"live-stream-info\"></span></div>",
+		"startLiveStreamInfoTracking(video);",
 		"video.videoWidth",
 		"video.videoHeight",
 		"requestVideoFrameCallback",

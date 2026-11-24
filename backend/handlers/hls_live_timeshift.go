@@ -64,6 +64,11 @@ func applyTimeshiftAudio(args []string, window time.Duration) []string {
 	if window <= 0 {
 		return args
 	}
+	return liveStereoAACAudio(args)
+}
+
+// liveStereoAACAudio swaps an output's audio copy for timeshiftAudioArgs.
+func liveStereoAACAudio(args []string) []string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c:a" && args[i+1] == "copy" {
 			out := make([]string, 0, len(args)+6)
@@ -100,6 +105,8 @@ func trimLivePlaylistWindow(session *HLSSession) {
 		// Backlog segments also leave before their source drops them (hls_live_backlog.go).
 		trimCount = max(trimCount, expiredLiveBacklogEntries(session, time.Now()))
 	}
+	// Copied segments a browser could not decode leave once the session encodes (hls_live_web_copy.go).
+	trimCount = max(trimCount, liveEntriesBeforeEncode(session))
 	if trimCount <= 0 {
 		return
 	}
@@ -109,6 +116,15 @@ func trimLivePlaylistWindow(session *HLSSession) {
 		}
 	}
 	session.livePlaylistWindow = append([]livePlaylistEntry(nil), session.livePlaylistWindow[trimCount:]...)
+}
+
+// liveIdleTimeout is how long a live session may go without requests before it is stopped: longer
+// for a paused timeshift session (liveIdleTimeoutPaused). Caller holds session.mu.
+func liveIdleTimeout(session *HLSSession) time.Duration {
+	if session.isTimeshiftSession() && session.PlaybackPaused {
+		return liveIdleTimeoutPaused
+	}
+	return hlsIdleTimeout
 }
 
 // isTimeshiftSession reports whether the session keeps a timeshift window.

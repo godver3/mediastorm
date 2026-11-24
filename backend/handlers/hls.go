@@ -370,6 +370,12 @@ type HLSSession struct {
 	FFmpegCmd           *exec.Cmd
 	liveDamage          *liveUpstreamDamage // live sessions only; FFmpeg-reported upstream losses
 	liveLayout          liveLayoutRestarts  // live sessions only; restarts for a changed input stream layout
+	webVideoCopy        bool                // web live sessions: copy the video (hls_live_web_copy.go)
+	webVideoCopyDecided bool                // decided on the first run and kept across restarts
+	webEncodePending    bool                // switched to the encode; the next encoding run sets liveEncodedFrom
+	liveEncodedFrom     int                 // the first media sequence encoded after a switch; earlier ones leave
+	liveRunCopiedWeb    bool                // the latest FFmpeg run copies a web session's video
+	liveSupervisorDone  bool                // the live supervisor has ended: nothing rebuilds the session
 	Cancel              context.CancelFunc
 	mu                  sync.RWMutex
 	Completed           bool
@@ -609,6 +615,10 @@ type LiveTuningSettings struct {
 	// TimeshiftWindow, when set, keeps that much of the channel listed and on disk so the
 	// player can pause and seek back (hls_live_timeshift.go). Zero for an ordinary live session.
 	TimeshiftWindow time.Duration
+	// WebVideoCopy, asked for by the web player (videoCopy=1), lets a web session copy
+	// browser-safe H.264 (hls_live_web_copy.go); the player falls back to the encode itself when
+	// its browser cannot decode the copy. Other web callers (the Jellyfin bridge) keep the encode.
+	WebVideoCopy bool
 }
 
 // LiveProviderUsageEntry summarizes active usage for a single live provider.
@@ -635,6 +645,12 @@ const (
 	// Set to 60s to be more forgiving during pause/screensaver scenarios
 	// Frontend sends keepalives every 10s, so this allows for missed keepalives
 	hlsIdleTimeout = 60 * time.Second
+
+	// liveIdleTimeoutPaused replaces hlsIdleTimeout for a paused timeshift session: a browser
+	// throttles a hidden tab's timers to about one a minute, so its keepalives and playlist reloads
+	// can be more than hlsIdleTimeout apart while the viewer means to come back. The window's
+	// pruning bounds what the session keeps on disk meanwhile.
+	liveIdleTimeoutPaused = 5 * time.Minute
 
 	// How long to wait before checking if FFmpeg is stuck (not generating segments)
 	// If FFmpeg IS generating segments, we let it run - throttle limits buffering
@@ -2671,7 +2687,11 @@ func (m *HLSManager) CreateLiveSession(ctx context.Context, liveURL, provider, b
 
 	// Start live transcoding in background
 	go func() {
-		if err := m.superviseLiveTranscoding(bgCtx, session); err != nil {
+		err := m.superviseLiveTranscoding(bgCtx, session)
+		session.mu.Lock()
+		session.liveSupervisorDone = true
+		session.mu.Unlock()
+		if err != nil {
 			log.Printf("[hls] live session %s transcoding failed: %v", sessionID, err)
 			session.mu.Lock()
 			session.Completed = true
@@ -2837,11 +2857,34 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		inputArg = "pipe:0"
 	}
 	encodeVideo := false
-	if session.LiveTuning.EncodeMPEG2Video && proxyBody != nil && isNativeLivePlaybackTarget(session.PlaybackTarget) {
+	// Native targets copy video; web ones only browser-safe H.264 (hls_live_web_copy.go).
+	// Only the web player asks for the copy (it falls back to the encode itself); other web
+	// callers such as the Jellyfin bridge keep the libx264 encode.
+	webCopyTarget := isWebBrowserPlaybackTarget(session.PlaybackTarget) && session.LiveTuning.WebVideoCopy
+	nativeTarget := isNativeLivePlaybackTarget(session.PlaybackTarget)
+	copyVideo := nativeTarget
+	webDecided := false
+	// Whether this run's check found an answer (a codec), not just an error or a timeout.
+	webCheckAnswered := false
+	if webCopyTarget {
+		// A restart keeps the first run's decision: a provider that just dropped must not turn a
+		// copying session into an encoding one, and a rebuild should not wait for another check.
+		session.mu.RLock()
+		if session.webVideoCopyDecided {
+			copyVideo, webDecided = session.webVideoCopy, true
+		}
+		session.mu.RUnlock()
+	}
+	if proxyBody != nil && ((session.LiveTuning.EncodeMPEG2Video && nativeTarget) || (webCopyTarget && !webDecided)) {
 		var codec string
 		codec, proxyBody = peekLiveTSVideoCodec(proxyBody, liveCodecPeekLimit, liveCodecPeekTimeout)
-		encodeVideo = codec == "mpeg2"
-		log.Printf("[hls] live session %s: tuner video=%q encode=%v", session.ID, codec, encodeVideo)
+		if webCopyTarget {
+			copyVideo, webDecided, webCheckAnswered = codec == "h264", true, codec != ""
+			log.Printf("[hls] live session %s: web video=%q copy=%v", session.ID, codec, copyVideo)
+		} else {
+			encodeVideo = codec == "mpeg2"
+			log.Printf("[hls] live session %s: tuner video=%q encode=%v", session.ID, codec, encodeVideo)
+		}
 	}
 	if session.LiveProvider == "stremio" && (session.LiveTuning.ForceHLSInput || inputLooksLikeHLS(session.Path)) {
 		relay, err := startLiveHLSInputRelay(ctx, session.Path, session.LiveTuning.ProxyURL, inputHeaders)
@@ -2885,6 +2928,29 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		proxyBody = resp.Body
 		inputArg = "pipe:0"
 		log.Printf("[hls] live session %s: streaming upstream via proxy %s", session.ID, requestsecurity.URLForLog(proxyURL))
+	}
+
+	// A web session reading its input by URL checks the source's video before FFmpeg starts; one
+	// fed through a pipe that was not peeked above (a proxy) keeps the encode.
+	if webCopyTarget && !webDecided && proxyBody == nil {
+		// The channel URL is read directly only where FFmpeg would read it directly too.
+		masterURL := session.Path
+		if strings.TrimSpace(session.LiveTuning.ProxyURL) != "" {
+			masterURL = ""
+		}
+		copyVideo, webCheckAnswered = m.liveWebVideoCopy(ctx, session.ID, masterURL, session.LiveTuning.RequestHeaders, inputArg, inputHeaders, hlsInput)
+	}
+	if webCopyTarget {
+		session.mu.Lock()
+		if session.webVideoCopyDecided {
+			// Kept from an earlier run, or a switch to the encode that came meanwhile.
+			copyVideo = session.webVideoCopy
+		} else if webCheckAnswered {
+			session.webVideoCopy, session.webVideoCopyDecided = copyVideo, true
+		}
+		// A check that failed (a slow or failing source at tune-in) encodes this run only; the
+		// next run checks again.
+		session.mu.Unlock()
 	}
 
 	// Build FFmpeg args optimized for live input
@@ -2952,7 +3018,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		args = append(args, "-f", "mpegts")
 	}
 	startNumber := resumeFrom
-	if resumeFrom == 0 && session.isTimeshiftSession() && isNativeLivePlaybackTarget(session.PlaybackTarget) && !encodeVideo &&
+	if resumeFrom == 0 && session.isTimeshiftSession() && copyVideo && !encodeVideo &&
 		hlsInput && proxyBody == nil && !session.LiveTuning.HDHomeRunInput && session.LiveProvider != "stremio" &&
 		strings.TrimSpace(session.LiveTuning.ProxyURL) == "" {
 		// The part of the source's own DVR window the timeshift window covers (hls_live_backlog.go);
@@ -2965,15 +3031,15 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 	}
 	args = append(args, "-i", inputArg)
 	session.mu.Lock()
-	if isNativeLivePlaybackTarget(session.PlaybackTarget) && encodeVideo {
+	if copyVideo && encodeVideo {
 		session.VideoEncoder = "libx264"
 		session.outputPlan = &HLSOutputPlan{Live: true, Encoder: "libx264", VideoCodec: "h264", AudioCodec: "aac"}
 		log.Printf("[hls] live session %s: MPEG-2 tuner video for an HLS client (video=libx264 audio=aac)", session.ID)
-	} else if isNativeLivePlaybackTarget(session.PlaybackTarget) {
+	} else if copyVideo {
 		session.VideoEncoder = "copy"
 		recordLiveOutputPlan(session, true)
 		audioMode := "copy"
-		if session.LiveTuning.TimeshiftWindow > 0 {
+		if session.LiveTuning.TimeshiftWindow > 0 || webCopyTarget {
 			audioMode = "aac"
 			session.outputPlan.AudioCopied = false
 			session.outputPlan.AudioCodec = "aac"
@@ -2985,9 +3051,12 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		log.Printf("[hls] live session %s: using compatibility transcode mode (video=libx264 audio=aac target=%q)", session.ID, session.PlaybackTarget)
 	}
 	session.mu.Unlock()
-	outputArgs := liveHLSOutputArgs(session.PlaybackTarget, segmentPattern, playlistPath, startNumber)
+	outputArgs := liveHLSOutputArgsFor(copyVideo, segmentPattern, playlistPath, startNumber)
 	if encodeVideo {
 		outputArgs = liveVideoEncodeArgs(outputArgs)
+	} else if copyVideo && webCopyTarget {
+		// Browsers cannot play AC-3/MP2 or reliably multichannel AAC.
+		outputArgs = liveStereoAACAudio(outputArgs)
 	}
 	outputArgs = applyTimeshiftAudio(applyTimeshiftListSize(outputArgs, session.LiveTuning.TimeshiftWindow), session.LiveTuning.TimeshiftWindow)
 	args = append(args, outputArgs...)
@@ -3032,10 +3101,23 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 		pid = cmd.Process.Pid
 		session.FFmpegPID = pid
 	}
+	// A switch to the encode (ForceLiveVideoEncode) that came after this run read its decision
+	// found no process to stop: stop this one. An encoding run after a switch is where the
+	// playlist starts again (the copied segments before it leave).
+	switchedMeanwhile := startErr == nil && webCopyTarget && copyVideo && session.webVideoCopyDecided && !session.webVideoCopy
+	session.liveRunCopiedWeb = startErr == nil && webCopyTarget && copyVideo
+	if startErr == nil && webCopyTarget && !copyVideo && session.webEncodePending {
+		session.liveEncodedFrom, session.webEncodePending = startNumber, false
+	}
 	session.mu.Unlock()
 
 	if startErr != nil {
 		return fmt.Errorf("start ffmpeg: %w", startErr)
+	}
+	if switchedMeanwhile {
+		log.Printf("[hls] live session %s: switched to the encode while starting; rebuilding", session.ID)
+		session.withdrawLiveBacklog()
+		_ = cmd.Process.Kill()
 	}
 
 	log.Printf("[hls] live session %s: FFmpeg started (PID=%d)", session.ID, pid)
@@ -3103,6 +3185,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 				session.mu.RLock()
 				lastRequest := session.LastSegmentRequest
 				segmentCount := session.SegmentRequestCount
+				idleLimit := liveIdleTimeout(session)
 				session.mu.RUnlock()
 
 				idleTime := time.Since(lastRequest)
@@ -3122,7 +3205,7 @@ func (m *HLSManager) startLiveTranscoding(ctx context.Context, session *HLSSessi
 				}
 
 				// Idle timeout: if no segment requests for hlsIdleTimeout after playback started
-				if segmentCount > 0 && idleTime > hlsIdleTimeout {
+				if segmentCount > 0 && idleTime > idleLimit {
 					log.Printf("[hls] live session %s: IDLE_TIMEOUT - no requests for %v (%d segments served)",
 						session.ID, idleTime, segmentCount)
 					session.mu.Lock()
@@ -3240,14 +3323,24 @@ func (m *HLSManager) superviseLiveTranscoding(ctx context.Context, session *HLSS
 		stopped := session.Stopped
 		session.mu.RUnlock()
 		layoutChanged := session.liveLayout.take()
+		session.mu.Lock()
+		// A copying web run that ended after the session switched to the encode (hls_live_web_copy.go).
+		// Read once: a later run that fails before it starts FFmpeg is an ordinary failure.
+		switchedToEncode := session.liveRunCopiedWeb && session.webVideoCopyDecided && !session.webVideoCopy
+		session.liveRunCopiedWeb = false
+		session.mu.Unlock()
 		if idleStopped && consumed {
 			// The idle timeout stopped it deliberately after playback started; viewer stopped watching.
 			return err
 		}
-		if layoutChanged && !idleStopped && !stopped {
-			// Stopped on purpose for a new stream layout (hls_live_layout.go): not a failure, so
-			// rebuild at once without spending the failure budget.
-			log.Printf("[hls] live session %s: rebuilding for the new input stream layout", session.ID)
+		if (layoutChanged || switchedToEncode) && !idleStopped && !stopped {
+			// Stopped on purpose for a new stream layout (hls_live_layout.go) or for the encode: not
+			// a failure, so rebuild at once without spending the failure budget.
+			if switchedToEncode {
+				log.Printf("[hls] live session %s: rebuilding with the video encode", session.ID)
+			} else {
+				log.Printf("[hls] live session %s: rebuilding for the new input stream layout", session.ID)
+			}
 			continue
 		}
 		if !consumed && restarts >= 3 {
@@ -3376,6 +3469,12 @@ func liveHLSOutputArgs(playbackTarget, segmentPattern, playlistPath string, resu
 	if len(resume) > 0 {
 		resumeFrom = resume[0]
 	}
+	return liveHLSOutputArgsFor(isNativeLivePlaybackTarget(playbackTarget), segmentPattern, playlistPath, resumeFrom)
+}
+
+// liveHLSOutputArgsFor is liveHLSOutputArgs for a session that copies video (native targets, and
+// web sessions on browser-safe H.264: hls_live_web_copy.go) or encodes it (copyVideo false).
+func liveHLSOutputArgsFor(copyVideo bool, segmentPattern, playlistPath string, resumeFrom int) []string {
 	// Live subtitles are handled separately. Automatic stream selection also picks
 	// DVB teletext, which the HLS muxer's default WebVTT encoder cannot encode and
 	// aborts playback before any audio/video segments are written, so -sn/-dn drop
@@ -3387,10 +3486,10 @@ func liveHLSOutputArgs(playbackTarget, segmentPattern, playlistPath string, resu
 	// Compatibility (cast/web) retention is the default; the native branch overrides.
 	hlsFlags := "independent_segments+temp_file"
 	listSize := strconv.Itoa(liveNativeHLSListSize)
-	if isNativeLivePlaybackTarget(playbackTarget) {
+	if copyVideo {
 		// Native apps (ExoPlayer / KSPlayer / MPV) demux/decode IPTV codecs themselves.
 		// Always transmux (copy) for those targets — never libx264/aac here. Web browser
-		// playback is the only live path that should re-encode for broad codec support.
+		// playback copies only browser-safe H.264 (its audio is re-encoded by the caller).
 		//
 		// Do not use FFmpeg delete_segments for native live: stream-copy produces segments
 		// faster than the player can pull the first URI, so delete_segments removes
@@ -5610,6 +5709,14 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 			hasPlaybackPosition = true
 			session.PlaybackPosition = playbackTime
 			session.PlaybackUpdatedAt = now
+		}
+	}
+	// A live player reports watch time, not a position in segments that are not all
+	// hlsSegmentDuration long (copied video is cut at the source's keyframes): mapped to segment
+	// numbers it would run ahead of the player, and segment cleanup would delete what it still
+	// needs. Live sessions track the segments actually served instead.
+	if timeStr := r.URL.Query().Get("time"); timeStr != "" && !session.IsLive {
+		if playbackTime, err := strconv.ParseFloat(timeStr, 64); err == nil && playbackTime >= 0 {
 			// For warm starts, the frontend reports absolute media time but HLS segments start from 0
 			// Adjust for StartOffset to get the actual HLS segment number
 			hlsTime := playbackTime - session.StartOffset
@@ -5650,7 +5757,7 @@ func (m *HLSManager) KeepAlive(w http.ResponseWriter, r *http.Request, sessionID
 
 	// If frontend reports buffer start time, use it for safe segment cleanup
 	// This is the earliest time still in the player's buffer - we must not delete segments at or after this point
-	if bufferStartStr := r.URL.Query().Get("bufferStart"); bufferStartStr != "" {
+	if bufferStartStr := r.URL.Query().Get("bufferStart"); bufferStartStr != "" && !session.IsLive {
 		if bufferStartTime, err := strconv.ParseFloat(bufferStartStr, 64); err == nil && bufferStartTime >= 0 {
 			// Adjust for StartOffset to get the actual HLS segment number
 			hlsBufferStart := bufferStartTime - session.StartOffset
@@ -6225,7 +6332,12 @@ func (m *HLSManager) ServePlaylist(w http.ResponseWriter, r *http.Request, sessi
 	var headerTags []string
 
 	if session.IsLive && !strings.Contains(playlistContent, "#EXT-X-START") {
-		if startTag := livePlaylistStartTagAfterBacklog(playlistContent, session.liveBacklogEnd()); startTag != "" {
+		// The start lies in the live part: after the backlog, and after segments copied before a
+		// switch to the encode.
+		session.mu.RLock()
+		liveFrom := session.liveEncodedFrom
+		session.mu.RUnlock()
+		if startTag := livePlaylistStartTagAfterBacklog(playlistContent, max(session.liveBacklogEnd(), liveFrom)); startTag != "" {
 			headerTags = append(headerTags, startTag)
 		}
 	}
@@ -7836,11 +7948,27 @@ func (m *HLSManager) buildSeamlessLivePlaylist(session *HLSSession, onDiskConten
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
-	isStaleSnapshot := false
-	if len(session.livePlaylistWindow) == 0 {
+	// Until the encode after a switch writes its first segment, the copy run's playlist is still
+	// on disk: its entries are not taken in again (nor their discontinuities counted again).
+	if session.liveEncodedFrom > 0 {
+		kept := snapshot.Entries[:0]
+		for _, entry := range snapshot.Entries {
+			if entry.MediaSequence >= session.liveEncodedFrom {
+				kept = append(kept, entry)
+			}
+		}
+		snapshot.Entries = kept
+	}
+
+	// Nothing to take in when the snapshot listed only segments copied before a switch.
+	isStaleSnapshot := len(snapshot.Entries) == 0
+	switch {
+	case isStaleSnapshot:
+	case len(session.livePlaylistWindow) == 0 && session.livePlaylistTargetDuration == 0:
+		// The first snapshot (a window emptied by a switch to the encode keeps its counters).
 		session.livePlaylistTargetDuration = snapshot.TargetDuration
 		session.liveDiscontinuitySequence = snapshot.DiscontinuitySequence
-	} else {
+	case len(session.livePlaylistWindow) > 0:
 		// Ignore stale concurrent reads whose highest segment is below what we already stitched.
 		highestInWindow := session.livePlaylistWindow[len(session.livePlaylistWindow)-1].MediaSequence
 		highestInSnapshot := snapshot.Entries[len(snapshot.Entries)-1].MediaSequence
@@ -7877,6 +8005,12 @@ func (m *HLSManager) buildSeamlessLivePlaylist(session *HLSSession, onDiskConten
 	// One window for every live target, matching what FFmpeg retains on disk; a timeshift
 	// session's is its duration instead (hls_live_timeshift.go).
 	trimLivePlaylistWindow(session)
+	if len(session.livePlaylistWindow) == 0 {
+		// Every listed segment was copied before a switch to the encode, which has not written one
+		// yet: an empty live playlist makes players reload rather than play them.
+		return fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:%d\n#EXT-X-DISCONTINUITY-SEQUENCE:%d\n",
+			max(1, session.livePlaylistTargetDuration), session.liveEncodedFrom, session.liveDiscontinuitySequence)
+	}
 
 	var sb strings.Builder
 	sb.WriteString("#EXTM3U\n")
