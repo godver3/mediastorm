@@ -1388,13 +1388,15 @@ type searchCacheOptions struct {
 	SkipFilter            bool
 	UseDownloadRanking    bool
 	SeasonPacksOnly       bool
-	// Preset size limits and episode-title languages depend on these.
-	RuntimeMinutes int
-	EpisodeTitle   string
+	// Preset size limits and episode-title languages depend on these; they
+	// are only part of the key while a preset ranks, so a search without one
+	// shares its cache entry across callers that pass different values.
+	RuntimeMinutes int    `json:",omitempty"`
+	EpisodeTitle   string `json:",omitempty"`
 }
 
 func buildSearchCacheOptions(opts SearchOptions) searchCacheOptions {
-	return searchCacheOptions{
+	out := searchCacheOptions{
 		Numbering:             opts.Numbering,
 		TitleID:               opts.TitleID,
 		Query:                 opts.Query,
@@ -1413,8 +1415,6 @@ func buildSearchCacheOptions(opts SearchOptions) searchCacheOptions {
 		IsDaily:               opts.IsDaily,
 		TargetAirDate:         opts.TargetAirDate,
 		EpisodeAirYear:        opts.EpisodeAirYear,
-		RuntimeMinutes:        opts.RuntimeMinutes,
-		EpisodeTitle:          opts.EpisodeTitle,
 		SeasonPremiereYear:    opts.SeasonPremiereYear,
 		EpisodeReleased:       opts.EpisodeReleased,
 		IncludeFiltered:       opts.IncludeFiltered,
@@ -1422,6 +1422,11 @@ func buildSearchCacheOptions(opts SearchOptions) searchCacheOptions {
 		UseDownloadRanking:    opts.UseDownloadRanking,
 		SeasonPacksOnly:       opts.SeasonPacksOnly,
 	}
+	if opts.activePreset != nil {
+		out.RuntimeMinutes = opts.RuntimeMinutes
+		out.EpisodeTitle = opts.EpisodeTitle
+	}
+	return out
 }
 
 func buildSearchRelevantSettings(settings config.Settings) searchRelevantSettings {
