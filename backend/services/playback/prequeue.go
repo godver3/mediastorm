@@ -80,6 +80,9 @@ type PrequeueRequest struct {
 	// Defaults to "details" if not specified
 	Reason  string `json:"reason,omitempty"`
 	SkipHLS bool   `json:"skipHLS,omitempty"` // Native clients set this to skip HLS session creation
+	// QualityPreset ranks this prequeue's search with a quality preset (an ID
+	// or "simple") instead of the profile's, when the server allows it.
+	QualityPreset string `json:"qualityPreset,omitempty"`
 }
 
 // PrequeueResponse is returned when a prequeue request is initiated
@@ -1285,7 +1288,7 @@ func (s *PrequeueStore) FindReadyByStreamPath(streamPath string) (*PrequeueEntry
 
 // Generation changes whenever all entries or a user's entries are cleared,
 // i.e. after a change to how releases rank (global or profile ranking and
-// filtering settings).
+// filtering settings, quality presets).
 func (s *PrequeueStore) Generation() uint64 { return s.generation.Load() }
 
 // DeleteAll removes all prequeue entries

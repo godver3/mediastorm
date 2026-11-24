@@ -513,3 +513,44 @@ func TestSettingsHandler_ShowParsedBadges_NoPrequeueStore(t *testing.T) {
 		t.Fatalf("PUT status %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A settings-page save sends back the settings it loaded: the quality preset
+// configuration (edited on its own page) and its sync task survive it.
+func TestSettingsPutKeepsQualityPresets(t *testing.T) {
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	stored, err := mgr.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.QualityPresets.MoviePreset = "p-movie"
+	stored.QualityPresets.PickerPresets = []string{"p-movie"}
+	stored.QualityPresets.AllowRequestOverride = true
+	EnsureQualityPresetSyncTask(&stored)
+	if err := mgr.Save(stored); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page was loaded before any of that.
+	payload := config.Settings{Server: config.ServerSettings{Host: "0.0.0.0", Port: 8888}}
+	buf, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	NewSettingsHandler(mgr).PutSettings(rec, httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(buf)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	saved, err := mgr.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := saved.QualityPresets
+	if q.MoviePreset != "p-movie" || len(q.PickerPresets) != 1 || !q.AllowRequestOverride {
+		t.Errorf("quality presets = %+v, want the stored ones", q)
+	}
+	found := false
+	for _, task := range saved.ScheduledTasks.Tasks {
+		found = found || task.Type == config.ScheduledTaskTypeQualityPresetSync
+	}
+	if !found {
+		t.Error("the quality preset sync task was dropped")
+	}
+}

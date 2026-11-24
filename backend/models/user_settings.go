@@ -65,6 +65,84 @@ type UserSettings struct {
 	Ranking           *UserRankingSettings   `json:"ranking,omitempty"`
 	Calendar          CalendarSettings       `json:"calendar"`
 	Recordings        RecordingSettings      `json:"recordings,omitempty"`
+	// QualityPresets overrides the global quality preset per media type.
+	QualityPresets *QualityPresetSelection `json:"qualityPresets,omitempty"`
+}
+
+// QualityPresetSelection picks quality presets per media type. nil inherits,
+// "simple" selects the simple ranking settings, anything else is a preset ID.
+type QualityPresetSelection struct {
+	MoviePreset  *string `json:"moviePreset,omitempty"`
+	SeriesPreset *string `json:"seriesPreset,omitempty"`
+	// AnimeMoviePreset and AnimeSeriesPreset apply to anime titles before
+	// the normal slots.
+	AnimeMoviePreset  *string `json:"animeMoviePreset,omitempty"`
+	AnimeSeriesPreset *string `json:"animeSeriesPreset,omitempty"`
+	// PickerPresets limits the presets this profile is offered in version
+	// pickers (and may pick as its defaults) to a subset of the server's
+	// offered presets; nil offers all of them.
+	PickerPresets *[]string `json:"pickerPresets,omitempty"`
+	// HiddenPresets are offered presets the profile hides from its own
+	// version pickers (it narrows, never widens, what the administrator
+	// offers); nil hides none.
+	HiddenPresets *[]string `json:"hiddenPresets,omitempty"`
+	// ShownPresets are presets the administrator hides by default that the
+	// profile shows in its own pickers; nil shows none of them. A preset on
+	// neither list follows the administrator's default.
+	ShownPresets *[]string `json:"shownPresets,omitempty"`
+}
+
+// IsEmpty reports whether nothing is selected.
+func (q *QualityPresetSelection) IsEmpty() bool {
+	return q == nil || (q.MoviePreset == nil && q.SeriesPreset == nil && q.AnimeMoviePreset == nil && q.AnimeSeriesPreset == nil && q.PickerPresets == nil && q.HiddenPresets == nil && q.ShownPresets == nil)
+}
+
+// AllowsPickerDefault is AllowsPicker with the presets the administrator
+// hides by default: such a preset counts as hidden unless the profile shows
+// it itself.
+func (q *QualityPresetSelection) AllowsPickerDefault(hiddenByDefault []string, id string) bool {
+	if !q.AllowsPicker(id) {
+		return false
+	}
+	if !containsPresetID(hiddenByDefault, id) {
+		return true
+	}
+	return q != nil && q.ShownPresets != nil && containsPresetID(*q.ShownPresets, id)
+}
+
+func containsPresetID(list []string, id string) bool {
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(id)) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsPicker reports whether the profile may pick preset id (a preset ID
+// or "simple"): it is on the administrator's list for the profile (no list
+// allows every offered preset) and the profile does not hide it.
+func (q *QualityPresetSelection) AllowsPicker(id string) bool {
+	if q == nil {
+		return true
+	}
+	same := func(a string) bool { return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(id)) }
+	if q.HiddenPresets != nil {
+		for _, hidden := range *q.HiddenPresets {
+			if same(hidden) {
+				return false
+			}
+		}
+	}
+	if q.PickerPresets == nil {
+		return true
+	}
+	for _, allowed := range *q.PickerPresets {
+		if same(allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 // MetadataSettings contains per-profile metadata presentation preferences.

@@ -22,6 +22,8 @@ export interface SourcePickerTarget {
   episode?: { season: number; episode: number; numbering?: EpisodeNumbering };
   /** Library copies, listed above the stream results (native Choose Source). */
   versions?: LibraryVersion[];
+  /** A quality preset picked on the details page: the results are ranked with it. */
+  qualityPreset?: string;
 }
 
 const HEALTH: Record<string, { label: string; tone: string }> = {
@@ -79,6 +81,7 @@ export function SourcePickerDialog({
       target.titleId,
       query,
       target.episode?.numbering?.ordering ?? '',
+      target.qualityPreset ?? '',
     ],
     queryFn: ({ signal }) =>
       searchSources(
@@ -90,6 +93,7 @@ export function SourcePickerDialog({
           imdbId: target.imdbId,
           year: target.year,
           numbering: target.episode?.numbering,
+          qualityPreset: target.qualityPreset,
         },
         signal,
       ),

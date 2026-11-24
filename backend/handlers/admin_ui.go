@@ -1642,6 +1642,7 @@ type AdminUIHandler struct {
 	usenetSpeed           usenetSpeedSampler
 	settingsTemplate      *template.Template
 	sportsTemplate        *template.Template
+	presetsTemplate       *template.Template
 	sportsHandler         *SportsHandler
 	statusTemplate        *template.Template
 	historyTemplate       *template.Template
@@ -2005,6 +2006,7 @@ func NewAdminUIHandler(settingsPath, logFile string, hlsManager *HLSManager, use
 	return &AdminUIHandler{
 		settingsTemplate:      createPageTemplate("settings.html"),
 		sportsTemplate:        createPageTemplate("sports.html"),
+		presetsTemplate:       createPageTemplate("quality_presets.html"),
 		statusTemplate:        createPageTemplate("status.html"),
 		historyTemplate:       createPageTemplate("history.html"),
 		toolsTemplate:         createPageTemplate("tools.html"),
@@ -4262,6 +4264,7 @@ func (h *AdminUIHandler) SaveUserSettings(w http.ResponseWriter, r *http.Request
 	if isAdmin, accountID, _, _ := h.getPageRoleInfo(r); !isAdmin {
 		restoreScopedLiveSettings(&settings, previous, h.configManager, userID, accountID, false)
 	}
+	keepUserQualityPresets(&settings, previous)
 	if err := h.userSettingsService.Update(userID, settings); err != nil {
 		http.Error(w, "Failed to save user settings", http.StatusInternalServerError)
 		return

@@ -1,8 +1,17 @@
 import { useDocumentTitle } from '@/lib/documentTitle';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { episodeKey, primaryTrailer, type Episode, type LibraryVersion } from '@/api/details';
 import { releaseTitle, type SourceResult, type TrackOverrides } from '@/api/playback';
+import {
+  currentPreset,
+  defaultPreset,
+  getQualityPresets,
+  offeredFor,
+  presetIdOf,
+  qualityPresetKeys,
+} from '@/api/qualityPresets';
 import type { Title } from '@/api/titles';
 import { useSessionState } from '@/auth/sessionStore';
 import { Button, EmptyState, ErrorState, Icon, PosterCard, Shelf, Spinner } from '@/components';
@@ -22,13 +31,19 @@ import { EpisodeList } from './EpisodeList';
 import { airedRegularEpisodes, orderedSeasons, watchState } from './format';
 import { ListsDialog } from './ListsDialog';
 import { MoreMenu } from './MoreMenu';
+import { QualityPresetDialog } from './QualityPresetDialog';
 import { ResumePrompt } from './ResumePrompt';
 import { SourcePickerDialog } from './SourcePickerDialog';
 import { TracksDialog, tracksSummary } from './TracksDialog';
 import { TrailerDialog } from './TrailerDialog';
 import { useDetails } from './useDetails';
 import { VersionsDialog } from './VersionsDialog';
-import { useWarmPrequeue } from './useWarmPrequeue';
+import {
+  forgetWarmPrequeues,
+  pickedPresetFor,
+  setPickedPreset,
+  useWarmPrequeue,
+} from './useWarmPrequeue';
 
 /** "1:02:14" / "23:14". */
 export function clock(seconds: number): string {
@@ -71,6 +86,10 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
   const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
   const [listsOpen, setListsOpen] = useState(false);
   const [tracksOpen, setTracksOpen] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  // A quality preset picked here, bound to the title it was picked for (native pickPreset);
+  // kept per profile and title (pickedPresetFor) so the page sends it again when reopened.
+  const [pickedPreset, setPagePreset] = useState<{ titleId: string; id: string } | null>(null);
   // Audio & Subtitles picks, bound to the warm stream they were made for (native).
   const [picks, setPicks] = useState<{ streamPath: string; overrides: TrackOverrides } | null>(
     null,
@@ -125,10 +144,33 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           ? d.library.data.movie
           : [];
 
+  // Quality presets offered for the title (servers with presets); none hides the picker.
+  const presets = useQuery({
+    queryKey: qualityPresetKeys.title(profileId ?? '', info.titleId, info.mediaType),
+    queryFn: ({ signal }) => getQualityPresets(profileId!, info, signal),
+    enabled: !!profileId && !!info.titleId,
+    staleTime: 5 * 60_000,
+  });
+  const presetChoices = presets.data ?? null;
+  const offeredPresets = presetChoices ? offeredFor(presetChoices, info.mediaType) : [];
+  const pickedPresetId =
+    pickedPreset?.titleId === info.titleId
+      ? pickedPreset.id
+      : profileId && info.titleId
+        ? pickedPresetFor(profileId, info.titleId)
+        : undefined;
+  const activePresetId =
+    pickedPresetId ??
+    (presetChoices ? presetIdOf(currentPreset(presetChoices, info.mediaType)) : undefined);
+  const activePresetName =
+    offeredPresets.find((p) => p.id === activePresetId)?.name ??
+    (presetChoices ? currentPreset(presetChoices, info.mediaType).name : undefined);
+
   const primaryVersions = versionsFor(isMovie ? undefined : primaryEpisode);
   const { warm: warmState, settings: playSettings } = useWarmPrequeue(profileId, info, {
     ready: !!bundle && !d.library.isPending,
     hasLibraryCopy: primaryVersions.length > 0,
+    qualityPreset: pickedPresetId,
   });
   // The warm-up, while it resolves or once it resolved the episode Play targets.
   const warm =
@@ -164,6 +206,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
         : {
             warmPrequeueId: warmId,
             tracks: Object.keys(currentPicks).length ? currentPicks : undefined,
+            qualityPreset: pickedPresetId,
           }),
     });
 
@@ -264,6 +307,13 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
             })
           }
           icon={<Icon name="drive" />}
+        />
+      )}
+      {offeredPresets.length > 0 && (
+        <ActionButton
+          label={activePresetName ? `Quality: ${activePresetName}` : 'Quality'}
+          onClick={() => setQualityOpen(true)}
+          icon={<Icon name="quality" />}
         />
       )}
       <ActionButton
@@ -514,6 +564,7 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
                 }
               : undefined,
             versions: versionsFor(sourcesFor.episode),
+            qualityPreset: pickedPresetId,
           }}
           onPickSource={(r) => {
             const ep = sourcesFor.episode;
@@ -576,6 +627,28 @@ export function DetailsPage({ search }: { search: DetailsSearch }) {
           target={d.target}
           open={listsOpen}
           onOpenChange={setListsOpen}
+        />
+      )}
+
+      {presetChoices && activePresetId && (
+        <QualityPresetDialog
+          presets={offeredPresets}
+          active={activePresetId}
+          defaultId={presetIdOf(defaultPreset(presetChoices, info.mediaType))}
+          open={qualityOpen}
+          onOpenChange={setQualityOpen}
+          onPick={(id) => {
+            setQualityOpen(false);
+            if (id === activePresetId) return;
+            setPagePreset({ titleId: info.titleId, id });
+            // The server remembers the pick once a prequeue or playback sends it; until then,
+            // and while it may still rank Auto with the old preset, this page sends the pick
+            // itself. A warm-up ranked with the old preset must not be reused.
+            if (profileId) {
+              setPickedPreset(profileId, info.titleId, id);
+              forgetWarmPrequeues(profileId, info.titleId);
+            }
+          }}
         />
       )}
 

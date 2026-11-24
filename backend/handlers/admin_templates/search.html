@@ -175,6 +175,16 @@
         </div>
 
         <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label">Quality preset</label>
+            <select id="qualityPresetSelect" class="form-select" style="width: auto; min-width: 200px;">
+                <option value="">As selected for the user</option>
+                <option value="simple">Simple ranking</option>
+            </select>
+            <p class="form-hint" id="qualityPresetAnime"></p>
+            <p class="form-hint">Rank this search with a specific quality preset. Presets offered in version pickers always work; any other preset needs "Apps may request any preset for a single search (API)" on the Quality presets page. A preset for the other media type falls back to the simple ranking.</p>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 1rem;">
             <label class="checkbox-label" style="display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                 <input type="checkbox" id="downloadRankingToggle">
                 <span>Use download ranking</span>
@@ -379,8 +389,45 @@
     // Load users on page load
     document.addEventListener('DOMContentLoaded', () => {
         loadUsers();
+        loadQualityPresets();
         document.getElementById('diag-timeout')?.addEventListener('input', updateSearchTimeoutProjection);
     });
+
+    // showAnimeDecision tells whether the selected title counts as anime
+    // (anime presets and slots apply) and why.
+    let animeDecisionSeq = 0;
+    async function showAnimeDecision(mediaType) {
+        const el = document.getElementById('qualityPresetAnime');
+        if (!el) return;
+        // Only the latest call writes: an answer for a title (or profile)
+        // selected before must not replace the current one's.
+        const seq = ++animeDecisionSeq;
+        el.textContent = '';
+        if (!selectedContent) return;
+        const q = new URLSearchParams({ mediaType, name: selectedContent.name || '' });
+        if (selectedContent.id) q.set('titleId', selectedContent.id);
+        if (selectedContent.imdbId) q.set('imdbId', selectedContent.imdbId);
+        if (selectedContent.year) q.set('year', String(selectedContent.year));
+        const userId = document.getElementById('userSelect').value;
+        if (userId) q.set('userId', userId);
+        const r = await apiCall('/api/quality-presets/effective?' + q.toString());
+        if (seq !== animeDecisionSeq) return;
+        if (!r || r.error || r.anime === undefined) { el.textContent = ''; return; }
+        const sel = mediaType === 'movie' ? r.movie : r.series;
+        el.textContent = `Anime: ${r.anime ? 'yes' : 'no'} (${r.animeReason || 'unknown'}) · preset used: ${sel && sel.presetId ? sel.name : 'simple ranking'} (${sel ? sel.source : 'none'})`;
+    }
+
+    async function loadQualityPresets() {
+        const list = await apiCall('/api/quality-presets/effective');
+        if (!list || list.error || !Array.isArray(list.presets)) return;
+        const select = document.getElementById('qualityPresetSelect');
+        list.presets.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.id;
+            option.textContent = `${p.name} (${p.mediaType === 'movie' ? 'movies' : 'series'})`;
+            select.appendChild(option);
+        });
+    }
 
     async function loadUsers() {
         try {
@@ -673,6 +720,11 @@
 
             if (document.getElementById('downloadRankingToggle').checked) {
                 params.set('downloadRanking', 'true');
+            }
+            showAnimeDecision(mediaType);
+            const qualityPreset = document.getElementById('qualityPresetSelect').value;
+            if (qualityPreset) {
+                params.set('qualityPreset', qualityPreset);
             }
 
             const results = await apiCall(`/api/indexers/search-test?${params.toString()}`);

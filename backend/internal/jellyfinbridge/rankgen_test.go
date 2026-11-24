@@ -64,3 +64,28 @@ func TestRankingChangeKeepsRunningPlayback(t *testing.T) {
 		t.Fatal("a running playback was moved to a new session after a ranking change")
 	}
 }
+
+// The presets offered for an item are fetched again after a ranking change
+// (a preset was edited), not served from the bridge's cache.
+func TestRankingChangeRefetchesOfferedPresets(t *testing.T) {
+	h := newHarness(t, config.JellyfinBridgeSettings{})
+	installFakePlayback(t, h)
+	var gen atomic.Uint64
+	h.srv.deps.RankingGeneration = gen.Load
+	var lookups atomic.Int32
+	h.srv.deps.Handlers.QualityPresets = func(w http.ResponseWriter, r *http.Request) {
+		lookups.Add(1)
+		writeJSON(w, http.StatusOK, map[string]any{"offered": []map[string]any{{"id": "p-german", "name": "German HD", "mediaType": "movie"}}})
+	}
+	tok := h.login("Living Room", "alice-pass")
+	item := movieID(t, h, tok)
+	h.do(http.MethodGet, "/Items/"+item, tok, nil)
+	h.do(http.MethodGet, "/Items/"+item, tok, nil)
+	before := lookups.Load()
+
+	gen.Add(1) // a preset was edited
+	h.do(http.MethodGet, "/Items/"+item, tok, nil)
+	if lookups.Load() == before {
+		t.Fatal("offered presets served from the cache after the ranking changed")
+	}
+}

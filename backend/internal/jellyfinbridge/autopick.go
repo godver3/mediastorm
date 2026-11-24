@@ -33,7 +33,7 @@ type autoPick struct {
 
 type autoPicks struct {
 	mu     sync.Mutex
-	byKey  map[string]*autoPick      // profile|device|item
+	byKey  map[string]*autoPick      // profile|device|item|preset
 	device map[string]*hlsClientCaps // profile|device -> last declared caps
 }
 
@@ -85,9 +85,10 @@ func (s *Server) autoCaps(p *principal, itemID string, profile *hlsClientCaps) *
 
 // pickAuto returns the stream for the automatic version: mediastorm's own
 // choice, or the best-ranked release whose video the client can copy.
-// Concurrent calls for the same profile, device and item share one pick.
-func (s *Server) pickAuto(ctx context.Context, p *principal, itemID string, ref itemRef, caps *hlsClientCaps) (*playback.PrequeueStatusResponse, *mediaProbe) {
-	key := deviceKey(p) + "|" + itemID
+// Concurrent calls for the same profile, device, item and preset share one
+// pick; presetID is a quality preset picked as version ("" = the profile's).
+func (s *Server) pickAuto(ctx context.Context, p *principal, itemID string, ref itemRef, caps *hlsClientCaps, presetID string) (*playback.PrequeueStatusResponse, *mediaProbe) {
+	key := deviceKey(p) + "|" + itemID + "|" + presetID
 	s.autoPicks.mu.Lock()
 	for k, old := range s.autoPicks.byKey {
 		if !old.at.IsZero() && time.Since(old.at) > autoPickTTL {
@@ -97,12 +98,12 @@ func (s *Server) pickAuto(ctx context.Context, p *principal, itemID string, ref 
 	gen := s.rankingGeneration()
 	pick, ok := s.autoPicks.byKey[key]
 	if ok && pick.gen != gen {
-		ok = false // ranked under older settings
+		ok = false // ranked under older settings or presets
 	}
 	if !ok {
 		pick = &autoPick{done: make(chan struct{}), gen: gen}
 		s.autoPicks.byKey[key] = pick
-		go s.runAutoPick(p, itemID, ref, caps, key, pick)
+		go s.runAutoPick(p, itemID, ref, caps, presetID, key, pick)
 	}
 	s.autoPicks.mu.Unlock()
 	select {
@@ -121,10 +122,10 @@ func (s *Server) rankingGeneration() uint64 {
 	return s.deps.RankingGeneration()
 }
 
-func (s *Server) runAutoPick(p *principal, itemID string, ref itemRef, caps *hlsClientCaps, key string, pick *autoPick) {
+func (s *Server) runAutoPick(p *principal, itemID string, ref itemRef, caps *hlsClientCaps, presetID, key string, pick *autoPick) {
 	ctx, cancel := context.WithTimeout(context.Background(), autoPrequeueWait+autoPickBudget)
 	defer cancel()
-	status, probe := s.autoPickStream(ctx, p, itemID, ref, caps)
+	status, probe := s.autoPickStream(ctx, p, itemID, ref, caps, presetID)
 	if probe != nil {
 		// The picked release's length, not that of a candidate probed last.
 		s.rememberDuration(p.Profile.ID, itemID, probe.DurationSeconds)
@@ -138,8 +139,8 @@ func (s *Server) runAutoPick(p *principal, itemID string, ref itemRef, caps *hls
 	close(pick.done)
 }
 
-func (s *Server) autoPickStream(ctx context.Context, p *principal, itemID string, ref itemRef, caps *hlsClientCaps) (*playback.PrequeueStatusResponse, *mediaProbe) {
-	prequeueID, err := s.startPrequeue(ctx, p, ref)
+func (s *Server) autoPickStream(ctx context.Context, p *principal, itemID string, ref itemRef, caps *hlsClientCaps, presetID string) (*playback.PrequeueStatusResponse, *mediaProbe) {
+	prequeueID, err := s.startPrequeue(ctx, p, ref, presetID)
 	if err != nil {
 		return &playback.PrequeueStatusResponse{Status: playback.PrequeueStatusFailed, Error: err.Error()}, nil
 	}
@@ -161,7 +162,7 @@ func (s *Server) autoPickStream(ctx context.Context, p *principal, itemID string
 		titleID = req.TitleID
 	}
 	attempts := 0
-	for _, r := range s.releasesWait(p, itemID, ref, autoReleaseWait) {
+	for _, r := range s.releasesWait(p, itemID, ref, autoReleaseWait, presetID) {
 		if attempts == autoPickAttempts || time.Now().After(deadline) {
 			break
 		}

@@ -54,6 +54,9 @@ type Settings struct {
 	BackupRetention BackupRetentionSettings `json:"backupRetention,omitempty"`
 	Sports          SportsSettings          `json:"sports,omitempty"`
 	Security        SecuritySettings        `json:"security"`
+	// QualityPresets selects Sonarr/Radarr-compatible quality presets (TRaSH
+	// profiles) used instead of the simple ranking settings.
+	QualityPresets QualityPresetsSettings `json:"qualityPresets"`
 }
 
 // DefaultProfileUnlockTTLHours is the default lifetime of a profile unlock
@@ -2053,6 +2056,9 @@ const (
 	ScheduledTaskTypeMDBListWatchlistSync  ScheduledTaskType = "mdblist_watchlist_sync"
 	ScheduledTaskTypeMDBListHistorySync    ScheduledTaskType = "mdblist_history_sync"
 	ScheduledTaskTypeScrobHistorySync      ScheduledTaskType = "scrob_history_sync"
+	// ScheduledTaskTypeQualityPresetSync checks quality presets whose own
+	// schedule (daily/weekly) is due for an upstream update.
+	ScheduledTaskTypeQualityPresetSync ScheduledTaskType = "quality_preset_sync"
 )
 
 const ScheduledTaskLocalMediaAllLibraries = "__all__"
@@ -2131,6 +2137,82 @@ type NetworkSettings struct {
 	HomeWifiSSID     string `json:"homeWifiSSID"`     // WiFi SSID to detect for home network (e.g., "MyHomeWiFi")
 	HomeBackendUrl   string `json:"homeBackendUrl"`   // Backend URL when on home WiFi (e.g., "http://192.168.1.100:7777/api")
 	RemoteBackendUrl string `json:"remoteBackendUrl"` // Backend URL when on mobile/other networks (e.g., "https://myserver.com:7777/api")
+}
+
+// QualityPresetSimple selects the simple filtering and ranking settings
+// instead of a quality preset.
+const QualityPresetSimple = "simple"
+
+// QualityPresetSource is a TRaSH-format snapshot source.
+type QualityPresetSource struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // github, url, bundled
+	Repo     string `json:"repo,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// QualityPresetsSettings controls quality presets.
+type QualityPresetsSettings struct {
+	// MoviePreset and SeriesPreset are preset IDs; "" or "simple" use the
+	// simple filtering and ranking settings.
+	MoviePreset  string `json:"moviePreset,omitempty"`
+	SeriesPreset string `json:"seriesPreset,omitempty"`
+	// AnimeMoviePreset and AnimeSeriesPreset rank anime titles; "" falls
+	// back to MoviePreset and SeriesPreset.
+	AnimeMoviePreset  string `json:"animeMoviePreset,omitempty"`
+	AnimeSeriesPreset string `json:"animeSeriesPreset,omitempty"`
+	// AnimeOnlyInPickers hides presets meant for every title (and the
+	// simple ranking) from version pickers on anime titles, leaving the
+	// anime presets.
+	AnimeOnlyInPickers bool `json:"animeOnlyInPickers,omitempty"`
+	// AllowRequestOverride lets clients pick another preset per search,
+	// for example while choosing the stream for an episode.
+	AllowRequestOverride bool `json:"allowRequestOverride"`
+	// PickerPresets are the choices offered in version pickers (the web
+	// player's release list and the version menu of Jellyfin clients), in
+	// order: preset IDs and QualityPresetSimple. Searches may always use
+	// them, even when AllowRequestOverride is off.
+	PickerPresets []string `json:"pickerPresets,omitempty"`
+	// HiddenByDefault are offered presets that profiles' version pickers
+	// leave out unless a profile shows them itself.
+	HiddenByDefault []string `json:"hiddenByDefault,omitempty"`
+	// Sources are the TRaSH-format snapshot sources, merged by priority
+	// (lower first). Empty means TRaSH-Guides on GitHub.
+	Sources []QualityPresetSource `json:"sources,omitempty"`
+}
+
+// OffersInPicker reports whether id (a preset ID or QualityPresetSimple) is
+// offered in version pickers.
+func (q QualityPresetsSettings) OffersInPicker(id string) bool {
+	id = strings.TrimSpace(id)
+	for _, offered := range q.PickerPresets {
+		if strings.EqualFold(offered, id) {
+			return id != ""
+		}
+	}
+	return false
+}
+
+// HidesByDefault reports whether offered preset id is hidden in profiles'
+// pickers until a profile shows it.
+func (q QualityPresetsSettings) HidesByDefault(id string) bool {
+	id = strings.TrimSpace(id)
+	for _, hidden := range q.HiddenByDefault {
+		if strings.EqualFold(strings.TrimSpace(hidden), id) {
+			return id != ""
+		}
+	}
+	return false
+}
+
+// AllowsRequestPreset reports whether a single search may ask for id
+// instead of the preset its profile and device would use.
+func (q QualityPresetsSettings) AllowsRequestPreset(id string) bool {
+	return strings.TrimSpace(id) != "" && (q.AllowRequestOverride || q.OffersInPicker(id))
 }
 
 // RankingCriterionID identifies a ranking criterion.
@@ -2297,6 +2379,7 @@ func DefaultSettings() Settings {
 			HomeBackendUrl:   "",
 			RemoteBackendUrl: "",
 		},
+		QualityPresets: QualityPresetsSettings{AllowRequestOverride: true},
 		Ranking: RankingSettings{
 			Criteria: DefaultRankingCriteria(),
 		},

@@ -3,6 +3,7 @@ package datastore
 import (
 	"context"
 	"fmt"
+	"novastream/services/qualityprofiles"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -156,6 +157,9 @@ func (ds *DataStore) WithTx(ctx context.Context, fn func(tx *Tx) error) error {
 }
 
 func (t *Tx) Accounts() AccountRepository { return &pgAccountRepo{pool: t.tx} }
+func (t *Tx) QualityPresets() qualityprofiles.Store {
+	return &pgQualityPresetRepo{pool: t.tx}
+}
 func (t *Tx) NumbersStation() NumbersStationRepository {
 	return &pgNumbersStationRepo{pool: t.tx}
 }

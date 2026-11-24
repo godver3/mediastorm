@@ -113,11 +113,24 @@ type ClientFilterSettings struct {
 	// transient filter caps at search time. Never written back into the flat
 	// filter fields above.
 	AdaptivePlayback *AdaptivePlaybackSettings `json:"adaptivePlayback,omitempty"`
+
+	// Quality preset overrides for this device (nil inherits, "simple" uses
+	// the simple ranking settings).
+	QualityPresetMovie  *string `json:"qualityPresetMovie,omitempty"`
+	QualityPresetSeries *string `json:"qualityPresetSeries,omitempty"`
+	// QualityPresetAnimeMovie and QualityPresetAnimeSeries apply to anime
+	// titles on this device before the normal slots.
+	QualityPresetAnimeMovie  *string `json:"qualityPresetAnimeMovie,omitempty"`
+	QualityPresetAnimeSeries *string `json:"qualityPresetAnimeSeries,omitempty"`
 }
 
 // IsEmpty returns true if no settings are configured
 func (c *ClientFilterSettings) IsEmpty() bool {
 	return c.HomeShelfFocusModel == nil &&
+		c.QualityPresetMovie == nil &&
+		c.QualityPresetSeries == nil &&
+		c.QualityPresetAnimeMovie == nil &&
+		c.QualityPresetAnimeSeries == nil &&
 		c.MaxSizeMovieGB == nil &&
 		c.MaxSizeEpisodeGB == nil &&
 		c.MaxResolution == nil &&

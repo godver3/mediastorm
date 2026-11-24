@@ -1510,6 +1510,11 @@
     let resolvedPlayback = null;
     let currentResolvedCandidate = null;
     let manualResults = [];
+    // Quality preset chosen for this title's release search ('' = the
+    // profile's own choice, 'simple' = the simple ranking).
+    let manualPreset = '';
+    let manualPresetKey = '';
+    let presetChoices = null;
     let profileSettingsCache = {};
     let hlsInstance = null;
     let hlsSessionId = '';
@@ -2842,12 +2847,18 @@
                             </button>
                             <button class="btn btn-secondary" onclick="clearDetails()">Close</button>
                         </div>
+                        <div id="detailsPresetPicker" style="margin-top:0.75rem;"></div>
                         ${episodeControls}
                     </div>
                 </div>
             </div>
             ${sections}
         `;
+        // Auto Select and Select Release share the preset choice.
+        ensurePresetChoices().then(() => {
+            const slot = document.getElementById('detailsPresetPicker');
+            if (slot && selectedItem === item) slot.innerHTML = renderPresetPicker('detailsPresetSelect');
+        });
     }
 
     function renderEpisodeControls() {
@@ -2990,7 +3001,75 @@
         return candidate;
     }
 
+    async function loadPresetChoices() {
+        const forKey = manualPresetKey;
+        try {
+            // The title decides which presets fit (anime presets only on anime).
+            const q = new URLSearchParams({ userId: activeProfileId, mediaType: selectedItem.mediaType, name: selectedItem.title || '' });
+            if (selectedItem.id) q.set('titleId', selectedItem.id);
+            if (selectedItem.imdbId) q.set('imdbId', selectedItem.imdbId);
+            if (selectedItem.year) q.set('year', String(selectedItem.year));
+            const choices = await apiCall(`/api/quality-presets/effective?${q.toString()}`);
+            // A slower load for a title left meanwhile must not overwrite the current one.
+            if (manualPresetKey === forKey) presetChoices = choices;
+        } catch (_) {
+            if (manualPresetKey === forKey) presetChoices = null; // Older servers or no access: no picker.
+        }
+        return presetChoices;
+    }
+
+    // ensurePresetChoices loads the offered presets once per title and
+    // profile; a new title starts again at the profile's own choice.
+    // Callers during a load share it, so none sees the previous title's
+    // choices.
+    let presetChoicesLoading = null;
+    async function ensurePresetChoices() {
+        const key = `${activeProfileId}|${selectedItem.mediaType}|${selectedItem.imdbId || selectedItem.title || ''}`;
+        if (key !== manualPresetKey) {
+            manualPresetKey = key;
+            manualPreset = '';
+            presetChoices = null;
+            const loading = loadPresetChoices();
+            presetChoicesLoading = loading;
+            try {
+                await loading;
+            } finally {
+                if (presetChoicesLoading === loading) presetChoicesLoading = null;
+            }
+        } else if (presetChoicesLoading) {
+            await presetChoicesLoading;
+        }
+        return presetChoices;
+    }
+
+    function renderPresetPicker(id = 'manualPresetSelect') {
+        const c = presetChoices;
+        if (!c || !selectedItem) return '';
+        const isMovie = selectedItem.mediaType === 'movie';
+        const current = isMovie ? c.movie : c.series;
+        // The admin chooses which presets are offered here ("simple" fits both media types).
+        const presets = (c.offered || []).filter((p) => !p.mediaType || p.mediaType === (isMovie ? 'movie' : 'series'));
+        if (!presets.length) return '';
+        const defaultLabel = current && current.presetId ? current.name : 'Simple ranking';
+        const option = (value, label) => `<option value="${escapeHtml(value)}"${manualPreset === value ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+        return `<label class="media-meta" style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">Quality preset
+            <select id="${id}" class="form-input" style="width:auto;" onchange="changeManualPreset(this.value, this.id)">
+                ${option('', 'Default (' + defaultLabel + ')')}${presets.map((p) => option(p.id, p.name)).join('')}
+            </select></label>`;
+    }
+
+    function changeManualPreset(value, source) {
+        manualPreset = value || '';
+        const details = document.getElementById('detailsPresetSelect');
+        if (details) details.value = manualPreset;
+        // On the details view the choice applies to the next Auto Select or
+        // Select Release; in the release list it searches again right away.
+        if (source !== 'detailsPresetSelect') openManualSelection();
+    }
+
     async function searchStreamCandidates() {
+        // The per-search preset choice belongs to one title and profile.
+        await ensurePresetChoices();
         const params = new URLSearchParams({
             q: buildStreamQuery(),
             mediaType: selectedItem.mediaType,
@@ -2998,6 +3077,7 @@
             userId: activeProfileId,
             includeFiltered: 'true',
         });
+        if (manualPreset) params.set('qualityPreset', manualPreset);
         if (selectedItem.imdbId) params.set('imdbId', selectedItem.imdbId);
         if (selectedItem.year) params.set('year', String(selectedItem.year));
         const results = await apiCall(`/api/indexers/search?${params.toString()}`);
@@ -3022,6 +3102,7 @@
                     </button>
                 </div>
                 <div class="section-label">Select Release</div>
+                ${renderPresetPicker()}
                 <div class="media-meta">${included} playable candidates, ${manualResults.length} total</div>
                 <div class="manual-results">
                     ${manualResults.map(renderManualResult).join('')}
@@ -3059,6 +3140,11 @@
             ? `<div class="manual-result-desc">${escapeHtml(passthroughDisplay.description)}</div>`
             : '';
         const reason = isExcluded && result.filterReason ? `<span style="color: var(--danger);">${escapeHtml(result.filterReason)}</span>` : '';
+        // Results ranked by a quality preset carry the *arr quality and the
+        // custom format score; show them with the matched formats on hover.
+        const presetInfo = attrs.qualityPreset && attrs.customFormatScore !== undefined
+            ? `<span title="${escapeHtml((attrs.customFormats || 'no custom formats') + ' · ' + attrs.qualityPreset)}">${escapeHtml(attrs.arrQuality || '')} · score ${escapeHtml(attrs.customFormatScore)}</span>`
+            : '';
         return `
             <article class="manual-result ${isExcluded ? 'manual-result-excluded' : ''}">
                 <div style="min-width: 0;">
@@ -3069,6 +3155,7 @@
                         ${size ? `<span>${escapeHtml(size)}</span>` : ''}
                         ${resolution ? `<span>${escapeHtml(resolution)}</span>` : ''}
                         ${hdr ? `<span>${escapeHtml(hdr)}</span>` : ''}
+                        ${presetInfo}
                         ${reason}
                     </div>
                 </div>

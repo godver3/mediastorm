@@ -57,16 +57,48 @@ type releaseList struct {
 	fetched time.Time
 	err     error
 	gen     uint64 // ranking generation the search ran under
+	// outdated marks a list ranked with a preset the title no longer uses
+	// (forgetAutoRanking): it is searched again, and served until then.
+	outdated bool
+	// previous is the outdated list this one replaces, served while it is
+	// searched, so a release version picked from it still plays.
+	previous []release
 }
 
 type releaseCache struct {
 	mu       sync.Mutex
-	lists    map[string]*releaseList // profile|item
+	lists    map[string]*releaseList // profile|item|preset
 	versions map[string]string       // version ID -> item ID
+	// presets maps a preset version ID to its preset, so playing it needs
+	// no lookup (which may fail or answer without the preset meanwhile).
+	presets map[string]presetChoice
+}
+
+// maxVersionIDs bounds the version ID maps; they start over beyond it.
+const maxVersionIDs = 50_000
+
+// addVersionLocked records a version ID of an item. Callers hold mu.
+func (c *releaseCache) addVersionLocked(id, itemID string) {
+	if len(c.versions) >= maxVersionIDs || len(c.presets) >= maxVersionIDs {
+		c.versions, c.presets = map[string]string{}, map[string]presetChoice{}
+	}
+	c.versions[id] = itemID
+}
+
+// presetVersion returns the preset a preset version ID of itemID stands for.
+func (s *Server) presetVersion(itemID, id string) (presetChoice, bool) {
+	s.releases.mu.Lock()
+	defer s.releases.mu.Unlock()
+	id = normalizeID(id)
+	c, ok := s.releases.presets[id]
+	if !ok || s.releases.versions[id] != itemID {
+		return presetChoice{}, false
+	}
+	return c, true
 }
 
 func newReleaseCache() *releaseCache {
-	return &releaseCache{lists: map[string]*releaseList{}, versions: map[string]string{}}
+	return &releaseCache{lists: map[string]*releaseList{}, versions: map[string]string{}, presets: map[string]presetChoice{}}
 }
 
 // versionItem maps a release version ID to its item. Jellyfin clients treat
@@ -85,7 +117,7 @@ func (s *Server) versionItem(id string) (string, bool) {
 // releasesFor returns the releases known for an item (none while the search
 // runs) and starts a search when there is no fresh list.
 func (s *Server) releasesFor(p *principal, itemID string, ref itemRef) []release {
-	return s.releasesWait(p, itemID, ref, 0)
+	return s.releasesWait(p, itemID, ref, 0, "")
 }
 
 // releaseVersionCount is how many releases are offered as versions.
@@ -109,28 +141,32 @@ func (s *Server) prefetchReleases(p *principal, itemID string) {
 	}
 }
 
-// releasesWait is releasesFor waiting up to wait for a running search.
-func (s *Server) releasesWait(p *principal, itemID string, ref itemRef, wait time.Duration) []release {
+// releasesWait is releasesFor waiting up to wait for a running search,
+// ranked by presetID ("" for the profile's own preset).
+func (s *Server) releasesWait(p *principal, itemID string, ref itemRef, wait time.Duration, presetID string) []release {
 	if (ref.Kind != refMovie && ref.Kind != refEpisode) || s.deps.Handlers.IndexerSearch == nil {
 		return nil
 	}
-	key := p.Profile.ID + "|" + itemID
+	// Per device: the search uses the device's own filter and preset settings.
+	key := deviceKey(p) + "|" + itemID + "|" + presetID
 	s.releases.mu.Lock()
 	gen := s.rankingGeneration()
 	list, ok := s.releases.lists[key]
 	stale := ok && ((list.ready && time.Since(list.fetched) > list.ttl()) || list.gen != gen)
-	if !ok || stale {
+	outdated := ok && list.ready && list.outdated && !stale
+	if !ok || stale || outdated {
 		for k, old := range s.releases.lists {
 			if old.ready && time.Since(old.fetched) > old.ttl() {
 				delete(s.releases.lists, k)
 			}
 		}
-		if len(s.releases.versions) > 50_000 {
-			s.releases.versions = map[string]string{}
+		next := &releaseList{done: make(chan struct{}), gen: gen}
+		if outdated {
+			next.previous = list.items
 		}
-		list = &releaseList{done: make(chan struct{}), gen: gen}
+		list = next
 		s.releases.lists[key] = list
-		go s.searchReleases(p, ref, list)
+		go s.searchReleases(p, ref, presetID, list)
 	}
 	ready, done := list.ready, list.done
 	s.releases.mu.Unlock()
@@ -142,13 +178,16 @@ func (s *Server) releasesWait(p *principal, itemID string, ref itemRef, wait tim
 	}
 	s.releases.mu.Lock()
 	defer s.releases.mu.Unlock()
+	if !list.ready {
+		return list.previous
+	}
 	return list.items
 }
 
-func (s *Server) searchReleases(p *principal, ref itemRef, list *releaseList) {
+func (s *Server) searchReleases(p *principal, ref itemRef, presetID string, list *releaseList) {
 	ctx, cancel := context.WithTimeout(context.Background(), releaseSearchWait)
 	defer cancel()
-	items, err := s.fetchReleases(ctx, p, ref)
+	items, err := s.fetchReleases(ctx, p, ref, presetID)
 	if err != nil {
 		log.Printf("[jellyfin-bridge] release search for %s: %v", ref.Source, err)
 	}
@@ -161,7 +200,7 @@ func (s *Server) searchReleases(p *principal, ref itemRef, list *releaseList) {
 // fetchReleases runs mediastorm's indexer search the way the prequeue does
 // (same title, episode code, IDs and profile) and keeps the first results
 // that passed the profile's filters, in mediastorm's ranking order.
-func (s *Server) fetchReleases(ctx context.Context, p *principal, ref itemRef) ([]release, error) {
+func (s *Server) fetchReleases(ctx context.Context, p *principal, ref itemRef, presetID string) ([]release, error) {
 	req, err := s.prequeueRequest(ctx, p, ref)
 	if err != nil {
 		return nil, err
@@ -179,6 +218,9 @@ func (s *Server) fetchReleases(ctx context.Context, p *principal, ref itemRef) (
 	}
 	if p.Client.DeviceID != "" {
 		q.Set("clientId", "jellyfin-"+p.Client.DeviceID)
+	}
+	if presetID != "" {
+		q.Set("qualityPreset", presetID)
 	}
 	var results []json.RawMessage
 	if _, err := callJSON(s.deps.Handlers.IndexerSearch, internalRequest(ctx, p, http.MethodGet, "/api/indexers/search?"+q.Encode(), nil, nil), &results); err != nil {
@@ -296,27 +338,45 @@ func (s *Server) releaseMediaSourceID(p *principal, itemID, key string) string {
 
 // releaseByMediaSource finds the release a media source ID stands for.
 func (s *Server) releaseByMediaSource(p *principal, itemID string, ref itemRef, mediaSourceID string) (release, bool) {
-	mediaSourceID = strings.ToLower(strings.TrimSpace(mediaSourceID))
+	// Clients may send the ID dashed.
+	mediaSourceID = normalizeID(mediaSourceID)
 	if mediaSourceID == "" {
 		return release{}, false
 	}
 	if s.releaseVersionCount() == 0 {
 		return release{}, false
 	}
-	for _, r := range s.shownReleases(s.releasesFor(p, itemID, ref)) {
-		if s.releaseMediaSourceID(p, itemID, r.Key) == mediaSourceID {
-			return r, true
+	// The whole list, and the one it replaced when it was searched again
+	// (ranked anew, say): a version offered before still plays when it is no
+	// longer shown, or the new search failed or filtered it out.
+	current := s.releasesFor(p, itemID, ref)
+	s.releases.mu.Lock()
+	var previous []release
+	if list, ok := s.releases.lists[deviceKey(p)+"|"+itemID+"|"]; ok {
+		previous = list.previous
+	}
+	s.releases.mu.Unlock()
+	for _, list := range [][]release{current, previous} {
+		for _, r := range list {
+			if s.releaseMediaSourceID(p, itemID, r.Key) == mediaSourceID {
+				return r, true
+			}
 		}
 	}
 	return release{}, false
 }
 
 // releasesCached returns a fresh release list found earlier for the item,
-// without starting a search.
+// without starting a search. It is the device's list for its own preset,
+// keyed as in releasesWait.
 func (s *Server) releasesCached(p *principal, itemID string) []release {
 	s.releases.mu.Lock()
 	defer s.releases.mu.Unlock()
-	list, ok := s.releases.lists[p.Profile.ID+"|"+itemID]
+	list, ok := s.releases.lists[deviceKey(p)+"|"+itemID+"|"]
+	if ok && !list.ready && list.previous != nil {
+		// Searched again: the outdated list serves until then.
+		return list.previous
+	}
 	if !ok || !list.ready || time.Since(list.fetched) > list.ttl() || list.gen != s.rankingGeneration() {
 		return nil
 	}
@@ -324,29 +384,48 @@ func (s *Server) releasesCached(p *principal, itemID string) []release {
 }
 
 // itemVersions lists an item's versions for clients: the automatic pick
-// first, then the releases found so far. It never searches: clients fetch
-// items in bulk while browsing, so the list comes from playback's search.
+// first, then the quality presets offered in pickers, then the releases
+// found so far. It never searches: clients fetch items in bulk while
+// browsing, so the list comes from playback's search.
 func (s *Server) itemVersions(p *principal, item *dto.BaseItemDto, ref itemRef) {
-	if (ref.Kind != refMovie && ref.Kind != refEpisode) || s.releaseVersionCount() == 0 {
+	if ref.Kind != refMovie && ref.Kind != refEpisode {
 		return
 	}
-	releases := s.shownReleases(s.releasesCached(p, item.ID))
+	ctx, cancel := context.WithTimeout(context.Background(), presetLookupWait)
+	presets := s.presetVersions(ctx, p, item.ID, ref)
+	autoLabel := s.autoVersionLabel(ctx, p, item.ID, ref)
+	def := s.presetsForItem(ctx, p, item.ID, ref).def
+	cancel()
+	releaseVersions := s.releaseVersionCount() > 0
+	var releases []release
+	if releaseVersions {
+		releases = s.shownReleases(s.releasesCached(p, item.ID))
+	}
+	if len(presets) == 0 && !releaseVersions {
+		return
+	}
 	// The default version's ID is the item ID, as in Jellyfin: clients only
 	// load a version as a separate item when its ID differs.
-	versions := []dto.MediaSourceInfo{versionStub(item.ID, "Auto (mediastorm)", item.RunTimeTicks)}
+	versions := []dto.MediaSourceInfo{versionStub(item.ID, autoLabel, item.RunTimeTicks)}
 	s.releases.mu.Lock()
-	if len(releases) == 0 {
+	for _, c := range presets {
+		id := s.presetMediaSourceID(p, item.ID, c.ID)
+		s.releases.addVersionLocked(id, item.ID)
+		s.releases.presets[id] = c
+		versions = append(versions, versionStub(id, presetVersionLabel(c, def), item.RunTimeTicks))
+	}
+	if releaseVersions && len(releases) == 0 {
 		// No releases searched yet: offer a version that searches when it is
 		// picked (loaded as an item) or played.
 		id := s.findReleasesID(p, item.ID)
-		s.releases.versions[id] = item.ID
+		s.releases.addVersionLocked(id, item.ID)
 		s.releases.mu.Unlock()
 		item.MediaSources = append(versions, versionStub(id, findReleasesLabel, item.RunTimeTicks))
 		return
 	}
 	for _, r := range releases {
 		id := s.releaseMediaSourceID(p, item.ID, r.Key)
-		s.releases.versions[id] = item.ID
+		s.releases.addVersionLocked(id, item.ID)
 		versions = append(versions, versionStub(id, r.Label, item.RunTimeTicks))
 	}
 	s.releases.mu.Unlock()

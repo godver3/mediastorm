@@ -86,18 +86,24 @@ type PrequeueHandler struct {
 	fullProber            VideoFullProber // Combined prober for single ffprobe call
 	userSettingsSvc       *user_settings.Service
 	contentPreferencesSvc *content_preferences.Service
-	clientSettingsSvc     ClientSettingsProvider
-	configManager         *config.Manager
-	metadataSvc           SeriesDetailsProvider // For episode counting
-	movieMetadataSvc      MovieDetailsProvider  // For movie anime detection
-	subtitleExtractor     SubtitlePreExtractor  // For pre-extracting subtitles
-	prewarmSvc            PrewarmService        // For checking pre-warmed entries
-	latencyTracker        *PlaybackLatencyTracker
-	failures              *streamFailureRegistry
-	badStreamsSvc         *badstreams.Service
-	externalURLValidator  func(context.Context, string) error
-	users                 prequeueOwnershipService
-	demoMode              bool
+	defaultQualityPreset  DefaultQualityPresetFunc
+	titlePresets          TitlePresetMemory
+	// titlePresetPicks orders the remembers of picked presets: each pick
+	// gets the next number per profile, device and title, and only the
+	// latest pick is written (two quick picks run concurrently).
+	titlePresetPicks     titlePresetPickOrder
+	clientSettingsSvc    ClientSettingsProvider
+	configManager        *config.Manager
+	metadataSvc          SeriesDetailsProvider // For episode counting
+	movieMetadataSvc     MovieDetailsProvider  // For movie anime detection
+	subtitleExtractor    SubtitlePreExtractor  // For pre-extracting subtitles
+	prewarmSvc           PrewarmService        // For checking pre-warmed entries
+	latencyTracker       *PlaybackLatencyTracker
+	failures             *streamFailureRegistry
+	badStreamsSvc        *badstreams.Service
+	externalURLValidator func(context.Context, string) error
+	users                prequeueOwnershipService
+	demoMode             bool
 }
 
 func (h *PrequeueHandler) canAccessUser(r *http.Request, userID string) bool {
@@ -402,6 +408,42 @@ type prequeueScopeSignature struct {
 	NewestReleaseFirst bool                             `json:"newestReleaseFirst,omitempty"`
 	Playback           prequeueScopePlayback            `json:"playback"`
 	ContentPreference  *models.ContentPreference        `json:"contentPreference,omitempty"`
+	// TitlePreset is the preset remembered for the title on this device.
+	TitlePreset string `json:"titlePreset,omitempty"`
+	// QualityPresets are the profile's and device's preset choices; the
+	// server's selection is the same for everyone.
+	QualityPresets *prequeueScopePresets `json:"qualityPresets,omitempty"`
+}
+
+type prequeueScopePresets struct {
+	Movie       *string `json:"movie,omitempty"`
+	Series      *string `json:"series,omitempty"`
+	AnimeMovie  *string `json:"animeMovie,omitempty"`
+	AnimeSeries *string `json:"animeSeries,omitempty"`
+}
+
+// withPresets lays non-nil choices over the current ones.
+func (p *prequeueScopePresets) withPresets(movie, series, animeMovie, animeSeries *string) *prequeueScopePresets {
+	if movie == nil && series == nil && animeMovie == nil && animeSeries == nil {
+		return p
+	}
+	var next prequeueScopePresets
+	if p != nil {
+		next = *p
+	}
+	if movie != nil {
+		next.Movie = movie
+	}
+	if series != nil {
+		next.Series = series
+	}
+	if animeMovie != nil {
+		next.AnimeMovie = animeMovie
+	}
+	if animeSeries != nil {
+		next.AnimeSeries = animeSeries
+	}
+	return &next
 }
 
 func configFilterToUserFilter(f config.FilterSettings) models.FilterSettings {
@@ -514,6 +556,8 @@ func applyClientScopeOverrides(sig *prequeueScopeSignature, clientSettings *mode
 	if clientSettings.NewestReleaseFirst != nil {
 		sig.NewestReleaseFirst = *clientSettings.NewestReleaseFirst
 	}
+	sig.QualityPresets = sig.QualityPresets.withPresets(clientSettings.QualityPresetMovie, clientSettings.QualityPresetSeries,
+		clientSettings.QualityPresetAnimeMovie, clientSettings.QualityPresetAnimeSeries)
 }
 
 func prequeueScopeHash(sig prequeueScopeSignature) string {
@@ -597,6 +641,9 @@ func (h *PrequeueHandler) prequeueSettingsScope(userID, clientID, titleID string
 				IgnoreDVCompatibilityCheck: userSettings.Playback.IgnoreDVCompatibilityCheck,
 				MaxResultsPerResolution:    userSettings.Playback.MaxResultsPerResolution,
 			}
+			if q := userSettings.QualityPresets; q != nil {
+				effective.QualityPresets = effective.QualityPresets.withPresets(q.MoviePreset, q.SeriesPreset, q.AnimeMoviePreset, q.AnimeSeriesPreset)
+			}
 		} else if err != nil {
 			log.Printf("[prequeue] Failed to build profile prequeue settings scope (using global): %v", err)
 		}
@@ -640,10 +687,218 @@ func (h *PrequeueHandler) prequeueSettingsScope(userID, clientID, titleID string
 		}
 	}
 
+	if h.titlePresets != nil && userID != "" && titleID != "" {
+		if id, err := h.titlePresets.TitlePreset(context.Background(), userID, clientID, titleID); err == nil {
+			effective.TitlePreset = id
+		} else {
+			log.Printf("[prequeue] Failed to include the title quality preset in prequeue scope (non-fatal): %v", err)
+		}
+	}
+
 	if reflect.DeepEqual(effective, global) {
 		return playback.DefaultPrequeueSettingsScopeKey, adaptiveCaps
 	}
 	return prequeueScopeHash(effective), adaptiveCaps
+}
+
+// requestQualityPreset returns the quality preset a prequeue request may
+// use, or "" when it asked for none, the preset does not exist or is for the
+// other app, or the server or the profile's own picker list does not allow
+// it (the same rules as a search). Only such a preset is remembered.
+func (h *PrequeueHandler) requestQualityPreset(ctx context.Context, userID, mediaType, id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if h.indexerSvc != nil {
+		if err := h.indexerSvc.CheckRequestedPreset(ctx, indexer.SearchOptions{QualityPreset: id, MediaType: mediaType, UserID: userID}); err != nil {
+			log.Printf("[prequeue] Ignoring quality preset %q for user=%s: %v", id, userID, err)
+			return ""
+		}
+		return id
+	}
+	if h.configManager == nil {
+		return ""
+	}
+	settings, err := h.configManager.Load()
+	if err != nil || !settings.QualityPresets.AllowsRequestPreset(id) {
+		return ""
+	}
+	if userID != "" {
+		var sel *models.QualityPresetSelection
+		if h.userSettingsSvc != nil {
+			if us, err := h.userSettingsSvc.Get(userID); err == nil && us != nil {
+				sel = us.QualityPresets
+			}
+		}
+		if !sel.AllowsPickerDefault(settings.QualityPresets.HiddenByDefault, id) {
+			return ""
+		}
+	}
+	return id
+}
+
+// titlePresetPick is a quality preset picked for playing a title.
+type titlePresetPick struct {
+	UserID, ClientID, TitleID, MediaType string
+	Name, ImdbID                         string
+	Year                                 int
+	PresetID                             string
+	// seq orders picks (titlePresetPickOrder); 0 writes unconditionally.
+	seq uint64
+}
+
+// DefaultQualityPresetFunc returns the preset a title gets without a
+// remembered one: the anime or normal slots of the device, the profile and
+// the server ("" = the simple ranking).
+type DefaultQualityPresetFunc func(ctx context.Context, mediaType, userID, clientID, titleID, name string, year int, imdbID string) string
+
+// TitlePresetMemory keeps the preset a profile last picked for a title on
+// a device.
+type TitlePresetMemory interface {
+	TitlePreset(ctx context.Context, userID, clientID, contentID string) (string, error)
+	RememberTitlePreset(ctx context.Context, userID, clientID, contentID, presetID string) (bool, error)
+}
+
+// SetTitlePresetMemory enables remembering picked presets per title and
+// device.
+func (h *PrequeueHandler) SetTitlePresetMemory(m TitlePresetMemory) {
+	h.titlePresets = m
+}
+
+// SetDefaultQualityPreset lets picks of the default preset clear a title's
+// remembered preset.
+func (h *PrequeueHandler) SetDefaultQualityPreset(fn DefaultQualityPresetFunc) {
+	h.defaultQualityPreset = fn
+}
+
+// titlePresetPickOrder numbers picked presets per profile, device and
+// title, so a slower remember of an earlier pick never overwrites a later
+// one. Remembers of one title run one at a time; other titles' do not wait.
+type titlePresetPickOrder struct {
+	mu    sync.Mutex
+	slots map[string]*titlePresetPickSlot
+	next  uint64
+}
+
+// titlePresetPickSlot is one title's picks in flight.
+type titlePresetPickSlot struct {
+	write  sync.Mutex // held while the title's pick is written
+	latest uint64     // guarded by titlePresetPickOrder.mu
+	refs   int        // picks taken and not yet released
+}
+
+func titlePresetPickKey(pick titlePresetPick) string {
+	return pick.UserID + "|" + pick.ClientID + "|" + pick.TitleID
+}
+
+// take numbers a pick as the latest for its title. Every taken pick is
+// released once its remember is done.
+func (o *titlePresetPickOrder) take(pick titlePresetPick) uint64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.slots == nil {
+		o.slots = map[string]*titlePresetPickSlot{}
+	}
+	key := titlePresetPickKey(pick)
+	slot := o.slots[key]
+	if slot == nil {
+		slot = &titlePresetPickSlot{}
+		o.slots[key] = slot
+	}
+	o.next++
+	slot.latest = o.next
+	slot.refs++
+	return o.next
+}
+
+// slot returns a taken pick's slot.
+func (o *titlePresetPickOrder) slot(pick titlePresetPick) *titlePresetPickSlot {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.slots[titlePresetPickKey(pick)]
+}
+
+// isLatest reports whether seq is still the latest pick for its title.
+func (o *titlePresetPickOrder) isLatest(slot *titlePresetPickSlot, seq uint64) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slot.latest == seq
+}
+
+// release ends a taken pick; the title's slot goes with its last one.
+func (o *titlePresetPickOrder) release(pick titlePresetPick) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	key := titlePresetPickKey(pick)
+	if slot := o.slots[key]; slot != nil {
+		if slot.refs--; slot.refs <= 0 {
+			delete(o.slots, key)
+		}
+	}
+}
+
+// rememberTitlePreset keeps a preset picked for playback as the title's
+// preset on the device, like a picked audio language: Auto ranks the
+// title's later playbacks there (the series' other episodes, the movie
+// again) with it. Picking the preset the title gets anyway clears it, so
+// the title follows the defaults again (and later changes to them).
+func (h *PrequeueHandler) rememberTitlePreset(pick titlePresetPick) {
+	if pick.seq != 0 {
+		defer h.titlePresetPicks.release(pick)
+	}
+	if h.titlePresets == nil || strings.TrimSpace(pick.UserID) == "" || strings.TrimSpace(pick.TitleID) == "" {
+		return
+	}
+	contentType := "movie"
+	if pick.MediaType == "series" || pick.MediaType == "tv" || pick.MediaType == "show" {
+		contentType = "series"
+	}
+	remember := strings.TrimSpace(pick.PresetID)
+	if h.defaultQualityPreset != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		def := h.defaultQualityPreset(ctx, contentType, pick.UserID, pick.ClientID, pick.TitleID, pick.Name, pick.Year, pick.ImdbID)
+		cancel()
+		if samePreset(remember, def) {
+			remember = ""
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Write only the title's latest pick, one write per title at a time:
+	// an earlier pick that gets here later finds a newer one and skips.
+	if pick.seq != 0 {
+		slot := h.titlePresetPicks.slot(pick)
+		slot.write.Lock()
+		defer slot.write.Unlock()
+		if !h.titlePresetPicks.isLatest(slot, pick.seq) {
+			return
+		}
+	}
+	changed, err := h.titlePresets.RememberTitlePreset(ctx, pick.UserID, pick.ClientID, pick.TitleID, remember)
+	if err != nil {
+		log.Printf("[prequeue] Failed to remember quality preset %q for title=%s user=%s client=%s: %v", remember, pick.TitleID, pick.UserID, pick.ClientID, err)
+		return
+	}
+	switch {
+	case changed && remember == "":
+		log.Printf("[prequeue] Picked the default quality preset %q for title=%s user=%s client=%s: forgot the remembered one", pick.PresetID, pick.TitleID, pick.UserID, pick.ClientID)
+	case changed:
+		log.Printf("[prequeue] Remembered quality preset %q for title=%s user=%s client=%s", remember, pick.TitleID, pick.UserID, pick.ClientID)
+	}
+}
+
+// samePreset compares preset IDs; "simple" and "" both mean the simple
+// ranking.
+func samePreset(a, b string) bool {
+	norm := func(id string) string {
+		id = strings.TrimSpace(id)
+		if strings.EqualFold(id, config.QualityPresetSimple) {
+			return ""
+		}
+		return id
+	}
+	return norm(a) == norm(b)
 }
 
 func (h *PrequeueHandler) prequeueSettingsScopeKey(userID, clientID, titleID string) string {
@@ -875,7 +1130,7 @@ func (h *PrequeueHandler) RunWorkerSyncScoped(ctx context.Context, titleID, titl
 	}
 
 	// Run worker synchronously (blocking)
-	h.runPrequeueWorker(entry.ID, titleID, titleName, imdbID, mediaType, year, userID, clientID, nil, targetEpisode, 0, true, prequeueWorkerScheduledPrewarm)
+	h.runPrequeueWorker(entry.ID, titleID, titleName, imdbID, mediaType, year, userID, clientID, "", nil, targetEpisode, 0, true, prequeueWorkerScheduledPrewarm)
 
 	// Check result
 	result, exists := h.store.Get(entry.ID)
@@ -1020,6 +1275,16 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 
 	throughput := adaptiveThroughputFromRequest(r)
 	settingsScopeKey, adaptiveCaps := h.prequeueSettingsScope(req.UserID, clientID, req.TitleID, throughput)
+	// A preset asked for by this request (a version picked in a client)
+	// ranks differently, so it gets its own prequeue.
+	qualityPreset := h.requestQualityPreset(r.Context(), req.UserID, mediaType, req.QualityPreset)
+	if qualityPreset != "" {
+		settingsScopeKey += "|preset:" + qualityPreset
+		pick := titlePresetPick{UserID: req.UserID, ClientID: clientID, TitleID: req.TitleID, MediaType: mediaType,
+			Name: titleName, ImdbID: req.ImdbID, Year: req.Year, PresetID: qualityPreset}
+		pick.seq = h.titlePresetPicks.take(pick)
+		go h.rememberTitlePreset(pick)
+	}
 	log.Printf("[prequeue] Effective settings scope for title=%s user=%s client=%s: %s", req.TitleID, req.UserID, clientID, settingsScopeKey)
 
 	// Warm references may share settings across profiles, but preparation IDs
@@ -1141,7 +1406,7 @@ func (h *PrequeueHandler) Prequeue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start background worker with all the info needed for search
-	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, throughput, targetEpisode, req.StartOffset, req.SkipHLS, prequeueWorkerInteractive)
+	go h.runPrequeueWorker(entry.ID, req.TitleID, titleName, req.ImdbID, mediaType, req.Year, req.UserID, clientID, qualityPreset, throughput, targetEpisode, req.StartOffset, req.SkipHLS, prequeueWorkerInteractive)
 
 	// Return response
 	resp := playback.PrequeueResponse{
@@ -1615,7 +1880,7 @@ func resolveFirstReadySourceForWorker(configured bool, mode prequeueWorkerMode) 
 // runPrequeueWorker runs the prequeue background task. Interactive prequeues
 // honor Resolve First Ready Source; scheduled pre-warm workers always wait for
 // the complete globally ranked candidate set before resolving.
-func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID string, throughput *models.AdaptiveThroughputContext, targetEpisode *models.EpisodeReference, startOffset float64, skipHLS bool, workerMode prequeueWorkerMode) {
+func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdbID, mediaType string, year int, userID, clientID, qualityPreset string, throughput *models.AdaptiveThroughputContext, targetEpisode *models.EpisodeReference, startOffset float64, skipHLS bool, workerMode prequeueWorkerMode) {
 	// Create cancellable context
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -1645,11 +1910,13 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	var isAnime bool
 	var targetAirDate string
 	var episodeAirYear int
+	var episodeTitle string
 	var seasonPremiereYear int
 	var episodeReleased bool
 	var countryCode string
 	var originalLanguage string
 	var tvdbID int64
+	var seriesRuntime int
 	var alternateTitles []string
 	if mediaType == "series" && h.metadataSvc != nil {
 		seriesMeta := h.createEpisodeResolverAndLookupAbsoluteEp(ctx, titleID, titleName, year, imdbID, targetEpisode)
@@ -1659,11 +1926,13 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		isAnime = seriesMeta.IsAnime
 		targetAirDate = seriesMeta.TargetAirDate
 		episodeAirYear = seriesMeta.EpisodeAirYear
+		episodeTitle = seriesMeta.EpisodeTitle
 		seasonPremiereYear = seriesMeta.SeasonPremiereYear
 		episodeReleased = seriesMeta.EpisodeReleased
 		countryCode = seriesMeta.CountryCode
 		originalLanguage = seriesMeta.OriginalLanguage
 		tvdbID = seriesMeta.TVDBID
+		seriesRuntime = seriesMeta.RuntimeMinutes
 		if imdbID == "" && seriesMeta.IMDBID != "" {
 			imdbID = seriesMeta.IMDBID
 			log.Printf("[prequeue] Populated IMDb ID %s from series metadata", imdbID)
@@ -1696,6 +1965,16 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	log.Printf("[prequeue] TIMING: search starting with query: %q (elapsed: %v)", query, time.Since(workerStart))
 	h.updatePrequeueProgress(prequeueID, "searching", query, 0, 0)
 
+	// Runtime feeds quality preset size limits and preferred sizes.
+	runtimeMinutes := 0
+	if targetEpisode != nil && targetEpisode.RuntimeMinutes > 0 {
+		runtimeMinutes = targetEpisode.RuntimeMinutes
+	} else if seriesRuntime > 0 {
+		// No runtime for the episode: a typical one of its season, as a
+		// search does, so size limits agree between the two.
+		runtimeMinutes = seriesRuntime
+	}
+
 	// For movies, check if the movie is anime by looking at genres
 	if mediaType == "movie" && h.movieMetadataSvc != nil {
 		movieQuery := models.MovieDetailsQuery{
@@ -1707,8 +1986,11 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		if movieTitle, err := h.movieMetadataSvc.MovieInfo(ctx, movieQuery); err == nil && movieTitle != nil {
 			countryCode = strings.TrimSpace(movieTitle.CountryCode)
 			originalLanguage = strings.TrimSpace(movieTitle.Language)
+			if movieTitle.RuntimeMinutes > 0 {
+				runtimeMinutes = movieTitle.RuntimeMinutes
+			}
 			alternateTitles = hydratedMovieSearchTitles(movieTitle)
-			if isAnimeTitle(movieTitle) {
+			if logAnimeDecision("", movieTitle) {
 				isAnime = true
 				log.Printf("[prequeue] Movie %q is anime (genres=%v originalName=%q language=%q) - applying anime language preferences",
 					titleName, movieTitle.Genres, movieTitle.OriginalName, movieTitle.Language)
@@ -1737,8 +2019,11 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		IsAnime:            isAnime,
 		TargetAirDate:      targetAirDate,
 		EpisodeAirYear:     episodeAirYear,
+		EpisodeTitle:       episodeTitle,
 		SeasonPremiereYear: seasonPremiereYear,
 		EpisodeReleased:    episodeReleased,
+		RuntimeMinutes:     runtimeMinutes,
+		QualityPreset:      qualityPreset,
 		// Concurrent resolution derives its bulk-attempt buckets from the
 		// effective Result Order. The indexer remains the source of truth for
 		// those lexicographic criterion values.
@@ -3258,8 +3543,11 @@ func combinedPrequeueSearchOptions(opts indexer.SearchOptions) indexer.SearchOpt
 		IsDaily:               opts.IsDaily,
 		TargetAirDate:         opts.TargetAirDate,
 		EpisodeAirYear:        opts.EpisodeAirYear,
+		EpisodeTitle:          opts.EpisodeTitle,
 		SeasonPremiereYear:    opts.SeasonPremiereYear,
 		EpisodeReleased:       opts.EpisodeReleased,
+		RuntimeMinutes:        opts.RuntimeMinutes,
+		QualityPreset:         opts.QualityPreset,
 		IncludeFiltered:       true,
 		IncludeScoreBreakdown: true,
 	}
@@ -3587,10 +3875,80 @@ func (h *PrequeueHandler) prepareSourceResults(ctx context.Context, state *prequ
 // first enabled Result Order criterion that actually differentiates candidates.
 // Service Priority is deliberately ignored: it still affects normal ordering,
 // but must not split otherwise equivalent candidates into separate bulk tries.
+// presetRanked reports whether a quality preset ranked the results. Their
+// breakdowns list one entry per matched custom format, so positions do not
+// line up across results and must not be compared position by position.
+func presetRanked(scored []models.ScoredNZBResult) bool {
+	for _, result := range scored {
+		if len(result.ScoreBreakdown) > 0 && result.ScoreBreakdown[0].Criterion == indexer.PresetBreakdownCriterion {
+			return true
+		}
+	}
+	return false
+}
+
+// presetPreferenceBuckets groups preset-ranked results the way the preset
+// ranks them: by quality position (higher first), then by total custom
+// format score (higher first). Only releases the preset considers equal
+// race each other; results without a preset breakdown come last.
+func presetPreferenceBuckets(scored []models.ScoredNZBResult) ([]int, string) {
+	type key struct{ quality, revision, score int64 }
+	keys := make([]key, len(scored))
+	has := make([]bool, len(scored))
+	var distinct []key
+	seen := map[key]bool{}
+	for i, result := range scored {
+		if len(result.ScoreBreakdown) == 0 || result.ScoreBreakdown[0].Criterion != indexer.PresetBreakdownCriterion {
+			continue
+		}
+		var k key
+		for _, item := range result.ScoreBreakdown {
+			switch item.Criterion {
+			case indexer.PresetQualityCriterion:
+				k.quality = item.RankValue
+			case indexer.PresetRevisionCriterion:
+				k.revision = item.RankValue
+			case indexer.PresetFormatScoreCriterion:
+				k.score = item.RankValue
+			}
+		}
+		keys[i], has[i] = k, true
+		if !seen[k] {
+			seen[k] = true
+			distinct = append(distinct, k)
+		}
+	}
+	sort.Slice(distinct, func(a, b int) bool {
+		if distinct[a].quality != distinct[b].quality {
+			return distinct[a].quality > distinct[b].quality
+		}
+		if distinct[a].revision != distinct[b].revision {
+			return distinct[a].revision > distinct[b].revision
+		}
+		return distinct[a].score > distinct[b].score
+	})
+	bucketOf := make(map[key]int, len(distinct))
+	for bucket, k := range distinct {
+		bucketOf[k] = bucket
+	}
+	buckets := make([]int, len(scored))
+	for i := range scored {
+		if has[i] {
+			buckets[i] = bucketOf[keys[i]]
+		} else {
+			buckets[i] = len(distinct)
+		}
+	}
+	return buckets, indexer.PresetBreakdownCriterion
+}
+
 func prequeuePreferenceBuckets(scored []models.ScoredNZBResult) ([]int, string) {
 	buckets := make([]int, len(scored))
 	if len(scored) < 2 {
 		return buckets, ""
+	}
+	if presetRanked(scored) {
+		return presetPreferenceBuckets(scored)
 	}
 
 	criterion := -1
@@ -3873,6 +4231,7 @@ type SeriesMetadataResult struct {
 	IsDaily            bool   // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate      string // Air date from TVDB in YYYY-MM-DD format
 	EpisodeAirYear     int    // Year the target episode aired, used to allow later-season year tags
+	EpisodeTitle       string // Name of the target episode: languages named in it are not the release's
 	SeasonPremiereYear int    // Premiere year of the requested season only.
 	EpisodeReleased    bool   // True only when metadata confirms the target episode has aired
 	IsAnime            bool   // True for anime content - requires waiting for Nyaa scraper
@@ -3881,6 +4240,9 @@ type SeriesMetadataResult struct {
 	TVDBID             int64  // Resolved TVDB ID used by structured Newznab TV searches
 	CountryCode        string // Original production country used to disambiguate regional remakes
 	OriginalLanguage   string // Original spoken language; an audio preference matching it needs no pin
+	// RuntimeMinutes is a typical episode runtime of the target's season
+	// (quality preset size limits when the episode has none).
+	RuntimeMinutes int
 }
 
 // createEpisodeResolverAndLookupAbsoluteEp fetches series metadata, creates an episode resolver,
@@ -3927,6 +4289,11 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	result.TVDBID = details.Title.TVDBID
 	result.CountryCode = strings.TrimSpace(details.Title.CountryCode)
 	result.OriginalLanguage = strings.TrimSpace(details.Title.Language)
+	targetSeason := 0
+	if targetEpisode != nil {
+		targetSeason = targetEpisode.SeasonNumber
+	}
+	result.RuntimeMinutes = typicalEpisodeRuntime(details.Seasons, targetSeason)
 
 	// Check if this is a daily show from the metadata
 	result.IsDaily = details.Title.IsDaily
@@ -3935,7 +4302,7 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	}
 
 	// Check if this is anime content from the genres
-	if isAnimeTitle(&details.Title) {
+	if logAnimeDecision("", &details.Title) {
 		result.IsAnime = true
 		log.Printf("[prequeue] Series %q is anime (genres=%v originalName=%q language=%q timezone=%q) - will wait for all scrapers including Nyaa",
 			details.Title.Name, details.Title.Genres, details.Title.OriginalName, details.Title.Language, details.Title.AirsTimezone)
@@ -4062,6 +4429,9 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 		result.SeasonPremiereYear = models.SeriesSeasonPremiereYear(details.Seasons, result.TargetEpisode.SeasonNumber)
 	}
 
+	if foundCanonicalEpisode != nil {
+		result.EpisodeTitle = foundCanonicalEpisode.Name
+	}
 	// Set the air date for daily show matching
 	if foundAirDate != "" {
 		result.TargetAirDate = foundAirDate

@@ -370,7 +370,7 @@ func (s *Server) pushQueue(m *syncMember, room *models.WatchRoom) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), syncPlayResolveWait+5*time.Second)
 		defer cancel()
-		if prequeueID, err := s.startPrequeue(ctx, p, ref); err == nil {
+		if prequeueID, err := s.startPrequeue(ctx, p, ref, ""); err == nil {
 			scratch := &playSession{ItemID: itemID, ProfileID: p.Profile.ID, prequeueID: prequeueID}
 			s.awaitPrequeue(ctx, p, scratch, syncPlayResolveWait)
 		}

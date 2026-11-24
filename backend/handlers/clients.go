@@ -528,6 +528,13 @@ func (h *ClientsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) 
 		settings.AdaptivePlayback.MeasuredAt = nil
 	}
 	previous, previousErr := h.settings.Get(clientID, userID)
+	if previousErr != nil {
+		// Without the stored settings the device's preset choices would be
+		// lost.
+		writeJSONError(w, previousErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	keepClientQualityPresets(&settings, previous)
 
 	if err := h.settings.Update(clientID, userID, settings); err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)

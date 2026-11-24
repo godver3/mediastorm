@@ -132,6 +132,33 @@ func TestAdaptiveThroughputDoesNotChangePrequeueScope(t *testing.T) {
 	}
 }
 
+// Two devices of one profile with different quality presets must not share
+// prequeues.
+func TestDevicePresetChangesPrequeueScope(t *testing.T) {
+	german, english := "p-german", "p-english"
+	base := prequeueScopeSignature{}
+	profile := base
+	profile.QualityPresets = profile.QualityPresets.withPresets(nil, &german, nil, nil)
+
+	tv := profile
+	applyClientScopeOverrides(&tv, &models.ClientFilterSettings{QualityPresetSeries: &english})
+	phone := profile
+	applyClientScopeOverrides(&phone, &models.ClientFilterSettings{})
+
+	if prequeueScopeHash(tv) == prequeueScopeHash(phone) {
+		t.Fatal("a device's own series preset must change the scope")
+	}
+	if prequeueScopeHash(phone) != prequeueScopeHash(profile) {
+		t.Fatal("a device without its own preset keeps the profile's scope")
+	}
+	if prequeueScopeHash(profile) == prequeueScopeHash(base) {
+		t.Fatal("the profile's preset must change the scope")
+	}
+	if *profile.QualityPresets.Series != german || profile.QualityPresets.Movie != nil {
+		t.Fatalf("profile presets %+v", profile.QualityPresets)
+	}
+}
+
 func TestReadyEntryFitsAdaptiveCaps(t *testing.T) {
 	const gib = int64(1024 * 1024 * 1024)
 
@@ -2816,5 +2843,113 @@ func TestNormalizeClientID(t *testing.T) {
 				t.Fatalf("normalizeClientID(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// A quality preset picked as version gets its own prequeue, and only when the
+// server allows that preset per request.
+func TestPrequeueQualityPresetHasItsOwnScope(t *testing.T) {
+	store := playback.NewPrequeueStore(time.Hour)
+	ready := func(scope, path string) string {
+		entry, _ := store.CreateScoped("movie:1", "Example", "user1", "movie", 2024, nil, "details", scope)
+		store.Update(entry.ID, func(e *playback.PrequeueEntry) {
+			e.Status = playback.PrequeueStatusReady
+			e.StreamPath = path
+			e.ServiceType = "debrid"
+			e.SelectedAudioTrack = -1
+			e.SelectedSubtitleTrack = -1
+			e.MigrationAdopted = true
+		})
+		return entry.ID
+	}
+	defaultID := ready(playback.DefaultPrequeueSettingsScopeKey, "/debrid/rd/default.mkv")
+	presetID := ready(playback.DefaultPrequeueSettingsScopeKey+"|preset:p-german", "/debrid/rd/german.mkv")
+
+	mgr := config.NewManager(filepath.Join(t.TempDir(), "settings.json"))
+	settings := config.DefaultSettings()
+	settings.QualityPresets.AllowRequestOverride = false
+	settings.QualityPresets.PickerPresets = []string{"p-german"}
+	if err := mgr.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	handler := &PrequeueHandler{store: store, configManager: mgr}
+
+	ask := func(preset string) string {
+		t.Helper()
+		body, _ := json.Marshal(playback.PrequeueRequest{
+			TitleID: "movie:1", TitleName: "Example", MediaType: "movie", UserID: "user1",
+			Year: 2024, Reason: "details", SkipHLS: true, QualityPreset: preset,
+		})
+		rec := httptest.NewRecorder()
+		handler.Prequeue(rec, httptest.NewRequest(http.MethodPost, "/api/playback/prequeue", bytes.NewReader(body)))
+		var resp playback.PrequeueResponse
+		if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&resp) != nil {
+			t.Fatalf("preset %q: status %d %s", preset, rec.Code, rec.Body.String())
+		}
+		return resp.PrequeueID
+	}
+	if got := ask(""); got != defaultID {
+		t.Errorf("no preset: got %s, want the default entry", got)
+	}
+	if got := ask("p-german"); got != presetID {
+		t.Errorf("offered preset: got %s, want its own entry", got)
+	}
+	// A preset the server does not offer is ignored: the default applies.
+	if got := ask("p-other"); got != defaultID {
+		t.Errorf("not offered preset: got %s, want the default entry", got)
+	}
+}
+
+// Preset-ranked results list one breakdown entry per matched custom format,
+// so a position-by-position comparison mixed unrelated formats: in the FMA:B
+// case every 1080p release shared the "Custom Format: 1080p" bucket and an
+// English release with score 50 raced (and beat) the German ones with 13700.
+// Buckets must follow the preset: quality position, then format score.
+func TestPrequeuePreferenceBucketsFollowQualityPreset(t *testing.T) {
+	preset := func(title string, quality, score int64, formats ...string) models.ScoredNZBResult {
+		items := []models.ScoreBreakdownItem{
+			{Criterion: indexer.PresetBreakdownCriterion},
+			{Criterion: indexer.PresetQualityCriterion, RankValue: quality},
+		}
+		for _, f := range formats {
+			items = append(items, models.ScoreBreakdownItem{Criterion: "Custom Format: " + f, Points: 50, RankValue: 50})
+		}
+		items = append(items,
+			models.ScoreBreakdownItem{Criterion: indexer.PresetFormatScoreCriterion, Points: int(score), RankValue: score},
+			models.ScoreBreakdownItem{Criterion: "Languages"})
+		return models.ScoredNZBResult{NZBResult: models.NZBResult{Title: title}, ScoreBreakdown: items}
+	}
+	scored := []models.ScoredNZBResult{
+		preset("Fullmetal.Alchemist.S01.German.DL.DTS.1080p.BluRay.x265.10bit-ABJ", 15, 13700, "1080p", "German DL", "German Bluray Tier 01"),
+		preset("Fullmetal.Alchemist.Brotherhood.S01E01.German.DL.DTS.1080p.BluRay.x265-ABJ", 15, 13700, "1080p", "German DL", "German Bluray Tier 01"),
+		preset("Fullmetal.Alchemist.Brotherhood.S01E01.German.DTS.DL.1080p.BluRay.x264-AST4u", 15, 13350, "1080p", "German DL"),
+		preset("Fullmetal.Alchemist.S01.German.DL.DTS.1080p.Untouched.BluRay-Fiona", 15, 11700, "1080p", "German DL"),
+		preset("[NotShadyCrab] Fullmetal Alchemist Brotherhood (Ep. 01-14) [BD 1080p Hi10 FLAC] [Dual Audio]", 15, 50, "1080p"),
+		preset("[ANIX] Fullmetal Alchemist Brotherhood - Ep01 [BD 1080p H264 FLAC][Multiple Subtitle]", 15, 50, "1080p"),
+		preset("Full.Metal.Alchemist.BrotherHood.E01.720p.Bluray.x264-OTAKU", 14, 5, "720p"),
+		{NZBResult: models.NZBResult{Title: "unranked"}},
+	}
+	buckets, criterion := prequeuePreferenceBuckets(scored)
+	if criterion != indexer.PresetBreakdownCriterion {
+		t.Fatalf("criterion = %q", criterion)
+	}
+	if want := []int{0, 0, 1, 2, 3, 3, 4, 5}; !reflect.DeepEqual(buckets, want) {
+		t.Fatalf("buckets = %v, want %v", buckets, want)
+	}
+	// A higher quality position beats any format score.
+	better := []models.ScoredNZBResult{preset("low", 10, 99999), preset("high", 20, 0)}
+	if b, _ := prequeuePreferenceBuckets(better); !reflect.DeepEqual(b, []int{1, 0}) {
+		t.Fatalf("quality must come first: %v", b)
+	}
+	// With propers preferred, a PROPER does not race the release it fixes.
+	withRevision := func(r models.ScoredNZBResult, rev int64) models.ScoredNZBResult {
+		items := append([]models.ScoreBreakdownItem{}, r.ScoreBreakdown[:2]...)
+		items = append(items, models.ScoreBreakdownItem{Criterion: indexer.PresetRevisionCriterion, RankValue: rev})
+		r.ScoreBreakdown = append(items, r.ScoreBreakdown[2:]...)
+		return r
+	}
+	propers := []models.ScoredNZBResult{withRevision(preset("plain", 15, 100), 100), withRevision(preset("proper", 15, 100), 200)}
+	if b, _ := prequeuePreferenceBuckets(propers); !reflect.DeepEqual(b, []int{1, 0}) {
+		t.Fatalf("the proper must rank alone: %v", b)
 	}
 }

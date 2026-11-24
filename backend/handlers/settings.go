@@ -55,6 +55,9 @@ func shouldClearPrequeueForGlobalSettingsChange(oldSettings, newSettings config.
 	if !reflect.DeepEqual(oldSettings.Ranking, newSettings.Ranking) {
 		return true
 	}
+	if !reflect.DeepEqual(oldSettings.QualityPresets, newSettings.QualityPresets) {
+		return true
+	}
 	return false
 }
 
@@ -972,6 +975,11 @@ func (h *SettingsHandler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	// The Jellyfin bridge is configured on the Integrations page (which
 	// applies changes live); a settings-page save keeps what is stored.
 	s.JellyfinBridge = oldSettings.JellyfinBridge
+	// Quality presets are configured on their own page (selection, picker
+	// offer, sources); a settings-page save sends back what it loaded, so
+	// it keeps what is stored, including the presets' sync task.
+	s.QualityPresets = oldSettings.QualityPresets
+	keepQualityPresetSyncTask(&s, &oldSettings)
 
 	// An explicit navigation choice is not a legacy list requiring migration.
 	if len(s.Display.NavigationTabVisibility) > 0 {
@@ -1468,6 +1476,44 @@ func hasEffectiveXtreamEPGConfig(s *config.Settings) bool {
 		strings.TrimSpace(s.Live.XtreamHost) != "" &&
 		strings.TrimSpace(s.Live.XtreamUsername) != "" &&
 		strings.TrimSpace(s.Live.XtreamPassword) != ""
+}
+
+// EnsureQualityPresetSyncTask adds the hourly task that checks quality
+// presets for upstream updates (each preset's own schedule decides whether
+// it is due). It returns true when the settings changed.
+func EnsureQualityPresetSyncTask(s *config.Settings) bool {
+	for _, task := range s.ScheduledTasks.Tasks {
+		if task.Type == config.ScheduledTaskTypeQualityPresetSync {
+			return false
+		}
+	}
+	s.ScheduledTasks.Tasks = append(s.ScheduledTasks.Tasks, config.ScheduledTask{
+		ID:         "auto-quality-preset-sync",
+		Type:       config.ScheduledTaskTypeQualityPresetSync,
+		Name:       "Quality preset updates",
+		Enabled:    true,
+		Frequency:  config.ScheduledTaskFrequencyHourly,
+		Config:     map[string]string{},
+		LastStatus: config.ScheduledTaskStatusPending,
+		CreatedAt:  time.Now(),
+	})
+	return true
+}
+
+// keepQualityPresetSyncTask puts back the quality preset sync task when a
+// settings save drops it (a page loaded before the task was added).
+func keepQualityPresetSyncTask(s, old *config.Settings) {
+	for _, task := range s.ScheduledTasks.Tasks {
+		if task.Type == config.ScheduledTaskTypeQualityPresetSync {
+			return
+		}
+	}
+	for _, task := range old.ScheduledTasks.Tasks {
+		if task.Type == config.ScheduledTaskTypeQualityPresetSync {
+			s.ScheduledTasks.Tasks = append(s.ScheduledTasks.Tasks, task)
+			return
+		}
+	}
 }
 
 // EnsureEPGTaskForGuide auto-creates an EPG refresh task when guide/EPG

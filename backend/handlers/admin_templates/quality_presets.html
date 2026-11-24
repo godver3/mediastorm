@@ -1,0 +1,1173 @@
+{{template "base" .}}
+
+{{define "title"}}Quality Presets - mediastorm Admin{{end}}
+
+{{define "content"}}
+<style>
+    .qp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem 1rem; }
+    .qp-row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+    .qp-row > label { display: flex; gap: 0.4rem; align-items: center; }
+    .qp-table { width: 100%; border-collapse: collapse; }
+    .qp-table th, .qp-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+    .qp-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.82rem; }
+    .qp-table tr.qp-selected td { background: rgba(127, 127, 127, 0.12); }
+    .qp-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .qp-badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.72rem; border: 1px solid var(--border); color: var(--text-secondary); margin-right: 0.25rem; white-space: nowrap; }
+    .qp-badge.warn { color: #d97706; border-color: #d97706; }
+    .qp-badge.bad { color: #dc2626; border-color: #dc2626; }
+    .qp-badge.ok { color: #16a34a; border-color: #16a34a; }
+    .qp-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.8rem; }
+    .qp-muted { color: var(--text-secondary); font-size: 0.85rem; }
+    .qp-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .qp-tabs button.active { outline: 2px solid var(--accent, #6366f1); }
+    .qp-card { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+    .qp-card h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+    .qp-score { width: 6.5rem; }
+    .qp-small { width: 5.5rem; }
+    .qp-items li { display: flex; gap: 0.5rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px dashed var(--border); }
+    .qp-items { list-style: none; padding: 0; margin: 0; }
+    .qp-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+    .qp-modal { background: var(--bg-primary, var(--card-bg, #111)); border: 1px solid var(--border); border-radius: 12px; width: min(820px, 100%); max-height: 90vh; overflow: auto; padding: 1rem; }
+    .qp-modal textarea { width: 100%; min-height: 320px; }
+    textarea.form-input { width: 100%; min-height: 120px; resize: vertical; }
+    .qp-conds { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+    .qp-conds li.no { color: var(--text-secondary); }
+    .qp-pass { color: #16a34a; }
+    .qp-advanced-note { margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.85rem; }
+    .qp-advanced-note a { color: var(--accent-hover, #818cf8); }
+    .qp-table a, .qp-card a:not(.btn), .qp-muted a { color: var(--accent-hover, #818cf8); text-decoration: none; font-weight: 500; }
+    .qp-table a:hover, .qp-card a:not(.btn):hover, .qp-muted a:hover { color: var(--text-primary, #fff); text-decoration: underline; }
+    .qp-fail { color: #dc2626; }
+    #qpToast { position: fixed; bottom: 18px; right: 18px; max-width: min(520px, calc(100vw - 32px)); padding: 0.7rem 1rem; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-secondary, #222); display: none; z-index: 1100; }
+    @media (max-width: 640px) { .qp-table th, .qp-table td { padding: 0.4rem; } }
+    .qp-offer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .qp-offer-row { display: grid; grid-template-columns: 1.6rem minmax(0, 1fr) 8.5rem 4.6rem; align-items: center; column-gap: 0.75rem; padding: 0.45rem 0.75rem; border-top: 1px solid var(--border); }
+    .qp-offer-row:first-child { border-top: none; }
+    .qp-offer-head { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); background: var(--bg-secondary, rgba(255,255,255,0.03)); }
+    .qp-offer-row input[type=checkbox] { margin: 0; }
+    .qp-offer-name { min-width: 0; }
+    .qp-offer-name > div:first-child { overflow-wrap: anywhere; }
+    .qp-offer-name .qp-muted { font-size: 0.78rem; }
+    .qp-offer-row.off .qp-offer-name { opacity: 0.6; }
+    .qp-offer-hide label { display: inline-flex; gap: 0.35rem; align-items: center; cursor: pointer; }
+    .qp-offer [hidden] { display: none !important; }
+    .qp-offer-hide-text { display: none; }
+    .qp-offer-order { display: flex; gap: 0.25rem; justify-content: flex-end; }
+    .qp-offer-order .btn { padding: 0.1rem 0.5rem; min-width: 2rem; line-height: 1.4; }
+    .qp-offer-order .btn:disabled { opacity: 0.35; cursor: default; }
+    .qp-offer-sep { padding: 0.35rem 0.75rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); border-top: 1px solid var(--border); background: var(--bg-secondary, rgba(255,255,255,0.03)); }
+    .qp-profiles { display: grid; gap: 0.75rem; }
+    .qp-profile { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .qp-profile-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.55rem 0.75rem; background: var(--bg-secondary, rgba(255,255,255,0.03)); border-bottom: 1px solid var(--border); font-weight: 600; }
+    .qp-profile-body { padding: 0.75rem; display: grid; gap: 1rem; }
+    .qp-profile-defaults { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.6rem 0.75rem; }
+    .qp-profile-defaults label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-secondary); min-width: 0; }
+    .qp-profile-defaults select { width: 100%; }
+    .qp-picks > summary { cursor: pointer; list-style: none; margin-bottom: 0; padding: 0.15rem 0; }
+    .qp-picks > summary::-webkit-details-marker { display: none; }
+    .qp-picks > summary > span:first-child::before { content: '▸'; display: inline-block; width: 1em; transition: transform 0.15s; }
+    .qp-picks[open] > summary > span:first-child::before { transform: rotate(90deg); }
+    .qp-picks[open] > summary { margin-bottom: 0.4rem; }
+    .qp-picks-summary { font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .qp-sub { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); }
+    .qp-pick-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(var(--cols, 1), 4.5rem); align-items: center; column-gap: 0.5rem; padding: 0.4rem 0.75rem; border-top: 1px solid var(--border); }
+    .qp-pick-row:first-child { border-top: none; }
+    .qp-pick-row > input, .qp-pick-row > span.qp-pick-col { justify-self: center; text-align: center; }
+    .qp-pick-row input[type=checkbox] { margin: 0; }
+    .qp-pick-row.off .qp-offer-name { opacity: 0.55; }
+    .qp-linkbtn { background: none; border: none; padding: 0; font: inherit; color: var(--accent, #818cf8); text-decoration: underline; cursor: pointer; }
+    .qp-own { color: #f59e0b; }
+    @media (max-width: 560px) {
+        .qp-offer-row { grid-template-columns: 1.6rem minmax(0, 1fr) 4.6rem; row-gap: 0.3rem; }
+        .qp-offer-head .qp-offer-hide-col { display: none; }
+        .qp-offer-hide { grid-column: 2 / 4; grid-row: 2; }
+        .qp-offer-hide-text { display: inline; color: var(--text-secondary); font-size: 0.8rem; }
+        .qp-offer-order { grid-column: 3; grid-row: 1; }
+        .qp-profile-body { padding: 0.6rem 0.5rem; }
+        .qp-pick-row { grid-template-columns: minmax(0, 1fr) repeat(var(--cols, 1), 3.4rem); padding: 0.4rem 0.6rem; column-gap: 0.25rem; }
+    }
+</style>
+
+<div class="page-header" data-page-group="Settings">
+    <div class="page-header-copy">
+        <div class="page-kicker">Settings</div>
+        <h1>Quality presets</h1>
+        <p>Rank and filter releases with Sonarr/Radarr quality profiles and custom formats, imported from TRaSH-Guides, from a Sonarr/Radarr instance or written by hand. When a preset is active it replaces the simple ranking and filtering settings for that media type.</p>
+        <p class="qp-advanced-note"><span class="qp-badge warn">Advanced</span> Meant for people who know Sonarr/Radarr quality profiles and custom formats. The simple ranking under <a href="{{.BasePath}}/settings?category=search">Search &amp; quality</a> is enough for most setups; nothing here is active until you select a preset.</p>
+    </div>
+</div>
+
+<div class="settings-group">
+    <div class="section expanded">
+        <div class="section-header"><div class="section-title">{{if .IsAdmin}}Active presets{{else}}Your quality presets{{end}}</div></div>
+        <div class="section-content" style="display:block;">
+            <div id="qpServerSettings"{{if not .IsAdmin}} hidden{{end}}>
+            <div class="qp-grid">
+                <label>Movies<br><select id="qpMovieSel" class="form-input"></select></label>
+                <label>Series<br><select id="qpSeriesSel" class="form-input"></select></label>
+                <label>Anime movies<br><select id="qpAnimeMovieSel" class="form-input"></select></label>
+                <label>Anime series<br><select id="qpAnimeSeriesSel" class="form-input"></select></label>
+            </div>
+            <p class="qp-muted" style="margin-top:0.5rem;">Anime titles (genre Anime, or Animation from Japan, China or Korea) use the anime presets first, on every level (device, profile, server), then the normal ones. Presets marked <i>anime only</i> fit only anime slots, presets marked <i>everything but anime</i> only normal slots. While a preset ranks, the anime language preference from Search &amp; quality is not used: anime presets bring their own language formats.</p>
+            <div class="qp-row" style="margin-top:0.75rem;">
+                <label><input type="checkbox" id="qpAllowOverride"> Apps may request any preset for a single search (API)</label>
+            </div>
+            <h3 style="margin-top:1.25rem; font-size:1rem;">Offer in version pickers</h3>
+            <p class="qp-muted">Checked presets appear as extra versions ("Preset · name") in the version menu of Jellyfin clients and in the web player's release list, so viewers can pick one for a single playback. They can always be picked, even with the option above off.</p>
+            <div id="qpOfferTabs" class="qp-row" role="group" aria-label="Show presets for" style="gap:0.35rem; margin:0.5rem 0;"></div>
+            <div id="qpPickerList" class="qp-offer"></div>
+            <label style="display:block; margin-top:0.5rem;"><input type="checkbox" id="qpAnimeOnly"> On anime titles, offer only anime presets</label>
+            <p class="qp-muted">Presets marked <i>anime only</i> appear only on anime, presets marked <i>everything but anime</i> never on anime.</p>
+            <div class="qp-row" style="margin-top:0.75rem;">
+                <button class="btn btn-primary" id="qpSaveSelection">Save</button>
+            </div>
+            <p class="qp-muted" style="margin-top:0.75rem;">Order of precedence: per-search choice → for anime titles the anime slots (device → profile → the anime presets above) → device → profile → the presets above. These checks always run first because they protect correctness or an explicit audio choice: <span id="qpFixedChecks"></span></p>
+            </div>
+            <h3 style="margin-top:1.25rem; font-size:1rem;">{{if .IsAdmin}}Per profile{{else}}Your profiles{{end}}</h3>
+            <p class="qp-muted">{{if .IsAdmin}}Defaults per profile, and which offered presets each profile gets in version pickers (it can only choose its own defaults among those, and may hide some of them for itself).{{else}}Choose your profiles' defaults among the presets the administrator offers you, and which of them your version pickers show.{{end}}</p>
+            <div id="qpAssignRows" class="qp-profiles"></div>
+        </div>
+    </div>
+
+    <div class="section expanded">
+        <div class="section-header"><div class="section-title">Presets</div></div>
+        <div class="section-content" style="display:block;">
+            <div class="qp-row" style="margin-bottom:0.75rem;">
+                <button class="btn btn-secondary qp-admin" id="qpSyncAll">Check all for updates</button>
+                <span id="qpListStatus" class="qp-muted"></span>
+            </div>
+            <div class="qp-scroll"><table class="qp-table"><thead><tr><th>Name</th><th>For</th><th>Source</th><th>Version</th><th>Sync</th><th>Status</th><th>Checked</th></tr></thead><tbody id="qpRows"></tbody></table></div>
+            <p class="qp-muted" style="margin-top:0.6rem;">Profiles and custom formats from <a href="https://trash-guides.info/" target="_blank" rel="noopener">TRaSH-Guides</a>, © TRaSH, used under the <a href="{{.BasePath}}/api/quality-presets/license" target="_blank" rel="noopener">MIT licence</a>; a snapshot is bundled with mediastorm.</p>
+        </div>
+    </div>
+
+    <div class="section expanded qp-admin">
+        <div class="section-header"><div class="section-title">Add a preset</div></div>
+        <div class="section-content" style="display:block;">
+            <div class="qp-tabs" id="qpAddTabs" role="tablist">
+                <button class="btn btn-secondary active" data-tab="trash" role="tab" aria-selected="true">TRaSH-Guides</button>
+                <button class="btn btn-secondary" data-tab="arr" role="tab" aria-selected="false">Sonarr / Radarr</button>
+                <button class="btn btn-secondary" data-tab="json" role="tab" aria-selected="false">Paste JSON</button>
+            </div>
+            <div class="qp-row" style="margin-bottom:0.4rem;">
+                <label><input type="checkbox" id="qpImportUse" checked> Use it right away</label>
+                <label><input type="checkbox" id="qpImportOffer"> Offer it in version pickers</label>
+            </div>
+            <p class="qp-muted">"Use it right away" makes the new preset the server's preset for its media type (the anime slot for anime-only presets); profiles and devices with their own choice keep it. New TRaSH and Sonarr/Radarr presets follow upstream changes automatically; change that under Sync.</p>
+            <div data-pane="trash">
+                <div class="qp-grid">
+                    <label>For<br><select id="qpTrashApp" class="form-input"><option value="sonarr">Series (Sonarr)</option><option value="radarr">Movies (Radarr)</option></select></label>
+                    <label>Profile<br><select id="qpTrashProfile" class="form-input"><option value="">Loading…</option></select></label>
+                    <label>Score set<br><select id="qpTrashScoreSet" class="form-input"></select></label>
+                    <label>Name (optional)<br><input id="qpTrashName" class="form-input"></label>
+                </div>
+                <p id="qpTrashDesc" class="qp-muted" style="white-space:pre-line;"></p>
+                <div class="qp-row"><button class="btn btn-primary" id="qpTrashImport">Import</button><span id="qpCatalogStatus" class="qp-muted"></span></div>
+            </div>
+            <div data-pane="arr" style="display:none;">
+                <div class="qp-grid">
+                    <label>URL<br><input id="qpArrUrl" class="form-input" placeholder="http://sonarr:8989"></label>
+                    <label>API key<br><input id="qpArrKey" class="form-input" type="password" autocomplete="off"></label>
+                    <label>Profile<br><select id="qpArrProfile" class="form-input"><option value="">Load profiles first</option></select></label>
+                    <label>Name (optional)<br><input id="qpArrName" class="form-input"></label>
+                </div>
+                <div class="qp-row" style="margin-top:0.6rem;"><button class="btn btn-secondary" id="qpArrLoad">Load profiles</button><button class="btn btn-primary" id="qpArrImport">Import</button></div>
+                <p class="qp-muted">The preset keeps the instance URL and API key so it can follow later changes made there.</p>
+            </div>
+            <div data-pane="json" style="display:none;">
+                <div class="qp-grid">
+                    <label>For<br><select id="qpJsonApp" class="form-input"><option value="sonarr">Series (Sonarr)</option><option value="radarr">Movies (Radarr)</option></select></label>
+                    <label>Name (optional)<br><input id="qpJsonName" class="form-input"></label>
+                </div>
+                <p class="qp-muted">Accepts a preset exported from mediastorm, a TRaSH profile with its custom formats (<span class="qp-mono">{"profile": …, "customFormats": […]}</span>), or a list of custom formats exported from Sonarr/Radarr.</p>
+                <textarea id="qpJsonBody" class="form-input qp-mono" placeholder="[ { &quot;name&quot;: &quot;…&quot;, &quot;specifications&quot;: [ … ] } ]"></textarea>
+                <div class="qp-row" style="margin-top:0.6rem;"><button class="btn btn-primary" id="qpJsonImport">Import</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section expanded qp-admin">
+        <div class="section-header"><div class="section-title">Snapshot sources</div></div>
+        <div class="section-content" style="display:block;">
+            <p class="qp-muted">TRaSH-format JSON sources, merged by priority (lower number wins when two contain the same trash_id). If GitHub is unreachable the snapshot bundled with mediastorm is used.</p>
+            <div class="qp-scroll"><table class="qp-table"><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Repository / URL</th><th>Ref</th><th>Priority</th><th>On</th><th></th></tr></thead><tbody id="qpSourceRows"></tbody></table></div>
+            <div class="qp-row" style="margin-top:0.6rem;"><button class="btn btn-secondary" id="qpSourceAdd">Add source</button><button class="btn btn-primary" id="qpSourceSave">Save sources</button></div>
+        </div>
+    </div>
+
+    <div class="section expanded" id="qpDetail" style="display:none;">
+        <div class="section-header"><div class="section-title" id="qpDetailTitle">Preset</div></div>
+        <div class="section-content" style="display:block;">
+            <div class="qp-tabs" id="qpDetailTabs" role="tablist">
+                <button class="btn btn-secondary active" data-tab="overview" role="tab" aria-selected="true">Overview &amp; sync</button>
+                <button class="btn btn-secondary" data-tab="qualities" role="tab" aria-selected="false">Qualities</button>
+                <button class="btn btn-secondary" data-tab="formats" role="tab" aria-selected="false">Custom formats</button>
+                <button class="btn btn-secondary" data-tab="test" role="tab" aria-selected="false">Test</button>
+            </div>
+            <div data-dpane="overview" id="qpOverview"></div>
+            <div data-dpane="qualities" id="qpQualities" style="display:none;"></div>
+            <div data-dpane="formats" id="qpFormats" style="display:none;"></div>
+            <div data-dpane="test" id="qpTest" style="display:none;">
+                <p class="qp-muted">Paste release names (one per line) to see how this preset scores and orders them.</p>
+                <textarea id="qpTestTitles" class="form-input qp-mono" placeholder="Show.S01E01.German.DL.1080p.WEB.h264-GROUP"></textarea>
+                <div class="qp-row" style="margin-top:0.6rem;">
+                    <label>Original language <input id="qpTestLang" class="form-input qp-small" placeholder="en"></label>
+                    <label>Runtime (min) <input id="qpTestRuntime" class="form-input qp-small" type="number" min="0"></label>
+                    <label><input type="checkbox" id="qpTestDetail"> Show every condition</label>
+                    <button class="btn btn-primary" id="qpTestRun">Evaluate</button>
+                </div>
+                <div id="qpTestOut" style="margin-top:0.8rem;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="qp-modal-backdrop" id="qpModal">
+    <div class="qp-modal" role="dialog" aria-modal="true" aria-labelledby="qpModalTitle" aria-describedby="qpModalHelp">
+        <h3 id="qpModalTitle" style="margin-top:0;">Edit</h3>
+        <p id="qpModalHelp" class="qp-muted"></p>
+        <textarea id="qpModalBody" class="form-input qp-mono" aria-labelledby="qpModalTitle"></textarea>
+        <div class="qp-row" id="qpModalExtra" style="margin-top:0.6rem;"></div>
+        <div class="qp-row" style="margin-top:0.8rem; justify-content:flex-end;">
+            <button class="btn btn-secondary" id="qpModalCancel">Cancel</button>
+            <button class="btn btn-primary" id="qpModalOk">Save</button>
+        </div>
+    </div>
+</div>
+<div id="qpToast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+const API = '{{.BasePath}}/api/quality-presets';
+const IS_ADMIN = {{.IsAdmin}};
+const USERS = {{json .Users}} || [];
+const state = { list: null, catalog: null, current: null, sources: [] };
+
+function $(id) { return document.getElementById(id); }
+function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+function when(v) { if (!v) return '—'; const d = new Date(v); return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString(); }
+function short(c) { if (!c) return '—'; return String(c).split(',').map(p => { const i = p.lastIndexOf('@'); const s = i >= 0 ? p.slice(i + 1) : p; return (i >= 0 ? p.slice(0, i) + '@' : '') + s.replace(/^sha256:/, '').slice(0, 10); }).join(', '); }
+function toast(msg, bad) { const t = $('qpToast'); t.textContent = msg; t.style.display = 'block'; t.style.borderColor = bad ? '#dc2626' : 'var(--border)'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', bad ? 9000 : 4000); }
+function forMedia(app) { return app === 'radarr' ? 'Movies' : 'Series'; }
+
+async function api(path, opts) {
+    opts = opts || {};
+    const init = { method: opts.method || 'GET', headers: {} };
+    if (opts.body !== undefined) {
+        if (typeof opts.body === 'string') { init.body = opts.body; init.headers['Content-Type'] = 'application/json'; }
+        else { init.body = JSON.stringify(opts.body); init.headers['Content-Type'] = 'application/json'; }
+    }
+    const res = await fetch(API + path, init);
+    if (res.status === 204) return null;
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) { throw new Error((data && (data.error || data.message)) || ('HTTP ' + res.status)); }
+    return data;
+}
+async function run(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { toast(e.message, true); return undefined; } }
+// busy disables a button while its action runs, so a double click does not
+// import or sync twice.
+async function busy(btn, fn) {
+    if (!btn || btn.disabled) return undefined;
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    try { return await fn(); } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+}
+
+if (!IS_ADMIN) document.querySelectorAll('.qp-admin').forEach(el => el.style.display = 'none');
+
+// ---------- list, selection, assignments ----------
+// presetOptions lists the presets a slot accepts: normal slots take presets
+// for every title or everything but anime, anime slots anime or every title.
+function presetOptions(app, value, extra, anime, allow) {
+    const list = (state.list && state.list.presets) || [];
+    // allow limits the choices (a profile choosing for itself); the current
+    // value always stays listed so saving does not silently change it.
+    const ok = id => !allow || allow(id) || id === value;
+    let html = extra || '';
+    if (ok('simple')) html += `<option value="simple"${value === 'simple' || (value === '' && !anime) ? ' selected' : ''}>Simple ranking settings</option>`;
+    const fits = p => p.app === app && (anime ? p.audience !== 'non-anime' : p.audience !== 'anime') && ok(p.id);
+    for (const p of list.filter(fits)) html += `<option value="${esc(p.id)}"${value === p.id ? ' selected' : ''}>${esc(p.name)}</option>`;
+    // A preset deleted since it was chosen stays visible: the search skips
+    // it and the next level decides, until someone picks something else.
+    if (value && value !== '\u0000' && value !== 'simple' && !list.some(p => p.id === value)) {
+        html += `<option value="${esc(value)}" selected>(deleted preset)</option>`;
+    }
+    return html;
+}
+
+async function loadList() {
+    const qs = USERS.map(u => 'userId=' + encodeURIComponent(u.id)).join('&');
+    const data = await run(() => api(qs ? '?' + qs : ''));
+    if (!data) return;
+    state.list = data;
+    state.defaultHidden = new Set(data.hiddenByDefault || []);
+    state.sources = data.sources || [];
+    $('qpMovieSel').innerHTML = presetOptions('radarr', data.moviePreset || '');
+    $('qpSeriesSel').innerHTML = presetOptions('sonarr', data.seriesPreset || '');
+    const sameAsNormal = v => `<option value=""${v ? '' : ' selected'}>Same as the normal preset</option>`;
+    $('qpAnimeMovieSel').innerHTML = presetOptions('radarr', data.animeMoviePreset || '', sameAsNormal(data.animeMoviePreset), true);
+    $('qpAnimeSeriesSel').innerHTML = presetOptions('sonarr', data.animeSeriesPreset || '', sameAsNormal(data.animeSeriesPreset), true);
+    $('qpAnimeOnly').checked = !!data.animeOnlyInPickers;
+    $('qpAnimeMovieSel').disabled = $('qpAnimeSeriesSel').disabled = $('qpAnimeOnly').disabled = !IS_ADMIN;
+    $('qpAllowOverride').checked = !!data.allowRequestOverride;
+    $('qpMovieSel').disabled = $('qpSeriesSel').disabled = $('qpAllowOverride').disabled = !IS_ADMIN;
+    renderPicker();
+    $('qpSaveSelection').style.display = IS_ADMIN ? '' : 'none';
+    renderAssignments();
+    renderRows();
+    renderSources();
+}
+
+// Version picker choices: "simple" plus every preset, checked when offered.
+// Offered choices come first, in the order pickers show them; ▲/▼ change it
+// (saved with the selection).
+// pickerChoices lists "simple" and every preset with what the offer list
+// shows about it.
+function pickerChoices() {
+    return [{ id: 'simple', name: 'Simple ranking settings', app: '' }].concat(((state.list && state.list.presets) || []).map(p => ({ id: p.id, name: p.name, app: p.app, audience: p.audience })));
+}
+
+// offerTabShows tells whether the current tab (all, radarr, sonarr) shows a
+// choice; the simple ranking fits movies and series alike.
+function offerTabShows(c) {
+    const tab = state.offerTab || 'all';
+    return tab === 'all' || !c.app || c.app === tab;
+}
+
+// renderOfferTabs draws All / Movies / Series with the offered count each.
+function renderOfferTabs(offered) {
+    const choices = pickerChoices().filter(c => offered.includes(c.id));
+    const tabs = [['all', 'All'], ['radarr', 'Movies'], ['sonarr', 'Series']];
+    const tab = state.offerTab || 'all';
+    $('qpOfferTabs').innerHTML = tabs.map(([k, label]) => {
+        const n = choices.filter(c => k === 'all' || !c.app || c.app === k).length;
+        return `<button type="button" class="btn ${k === tab ? 'btn-primary' : 'btn-secondary'}" data-offer-tab="${k}" aria-pressed="${k === tab}">${label} <span style="opacity:0.75;">${n}</span></button>`;
+    }).join('');
+}
+
+function renderPicker(order) {
+    const offered = order || (state.list && state.list.pickerPresets) || [];
+    const rank = c => { const i = offered.indexOf(c.id); return i < 0 ? offered.length : i; };
+    const choices = pickerChoices().sort((a, b) => rank(a) - rank(b));
+    // ▲/▼ move past the neighbours the current tab shows.
+    const visibleOffered = choices.filter(c => offered.includes(c.id) && offerTabShows(c)).map(c => c.id);
+    const move = (c, d, label) => {
+        const i = visibleOffered.indexOf(c.id), off = i + d < 0 || i + d >= visibleOffered.length;
+        return `<button type="button" class="btn btn-secondary" data-picker-move="${d}" data-id="${esc(c.id)}" aria-label="${label} ${esc(c.name)}"${off ? ' disabled' : ''}>${d < 0 ? '▲' : '▼'}</button>`;
+    };
+    const row = c => {
+        const on = offered.includes(c.id);
+        const meta = `${c.app ? forMedia(c.app) : 'movies and series'}${audienceLabel(c.audience) ? ' · ' + audienceLabel(c.audience) : ''}`;
+        const hide = on ? `<label title="Profiles see it only when they show it themselves"><input type="checkbox" data-default-hidden="${esc(c.id)}"${state.defaultHidden && state.defaultHidden.has(c.id) ? ' checked' : ''}${IS_ADMIN ? '' : ' disabled'}><span class="qp-offer-hide-text">hidden by default</span></label>` : '';
+        const order = on && IS_ADMIN && visibleOffered.length > 1 ? move(c, -1, 'Move up') + move(c, 1, 'Move down') : '';
+        return `<div class="qp-offer-row${on ? '' : ' off'}"${offerTabShows(c) ? '' : ' hidden'}><input type="checkbox" data-picker="${esc(c.id)}" aria-label="Offer ${esc(c.name)}"${on ? ' checked' : ''}${IS_ADMIN ? '' : ' disabled'}><div class="qp-offer-name"><div>${esc(c.name)}</div><div class="qp-muted">${meta}</div></div><div class="qp-offer-hide">${hide}</div><div class="qp-offer-order">${order}</div></div>`;
+    };
+    const head = `<div class="qp-offer-row qp-offer-head"><span title="Offered in version pickers">On</span><span>Preset</span><span class="qp-offer-hide-col">Hidden by default</span><span style="text-align:right;">Order</span></div>`;
+    const on = choices.filter(c => offered.includes(c.id)), off = choices.filter(c => !offered.includes(c.id));
+    const offVisible = off.some(offerTabShows);
+    $('qpPickerList').innerHTML = head + on.map(row).join('') + (off.length ? `<div class="qp-offer-sep"${offVisible ? '' : ' hidden'}>Not offered</div>` + off.map(row).join('') : '');
+    renderOfferTabs(offered);
+}
+$('qpPickerList').addEventListener('click', ev => {
+    const btn = ev.target.closest('[data-picker-move]');
+    if (!btn || btn.disabled) return;
+    const d = Number(btn.getAttribute('data-picker-move'));
+    const order = pickerSelection(), id = btn.getAttribute('data-id');
+    // Swap with the next offered choice in that direction the tab shows.
+    const shown = new Set(pickerChoices().filter(offerTabShows).map(c => c.id));
+    const i = order.indexOf(id);
+    let j = i + d;
+    while (j >= 0 && j < order.length && !shown.has(order[j])) j += d;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    renderPicker(order);
+});
+$('qpOfferTabs').addEventListener('click', ev => {
+    const btn = ev.target.closest('[data-offer-tab]');
+    if (!btn) return;
+    state.offerTab = btn.getAttribute('data-offer-tab');
+    renderPicker(pickerSelection());
+});
+// A newly checked choice joins the end of the order and gets its buttons.
+$('qpPickerList').addEventListener('change', ev => {
+    if (ev.target.hasAttribute('data-default-hidden')) {
+        const id = ev.target.getAttribute('data-default-hidden');
+        if (ev.target.checked) state.defaultHidden.add(id); else state.defaultHidden.delete(id);
+        return;
+    }
+    if (ev.target.hasAttribute('data-picker')) renderPicker(pickerSelection());
+});
+
+function pickerSelection() {
+    // The list is rendered in picker order: checked choices in that order.
+    return [...$('qpPickerList').querySelectorAll('[data-picker]')].filter(el => el.checked).map(el => el.getAttribute('data-picker'));
+}
+
+function audienceLabel(a) { return a === 'anime' ? 'anime only' : a === 'non-anime' ? 'everything but anime' : ''; }
+
+// pickerChoiceName names an offered choice.
+function pickerChoiceName(id) {
+    if (id === 'simple') return 'Simple ranking';
+    const p = ((state.list && state.list.presets) || []).find(x => x.id === id);
+    return p ? p.name : id;
+}
+
+// pickerList shows which offered presets a profile gets in version pickers:
+// all of them (no list) or the ones the administrator checked ("Offered"),
+// and of those the ones the profile shows ("Shown": its own choice, else the
+// administrator's recommendation). The administrator can set both.
+function pickerList(a, userID) {
+    const offered = (state.list && state.list.pickerPresets) || [];
+    if (!offered.length) return '<div class="qp-muted">No presets are offered in version pickers.</div>';
+    const own = a.pickerPresets;
+    const has = id => !own || own.includes(id);
+    const ids = IS_ADMIN ? offered : offered.filter(has);
+    const cols = IS_ADMIN ? 2 : 1;
+    const overrides = ids.some(id => (a.hiddenPresets || []).includes(id) || (a.shownPresets || []).includes(id));
+    const head = `<div class="qp-pick-row qp-offer-head" style="--cols:${cols};"><span>Preset</span>${IS_ADMIN ? '<span class="qp-pick-col">Offered</span>' : ''}<span class="qp-pick-col">Shown</span></div>`;
+    const rows = ids.map(id => {
+        const on = has(id);
+        const ownBox = IS_ADMIN ? `<input type="checkbox" data-picker-own="${esc(id)}" aria-label="Offer ${esc(pickerChoiceName(id))}"${on ? ' checked' : ''}>` : '';
+        return `<div class="qp-pick-row${on ? '' : ' off'}" style="--cols:${cols};"><div class="qp-offer-name"><div>${esc(pickerChoiceName(id))}</div><div class="qp-muted">${esc(choiceMedia(id))}<span data-hint>${pickHint(a, id)}</span></div></div>${ownBox}${hideBox(a, id, on)}</div>`;
+    }).join('');
+    const followAll = overrides ? `<div style="text-align:right; margin-bottom:0.4rem;"><button type="button" class="qp-linkbtn" data-follow-all="1">Follow all recommendations</button></div>` : '';
+    // Collapsed by default for administrators (one card per profile adds
+    // up); the account view shows its own lists open.
+    const offeredHere = ids.filter(has);
+    const shown = offeredHere.filter(id => profileShows(a, id)).length;
+    const choices = offeredHere.filter(id => (a.hiddenPresets || []).includes(id) || (a.shownPresets || []).includes(id)).length;
+    const summary = (IS_ADMIN ? `${offeredHere.length} of ${offered.length} offered · ` : '') + `${shown} of ${offeredHere.length} shown` + (choices ? ` · ${choices} own choice${choices === 1 ? '' : 's'}` : '');
+    const open = state.openPicks ? state.openPicks.has(userID) : !IS_ADMIN;
+    return `<details class="qp-picks" data-picks-user="${esc(userID)}"${open ? ' open' : ''}><summary class="qp-sub"><span>Version pickers</span><span class="qp-picks-summary">${esc(summary)}</span></summary>${followAll}<div class="qp-offer">${head}${rows}</div></details>`;
+}
+
+// choiceMedia names what an offered choice is for.
+function choiceMedia(id) {
+    if (id === 'simple') return 'Movies and series';
+    const p = ((state.list && state.list.presets) || []).find(x => x.id === id);
+    if (!p) return '';
+    return forMedia(p.app) + (audienceLabel(p.audience) ? ' · ' + audienceLabel(p.audience) : '');
+}
+
+// pickHint tells whether the profile follows the recommendation or made its
+// own choice, with a way back to the recommendation.
+function pickHint(a, id, pending) {
+    const def = state.defaultHidden && state.defaultHidden.has(id);
+    const choice = pending !== undefined ? pending : ((a.hiddenPresets || []).includes(id) ? 'hidden' : (a.shownPresets || []).includes(id) ? 'shown' : '');
+    if (!choice) return ` · recommended: ${def ? 'hidden' : 'shown'}`;
+    return ` · <span class="qp-own">own choice: ${choice}</span> · <button type="button" class="qp-linkbtn" data-follow="${esc(id)}">follow recommendation (${def ? 'hidden' : 'shown'})</button>`;
+}
+
+// profileShows tells whether a profile's pickers show an offered preset: its
+// own choice if it made one, else the administrator's recommendation.
+function profileShows(a, id) {
+    if ((a.hiddenPresets || []).includes(id)) return false;
+    if ((a.shownPresets || []).includes(id)) return true;
+    return !(state.defaultHidden && state.defaultHidden.has(id));
+}
+
+// hideBox is one offered preset in a profile's own list: checked when shown,
+// with the recommendation and, for an own choice, a way back to it.
+function hideBox(a, id, offered) {
+    const def = state.defaultHidden && state.defaultHidden.has(id);
+    const choice = (a.hiddenPresets || []).includes(id) ? 'hidden' : (a.shownPresets || []).includes(id) ? 'shown' : '';
+    return `<input type="checkbox" data-picker-hide="${esc(id)}" data-def-hidden="${def ? 1 : 0}" data-choice="${choice}" aria-label="Show ${esc(pickerChoiceName(id))}"${profileShows(a, id) ? ' checked' : ''}${offered ? '' : ' disabled'}>`;
+}
+
+// boxChoice is what Save stores for one checkbox (see profileChoices).
+function boxChoice(b) {
+    const r = profileChoices([b]);
+    return r.hiddenPresets ? 'hidden' : r.shownPresets ? 'shown' : '';
+}
+
+// refreshHint redraws a row's hint after its checkbox changed.
+function refreshHint(b) {
+    const hint = b.closest('.qp-pick-row').querySelector('[data-hint]');
+    if (hint) hint.innerHTML = pickHint({}, b.getAttribute('data-picker-hide'), boxChoice(b));
+}
+
+// profileChoices turns a profile's checkboxes into its own choices: a choice
+// it made stays until it follows the recommendation again; a new one is
+// stored only where it differs from the recommendation.
+function profileChoices(boxes) {
+    const hidden = [], shown = [];
+    for (const b of boxes) {
+        const id = b.getAttribute('data-picker-hide'), def = b.getAttribute('data-def-hidden') === '1', choice = b.getAttribute('data-choice');
+        if (choice === 'hidden' && !b.checked) hidden.push(id);
+        else if (choice === 'shown' && b.checked) shown.push(id);
+        else if (b.checked === def) (b.checked ? shown : hidden).push(id);
+    }
+    return { hiddenPresets: hidden.length ? hidden : null, shownPresets: shown.length ? shown : null };
+}
+
+// followRecommendation drops a profile's own choice for one preset (in the
+// form; Save stores it).
+function followRecommendation(box) {
+    const def = box.getAttribute('data-def-hidden') === '1';
+    box.setAttribute('data-choice', '');
+    box.checked = !def;
+    refreshHint(box);
+}
+
+// markDirty highlights a profile's Save button once something changed.
+function markDirty(card) {
+    const btn = card && card.querySelector('[data-assign]');
+    if (btn) { btn.classList.add('btn-primary'); btn.classList.remove('btn-secondary'); btn.textContent = 'Save changes'; }
+}
+
+function renderAssignments() {
+    const cards = USERS.map(u => {
+        const a = (state.list.assignments || {})[u.id] || {};
+        const inherit = v => `<option value="inherit"${v == null ? ' selected' : ''}>Inherit</option>`;
+        // Profiles choose their own defaults among the presets offered to them.
+        const offered = (state.list && state.list.pickerPresets) || [];
+        const allow = IS_ADMIN ? null : (id => offered.includes(id) && (!a.pickerPresets || a.pickerPresets.includes(id)) && profileShows(a, id));
+        const sel = (label, kind, app, anime, v) => `<label>${label}<select class="form-input" data-kind="${kind}">${presetOptions(app, v == null ? '\u0000' : v, inherit(v), anime, allow)}</select></label>`;
+        return `<div class="qp-profile" data-user="${esc(u.id)}">
+            <div class="qp-profile-head"><span>${esc(u.name)}</span><button type="button" class="btn btn-secondary" data-assign="${esc(u.id)}">Save</button></div>
+            <div class="qp-profile-body">
+                <div><div class="qp-sub"><span>Defaults</span></div><div class="qp-profile-defaults">
+                    ${sel('Movies', 'movie', 'radarr', false, a.moviePreset)}
+                    ${sel('Series', 'series', 'sonarr', false, a.seriesPreset)}
+                    ${sel('Anime movies', 'animeMovie', 'radarr', true, a.animeMoviePreset)}
+                    ${sel('Anime series', 'animeSeries', 'sonarr', true, a.animeSeriesPreset)}
+                </div></div>
+                <div>${pickerList(a, u.id)}</div>
+            </div></div>`;
+    }).join('');
+    $('qpAssignRows').innerHTML = cards || '<div class="qp-muted">No profiles</div>';
+}
+
+// Remember which profiles' picker lists are open across re-renders (Save
+// reloads the list).
+$('qpAssignRows').addEventListener('toggle', ev => {
+    const d = ev.target;
+    if (!d.matches || !d.matches('details[data-picks-user]')) return;
+    if (!state.openPicks) state.openPicks = new Set(IS_ADMIN ? [] : USERS.map(u => u.id));
+    if (d.open) state.openPicks.add(d.getAttribute('data-picks-user'));
+    else state.openPicks.delete(d.getAttribute('data-picks-user'));
+}, true);
+$('qpAssignRows').addEventListener('change', ev => {
+    const t = ev.target, card = t.closest('[data-user]');
+    if (t.hasAttribute('data-picker-own')) {
+        // A preset the profile is not offered has no own choice to make.
+        const row = t.closest('.qp-pick-row'), hide = row.querySelector('[data-picker-hide]');
+        row.classList.toggle('off', !t.checked);
+        if (hide) hide.disabled = !t.checked;
+        card.dataset.ownDirty = '1';
+    }
+    if (t.hasAttribute('data-picker-hide')) {
+        refreshHint(t);
+        card.dataset.hideDirty = '1';
+    }
+    if (t.hasAttribute('data-kind')) t.dataset.dirty = '1';
+    markDirty(card);
+});
+
+$('qpAssignRows').addEventListener('click', async ev => {
+    const followBtn = ev.target.closest('[data-follow],[data-follow-all]');
+    if (followBtn) {
+        ev.preventDefault();
+        const follow = followBtn.getAttribute('data-follow');
+        const card = followBtn.closest('[data-user]');
+        const boxes = [...card.querySelectorAll('[data-picker-hide]')].filter(b => !follow || b.getAttribute('data-picker-hide') === follow);
+        boxes.filter(b => b.getAttribute('data-choice') || boxChoice(b)).forEach(followRecommendation);
+        card.dataset.hideDirty = '1';
+        markDirty(card);
+        return;
+    }
+    const id = ev.target.getAttribute('data-assign');
+    if (!id) return;
+    const row = ev.target.closest('[data-user]');
+    // Only the defaults changed on this card are sent (omitted ones stay as
+    // stored, also when the profile changed them since this page loaded).
+    const body = { userId: id };
+    const fields = { movie: 'moviePreset', series: 'seriesPreset', animeMovie: 'animeMoviePreset', animeSeries: 'animeSeriesPreset' };
+    for (const [kind, field] of Object.entries(fields)) {
+        const sel = row.querySelector('[data-kind=' + kind + ']');
+        if (sel && sel.dataset.dirty) body[field] = sel.value;
+    }
+    // Only what was changed on this card is sent: the profile may have
+    // changed its own choices since this page loaded, and those stay.
+    const boxes = [...row.querySelectorAll('[data-picker-own]')];
+    if (IS_ADMIN && boxes.length && row.dataset.ownDirty) {
+        const checked = boxes.filter(b => b.checked).map(b => b.getAttribute('data-picker-own'));
+        // Everything checked means no list: new offered presets appear too.
+        body.pickerPresets = checked.length === boxes.length ? null : checked;
+    }
+    const hideBoxes = [...row.querySelectorAll('[data-picker-hide]')];
+    if (hideBoxes.length && row.dataset.hideDirty) {
+        // Choices for presets without a box here (not offered on this page)
+        // are kept as stored.
+        // The stored choices as they are now, not as this page loaded them.
+        const fresh = await run(() => api('?userId=' + encodeURIComponent(id)));
+        if (!fresh) return;
+        const a = ((fresh.assignments || {})[id]) || {};
+        const onCard = new Set(hideBoxes.map(b => b.getAttribute('data-picker-hide')));
+        const known = new Set(['simple'].concat((state.list.presets || []).map(p => p.id)));
+        const keep = list => (list || []).filter(x => !onCard.has(x) && known.has(x));
+        const made = profileChoices(hideBoxes);
+        const hidden = keep(a.hiddenPresets).concat(made.hiddenPresets || []);
+        const shown = keep(a.shownPresets).concat(made.shownPresets || []);
+        body.hiddenPresets = hidden.length ? hidden : null;
+        body.shownPresets = shown.length ? shown : null;
+    }
+    if (await run(() => api('/assign', { method: 'PUT', body }), 'Profile updated')) loadList();
+});
+
+$('qpSaveSelection').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    await run(() => api('/selection', { method: 'PUT', body: { moviePreset: $('qpMovieSel').value, seriesPreset: $('qpSeriesSel').value, allowRequestOverride: $('qpAllowOverride').checked, pickerPresets: pickerSelection(), hiddenByDefault: pickerSelection().filter(id => state.defaultHidden.has(id)), animeMoviePreset: $('qpAnimeMovieSel').value, animeSeriesPreset: $('qpAnimeSeriesSel').value, animeOnlyInPickers: $('qpAnimeOnly').checked } }), 'Active presets saved');
+    await loadList();
+}));
+
+function statusBadges(p) {
+    let b = '';
+    if (p.hasPending) b += '<span class="qp-badge warn">update waiting</span>';
+    if (p.conflicts) b += `<span class="qp-badge bad">${p.conflicts} conflict${p.conflicts === 1 ? '' : 's'}</span>`;
+    if (p.reviewFormats) b += `<span class="qp-badge warn">${p.reviewFormats} to review</span>`;
+    if (p.lastError) b += `<span class="qp-badge bad" title="${esc(p.lastError)}">check failed</span>`;
+    if (p.formatErrors) b += `<span class="qp-badge bad" title="These formats are left out when ranking; open the preset for details">${p.formatErrors} broken format${p.formatErrors === 1 ? '' : 's'}</span>`;
+    // Where the preset is in use: deleting or changing it affects these.
+    const sel = state.list;
+    if (sel) {
+        const uses = [];
+        if (sel.moviePreset === p.id || sel.seriesPreset === p.id) uses.push('active');
+        if (sel.animeMoviePreset === p.id || sel.animeSeriesPreset === p.id) uses.push('anime slot');
+        if ((sel.pickerPresets || []).includes(p.id)) uses.push('in pickers');
+        const profiles = Object.values(sel.assignments || {}).filter(a => [a.moviePreset, a.seriesPreset, a.animeMoviePreset, a.animeSeriesPreset].includes(p.id)).length;
+        if (profiles) uses.push(`${profiles} profile${profiles === 1 ? '' : 's'}`);
+        b += uses.map(u => `<span class="qp-badge ok">${u}</span>`).join('');
+    }
+    return b || '<span class="qp-muted">—</span>';
+}
+
+function renderRows() {
+    const list = state.list.presets || [];
+    $('qpListStatus').textContent = `${list.length} preset${list.length === 1 ? '' : 's'}`;
+    $('qpRows').innerHTML = list.map(p => `<tr data-id="${esc(p.id)}" class="${state.current && state.current.preset.id === p.id ? 'qp-selected' : ''}" style="cursor:pointer;">
+        <td><a href="#" data-open="${esc(p.id)}">${esc(p.name)}</a></td><td>${forMedia(p.app)}${audienceLabel(p.audience) ? ' <span class="qp-badge">' + audienceLabel(p.audience) + '</span>' : ''}</td><td>${esc(p.origin)}</td>
+        <td class="qp-mono">${esc(short(p.commit))}</td><td>${esc(p.syncMode)}</td><td>${statusBadges(p)}</td><td class="qp-muted">${esc(when(p.lastCheckedAt))}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="qp-muted">No presets yet. Add one below; a TRaSH-Guides profile for your language and quality (for example a WEB-1080p profile) is a good start.</td></tr>';
+}
+$('qpRows').addEventListener('click', ev => {
+    const tr = ev.target.closest('tr[data-id]');
+    if (!tr) return;
+    ev.preventDefault();
+    openPreset(tr.getAttribute('data-id'));
+});
+$('qpSyncAll').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const r = await run(() => api('/sync', { method: 'POST' }));
+    if (r) toast(`Checked ${r.checked}: ${r.applied} applied, ${r.staged} waiting${r.errors && r.errors.length ? ', ' + r.errors.length + ' failed' : ''}`, r.errors && r.errors.length);
+    await loadList();
+}));
+
+// ---------- add preset ----------
+function tabs(containerId, attr) {
+    const c = $(containerId);
+    c.addEventListener('click', ev => {
+        const t = ev.target.getAttribute('data-tab');
+        if (!t) return;
+        c.querySelectorAll('button').forEach(b => { b.classList.toggle('active', b === ev.target); b.setAttribute('aria-selected', String(b === ev.target)); });
+        document.querySelectorAll(`[${attr}]`).forEach(p => p.style.display = p.getAttribute(attr) === t ? '' : 'none');
+    });
+}
+tabs('qpAddTabs', 'data-pane');
+tabs('qpDetailTabs', 'data-dpane');
+
+async function loadCatalog() {
+    if (!IS_ADMIN) return;
+    $('qpCatalogStatus').textContent = 'Loading TRaSH-Guides…';
+    const cat = await run(() => api('/catalog'));
+    if (!cat) { $('qpCatalogStatus').textContent = 'Could not load the catalog'; return; }
+    state.catalog = cat;
+    $('qpCatalogStatus').textContent = 'Version ' + short(cat.commit) + ((cat.warnings || []).length ? ' — ' + cat.warnings.join('; ') : '');
+    renderCatalog();
+}
+function renderCatalog() {
+    const app = $('qpTrashApp').value;
+    const profiles = (state.catalog && state.catalog.profiles[app]) || [];
+    const groups = {};
+    for (const p of profiles) (groups[p.group || 'Other'] = groups[p.group || 'Other'] || []).push(p);
+    $('qpTrashProfile').innerHTML = Object.keys(groups).map(g => `<optgroup label="${esc(g)}">${groups[g].map(p => `<option value="${esc(p.trashId)}">${esc(p.name)}</option>`).join('')}</optgroup>`).join('');
+    renderCatalogProfile();
+}
+function renderCatalogProfile() {
+    const app = $('qpTrashApp').value;
+    const p = ((state.catalog && state.catalog.profiles[app]) || []).find(x => x.trashId === $('qpTrashProfile').value);
+    if (!p) { $('qpTrashDesc').textContent = ''; return; }
+    $('qpTrashDesc').textContent = `${p.description || ''}\n${p.formats} formats, ${p.groups} optional format groups.`;
+    $('qpTrashScoreSet').innerHTML = `<option value="">Profile default (${esc(p.scoreSet || 'default')})</option>` + (p.scoreSets || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+}
+$('qpTrashApp').addEventListener('change', renderCatalog);
+$('qpTrashProfile').addEventListener('change', renderCatalogProfile);
+// afterImport puts a new preset to use as the import options ask, then
+// opens it.
+async function afterImport(d, note) {
+    const p = d.preset;
+    const body = {};
+    if ($('qpImportUse').checked) {
+        const slot = p.audience === 'anime' ? (p.app === 'radarr' ? 'animeMoviePreset' : 'animeSeriesPreset') : (p.app === 'radarr' ? 'moviePreset' : 'seriesPreset');
+        body[slot] = p.id;
+    }
+    if ($('qpImportOffer').checked) body.pickerPresets = ((state.list && state.list.pickerPresets) || []).concat(p.id);
+    let msg = 'Imported ' + p.name;
+    if (Object.keys(body).length && await run(() => api('/selection', { method: 'PUT', body }))) {
+        msg += body.pickerPresets && Object.keys(body).length === 1 ? ' and offered in version pickers' : ' and put to use';
+    }
+    toast(msg + (note || ''));
+    await loadList();
+    openPreset(p.id);
+}
+$('qpTrashImport').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const body = { app: $('qpTrashApp').value, profileTrashId: $('qpTrashProfile').value, scoreSet: $('qpTrashScoreSet').value, name: $('qpTrashName').value.trim() };
+    const d = await run(() => api('/import/trash', { method: 'POST', body }));
+    if (d) await afterImport(d, (d.errors || []).length ? ' — ' + d.errors.join('; ') : '');
+}));
+$('qpArrLoad').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const r = await run(() => api('/import/arr/profiles', { method: 'POST', body: { url: $('qpArrUrl').value.trim(), apiKey: $('qpArrKey').value.trim() } }));
+    if (!r) return;
+    $('qpArrProfile').innerHTML = (r.profiles || []).map(p => `<option value="${p.id}">${esc(p.name)} (${forMedia(r.app)})</option>`).join('') || '<option value="">No profiles</option>';
+}));
+$('qpArrImport').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const body = { url: $('qpArrUrl').value.trim(), apiKey: $('qpArrKey').value.trim(), profileId: Number($('qpArrProfile').value), name: $('qpArrName').value.trim() };
+    const d = await run(() => api('/import/arr', { method: 'POST', body }));
+    if (d) await afterImport(d);
+}));
+$('qpJsonImport').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const q = '?app=' + encodeURIComponent($('qpJsonApp').value) + '&name=' + encodeURIComponent($('qpJsonName').value.trim());
+    const d = await run(() => api('/import/json' + q, { method: 'POST', body: $('qpJsonBody').value }));
+    if (d) { $('qpJsonBody').value = ''; await afterImport(d); }
+}));
+
+// ---------- sources ----------
+function renderSources() {
+    $('qpSourceRows').innerHTML = state.sources.map((s, i) => `<tr data-i="${i}">
+        <td><input class="form-input qp-small" data-f="id" value="${esc(s.id)}"></td>
+        <td><input class="form-input" data-f="name" value="${esc(s.name)}"></td>
+        <td><select class="form-input" data-f="type">${['github', 'url', 'bundled'].map(t => `<option${s.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select></td>
+        <td><input class="form-input" data-f="${s.type === 'url' ? 'url' : 'repo'}" value="${esc(s.type === 'url' ? s.url : s.repo)}" ${s.type === 'bundled' ? 'disabled' : ''} placeholder="${s.type === 'url' ? 'https://…/archive.tar.gz' : 'owner/repository'}"></td>
+        <td><input class="form-input qp-small" data-f="ref" value="${esc(s.ref || '')}" ${s.type !== 'github' ? 'disabled' : ''} placeholder="master"></td>
+        <td><input class="form-input qp-small" type="number" data-f="priority" value="${Number(s.priority || 0)}"></td>
+        <td><input type="checkbox" data-f="enabled" ${s.enabled ? 'checked' : ''}></td>
+        <td><button class="btn btn-danger" data-del="${i}">Remove</button></td></tr>`).join('');
+}
+function readSources() {
+    return [...$('qpSourceRows').querySelectorAll('tr')].map(tr => {
+        const get = f => tr.querySelector(`[data-f=${f}]`);
+        const type = get('type').value;
+        const s = { id: get('id').value.trim(), name: get('name').value.trim(), type, priority: Number(get('priority').value || 0), enabled: get('enabled').checked };
+        if (type === 'github') { s.repo = (get('repo') || {}).value?.trim() || ''; s.ref = get('ref').value.trim(); }
+        if (type === 'url') s.url = (get('url') || {}).value?.trim() || '';
+        return s;
+    });
+}
+$('qpSourceRows').addEventListener('click', ev => { const i = ev.target.getAttribute('data-del'); if (i === null) return; state.sources = readSources(); state.sources.splice(Number(i), 1); renderSources(); });
+$('qpSourceRows').addEventListener('change', ev => { if (ev.target.getAttribute('data-f') === 'type') { state.sources = readSources(); renderSources(); } });
+$('qpSourceAdd').addEventListener('click', () => { state.sources = readSources(); state.sources.push({ id: 'source-' + (state.sources.length + 1), name: 'New source', type: 'github', repo: '', ref: 'master', priority: state.sources.length, enabled: true }); renderSources(); });
+$('qpSourceSave').addEventListener('click', async () => { const r = await run(() => api('/sources', { method: 'PUT', body: readSources() }), 'Sources saved'); if (r) { state.sources = r; renderSources(); loadCatalog(); } });
+
+// ---------- detail ----------
+async function openPreset(id) {
+    const d = await run(() => api('/' + encodeURIComponent(id)));
+    if (!d) return;
+    state.current = d;
+    $('qpDetail').style.display = '';
+    $('qpDetailTitle').textContent = d.preset.overrides.name || d.preset.name;
+    renderOverview(); renderQualities(); renderFormats();
+    renderRows();
+    $('qpDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function mutate(path, opts, msg) {
+    const d = await run(() => api('/' + encodeURIComponent(state.current.preset.id) + path, opts), msg);
+    if (d && d.preset) { state.current = d; renderOverview(); renderQualities(); renderFormats(); loadList(); }
+    return d;
+}
+function override(path, value, msg) { return mutate('/override', { method: 'PUT', body: { path, value } }, msg || 'Saved'); }
+function clearOverride(path) { return mutate('/override?path=' + encodeURIComponent(path), { method: 'DELETE' }, 'Reverted to upstream'); }
+
+function renderOverview() {
+    const d = state.current, p = d.preset, s = p.sync;
+    const ro = !IS_ADMIN ? 'disabled' : '';
+    const errs = (d.errors || []).map(e => `<div class="qp-badge bad" style="white-space:normal;">${esc(e)}</div>`).join(' ');
+    const origin = p.origin.kind === 'trash' ? `TRaSH profile <span class="qp-mono">${esc(p.origin.profileTrashId)}</span>${p.origin.scoreSet ? ', score set ' + esc(p.origin.scoreSet) : ''}`
+        : p.origin.kind === 'arr' ? `${p.origin.arrUrl ? 'Instance ' + esc(p.origin.arrUrl) : 'A Sonarr/Radarr instance'} (profile ${p.origin.arrProfileId})` : 'Created by hand (no upstream)';
+    const syncable = p.origin.kind !== 'manual';
+    let html = `<div class="qp-card"><h3>${esc(p.overrides.name || p.name)} <span class="qp-badge">${forMedia(p.app)}</span></h3>
+        <div class="qp-muted">${origin}</div>
+        <div class="qp-muted">Version <span class="qp-mono">${esc(short(p.upstream.commit))}</span>${(p.upstream.sources || []).length ? ' from ' + esc(p.upstream.sources.join(', ')) : ''} · last checked ${esc(when(p.lastCheckedAt))}</div>
+        ${p.lastCheckError ? `<div class="qp-badge bad" style="white-space:normal; margin-top:0.4rem;">Last check failed: ${esc(p.lastCheckError)}</div>` : ''}
+        ${errs ? '<div style="margin-top:0.5rem;">' + errs + '</div>' : ''}
+        ${(d.resolved && d.resolved.trashConflicts || []).length ? '<div class="qp-badge warn" style="white-space:normal; margin-top:0.4rem;">TRaSH marks these enabled formats as mutually exclusive: ' + d.resolved.trashConflicts.map(c => esc(c.join(' + '))).join('; ') + '</div>' : ''}
+        <div class="qp-row qp-admin" style="margin-top:0.8rem;">
+            ${syncable ? '<button class="btn btn-secondary" data-act="check">Check for updates</button><button class="btn btn-secondary" data-act="syncnow">Sync now</button>' : ''}
+            ${p.origin.kind === 'arr' ? '<button class="btn btn-secondary" data-act="connection">Connection…</button>' : ''}
+            <a class="btn btn-secondary" href="${API}/${encodeURIComponent(p.id)}/export">Export</a>
+            <button class="btn btn-secondary" data-act="duplicate">Duplicate</button>
+            <button class="btn btn-secondary" data-act="rename">Rename</button>
+            <button class="btn btn-danger" data-act="delete">Delete</button>
+        </div>
+        <div class="qp-row" style="margin-top:0.8rem;"><label>For
+            <select class="form-input" id="qpAudience" style="width:auto;" ${IS_ADMIN ? '' : 'disabled'}>
+                ${[['', 'All titles'], ['anime', 'Anime only'], ['non-anime', 'Everything but anime']].map(([v, l]) => `<option value="${v}"${(p.audience || '') === v ? ' selected' : ''}>${l}</option>`).join('')}
+            </select></label><span class="qp-muted">Anime only presets rank and appear only for anime; everything but anime presets never do.</span></div>
+        <div class="qp-row" style="margin-top:0.5rem;"><label style="max-width:100%;">If nothing passes
+            <select class="form-input" id="qpFallback" style="width:auto; max-width:100%;" ${IS_ADMIN ? '' : 'disabled'}>
+                ${fallbackChoices(p).map(([v, l]) => `<option value="${esc(v)}"${(p.fallback || '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}
+            </select></label><span class="qp-muted">Ranks the same search results again when this preset rejects all of them, e.g. an UHD preset on a show that only exists in 1080p. A fallback preset can have its own fallback (up to 3 in a row).</span></div></div>`;
+    if (syncable) {
+        const f = s.follow || {};
+        const chk = (k, label) => `<label><input type="checkbox" data-follow="${k}" ${f[k] ? 'checked' : ''} ${ro}> ${label}</label>`;
+        html += `<div class="qp-card"><h3>Sync</h3><div class="qp-grid">
+            <label>Mode<br><select class="form-input" id="qpSyncMode" ${ro}>${[['auto', 'Apply automatically'], ['notify', 'Ask before applying'], ['manual', 'Only when I check'], ['pinned', 'Pin to a version']].map(([v, l]) => `<option value="${v}"${s.mode === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+            <label>Pinned version<br><input class="form-input qp-mono" id="qpSyncPin" value="${esc(s.pinnedCommit || '')}" placeholder="${esc(p.upstream.commit)}" ${ro}></label>
+            <label>Check<br><select class="form-input" id="qpSyncSchedule" ${ro}>${[['daily', 'Daily'], ['weekly', 'Weekly'], ['manual', 'Manually']].map(([v, l]) => `<option value="${v}"${s.schedule === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+            <label>New formats from upstream<br><select class="form-input" id="qpSyncNew" ${ro}>${[['enable', 'Switch on'], ['disable', 'Add switched off'], ['review', 'Hold for review']].map(([v, l]) => `<option value="${v}"${s.newFormats === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+            </div><div class="qp-row" style="margin-top:0.6rem;"><span class="qp-muted">Follow upstream for:</span>
+            ${chk('profile', 'quality order &amp; limits')}${chk('conditions', 'format conditions')}${chk('scores', 'scores')}${chk('groups', 'format groups')}${chk('sizes', 'quality sizes')}</div>
+            <p class="qp-muted">Parts that don't follow keep their current version. Individual formats can override this on the Custom formats tab. Your own changes are always kept; if upstream changes something you changed, it is shown as a conflict below.</p>
+            <div class="qp-row qp-admin"><button class="btn btn-primary" data-act="savesync">Save sync settings</button></div></div>`;
+    }
+    if (p.pending) {
+        const pend = p.pending;
+        html += `<div class="qp-card" style="border-color:#d97706;"><h3>Update waiting: ${esc(short(pend.fromCommit))} → ${esc(short(pend.toCommit))}</h3>
+            ${changeTable(pend.changes)}
+            ${(pend.conflicts || []).length ? '<p class="qp-badge bad" style="white-space:normal;">Applying keeps your values for ' + pend.conflicts.length + ' changed field(s); they will be listed as conflicts.</p>' : ''}
+            ${(pend.newFormats || []).length ? '<p class="qp-muted">New formats: ' + pend.newFormats.map(k => esc(formatName(k))).join(', ') + '</p>' : ''}
+            <div class="qp-row qp-admin"><button class="btn btn-primary" data-act="apply">Apply update</button><button class="btn btn-secondary" data-act="discard">Discard</button><button class="btn btn-secondary" data-act="dryrun">Preview ranking change…</button></div>
+            <div id="qpDryRunOut"></div></div>`;
+    }
+    if ((p.conflicts || []).length) {
+        html += `<div class="qp-card" style="border-color:#dc2626;"><h3>Conflicts</h3><p class="qp-muted">Upstream changed fields you have changed too. Your value stays in effect until you choose.</p>
+            <div class="qp-scroll"><table class="qp-table"><thead><tr><th>Field</th><th>Upstream before</th><th>Upstream now</th><th>Yours</th><th></th></tr></thead><tbody>
+            ${p.conflicts.map(c => `<tr><td>${esc(c.field)} ${c.format ? '<b>' + esc(c.format) + '</b>' : ''}</td><td class="qp-mono">${esc(trim(c.upstreamBefore))}</td><td class="qp-mono">${esc(trim(c.upstreamAfter))}</td><td class="qp-mono">${esc(trim(c.yours))}</td>
+              <td class="qp-admin" style="white-space:nowrap;"><button class="btn btn-secondary" data-conflict="${esc(c.path)}" data-choice="yours">Keep mine</button> <button class="btn btn-secondary" data-conflict="${esc(c.path)}" data-choice="upstream">Take upstream</button> <button class="btn btn-secondary" data-conflict="${esc(c.path)}" data-choice="edit">Edit…</button></td></tr>`).join('')}
+            </tbody></table></div></div>`;
+    }
+    if ((p.reviewFormats || []).length) {
+        html += `<div class="qp-card"><h3>New formats to review</h3>${p.reviewFormats.map(k => `<div class="qp-row"><span>${esc(formatName(k))}</span><button class="btn btn-secondary qp-admin" data-review="${esc(k)}" data-enable="1">Switch on</button><button class="btn btn-secondary qp-admin" data-review="${esc(k)}" data-enable="0">Keep off</button></div>`).join('')}</div>`;
+    }
+    if ((p.removed || []).length) {
+        html += `<div class="qp-card"><h3>Removed upstream</h3>${p.removed.slice().reverse().map(r => `<div class="qp-muted">${esc(r.name)} — ${esc(when(r.removedAt))} ${r.kept ? '<span class="qp-badge">kept as your own format</span>' : '<span class="qp-badge">removed</span>'}</div>`).join('')}</div>`;
+    }
+    if ((p.history || []).length) {
+        html += `<div class="qp-card"><h3>History</h3><div class="qp-row" style="margin-bottom:0.4rem;"><label class="qp-admin"><input type="checkbox" id="qpRollbackPin"> Pin after rolling back</label></div>
+            <div class="qp-scroll"><table class="qp-table"><thead><tr><th>Applied</th><th>Version</th><th>Note</th><th></th></tr></thead><tbody>
+            ${p.history.map(h => `<tr><td>${esc(when(h.appliedAt))}</td><td class="qp-mono">${esc(short(h.commit))}</td><td>${esc(h.note || '')}</td><td class="qp-admin"><button class="btn btn-secondary" data-rollback="${esc(h.id)}">Roll back</button></td></tr>`).join('')}
+            </tbody></table></div></div>`;
+    }
+    $('qpOverview').innerHTML = html;
+    if (!IS_ADMIN) $('qpOverview').querySelectorAll('.qp-admin').forEach(el => el.style.display = 'none');
+}
+function trim(v) { v = String(v ?? ''); return v.length > 160 ? v.slice(0, 160) + '…' : v; }
+// formatOrigin explains where a format and its score come from (layer and
+// snapshot source), shown when hovering a format in the test bench.
+function formatOrigin(key) {
+    const r = state.current && state.current.resolved;
+    const v = r && (r.formats || []).find(f => f.key === key);
+    if (!v) return '';
+    const parts = [v.origin === 'own' ? 'your own format' : (v.origin === 'group' ? 'from group ' + v.group : 'from the profile')];
+    if (v.source) parts.push('source ' + v.source + ((v.shadowed || []).length ? ' (over ' + v.shadowed.join(', ') + ')' : ''));
+    if (v.edited) parts.push('conditions edited by you');
+    parts.push(v.upstreamScore != null && v.score !== v.upstreamScore ? 'your score (upstream ' + v.upstreamScore + ')' : 'upstream score');
+    return parts.join(' · ');
+}
+
+function formatName(key) {
+    const r = state.current && state.current.resolved;
+    const v = r && (r.formats || []).find(f => f.key === key);
+    if (v) return v.name;
+    const p = state.current && state.current.preset;
+    for (const up of [p && p.upstream.formats, p && p.pending && p.pending.upstream && p.pending.upstream.formats]) {
+        if (up && up[key] && up[key].name) return up[key].name;
+    }
+    return key;
+}
+function changeTable(changes) {
+    if (!changes || !changes.length) return '<p class="qp-muted">Only the version changed.</p>';
+    return `<div class="qp-scroll"><table class="qp-table"><thead><tr><th>Change</th><th>Part</th><th>Item</th><th>Detail</th></tr></thead><tbody>${changes.map(c => `<tr><td>${esc(c.kind)}</td><td>${esc(c.part)}</td><td>${esc(c.name || c.key || '')}</td><td class="qp-muted">${esc(c.detail || '')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// fallbackChoices lists what a preset can fall back to: nothing, the simple
+// ranking or another preset of the same app.
+function fallbackChoices(p) {
+    const others = ((state.list && state.list.presets) || []).filter(x => x.app === p.app && x.id !== p.id);
+    const choices = [['', 'Nothing (no release found)'], ['simple', 'Simple ranking settings']]
+        .concat(others.map(x => [x.id, x.name + (audienceLabel(x.audience) ? ' (' + audienceLabel(x.audience) + ')' : '')]));
+    if (p.fallback && !choices.some(([v]) => v === p.fallback)) choices.push([p.fallback, '(deleted preset)']);
+    return choices;
+}
+
+$('qpOverview').addEventListener('change', async ev => {
+    if (!state.current) return;
+    if (ev.target.id === 'qpFallback') {
+        await mutate('/settings', { method: 'PUT', body: { fallback: ev.target.value } }, 'Saved');
+        return;
+    }
+    if (ev.target.id !== 'qpAudience') return;
+    await mutate('/settings', { method: 'PUT', body: { audience: ev.target.value } }, 'Saved');
+});
+
+$('qpOverview').addEventListener('click', async ev => {
+    const t = ev.target;
+    const act = t.getAttribute('data-act');
+    const p = state.current && state.current.preset;
+    if (!p) return;
+    if (act === 'check' || act === 'syncnow') {
+        await busy(t, async () => {
+            const r = await run(() => api('/' + encodeURIComponent(p.id) + '/check', { method: 'POST', body: { apply: act === 'syncnow' } }));
+            if (r) toast(r.upToDate ? 'Already up to date' : r.applied ? 'Update applied' : 'Update waiting for approval');
+            await openPreset(p.id); await loadList();
+        });
+    } else if (act === 'connection') {
+        openModal('Connection', 'The Sonarr/Radarr instance this preset follows. Leave the API key empty to keep the stored one.', null, async () => {
+            const connection = { url: $('qpConnUrl').value.trim(), apiKey: $('qpConnKey').value.trim() };
+            return !!(await mutate('/settings', { method: 'PUT', body: { connection } }, 'Connection saved'));
+        }, `<label style="flex:1 1 260px;">URL<br><input id="qpConnUrl" class="form-input" value="${esc(p.origin.arrUrl || '')}"></label>
+            <label style="flex:1 1 200px;">API key<br><input id="qpConnKey" class="form-input" type="password" autocomplete="off" placeholder="unchanged"></label>`);
+    } else if (act === 'apply') { await mutate('/pending', { method: 'POST' }, 'Update applied'); }
+    else if (act === 'discard') { await mutate('/pending', { method: 'DELETE' }, 'Update discarded'); }
+    else if (act === 'delete') {
+        if (!confirm('Delete preset "' + (p.overrides.name || p.name) + '"? The server stops using it; profiles and devices that chose it use the next level\'s preset instead.')) return;
+        await run(() => api('/' + encodeURIComponent(p.id), { method: 'DELETE' }), 'Preset deleted');
+        state.current = null; $('qpDetail').style.display = 'none'; loadList();
+    } else if (act === 'duplicate') {
+        const name = prompt('Name of the copy', (p.overrides.name || p.name) + ' (copy)');
+        if (name === null) return;
+        const d = await run(() => api('/' + encodeURIComponent(p.id) + '/duplicate', { method: 'POST', body: { name } }), 'Copied');
+        if (d) { await loadList(); openPreset(d.preset.id); }
+    } else if (act === 'rename') {
+        const name = prompt('New name', p.overrides.name || p.name);
+        if (name) await mutate('/settings', { method: 'PUT', body: { name } }, 'Renamed');
+    } else if (act === 'savesync') {
+        const follow = {};
+        $('qpOverview').querySelectorAll('[data-follow]').forEach(c => follow[c.getAttribute('data-follow')] = c.checked);
+        const sync = Object.assign({}, p.sync, { mode: $('qpSyncMode').value, pinnedCommit: $('qpSyncPin').value.trim(), schedule: $('qpSyncSchedule').value, newFormats: $('qpSyncNew').value, follow });
+        if (sync.mode === 'pinned' && !sync.pinnedCommit) sync.pinnedCommit = p.upstream.commit;
+        await mutate('/settings', { method: 'PUT', body: { sync } }, 'Sync settings saved');
+    } else if (act === 'dryrun') {
+        openModal('Preview ranking change', 'Release names to compare, one per line (the Test tab\'s list is filled in).', $('qpTestTitles').value || '', async text => {
+            const titles = text.split('\n').map(s => s.trim()).filter(Boolean);
+            if (!titles.length) { toast('Add at least one release name', true); return false; }
+            const r = await run(() => api('/' + encodeURIComponent(p.id) + '/dry-run', { method: 'POST', body: { titles, originalLanguage: $('qpTestLang').value.trim() } }));
+            if (!r) return false;
+            $('qpDryRunOut').innerHTML = '<div class="qp-grid" style="margin-top:0.6rem;"><div><b>Now</b>' + rankList(r.before) + '</div><div><b>After the update</b>' + rankList(r.after) + '</div></div>';
+            return true;
+        });
+    }
+    const conflict = t.getAttribute('data-conflict');
+    if (conflict) {
+        const choice = t.getAttribute('data-choice');
+        if (choice === 'edit') {
+            const c = p.conflicts.find(x => x.path === conflict);
+            openModal('Edit ' + c.field, 'Enter the new value as JSON (a number for scores, a custom format object for conditions).', c.yours, async text => {
+                let value; try { value = JSON.parse(text); } catch (e) { toast('Invalid JSON: ' + e.message, true); return false; }
+                return !!(await mutate('/conflicts', { method: 'POST', body: { path: conflict, choice: 'edit', value } }, 'Conflict resolved'));
+            });
+        } else await mutate('/conflicts', { method: 'POST', body: { path: conflict, choice } }, 'Conflict resolved');
+    }
+    const review = t.getAttribute('data-review');
+    if (review) await mutate('/review', { method: 'POST', body: { keys: [review], enable: t.getAttribute('data-enable') === '1' } }, 'Saved');
+    const rb = t.getAttribute('data-rollback');
+    if (rb) { if (confirm('Restore this version? The current state is kept in history.')) await mutate('/rollback', { method: 'POST', body: { historyId: rb, pin: !!($('qpRollbackPin') && $('qpRollbackPin').checked) } }, 'Rolled back'); }
+});
+function rankList(items) { return '<ol class="qp-mono" style="padding-left:1.2rem;">' + (items || []).map(i => `<li>${esc(i.title)} <span class="${i.evaluation.allowed ? 'qp-pass' : 'qp-fail'}">${i.evaluation.allowed ? i.evaluation.score : 'rejected'}</span></li>`).join('') + '</ol>'; }
+
+// ---------- qualities ----------
+function renderQualities() {
+    const d = state.current, p = d.preset, prof = d.resolved ? d.resolved.profile : p.upstream.profile;
+    const ro = !IS_ADMIN ? 'disabled' : '';
+    const items = prof.items || [];
+    const ov = p.overrides;
+    const langs = ['', 'Any', 'Original', 'English', 'German', 'French', 'Spanish', 'Italian', 'Japanese'];
+    $('qpQualities').innerHTML = `<div class="qp-card"><h3>Qualities <span class="qp-muted">(most preferred first; qualities in a group rank equally)</span> ${ov.items ? '<span class="qp-badge warn">changed</span>' : ''}</h3>
+        <ul class="qp-items" id="qpItemList">${items.map((it, i) => `<li data-i="${i}"><input type="checkbox" ${it.allowed ? 'checked' : ''} ${ro}> <b>${esc(it.name)}</b> ${(it.items || []).length ? '<span class="qp-muted">' + esc(it.items.join(', ')) + '</span>' : ''}
+            <span style="margin-left:auto;" class="qp-admin"><button class="btn btn-secondary" data-move="-1">▲</button> <button class="btn btn-secondary" data-move="1">▼</button></span></li>`).join('')}</ul>
+        <div class="qp-row qp-admin" style="margin-top:0.6rem;"><button class="btn btn-primary" id="qpItemsSave">Save qualities</button>${ov.items ? '<button class="btn btn-secondary" id="qpItemsReset">Use upstream order</button>' : ''}</div></div>
+        <div class="qp-card"><h3>Limits &amp; options</h3><div class="qp-grid">
+            <label>Minimum custom format score<br><input type="number" class="form-input" id="qpMinScore" value="${prof.minFormatScore}" ${ro}></label>
+            ${p.app === 'radarr' ? `<label>Required language<br><select class="form-input" id="qpLang" ${ro}>${langs.map(l => `<option value="${l}"${(prof.language || '') === l ? ' selected' : ''}>${l || 'None'}</option>`).join('')}</select></label>` : ''}
+            <label>Propers &amp; repacks<br><select class="form-input" id="qpPropers" ${ro}><option value="doNotPrefer"${prof.propers !== 'preferAndUpgrade' ? ' selected' : ''}>Do not prefer (score them with formats)</option><option value="preferAndUpgrade"${prof.propers === 'preferAndUpgrade' ? ' selected' : ''}>Prefer higher revisions</option></select></label>
+            <label>Preferred protocol<br><select class="form-input" id="qpProto" ${ro}><option value="">None (use service priority)</option><option value="usenet"${prof.preferredProtocol === 'usenet' ? ' selected' : ''}>Usenet</option><option value="torrent"${prof.preferredProtocol === 'torrent' ? ' selected' : ''}>Torrent / debrid</option></select></label>
+            <label>Languages of MULTi releases<br><input class="form-input" id="qpMulti" value="${esc((prof.multiLanguages || []).join(', '))}" placeholder="German, English" ${ro}></label>
+            <label><input type="checkbox" id="qpEnforce" ${prof.enforceSizeLimits ? 'checked' : ''} ${ro}> Reject releases outside the quality size limits</label>
+        </div><div class="qp-row qp-admin" style="margin-top:0.6rem;"><button class="btn btn-primary" id="qpOptsSave">Save options</button></div></div>`;
+    if (!IS_ADMIN) $('qpQualities').querySelectorAll('.qp-admin').forEach(el => el.style.display = 'none');
+    state.items = JSON.parse(JSON.stringify(items));
+}
+$('qpQualities').addEventListener('click', async ev => {
+    const t = ev.target;
+    const li = t.closest('li[data-i]');
+    if (t.getAttribute('data-move') && li) {
+        syncItemChecks();
+        const i = Number(li.getAttribute('data-i')), j = i + Number(t.getAttribute('data-move'));
+        if (j < 0 || j >= state.items.length) return;
+        [state.items[i], state.items[j]] = [state.items[j], state.items[i]];
+        const list = $('qpItemList');
+        const nodes = [...list.children];
+        if (j > i) list.insertBefore(nodes[j], nodes[i]); else list.insertBefore(nodes[i], nodes[j]);
+        [...list.children].forEach((n, k) => n.setAttribute('data-i', k));
+        return;
+    }
+    if (t.id === 'qpItemsSave') { syncItemChecks(); await override('items', state.items.map(it => ({ name: it.name, allowed: it.allowed, items: it.items || undefined })), 'Qualities saved'); }
+    if (t.id === 'qpItemsReset') await clearOverride('items');
+    if (t.id === 'qpOptsSave') {
+        // Read every field first: each save re-renders the form.
+        const profile = state.current.resolved.profile;
+        const min = Number($('qpMinScore').value);
+        const lang = $('qpLang') ? $('qpLang').value : null;
+        const settings = { enforceSizeLimits: $('qpEnforce').checked, preferredProtocol: $('qpProto').value, propers: $('qpPropers').value,
+            multiLanguages: $('qpMulti').value.split(',').map(s => s.trim()).filter(Boolean) };
+        if (min !== profile.minFormatScore) await override('minFormatScore', min);
+        if (lang !== null && lang !== (profile.language || '')) await override('language', lang);
+        await mutate('/settings', { method: 'PUT', body: settings }, 'Options saved');
+    }
+});
+function syncItemChecks() { [...$('qpItemList').children].forEach(li => { const i = Number(li.getAttribute('data-i')); state.items[i].allowed = li.querySelector('input[type=checkbox]').checked; }); }
+
+// ---------- formats ----------
+function renderFormats() {
+    const d = state.current, p = d.preset, r = d.resolved;
+    const ro = !IS_ADMIN ? 'disabled' : '';
+    const groups = (r && r.groups) || [];
+    const per = (p.sync && p.sync.perFormat) || {};
+    let html = '';
+    if (groups.length) {
+        html += `<div class="qp-card"><h3>Optional format groups</h3>${groups.map(g => `<details style="margin-bottom:0.4rem;"><summary><label onclick="event.stopPropagation()"><input type="checkbox" data-group="${esc(g.trashId)}" ${g.enabled ? 'checked' : ''} ${ro}> <b>${esc(g.name)}</b></label> ${g.default ? '<span class="qp-badge">on by default</span>' : ''}</summary>
+            <div class="qp-muted" style="margin:0.3rem 0;">${esc(g.description || '')}</div>
+            ${g.formats.map(f => `<label style="display:block; margin-left:1.4rem;"><input type="checkbox" data-group-format="${esc(g.trashId)}" data-key="${esc(f.trashId)}" ${f.selected ? 'checked' : ''} ${f.required || ro ? 'disabled' : ''}> ${esc(f.name)} <span class="qp-muted">(${f.score})</span> ${f.required ? '<span class="qp-badge">required</span>' : ''}</label>`).join('')}
+            </details>`).join('')}<div class="qp-row qp-admin"><button class="btn btn-primary" id="qpGroupsSave">Save groups</button></div></div>`;
+    }
+    const views = (r && r.formats) || [];
+    const multiSource = (p.upstream.sources || []).length > 1;
+    html += `<div class="qp-card"><h3>Formats</h3><div class="qp-row" style="margin-bottom:0.6rem;"><input class="form-input" id="qpFormatFilter" placeholder="Filter formats" aria-label="Filter formats" style="max-width:240px;" value="${esc(state.formatFilter || '')}"><button class="btn btn-secondary qp-admin" id="qpAddFormat">Add your own format…</button></div>
+        <div class="qp-scroll"><table class="qp-table"><thead><tr><th>Format</th><th>Score</th><th>Upstream</th><th>On</th><th title="Follow upstream conditions / scores for this format">Follow</th><th></th></tr></thead><tbody id="qpFormatRows">
+        ${views.map(v => {
+            const pf = per[v.key] || {};
+            const followC = pf.conditions == null ? '' : (pf.conditions ? 'yes' : 'no');
+            const followS = pf.scores == null ? '' : (pf.scores ? 'yes' : 'no');
+            const sel = (val, kind) => `<select class="form-input" data-follow-fmt="${kind}" data-key="${esc(v.key)}" ${ro} style="width:auto;"><option value=""${val === '' ? ' selected' : ''}>default</option><option value="yes"${val === 'yes' ? ' selected' : ''}>yes</option><option value="no"${val === 'no' ? ' selected' : ''}>no</option></select>`;
+            return `<tr data-name="${esc(v.name.toLowerCase())}"><td><b>${esc(v.name)}</b> <span class="qp-badge">${esc(v.origin)}${v.group ? ': ' + esc(v.group) : ''}</span>${multiSource && v.source ? `<span class="qp-badge" title="Taken from source ${esc(v.source)}">${esc(v.source)}</span>` : ''}${(v.shadowed || []).length ? `<span class="qp-badge warn" title="Also defined in ${esc(v.shadowed.join(', '))}; ${esc(v.source)} takes precedence">overrides ${esc(v.shadowed.join(', '))}</span>` : ''}${v.edited ? '<span class="qp-badge warn">edited</span>' : ''}${v.review ? '<span class="qp-badge warn">review</span>' : ''}${(v.unsupported || []).length ? `<span class="qp-badge warn" title="${esc(v.unsupported.join('; '))}">partly supported</span>` : ''}</td>
+            <td><input type="number" class="form-input qp-score" data-score="${esc(v.key)}" value="${v.score}" ${ro}></td>
+            <td class="qp-muted">${v.upstreamScore == null ? '—' : v.upstreamScore}</td>
+            <td><input type="checkbox" data-enabled="${esc(v.key)}" ${!v.disabled && !v.review ? 'checked' : ''} ${ro}></td>
+            <td style="white-space:nowrap;">${p.origin.kind === 'manual' ? '—' : 'conditions ' + sel(followC, 'conditions') + ' scores ' + sel(followS, 'scores')}</td>
+            <td class="qp-admin" style="white-space:nowrap;"><button class="btn btn-secondary" data-edit="${esc(v.key)}">Conditions…</button> ${v.score !== v.upstreamScore && v.upstreamScore != null ? `<button class="btn btn-secondary" data-reset-score="${esc(v.key)}">Reset score</button>` : ''} ${v.origin === 'own' || v.edited ? `<button class="btn btn-danger" data-remove="${esc(v.key)}">${v.origin === 'own' ? 'Remove' : 'Revert'}</button>` : ''}</td></tr>`;
+        }).join('')}</tbody></table></div></div>`;
+    $('qpFormats').innerHTML = html;
+    if (!IS_ADMIN) $('qpFormats').querySelectorAll('.qp-admin').forEach(el => el.style.display = 'none');
+    // The filter survives the re-render after every score or switch change.
+    const filter = $('qpFormatFilter');
+    const apply = () => { const q = (state.formatFilter || '').toLowerCase(); $('qpFormatRows').querySelectorAll('tr').forEach(tr => tr.style.display = tr.getAttribute('data-name').includes(q) ? '' : 'none'); };
+    filter.addEventListener('input', () => { state.formatFilter = filter.value; apply(); });
+    apply();
+}
+function findFormat(key) {
+    const p = state.current.preset;
+    return (p.overrides.formats && p.overrides.formats[key]) || (p.upstream.formats && p.upstream.formats[key]);
+}
+$('qpFormats').addEventListener('change', async ev => {
+    const t = ev.target;
+    if (t.hasAttribute('data-score')) await override('score:' + t.getAttribute('data-score'), Number(t.value), 'Score saved');
+    if (t.hasAttribute('data-enabled')) {
+        const key = t.getAttribute('data-enabled');
+        if ((state.current.preset.reviewFormats || []).includes(key)) await mutate('/review', { method: 'POST', body: { keys: [key], enable: t.checked } }, 'Saved');
+        else await mutate('/formats/' + encodeURIComponent(key) + '/disabled', { method: 'PUT', body: { disabled: !t.checked } }, t.checked ? 'Format on' : 'Format off');
+    }
+    if (t.hasAttribute('data-follow-fmt')) {
+        const p = state.current.preset, key = t.getAttribute('data-key'), kind = t.getAttribute('data-follow-fmt');
+        const sync = JSON.parse(JSON.stringify(p.sync));
+        sync.perFormat = sync.perFormat || {};
+        const pf = sync.perFormat[key] || {};
+        if (t.value === '') delete pf[kind]; else pf[kind] = t.value === 'yes';
+        if (Object.keys(pf).length) sync.perFormat[key] = pf; else delete sync.perFormat[key];
+        await mutate('/settings', { method: 'PUT', body: { sync } }, 'Sync policy saved');
+    }
+});
+$('qpFormats').addEventListener('click', async ev => {
+    const t = ev.target;
+    if (t.id === 'qpGroupsSave') {
+        // Collect every changed group first: each save re-renders the list.
+        const changes = [];
+        for (const cb of $('qpFormats').querySelectorAll('[data-group]')) {
+            const id = cb.getAttribute('data-group');
+            const formats = {};
+            $('qpFormats').querySelectorAll(`[data-group-format="${CSS.escape(id)}"]`).forEach(f => { if (!f.disabled) formats[f.getAttribute('data-key')] = f.checked; });
+            const g = state.current.resolved.groups.find(x => x.trashId === id);
+            if (cb.checked !== g.enabled || g.formats.some(f => !f.required && formats[f.trashId] !== f.selected)) {
+                changes.push({ id, value: { enabled: cb.checked, formats } });
+            }
+        }
+        for (const c of changes) await override('group:' + c.id, c.value, 'Groups saved');
+    }
+    const edit = t.getAttribute('data-edit');
+    if (edit) {
+        const cf = findFormat(edit);
+        openModal('Conditions of ' + cf.name, 'Sonarr/Radarr custom format JSON. Regular expressions use .NET syntax (lookarounds allowed) and are case-insensitive.', JSON.stringify(cf, null, 2), async text => {
+            let value; try { value = JSON.parse(text); } catch (e) { toast('Invalid JSON: ' + e.message, true); return false; }
+            return !!(await override('format:' + edit, value, 'Conditions saved'));
+        });
+    }
+    const rs = t.getAttribute('data-reset-score');
+    if (rs) await clearOverride('score:' + rs);
+    const rm = t.getAttribute('data-remove');
+    if (rm) { if (confirm('Remove this format change?')) await mutate('/formats/' + encodeURIComponent(rm), { method: 'DELETE' }, 'Removed'); }
+    if (t.id === 'qpAddFormat') {
+        const template = { name: 'My format', specifications: [{ name: 'Title', implementation: 'ReleaseTitleSpecification', negate: false, required: true, fields: { value: '\\bexample\\b' } }] };
+        openModal('Add your own format', 'Custom format JSON (Sonarr/Radarr or TRaSH layout).', JSON.stringify(template, null, 2), async text => {
+            let format; try { format = JSON.parse(text); } catch (e) { toast('Invalid JSON: ' + e.message, true); return false; }
+            const score = Number($('qpModalScore').value || 0);
+            return !!(await mutate('/formats', { method: 'POST', body: { format, score } }, 'Format added'));
+        }, '<label>Score <input id="qpModalScore" type="number" class="form-input qp-score" value="100"></label>');
+    }
+});
+
+// ---------- test bench ----------
+$('qpTestRun').addEventListener('click', ev => busy(ev.currentTarget, async () => {
+    const titles = $('qpTestTitles').value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!titles.length) { toast('Add at least one release name', true); return; }
+    const body = { titles, originalLanguage: $('qpTestLang').value.trim(), runtimeMinutes: Number($('qpTestRuntime').value || 0), detail: $('qpTestDetail').checked };
+    const r = await run(() => api('/' + encodeURIComponent(state.current.preset.id) + '/explain', { method: 'POST', body }));
+    if (!r) return;
+    $('qpTestOut').innerHTML = `<div class="qp-scroll"><table class="qp-table"><thead><tr><th>#</th><th>Release</th><th>Quality</th><th>Languages</th><th>Group</th><th>Score</th><th>Formats</th></tr></thead><tbody>${r.map(x => {
+        const e = x.evaluation, rel = e.release;
+        const conds = (x.conditions || []).map(f => `<li class="${f.matched ? '' : 'no'}"><b class="${f.matched ? 'qp-pass' : ''}">${esc(f.name)}</b>${(f.conditions || []).length ? '<ul class="qp-conds">' + f.conditions.map(c => `<li class="${c.matched ? '' : 'no'}">${c.matched ? '✓' : '✗'} ${esc(c.name)}: ${esc(c.description)}${c.negate ? ' (negated)' : ''}${c.required ? ' (required)' : ''}${c.error ? ' — ' + esc(c.error) : ''}</li>`).join('') + '</ul>' : ''}</li>`).join('');
+        return `<tr><td>${x.rank}</td><td class="qp-mono">${esc(x.title)}${(e.rejections || []).length ? '<div class="qp-fail">' + e.rejections.map(esc).join('<br>') + '</div>' : ''}${conds ? '<details><summary class="qp-muted">conditions</summary><ul class="qp-conds">' + conds + '</ul></details>' : ''}</td>
+            <td>${esc(rel.quality.name)}${e.qualityGroup ? '<div class="qp-muted">' + esc(e.qualityGroup) + '</div>' : ''}</td><td>${esc((rel.languages || []).join(', '))}</td><td>${esc(rel.releaseGroup || '')}</td>
+            <td class="${e.allowed ? 'qp-pass' : 'qp-fail'}">${e.score}</td><td>${(e.formats || []).map(f => `<span title="${esc(formatOrigin(f.key))}">${esc(f.name)}</span> <span class="qp-muted">${f.score}</span>`).join('<br>')}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+}));
+
+// ---------- modal ----------
+// openModal edits text (body), or only the fields in extra when body is null.
+let modalHandler = null, modalReturn = null;
+function openModal(title, help, body, onSave, extra) {
+    $('qpModalTitle').textContent = title; $('qpModalHelp').textContent = help || '';
+    $('qpModalBody').value = body || ''; $('qpModalBody').style.display = body === null ? 'none' : '';
+    $('qpModalExtra').innerHTML = extra || '';
+    modalHandler = onSave; modalReturn = document.activeElement;
+    $('qpModal').style.display = 'flex';
+    const first = body === null ? $('qpModalExtra').querySelector('input, select, textarea') : $('qpModalBody');
+    if (first) first.focus();
+}
+function closeModal() {
+    $('qpModal').style.display = 'none'; modalHandler = null;
+    if (modalReturn && document.contains(modalReturn)) modalReturn.focus();
+}
+$('qpModalCancel').addEventListener('click', closeModal);
+$('qpModal').addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); closeModal(); } });
+$('qpModalOk').addEventListener('click', ev => busy(ev.currentTarget, async () => { if (!modalHandler) return; const ok = await modalHandler($('qpModalBody').value); if (ok !== false) closeModal(); }));
+
+// ---------- init ----------
+(async function init() {
+    try {
+        const checks = await api('/fixed-checks');
+        $('qpFixedChecks').innerHTML = (checks || []).map(c => `<span class="qp-badge" title="${esc(c.description)}">${esc(c.name)}</span>`).join(' ');
+    } catch (e) { /* informational only */ }
+    await loadList();
+    loadCatalog();
+    const want = new URLSearchParams(location.search).get('preset');
+    if (want) openPreset(want);
+})();
+})();
+</script>
+{{end}}
