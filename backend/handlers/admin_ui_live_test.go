@@ -28,3 +28,26 @@ func TestLiveSectionShowsOnlyServerWideFields(t *testing.T) {
 		}
 	}
 }
+
+// TestLivePlaybackSectionHasNoConnectionTest: the "Live TV Playback" card shows only timeshift
+// and comskip; its Test Connection button tested the hidden single-source fields and failed
+// for anyone with named sources only. The sources keep their own test.
+func TestLivePlaybackSectionHasNoConnectionTest(t *testing.T) {
+	live, _ := SettingsSchema["live"].(map[string]interface{})
+	if live == nil {
+		t.Fatal("no live section")
+	}
+	if testable, _ := live["testable"].(bool); testable {
+		t.Error("the Live TV Playback section still offers Test Connection")
+	}
+	fields, _ := live["fields"].(map[string]interface{})
+	playlist, _ := fields["playlistUrl"].(map[string]interface{})
+	if hidden, _ := playlist["hidden"].(bool); !hidden {
+		t.Error("the legacy playlist URL field is visible")
+	}
+	if tv, _ := SettingsSchema["liveTV"].(map[string]interface{}); tv != nil {
+		if testable, _ := tv["testable"].(bool); !testable {
+			t.Error("the profile Live TV section lost its test")
+		}
+	}
+}
