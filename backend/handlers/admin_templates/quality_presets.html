@@ -1067,6 +1067,9 @@ $('qpOverview').addEventListener('click', async ev => {
     } else if (act === 'apply') { await mutate('/pending', { method: 'POST' }, 'Update applied'); }
     else if (act === 'discard') { await mutate('/pending', { method: 'DELETE' }, 'Update discarded'); }
     else if (act === 'delete') {
+        // Staged Active presets or profile choices may name this preset;
+        // saving them after the delete would fail.
+        if (blockedByStaged('selection') || blockedByStaged('assign')) return;
         if (!confirm('Delete preset "' + (p.overrides.name || p.name) + '"? The server stops using it; profiles and devices that chose it use the next level\'s preset instead.')) return;
         await run(() => api('/' + encodeURIComponent(p.id), { method: 'DELETE' }), 'Preset deleted');
         state.current = null; $('qpDetail').style.display = 'none'; loadList();
