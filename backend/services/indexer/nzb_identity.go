@@ -25,7 +25,7 @@ func withNZBIdentity(opts SearchOptions) SearchOptions {
 	}
 	identity := models.NZBIdentity{CatalogID: id, MediaType: opts.MediaType}
 	if opts.MediaType == "series" {
-		parsed := debrid.ParseQuery(opts.Query)
+		parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 		identity.Season, identity.Episode = parsed.Season, parsed.Episode
 		if opts.Numbering != nil {
 			if opts.Numbering.SeriesID != "" {

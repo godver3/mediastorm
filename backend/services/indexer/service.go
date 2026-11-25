@@ -1458,7 +1458,7 @@ func buildSearchRankingSettings(settings config.Settings) searchRankingSettings 
 }
 
 func (s *Service) searchCacheKey(mode string, opts SearchOptions, settings config.Settings, alternateTitles []string, filterSettings models.FilterSettings, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingCriteria []config.RankingCriterion, rankingBundle effectiveRankingBundle) string {
-	parsedMappingQuery := debrid.ParseQuery(opts.Query)
+	parsedMappingQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	payload := searchCacheKeyPayload{
 		AudioLanguage:         s.getEffectiveAudioLanguage(opts.UserID, opts.ClientID, settings),
 		ExplicitAudioLanguage: s.explicitAudioLanguageFor(opts),
@@ -1664,7 +1664,7 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		log.Printf("[indexer] resolved %d alternate title(s) for %q: %v", len(alternateTitles), opts.Query, alternateTitles)
 	}
 
-	parsedQuery := debrid.ParseQuery(opts.Query)
+	parsedQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 	rankingBundle := s.getEffectiveRankingBundle(opts.UserID, opts.ClientID, settings)
 	rankingCriteria := rankingBundle.Default
@@ -1988,7 +1988,7 @@ func (s *Service) SearchWithScoring(ctx context.Context, opts SearchOptions) ([]
 	}
 	expectedYear := rawOpts.Year
 	if expectedYear == 0 {
-		expectedYear = debrid.ParseQuery(rawOpts.Query).Year
+		expectedYear = debrid.ParseQueryWithYear(rawOpts.Query, rawOpts.Year).Year
 	}
 	applyEpisodeYearPriority(passedResults, expectedYear, rawOpts.EpisodeAirYear)
 	passedIndex := 0
@@ -2217,7 +2217,7 @@ func (s *Service) SearchWithScoringSplit(ctx context.Context, opts SearchOptions
 		log.Printf("[indexer] resolved %d alternate title(s) for %q: %v", len(alternateTitles), opts.Query, alternateTitles)
 	}
 
-	parsedQuery := debrid.ParseQuery(opts.Query)
+	parsedQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 	rankingBundle := s.getEffectiveRankingBundle(opts.UserID, opts.ClientID, settings)
 	rankingCriteria := rankingBundle.Default
@@ -2517,7 +2517,7 @@ func (s *Service) splitSearchDebrid(ctx context.Context, settings config.Setting
 func (s *Service) scoreSourceCandidates(opts SearchOptions, settings config.Settings, raw []models.NZBResult, filterOpts filter.Options, filterBundle effectiveFilterBundle, animeSettings models.AnimeFilteringSettings, filterOverrides effectiveOverrides, rankingBundle effectiveRankingBundle) ([]models.ScoredNZBResult, int) {
 	expectedYear := opts.Year
 	if expectedYear == 0 {
-		expectedYear = debrid.ParseQuery(opts.Query).Year
+		expectedYear = debrid.ParseQueryWithYear(opts.Query, opts.Year).Year
 	}
 
 	detailed := make([]filter.FilteredResult, 0, len(raw))
@@ -2725,7 +2725,7 @@ func (s *Service) searchRawResults(ctx context.Context, opts SearchOptions) ([]m
 	metadataLanguage := s.getEffectiveMetadataLanguage(opts.UserID, settings)
 	alternateTitles, filterTitles, requiredTitles := s.resolveSearchTitles(ctx, opts, metadataLanguage, settings.Streaming.MaxAlternateTitleSearches)
 	opts.requiredSearchTitles = requiredTitles
-	parsedQuery := debrid.ParseQuery(opts.Query)
+	parsedQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 	filterBundle, animeSettings, filterOverrides := s.getEffectiveFilterBundle(opts.UserID, opts.ClientID, opts.AdaptiveThroughput, settings)
 	filterSettings := filterBundle.Default
@@ -2951,7 +2951,7 @@ func (s *Service) fetchUsenetResultsAllQueries(ctx context.Context, settings con
 
 // buildFilterOptions constructs filter.Options from SearchOptions and FilterSettings.
 func (s *Service) buildFilterOptions(opts SearchOptions, filterSettings models.FilterSettings, resolvedTitles ...[]string) filter.Options {
-	parsedQuery := debrid.ParseQuery(opts.Query)
+	parsedQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	expectedTitle := strings.TrimSpace(parsedQuery.Title)
 	if expectedTitle == "" {
 		expectedTitle = strings.TrimSpace(opts.Query)
@@ -3063,7 +3063,7 @@ func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridCh
 	metadataLanguage := s.getEffectiveMetadataLanguage(opts.UserID, settings)
 	alternateTitles, filterTitles, requiredTitles := s.resolveSearchTitles(ctx, opts, metadataLanguage, settings.Streaming.MaxAlternateTitleSearches)
 	opts.requiredSearchTitles = requiredTitles
-	parsedQuery := debrid.ParseQuery(opts.Query)
+	parsedQuery := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
 
 	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
@@ -3200,7 +3200,7 @@ func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions
 	// those so source lookup does not repeat metadata search or create an N+1
 	// alias-fetch path.
 	if len(opts.AlternateTitles) > 0 {
-		parsed := debrid.ParseQuery(opts.Query)
+		parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 		query := strings.TrimSpace(parsed.Title)
 		if query == "" {
 			query = strings.TrimSpace(opts.Query)
@@ -3231,7 +3231,7 @@ func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions
 		return nil
 	}
 
-	parsed := debrid.ParseQuery(opts.Query)
+	parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	query := strings.TrimSpace(parsed.Title)
 	if query == "" {
 		query = strings.TrimSpace(opts.Query)
@@ -3979,7 +3979,7 @@ func (s *Service) searchDailyUsenet(ctx context.Context, settings config.Setting
 					continue
 				}
 
-				filtered := s.applyUsenetFilteringWithSettings(raw, opts, parsed, debrid.ParseQuery(candidate.query), filterTitles, filterSettings)
+				filtered := s.applyUsenetFilteringWithSettings(raw, opts, parsed, debrid.ParseQueryWithYear(candidate.query, opts.Year), filterTitles, filterSettings)
 				if opts.SkipFilter {
 					filtered = raw
 				}
@@ -4107,7 +4107,7 @@ func (s *Service) searchUsenetWithFilter(ctx context.Context, settings config.Se
 				return
 			}
 
-			parsedForQuery := debrid.ParseQuery(q)
+			parsedForQuery := debrid.ParseQueryWithYear(q, opts.Year)
 			filtered := s.applyUsenetFilteringWithSettings(allResults, opts, baseParsed, parsedForQuery, filterTitles, filterSettings)
 			resultsChan <- searchResult{query: q, results: filtered, priority: priority}
 		}(idx, query)
@@ -4229,7 +4229,7 @@ func (s *Service) searchUsenetSingleWithFilter(ctx context.Context, settings con
 		return []models.NZBResult{}, nil
 	}
 
-	parsedForQuery := debrid.ParseQuery(query)
+	parsedForQuery := debrid.ParseQueryWithYear(query, opts.Year)
 	filtered := s.applyUsenetFilteringWithSettings(allResults, opts, baseParsed, parsedForQuery, alternateTitles, filterSettings)
 	return filtered, nil
 }
@@ -4247,7 +4247,7 @@ func (s *Service) searchUsenetSingle(ctx context.Context, settings config.Settin
 		return []models.NZBResult{}, nil
 	}
 
-	parsedForQuery := debrid.ParseQuery(query)
+	parsedForQuery := debrid.ParseQueryWithYear(query, opts.Year)
 	filtered := s.applyUsenetFiltering(allResults, settings, opts, baseParsed, parsedForQuery, alternateTitles)
 	return filtered, nil
 }
@@ -4632,7 +4632,7 @@ func (s *Service) fetchTorznab(ctx context.Context, idx config.IndexerConfig, op
 	}
 
 	if len(results) == 0 && opts.EpisodeReleased && !opts.disableSeasonFallback {
-		parsed := debrid.ParseQuery(opts.Query)
+		parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 		if parsed.Season > 0 && parsed.Episode > 0 &&
 			(strings.EqualFold(strings.TrimSpace(opts.MediaType), "series") || parsed.MediaType == debrid.MediaTypeSeries) {
 			fallbackOpts := opts

@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Service) discoverCrossMapping(ctx context.Context, settings config.Settings, opts SearchOptions) {
-	parsed := debrid.ParseQuery(opts.Query)
+	parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	mediaType := strings.ToLower(opts.MediaType)
 	if mediaType == "" {
 		mediaType = string(parsed.MediaType)

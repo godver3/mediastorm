@@ -521,7 +521,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		return []models.NZBResult{}, nil
 	}
 
-	parsed := ParseQuery(opts.Query)
+	parsed := ParseQueryWithYear(opts.Query, opts.Year)
 
 	// Use explicit metadata if provided, otherwise use parsed values
 	if opts.MediaType != "" {
@@ -533,7 +533,7 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 
 	target := parsed
 	if filterQuery := strings.TrimSpace(opts.FilterQuery); filterQuery != "" && filterQuery != strings.TrimSpace(opts.Query) {
-		target = ParseQuery(filterQuery)
+		target = ParseQueryWithYear(filterQuery, opts.Year)
 		target.MediaType = parsed.MediaType
 		target.Year = parsed.Year
 	}

@@ -540,7 +540,7 @@ func normalizeDecoratedSeriesQuery(query, mediaType string) string {
 	if !strings.EqualFold(strings.TrimSpace(mediaType), "series") || !seriesDisplayLabelRE.MatchString(query) {
 		return query
 	}
-	parsed := debrid.ParseQuery(query)
+	parsed := debrid.ParseQueryWithYear(query, debrid.KeepQueryYears)
 	if parsed.Title == "" || !parsed.HasSeasonMatch || parsed.Episode <= 0 {
 		return query
 	}
@@ -567,7 +567,7 @@ func markBadScoredResults(results []models.ScoredNZBResult, badStreams *badstrea
 // buildMaskedTitle creates a display name from search parameters
 func buildMaskedTitle(query string, year int, mediaType string) string {
 	// Parse the query to extract clean title and episode info
-	parsed := debrid.ParseQuery(query)
+	parsed := debrid.ParseQueryWithYear(query, year)
 	title := strings.TrimSpace(parsed.Title)
 	if title == "" {
 		title = strings.TrimSpace(query)
@@ -665,7 +665,7 @@ func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query stri
 	}
 
 	// Parse title and episode from query (e.g., "ReBoot S03E02" -> "ReBoot", Season=3, Episode=2)
-	parsed := debrid.ParseQuery(query)
+	parsed := debrid.ParseQueryWithYear(query, year)
 	titleName := strings.TrimSpace(parsed.Title)
 	if titleName == "" {
 		titleName = strings.TrimSpace(query)

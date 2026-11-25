@@ -5,6 +5,7 @@ import (
 	"html"
 	"log"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -455,6 +456,15 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 				parsedCopy.Title = title
 				parsed = &parsedCopy
 			}
+			name := strings.TrimSpace(strings.TrimSuffix(parsed.Title, " *"))
+			if title := nameInMultiNameRelease(result.Title, releaseTitles, opts.IsMovie, opts.ExpectedYear); title != "" {
+				name = title
+			}
+			if name != parsed.Title {
+				parsedCopy := *parsed
+				parsedCopy.Title = name
+				parsed = &parsedCopy
+			}
 			// Check title similarity
 			titleSim, matchedTitle := bestTitleSimilarityForMedia(releaseTitles, parsed.Title, opts.IsMovie, result.Title)
 			if i < 5 {
@@ -468,6 +478,12 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 
 			if titleSim < MinTitleSimilarity {
 				reason := fmt.Sprintf("title similarity %.0f%% < %.0f%% (parsed: '%s')", titleSim*100, MinTitleSimilarity*100, parsed.Title)
+				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
+				reject(result, reason)
+				continue
+			}
+			if missesTitleYear(result.Title, parsed.Title, matchedTitle, opts.ExpectedYear) {
+				reason := fmt.Sprintf("title lacks the year in expected title %q (parsed: '%s')", matchedTitle, parsed.Title)
 				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
 				reject(result, reason)
 				continue
@@ -574,7 +590,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 			// Volumes are common in anime DVD/BD releases (e.g., "Vol 01", "Vol.1-6")
 			// ptt-go reads a number-only movie title ("1917", "300") as an
 			// episode number. That number is the title, not a TV pattern.
-			if opts.IsMovie && episodesAreTitleNumbers(parsed, matchedTitle) {
+			if opts.IsMovie && episodesAreTitleNumbers(parsed, matchedTitle, opts.ExpectedYear) {
 				parsedCopy := *parsed
 				parsedCopy.Episodes = nil
 				parsed = &parsedCopy
@@ -653,7 +669,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 
 			// Check year for all media types (movies and series)
 			if opts.ExpectedYear > 0 {
-				parsedYear := releaseYearOutsideTitle(result.Title, parsed.Year, titleYears(append([]string{opts.ExpectedTitle, matchedTitle}, opts.AlternateTitles...), opts.ExpectedYear))
+				parsedYear := releaseYearOutsideTitle(result.Title, parsed.Year, opts.IsMovie, titleYears([]string{opts.ExpectedTitle, matchedTitle}, opts.ExpectedYear))
 				if parsedYear == 0 {
 					parsedYear = matchingYearFromRange(result.Title, opts.ExpectedYear)
 				}
@@ -946,7 +962,9 @@ func titleWithParsedYear(parsed *parsett.ParsedTitle, titles []string) (string, 
 
 // episodesAreTitleNumbers reports whether every parsed episode number is a word
 // of both the parsed and the expected title, with no season or volume parsed.
-func episodesAreTitleNumbers(parsed *parsett.ParsedTitle, expectedTitle string) bool {
+// The release year also counts: after a year in the title the parser can read
+// it as an episode ("Wonder.Woman.1984.2020").
+func episodesAreTitleNumbers(parsed *parsett.ParsedTitle, expectedTitle string, expectedYear int) bool {
 	if len(parsed.Episodes) == 0 || len(parsed.Seasons) > 0 || len(parsed.Volumes) > 0 {
 		return false
 	}
@@ -959,12 +977,35 @@ func episodesAreTitleNumbers(parsed *parsett.ParsedTitle, expectedTitle string) 
 	}
 	inParsed, inExpected := words(parsed.Title), words(expectedTitle)
 	for _, episode := range parsed.Episodes {
+		if expectedYear > 0 && abs(episode-expectedYear) <= MaxYearDifference {
+			continue
+		}
 		number := strconv.Itoa(episode)
 		if !inParsed[number] || !inExpected[number] {
 			return false
 		}
 	}
 	return true
+}
+
+// missesTitleYear reports whether a release names the expected title without
+// the year that is part of it ("Blade Runner" for "Blade Runner 2099"). A year
+// that fits the expected year only tells same-named titles apart, as does one
+// in brackets, so releases may leave it out.
+func missesTitleYear(releaseTitle, parsedTitle, matchedTitle string, expectedYear int) bool {
+	if expectedYear <= 0 || strings.HasSuffix(matchedTitle, ")") || strings.HasSuffix(matchedTitle, "]") {
+		return false
+	}
+	expected := normalizeForContainment(matchedTitle)
+	base := stripTrailingTitleYear(expected)
+	if base == expected || stripLeadingTitleArticle(normalizeForContainment(parsedTitle)) != stripLeadingTitleArticle(base) {
+		return false
+	}
+	titleYear := expected[len(expected)-4:]
+	if year, err := strconv.Atoi(titleYear); err != nil || abs(year-expectedYear) <= MaxYearDifference {
+		return false
+	}
+	return !slices.Contains(yearWordPattern.FindAllString(releaseTitle, -1), titleYear)
 }
 
 // titleYears returns the year-like numbers that are part of the titles
@@ -987,7 +1028,7 @@ func titleYears(titles []string, expectedYear int) map[int]bool {
 // a year that is part of the title as the release year, which then fails the
 // year check on every release of that title. Such a year is ignored, and the
 // first other year in the release name is used instead (0 when there is none).
-func releaseYearOutsideTitle(releaseTitle string, parsedYear int, inTitle map[int]bool) int {
+func releaseYearOutsideTitle(releaseTitle string, parsedYear int, isMovie bool, inTitle map[int]bool) int {
 	if parsedYear == 0 || !inTitle[parsedYear] {
 		return parsedYear
 	}
@@ -1000,12 +1041,14 @@ func releaseYearOutsideTitle(releaseTitle string, parsedYear int, inTitle map[in
 		if !inTitle[year] {
 			return year
 		}
-		// A title year named twice ("1984.1984") is also the release year.
-		if year == parsedYear {
-			if seen++; seen == 2 {
-				return year
-			}
+		// A movie's title year named twice ("1984.1984") is also the release
+		// year. In a series the repeat can be an episode name ("1923.S01E01.1923").
+		if isMovie && year == parsedYear {
+			seen++
 		}
+	}
+	if seen > 1 {
+		return parsedYear
 	}
 	return 0
 }

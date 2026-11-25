@@ -11,8 +11,8 @@ import (
 // Bind a mapped text query to the corresponding provider IDs without changing
 // the catalog options used for filtering, display, history, or cache identity.
 func mappedQueryOptions(opts SearchOptions, query string) SearchOptions {
-	original := debrid.ParseQuery(opts.Query)
-	requested := debrid.ParseQuery(query)
+	original := debrid.ParseQueryWithYear(opts.Query, opts.Year)
+	requested := debrid.ParseQueryWithYear(query, opts.Year)
 	out := opts
 	out.Query = query
 	if opts.Numbering != nil && strings.HasPrefix(opts.Numbering.SeriesID, "tvdb:series:") {
@@ -50,7 +50,7 @@ func mappedQueryOptions(opts SearchOptions, query string) SearchOptions {
 
 // Preserve both identities until the indexer applies its final ranking/limit.
 func crossMappingSourceLimit(opts SearchOptions, limit int) int {
-	parsed := debrid.ParseQuery(opts.Query)
+	parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	if parsed.MediaType == debrid.MediaTypeSeries {
 		if len(mediaidentity.ReleaseEpisodeAliases(opts.TitleID, parsed.Season, parsed.Episode, opts.Numbering)) > 0 {
 			return 0

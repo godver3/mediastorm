@@ -13,7 +13,7 @@ import (
 // Search the budgeted language titles independently of whether another title
 // returns results. Keep the caller's complete alias set for identity filtering.
 func (s *Service) searchDebridTitles(ctx context.Context, base debrid.SearchOptions, opts SearchOptions, titles []string) ([]models.NZBResult, error) {
-	queries := combineFilterTitles([]string{base.Query}, buildTitleSearchQueries(opts, debrid.ParseQuery(opts.Query), titles))
+	queries := combineFilterTitles([]string{base.Query}, buildTitleSearchQueries(opts, debrid.ParseQueryWithYear(opts.Query, opts.Year), titles))
 	if len(queries) <= 1 {
 		return s.debrid.Search(ctx, base)
 	}

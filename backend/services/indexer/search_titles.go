@@ -34,7 +34,7 @@ func (s *Service) resolveSearchTitles(ctx context.Context, opts SearchOptions, m
 	// Hydrated aliases are plain names in provider order. Resolve the localized
 	// main title through the language-scoped metadata cache instead of guessing
 	// its language from that order (or from TMDB country codes).
-	query := strings.TrimSpace(debrid.ParseQuery(opts.Query).Title)
+	query := strings.TrimSpace(debrid.ParseQueryWithYear(opts.Query, opts.Year).Title)
 	if query == "" {
 		query = strings.TrimSpace(opts.Query)
 	}
@@ -58,7 +58,7 @@ func (s *Service) resolveSearchTitles(ctx context.Context, opts SearchOptions, m
 	requiredTitles = combineFilterTitles(requiredTitles)
 	filterTitles = combineFilterTitles(opts.AlternateTitles, requiredTitles, aliases)
 	searchTitles = combineFilterTitles(requiredTitles, aliases)
-	parsed := debrid.ParseQuery(opts.Query)
+	parsed := debrid.ParseQueryWithYear(opts.Query, opts.Year)
 	// A parent anthology name must be searched with its mapped season, never
 	// with the standalone catalog season. buildSearchQueries adds that request.
 	searchTitles = mediaidentity.UnscopedReleaseTitles(searchTitles, query, opts.TitleID, parsed.Season, parsed.Episode, opts.Numbering)
