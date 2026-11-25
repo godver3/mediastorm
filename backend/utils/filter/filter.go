@@ -41,6 +41,7 @@ var (
 	resolution576Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])576[pi]?([^a-z0-9]|$)`)
 	resolution480Pattern    = regexp.MustCompile(`(?i)(^|[^a-z0-9])480[pi]?([^a-z0-9]|$)`)
 	yearTokenPattern        = regexp.MustCompile(`^(?:19|20)\d{2}$`)
+	yearWordPattern         = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
 	formulaOneRoundPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})(?:x\d+)*(?:[^a-z0-9]+|x)(?:r|round)[.\s_-]*(\d{1,2})(?:[^a-z0-9]|$)`)
 	formulaOneXPattern      = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:f1|formula[.\s_-]*1)[^a-z0-9]+((?:19|20)\d{2})x(\d{1,3})(?:[^a-z0-9]|$)`)
 	yearRangePattern        = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})(?:[^a-z0-9]|$)`)
@@ -637,7 +638,7 @@ func ResultsWithDetails(results []models.NZBResult, opts Options) []FilteredResu
 
 			// Check year for all media types (movies and series)
 			if opts.ExpectedYear > 0 {
-				parsedYear := parsed.Year
+				parsedYear := releaseYearOutsideTitle(result.Title, parsed.Year, titleYears(append([]string{opts.ExpectedTitle, matchedTitle}, opts.AlternateTitles...)))
 				if parsedYear == 0 {
 					parsedYear = matchingYearFromRange(result.Title, opts.ExpectedYear)
 				}
@@ -905,6 +906,36 @@ func hasDolbyVision(hdrFormats []string) bool {
 		}
 	}
 	return false
+}
+
+// titleYears returns the year-like numbers that are part of the titles
+// themselves ("Blade Runner 2099", "1923", "2001: A Space Odyssey").
+func titleYears(titles []string) map[int]bool {
+	years := map[int]bool{}
+	for _, title := range titles {
+		for _, token := range yearWordPattern.FindAllString(title, -1) {
+			if year, err := strconv.Atoi(token); err == nil {
+				years[year] = true
+			}
+		}
+	}
+	return years
+}
+
+// releaseYearOutsideTitle returns the release year to check. The parser reads
+// a year that is part of the title as the release year, which then fails the
+// year check on every release of that title. Such a year is ignored, and the
+// first other year in the release name is used instead (0 when there is none).
+func releaseYearOutsideTitle(releaseTitle string, parsedYear int, inTitle map[int]bool) int {
+	if parsedYear == 0 || !inTitle[parsedYear] {
+		return parsedYear
+	}
+	for _, token := range yearWordPattern.FindAllString(releaseTitle, -1) {
+		if year, err := strconv.Atoi(token); err == nil && !inTitle[year] {
+			return year
+		}
+	}
+	return 0
 }
 
 func matchingYearFromRange(title string, expectedYear int) int {
