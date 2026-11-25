@@ -1567,7 +1567,7 @@ func TestExecuteLocalMediaScan_AllLibraries(t *testing.T) {
 	if result.Count != 30 {
 		t.Fatalf("result.Count = %d, want 30", result.Count)
 	}
-	if !strings.Contains(result.Message, "completed for 2 libraries") {
+	if !strings.Contains(result.Message, "completed for 2 of 2 libraries") {
 		t.Fatalf("result.Message = %q, want aggregated all-libraries summary", result.Message)
 	}
 }

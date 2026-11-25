@@ -1334,6 +1334,7 @@ func main() {
 	usersHandler.SetConfigManager(cfgManager)
 	schedulerService.SetJellyfinClient(jellyfinClient)
 	schedulerService.SetLocalMediaService(localMediaService)
+	schedulerService.SetRemoteMediaService(remoteMediaService)
 	if store != nil {
 		schedulerService.SetHistorySyncSnapshotStore(store.HistorySyncSnapshots())
 	}

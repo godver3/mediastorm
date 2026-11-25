@@ -62,7 +62,11 @@ type VerifiedServer struct {
 	Libraries  []AvailableLibrary `json:"libraries"`
 }
 
+// ErrSyncInProgress reports that the library is already being synced.
+var ErrSyncInProgress = errors.New("library sync already in progress")
+
 type Service struct {
+	syncing  sync.Map // library IDs being synced
 	repo     datastore.RemoteMediaRepository
 	cfg      *config.Manager
 	plex     *plex.Client
@@ -347,6 +351,11 @@ func (s *Service) DeleteLibrary(ctx context.Context, id string) error {
 }
 
 func (s *Service) Sync(ctx context.Context, id string) (int, error) {
+	// Overlapping syncs of one library would mark each other's items missing.
+	if _, running := s.syncing.LoadOrStore(id, struct{}{}); running {
+		return 0, ErrSyncInProgress
+	}
+	defer s.syncing.Delete(id)
 	library, err := s.repo.GetLibrary(ctx, id)
 	if err != nil || library == nil {
 		if err == nil {

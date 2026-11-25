@@ -867,7 +867,7 @@
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             {{if .IsAdmin}}
-                            <option value="local_media_scan">Local Media Library Scan</option>
+                            <option value="local_media_scan">Library Scan / Sync</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Home Shelves</option>
                             {{end}}
@@ -920,8 +920,7 @@
                             <label class="form-label">Library</label>
                             <select id="newTaskLocalMediaLibrary" class="form-select">
                             </select>
-                            <small class="text-muted">Pick which local media library should be rescanned on this schedule.</small>
-                            <small class="text-muted">Choose All Libraries to run the scan against every configured local media library.</small>
+                            <small class="text-muted">Rescans local folders and syncs Plex and Jellyfin libraries. All Libraries covers every configured library.</small>
                         </div>
                     </div>
 
@@ -1302,7 +1301,7 @@
                             <option value="jellyfin_favorites_sync">Jellyfin Favorites Sync</option>
                             <option value="jellyfin_history_sync">Jellyfin Watch History Sync</option>
                             {{if .IsAdmin}}
-                            <option value="local_media_scan">Local Media Library Scan</option>
+                            <option value="local_media_scan">Library Scan / Sync</option>
                             <option value="backup">System Backup</option>
                             <option value="prewarm">Pre-warm Home Shelves</option>
                             {{end}}
@@ -1355,7 +1354,7 @@
                             <label class="form-label">Library</label>
                             <select id="editTaskLocalMediaLibrary" class="form-select">
                             </select>
-                            <small class="text-muted">Choose All Libraries to run the scan against every configured local media library.</small>
+                            <small class="text-muted">Rescans local folders and syncs Plex and Jellyfin libraries. All Libraries covers every configured library.</small>
                         </div>
                     </div>
 
@@ -3494,7 +3493,7 @@
     function populateLocalMediaLibrarySelects() {
         const options = localMediaLibraries.length
             ? [`<option value="${ALL_LOCAL_MEDIA_LIBRARIES_VALUE}">All Libraries</option>`]
-                .concat(localMediaLibraries.map(library => `<option value="${library.id}">${escapeHtml(library.name)} (${escapeHtml(library.type)})</option>`))
+                .concat(localMediaLibraries.map(library => `<option value="${library.id}">${escapeHtml(library.name)} (${escapeHtml([library.type, library.sourceName, library.sourceServerName].filter(Boolean).join(", "))})</option>`))
                 .join('')
             : '<option value="">No libraries configured</option>';
 
@@ -6344,7 +6343,7 @@
             case 'mdblist_history_sync': return 'MDBList History';
             case 'jellyfin_favorites_sync': return 'Jellyfin Favorites';
             case 'jellyfin_history_sync': return 'Jellyfin History';
-            case 'local_media_scan': return 'Local Media Scan';
+            case 'local_media_scan': return 'Library Scan / Sync';
             case 'backup': return 'System Backup';
             case 'prewarm': return 'Pre-warm';
             case 'quality_preset_sync': return 'Quality Preset Updates';

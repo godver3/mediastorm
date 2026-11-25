@@ -253,7 +253,7 @@ func validateScheduledTaskConfig(taskType config.ScheduledTaskType, taskConfig m
 		}
 	case config.ScheduledTaskTypeLocalMediaScan:
 		if taskConfig == nil || strings.TrimSpace(taskConfig["libraryId"]) == "" {
-			return errors.New("Local media scan requires libraryId in config")
+			return errors.New("Library scan requires libraryId in config")
 		}
 	case config.ScheduledTaskTypeMDBListWatchlistSync:
 		if err := requireProfile("mdblistAccountId", "MDBList watchlist sync requires mdblistAccountId and profileId in config"); err != nil {
