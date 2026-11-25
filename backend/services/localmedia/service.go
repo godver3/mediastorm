@@ -1720,6 +1720,19 @@ func (s *Service) buildItem(ctx context.Context, library models.LocalMediaLibrar
 	now := time.Now().UTC()
 	if hasExisting && canReuseLocalMediaItem(existing, filePath, info.Size(), modifiedAt) {
 		s.rematchReusedItemByExternalIDs(ctx, library, detected, metadataCache, &existing)
+		if existing.Probe == nil || existing.Probe.Version < localMediaProbeVersion {
+			// Probed before fields were added (interlaced): probe again, keep the rest.
+			if probe, err := s.probeLocalFileWithError(ctx, filePath, info.Size()); err == nil {
+				existing.Probe = probe
+			} else {
+				// Tried once: like a new file whose probe fails, not again until it changes.
+				log.Printf("[localmedia] re-probe failed file=%q: %v", relativePath, err)
+				if existing.Probe == nil {
+					existing.Probe = &models.LocalMediaProbe{SizeBytes: info.Size()}
+				}
+				existing.Probe.Version = localMediaProbeVersion
+			}
+		}
 		existing.FilePath = filePath
 		existing.FileName = filepath.Base(filePath)
 		existing.IsMissing = false
@@ -2100,6 +2113,7 @@ type ffprobeResponse struct {
 		Width          int               `json:"width"`
 		Height         int               `json:"height"`
 		ColorTransfer  string            `json:"color_transfer"`
+		FieldOrder     string            `json:"field_order"`
 		ColorPrimaries string            `json:"color_primaries"`
 		SideDataList   []map[string]any  `json:"side_data_list"`
 		Tags           map[string]string `json:"tags"`
@@ -2111,10 +2125,13 @@ type ffprobeResponse struct {
 	} `json:"format"`
 }
 
+// localMediaProbeVersion is the current LocalMediaProbe generation: 1 added Interlaced.
+const localMediaProbeVersion = 1
+
 func (s *Service) probeLocalFile(ctx context.Context, path string, fileSize int64) *models.LocalMediaProbe {
 	probe, err := s.probeLocalFileWithError(ctx, path, fileSize)
 	if err != nil {
-		return &models.LocalMediaProbe{SizeBytes: fileSize}
+		return &models.LocalMediaProbe{SizeBytes: fileSize, Version: localMediaProbeVersion}
 	}
 	return probe
 }
@@ -2151,6 +2168,7 @@ func (s *Service) probeLocalFileWithError(ctx context.Context, path string, file
 	probe := &models.LocalMediaProbe{
 		FormatName: resp.Format.FormatName,
 		SizeBytes:  fileSize,
+		Version:    localMediaProbeVersion,
 	}
 	if v, err := strconv.ParseFloat(resp.Format.Duration, 64); err == nil {
 		probe.DurationSeconds = v
@@ -2168,6 +2186,7 @@ func (s *Service) probeLocalFileWithError(ctx context.Context, path string, file
 				probe.Width = stream.Width
 				probe.Height = stream.Height
 				probe.HDRFormat = detectHDRFormat(stream.ColorTransfer, stream.ColorPrimaries, stream.SideDataList)
+				probe.Interlaced = models.IsInterlacedFieldOrder(stream.FieldOrder)
 			}
 		case "audio":
 			probe.AudioStreams++

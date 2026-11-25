@@ -24,6 +24,18 @@ describe('library mappers', () => {
       }),
     ).toBe('4K · HEVC · Dolby Vision');
     expect(versionQuality({ id: 'i', versionLabel: '1080p · H264' })).toBe('1080p · H264');
+    expect(
+      versionQuality({
+        id: 'i',
+        probe: { width: 1920, height: 1080, videoCodec: 'h264', interlaced: true },
+      }),
+    ).toBe('1080i · H.264');
+    expect(
+      versionQuality({
+        id: 'i',
+        probe: { width: 720, height: 576, videoCodec: 'h264', interlaced: true },
+      }),
+    ).toBe('576i · H.264');
     expect(versionQuality({ id: 'i', fileName: 'a.mkv' })).toBe('a.mkv');
     expect(
       versionSize({ id: 'i', sizeBytes: 21_100_000_000, probe: { durationSeconds: 6500 } }),

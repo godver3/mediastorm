@@ -3665,6 +3665,8 @@ func composeMetadataResponse(meta *ffprobeOutput, sanitizedPath string, plan aud
 				ColorTransfer:            strings.TrimSpace(stream.ColorTransfer),
 				ColorPrimaries:           strings.TrimSpace(stream.ColorPrimaries),
 				ColorSpace:               strings.TrimSpace(stream.ColorSpace),
+				FieldOrder:               strings.TrimSpace(stream.FieldOrder),
+				Interlaced:               models.IsInterlacedFieldOrder(stream.FieldOrder),
 			}
 			resp.VideoStreams = append(resp.VideoStreams, summary)
 		case "subtitle":
@@ -3885,6 +3887,7 @@ type ffprobeStream struct {
 	ColorSpace     string            `json:"color_space"`
 	ColorTransfer  string            `json:"color_transfer"`
 	ColorPrimaries string            `json:"color_primaries"`
+	FieldOrder     string            `json:"field_order"`
 	SideDataList   []ffprobeSideData `json:"side_data_list"`
 }
 
@@ -3945,6 +3948,10 @@ type videoStreamSummary struct {
 	ColorTransfer  string `json:"colorTransfer,omitempty"`
 	ColorPrimaries string `json:"colorPrimaries,omitempty"`
 	ColorSpace     string `json:"colorSpace,omitempty"`
+	// FieldOrder is ffprobe's field_order (progressive, tt, bb, tb, bt); Interlaced is true
+	// for the interlaced ones.
+	FieldOrder string `json:"fieldOrder,omitempty"`
+	Interlaced bool   `json:"interlaced,omitempty"`
 }
 
 type subtitleStreamSummary struct {

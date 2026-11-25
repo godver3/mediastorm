@@ -202,6 +202,12 @@ describe('mappers', () => {
     ]);
     expect(v.movie).toHaveLength(1);
     expect(versionQuality(v.movie[0]!)).toBe('4K · HEVC · Dolby Vision');
+    expect(
+      versionQuality({
+        item: { id: 'i', probe: { width: 720, height: 576, videoCodec: 'h264', interlaced: true } },
+        libraryName: 'Aufnahmen',
+      }),
+    ).toMatch(/^576i · /);
     expect(v.episodes['1:2']).toHaveLength(1);
   });
   it('embeds YouTube trailers only', () => {

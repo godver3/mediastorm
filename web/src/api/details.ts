@@ -301,6 +301,8 @@ export interface LibraryProbe {
   width?: number;
   height?: number;
   hdrFormat?: string;
+  /** Interlaced video (1080i, 576i). */
+  interlaced?: boolean;
 }
 
 export interface LibraryItem {
@@ -401,15 +403,16 @@ export function versionQuality(v: LibraryVersion): string {
   const p = v.item.probe ?? {};
   const w = p.width ?? 0;
   const h = p.height ?? 0;
+  const scan = p.interlaced ? 'i' : 'p';
   const res =
     w >= 3200 || h >= 1800
       ? '4K'
       : w >= 1800 || h >= 1000
-        ? '1080p'
+        ? `1080${scan}`
         : w >= 1200 || h >= 700
-          ? '720p'
+          ? `720${scan}`
           : h > 0
-            ? `${h}p`
+            ? `${h}${scan}`
             : undefined;
   const c = (p.videoCodec ?? '').toLowerCase();
   const codec = !c
