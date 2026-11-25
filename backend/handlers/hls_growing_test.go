@@ -35,12 +35,13 @@ func (p *growingTestProvider) IsGrowing(context.Context, string) (bool, error) {
 }
 
 // writeArgsRecordingFFmpeg writes a fake ffmpeg that records its arguments.
+// The file appears only once complete: callers read it as soon as it exists.
 func writeArgsRecordingFFmpeg(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args.txt")
 	script := filepath.Join(dir, "ffmpeg")
-	body := fmt.Sprintf("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\"; done > %q\n", argsFile)
+	body := fmt.Sprintf("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\"; done > %q && mv %q %q\n", argsFile+".tmp", argsFile+".tmp", argsFile)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write fake ffmpeg: %v", err)
 	}
